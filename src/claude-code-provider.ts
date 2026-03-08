@@ -104,6 +104,14 @@ export class ClaudeCodeProvider implements AgentProvider {
 			request.signal.addEventListener("abort", () => abortController.abort());
 		}
 
+		// Strip CLAUDECODE env var to allow spawning from within a Claude Code session.
+		const env: Record<string, string> = {};
+		for (const [key, value] of Object.entries(process.env)) {
+			if (key !== "CLAUDECODE" && value !== undefined) {
+				env[key] = value;
+			}
+		}
+
 		return query({
 			prompt: request.prompt,
 			options: {
@@ -113,6 +121,7 @@ export class ClaudeCodeProvider implements AgentProvider {
 				abortController,
 				permissionMode: "bypassPermissions",
 				allowDangerouslySkipPermissions: true,
+				env,
 			},
 		});
 	}

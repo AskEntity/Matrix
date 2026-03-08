@@ -64,8 +64,11 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 					maxTurns: 20,
 				}),
 			});
+			const runBody = await runRes.json();
+			console.log("Run response status:", runRes.status);
+			console.log("Run response body:", JSON.stringify(runBody, null, 2));
 			expect(runRes.status).toBe(200);
-			const result = (await runRes.json()) as {
+			const result = runBody as {
 				success: boolean;
 				output: string;
 			};
