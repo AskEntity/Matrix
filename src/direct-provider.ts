@@ -611,13 +611,21 @@ export class DirectProvider implements AgentProvider {
 			messages.push({ role: "user", content: toolResults });
 		}
 
+		const hitMaxTurns = turns >= maxTurns;
+		if (hitMaxTurns) {
+			yield {
+				type: "status",
+				message: `Max turns (${maxTurns}) reached, stopping`,
+			};
+		}
+
 		const { inputPer1M, outputPer1M } = getModelPricing(model);
 		const costUsd =
 			(totalInputTokens * inputPer1M) / 1_000_000 +
 			(totalOutputTokens * outputPer1M) / 1_000_000;
 
 		return {
-			success: true,
+			success: !hitMaxTurns,
 			output: lastText,
 			costUsd,
 			turns,
