@@ -26,10 +26,10 @@ bun run check       # biome lint + format
 
 **Pre-commit hooks are active** (.hooks/pre-commit runs typecheck + lint + unit tests).
 
-## Current Phase: Phase 2
+## Current Phase: Phase 3
 
-Phase 1 complete: task decomposition + worktree-isolated parallel execution + parent merge.
-Phase 2: Main agent as orchestrator — agent observes tree, spawns tasks via MCP tools.
+Phase 2 complete: agent-driven orchestration with MCP tools, bootstrap verified.
+Phase 3: Web UI, real-time streaming, user interaction, CLI debug mode.
 
 ## Tech Stack
 
@@ -74,6 +74,8 @@ Project lifecycle is deterministic code, not agent work.
 | POST | /projects/:id/execute | Run task tree with worktree isolation (parallel) |
 | POST | /projects/:id/orchestrate | Run pending tasks sequentially (legacy) |
 | POST | /projects/:id/orchestrate/agent | Agent-driven orchestration with MCP tools |
+| POST | /projects/:id/message | Send instruction to running agent |
+| WS | /ws | Real-time task tree + agent events + message injection |
 
 ## Key Files
 
@@ -89,8 +91,9 @@ Project lifecycle is deterministic code, not agent work.
 | src/runner.ts | Agent-driven parallel task execution with worktree isolation |
 | src/orchestrator.ts | Legacy sequential orchestrator (kept for backward compat) |
 | src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, spawn_task, merge_branch) |
-| src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, orchestrate, execute |
-| src/daemon.test.ts | API route tests (33 tests, 81 total across 6 files) |
+| src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, orchestrate, execute, watch, send |
+| web/ | Web UI: task tree, agent activity, message injection (served by daemon) |
+| src/daemon.test.ts | API route tests (87 total across 8 files) |
 | src/project-manager.test.ts | ProjectManager unit tests |
 | src/task-tracker.test.ts | TaskTracker unit tests |
 | src/e2e.test.ts | Real agent E2E test (token-gated) |
@@ -166,10 +169,14 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Bootstrap verified: OpenGraft orchestrates its own development (version.ts task)
 
 ### Phase 3 (IN PROGRESS)
-- [ ] Web UI: real-time task tree dashboard served by daemon
-- [ ] WebSocket endpoint for live task tree + agent event streaming
-- [ ] Real-time agent activity: see tool calls, text output, errors as they happen
-- [ ] User interaction: send instructions to running agents mid-execution
-- [ ] CLI agent activity view (debug mode)
+- [x] Web UI: dark-themed SPA with task tree + agent activity panels
+- [x] WebSocket endpoint (/ws) for live task tree + agent event streaming
+- [x] Real-time agent activity: tool calls, text output, errors streamed to UI
+- [x] User interaction: inject messages into running agents (WS + HTTP + Web UI + CLI)
+- [x] CLI `og watch`: real-time agent activity monitoring via WebSocket
+- [x] CLI `og send`: send instructions to running agents
+- [x] CLI `og orchestrate` streams via WebSocket for real-time output
+- [x] Interactive AgentSession with streamInput() for mid-execution messages
+- [x] Worktree cleanup fix: proper removal + core.bare=false guard
 - [ ] Direct Anthropic API: bypass Claude Code subprocess, use Messages API directly
 - [ ] Multi-model support: select model per task (cheap model for simple tasks)
