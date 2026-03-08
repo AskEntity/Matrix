@@ -6,8 +6,10 @@ import type { AgentProvider } from "./agent-provider.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { Orchestrator } from "./orchestrator.ts";
 import { ProjectManager } from "./project-manager.ts";
+import { Runner } from "./runner.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { DecomposedTask, HealthResponse, TaskStatus } from "./types.ts";
+import { WorktreeManager } from "./worktree-manager.ts";
 
 const VERSION = "0.0.1";
 const startTime = Date.now();
@@ -342,6 +344,29 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				nodes: tracker.allNodes(),
 				costUsd: result.costUsd,
 				turns: result.turns,
+			});
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 500);
+		}
+	});
+
+	// Runner: worktree-isolated parallel task execution
+	app.post("/projects/:id/execute", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const tracker = await getTracker(project.id);
+		const wtRoot = join(project.path, ".worktrees");
+		const wm = new WorktreeManager(project.path, wtRoot);
+		const runner = new Runner(tracker, config.agentProvider, wm, project.path);
+
+		try {
+			const result = await runner.run();
+			return c.json({
+				...result,
+				events: runner.getEvents(),
 			});
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";

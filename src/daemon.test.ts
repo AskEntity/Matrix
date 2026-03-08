@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentProvider } from "./agent-provider.ts";
@@ -538,6 +538,138 @@ describe("daemon decompose API", () => {
 			body: JSON.stringify({ goal: "Build something" }),
 		});
 		expect(decompRes.status).toBe(500);
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+});
+
+/** Clean git env for test isolation. */
+const cleanGitEnv: Record<string, string | undefined> = {
+	...process.env,
+	GIT_DIR: undefined,
+	GIT_WORK_TREE: undefined,
+	GIT_INDEX_FILE: undefined,
+	GIT_OBJECT_DIRECTORY: undefined,
+	GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+};
+
+async function gitExec(cmd: string[], cwd: string): Promise<void> {
+	const proc = Bun.spawn(cmd, {
+		cwd,
+		stdout: "pipe",
+		stderr: "pipe",
+		env: cleanGitEnv,
+	});
+	await proc.exited;
+}
+
+describe("daemon execute API", () => {
+	test("POST /execute runs tasks with worktree isolation", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-exec-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-edata-"));
+		const projectPath = join(tempDir, "exec-app");
+
+		// Init a real git repo for worktree support
+		await Bun.spawn(["mkdir", "-p", projectPath]).exited;
+		await gitExec(["git", "init"], projectPath);
+		await gitExec(
+			["git", "config", "user.email", "test@test.com"],
+			projectPath,
+		);
+		await gitExec(["git", "config", "user.name", "Test"], projectPath);
+		await writeFile(join(projectPath, "README.md"), "# Test\n");
+		await gitExec(["git", "add", "-A"], projectPath);
+		await gitExec(["git", "commit", "-m", "init"], projectPath);
+
+		const execProvider = createMockProvider(async () => ({
+			success: true,
+			output: "task done",
+			sessionId: "sess-1",
+		}));
+
+		const { app, pm } = createApp({
+			dataDir,
+			agentProvider: execProvider,
+		});
+		await pm.load();
+
+		// Register the project (it already exists, so it's a "convert")
+		const projectRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectPath }),
+		});
+		const project = (await projectRes.json()) as Project;
+
+		// Create task tree
+		const rootRes = await app.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "App", description: "Build it" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		await app.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Feature A",
+				description: "First feature",
+				parentId: root.id,
+			}),
+		});
+
+		// Execute
+		const execRes = await app.request(`/projects/${project.id}/execute`, {
+			method: "POST",
+		});
+		expect(execRes.status).toBe(200);
+
+		const result = (await execRes.json()) as {
+			completed: number;
+			failed: number;
+			events: { type: string }[];
+		};
+		expect(result.completed).toBeGreaterThan(0);
+		expect(result.events.length).toBeGreaterThan(0);
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("POST /execute returns empty when no tasks", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-exec2-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-edata2-"));
+		const projectPath = join(tempDir, "empty-app");
+
+		await Bun.spawn(["mkdir", "-p", projectPath]).exited;
+		await gitExec(["git", "init"], projectPath);
+		await gitExec(
+			["git", "config", "user.email", "test@test.com"],
+			projectPath,
+		);
+		await gitExec(["git", "config", "user.name", "Test"], projectPath);
+		await writeFile(join(projectPath, "README.md"), "# Test\n");
+		await gitExec(["git", "add", "-A"], projectPath);
+		await gitExec(["git", "commit", "-m", "init"], projectPath);
+
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const projectRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectPath }),
+		});
+		const project = (await projectRes.json()) as Project;
+
+		const execRes = await app.request(`/projects/${project.id}/execute`, {
+			method: "POST",
+		});
+		expect(execRes.status).toBe(200);
+		const result = (await execRes.json()) as { completed: number };
+		expect(result.completed).toBe(0);
 
 		await rm(tempDir, { recursive: true });
 		await rm(dataDir, { recursive: true });
