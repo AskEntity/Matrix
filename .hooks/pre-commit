@@ -4,6 +4,9 @@
 
 set -e
 
+# Strip git env vars so test subprocesses (git init, worktree ops) work correctly
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
 echo "Running typecheck..."
 bun run typecheck
 

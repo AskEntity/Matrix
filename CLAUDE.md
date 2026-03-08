@@ -178,7 +178,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] CLI `og send`: send instructions to running agents
 - [x] CLI `og orchestrate` streams via WebSocket for real-time output
 - [x] Interactive AgentSession with streamInput() for mid-execution messages
-- [x] Worktree cleanup fix: proper removal + core.bare=false guard
+- [x] Worktree cleanup fix: proper removal
 - [x] Direct Anthropic API: DirectProvider with Messages API + built-in tools
 - [x] Multi-model support: OG_PROVIDER + OG_MODEL env vars, model per AgentRequest
 - [ ] MCP tool forwarding in DirectProvider (connect mcpServers from request)

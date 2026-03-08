@@ -11,24 +11,6 @@ export interface WorktreeInfo {
 }
 
 /**
- * Clean git environment: strip vars that parent git processes inject.
- * Without this, git worktree operations fail when run inside hooks.
- */
-function cleanGitEnv(): Record<string, string | undefined> {
-	const env = { ...process.env };
-	for (const key of [
-		"GIT_DIR",
-		"GIT_WORK_TREE",
-		"GIT_INDEX_FILE",
-		"GIT_OBJECT_DIRECTORY",
-		"GIT_ALTERNATE_OBJECT_DIRECTORIES",
-	]) {
-		delete env[key];
-	}
-	return env;
-}
-
-/**
  * Manages git worktrees for task isolation.
  * Each task gets its own worktree on a dedicated branch.
  * Branch naming: og/<taskId-short>/<slug>
@@ -145,7 +127,6 @@ export class WorktreeManager {
 			cwd: cwd ?? this.repoPath,
 			stdout: "pipe",
 			stderr: "pipe",
-			env: cleanGitEnv(),
 		});
 	}
 
