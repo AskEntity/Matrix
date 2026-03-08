@@ -19,6 +19,25 @@ import type { AgentResult } from "./types.ts";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 16384;
 
+/** Per-million-token pricing by model family. */
+const MODEL_PRICING: Record<string, { inputPer1M: number; outputPer1M: number }> =
+	{
+		opus: { inputPer1M: 15, outputPer1M: 75 },
+		sonnet: { inputPer1M: 3, outputPer1M: 15 },
+		haiku: { inputPer1M: 0.8, outputPer1M: 4 },
+	};
+
+function getModelPricing(model: string): {
+	inputPer1M: number;
+	outputPer1M: number;
+} {
+	for (const [family, pricing] of Object.entries(MODEL_PRICING)) {
+		if (model.includes(family)) return pricing;
+	}
+	// Default to Sonnet pricing for unknown models
+	return MODEL_PRICING.sonnet as { inputPer1M: number; outputPer1M: number };
+}
+
 const TOOLS: Tool[] = [
 	{
 		name: "bash",
@@ -568,9 +587,10 @@ export class DirectProvider implements AgentProvider {
 			messages.push({ role: "user", content: toolResults });
 		}
 
-		// Estimate cost (Claude Sonnet 4 pricing: $3/MTok input, $15/MTok output)
+		const { inputPer1M, outputPer1M } = getModelPricing(model);
 		const costUsd =
-			(totalInputTokens * 3) / 1_000_000 + (totalOutputTokens * 15) / 1_000_000;
+			(totalInputTokens * inputPer1M) / 1_000_000 +
+			(totalOutputTokens * outputPer1M) / 1_000_000;
 
 		return {
 			success: true,
