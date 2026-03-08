@@ -8,7 +8,6 @@ let selectedTaskId = null;
 const taskNodes = new Map();
 /** @type {Map<string, Array<{eventType: string, text: string}>>} */
 const taskEvents = new Map();
-
 // DOM refs
 const projectSelect = document.getElementById("project-select");
 const taskTree = document.getElementById("task-tree");
@@ -16,8 +15,13 @@ const noTasks = document.getElementById("no-tasks");
 const activityLog = document.getElementById("activity-log");
 const promptInput = document.getElementById("prompt-input");
 const btnOrchestrate = document.getElementById("btn-orchestrate");
+const btnStop = document.getElementById("btn-stop");
 const btnRefresh = document.getElementById("btn-refresh");
 const btnClearLog = document.getElementById("btn-clear-log");
+const btnAddTask = document.getElementById("btn-add-task");
+const btnInitProject = document.getElementById("btn-init-project");
+const btnDeleteProject = document.getElementById("btn-delete-project");
+const btnDeleteTask = document.getElementById("btn-delete-task");
 const autoScroll = document.getElementById("auto-scroll");
 const connectionStatus = document.getElementById("connection-status");
 const costDisplay = document.getElementById("cost-display");
@@ -30,6 +34,8 @@ const btnCloseDetail = document.getElementById("btn-close-detail");
 const continueForm = document.getElementById("continue-form");
 const continueInput = document.getElementById("continue-input");
 const detailLog = document.getElementById("detail-log");
+const modelSelect = document.getElementById("model-select");
+const childModelSelect = document.getElementById("child-model-select");
 
 // --- WebSocket ---
 
@@ -77,10 +83,7 @@ function handleWSMessage(msg) {
 			break;
 		case "orchestration_started":
 			logEntry("orchestration_started", "Orchestration started");
-			btnOrchestrate.disabled = true;
-			btnOrchestrate.textContent = "Running...";
-			injectInput.disabled = false;
-			btnInject.disabled = false;
+			setOrchestrationRunning(true);
 			break;
 		case "orchestration_completed":
 			logEntry(
@@ -88,10 +91,7 @@ function handleWSMessage(msg) {
 				`Orchestration completed: ${msg.success ? "SUCCESS" : "FAILED"}` +
 					(msg.costUsd ? ` ($${msg.costUsd.toFixed(2)})` : ""),
 			);
-			btnOrchestrate.disabled = false;
-			btnOrchestrate.textContent = "Orchestrate";
-			injectInput.disabled = true;
-			btnInject.disabled = true;
+			setOrchestrationRunning(false);
 			if (msg.costUsd) {
 				costDisplay.textContent = `Last run: $${msg.costUsd.toFixed(2)}`;
 			}
@@ -116,34 +116,57 @@ function handleWSMessage(msg) {
 	}
 }
 
+function setOrchestrationRunning(running) {
+	btnOrchestrate.disabled = running;
+	btnOrchestrate.textContent = running ? "Running..." : "Orchestrate";
+	btnStop.classList.toggle("hidden", !running);
+	injectInput.disabled = !running;
+	btnInject.disabled = !running;
+}
+
 // --- API ---
 
 async function fetchProjects() {
-	const res = await fetch("/projects");
-	const projects = await res.json();
-	projectSelect.innerHTML = '<option value="">Select project...</option>';
-	for (const p of projects) {
-		const opt = document.createElement("option");
-		opt.value = p.id;
-		opt.textContent = `${p.name} (${p.path})`;
-		projectSelect.appendChild(opt);
-	}
-	if (projects.length === 1) {
-		projectSelect.value = projects[0].id;
-		selectProject(projects[0].id);
+	try {
+		const res = await fetch("/projects");
+		const projects = await res.json();
+		const currentValue = projectSelect.value;
+		projectSelect.innerHTML = '<option value="">Select project...</option>';
+		for (const p of projects) {
+			const opt = document.createElement("option");
+			opt.value = p.id;
+			opt.textContent = `${p.name} (${p.path})`;
+			projectSelect.appendChild(opt);
+		}
+		// Restore selection or auto-select single project
+		if (currentValue && projects.some((p) => p.id === currentValue)) {
+			projectSelect.value = currentValue;
+		} else if (projects.length === 1) {
+			projectSelect.value = projects[0].id;
+			selectProject(projects[0].id);
+		}
+		// Show/hide delete button
+		btnDeleteProject.classList.toggle("hidden", !projectSelect.value);
+	} catch {
+		/* ignore fetch errors */
 	}
 }
 
 async function fetchTasks(projectId) {
-	const res = await fetch(`/projects/${projectId}/tasks`);
-	const data = await res.json();
-	renderTaskTree(data.nodes || []);
+	try {
+		const res = await fetch(`/projects/${projectId}/tasks`);
+		const data = await res.json();
+		renderTaskTree(data.nodes || []);
+	} catch {
+		/* ignore */
+	}
 }
 
 async function selectProject(projectId) {
 	selectedProjectId = projectId;
 	selectedTaskId = null;
 	closeDetail();
+	btnDeleteProject.classList.toggle("hidden", !projectId);
 	if (!projectId) {
 		taskTree.innerHTML = "";
 		noTasks.style.display = "block";
@@ -350,7 +373,6 @@ continueForm.addEventListener("submit", async (e) => {
 				`Continued task: ${updated.title}${message ? ` — "${message}"` : ""}`,
 			);
 			continueInput.value = "";
-			// Refresh tree to show updated status
 			await fetchTasks(selectedProjectId);
 		} else {
 			const err = await res.json();
@@ -358,6 +380,33 @@ continueForm.addEventListener("submit", async (e) => {
 		}
 	} catch (err) {
 		logEntry("error", `Continue failed: ${err.message}`);
+	}
+});
+
+// --- Delete task ---
+
+btnDeleteTask.addEventListener("click", async () => {
+	if (!selectedProjectId || !selectedTaskId) return;
+	const node = taskNodes.get(selectedTaskId);
+	if (!node) return;
+
+	if (!confirm(`Delete task "${node.title}" and all its children?`)) return;
+
+	try {
+		const res = await fetch(
+			`/projects/${selectedProjectId}/tasks/${selectedTaskId}`,
+			{ method: "DELETE" },
+		);
+		if (res.ok) {
+			logEntry("task_completed", `Deleted task: ${node.title}`);
+			closeDetail();
+			await fetchTasks(selectedProjectId);
+		} else {
+			const err = await res.json();
+			logEntry("error", `Delete failed: ${err.error}`);
+		}
+	} catch (err) {
+		logEntry("error", `Delete failed: ${err.message}`);
 	}
 });
 
@@ -389,7 +438,7 @@ function logAgentEvent(msg) {
 	if (msg.eventType === "tool_use") {
 		text = `Tool: ${msg.tool} ${JSON.stringify(msg.input || {}).slice(0, 200)}`;
 	} else if (msg.eventType === "tool_result") {
-		const prefix = msg.isError ? "✗" : "✓";
+		const prefix = msg.isError ? "\u2717" : "\u2713";
 		text = `${prefix} ${msg.tool}: ${(msg.content || "").slice(0, 300)}`;
 	} else if (msg.eventType === "text") {
 		text = msg.content || "";
@@ -414,17 +463,14 @@ function logAgentEvent(msg) {
 
 // --- Orchestrate ---
 
-const modelSelect = document.getElementById("model-select");
-
 orchestrateForm.addEventListener("submit", async (e) => {
 	e.preventDefault();
 	const prompt = promptInput.value.trim();
 	if (!prompt || !selectedProjectId) return;
 
 	const model = modelSelect.value || undefined;
+	const childModel = childModelSelect.value || undefined;
 
-	btnOrchestrate.disabled = true;
-	btnOrchestrate.textContent = "Starting...";
 	promptInput.value = "";
 
 	try {
@@ -436,8 +482,10 @@ orchestrateForm.addEventListener("submit", async (e) => {
 				maxTurns: 50,
 			};
 			if (model) msg.model = model;
+			if (childModel) msg.childModel = childModel;
 			ws.send(JSON.stringify(msg));
 		} else {
+			setOrchestrationRunning(true);
 			logEntry(
 				"orchestration_started",
 				"Orchestration started (HTTP fallback)",
@@ -447,7 +495,7 @@ orchestrateForm.addEventListener("submit", async (e) => {
 				{
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ prompt, maxTurns: 50, model }),
+					body: JSON.stringify({ prompt, maxTurns: 50, model, childModel }),
 				},
 			);
 			const result = await res.json();
@@ -456,13 +504,119 @@ orchestrateForm.addEventListener("submit", async (e) => {
 				`Completed: ${result.success ? "SUCCESS" : "FAILED"} ($${(result.costUsd || 0).toFixed(2)})`,
 			);
 			if (result.tree) renderTaskTree(result.tree.nodes || []);
-			btnOrchestrate.disabled = false;
-			btnOrchestrate.textContent = "Orchestrate";
+			setOrchestrationRunning(false);
 		}
 	} catch (err) {
 		logEntry("error", err.message);
-		btnOrchestrate.disabled = false;
-		btnOrchestrate.textContent = "Orchestrate";
+		setOrchestrationRunning(false);
+	}
+});
+
+// --- Stop orchestration ---
+
+btnStop.addEventListener("click", () => {
+	if (!selectedProjectId) return;
+	// Send stop via inject message (the agent will receive it)
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		ws.send(
+			JSON.stringify({
+				type: "inject_message",
+				projectId: selectedProjectId,
+				prompt:
+					"STOP: The user has requested to stop the orchestration. Finish your current step, update task statuses, and stop.",
+			}),
+		);
+		logEntry("orchestration_started", "Stop requested...");
+	}
+});
+
+// --- Project Management ---
+
+btnInitProject.addEventListener("click", async () => {
+	const path = prompt("Enter project path:");
+	if (!path) return;
+
+	try {
+		const res = await fetch("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path }),
+		});
+		if (res.ok) {
+			const project = await res.json();
+			logEntry("orchestration_started", `Project created: ${project.name}`);
+			await fetchProjects();
+			projectSelect.value = project.id;
+			selectProject(project.id);
+		} else {
+			const err = await res.json();
+			logEntry("error", `Init failed: ${err.error}`);
+		}
+	} catch (err) {
+		logEntry("error", `Init failed: ${err.message}`);
+	}
+});
+
+btnDeleteProject.addEventListener("click", async () => {
+	if (!selectedProjectId) return;
+	const selectedOpt = projectSelect.options[projectSelect.selectedIndex];
+	const name = selectedOpt ? selectedOpt.textContent : selectedProjectId;
+
+	if (!confirm(`Delete project ${name}? (Code will not be deleted)`)) return;
+
+	try {
+		const res = await fetch(`/projects/${selectedProjectId}`, {
+			method: "DELETE",
+		});
+		if (res.ok) {
+			logEntry("orchestration_completed", `Project deleted: ${name}`);
+			selectedProjectId = "";
+			projectSelect.value = "";
+			await fetchProjects();
+			selectProject("");
+		} else {
+			const err = await res.json();
+			logEntry("error", `Delete failed: ${err.error}`);
+		}
+	} catch (err) {
+		logEntry("error", `Delete failed: ${err.message}`);
+	}
+});
+
+// --- Add Task ---
+
+btnAddTask.addEventListener("click", async () => {
+	if (!selectedProjectId) {
+		logEntry("error", "Select a project first");
+		return;
+	}
+
+	const title = prompt("Task title:");
+	if (!title) return;
+
+	const description = prompt("Task description:") || "";
+
+	// If a task is selected, create as child; otherwise create root
+	const body = { title, description };
+	if (selectedTaskId) {
+		body.parentId = selectedTaskId;
+	}
+
+	try {
+		const res = await fetch(`/projects/${selectedProjectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+		});
+		if (res.ok) {
+			logEntry("task_started", `Task created: ${title}`);
+			await fetchTasks(selectedProjectId);
+		} else {
+			const err = await res.json();
+			logEntry("error", `Create failed: ${err.error}`);
+		}
+	} catch (err) {
+		logEntry("error", `Create failed: ${err.message}`);
 	}
 });
 

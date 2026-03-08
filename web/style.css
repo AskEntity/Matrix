@@ -68,6 +68,34 @@ header h1 {
 	font-size: 13px;
 }
 
+#btn-init-project {
+	background: var(--bg-tertiary);
+	color: var(--text);
+	border: 1px solid var(--border);
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+#btn-init-project:hover {
+	background: var(--border);
+}
+
+.btn-danger {
+	background: transparent;
+	color: var(--red);
+	border: 1px solid var(--red);
+	padding: 6px 12px;
+	border-radius: 6px;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.btn-danger:hover {
+	background: rgba(248, 81, 73, 0.15);
+}
+
 main {
 	flex: 1;
 	display: flex;
@@ -388,6 +416,13 @@ section {
 
 #detail-actions {
 	padding: 0 16px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+#btn-delete-task {
+	align-self: flex-start;
 }
 
 #continue-form {
@@ -569,6 +604,31 @@ footer {
 #btn-orchestrate:disabled {
 	opacity: 0.5;
 	cursor: not-allowed;
+}
+
+#btn-stop {
+	background: var(--red);
+	color: white;
+	border: none;
+	padding: 8px 16px;
+	border-radius: 8px;
+	font-size: 14px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+#btn-stop:hover {
+	opacity: 0.9;
+}
+
+#child-model-select {
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	color: var(--text);
+	padding: 8px 8px;
+	border-radius: 8px;
+	font-size: 13px;
+	cursor: pointer;
 }
 
 #cost-display {
