@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
@@ -20,12 +21,14 @@ const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 16384;
 
 /** Per-million-token pricing by model family. */
-const MODEL_PRICING: Record<string, { inputPer1M: number; outputPer1M: number }> =
-	{
-		opus: { inputPer1M: 15, outputPer1M: 75 },
-		sonnet: { inputPer1M: 3, outputPer1M: 15 },
-		haiku: { inputPer1M: 0.8, outputPer1M: 4 },
-	};
+const MODEL_PRICING: Record<
+	string,
+	{ inputPer1M: number; outputPer1M: number }
+> = {
+	opus: { inputPer1M: 15, outputPer1M: 75 },
+	sonnet: { inputPer1M: 3, outputPer1M: 15 },
+	haiku: { inputPer1M: 0.8, outputPer1M: 4 },
+};
 
 function getModelPricing(model: string): {
 	inputPer1M: number;
@@ -154,6 +157,10 @@ const TOOLS: Tool[] = [
 	},
 ];
 
+function resolvePath(p: string, cwd: string): string {
+	return isAbsolute(p) ? p : join(cwd, p);
+}
+
 async function executeTool(
 	name: string,
 	input: Record<string, unknown>,
@@ -196,7 +203,7 @@ async function executeTool(
 		}
 
 		case "read_file": {
-			const path = input.path as string;
+			const path = resolvePath(input.path as string, cwd);
 			try {
 				const content = readFileSync(path, "utf-8");
 				return { content, isError: false };
@@ -209,7 +216,7 @@ async function executeTool(
 		}
 
 		case "write_file": {
-			const path = input.path as string;
+			const path = resolvePath(input.path as string, cwd);
 			const content = input.content as string;
 			try {
 				writeFileSync(path, content, "utf-8");
@@ -223,7 +230,7 @@ async function executeTool(
 		}
 
 		case "edit_file": {
-			const path = input.path as string;
+			const path = resolvePath(input.path as string, cwd);
 			const oldStr = input.old_string as string;
 			const newStr = input.new_string as string;
 			try {
