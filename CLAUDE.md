@@ -5,11 +5,31 @@
 > This file is the cold-start anchor for every AI session. Read it first.
 > Full methodology: `OpenGraft.md`. This file keeps only key decisions and current state.
 
-## Current Phase: Phase 0 — Minimal Loop
+## Operating Mode
 
-**Goal**: Prove the daemon → agent loop works. Daemon-first architecture, all interaction via HTTP/SSE/WS API.
+**Autonomy**: Level 10. Work continuously: implement → test → commit → pick up next feature.
+Do not ask questions — make decisions and keep moving.
 
-**Autonomy**: Level 10. Work continuously: implement → test → commit → pick up next feature. Do not ask questions — make decisions and keep moving.
+**How to run E2E tests** (needs this every time after context compression):
+```bash
+# Load env vars from .env file (contains CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_MODEL)
+source .env && export CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_MODEL
+bun test src/e2e.test.ts
+```
+
+**How to run unit tests + all checks**:
+```bash
+bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts  # unit tests
+bun run typecheck   # tsc --noEmit
+bun run check       # biome lint + format
+```
+
+**Pre-commit hooks are active** (.hooks/pre-commit runs typecheck + lint + unit tests).
+
+## Current Phase: Phase 0 → Phase 1 transition
+
+Phase 0 is complete: daemon → agent loop works (E2E verified, agent created calculator in 11 turns).
+Phase 1: Task decomposition — AI breaks abstract goals into task tree and executes.
 
 ## Tech Stack
 
@@ -32,8 +52,7 @@ Daemon (Hono: HTTP + SSE + WS on :7433)
 ```
 
 Daemon is the single core process. CLI and frontend are API consumers.
-
-**Project lifecycle is deterministic code, not agent work.** The daemon initializes directories, creates `.ai/` structure, and hands the prepared project to agents.
+Project lifecycle is deterministic code, not agent work.
 
 ## API
 
@@ -44,8 +63,27 @@ Daemon is the single core process. CLI and frontend are API consumers.
 | GET | /projects | List all projects |
 | GET | /projects/:id | Get project by ID |
 | DELETE | /projects/:id | Remove project metadata (keeps code) |
-| POST | /projects/:id/run | Execute agent task (one-shot, returns result) |
-| POST | /projects/:id/stream | Execute agent task (SSE streaming events) |
+| POST | /projects/:id/tasks | Create task (root or child via `parentId`) |
+| GET | /projects/:id/tasks | Get full task tree |
+| PATCH | /projects/:id/tasks/:nodeId | Update task status/branch |
+| DELETE | /projects/:id/tasks/:nodeId | Remove task and descendants |
+| POST | /projects/:id/run | Execute agent task (one-shot) |
+| POST | /projects/:id/stream | Execute agent task (SSE streaming) |
+
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| src/types.ts | All type definitions (TaskNode, AgentResult, Project, etc.) |
+| src/daemon.ts | Hono HTTP server, all routes, createApp() factory |
+| src/agent-provider.ts | AgentProvider interface (decoupled, swappable) |
+| src/claude-code-provider.ts | Phase 0 impl: delegates to Claude Agent SDK |
+| src/project-manager.ts | Project init/CRUD, .ai/ setup, git init |
+| src/task-tracker.ts | Task tree CRUD, persistence to JSON |
+| src/daemon.test.ts | API route tests (36 tests) |
+| src/project-manager.test.ts | ProjectManager unit tests |
+| src/task-tracker.test.ts | TaskTracker unit tests |
+| src/e2e.test.ts | Real agent E2E test (token-gated) |
 
 ## Code Rules
 
@@ -53,20 +91,6 @@ Daemon is the single core process. CLI and frontend are API consumers.
 2. **All user-facing text must go through i18n.** No raw string literals in HTML/UI.
 3. **Pre-commit hooks enforce all checks** (typecheck, lint, test).
 4. Three repetitions before abstracting. No premature helpers.
-
-## Commands
-
-```bash
-bun test           # Run tests
-bun run typecheck  # Type check
-bun run check      # Biome lint + format
-bun run dev        # Start daemon (watch mode)
-```
-
-## Testing
-
-- Unit/integration tests: `bun test` (skips E2E by default)
-- E2E tests (requires token): `CLAUDE_CODE_OAUTH_TOKEN=... bun test src/e2e.test.ts`
 
 ## Methodology Summary (read every session)
 
@@ -93,15 +117,21 @@ Identify layer → add logs → trust logs → isolate → minimize
 
 ## Build Log
 
-### Phase 0
+### Phase 0 (COMPLETE)
 - [x] Project init (package.json, tsconfig, biome, hono)
 - [x] Core types (TaskNode, AgentResult, Project, HealthResponse)
 - [x] Daemon skeleton + /health + tests
 - [x] AgentProvider interface + ClaudeCodeProvider (decoupled for future swap)
 - [x] ProjectManager: init(path) — create new or convert existing projects
-- [x] Projects CRUD API (POST/GET/DELETE /projects)
-- [x] Agent execution endpoints: POST /run (one-shot) + POST /stream (SSE)
-- [x] E2E test scaffold (agent creates calculator, verifies tests pass)
-- [ ] E2E validation: run with real token, confirm agent loop works
-- [ ] Pre-commit hooks setup (typecheck + lint + test)
-- [ ] Task tracker (Phase 1 prep)
+- [x] Projects CRUD API + tests
+- [x] Agent execution: POST /run (one-shot) + POST /stream (SSE)
+- [x] Nested session fix (strip CLAUDECODE env var)
+- [x] E2E validated: agent creates calculator (13 tests) in 11 turns
+- [x] Pre-commit hooks (typecheck + lint + test)
+
+### Phase 1 (IN PROGRESS)
+- [x] TaskTracker: tree CRUD, persistence, status management
+- [x] Task API endpoints: POST/GET/PATCH/DELETE /projects/:id/tasks
+- [ ] Orchestrator loop: pick pending task → spawn agent → update status on result
+- [ ] System prompt injection (methodology from OpenGraft.md section 9)
+- [ ] Task decomposition: agent breaks abstract goal into subtasks via API

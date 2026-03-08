@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentProvider } from "./agent-provider.ts";
 import { createApp } from "./daemon.ts";
-import type { HealthResponse, Project } from "./types.ts";
+import type { HealthResponse, Project, TaskNode } from "./types.ts";
 
 const mockProvider: AgentProvider = {
 	name: "mock",
@@ -152,5 +152,134 @@ describe("daemon projects API", () => {
 
 		const getRes = await app.request(`/projects/${created.id}`);
 		expect(getRes.status).toBe(404);
+	});
+});
+
+describe("daemon tasks API", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-tasks-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-tdata-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+
+		// Create a project for task tests
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "task-app") }),
+		});
+		const project = (await res.json()) as Project;
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("POST /tasks creates root task", async () => {
+		const res = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Chat App", description: "Build it" }),
+		});
+		expect(res.status).toBe(201);
+		const node = (await res.json()) as TaskNode;
+		expect(node.title).toBe("Chat App");
+		expect(node.status).toBe("pending");
+		expect(node.parentId).toBeNull();
+	});
+
+	test("POST /tasks creates child task", async () => {
+		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Root", description: "" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		const childRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Auth",
+				description: "User auth",
+				parentId: root.id,
+			}),
+		});
+		expect(childRes.status).toBe(201);
+		const child = (await childRes.json()) as TaskNode;
+		expect(child.parentId).toBe(root.id);
+	});
+
+	test("GET /tasks returns tree", async () => {
+		await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "App", description: "" }),
+		});
+
+		const res = await app.request(`/projects/${projectId}/tasks`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			root: TaskNode;
+			nodes: TaskNode[];
+		};
+		expect(body.root.title).toBe("App");
+		expect(body.nodes).toHaveLength(1);
+	});
+
+	test("PATCH /tasks/:nodeId updates status and branch", async () => {
+		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "App", description: "" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		const patchRes = await app.request(
+			`/projects/${projectId}/tasks/${root.id}`,
+			{
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					status: "in_progress",
+					branch: "feat/main",
+				}),
+			},
+		);
+		expect(patchRes.status).toBe(200);
+		const updated = (await patchRes.json()) as TaskNode;
+		expect(updated.status).toBe("in_progress");
+		expect(updated.branch).toBe("feat/main");
+	});
+
+	test("DELETE /tasks/:nodeId removes task", async () => {
+		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "App", description: "" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		const delRes = await app.request(
+			`/projects/${projectId}/tasks/${root.id}`,
+			{ method: "DELETE" },
+		);
+		expect(delRes.status).toBe(200);
+
+		const getRes = await app.request(`/projects/${projectId}/tasks`);
+		const body = (await getRes.json()) as {
+			root: null;
+			nodes: TaskNode[];
+		};
+		expect(body.root).toBeNull();
+		expect(body.nodes).toHaveLength(0);
 	});
 });

@@ -4,7 +4,8 @@ import { Hono } from "hono";
 import type { AgentProvider } from "./agent-provider.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { ProjectManager } from "./project-manager.ts";
-import type { HealthResponse } from "./types.ts";
+import { TaskTracker } from "./task-tracker.ts";
+import type { HealthResponse, TaskStatus } from "./types.ts";
 
 const VERSION = "0.0.1";
 const startTime = Date.now();
@@ -22,6 +23,19 @@ const defaultConfig: DaemonConfig = {
 export function createApp(config: DaemonConfig = defaultConfig) {
 	const app = new Hono();
 	const pm = new ProjectManager(config.dataDir);
+	const trackers = new Map<string, TaskTracker>();
+
+	/** Get or create a TaskTracker for a project. */
+	async function getTracker(projectId: string): Promise<TaskTracker> {
+		let tracker = trackers.get(projectId);
+		if (!tracker) {
+			const treePath = join(config.dataDir, "projects", projectId, "tree.json");
+			tracker = new TaskTracker(treePath);
+			await tracker.load();
+			trackers.set(projectId, tracker);
+		}
+		return tracker;
+	}
 
 	// Health
 	app.get("/health", (c) => {
@@ -33,7 +47,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json(response);
 	});
 
-	// Projects
+	// Projects CRUD
 	app.post("/projects", async (c) => {
 		const body = await c.req.json<{ path: string }>();
 		if (!body.path) {
@@ -63,6 +77,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	app.delete("/projects/:id", async (c) => {
 		try {
 			await pm.delete(c.req.param("id"));
+			trackers.delete(c.req.param("id"));
 			return c.json({ ok: true });
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -70,7 +85,87 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	});
 
-	// Execute agent task (one-shot)
+	// Task tree
+	app.get("/projects/:id/tasks", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const tracker = await getTracker(project.id);
+		return c.json({
+			root: tracker.getRoot() ?? null,
+			nodes: tracker.allNodes(),
+		});
+	});
+
+	app.post("/projects/:id/tasks", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const body = await c.req.json<{
+			title: string;
+			description: string;
+			parentId?: string;
+		}>();
+		if (!body.title) {
+			return c.json({ error: "title is required" }, 400);
+		}
+
+		const tracker = await getTracker(project.id);
+		try {
+			const node = body.parentId
+				? tracker.addChild(body.parentId, body.title, body.description ?? "")
+				: tracker.createRoot(body.title, body.description ?? "");
+			await tracker.save();
+			return c.json(node, 201);
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 409);
+		}
+	});
+
+	app.patch("/projects/:id/tasks/:nodeId", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const tracker = await getTracker(project.id);
+		const nodeId = c.req.param("nodeId");
+		const node = tracker.get(nodeId);
+		if (!node) {
+			return c.json({ error: "Task not found" }, 404);
+		}
+		const body = await c.req.json<{
+			status?: TaskStatus;
+			branch?: string;
+		}>();
+		if (body.status) {
+			tracker.updateStatus(nodeId, body.status);
+		}
+		if (body.branch) {
+			tracker.assignBranch(nodeId, body.branch);
+		}
+		await tracker.save();
+		return c.json(tracker.get(nodeId));
+	});
+
+	app.delete("/projects/:id/tasks/:nodeId", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const tracker = await getTracker(project.id);
+		const nodeId = c.req.param("nodeId");
+		if (!tracker.get(nodeId)) {
+			return c.json({ error: "Task not found" }, 404);
+		}
+		tracker.remove(nodeId);
+		await tracker.save();
+		return c.json({ ok: true });
+	});
+
+	// Agent execution (one-shot)
 	app.post("/projects/:id/run", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) {
@@ -93,7 +188,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	});
 
-	// Execute agent task (SSE streaming)
+	// Agent execution (SSE streaming)
 	app.post("/projects/:id/stream", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) {
@@ -127,7 +222,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						send("event", result.value);
 						result = await gen.next();
 					}
-					// Generator return value is the final result
 					send("result", result.value);
 				} catch (e) {
 					const message = e instanceof Error ? e.message : "Unknown error";
