@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -173,6 +174,48 @@ describe("Orchestrator", () => {
 		// Task B's prompt should mention Task A as completed
 		expect(prompts[0]).toContain("Task A");
 		expect(prompts[0]).toContain("passed");
+	});
+
+	test("prompt includes project memory when .ai/memory.md exists", async () => {
+		// Create .ai/memory.md in the project directory
+		mkdirSync(join(tempDir, ".ai"), { recursive: true });
+		writeFileSync(
+			join(tempDir, ".ai", "memory.md"),
+			"# Project Notes\nUse bun for all commands.\nDatabase is SQLite.",
+		);
+
+		tracker.createRoot("App", "desc");
+
+		const prompts: string[] = [];
+		const provider = createMockProvider(async (req) => {
+			prompts.push(req.prompt);
+			return { success: true, output: "done" };
+		});
+
+		const orch = new Orchestrator(tracker, provider, tempDir);
+		await orch.step();
+
+		expect(prompts[0]).toContain("Project Memory");
+		expect(prompts[0]).toContain("Use bun for all commands");
+		expect(prompts[0]).toContain("Database is SQLite");
+	});
+
+	test("prompt works without .ai/memory.md", async () => {
+		tracker.createRoot("App", "desc");
+
+		const prompts: string[] = [];
+		const provider = createMockProvider(async (req) => {
+			prompts.push(req.prompt);
+			return { success: true, output: "done" };
+		});
+
+		const orch = new Orchestrator(tracker, provider, tempDir);
+		await orch.step();
+
+		// Should not contain memory section
+		expect(prompts[0]).not.toContain("Project Memory");
+		// But should still contain the task
+		expect(prompts[0]).toContain("App");
 	});
 
 	test("prompt includes methodology instructions", async () => {

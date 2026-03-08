@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -25,6 +26,22 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const app = new Hono();
 	const pm = new ProjectManager(config.dataDir);
 	const trackers = new Map<string, TaskTracker>();
+
+	/** Read .ai/memory.md from a project directory. Returns empty string if not found. */
+	function readProjectMemory(projectPath: string): string {
+		try {
+			return readFileSync(join(projectPath, ".ai", "memory.md"), "utf-8");
+		} catch {
+			return "";
+		}
+	}
+
+	/** Prepend project memory to a prompt if available. */
+	function withMemory(projectPath: string, prompt: string): string {
+		const memory = readProjectMemory(projectPath);
+		if (!memory) return prompt;
+		return `## Project Memory\n${memory}\n\n${prompt}`;
+	}
 
 	/** Get or create a TaskTracker for a project. */
 	async function getTracker(projectId: string): Promise<TaskTracker> {
@@ -178,7 +195,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 		try {
 			const result = await config.agentProvider.execute({
-				prompt: body.prompt,
+				prompt: withMemory(project.path, body.prompt),
 				cwd: project.path,
 				maxTurns: body.maxTurns,
 			});
@@ -213,7 +230,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 				try {
 					const gen = config.agentProvider.stream({
-						prompt: body.prompt,
+						prompt: withMemory(project.path, body.prompt),
 						cwd: project.path,
 						maxTurns: body.maxTurns,
 					});

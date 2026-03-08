@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import type { AgentResult, TaskNode } from "./types.ts";
@@ -70,8 +72,11 @@ export class Orchestrator {
 		this.tracker.updateStatus(target.id, "in_progress");
 		await this.tracker.save();
 
+		// Read project memory for context survival
+		const memory = this.readMemory();
+
 		// Build the prompt from task context
-		const prompt = this.buildPrompt(target);
+		const prompt = this.buildPrompt(target, memory);
 
 		// Execute
 		const request: AgentRequest = {
@@ -143,9 +148,23 @@ export class Orchestrator {
 		return pending[0];
 	}
 
+	/** Read .ai/memory.md from the project directory. Returns empty string if not found. */
+	private readMemory(): string {
+		try {
+			return readFileSync(join(this.projectPath, ".ai", "memory.md"), "utf-8");
+		} catch {
+			return "";
+		}
+	}
+
 	/** Build the agent prompt from task context. */
-	private buildPrompt(node: TaskNode): string {
+	private buildPrompt(node: TaskNode, memory: string): string {
 		const parts: string[] = [];
+
+		// Project memory — accumulated knowledge from previous sessions
+		if (memory) {
+			parts.push("## Project Memory", memory, "");
+		}
 
 		// Task description
 		parts.push(`# Task: ${node.title}`);
