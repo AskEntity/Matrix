@@ -613,13 +613,37 @@ export class DirectProvider implements AgentProvider {
 				`Working directory: ${cwd}`,
 			].filter(Boolean);
 
-			const response = await this.client.messages.create({
-				model,
-				max_tokens: DEFAULT_MAX_TOKENS,
-				system: systemParts.join("\n\n"),
-				messages,
-				tools: allTools,
-			});
+			let response: Anthropic.Messages.Message;
+			try {
+				response = await this.client.messages.create({
+					model,
+					max_tokens: DEFAULT_MAX_TOKENS,
+					system: systemParts.join("\n\n"),
+					messages,
+					tools: allTools,
+				});
+			} catch (e) {
+				// Retry once on transient errors (rate limit, network)
+				if (
+					e instanceof Anthropic.RateLimitError ||
+					e instanceof Anthropic.APIConnectionError
+				) {
+					yield {
+						type: "error",
+						message: `API error (retrying): ${e.message}`,
+					};
+					await new Promise((r) => setTimeout(r, 5000));
+					response = await this.client.messages.create({
+						model,
+						max_tokens: DEFAULT_MAX_TOKENS,
+						system: systemParts.join("\n\n"),
+						messages,
+						tools: allTools,
+					});
+				} else {
+					throw e;
+				}
+			}
 
 			totalInputTokens += response.usage.input_tokens;
 			totalOutputTokens += response.usage.output_tokens;
