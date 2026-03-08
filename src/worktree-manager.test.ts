@@ -5,22 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorktreeManager } from "./worktree-manager.ts";
 
-/** Clean git env to avoid interference from parent git hooks. */
-const cleanGitEnv: Record<string, string | undefined> = {
-	...process.env,
-	GIT_DIR: undefined,
-	GIT_WORK_TREE: undefined,
-	GIT_INDEX_FILE: undefined,
-	GIT_OBJECT_DIRECTORY: undefined,
-	GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
-};
-
 async function exec(cmd: string[], cwd: string): Promise<string> {
 	const proc = Bun.spawn(cmd, {
 		cwd,
 		stdout: "pipe",
 		stderr: "pipe",
-		env: cleanGitEnv,
 	});
 	await proc.exited;
 	return new Response(proc.stdout).text();
@@ -30,6 +19,11 @@ async function initRepo(dir: string): Promise<void> {
 	await exec(["git", "init"], dir);
 	await exec(["git", "config", "user.email", "test@test.com"], dir);
 	await exec(["git", "config", "user.name", "Test"], dir);
+	// Create a minimal package.json so installDeps has something to work with
+	await writeFile(
+		join(dir, "package.json"),
+		JSON.stringify({ name: "test-repo", private: true }),
+	);
 	await writeFile(join(dir, "README.md"), "# Test\n");
 	await exec(["git", "add", "-A"], dir);
 	await exec(["git", "commit", "-m", "init"], dir);
@@ -59,6 +53,30 @@ describe("WorktreeManager", () => {
 		expect(info.branch).toBe("og/abcdef12/setup");
 		expect(existsSync(info.path)).toBe(true);
 		expect(existsSync(join(info.path, "README.md"))).toBe(true);
+	});
+
+	test("create enables extensions.worktreeConfig", async () => {
+		const taskId = "abcdef12-3456-7890-abcd-ef1234567890";
+		await mgr.create(taskId, "setup");
+
+		const value = (
+			await exec(
+				["git", "config", "--get", "extensions.worktreeConfig"],
+				repoDir,
+			)
+		).trim();
+		expect(value).toBe("true");
+	});
+
+	test("create disables hooks per-worktree", async () => {
+		const taskId = "abcdef12-3456-7890-abcd-ef1234567890";
+		const info = await mgr.create(taskId, "setup");
+
+		// Check that core.hooksPath is set to /dev/null in the worktree
+		const hooksPath = (
+			await exec(["git", "config", "--worktree", "core.hooksPath"], info.path)
+		).trim();
+		expect(hooksPath).toBe("/dev/null");
 	});
 
 	test("create from specific base branch", async () => {
