@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import type { AgentProvider } from "./agent-provider.ts";
-import { createOrchestratorTools } from "./agent-tools.ts";
+import { CostAccumulator, createOrchestratorTools } from "./agent-tools.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { Orchestrator } from "./orchestrator.ts";
 import { ProjectManager } from "./project-manager.ts";
@@ -393,12 +393,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const wtRoot = join(project.path, ".worktrees");
 		const wm = new WorktreeManager(project.path, wtRoot);
 
-		const mcpServer = createOrchestratorTools({
-			tracker,
-			provider: config.agentProvider,
-			worktrees: wm,
-			projectPath: project.path,
-		});
+		const costAccumulator = new CostAccumulator();
+		const mcpServer = createOrchestratorTools(
+			{
+				tracker,
+				provider: config.agentProvider,
+				worktrees: wm,
+				projectPath: project.path,
+			},
+			costAccumulator,
+		);
 
 		const memory = readProjectMemory(project.path);
 		const prompt = body.resume
@@ -428,8 +432,17 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				await tracker.save();
 			}
 
+			// Combine orchestrator cost with child agent costs
+			const totalCostUsd = (result.costUsd ?? 0) + costAccumulator.totalCostUsd;
+
 			return c.json({
 				...result,
+				costUsd: totalCostUsd,
+				childCosts: {
+					totalCostUsd: costAccumulator.totalCostUsd,
+					totalTurns: costAccumulator.totalTurns,
+					taskCount: costAccumulator.taskCount,
+				},
 				tree: {
 					root: tracker.getRoot() ?? null,
 					nodes: tracker.allNodes(),

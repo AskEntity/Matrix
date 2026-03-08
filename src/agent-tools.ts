@@ -28,13 +28,40 @@ export interface OrchestratorToolsDeps {
 	projectPath: string;
 }
 
+/** Tracks accumulated costs from all child agent executions. */
+export class CostAccumulator {
+	private _totalCost = 0;
+	private _totalTurns = 0;
+	private _taskCount = 0;
+
+	add(costUsd: number | undefined, turns: number | undefined): void {
+		if (costUsd) this._totalCost += costUsd;
+		if (turns) this._totalTurns += turns;
+		this._taskCount++;
+	}
+
+	get totalCostUsd(): number {
+		return this._totalCost;
+	}
+	get totalTurns(): number {
+		return this._totalTurns;
+	}
+	get taskCount(): number {
+		return this._taskCount;
+	}
+}
+
 /**
  * Create an MCP server with OpenGraft orchestrator tools.
  * These tools let the main agent observe and manipulate the task tree,
  * and spawn child agents on isolated worktrees.
  */
-export function createOrchestratorTools(deps: OrchestratorToolsDeps) {
+export function createOrchestratorTools(
+	deps: OrchestratorToolsDeps,
+	costAccumulator?: CostAccumulator,
+) {
 	const { tracker, provider, worktrees, projectPath } = deps;
+	const costs = costAccumulator ?? new CostAccumulator();
 
 	return createSdkMcpServer({
 		name: "opengraft",
@@ -198,10 +225,11 @@ export function createOrchestratorTools(deps: OrchestratorToolsDeps) {
 						// Execute agent (this blocks until the child agent finishes)
 						const result = await provider.execute(request);
 
-						// Store session ID
+						// Store session ID and accumulate cost
 						if (result.sessionId) {
 							tracker.assignSession(node.id, result.sessionId);
 						}
+						costs.add(result.costUsd, result.turns);
 
 						const newStatus = result.success ? "passed" : "failed";
 						tracker.updateStatus(node.id, newStatus);
@@ -320,6 +348,7 @@ export function createOrchestratorTools(deps: OrchestratorToolsDeps) {
 								if (result.sessionId) {
 									tracker.assignSession(child.id, result.sessionId);
 								}
+								costs.add(result.costUsd, result.turns);
 
 								const newStatus = result.success ? "passed" : "failed";
 								tracker.updateStatus(child.id, newStatus);

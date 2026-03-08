@@ -90,7 +90,7 @@ Project lifecycle is deterministic code, not agent work.
 | src/orchestrator.ts | Legacy sequential orchestrator (kept for backward compat) |
 | src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, spawn_task, merge_branch) |
 | src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, orchestrate, execute |
-| src/daemon.test.ts | API route tests (33 tests) |
+| src/daemon.test.ts | API route tests (33 tests, 81 total across 6 files) |
 | src/project-manager.test.ts | ProjectManager unit tests |
 | src/task-tracker.test.ts | TaskTracker unit tests |
 | src/e2e.test.ts | Real agent E2E test (token-gated) |
@@ -168,5 +168,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] E2E validated: agent orchestrator creates 3 tasks + executes via MCP tools (17 turns, $0.18)
 - [x] spawn_children tool for true parallel execution via Promise.all
 - [x] E2E validated: 2 independent modules spawned in parallel (23 turns, $0.32)
-- [ ] Worktree cleanup after orchestration completes
-- [ ] WebSocket endpoint for real-time orchestration status
+- [x] cleanup_worktrees MCP tool for post-orchestration cleanup
+- [x] Orchestrator session persistence + resume (--resume flag in CLI)
+- [ ] Cost tracking: accumulate total cost across all spawned agents
+- [ ] Concurrent orchestration guard (prevent double-run on same project)

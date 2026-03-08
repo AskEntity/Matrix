@@ -241,6 +241,11 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 		output: string;
 		costUsd?: number;
 		turns?: number;
+		childCosts?: {
+			totalCostUsd: number;
+			totalTurns: number;
+			taskCount: number;
+		};
 		tree?: {
 			root: { title: string; status: string } | null;
 			nodes: { id: string; title: string; status: string }[];
@@ -248,8 +253,13 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 	};
 
 	console.log(result.success ? "Success" : "Failed");
-	if (result.turns) console.log(`Turns: ${result.turns}`);
-	if (result.costUsd) console.log(`Cost: $${result.costUsd.toFixed(4)}`);
+	if (result.turns) console.log(`Orchestrator turns: ${result.turns}`);
+	if (result.costUsd) console.log(`Total cost: $${result.costUsd.toFixed(4)}`);
+	if (result.childCosts && result.childCosts.taskCount > 0) {
+		console.log(
+			`  Child agents: ${result.childCosts.taskCount} tasks, ${result.childCosts.totalTurns} turns, $${result.childCosts.totalCostUsd.toFixed(4)}`,
+		);
+	}
 	if (result.tree) {
 		console.log(`\nTask tree: ${result.tree.nodes.length} nodes`);
 		for (const node of result.tree.nodes) {
