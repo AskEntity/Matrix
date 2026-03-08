@@ -414,6 +414,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			prompt: string;
 			maxTurns?: number;
 			resume?: boolean;
+			model?: string;
 		}>();
 		if (!body.prompt && !body.resume) {
 			return c.json({ error: "prompt is required" }, 400);
@@ -463,6 +464,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				mcpServers: { opengraft: mcpServer },
 				mcpToolDefs: { opengraft: toolDefs },
 				resumeSessionId,
+				model: body.model,
 			});
 
 			// Persist orchestrator session ID for future resume
@@ -538,6 +540,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							projectId?: string;
 							prompt?: string;
 							maxTurns?: number;
+							model?: string;
 						};
 
 						if (msg.type === "subscribe" && msg.projectId) {
@@ -560,6 +563,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								msg.projectId,
 								msg.prompt,
 								msg.maxTurns ?? 50,
+								msg.model,
 							);
 						}
 
@@ -596,6 +600,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		projectId: string,
 		prompt: string,
 		maxTurns: number,
+		model?: string,
 	) {
 		const project = pm.get(projectId);
 		if (!project) return;
@@ -647,6 +652,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				maxTurns,
 				mcpServers: { opengraft: mcpServer },
 				mcpToolDefs: { opengraft: toolDefs },
+				model,
 			});
 
 			// Track the session for message injection
