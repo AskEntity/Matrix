@@ -26,10 +26,10 @@ bun run check       # biome lint + format
 
 **Pre-commit hooks are active** (.hooks/pre-commit runs typecheck + lint + unit tests).
 
-## Current Phase: Phase 0 → Phase 1 transition
+## Current Phase: Phase 1 → Phase 2 transition
 
-Phase 0 is complete: daemon → agent loop works (E2E verified, agent created calculator in 11 turns).
-Phase 1: Task decomposition — AI breaks abstract goals into task tree and executes.
+Phase 1 is complete: task decomposition + worktree-isolated parallel execution + parent merge.
+Phase 2: Main agent as orchestrator — agent decides what to spawn (tools, not HTTP calls).
 
 ## Tech Stack
 
@@ -152,4 +152,11 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Parent agent resume: wake parent with merge prompt when children complete
 - [x] Worktree cleanup after successful parent merge
 - [x] E2E validated: runner parallel execution (2 children + merge, ~2min)
-- [ ] Full pipeline E2E: decompose → execute (end-to-end with real agent)
+- [x] Full pipeline E2E: decompose (4 tasks) → execute (3 children parallel, ~3.5min)
+
+### Phase 2 (PLANNED)
+- [ ] Main agent as orchestrator: observes tree, decides spawns via tools
+- [ ] MCP server for agent tools: spawn_task, get_tree, merge_branch
+- [ ] Better decomposition: non-overlapping task boundaries for clean merges
+- [ ] Retry/recovery: re-execute failed tasks with error context
+- [ ] CLI: `og init`, `og run`, `og status`, `og decompose`
