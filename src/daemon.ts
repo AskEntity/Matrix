@@ -374,6 +374,59 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	});
 
+	// Runner SSE: stream execution events in real-time
+	app.post("/projects/:id/execute/stream", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+
+		const tracker = await getTracker(project.id);
+		const wtRoot = join(project.path, ".worktrees");
+		const wm = new WorktreeManager(project.path, wtRoot);
+
+		const stream = new ReadableStream({
+			async start(controller) {
+				const encoder = new TextEncoder();
+				const send = (event: string, data: unknown) => {
+					controller.enqueue(
+						encoder.encode(
+							`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+						),
+					);
+				};
+
+				const runner = new Runner(
+					tracker,
+					config.agentProvider,
+					wm,
+					project.path,
+					{
+						onEvent: (evt) => send("event", evt),
+					},
+				);
+
+				try {
+					const result = await runner.run();
+					send("result", result);
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					send("error", { error: message });
+				} finally {
+					controller.close();
+				}
+			},
+		});
+
+		return new Response(stream, {
+			headers: {
+				"Content-Type": "text/event-stream",
+				"Cache-Control": "no-cache",
+				Connection: "keep-alive",
+			},
+		});
+	});
+
 	return { app, pm };
 }
 

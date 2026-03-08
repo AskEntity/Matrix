@@ -80,13 +80,17 @@ For each feature:
  */
 export class Runner {
 	private events: RunnerEvent[] = [];
+	private onEvent?: (event: RunnerEvent) => void;
 
 	constructor(
 		private readonly tracker: TaskTracker,
 		private readonly provider: AgentProvider,
 		private readonly worktrees: WorktreeManager,
 		private readonly projectPath: string,
-	) {}
+		options?: { onEvent?: (event: RunnerEvent) => void },
+	) {
+		this.onEvent = options?.onEvent;
+	}
 
 	/** Get all events emitted during execution. */
 	getEvents(): RunnerEvent[] {
@@ -319,6 +323,7 @@ export class Runner {
 
 	private emit(event: RunnerEvent): void {
 		this.events.push(event);
+		this.onEvent?.(event);
 	}
 
 	private readMemory(): string {

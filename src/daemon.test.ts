@@ -674,4 +674,59 @@ describe("daemon execute API", () => {
 		await rm(tempDir, { recursive: true });
 		await rm(dataDir, { recursive: true });
 	});
+
+	test("POST /execute/stream returns SSE events", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-sse-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-sdata-"));
+		const projectPath = join(tempDir, "sse-app");
+
+		await Bun.spawn(["mkdir", "-p", projectPath]).exited;
+		await gitExec(["git", "init"], projectPath);
+		await gitExec(
+			["git", "config", "user.email", "test@test.com"],
+			projectPath,
+		);
+		await gitExec(["git", "config", "user.name", "Test"], projectPath);
+		await writeFile(join(projectPath, "README.md"), "# Test\n");
+		await gitExec(["git", "add", "-A"], projectPath);
+		await gitExec(["git", "commit", "-m", "init"], projectPath);
+
+		const sseProvider = createMockProvider(async () => ({
+			success: true,
+			output: "done",
+		}));
+
+		const { app, pm } = createApp({
+			dataDir,
+			agentProvider: sseProvider,
+		});
+		await pm.load();
+
+		const projectRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectPath }),
+		});
+		const project = (await projectRes.json()) as Project;
+
+		await app.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Task", description: "Do it" }),
+		});
+
+		const sseRes = await app.request(`/projects/${project.id}/execute/stream`, {
+			method: "POST",
+		});
+		expect(sseRes.status).toBe(200);
+		expect(sseRes.headers.get("Content-Type")).toBe("text/event-stream");
+
+		const body = await sseRes.text();
+		expect(body).toContain("event: event");
+		expect(body).toContain("event: result");
+		expect(body).toContain("task_started");
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
 });
