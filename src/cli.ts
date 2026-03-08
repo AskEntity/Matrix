@@ -217,13 +217,16 @@ async function handleDecompose(args: string[]): Promise<void> {
 
 async function handleOrchestrate(args: string[]): Promise<void> {
 	const isResume = args[0] === "--resume";
-	// Parse --model flag
+	// Parse --model and --child-model flags
 	let model: string | undefined;
+	let childModel: string | undefined;
 	const filteredArgs: string[] = [];
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (arg === "--model" && i + 1 < args.length) {
 			model = args[++i] as string;
+		} else if (arg === "--child-model" && i + 1 < args.length) {
+			childModel = args[++i] as string;
 		} else if (arg) {
 			filteredArgs.push(arg);
 		}
@@ -251,6 +254,7 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 		body.prompt = goal;
 	}
 	if (model) body.model = model;
+	if (childModel) body.childModel = childModel;
 
 	// Connect WS in background for real-time event display
 	const wsUrl = `${DAEMON_URL.replace(/^http/, "ws")}/ws`;
