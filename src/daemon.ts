@@ -439,6 +439,11 @@ const DECOMPOSE_PROMPT = `You are a task decomposition system. Given a high-leve
 4. Each task needs a clear title and description.
 5. Keep the tree shallow: prefer 2-3 levels max.
 6. Order children so dependencies come first.
+7. CRITICAL: Sibling tasks will run IN PARALLEL on separate git branches and then be merged.
+   - Each sibling MUST work on DIFFERENT files/modules to avoid merge conflicts.
+   - Never have two siblings modify the same file.
+   - Split by module/feature boundary, not by step (e.g. "auth module" vs "payment module", NOT "write types" vs "write tests").
+   - If tasks share a dependency, create that dependency as an earlier sibling or parent task.
 
 ## Output Format
 Respond with ONLY a JSON object (no markdown fences, no explanation):
