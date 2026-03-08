@@ -409,18 +409,24 @@ async function resolveCurrentProject(): Promise<string | null> {
 	return match.id;
 }
 
-async function handleRetry(args: string[]): Promise<void> {
+async function handleContinue(args: string[]): Promise<void> {
 	const taskId = args[0];
 	if (!taskId) {
-		console.error("Usage: og retry <taskId>");
+		console.error("Usage: og continue <taskId> [message]");
 		process.exit(1);
 	}
+
+	const message = args.slice(1).join(" ") || undefined;
 
 	const projectId = await resolveCurrentProject();
 	if (!projectId) return;
 
-	const res = await api(`/projects/${projectId}/tasks/${taskId}/retry`, {
+	const body: Record<string, unknown> = {};
+	if (message) body.message = message;
+
+	const res = await api(`/projects/${projectId}/tasks/${taskId}/continue`, {
 		method: "POST",
+		body: JSON.stringify(body),
 	});
 
 	if (!res.ok) {
@@ -430,7 +436,7 @@ async function handleRetry(args: string[]): Promise<void> {
 	}
 
 	const node = (await res.json()) as { title: string; status: string };
-	console.log(`Retried: ${node.title} -> ${node.status}`);
+	console.log(`Continued: ${node.title} -> ${node.status}`);
 }
 
 async function handleWatch(): Promise<void> {
@@ -599,8 +605,9 @@ switch (command) {
 	case "exec":
 		await handleExecute();
 		break;
-	case "retry":
-		await handleRetry(args);
+	case "continue":
+	case "cont":
+		await handleContinue(args);
 		break;
 	case "watch":
 	case "w":
@@ -628,7 +635,7 @@ switch (command) {
 			"  orchestrate <goal>  Agent-driven: decompose + execute + merge",
 		);
 		console.log("  execute         Execute task tree with worktrees");
-		console.log("  retry <taskId>  Retry a failed/stuck task");
+		console.log("  continue <taskId> [msg]  Continue a failed/stuck task");
 		console.log("  watch           Watch agent activity in real-time");
 		console.log("  send <msg>      Send instruction to running agent");
 		console.log("  health          Check daemon status");

@@ -88,7 +88,7 @@ Project lifecycle is deterministic code, not agent work.
 | src/task-tracker.ts | Task tree CRUD, persistence to JSON |
 | src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
 | src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, spawn_task, spawn_children, delete_task) |
-| src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, orchestrate, execute, watch, send |
+| src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, orchestrate, execute, continue, watch, send |
 | web/ | Web UI: task tree, agent activity, message injection (served by daemon) |
 | src/daemon.test.ts | API route tests (58 total across 4 files) |
 | src/project-manager.test.ts | ProjectManager unit tests |
@@ -158,7 +158,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Full pipeline E2E: decompose (4 tasks) → execute (3 children parallel, ~3.5min)
 
 ### Phase 2 (COMPLETE)
-- [x] CLI: `og init`, `og list`, `og status`, `og run`, `og decompose`, `og execute`, `og retry`
+- [x] CLI: `og init`, `og list`, `og status`, `og run`, `og decompose`, `og execute`, `og continue`
 - [x] MCP tools: get_tree, create_task, update_task_status, spawn_task, spawn_children, delete_task
 - [x] Agent-driven orchestration (POST /orchestrate/agent) with session persistence + cost tracking
 - [x] Git-clean guard: require clean working tree before spawn
