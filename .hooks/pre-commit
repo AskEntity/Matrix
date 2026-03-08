@@ -1,0 +1,16 @@
+#!/bin/sh
+# Pre-commit hook: enforces typecheck, lint, and tests before every commit.
+# Install: git config core.hooksPath .hooks
+
+set -e
+
+echo "Running typecheck..."
+bun run typecheck
+
+echo "Running lint..."
+bun run check
+
+echo "Running tests..."
+bun test --bail src/daemon.test.ts src/project-manager.test.ts
+
+echo "All checks passed."
