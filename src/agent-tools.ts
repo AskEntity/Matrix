@@ -233,6 +233,12 @@ export function createOrchestratorTools(
 				"Call this for multiple tasks simultaneously — they will run in parallel.",
 			{
 				taskId: z.string().describe("ID of the task to execute"),
+				maxTurns: z
+					.number()
+					.optional()
+					.describe(
+						"Max agentic turns for this task (default: 30). Increase for complex tasks.",
+					),
 			},
 			async (args) => {
 				// Guard: require clean working tree before spawning
@@ -291,7 +297,7 @@ export function createOrchestratorTools(
 						prompt,
 						cwd: wt.path,
 						systemPrompt: TASK_SYSTEM_PROMPT,
-						maxTurns: 30,
+						maxTurns: args.maxTurns ?? 30,
 						resumeSessionId: node.sessionId ?? undefined,
 						model: childModel,
 					};
@@ -359,6 +365,12 @@ export function createOrchestratorTools(
 				parentId: z
 					.string()
 					.describe("ID of the parent task whose children to spawn"),
+				maxTurns: z
+					.number()
+					.optional()
+					.describe(
+						"Max agentic turns per child (default: 30). Increase for complex tasks.",
+					),
 			},
 			async (args) => {
 				// Guard: require clean working tree before spawning
@@ -437,7 +449,7 @@ export function createOrchestratorTools(
 									prompt,
 									cwd: wt.path,
 									systemPrompt: TASK_SYSTEM_PROMPT,
-									maxTurns: 30,
+									maxTurns: args.maxTurns ?? 30,
 									resumeSessionId: child.sessionId ?? undefined,
 									model: childModel,
 								},
@@ -500,6 +512,130 @@ export function createOrchestratorTools(
 					],
 					...(failed > 0 ? { isError: true } : {}),
 				};
+			},
+		),
+
+		tool(
+			"continue_task",
+			"Continue a failed or stuck task. Resumes the agent on the same worktree " +
+				"with an optional message (e.g., instructions on what went wrong). " +
+				"Use this when a task hit max turns or failed and you want to give it another chance.",
+			{
+				taskId: z.string().describe("ID of the failed/stuck task to continue"),
+				message: z
+					.string()
+					.optional()
+					.describe(
+						"Additional instructions for the agent (e.g., what to fix)",
+					),
+				maxTurns: z
+					.number()
+					.optional()
+					.describe("Max additional turns (default: 30)"),
+			},
+			async (args) => {
+				const node = tracker.get(args.taskId);
+				if (!node) {
+					return {
+						content: [{ type: "text" as const, text: "Error: Task not found" }],
+						isError: true,
+					};
+				}
+
+				if (node.status !== "failed" && node.status !== "stuck") {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: Task is ${node.status}, not failed/stuck`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				if (!node.worktreePath) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "Error: Task has no worktree to continue in",
+							},
+						],
+						isError: true,
+					};
+				}
+
+				try {
+					tracker.updateStatus(node.id, "in_progress");
+					await tracker.save();
+					emit({
+						type: "task_started",
+						taskId: node.id,
+						title: node.title,
+					});
+
+					const memory = readMemory(projectPath);
+					const prompt = args.message
+						? `Continue working on this task. Previous attempt failed.\n\n${args.message}\n\n${buildTaskPrompt(node, tracker, memory)}`
+						: `Continue working on this task. Previous attempt failed or hit the turn limit. Pick up where you left off.\n\n${buildTaskPrompt(node, tracker, memory)}`;
+
+					const result = await executeChildStreaming(
+						{
+							prompt,
+							cwd: node.worktreePath,
+							systemPrompt: TASK_SYSTEM_PROMPT,
+							maxTurns: args.maxTurns ?? 30,
+							resumeSessionId: node.sessionId ?? undefined,
+							model: childModel,
+						},
+						node.id,
+					);
+
+					if (result.sessionId) {
+						tracker.assignSession(node.id, result.sessionId);
+					}
+					costs.add(result.costUsd, result.turns);
+
+					const newStatus = result.success ? "passed" : "failed";
+					tracker.updateStatus(node.id, newStatus);
+					await tracker.save();
+					emit({
+						type: "task_completed",
+						taskId: node.id,
+						title: node.title,
+						success: result.success,
+					});
+
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify(
+									{
+										taskId: node.id,
+										title: node.title,
+										status: newStatus,
+										success: result.success,
+										output: result.output.slice(0, 2000),
+										costUsd: result.costUsd,
+										turns: result.turns,
+									},
+									null,
+									2,
+								),
+							},
+						],
+					};
+				} catch (e) {
+					tracker.updateStatus(node.id, "stuck");
+					await tracker.save();
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						isError: true,
+					};
+				}
 			},
 		),
 

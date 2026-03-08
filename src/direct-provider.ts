@@ -605,11 +605,11 @@ export class DirectProvider implements AgentProvider {
 								toolUse.input as Record<string, unknown>,
 								{},
 							);
-							const content = Array.isArray(mcpResult.content)
+							const parts = Array.isArray(mcpResult.content)
 								? mcpResult.content
 								: [];
 							return {
-								text: content
+								content: parts
 									.map((c: { type: string; text?: string }) =>
 										c.type === "text" ? (c.text ?? "") : JSON.stringify(c),
 									)
@@ -618,7 +618,7 @@ export class DirectProvider implements AgentProvider {
 							};
 						} catch (e) {
 							return {
-								text: `MCP tool error: ${e instanceof Error ? e.message : String(e)}`,
+								content: `MCP tool error: ${e instanceof Error ? e.message : String(e)}`,
 								isError: true,
 							};
 						}
@@ -636,11 +636,10 @@ export class DirectProvider implements AgentProvider {
 			for (let i = 0; i < toolUses.length; i++) {
 				const toolUse = toolUses[i] as ToolUseBlock;
 				const exec = execResults[i] as {
-					text?: string;
-					content?: string;
+					content: string;
 					isError: boolean;
 				};
-				const text = exec.text ?? exec.content ?? "";
+				const text = exec.content;
 				const isError = exec.isError;
 
 				yield {
