@@ -275,11 +275,10 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 							"Build a utility library with TWO separate modules: " +
 							"1) src/strings.ts — capitalize(str) and reverse(str) functions, with src/strings.test.ts " +
 							"2) src/arrays.ts — unique(arr) and flatten(arr) functions, with src/arrays.test.ts " +
-							"These modules are INDEPENDENT. Use create_task to create a root and 2 child tasks " +
-							"(one per module), then use spawn_children to execute them in parallel. " +
-							"After both pass, use merge_branch to merge each child's branch into the root's branch. " +
-							"Finally verify all tests pass on the merged branch.",
-						maxTurns: 60,
+							"These modules are INDEPENDENT. " +
+							"Steps: create_task for root, create_task for each module as children, " +
+							"spawn_children to execute in parallel, update_task_status root to passed when done.",
+						maxTurns: 50,
 					}),
 				},
 			);
