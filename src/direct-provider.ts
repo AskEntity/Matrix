@@ -475,6 +475,8 @@ export class DirectProvider implements AgentProvider {
 	readonly name = "direct-api";
 	private client: Anthropic;
 	private model: string;
+	/** Persisted conversation histories keyed by session ID. */
+	private sessionHistory = new Map<string, MessageParam[]>();
 
 	constructor(model?: string) {
 		this.client = new Anthropic();
@@ -482,8 +484,9 @@ export class DirectProvider implements AgentProvider {
 	}
 
 	async execute(request: AgentRequest): Promise<AgentResult> {
-		const gen = this.runLoop(request);
-		let lastResult: AgentResult = { success: false, output: "" };
+		const sessionId = request.resumeSessionId ?? randomUUID();
+		const gen = this.runLoop(request, sessionId);
+		let lastResult: AgentResult = { success: false, output: "", sessionId };
 		let result = await gen.next();
 		while (!result.done) {
 			result = await gen.next();
@@ -495,7 +498,8 @@ export class DirectProvider implements AgentProvider {
 	async *stream(
 		request: AgentRequest,
 	): AsyncGenerator<AgentEvent, AgentResult> {
-		const gen = this.runLoop(request);
+		const sessionId = request.resumeSessionId ?? randomUUID();
+		const gen = this.runLoop(request, sessionId);
 		let result = await gen.next();
 		while (!result.done) {
 			yield result.value;
@@ -505,7 +509,7 @@ export class DirectProvider implements AgentProvider {
 	}
 
 	startSession(request: AgentRequest): AgentSession {
-		const sessionId = randomUUID();
+		const sessionId = request.resumeSessionId ?? randomUUID();
 		const injectedMessages: string[] = [];
 		let closed = false;
 		const abortController = new AbortController();
@@ -515,6 +519,7 @@ export class DirectProvider implements AgentProvider {
 		async function* eventStream(): AsyncGenerator<AgentEvent, AgentResult> {
 			const gen = self.runLoop(
 				{ ...request, signal: abortController.signal },
+				sessionId,
 				() => {
 					if (injectedMessages.length > 0) {
 						return injectedMessages.shift() as string;
@@ -548,15 +553,18 @@ export class DirectProvider implements AgentProvider {
 
 	private async *runLoop(
 		request: AgentRequest,
+		sessionId: string,
 		checkInjectedMessage?: () => string | undefined,
 	): AsyncGenerator<AgentEvent, AgentResult> {
 		const model = request.model ?? this.model;
 		const maxTurns = request.maxTurns ?? 0; // 0 = unlimited
 		const cwd = request.cwd;
 
-		const messages: MessageParam[] = [
-			{ role: "user", content: request.prompt },
-		];
+		// Restore conversation history if resuming, otherwise start fresh
+		const existingHistory = this.sessionHistory.get(sessionId);
+		const messages: MessageParam[] = existingHistory
+			? [...existingHistory, { role: "user" as const, content: request.prompt }]
+			: [{ role: "user" as const, content: request.prompt }];
 
 		// Add MCP tool definitions from mcpToolDefs
 		const allTools: Tool[] = [...TOOLS];
@@ -737,13 +745,16 @@ export class DirectProvider implements AgentProvider {
 			messages.push({ role: "user", content: toolResults });
 		}
 
-		const hitMaxTurns = turns >= maxTurns;
+		const hitMaxTurns = maxTurns > 0 && turns >= maxTurns;
 		if (hitMaxTurns) {
 			yield {
 				type: "status",
 				message: `Max turns (${maxTurns}) reached, stopping`,
 			};
 		}
+
+		// Persist conversation history for future resume
+		this.sessionHistory.set(sessionId, [...messages]);
 
 		const { inputPer1M, outputPer1M } = getModelPricing(model);
 		const costUsd =
@@ -755,6 +766,7 @@ export class DirectProvider implements AgentProvider {
 			output: lastText,
 			costUsd,
 			turns,
+			sessionId,
 		};
 	}
 }

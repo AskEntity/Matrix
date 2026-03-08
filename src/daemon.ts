@@ -302,10 +302,20 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			});
 			broadcastTreeUpdate(project.id, tracker);
 
-			const memory = readProjectMemory(project.path);
-			const continuePrompt = body.message
-				? `Continue working on this task. Previous attempt failed.\n\n${body.message}\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}`
-				: `Continue working on this task. Pick up where you left off.\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}`;
+			// If we have a session, the agent already has full context in its history.
+			// Just send the user's message (or a simple continue instruction).
+			// If no session, include full task context since it's a fresh start.
+			let continuePrompt: string;
+			if (node.sessionId) {
+				continuePrompt = body.message
+					? body.message
+					: "Continue working. Pick up where you left off and complete the task.";
+			} else {
+				const memory = readProjectMemory(project.path);
+				continuePrompt = body.message
+					? `${body.message}\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}`
+					: `Continue working on this task.\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}`;
+			}
 
 			// Run async — return immediately so UI updates
 			(async () => {

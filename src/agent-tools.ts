@@ -585,10 +585,19 @@ export function createOrchestratorTools(
 						title: node.title,
 					});
 
-					const memory = readMemory(projectPath);
-					const prompt = args.message
-						? `Continue working on this task. Previous attempt failed.\n\n${args.message}\n\n${buildTaskPrompt(node, tracker, memory)}`
-						: `Continue working on this task. Previous attempt failed or hit the turn limit. Pick up where you left off.\n\n${buildTaskPrompt(node, tracker, memory)}`;
+					// If session exists, agent has full context in history — just send user's message.
+					// If no session, include full task context.
+					let prompt: string;
+					if (node.sessionId) {
+						prompt = args.message
+							? args.message
+							: "Continue working. Pick up where you left off and complete the task.";
+					} else {
+						const memory = readMemory(projectPath);
+						prompt = args.message
+							? `${args.message}\n\n${buildTaskPrompt(node, tracker, memory)}`
+							: `Continue working on this task.\n\n${buildTaskPrompt(node, tracker, memory)}`;
+					}
 
 					const result = await executeChildStreaming(
 						{
