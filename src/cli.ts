@@ -298,6 +298,30 @@ async function resolveCurrentProject(): Promise<string | null> {
 	return match.id;
 }
 
+async function handleRetry(args: string[]): Promise<void> {
+	const taskId = args[0];
+	if (!taskId) {
+		console.error("Usage: og retry <taskId>");
+		process.exit(1);
+	}
+
+	const projectId = await resolveCurrentProject();
+	if (!projectId) return;
+
+	const res = await api(`/projects/${projectId}/tasks/${taskId}/retry`, {
+		method: "POST",
+	});
+
+	if (!res.ok) {
+		const err = (await res.json()) as { error: string };
+		console.error(`Error: ${err.error}`);
+		process.exit(1);
+	}
+
+	const node = (await res.json()) as { title: string; status: string };
+	console.log(`Retried: ${node.title} -> ${node.status}`);
+}
+
 async function handleHealth(): Promise<void> {
 	try {
 		const res = await api("/health");
@@ -341,6 +365,9 @@ switch (command) {
 	case "exec":
 		await handleExecute();
 		break;
+	case "retry":
+		await handleRetry(args);
+		break;
 	case "health":
 		await handleHealth();
 		break;
@@ -356,6 +383,7 @@ switch (command) {
 		console.log("  run <prompt>    Run agent task (one-shot)");
 		console.log("  decompose <goal>  Break goal into task tree");
 		console.log("  execute         Execute task tree with worktrees");
+		console.log("  retry <taskId>  Retry a failed/stuck task");
 		console.log("  health          Check daemon status");
 		break;
 }
