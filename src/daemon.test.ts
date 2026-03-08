@@ -291,6 +291,46 @@ describe("daemon tasks API", () => {
 		expect(body.root).toBeNull();
 		expect(body.nodes).toHaveLength(0);
 	});
+
+	test("POST /tasks/:nodeId/retry resets failed task to pending", async () => {
+		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "App", description: "" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		// Mark as failed
+		await app.request(`/projects/${projectId}/tasks/${root.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "failed" }),
+		});
+
+		// Retry
+		const retryRes = await app.request(
+			`/projects/${projectId}/tasks/${root.id}/retry`,
+			{ method: "POST" },
+		);
+		expect(retryRes.status).toBe(200);
+		const retried = (await retryRes.json()) as TaskNode;
+		expect(retried.status).toBe("pending");
+	});
+
+	test("POST /tasks/:nodeId/retry rejects non-failed task", async () => {
+		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "App2", description: "" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		const retryRes = await app.request(
+			`/projects/${projectId}/tasks/${root.id}/retry`,
+			{ method: "POST" },
+		);
+		expect(retryRes.status).toBe(400);
+	});
 });
 
 describe("daemon orchestrate API", () => {

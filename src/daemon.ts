@@ -170,6 +170,28 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json(tracker.get(nodeId));
 	});
 
+	app.post("/projects/:id/tasks/:nodeId/retry", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const tracker = await getTracker(project.id);
+		const nodeId = c.req.param("nodeId");
+		const node = tracker.get(nodeId);
+		if (!node) {
+			return c.json({ error: "Task not found" }, 404);
+		}
+		if (node.status !== "failed" && node.status !== "stuck") {
+			return c.json(
+				{ error: `Cannot retry task with status: ${node.status}` },
+				400,
+			);
+		}
+		tracker.updateStatus(nodeId, "pending");
+		await tracker.save();
+		return c.json(tracker.get(nodeId));
+	});
+
 	app.delete("/projects/:id/tasks/:nodeId", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) {
