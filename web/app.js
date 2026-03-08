@@ -479,7 +479,6 @@ orchestrateForm.addEventListener("submit", async (e) => {
 				type: "orchestrate",
 				projectId: selectedProjectId,
 				prompt,
-				maxTurns: 50,
 			};
 			if (model) msg.model = model;
 			if (childModel) msg.childModel = childModel;
@@ -495,7 +494,7 @@ orchestrateForm.addEventListener("submit", async (e) => {
 				{
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ prompt, maxTurns: 50, model, childModel }),
+					body: JSON.stringify({ prompt, model, childModel }),
 				},
 			);
 			const result = await res.json();

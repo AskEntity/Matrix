@@ -551,7 +551,7 @@ export class DirectProvider implements AgentProvider {
 		checkInjectedMessage?: () => string | undefined,
 	): AsyncGenerator<AgentEvent, AgentResult> {
 		const model = request.model ?? this.model;
-		const maxTurns = request.maxTurns ?? 30;
+		const maxTurns = request.maxTurns ?? 0; // 0 = unlimited
 		const cwd = request.cwd;
 
 		const messages: MessageParam[] = [
@@ -587,7 +587,7 @@ export class DirectProvider implements AgentProvider {
 
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
-		while (turns < maxTurns) {
+		while (maxTurns === 0 || turns < maxTurns) {
 			// Check abort signal
 			if (request.signal?.aborted) {
 				yield { type: "status", message: "Aborted" };

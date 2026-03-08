@@ -284,11 +284,81 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			);
 		}
 		const body = await c.req
-			.json<{ message?: string }>()
-			.catch(() => ({ message: undefined }));
+			.json<{ message?: string; model?: string }>()
+			.catch(() => ({ message: undefined, model: undefined }));
 		if (body.message) {
 			tracker.setMessage(nodeId, body.message);
 		}
+
+		// If the task has a worktree, re-run the agent immediately
+		if (node.worktreePath) {
+			tracker.updateStatus(nodeId, "in_progress");
+			await tracker.save();
+
+			broadcastEvent(project.id, {
+				type: "task_started",
+				taskId: nodeId,
+				title: node.title,
+			});
+			broadcastTreeUpdate(project.id, tracker);
+
+			const memory = readProjectMemory(project.path);
+			const continuePrompt = body.message
+				? `Continue working on this task. Previous attempt failed.\n\n${body.message}\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}`
+				: `Continue working on this task. Pick up where you left off.\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}`;
+
+			// Run async — return immediately so UI updates
+			(async () => {
+				try {
+					const gen = config.agentProvider.stream({
+						prompt: continuePrompt,
+						cwd: node.worktreePath as string,
+						systemPrompt: CHILD_SYSTEM_PROMPT,
+						resumeSessionId: node.sessionId ?? undefined,
+						model: body.model,
+					});
+
+					let result = await gen.next();
+					while (!result.done) {
+						const { type: eventType, ...eventData } = result.value;
+						broadcastEvent(project.id, {
+							type: "agent_event",
+							taskId: nodeId,
+							eventType,
+							...eventData,
+						});
+						result = await gen.next();
+					}
+					const agentResult = result.value;
+
+					if (agentResult.sessionId) {
+						tracker.assignSession(nodeId, agentResult.sessionId);
+					}
+					const newStatus = agentResult.success ? "passed" : "failed";
+					tracker.updateStatus(nodeId, newStatus);
+					await tracker.save();
+					broadcastEvent(project.id, {
+						type: "task_completed",
+						taskId: nodeId,
+						title: node.title,
+						success: agentResult.success,
+					});
+					broadcastTreeUpdate(project.id, tracker);
+				} catch (e) {
+					tracker.updateStatus(nodeId, "stuck");
+					await tracker.save();
+					broadcastEvent(project.id, {
+						type: "error",
+						message: `Continue failed: ${e instanceof Error ? e.message : String(e)}`,
+					});
+					broadcastTreeUpdate(project.id, tracker);
+				}
+			})();
+
+			return c.json(tracker.get(nodeId));
+		}
+
+		// No worktree — just reset to pending
 		tracker.updateStatus(nodeId, "pending");
 		await tracker.save();
 		return c.json(tracker.get(nodeId));
@@ -414,7 +484,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				prompt,
 				cwd: project.path,
 				systemPrompt: DECOMPOSE_PROMPT,
-				maxTurns: body.maxTurns ?? 10,
+				maxTurns: body.maxTurns,
 			});
 
 			if (!result.success) {
@@ -518,7 +588,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				prompt,
 				cwd: project.path,
 				systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
-				maxTurns: body.maxTurns ?? 50,
+				maxTurns: body.maxTurns,
 				mcpServers: { opengraft: mcpServer },
 				mcpToolDefs: { opengraft: toolDefs },
 				resumeSessionId,
@@ -621,7 +691,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							runOrchestrateViaWS(
 								msg.projectId,
 								msg.prompt,
-								msg.maxTurns ?? 50,
+								msg.maxTurns,
 								msg.model,
 								msg.childModel,
 							);
@@ -659,7 +729,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	async function runOrchestrateViaWS(
 		projectId: string,
 		prompt: string,
-		maxTurns: number,
+		maxTurns?: number,
 		model?: string,
 		childModel?: string,
 	) {
@@ -782,6 +852,28 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	return { app, pm, wsClients };
 }
+
+const CHILD_SYSTEM_PROMPT = `You are an autonomous programming agent working on a subtask.
+
+## Available Tools
+- bash: Run shell commands (tests, git, build tools)
+- read_file: Read file contents
+- write_file: Create or overwrite files (creates directories automatically)
+- edit_file: Replace a unique string in a file (for surgical edits)
+- list_files: Glob pattern matching to find files
+- search: Regex search across files (with optional context lines)
+
+## Workflow
+1. Read the task description and project memory carefully
+2. Explore the codebase to understand relevant modules
+3. Implement: types → tests → implementation
+4. Validate: run tests, typecheck, and lint — all must pass
+5. Commit your work via bash (git add + git commit)
+
+## Rules
+- Work only on the files/modules described in your task
+- Run \`bun test\`, \`bun run typecheck\`, and \`bun run check\` before considering done
+- Commit when all checks pass`;
 
 const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. You break goals into tasks and execute them.
 
