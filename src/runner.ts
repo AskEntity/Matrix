@@ -249,6 +249,61 @@ export class Runner {
 		};
 	}
 
+	/**
+	 * Resume a parent agent after all its children have completed.
+	 * The parent agent receives a merge prompt with child branch info.
+	 */
+	async resumeParent(node: TaskNode): Promise<AgentResult> {
+		this.emit({
+			type: "merge_started",
+			taskId: node.id,
+			title: node.title,
+		});
+
+		const children = this.tracker.getChildren(node.id);
+		const passed = children.filter((c) => c.status === "passed");
+		const failed = children.filter(
+			(c) => c.status === "failed" || c.status === "stuck",
+		);
+
+		const prompt = this.buildMergePrompt(node, passed, failed);
+
+		const request: AgentRequest = {
+			prompt,
+			cwd: node.worktreePath ?? this.projectPath,
+			systemPrompt: METHODOLOGY_PROMPT,
+			maxTurns: 20,
+			resumeSessionId: node.sessionId ?? undefined,
+		};
+
+		try {
+			const result = await this.provider.execute(request);
+
+			if (result.sessionId) {
+				this.tracker.assignSession(node.id, result.sessionId);
+			}
+
+			const newStatus = result.success ? "passed" : "failed";
+			this.tracker.updateStatus(node.id, newStatus);
+			await this.tracker.save();
+
+			this.emit({
+				type: "merge_completed",
+				taskId: node.id,
+				success: result.success,
+			});
+
+			return result;
+		} catch (e) {
+			this.tracker.updateStatus(node.id, "stuck");
+			await this.tracker.save();
+
+			const message = e instanceof Error ? e.message : "Unknown error";
+			this.emit({ type: "error", taskId: node.id, message });
+			return { success: false, output: `Merge error: ${message}` };
+		}
+	}
+
 	/** Recursively execute a node: children first (parallel), then self. */
 	private async runNode(
 		node: TaskNode,
@@ -263,7 +318,20 @@ export class Runner {
 		const pendingChildren = children.filter((c) => c.status === "pending");
 
 		if (pendingChildren.length > 0) {
-			// First, recursively process any children that have their own children
+			// Parent needs a worktree so children can branch from it
+			if (!node.worktreePath) {
+				const slug = this.slugify(node.title);
+				const parentNode = node.parentId
+					? this.tracker.get(node.parentId)
+					: undefined;
+				const baseBranch = parentNode?.branch ?? undefined;
+				const wt = await this.worktrees.create(node.id, slug, baseBranch);
+				this.tracker.assignWorktree(node.id, wt.branch, wt.path);
+				this.tracker.updateStatus(node.id, "in_progress");
+				await this.tracker.save();
+			}
+
+			// Recursively process any children that have their own children
 			for (const child of pendingChildren) {
 				const grandchildren = this.tracker.getChildren(child.id);
 				if (grandchildren.length > 0) {
@@ -271,9 +339,8 @@ export class Runner {
 				}
 			}
 
-			// Now execute remaining leaf children in parallel
+			// Execute remaining leaf children in parallel
 			const leafChildren = pendingChildren.filter((c) => {
-				// Re-check status since recursive processing may have changed it
 				const current = this.tracker.get(c.id);
 				return current?.status === "pending";
 			});
@@ -297,28 +364,79 @@ export class Runner {
 				}
 			}
 
-			// Merge children into parent
+			// All children done — resume parent to merge
 			const allChildrenPassed = children.every((c) => {
 				const current = this.tracker.get(c.id);
 				return current?.status === "passed";
 			});
 
-			if (allChildrenPassed && node.branch) {
-				await this.mergeChildren(node.id);
+			if (allChildrenPassed) {
+				const mergeResult = await this.resumeParent(node);
+				results.push({
+					taskId: node.id,
+					title: node.title,
+					success: mergeResult.success,
+					output: mergeResult.output,
+				});
+			} else {
+				// Some children failed — mark parent as failed too
+				this.tracker.updateStatus(node.id, "failed");
+				await this.tracker.save();
+				results.push({
+					taskId: node.id,
+					title: node.title,
+					success: false,
+					output: "Some child tasks failed",
+				});
+			}
+		} else {
+			// Leaf node — execute directly
+			const current = this.tracker.get(node.id);
+			if (current?.status === "pending") {
+				const result = await this.executeTask(node);
+				results.push({
+					taskId: node.id,
+					title: node.title,
+					success: result.success,
+					output: result.output,
+				});
 			}
 		}
+	}
 
-		// Execute this node if it's still pending (leaf node or post-merge)
-		const current = this.tracker.get(node.id);
-		if (current?.status === "pending") {
-			const result = await this.executeTask(node);
-			results.push({
-				taskId: node.id,
-				title: node.title,
-				success: result.success,
-				output: result.output,
-			});
+	private buildMergePrompt(
+		node: TaskNode,
+		passed: TaskNode[],
+		failed: TaskNode[],
+	): string {
+		const parts: string[] = [];
+
+		parts.push(`# Merge: ${node.title}`);
+		parts.push(
+			"All child tasks have completed. Merge their work into this branch.",
+		);
+		parts.push("");
+		parts.push("## Completed children:");
+		for (const child of passed) {
+			parts.push(`- ${child.title} (branch: ${child.branch})`);
 		}
+		if (failed.length > 0) {
+			parts.push("\n## Failed children:");
+			for (const child of failed) {
+				parts.push(`- ${child.title} (${child.status})`);
+			}
+		}
+		parts.push("");
+		parts.push("## Instructions");
+		parts.push(
+			"Merge each child branch into the current branch using `git merge`.",
+		);
+		parts.push(
+			"Resolve any conflicts. Run tests to verify the merged code works.",
+		);
+		parts.push("Commit the merge when everything passes.");
+
+		return parts.join("\n");
 	}
 
 	private emit(event: RunnerEvent): void {

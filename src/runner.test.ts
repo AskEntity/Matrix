@@ -198,4 +198,54 @@ describe("Runner", () => {
 
 		expect(prompts[0]).toContain("Use bun");
 	});
+
+	test("run resumes parent after children complete", async () => {
+		const root = tracker.createRoot("App", "desc");
+		tracker.addChild(root.id, "Child A", "first");
+		tracker.addChild(root.id, "Child B", "second");
+
+		const prompts: string[] = [];
+		const provider = createMockProvider(async (req) => {
+			prompts.push(req.prompt);
+			return { success: true, output: "done" };
+		});
+
+		const runner = new Runner(tracker, provider, worktrees, repoDir);
+		const result = await runner.run();
+
+		// 2 children + 1 parent merge = 3 results
+		expect(result.completed).toBe(3);
+
+		// The last prompt should be a merge prompt for the parent
+		const mergePrompt = prompts[prompts.length - 1];
+		expect(mergePrompt).toContain("Merge: App");
+		expect(mergePrompt).toContain("Child A");
+		expect(mergePrompt).toContain("Child B");
+
+		// Parent should have events: merge_started, merge_completed
+		const events = runner.getEvents();
+		const mergeEvents = events.filter((e) => e.type === "merge_started");
+		expect(mergeEvents.length).toBeGreaterThan(0);
+	});
+
+	test("run marks parent as failed when child fails", async () => {
+		const root = tracker.createRoot("App", "desc");
+		tracker.addChild(root.id, "Good", "passes");
+		tracker.addChild(root.id, "Bad", "fails");
+
+		const provider = createMockProvider(async (req) => {
+			if (req.prompt.includes("Bad")) {
+				return { success: false, output: "error" };
+			}
+			return { success: true, output: "ok" };
+		});
+
+		const runner = new Runner(tracker, provider, worktrees, repoDir);
+		const result = await runner.run();
+
+		// Parent should be marked as failed
+		const parentResult = result.results.find((r) => r.title === "App");
+		expect(parentResult?.success).toBe(false);
+		expect(tracker.get(root.id)?.status).toBe("failed");
+	});
 });
