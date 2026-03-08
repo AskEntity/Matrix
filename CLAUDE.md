@@ -86,6 +86,7 @@ Project lifecycle is deterministic code, not agent work.
 | src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
 | src/runner.ts | Agent-driven parallel task execution with worktree isolation |
 | src/orchestrator.ts | Legacy sequential orchestrator (kept for backward compat) |
+| src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, execute |
 | src/orchestrator.ts | Picks pending tasks, spawns agents, updates status |
 | src/daemon.test.ts | API route tests (30 tests) |
 | src/project-manager.test.ts | ProjectManager unit tests |
@@ -154,9 +155,9 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] E2E validated: runner parallel execution (2 children + merge, ~2min)
 - [x] Full pipeline E2E: decompose (4 tasks) → execute (3 children parallel, ~3.5min)
 
-### Phase 2 (PLANNED)
+### Phase 2 (IN PROGRESS)
+- [x] CLI: `og init`, `og list`, `og status`, `og run`, `og decompose`, `og execute`
 - [ ] Main agent as orchestrator: observes tree, decides spawns via tools
 - [ ] MCP server for agent tools: spawn_task, get_tree, merge_branch
 - [ ] Better decomposition: non-overlapping task boundaries for clean merges
 - [ ] Retry/recovery: re-execute failed tasks with error context
-- [ ] CLI: `og init`, `og run`, `og status`, `og decompose`
