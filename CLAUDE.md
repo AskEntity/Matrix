@@ -66,6 +66,7 @@ Project lifecycle is deterministic code, not agent work.
 | POST | /projects/:id/tasks | Create task (root or child via `parentId`) |
 | GET | /projects/:id/tasks | Get full task tree |
 | PATCH | /projects/:id/tasks/:nodeId | Update task status/branch |
+| POST | /projects/:id/tasks/:nodeId/retry | Reset failed/stuck task to pending |
 | DELETE | /projects/:id/tasks/:nodeId | Remove task and descendants |
 | POST | /projects/:id/run | Execute agent task (one-shot) |
 | POST | /projects/:id/stream | Execute agent task (SSE streaming) |
@@ -156,8 +157,8 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Full pipeline E2E: decompose (4 tasks) → execute (3 children parallel, ~3.5min)
 
 ### Phase 2 (IN PROGRESS)
-- [x] CLI: `og init`, `og list`, `og status`, `og run`, `og decompose`, `og execute`
+- [x] CLI: `og init`, `og list`, `og status`, `og run`, `og decompose`, `og execute`, `og retry`
+- [x] Better decomposition: merge-safe prompt (non-overlapping file boundaries)
+- [x] Retry endpoint: POST /tasks/:nodeId/retry (reset failed/stuck → pending)
 - [ ] Main agent as orchestrator: observes tree, decides spawns via tools
 - [ ] MCP server for agent tools: spawn_task, get_tree, merge_branch
-- [ ] Better decomposition: non-overlapping task boundaries for clean merges
-- [ ] Retry/recovery: re-execute failed tasks with error context
