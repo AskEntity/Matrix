@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
+import {
+	createSdkMcpServer,
+	type SdkMcpToolDefinition,
+	tool,
+} from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import type { TaskTracker } from "./task-tracker.ts";
@@ -78,467 +82,471 @@ export class CostAccumulator {
 	}
 }
 
+/** Result of createOrchestratorTools — MCP server + raw tool definitions. */
+export interface OrchestratorToolsResult {
+	/** MCP server config for Claude Code provider. */
+	mcpServer: ReturnType<typeof createSdkMcpServer>;
+	/** Raw tool definitions for DirectProvider forwarding. */
+	// biome-ignore lint/suspicious/noExplicitAny: SdkMcpToolDefinition generic is not narrowable here
+	toolDefs: SdkMcpToolDefinition<any>[];
+}
+
 /**
- * Create an MCP server with OpenGraft orchestrator tools.
- * These tools let the main agent observe and manipulate the task tree,
- * and spawn child agents on isolated worktrees.
+ * Create orchestrator tools for the main agent.
+ * Returns both an MCP server (for Claude Code provider) and raw tool definitions
+ * (for DirectProvider to forward as Anthropic API tools).
  */
 export function createOrchestratorTools(
 	deps: OrchestratorToolsDeps,
 	costAccumulator?: CostAccumulator,
-) {
+): OrchestratorToolsResult {
 	const { tracker, provider, worktrees, projectPath, onTaskEvent } = deps;
 	const costs = costAccumulator ?? new CostAccumulator();
 	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
 
-	return createSdkMcpServer({
-		name: "opengraft",
-		version: "0.1.0",
-		tools: [
-			tool(
-				"get_tree",
-				"Get the current task tree. Returns all nodes with their status, branch, and hierarchy.",
-				{ format: z.enum(["flat", "tree"]).optional().default("flat") },
-				async () => {
-					const root = tracker.getRoot();
-					const nodes = tracker.allNodes();
+	const toolDefs = [
+		tool(
+			"get_tree",
+			"Get the current task tree. Returns all nodes with their status, branch, and hierarchy.",
+			{ format: z.enum(["flat", "tree"]).optional().default("flat") },
+			async () => {
+				const root = tracker.getRoot();
+				const nodes = tracker.allNodes();
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify({ root: root ?? null, nodes }, null, 2),
+						},
+					],
+				};
+			},
+		),
+
+		tool(
+			"create_task",
+			"Create a new task in the tree. If parentId is provided, creates a child task. Otherwise creates the root task. " +
+				"IMPORTANT: Sibling tasks will run in PARALLEL on separate branches. " +
+				"Each sibling must work on DIFFERENT files/modules to avoid merge conflicts.",
+			{
+				title: z.string().describe("Short title for the task"),
+				description: z
+					.string()
+					.describe("Detailed description of what the task should accomplish"),
+				parentId: z
+					.string()
+					.optional()
+					.describe("Parent task ID. Omit to create root task."),
+			},
+			async (args) => {
+				try {
+					const node = args.parentId
+						? tracker.addChild(args.parentId, args.title, args.description)
+						: tracker.createRoot(args.title, args.description);
+					await tracker.save();
 					return {
 						content: [
 							{
 								type: "text" as const,
-								text: JSON.stringify({ root: root ?? null, nodes }, null, 2),
+								text: JSON.stringify(node, null, 2),
 							},
 						],
 					};
-				},
-			),
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						isError: true,
+					};
+				}
+			},
+		),
 
-			tool(
-				"create_task",
-				"Create a new task in the tree. If parentId is provided, creates a child task. Otherwise creates the root task. " +
-					"IMPORTANT: Sibling tasks will run in PARALLEL on separate branches. " +
-					"Each sibling must work on DIFFERENT files/modules to avoid merge conflicts.",
-				{
-					title: z.string().describe("Short title for the task"),
-					description: z
-						.string()
-						.describe(
-							"Detailed description of what the task should accomplish",
-						),
-					parentId: z
-						.string()
-						.optional()
-						.describe("Parent task ID. Omit to create root task."),
-				},
-				async (args) => {
-					try {
-						const node = args.parentId
-							? tracker.addChild(args.parentId, args.title, args.description)
-							: tracker.createRoot(args.title, args.description);
-						await tracker.save();
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: JSON.stringify(node, null, 2),
-								},
-							],
-						};
-					} catch (e) {
-						const message = e instanceof Error ? e.message : "Unknown error";
-						return {
-							content: [{ type: "text" as const, text: `Error: ${message}` }],
-							isError: true,
-						};
-					}
-				},
-			),
-
-			tool(
-				"update_task_status",
-				"Update the status of a task node. Valid statuses: pending, in_progress, testing, passed, failed, stuck.",
-				{
-					taskId: z.string().describe("Task node ID"),
-					status: z
-						.enum([
-							"pending",
-							"in_progress",
-							"testing",
-							"passed",
-							"failed",
-							"stuck",
-						])
-						.describe("New status"),
-				},
-				async (args) => {
-					try {
-						tracker.updateStatus(args.taskId, args.status);
-						await tracker.save();
-						const node = tracker.get(args.taskId);
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: JSON.stringify(node, null, 2),
-								},
-							],
-						};
-					} catch (e) {
-						const message = e instanceof Error ? e.message : "Unknown error";
-						return {
-							content: [{ type: "text" as const, text: `Error: ${message}` }],
-							isError: true,
-						};
-					}
-				},
-			),
-
-			tool(
-				"spawn_task",
-				"Spawn a child agent to execute a task on an isolated git worktree. " +
-					"Creates a worktree, runs the agent, waits for completion, and returns the result. " +
-					"The agent works in its own branch and directory. " +
-					"Call this for multiple tasks simultaneously — they will run in parallel.",
-				{
-					taskId: z.string().describe("ID of the task to execute"),
-				},
-				async (args) => {
-					// Guard: require clean working tree before spawning
-					const gitCheck = await isGitClean(projectPath);
-					if (!gitCheck.clean) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `Error: ${gitCheck.message}`,
-								},
-							],
-							isError: true,
-						};
-					}
-
+		tool(
+			"update_task_status",
+			"Update the status of a task node. Valid statuses: pending, in_progress, testing, passed, failed, stuck.",
+			{
+				taskId: z.string().describe("Task node ID"),
+				status: z
+					.enum([
+						"pending",
+						"in_progress",
+						"testing",
+						"passed",
+						"failed",
+						"stuck",
+					])
+					.describe("New status"),
+			},
+			async (args) => {
+				try {
+					tracker.updateStatus(args.taskId, args.status);
+					await tracker.save();
 					const node = tracker.get(args.taskId);
-					if (!node) {
-						return {
-							content: [
-								{ type: "text" as const, text: "Error: Task not found" },
-							],
-							isError: true,
-						};
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify(node, null, 2),
+							},
+						],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						isError: true,
+					};
+				}
+			},
+		),
+
+		tool(
+			"spawn_task",
+			"Spawn a child agent to execute a task on an isolated git worktree. " +
+				"Creates a worktree, runs the agent, waits for completion, and returns the result. " +
+				"The agent works in its own branch and directory. " +
+				"Call this for multiple tasks simultaneously — they will run in parallel.",
+			{
+				taskId: z.string().describe("ID of the task to execute"),
+			},
+			async (args) => {
+				// Guard: require clean working tree before spawning
+				const gitCheck = await isGitClean(projectPath);
+				if (!gitCheck.clean) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: ${gitCheck.message}`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				const node = tracker.get(args.taskId);
+				if (!node) {
+					return {
+						content: [{ type: "text" as const, text: "Error: Task not found" }],
+						isError: true,
+					};
+				}
+
+				if (node.status !== "pending") {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: Task is ${node.status}, not pending`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				try {
+					// Create worktree
+					const slug = slugify(node.title);
+					const parentNode = node.parentId
+						? tracker.get(node.parentId)
+						: undefined;
+					const baseBranch = parentNode?.branch ?? undefined;
+
+					const wt = await worktrees.create(node.id, slug, baseBranch);
+					tracker.assignWorktree(node.id, wt.branch, wt.path);
+					tracker.updateStatus(node.id, "in_progress");
+					await tracker.save();
+					emit({ type: "task_started", taskId: node.id, title: node.title });
+
+					// Build prompt
+					const memory = readMemory(projectPath);
+					const prompt = buildTaskPrompt(node, tracker, memory);
+
+					const request: AgentRequest = {
+						prompt,
+						cwd: wt.path,
+						systemPrompt: TASK_SYSTEM_PROMPT,
+						maxTurns: 30,
+						resumeSessionId: node.sessionId ?? undefined,
+					};
+
+					// Execute agent (this blocks until the child agent finishes)
+					const result = await provider.execute(request);
+
+					// Store session ID and accumulate cost
+					if (result.sessionId) {
+						tracker.assignSession(node.id, result.sessionId);
 					}
+					costs.add(result.costUsd, result.turns);
 
-					if (node.status !== "pending") {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `Error: Task is ${node.status}, not pending`,
-								},
-							],
-							isError: true,
-						};
-					}
-
-					try {
-						// Create worktree
-						const slug = slugify(node.title);
-						const parentNode = node.parentId
-							? tracker.get(node.parentId)
-							: undefined;
-						const baseBranch = parentNode?.branch ?? undefined;
-
-						const wt = await worktrees.create(node.id, slug, baseBranch);
-						tracker.assignWorktree(node.id, wt.branch, wt.path);
-						tracker.updateStatus(node.id, "in_progress");
-						await tracker.save();
-						emit({ type: "task_started", taskId: node.id, title: node.title });
-
-						// Build prompt
-						const memory = readMemory(projectPath);
-						const prompt = buildTaskPrompt(node, tracker, memory);
-
-						const request: AgentRequest = {
-							prompt,
-							cwd: wt.path,
-							systemPrompt: TASK_SYSTEM_PROMPT,
-							maxTurns: 30,
-							resumeSessionId: node.sessionId ?? undefined,
-						};
-
-						// Execute agent (this blocks until the child agent finishes)
-						const result = await provider.execute(request);
-
-						// Store session ID and accumulate cost
-						if (result.sessionId) {
-							tracker.assignSession(node.id, result.sessionId);
-						}
-						costs.add(result.costUsd, result.turns);
-
-						const newStatus = result.success ? "passed" : "failed";
-						tracker.updateStatus(node.id, newStatus);
-						emit({
-							type: "task_completed",
-							taskId: node.id,
-							title: node.title,
-							success: result.success,
-						});
-						await tracker.save();
-
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: JSON.stringify(
-										{
-											taskId: node.id,
-											title: node.title,
-											status: newStatus,
-											success: result.success,
-											output: result.output.slice(0, 2000),
-											branch: wt.branch,
-											costUsd: result.costUsd,
-											turns: result.turns,
-										},
-										null,
-										2,
-									),
-								},
-							],
-						};
-					} catch (e) {
-						tracker.updateStatus(node.id, "stuck");
-						await tracker.save();
-
-						const message = e instanceof Error ? e.message : "Unknown error";
-						return {
-							content: [{ type: "text" as const, text: `Error: ${message}` }],
-							isError: true,
-						};
-					}
-				},
-			),
-
-			tool(
-				"spawn_children",
-				"Spawn ALL pending children of a parent task in parallel. " +
-					"Each child gets its own git worktree and agent. " +
-					"This tool blocks until all children have completed. " +
-					"Use this instead of calling spawn_task multiple times — it's truly parallel.",
-				{
-					parentId: z
-						.string()
-						.describe("ID of the parent task whose children to spawn"),
-				},
-				async (args) => {
-					// Guard: require clean working tree before spawning
-					const gitCheck = await isGitClean(projectPath);
-					if (!gitCheck.clean) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `Error: ${gitCheck.message}`,
-								},
-							],
-							isError: true,
-						};
-					}
-
-					const parent = tracker.get(args.parentId);
-					if (!parent) {
-						return {
-							content: [
-								{ type: "text" as const, text: "Error: Parent not found" },
-							],
-							isError: true,
-						};
-					}
-
-					const children = tracker.getChildren(args.parentId);
-					const pending = children.filter((c) => c.status === "pending");
-
-					if (pending.length === 0) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: "No pending children to spawn",
-								},
-							],
-						};
-					}
-
-					// Ensure parent has a worktree so children can branch from it
-					if (!parent.worktreePath) {
-						const parentSlug = slugify(parent.title);
-						const grandparent = parent.parentId
-							? tracker.get(parent.parentId)
-							: undefined;
-						const baseBranch = grandparent?.branch ?? undefined;
-						const wt = await worktrees.create(
-							parent.id,
-							parentSlug,
-							baseBranch,
-						);
-						tracker.assignWorktree(parent.id, wt.branch, wt.path);
-						tracker.updateStatus(parent.id, "in_progress");
-						await tracker.save();
-					}
-
-					// Spawn all children in parallel
-					const results = await Promise.all(
-						pending.map(async (child) => {
-							try {
-								const slug = slugify(child.title);
-								const baseBranch = parent.branch ?? undefined;
-
-								const wt = await worktrees.create(child.id, slug, baseBranch);
-								tracker.assignWorktree(child.id, wt.branch, wt.path);
-								tracker.updateStatus(child.id, "in_progress");
-								await tracker.save();
-								emit({
-									type: "task_started",
-									taskId: child.id,
-									title: child.title,
-								});
-
-								const memory = readMemory(projectPath);
-								const prompt = buildTaskPrompt(child, tracker, memory);
-
-								const result = await provider.execute({
-									prompt,
-									cwd: wt.path,
-									systemPrompt: TASK_SYSTEM_PROMPT,
-									maxTurns: 30,
-									resumeSessionId: child.sessionId ?? undefined,
-								});
-
-								if (result.sessionId) {
-									tracker.assignSession(child.id, result.sessionId);
-								}
-								costs.add(result.costUsd, result.turns);
-
-								const newStatus = result.success ? "passed" : "failed";
-								tracker.updateStatus(child.id, newStatus);
-								await tracker.save();
-								emit({
-									type: "task_completed",
-									taskId: child.id,
-									title: child.title,
-									success: result.success,
-								});
-
-								return {
-									taskId: child.id,
-									title: child.title,
-									status: newStatus,
-									success: result.success,
-									branch: wt.branch,
-									costUsd: result.costUsd,
-									turns: result.turns,
-								};
-							} catch (e) {
-								tracker.updateStatus(child.id, "stuck");
-								await tracker.save();
-								const message =
-									e instanceof Error ? e.message : "Unknown error";
-								return {
-									taskId: child.id,
-									title: child.title,
-									status: "stuck" as const,
-									success: false,
-									branch: null,
-									error: message,
-								};
-							}
-						}),
-					);
-
-					const passed = results.filter((r) => r.success).length;
-					const failed = results.length - passed;
+					const newStatus = result.success ? "passed" : "failed";
+					tracker.updateStatus(node.id, newStatus);
+					emit({
+						type: "task_completed",
+						taskId: node.id,
+						title: node.title,
+						success: result.success,
+					});
+					await tracker.save();
 
 					return {
 						content: [
 							{
 								type: "text" as const,
 								text: JSON.stringify(
-									{ passed, failed, total: results.length, results },
+									{
+										taskId: node.id,
+										title: node.title,
+										status: newStatus,
+										success: result.success,
+										output: result.output.slice(0, 2000),
+										branch: wt.branch,
+										costUsd: result.costUsd,
+										turns: result.turns,
+									},
 									null,
 									2,
 								),
 							},
 						],
-						...(failed > 0 ? { isError: true } : {}),
 					};
-				},
-			),
+				} catch (e) {
+					tracker.updateStatus(node.id, "stuck");
+					await tracker.save();
 
-			tool(
-				"delete_task",
-				"Delete a child task and clean up its resources (worktree + branch). " +
-					"Call this AFTER you have already merged the child's branch yourself. " +
-					"This removes the worktree directory, deletes the git branch, " +
-					"and removes the task node from the tree.",
-				{
-					taskId: z.string().describe("ID of the task to delete"),
-				},
-				async (args) => {
-					const node = tracker.get(args.taskId);
-					if (!node) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: "Error: Task not found",
-								},
-							],
-							isError: true,
-						};
-					}
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						isError: true,
+					};
+				}
+			},
+		),
 
-					try {
-						// Clean up worktree + branch if they exist
-						if (node.worktreePath && node.branch) {
-							const slug = slugify(node.title);
-							await worktrees.remove(node.id, slug);
+		tool(
+			"spawn_children",
+			"Spawn ALL pending children of a parent task in parallel. " +
+				"Each child gets its own git worktree and agent. " +
+				"This tool blocks until all children have completed. " +
+				"Use this instead of calling spawn_task multiple times — it's truly parallel.",
+			{
+				parentId: z
+					.string()
+					.describe("ID of the parent task whose children to spawn"),
+			},
+			async (args) => {
+				// Guard: require clean working tree before spawning
+				const gitCheck = await isGitClean(projectPath);
+				if (!gitCheck.clean) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: ${gitCheck.message}`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				const parent = tracker.get(args.parentId);
+				if (!parent) {
+					return {
+						content: [
+							{ type: "text" as const, text: "Error: Parent not found" },
+						],
+						isError: true,
+					};
+				}
+
+				const children = tracker.getChildren(args.parentId);
+				const pending = children.filter((c) => c.status === "pending");
+
+				if (pending.length === 0) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "No pending children to spawn",
+							},
+						],
+					};
+				}
+
+				// Ensure parent has a worktree so children can branch from it
+				if (!parent.worktreePath) {
+					const parentSlug = slugify(parent.title);
+					const grandparent = parent.parentId
+						? tracker.get(parent.parentId)
+						: undefined;
+					const baseBranch = grandparent?.branch ?? undefined;
+					const wt = await worktrees.create(parent.id, parentSlug, baseBranch);
+					tracker.assignWorktree(parent.id, wt.branch, wt.path);
+					tracker.updateStatus(parent.id, "in_progress");
+					await tracker.save();
+				}
+
+				// Spawn all children in parallel
+				const results = await Promise.all(
+					pending.map(async (child) => {
+						try {
+							const slug = slugify(child.title);
+							const baseBranch = parent.branch ?? undefined;
+
+							const wt = await worktrees.create(child.id, slug, baseBranch);
+							tracker.assignWorktree(child.id, wt.branch, wt.path);
+							tracker.updateStatus(child.id, "in_progress");
+							await tracker.save();
+							emit({
+								type: "task_started",
+								taskId: child.id,
+								title: child.title,
+							});
+
+							const memory = readMemory(projectPath);
+							const prompt = buildTaskPrompt(child, tracker, memory);
+
+							const result = await provider.execute({
+								prompt,
+								cwd: wt.path,
+								systemPrompt: TASK_SYSTEM_PROMPT,
+								maxTurns: 30,
+								resumeSessionId: child.sessionId ?? undefined,
+							});
+
+							if (result.sessionId) {
+								tracker.assignSession(child.id, result.sessionId);
+							}
+							costs.add(result.costUsd, result.turns);
+
+							const newStatus = result.success ? "passed" : "failed";
+							tracker.updateStatus(child.id, newStatus);
+							await tracker.save();
+							emit({
+								type: "task_completed",
+								taskId: child.id,
+								title: child.title,
+								success: result.success,
+							});
+
+							return {
+								taskId: child.id,
+								title: child.title,
+								status: newStatus,
+								success: result.success,
+								branch: wt.branch,
+								costUsd: result.costUsd,
+								turns: result.turns,
+							};
+						} catch (e) {
+							tracker.updateStatus(child.id, "stuck");
+							await tracker.save();
+							const message = e instanceof Error ? e.message : "Unknown error";
+							return {
+								taskId: child.id,
+								title: child.title,
+								status: "stuck" as const,
+								success: false,
+								branch: null,
+								error: message,
+							};
 						}
+					}),
+				);
 
-						// Remove task from tree
-						tracker.remove(node.id);
-						await tracker.save();
+				const passed = results.filter((r) => r.success).length;
+				const failed = results.length - passed;
 
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: JSON.stringify(
-										{
-											deleted: true,
-											taskId: node.id,
-											title: node.title,
-										},
-										null,
-										2,
-									),
-								},
-							],
-						};
-					} catch (e) {
-						const message = e instanceof Error ? e.message : "Unknown error";
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `Error: ${message}`,
-								},
-							],
-							isError: true,
-						};
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify(
+								{ passed, failed, total: results.length, results },
+								null,
+								2,
+							),
+						},
+					],
+					...(failed > 0 ? { isError: true } : {}),
+				};
+			},
+		),
+
+		tool(
+			"delete_task",
+			"Delete a child task and clean up its resources (worktree + branch). " +
+				"Call this AFTER you have already merged the child's branch yourself. " +
+				"This removes the worktree directory, deletes the git branch, " +
+				"and removes the task node from the tree.",
+			{
+				taskId: z.string().describe("ID of the task to delete"),
+			},
+			async (args) => {
+				const node = tracker.get(args.taskId);
+				if (!node) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "Error: Task not found",
+							},
+						],
+						isError: true,
+					};
+				}
+
+				try {
+					// Clean up worktree + branch if they exist
+					if (node.worktreePath && node.branch) {
+						const slug = slugify(node.title);
+						await worktrees.remove(node.id, slug);
 					}
-				},
-			),
-		],
+
+					// Remove task from tree
+					tracker.remove(node.id);
+					await tracker.save();
+
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify(
+									{
+										deleted: true,
+										taskId: node.id,
+										title: node.title,
+									},
+									null,
+									2,
+								),
+							},
+						],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: ${message}`,
+							},
+						],
+						isError: true,
+					};
+				}
+			},
+		),
+	];
+
+	const mcpServer = createSdkMcpServer({
+		name: "opengraft",
+		version: "0.1.0",
+		tools: toolDefs,
 	});
+
+	return { mcpServer, toolDefs };
 }
 
 function readMemory(projectPath: string): string {

@@ -1,4 +1,7 @@
-import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
+import type {
+	McpServerConfig,
+	SdkMcpToolDefinition,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { AgentResult } from "./types.ts";
 
 /** What the orchestrator sends to an agent. */
@@ -15,8 +18,11 @@ export interface AgentRequest {
 	signal?: AbortSignal;
 	/** Session ID to resume a previous conversation. */
 	resumeSessionId?: string;
-	/** MCP servers to attach to the agent session. */
+	/** MCP servers to attach to the agent session (for Claude Code provider). */
 	mcpServers?: Record<string, McpServerConfig>;
+	/** Raw MCP tool definitions for direct API forwarding (for DirectProvider). */
+	// biome-ignore lint/suspicious/noExplicitAny: SdkMcpToolDefinition generic varies
+	mcpToolDefs?: Record<string, SdkMcpToolDefinition<any>[]>;
 	/** Claude model to use (e.g. 'claude-sonnet-4-6', 'claude-opus-4-6'). */
 	model?: string;
 }

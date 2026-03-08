@@ -432,7 +432,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const wm = new WorktreeManager(project.path, wtRoot);
 
 		const costAccumulator = new CostAccumulator();
-		const mcpServer = createOrchestratorTools(
+		const { mcpServer, toolDefs } = createOrchestratorTools(
 			{
 				tracker,
 				provider: config.agentProvider,
@@ -461,6 +461,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
 				maxTurns: body.maxTurns ?? 50,
 				mcpServers: { opengraft: mcpServer },
+				mcpToolDefs: { opengraft: toolDefs },
 				resumeSessionId,
 			});
 
@@ -617,7 +618,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const costAccumulator = new CostAccumulator();
 
 		// Wrap the orchestrator tools to broadcast events on state changes
-		const mcpServer = createOrchestratorTools(
+		const { mcpServer, toolDefs } = createOrchestratorTools(
 			{
 				tracker,
 				provider: config.agentProvider,
@@ -645,6 +646,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
 				maxTurns,
 				mcpServers: { opengraft: mcpServer },
+				mcpToolDefs: { opengraft: toolDefs },
 			});
 
 			// Track the session for message injection

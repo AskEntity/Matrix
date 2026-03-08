@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
 	MessageParam,
@@ -285,6 +286,83 @@ async function executeTool(
 }
 
 /**
+ * Convert a Zod raw shape (from SdkMcpToolDefinition.inputSchema) to JSON Schema.
+ * Handles the types used in our orchestrator tools: string, enum, optional.
+ */
+function zodShapeToJsonSchema(
+	shape: Record<string, unknown>,
+): Record<string, unknown> {
+	const properties: Record<string, unknown> = {};
+	const required: string[] = [];
+
+	for (const [key, zodType] of Object.entries(shape)) {
+		const prop = zodTypeToJsonProp(zodType);
+		properties[key] = prop.schema;
+		if (!prop.optional) {
+			required.push(key);
+		}
+	}
+
+	return {
+		type: "object",
+		properties,
+		...(required.length > 0 ? { required } : {}),
+	};
+}
+
+function zodTypeToJsonProp(zodType: unknown): {
+	schema: Record<string, unknown>;
+	optional: boolean;
+} {
+	// Walk the Zod type to extract JSON Schema info
+	// Uses internal Zod structures — works with both v3 and v4
+	// biome-ignore lint/suspicious/noExplicitAny: introspecting Zod internals
+	const t = zodType as any;
+
+	// Zod v4: _zod.def.type, Zod v3: _def.typeName
+	const def = t._zod?.def ?? t._def ?? {};
+	const typeName: string = def.type ?? def.typeName ?? "";
+	const description: string | undefined =
+		t._zod?.bag?.description ?? def.description ?? t.description;
+
+	if (typeName === "optional" || typeName === "ZodOptional") {
+		const inner = zodTypeToJsonProp(def?.innerType);
+		return {
+			schema: { ...inner.schema, ...(description ? { description } : {}) },
+			optional: true,
+		};
+	}
+
+	if (typeName === "default" || typeName === "ZodDefault") {
+		const inner = zodTypeToJsonProp(def?.innerType);
+		return {
+			schema: { ...inner.schema, ...(description ? { description } : {}) },
+			optional: true,
+		};
+	}
+
+	if (typeName === "enum" || typeName === "ZodEnum") {
+		return {
+			schema: {
+				type: "string",
+				enum: def?.values ?? [],
+				...(description ? { description } : {}),
+			},
+			optional: false,
+		};
+	}
+
+	// Default to string
+	return {
+		schema: {
+			type: "string",
+			...(description ? { description } : {}),
+		},
+		optional: false,
+	};
+}
+
+/**
  * Direct Anthropic API provider.
  * Uses the Messages API with tool use for a lightweight, controllable agent loop.
  * No Claude Code subprocess — direct API calls with custom tool execution.
@@ -371,9 +449,27 @@ export class DirectProvider implements AgentProvider {
 			{ role: "user", content: request.prompt },
 		];
 
-		// Add MCP tool definitions if any
-		const allTools = [...TOOLS];
-		// Note: MCP tools from request.mcpServers are not yet supported in direct mode
+		// Add MCP tool definitions from mcpToolDefs
+		const allTools: Tool[] = [...TOOLS];
+		// biome-ignore lint/suspicious/noExplicitAny: SdkMcpToolDefinition generic varies
+		const mcpHandlers = new Map<string, SdkMcpToolDefinition<any>>();
+
+		if (request.mcpToolDefs) {
+			for (const [serverName, defs] of Object.entries(request.mcpToolDefs)) {
+				for (const def of defs) {
+					const toolName = `mcp__${serverName}__${def.name}`;
+					mcpHandlers.set(toolName, def);
+
+					// Convert Zod schema to JSON Schema for the API
+					const jsonSchema = zodShapeToJsonSchema(def.inputSchema);
+					allTools.push({
+						name: toolName,
+						description: def.description,
+						input_schema: jsonSchema as Tool["input_schema"],
+					});
+				}
+			}
+		}
 
 		let turns = 0;
 		let totalInputTokens = 0;
@@ -435,17 +531,37 @@ export class DirectProvider implements AgentProvider {
 			// Execute tools and collect results
 			const toolResults: ToolResultBlockParam[] = [];
 			for (const toolUse of toolUses) {
-				const result = await executeTool(
-					toolUse.name,
-					toolUse.input as Record<string, unknown>,
-					cwd,
-				);
-				toolResults.push({
-					type: "tool_result",
-					tool_use_id: toolUse.id,
-					content: result.content,
-					is_error: result.isError,
-				});
+				const mcpHandler = mcpHandlers.get(toolUse.name);
+				if (mcpHandler) {
+					// Route to MCP tool handler
+					const mcpResult = await mcpHandler.handler(
+						toolUse.input as Record<string, unknown>,
+						{},
+					);
+					const text = mcpResult.content
+						.map((c: { type: string; text?: string }) =>
+							c.type === "text" ? (c.text ?? "") : JSON.stringify(c),
+						)
+						.join("\n");
+					toolResults.push({
+						type: "tool_result",
+						tool_use_id: toolUse.id,
+						content: text,
+						is_error: mcpResult.isError ?? false,
+					});
+				} else {
+					const result = await executeTool(
+						toolUse.name,
+						toolUse.input as Record<string, unknown>,
+						cwd,
+					);
+					toolResults.push({
+						type: "tool_result",
+						tool_use_id: toolUse.id,
+						content: result.content,
+						is_error: result.isError,
+					});
+				}
 			}
 
 			// Add tool results to history
