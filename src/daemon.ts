@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
+import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
+import type { WSContext } from "hono/ws";
 import type { AgentProvider } from "./agent-provider.ts";
 import { CostAccumulator, createOrchestratorTools } from "./agent-tools.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
@@ -13,6 +15,30 @@ import type { DecomposedTask, HealthResponse, TaskStatus } from "./types.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 
 const VERSION = "0.0.1";
+
+/** WebSocket client connection with project subscription. */
+interface WSClient {
+	ws: WSContext;
+	projectId: string | null;
+}
+
+/** Broadcast an event to all WebSocket clients subscribed to a project. */
+function broadcast(
+	clients: Set<WSClient>,
+	projectId: string,
+	event: Record<string, unknown>,
+) {
+	const msg = JSON.stringify(event);
+	for (const client of clients) {
+		if (client.projectId === projectId) {
+			try {
+				client.ws.send(msg);
+			} catch {
+				/* client disconnected */
+			}
+		}
+	}
+}
 const startTime = Date.now();
 
 export interface DaemonConfig {
@@ -30,6 +56,20 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const pm = new ProjectManager(config.dataDir);
 	const trackers = new Map<string, TaskTracker>();
 	const activeOrchestrations = new Set<string>();
+	const wsClients = new Set<WSClient>();
+
+	/** Broadcast a tree update to all subscribers of a project. */
+	function broadcastTreeUpdate(projectId: string, tracker: TaskTracker) {
+		broadcast(wsClients, projectId, {
+			type: "tree_updated",
+			nodes: tracker.allNodes(),
+		});
+	}
+
+	/** Broadcast an agent event to subscribers. */
+	function broadcastEvent(projectId: string, event: Record<string, unknown>) {
+		broadcast(wsClients, projectId, event);
+	}
 
 	/** Read .opengraft/memory.md from a project directory. Returns empty string if not found. */
 	function readProjectMemory(projectPath: string): string {
@@ -544,7 +584,186 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		});
 	});
 
-	return { app, pm };
+	// WebSocket endpoint for real-time updates
+	app.get(
+		"/ws",
+		upgradeWebSocket((_c) => {
+			const client: WSClient = {
+				ws: null as unknown as WSContext,
+				projectId: null,
+			};
+
+			return {
+				onOpen(_evt, ws) {
+					client.ws = ws;
+					wsClients.add(client);
+				},
+				onMessage(evt, ws) {
+					try {
+						const msg = JSON.parse(
+							typeof evt.data === "string" ? evt.data : "",
+						) as {
+							type: string;
+							projectId?: string;
+							prompt?: string;
+							maxTurns?: number;
+						};
+
+						if (msg.type === "subscribe" && msg.projectId) {
+							client.projectId = msg.projectId;
+							// Send current tree immediately
+							const tracker = trackers.get(msg.projectId);
+							if (tracker) {
+								ws.send(
+									JSON.stringify({
+										type: "tree_updated",
+										nodes: tracker.allNodes(),
+									}),
+								);
+							}
+						}
+
+						if (msg.type === "orchestrate" && msg.projectId && msg.prompt) {
+							// Trigger orchestration asynchronously
+							runOrchestrateViaWS(
+								msg.projectId,
+								msg.prompt,
+								msg.maxTurns ?? 50,
+							);
+						}
+					} catch {
+						/* ignore parse errors */
+					}
+				},
+				onClose() {
+					wsClients.delete(client);
+				},
+			};
+		}),
+	);
+
+	/** Run orchestration triggered via WebSocket, broadcasting events. */
+	async function runOrchestrateViaWS(
+		projectId: string,
+		prompt: string,
+		maxTurns: number,
+	) {
+		const project = pm.get(projectId);
+		if (!project) return;
+
+		if (activeOrchestrations.has(projectId)) {
+			broadcastEvent(projectId, {
+				type: "error",
+				message: "Orchestration already running",
+			});
+			return;
+		}
+
+		activeOrchestrations.add(projectId);
+		broadcastEvent(projectId, { type: "orchestration_started" });
+
+		const tracker = await getTracker(projectId);
+		const wtRoot = join(project.path, ".worktrees");
+		const wm = new WorktreeManager(project.path, wtRoot);
+
+		const costAccumulator = new CostAccumulator();
+
+		// Wrap the orchestrator tools to broadcast events on state changes
+		const mcpServer = createOrchestratorTools(
+			{
+				tracker,
+				provider: config.agentProvider,
+				worktrees: wm,
+				projectPath: project.path,
+				onTaskEvent: (event) => {
+					broadcastEvent(projectId, event);
+					// Also broadcast tree update after any task event
+					broadcastTreeUpdate(projectId, tracker);
+				},
+			},
+			costAccumulator,
+		);
+
+		const memory = readProjectMemory(project.path);
+		const fullPrompt = memory
+			? `## Project Memory\n${memory}\n\n${prompt}`
+			: prompt;
+
+		try {
+			// Use streaming to capture agent events
+			const gen = config.agentProvider.stream({
+				prompt: fullPrompt,
+				cwd: project.path,
+				systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
+				maxTurns,
+				mcpServers: { opengraft: mcpServer },
+			});
+
+			let finalResult: {
+				success: boolean;
+				output: string;
+				sessionId?: string;
+				costUsd?: number;
+			} = {
+				success: false,
+				output: "",
+			};
+			let result = await gen.next();
+			while (!result.done) {
+				// Forward agent events to WS clients
+				const agentEvent = result.value;
+				broadcastEvent(projectId, {
+					type: "agent_event",
+					eventType: agentEvent.type,
+					...(agentEvent.type === "tool_use"
+						? { tool: agentEvent.tool, input: agentEvent.input }
+						: agentEvent.type === "text"
+							? { content: agentEvent.content }
+							: agentEvent.type === "status"
+								? { message: agentEvent.message }
+								: {
+										message: "message" in agentEvent ? agentEvent.message : "",
+									}),
+				});
+				result = await gen.next();
+			}
+			finalResult = result.value;
+
+			if (finalResult.sessionId) {
+				tracker.orchestratorSessionId = finalResult.sessionId;
+				await tracker.save();
+			}
+
+			const totalCostUsd =
+				(finalResult.costUsd ?? 0) + costAccumulator.totalCostUsd;
+
+			broadcastEvent(projectId, {
+				type: "orchestration_completed",
+				success: finalResult.success,
+				costUsd: totalCostUsd,
+				childCosts: {
+					totalCostUsd: costAccumulator.totalCostUsd,
+					totalTurns: costAccumulator.totalTurns,
+					taskCount: costAccumulator.taskCount,
+				},
+			});
+			broadcastTreeUpdate(projectId, tracker);
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			broadcastEvent(projectId, {
+				type: "error",
+				message,
+			});
+		} finally {
+			activeOrchestrations.delete(projectId);
+		}
+	}
+
+	// Static file serving for the web UI
+	app.get("/", (c) => c.redirect("/web/index.html"));
+	app.use("/web/*", serveStatic({ root: "./" }));
+
+	return { app, pm, wsClients };
 }
 
 const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. You break goals into tasks and execute them.
@@ -653,8 +872,10 @@ if (import.meta.main) {
 	const { app, pm } = createApp();
 	await pm.load();
 	console.log(`OpenGraft daemon listening on http://localhost:${port}`);
+	console.log(`Web UI: http://localhost:${port}/`);
 	Bun.serve({
 		fetch: app.fetch,
 		port,
+		websocket,
 	});
 }

@@ -51,6 +51,8 @@ export interface OrchestratorToolsDeps {
 	provider: AgentProvider;
 	worktrees: WorktreeManager;
 	projectPath: string;
+	/** Optional callback for broadcasting task events (e.g., to WebSocket clients). */
+	onTaskEvent?: (event: Record<string, unknown>) => void;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -85,8 +87,9 @@ export function createOrchestratorTools(
 	deps: OrchestratorToolsDeps,
 	costAccumulator?: CostAccumulator,
 ) {
-	const { tracker, provider, worktrees, projectPath } = deps;
+	const { tracker, provider, worktrees, projectPath, onTaskEvent } = deps;
 	const costs = costAccumulator ?? new CostAccumulator();
+	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
 
 	return createSdkMcpServer({
 		name: "opengraft",
@@ -248,6 +251,7 @@ export function createOrchestratorTools(
 						tracker.assignWorktree(node.id, wt.branch, wt.path);
 						tracker.updateStatus(node.id, "in_progress");
 						await tracker.save();
+						emit({ type: "task_started", taskId: node.id, title: node.title });
 
 						// Build prompt
 						const memory = readMemory(projectPath);
@@ -272,6 +276,12 @@ export function createOrchestratorTools(
 
 						const newStatus = result.success ? "passed" : "failed";
 						tracker.updateStatus(node.id, newStatus);
+						emit({
+							type: "task_completed",
+							taskId: node.id,
+							title: node.title,
+							success: result.success,
+						});
 						await tracker.save();
 
 						return {
@@ -386,6 +396,11 @@ export function createOrchestratorTools(
 								tracker.assignWorktree(child.id, wt.branch, wt.path);
 								tracker.updateStatus(child.id, "in_progress");
 								await tracker.save();
+								emit({
+									type: "task_started",
+									taskId: child.id,
+									title: child.title,
+								});
 
 								const memory = readMemory(projectPath);
 								const prompt = buildTaskPrompt(child, tracker, memory);
@@ -406,6 +421,12 @@ export function createOrchestratorTools(
 								const newStatus = result.success ? "passed" : "failed";
 								tracker.updateStatus(child.id, newStatus);
 								await tracker.save();
+								emit({
+									type: "task_completed",
+									taskId: child.id,
+									title: child.title,
+									success: result.success,
+								});
 
 								return {
 									taskId: child.id,

@@ -157,26 +157,19 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] E2E validated: runner parallel execution (2 children + merge, ~2min)
 - [x] Full pipeline E2E: decompose (4 tasks) → execute (3 children parallel, ~3.5min)
 
-### Phase 2 (IN PROGRESS)
+### Phase 2 (COMPLETE)
 - [x] CLI: `og init`, `og list`, `og status`, `og run`, `og decompose`, `og execute`, `og retry`
-- [x] Better decomposition: merge-safe prompt (non-overlapping file boundaries)
-- [x] Retry endpoint: POST /tasks/:nodeId/retry (reset failed/stuck → pending)
-- [x] MCP server for agent tools: get_tree, create_task, update_task_status, spawn_task, merge_branch
-- [x] AgentRequest.mcpServers support in ClaudeCodeProvider
-- [x] POST /orchestrate/agent endpoint: agent-driven orchestration with MCP tools
-- [x] CLI `og orchestrate` command
-- [x] E2E validated: agent orchestrator creates 3 tasks + executes via MCP tools (17 turns, $0.18)
-- [x] spawn_children tool for true parallel execution via Promise.all
-- [x] E2E validated: 2 independent modules spawned in parallel (23 turns, $0.32)
-- [x] cleanup_worktrees MCP tool for post-orchestration cleanup
-- [x] Orchestrator session persistence + resume (--resume flag in CLI)
-- [x] Cost tracking: CostAccumulator across orchestrator + child agents
-- [x] Concurrent orchestration guard (409 on double-run)
-- [x] Orchestrator prompt tuning: explicit finalization steps, root marked as passed
-- [x] E2E validated: 4-node tree (root + setup + 2 modules), all passed (22 turns, $0.99)
-- [x] 自举测试成功
+- [x] MCP tools: get_tree, create_task, update_task_status, spawn_task, spawn_children, merge_branch, cleanup_worktrees
+- [x] Agent-driven orchestration (POST /orchestrate/agent) with session persistence + cost tracking
+- [x] Git-clean guard: require clean working tree before spawn
+- [x] Rename .ai → .opengraft, .ai-daemon → .opengraft-daemon
+- [x] Bootstrap verified: OpenGraft orchestrates its own development (version.ts task)
 
-### Phase 3 (NEXT)
+### Phase 3 (IN PROGRESS)
+- [ ] Web UI: real-time task tree dashboard served by daemon
+- [ ] WebSocket endpoint for live task tree + agent event streaming
+- [ ] Real-time agent activity: see tool calls, text output, errors as they happen
+- [ ] User interaction: send instructions to running agents mid-execution
+- [ ] CLI agent activity view (debug mode)
 - [ ] Direct Anthropic API: bypass Claude Code subprocess, use Messages API directly
 - [ ] Multi-model support: select model per task (cheap model for simple tasks)
-- [ ] Web UI: real-time dashboard for task tree visualization
