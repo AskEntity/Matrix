@@ -104,6 +104,27 @@ export function createOrchestratorTools(
 	const costs = costAccumulator ?? new CostAccumulator();
 	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
 
+	/** Execute a child agent with streaming, forwarding events tagged with taskId. */
+	async function executeChildStreaming(
+		request: AgentRequest,
+		taskId: string,
+	): Promise<{
+		success: boolean;
+		output: string;
+		costUsd?: number;
+		turns?: number;
+		sessionId?: string;
+	}> {
+		const stream = provider.stream(request);
+		let result = await stream.next();
+		while (!result.done) {
+			const { type: eventType, ...eventData } = result.value;
+			emit({ type: "agent_event", taskId, eventType, ...eventData });
+			result = await stream.next();
+		}
+		return result.value;
+	}
+
 	const toolDefs = [
 		tool(
 			"get_tree",
@@ -271,8 +292,8 @@ export function createOrchestratorTools(
 						resumeSessionId: node.sessionId ?? undefined,
 					};
 
-					// Execute agent (this blocks until the child agent finishes)
-					const result = await provider.execute(request);
+					// Execute agent with streaming (forwards events to UI)
+					const result = await executeChildStreaming(request, node.id);
 
 					// Store session ID and accumulate cost
 					if (result.sessionId) {
@@ -407,13 +428,16 @@ export function createOrchestratorTools(
 							const memory = readMemory(projectPath);
 							const prompt = buildTaskPrompt(child, tracker, memory);
 
-							const result = await provider.execute({
-								prompt,
-								cwd: wt.path,
-								systemPrompt: TASK_SYSTEM_PROMPT,
-								maxTurns: 30,
-								resumeSessionId: child.sessionId ?? undefined,
-							});
+							const result = await executeChildStreaming(
+								{
+									prompt,
+									cwd: wt.path,
+									systemPrompt: TASK_SYSTEM_PROMPT,
+									maxTurns: 30,
+									resumeSessionId: child.sessionId ?? undefined,
+								},
+								child.id,
+							);
 
 							if (result.sessionId) {
 								tracker.assignSession(child.id, result.sessionId);

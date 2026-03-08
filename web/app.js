@@ -6,6 +6,8 @@ let selectedProjectId = "";
 let selectedTaskId = null;
 /** @type {Map<string, object>} */
 const taskNodes = new Map();
+/** @type {Map<string, Array<{eventType: string, text: string}>>} */
+const taskEvents = new Map();
 
 // DOM refs
 const projectSelect = document.getElementById("project-select");
@@ -27,6 +29,7 @@ const taskDetail = document.getElementById("task-detail");
 const btnCloseDetail = document.getElementById("btn-close-detail");
 const continueForm = document.getElementById("continue-form");
 const continueInput = document.getElementById("continue-input");
+const detailLog = document.getElementById("detail-log");
 
 // --- WebSocket ---
 
@@ -270,6 +273,9 @@ function showDetail(node) {
 	);
 	setDetailField("detail-message", "Message", node.message);
 
+	// Render per-task agent output
+	renderDetailLog(node.id);
+
 	// Show continue form for failed/stuck tasks
 	if (node.status === "failed" || node.status === "stuck") {
 		continueForm.classList.remove("hidden");
@@ -291,6 +297,22 @@ function escapeHtml(text) {
 	const div = document.createElement("div");
 	div.textContent = text;
 	return div.innerHTML;
+}
+
+function renderDetailLog(taskId) {
+	detailLog.innerHTML = "";
+	const events = taskEvents.get(taskId) || [];
+	for (const evt of events) {
+		appendDetailLogEntry(evt.eventType, evt.text);
+	}
+}
+
+function appendDetailLogEntry(eventType, text) {
+	const div = document.createElement("div");
+	div.className = `detail-log-entry event-${eventType}`;
+	div.textContent = text;
+	detailLog.appendChild(div);
+	detailLog.scrollTop = detailLog.scrollHeight;
 }
 
 function closeDetail() {
@@ -363,17 +385,27 @@ function logEntry(eventType, text) {
 }
 
 function logAgentEvent(msg) {
+	let text;
 	if (msg.eventType === "tool_use") {
-		logEntry(
-			"agent_event",
-			`Tool: ${msg.tool} ${JSON.stringify(msg.input || {}).slice(0, 200)}`,
-		);
+		text = `Tool: ${msg.tool} ${JSON.stringify(msg.input || {}).slice(0, 200)}`;
 	} else if (msg.eventType === "text") {
-		logEntry("agent_event", msg.content || "");
+		text = msg.content || "";
 	} else if (msg.eventType === "status") {
-		logEntry("agent_event", `Status: ${msg.message}`);
+		text = `Status: ${msg.message}`;
 	} else {
-		logEntry("agent_event", JSON.stringify(msg).slice(0, 300));
+		text = JSON.stringify(msg).slice(0, 300);
+	}
+
+	logEntry("agent_event", text);
+
+	// Store per-task events for the detail panel
+	if (msg.taskId) {
+		if (!taskEvents.has(msg.taskId)) taskEvents.set(msg.taskId, []);
+		taskEvents.get(msg.taskId).push({ eventType: msg.eventType, text });
+		// If this task is currently selected, append to detail log
+		if (msg.taskId === selectedTaskId) {
+			appendDetailLogEntry(msg.eventType, text);
+		}
 	}
 }
 

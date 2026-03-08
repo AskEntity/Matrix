@@ -257,9 +257,10 @@ section {
 #task-detail {
 	border-bottom: 1px solid var(--border);
 	background: var(--bg-secondary);
-	max-height: 45%;
+	max-height: 60%;
 	display: flex;
 	flex-direction: column;
+	overflow-y: auto;
 }
 
 #task-detail .panel-header h2 {
@@ -336,6 +337,47 @@ section {
 .status-badge.stuck {
 	background: rgba(240, 136, 62, 0.2);
 	color: var(--orange);
+}
+
+#detail-log-section {
+	padding: 0 16px 12px;
+}
+
+#detail-log {
+	max-height: 300px;
+	overflow-y: auto;
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 6px;
+	padding: 8px 12px;
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.5;
+	margin-top: 4px;
+}
+
+#detail-log:empty::after {
+	content: "No events yet";
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+.detail-log-entry {
+	padding: 2px 0;
+	color: var(--text-secondary);
+	word-break: break-all;
+}
+
+.detail-log-entry.event-tool_use {
+	color: var(--blue);
+}
+
+.detail-log-entry.event-text {
+	color: var(--text);
+}
+
+.detail-log-entry.event-error {
+	color: var(--red);
 }
 
 #detail-actions {
