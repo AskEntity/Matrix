@@ -273,7 +273,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		const body = await c.req.json<{ prompt: string; maxTurns?: number }>();
+		const body = await c.req.json<{
+			prompt: string;
+			maxTurns?: number;
+			model?: string;
+		}>();
 		if (!body.prompt) {
 			return c.json({ error: "prompt is required" }, 400);
 		}
@@ -282,6 +286,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				prompt: withMemory(project.path, body.prompt),
 				cwd: project.path,
 				maxTurns: body.maxTurns,
+				model: body.model,
 			});
 			return c.json(result);
 		} catch (e) {
@@ -296,7 +301,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		const body = await c.req.json<{ prompt: string; maxTurns?: number }>();
+		const body = await c.req.json<{
+			prompt: string;
+			maxTurns?: number;
+			model?: string;
+		}>();
 		if (!body.prompt) {
 			return c.json({ error: "prompt is required" }, 400);
 		}
@@ -317,6 +326,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						prompt: withMemory(project.path, body.prompt),
 						cwd: project.path,
 						maxTurns: body.maxTurns,
+						model: body.model,
 					});
 
 					let result = await gen.next();
