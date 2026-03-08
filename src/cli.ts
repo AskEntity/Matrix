@@ -314,64 +314,6 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 	}
 }
 
-async function handleExecute(): Promise<void> {
-	const projectId = await resolveCurrentProject();
-	if (!projectId) return;
-
-	console.log("Executing task tree...");
-
-	// Use SSE endpoint for real-time output
-	const res = await fetch(
-		`${DAEMON_URL}/projects/${projectId}/execute/stream`,
-		{
-			method: "POST",
-		},
-	);
-
-	if (!res.ok || !res.body) {
-		console.error("Error: execution failed");
-		process.exit(1);
-	}
-
-	const reader = res.body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
-
-	while (true) {
-		const { done, value } = await reader.read();
-		if (done) break;
-
-		buffer += decoder.decode(value, { stream: true });
-		const lines = buffer.split("\n");
-		buffer = lines.pop() ?? "";
-
-		for (const line of lines) {
-			if (line.startsWith("data: ")) {
-				const data = JSON.parse(line.slice(6));
-				if (data.type === "task_started") {
-					console.log(`> Starting: ${data.title}`);
-				} else if (data.type === "task_completed") {
-					const icon = data.success ? "+" : "x";
-					console.log(`${icon} Completed: ${data.title}`);
-				} else if (data.type === "merge_started") {
-					console.log(`> Merging: ${data.title}`);
-				} else if (data.type === "merge_completed") {
-					const icon = data.success ? "+" : "x";
-					console.log(
-						`${icon} Merge: ${data.success ? "succeeded" : "failed"}`,
-					);
-				} else if (data.type === "error") {
-					console.error(`! Error: ${data.message}`);
-				} else if (data.completed !== undefined) {
-					// Final result
-					console.log("");
-					console.log(`Completed: ${data.completed}, Failed: ${data.failed}`);
-				}
-			}
-		}
-	}
-}
-
 async function resolveProject(idOrPath?: string): Promise<string | null> {
 	if (idOrPath) {
 		// Try as ID first
@@ -601,10 +543,6 @@ switch (command) {
 	case "orch":
 		await handleOrchestrate(args);
 		break;
-	case "execute":
-	case "exec":
-		await handleExecute();
-		break;
 	case "continue":
 	case "cont":
 		await handleContinue(args);
@@ -634,7 +572,6 @@ switch (command) {
 		console.log(
 			"  orchestrate <goal>  Agent-driven: decompose + execute + merge",
 		);
-		console.log("  execute         Execute task tree with worktrees");
 		console.log("  continue <taskId> [msg]  Continue a failed/stuck task");
 		console.log("  watch           Watch agent activity in real-time");
 		console.log("  send <msg>      Send instruction to running agent");
