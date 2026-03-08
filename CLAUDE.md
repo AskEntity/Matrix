@@ -172,5 +172,10 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Orchestrator session persistence + resume (--resume flag in CLI)
 - [x] Cost tracking: CostAccumulator across orchestrator + child agents
 - [x] Concurrent orchestration guard (409 on double-run)
-- [ ] Comprehensive orchestration E2E: parallel spawn + merge + verify on merged branch
-- [ ] Agent system prompt tuning: ensure agent uses spawn_children over spawn_task
+- [x] Orchestrator prompt tuning: explicit finalization steps, root marked as passed
+- [x] E2E validated: 4-node tree (root + setup + 2 modules), all passed (22 turns, $0.99)
+
+### Phase 3 (NEXT)
+- [ ] Direct Anthropic API: bypass Claude Code subprocess, use Messages API directly
+- [ ] Multi-model support: select model per task (cheap model for simple tasks)
+- [ ] Web UI: real-time dashboard for task tree visualization
