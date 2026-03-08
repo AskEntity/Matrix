@@ -70,7 +70,8 @@ Project lifecycle is deterministic code, not agent work.
 | POST | /projects/:id/run | Execute agent task (one-shot) |
 | POST | /projects/:id/stream | Execute agent task (SSE streaming) |
 | POST | /projects/:id/decompose | Agent breaks goal into task tree |
-| POST | /projects/:id/orchestrate | Run pending tasks through agent |
+| POST | /projects/:id/execute | Run task tree with worktree isolation (parallel) |
+| POST | /projects/:id/orchestrate | Run pending tasks sequentially (legacy) |
 
 ## Key Files
 
@@ -82,6 +83,9 @@ Project lifecycle is deterministic code, not agent work.
 | src/claude-code-provider.ts | Phase 0 impl: delegates to Claude Agent SDK |
 | src/project-manager.ts | Project init/CRUD, .ai/ setup, git init |
 | src/task-tracker.ts | Task tree CRUD, persistence to JSON |
+| src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
+| src/runner.ts | Agent-driven parallel task execution with worktree isolation |
+| src/orchestrator.ts | Legacy sequential orchestrator (kept for backward compat) |
 | src/orchestrator.ts | Picks pending tasks, spawns agents, updates status |
 | src/daemon.test.ts | API route tests (30 tests) |
 | src/project-manager.test.ts | ProjectManager unit tests |
@@ -140,4 +144,9 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] E2E validated: orchestrator completes 2-node task tree (37 turns, $0.47)
 - [x] Context compression survival: memory.md read on agent start
 - [x] Task decomposition: POST /projects/:id/decompose — agent breaks goal into task tree
-- [ ] Orchestrator SSE streaming (real-time progress for UI)
+- [x] WorktreeManager: git worktree lifecycle for task isolation
+- [x] Session persistence: AgentRequest.resumeSessionId + AgentResult.sessionId
+- [x] Runner: parallel task execution with worktree isolation, event system
+- [x] POST /projects/:id/execute endpoint (worktree-based parallel)
+- [ ] SSE streaming for /execute (real-time runner events)
+- [ ] Parent agent resume: wake parent when all children complete and merge
