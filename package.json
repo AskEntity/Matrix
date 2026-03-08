@@ -2,6 +2,9 @@
 	"name": "opengraft",
 	"type": "module",
 	"private": true,
+	"bin": {
+		"og": "src/cli.ts"
+	},
 	"scripts": {
 		"dev": "bun run --watch src/daemon.ts",
 		"test": "bun test",
