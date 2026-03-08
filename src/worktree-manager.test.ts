@@ -133,16 +133,33 @@ describe("WorktreeManager", () => {
 		await exec(["git", "add", "-A"], info.path);
 		await exec(["git", "commit", "-m", "add new file"], info.path);
 
-		// Get current branch name (could be main or master)
-		const currentBranch = (
-			await exec(["git", "rev-parse", "--abbrev-ref", "HEAD"], repoDir)
-		).trim();
-
-		const success = await mgr.merge(taskId, "merge-me", currentBranch);
+		// Merge into main repo (repoDir has the target branch checked out)
+		const success = await mgr.merge(taskId, "merge-me", repoDir);
 		expect(success).toBe(true);
 
 		// The merged file should now exist in the main repo
 		expect(existsSync(join(repoDir, "new-file.txt"))).toBe(true);
+	});
+
+	test("mergeAndCleanup merges and removes worktree", async () => {
+		const taskId = "dddddddd-2222-3333-4444-555555555555";
+		const info = await mgr.create(taskId, "finalize-me");
+
+		// Make a change in the worktree
+		await writeFile(join(info.path, "finalized.txt"), "done\n");
+		await exec(["git", "add", "-A"], info.path);
+		await exec(["git", "commit", "-m", "add finalized file"], info.path);
+
+		const success = await mgr.mergeAndCleanup(taskId, "finalize-me", repoDir);
+		expect(success).toBe(true);
+
+		// File should be merged
+		expect(existsSync(join(repoDir, "finalized.txt"))).toBe(true);
+		// Worktree should be gone
+		expect(existsSync(info.path)).toBe(false);
+		// Branch should be gone
+		const branches = await exec(["git", "branch"], repoDir);
+		expect(branches).not.toContain("og/dddddddd/finalize-me");
 	});
 
 	test("merge returns false on conflict", async () => {
@@ -158,10 +175,7 @@ describe("WorktreeManager", () => {
 		await exec(["git", "add", "-A"], info.path);
 		await exec(["git", "commit", "-m", "worktree change"], info.path);
 
-		const currentBranch = (
-			await exec(["git", "rev-parse", "--abbrev-ref", "HEAD"], repoDir)
-		).trim();
-		const success = await mgr.merge(taskId, "conflict", currentBranch);
+		const success = await mgr.merge(taskId, "conflict", repoDir);
 		expect(success).toBe(false);
 
 		// Abort the failed merge

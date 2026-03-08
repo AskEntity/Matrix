@@ -190,6 +190,9 @@ export class Runner {
 		const parent = this.tracker.get(parentId);
 		if (!parent?.branch) return false;
 
+		// Merge target: parent's worktree, or the main project path
+		const mergeCwd = parent.worktreePath || this.projectPath;
+
 		this.emit({
 			type: "merge_started",
 			taskId: parentId,
@@ -202,7 +205,11 @@ export class Runner {
 		let allMerged = true;
 		for (const child of passed) {
 			const slug = this.slugify(child.title);
-			const success = await this.worktrees.merge(child.id, slug, parent.branch);
+			const success = await this.worktrees.mergeAndCleanup(
+				child.id,
+				slug,
+				mergeCwd,
+			);
 			if (!success) {
 				allMerged = false;
 				this.emit({

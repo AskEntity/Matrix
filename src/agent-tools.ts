@@ -474,64 +474,115 @@ export function createOrchestratorTools(
 			),
 
 			tool(
-				"merge_branch",
-				"Merge a task's branch into a target branch. Used after child tasks complete to integrate their work.",
+				"finalize_task",
+				"Finalize a completed child task: merge its branch into the parent's branch, " +
+					"then clean up the child's worktree and branch. " +
+					"This is an atomic operation — call it for each passed child task. " +
+					"The merge happens in the parent's worktree directory (where the target branch is checked out), " +
+					"so there's no checkout in the main repo.",
 				{
-					taskId: z.string().describe("ID of the task whose branch to merge"),
-					targetBranch: z
-						.string()
-						.describe("Branch to merge into (usually the parent's branch)"),
+					taskId: z.string().describe("ID of the child task to finalize"),
 				},
 				async (args) => {
 					const node = tracker.get(args.taskId);
 					if (!node) {
 						return {
 							content: [
-								{ type: "text" as const, text: "Error: Task not found" },
+								{
+									type: "text" as const,
+									text: "Error: Task not found",
+								},
 							],
 							isError: true,
 						};
 					}
-					if (!node.branch) {
+					if (!node.branch || !node.worktreePath) {
 						return {
 							content: [
 								{
 									type: "text" as const,
-									text: "Error: Task has no branch assigned",
+									text: "Error: Task has no branch/worktree assigned",
+								},
+							],
+							isError: true,
+						};
+					}
+					if (node.status !== "passed") {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Error: Task status is "${node.status}", must be "passed" to finalize`,
 								},
 							],
 							isError: true,
 						};
 					}
 
+					// Find the parent's worktree path to merge into
+					const parent = node.parentId ? tracker.get(node.parentId) : undefined;
+					// Merge target: parent's worktree, or the main repo if no parent worktree
+					const mergeCwd = parent?.worktreePath ?? projectPath;
+
 					try {
 						const slug = slugify(node.title);
-						const success = await worktrees.merge(
+						const success = await worktrees.mergeAndCleanup(
 							node.id,
 							slug,
-							args.targetBranch,
+							mergeCwd,
 						);
+
+						if (!success) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: JSON.stringify(
+											{
+												merged: false,
+												branch: node.branch,
+												reason:
+													"Merge conflict — resolve manually or retry the task",
+											},
+											null,
+											2,
+										),
+									},
+								],
+								isError: true,
+							};
+						}
+
+						// Clear worktree path since it's been cleaned up
+						tracker.assignWorktree(node.id, node.branch, "");
+
 						return {
 							content: [
 								{
 									type: "text" as const,
 									text: JSON.stringify(
 										{
-											merged: success,
+											finalized: true,
+											taskId: node.id,
+											title: node.title,
+											mergedInto: mergeCwd,
 											branch: node.branch,
-											into: args.targetBranch,
 										},
 										null,
 										2,
 									),
 								},
 							],
-							...(success ? {} : { isError: true }),
 						};
 					} catch (e) {
 						const message = e instanceof Error ? e.message : "Unknown error";
 						return {
-							content: [{ type: "text" as const, text: `Error: ${message}` }],
+							content: [
+								{
+									type: "text" as const,
+									text: `Error: ${message}`,
+								},
+							],
 							isError: true,
 						};
 					}
@@ -539,14 +590,15 @@ export function createOrchestratorTools(
 			),
 			tool(
 				"cleanup_worktrees",
-				"Clean up all worktrees and their branches. Call this after orchestration is complete to free disk space.",
+				"Clean up all remaining worktrees and branches. " +
+					"Use this as a last resort after orchestration to clean up any leftovers. " +
+					"Prefer finalize_task for individual tasks.",
 				{},
 				async () => {
 					try {
 						const list = await worktrees.list();
 						await worktrees.cleanup();
 
-						// Also clean up og/ branches that may remain
 						return {
 							content: [
 								{
@@ -565,7 +617,12 @@ export function createOrchestratorTools(
 					} catch (e) {
 						const message = e instanceof Error ? e.message : "Unknown error";
 						return {
-							content: [{ type: "text" as const, text: `Error: ${message}` }],
+							content: [
+								{
+									type: "text" as const,
+									text: `Error: ${message}`,
+								},
+							],
 							isError: true,
 						};
 					}

@@ -826,26 +826,34 @@ const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. Yo
 - create_task: Add tasks to the tree (root or children)
 - update_task_status: Update a task's status
 - spawn_task: Execute a single task on an isolated git worktree (blocks until done)
-- spawn_children: Execute ALL pending children of a parent in PARALLEL (recommended over spawn_task)
-- merge_branch: Merge a completed task's branch into a target branch
-- cleanup_worktrees: Clean up all worktrees after orchestration is done
+- spawn_children: Execute ALL pending children of a parent in PARALLEL (recommended)
+- finalize_task: Merge a passed child's branch into its parent, then clean up worktree + branch
+- cleanup_worktrees: Clean up all remaining worktrees (last resort)
 
 ## Workflow
 1. Analyze the goal and the codebase
 2. Create a root task, then decompose into child tasks using create_task
 3. CRITICAL: Sibling tasks run in PARALLEL — each must work on DIFFERENT files/modules
 4. Call spawn_children(parentId) to execute all children in parallel
-5. After all children pass, merge each child's branch into the root's branch using merge_branch
-6. Run tests on the merged branch to verify integration works
-7. Mark the root task as "passed" using update_task_status
-8. Call cleanup_worktrees to free disk space
+5. For each passed child, call finalize_task(taskId) — this merges and cleans up atomically
+6. After all children are finalized, mark the root task as "passed"
+7. Call cleanup_worktrees only if there are leftover worktrees
+
+## Task Lifecycle
+pending → in_progress (agent working) → passed/failed → finalized (merged + cleaned up)
+
+finalize_task handles:
+- Merging the child's branch into the parent's worktree (no checkout in main repo)
+- Removing the child's worktree directory
+- Deleting the child's branch
 
 ## Rules
 - Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
 - Never have two siblings modify the same file
 - Keep the tree shallow: 2-3 levels max
 - Each leaf task should be independently executable by a single agent session
-- Use spawn_children for parallel execution — calling spawn_task multiple times runs them sequentially
+- Use spawn_children for parallel execution — calling spawn_task multiple times runs sequentially
+- ALWAYS finalize each passed child before moving on
 - ALWAYS mark the root task as "passed" when everything succeeds, or "failed" if something went wrong`;
 
 const DECOMPOSE_PROMPT = `You are a task decomposition system. Given a high-level goal, break it into a hierarchical task tree.

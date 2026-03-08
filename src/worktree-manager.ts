@@ -100,22 +100,41 @@ export class WorktreeManager {
 		await this.git(["branch", "-D", branch]).exited;
 	}
 
-	/** Merge a task branch into a target branch. Returns true if merge succeeded. */
+	/**
+	 * Merge a task's branch into the target branch.
+	 * Executes the merge from `mergeCwd` (the directory that has targetBranch checked out).
+	 * This avoids checkout in the main repo — the caller decides where the merge happens.
+	 */
 	async merge(
 		taskId: string,
 		slug: string,
-		targetBranch: string,
+		mergeCwd: string,
 	): Promise<boolean> {
 		const branch = this.branchName(taskId, slug);
 
-		// Checkout the target branch in the main repo
-		if ((await this.git(["checkout", targetBranch]).exited) !== 0) return false;
-
-		// Merge the task branch
 		return (
-			(await this.git(["merge", "--no-ff", branch, "-m", `Merge task: ${slug}`])
-				.exited) === 0
+			(await this.git(
+				["merge", "--no-ff", branch, "-m", `Merge task: ${slug}`],
+				mergeCwd,
+			).exited) === 0
 		);
+	}
+
+	/**
+	 * Merge a child's branch and then clean up its worktree + branch.
+	 * Atomic operation: merge → remove worktree → delete branch.
+	 * mergeCwd is the directory that has the target branch checked out.
+	 */
+	async mergeAndCleanup(
+		taskId: string,
+		slug: string,
+		mergeCwd: string,
+	): Promise<boolean> {
+		const merged = await this.merge(taskId, slug, mergeCwd);
+		if (!merged) return false;
+
+		await this.remove(taskId, slug);
+		return true;
 	}
 
 	/** List active worktrees. */
