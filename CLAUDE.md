@@ -19,7 +19,7 @@ bun test src/e2e.test.ts
 
 **How to run unit tests + all checks**:
 ```bash
-bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts  # unit tests
+bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/direct-provider.test.ts  # unit tests
 bun run typecheck   # tsc --noEmit
 bun run check       # biome lint + format
 ```
@@ -90,7 +90,7 @@ Project lifecycle is deterministic code, not agent work.
 | src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, spawn_task, spawn_children, delete_task) |
 | src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, orchestrate, continue, watch, send |
 | web/ | Web UI: task tree, agent activity, message injection (served by daemon) |
-| src/daemon.test.ts | API route tests (58 total across 4 files) |
+| src/daemon.test.ts | API route tests (74 total across 5 files) |
 | src/project-manager.test.ts | ProjectManager unit tests |
 | src/task-tracker.test.ts | TaskTracker unit tests |
 | src/e2e.test.ts | Real agent E2E test (token-gated) |

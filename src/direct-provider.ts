@@ -30,7 +30,8 @@ const MODEL_PRICING: Record<
 	haiku: { inputPer1M: 0.8, outputPer1M: 4 },
 };
 
-function getModelPricing(model: string): {
+/** @internal Exported for testing */
+export function getModelPricing(model: string): {
 	inputPer1M: number;
 	outputPer1M: number;
 } {
@@ -157,11 +158,13 @@ const TOOLS: Tool[] = [
 	},
 ];
 
-function resolvePath(p: string, cwd: string): string {
+/** @internal Exported for testing */
+export function resolvePath(p: string, cwd: string): string {
 	return isAbsolute(p) ? p : join(cwd, p);
 }
 
-async function executeTool(
+/** @internal Exported for testing */
+export async function executeTool(
 	name: string,
 	input: Record<string, unknown>,
 	cwd: string,
