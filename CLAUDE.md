@@ -150,5 +150,6 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] POST /projects/:id/execute endpoint (worktree-based parallel)
 - [x] SSE streaming: POST /execute/stream with real-time runner events
 - [x] Parent agent resume: wake parent with merge prompt when children complete
-- [ ] Full pipeline E2E: decompose → execute → merge (end-to-end with real agent)
-- [ ] Worktree cleanup after successful merge
+- [x] Worktree cleanup after successful parent merge
+- [x] E2E validated: runner parallel execution (2 children + merge, ~2min)
+- [ ] Full pipeline E2E: decompose → execute (end-to-end with real agent)
