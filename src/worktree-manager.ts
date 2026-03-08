@@ -129,12 +129,22 @@ export class WorktreeManager {
 
 	/** Clean up the worktree root directory entirely. */
 	async cleanup(): Promise<void> {
-		// Prune stale worktrees first
+		// Remove each worktree properly via git first
+		const worktrees = await this.list();
+		for (const wt of worktrees) {
+			await this.git(["worktree", "remove", "--force", wt.path]).exited;
+			await this.git(["branch", "-D", wt.branch]).exited;
+		}
+
+		// Prune any stale worktree references
 		await this.git(["worktree", "prune"]).exited;
 
 		if (existsSync(this.worktreeRoot)) {
 			await rm(this.worktreeRoot, { recursive: true });
 		}
+
+		// Ensure main repo stays functional after cleanup
+		await this.git(["config", "core.bare", "false"]).exited;
 	}
 
 	private git(args: string[], cwd?: string) {

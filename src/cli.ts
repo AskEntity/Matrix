@@ -217,58 +217,50 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 	if (!projectId) return;
 
 	console.log(isResume ? "Resuming orchestration..." : "Orchestrating...");
-	const body: Record<string, unknown> = {};
-	if (isResume) {
-		body.resume = true;
-		if (goal) body.prompt = goal;
-	} else {
-		body.prompt = goal;
-	}
 
-	const res = await api(`/projects/${projectId}/orchestrate/agent`, {
-		method: "POST",
-		body: JSON.stringify(body),
+	// Use WebSocket for real-time streaming output
+	const wsUrl = `${DAEMON_URL.replace(/^http/, "ws")}/ws`;
+	const ws = new WebSocket(wsUrl);
+
+	const done = new Promise<void>((resolve) => {
+		ws.onopen = () => {
+			ws.send(JSON.stringify({ type: "subscribe", projectId }));
+			ws.send(
+				JSON.stringify({
+					type: "orchestrate",
+					projectId,
+					prompt: goal || undefined,
+					maxTurns: 50,
+				}),
+			);
+		};
+
+		ws.onmessage = (evt) => {
+			try {
+				const msg = JSON.parse(
+					typeof evt.data === "string" ? evt.data : "",
+				) as Record<string, unknown>;
+				formatWatchEvent(msg);
+
+				if (msg.type === "orchestration_completed" || msg.type === "error") {
+					ws.close();
+					resolve();
+				}
+			} catch {
+				/* ignore */
+			}
+		};
+
+		ws.onerror = () => {
+			console.error("WebSocket error. Falling back to HTTP...");
+			ws.close();
+			resolve();
+		};
+
+		ws.onclose = () => resolve();
 	});
 
-	if (!res.ok) {
-		const err = (await res.json()) as { error: string };
-		console.error(`Error: ${err.error}`);
-		process.exit(1);
-	}
-
-	const result = (await res.json()) as {
-		success: boolean;
-		output: string;
-		costUsd?: number;
-		turns?: number;
-		childCosts?: {
-			totalCostUsd: number;
-			totalTurns: number;
-			taskCount: number;
-		};
-		tree?: {
-			root: { title: string; status: string } | null;
-			nodes: { id: string; title: string; status: string }[];
-		};
-	};
-
-	console.log(result.success ? "Success" : "Failed");
-	if (result.turns) console.log(`Orchestrator turns: ${result.turns}`);
-	if (result.costUsd) console.log(`Total cost: $${result.costUsd.toFixed(4)}`);
-	if (result.childCosts && result.childCosts.taskCount > 0) {
-		console.log(
-			`  Child agents: ${result.childCosts.taskCount} tasks, ${result.childCosts.totalTurns} turns, $${result.childCosts.totalCostUsd.toFixed(4)}`,
-		);
-	}
-	if (result.tree) {
-		console.log(`\nTask tree: ${result.tree.nodes.length} nodes`);
-		for (const node of result.tree.nodes) {
-			const icon = statusEmoji(node.status);
-			console.log(`  ${icon} ${node.title} [${node.status}]`);
-		}
-	}
-	console.log("");
-	console.log(result.output);
+	await done;
 }
 
 async function handleExecute(): Promise<void> {
@@ -390,6 +382,101 @@ async function handleRetry(args: string[]): Promise<void> {
 	console.log(`Retried: ${node.title} -> ${node.status}`);
 }
 
+async function handleWatch(): Promise<void> {
+	const projectId = await resolveCurrentProject();
+	if (!projectId) return;
+
+	const wsUrl = `${DAEMON_URL.replace(/^http/, "ws")}/ws`;
+	console.log(`Connecting to ${wsUrl}...`);
+
+	const ws = new WebSocket(wsUrl);
+
+	ws.onopen = () => {
+		console.log("Connected. Watching agent activity...\n");
+		ws.send(JSON.stringify({ type: "subscribe", projectId }));
+	};
+
+	ws.onclose = () => {
+		console.log("\nDisconnected.");
+		process.exit(0);
+	};
+
+	ws.onerror = () => {
+		console.error("WebSocket error. Is the daemon running?");
+		process.exit(1);
+	};
+
+	ws.onmessage = (evt) => {
+		try {
+			const msg = JSON.parse(
+				typeof evt.data === "string" ? evt.data : "",
+			) as Record<string, unknown>;
+			formatWatchEvent(msg);
+		} catch {
+			/* ignore parse errors */
+		}
+	};
+
+	// Keep process alive
+	await new Promise(() => {});
+}
+
+function formatWatchEvent(msg: Record<string, unknown>): void {
+	const time = new Date().toLocaleTimeString();
+	const type = msg.type as string;
+
+	switch (type) {
+		case "tree_updated": {
+			const nodes = msg.nodes as { title: string; status: string }[];
+			const counts: Record<string, number> = {};
+			for (const n of nodes) {
+				counts[n.status] = (counts[n.status] ?? 0) + 1;
+			}
+			const summary = Object.entries(counts)
+				.map(([s, c]) => `${s}:${c}`)
+				.join(" ");
+			console.log(`${time} [tree] ${nodes.length} nodes (${summary})`);
+			break;
+		}
+		case "agent_event": {
+			const eventType = msg.eventType as string;
+			if (eventType === "tool_use") {
+				const tool = msg.tool as string;
+				const input = JSON.stringify(msg.input ?? {}).slice(0, 120);
+				console.log(`${time} [tool] ${tool} ${input}`);
+			} else if (eventType === "text") {
+				const content = (msg.content as string) ?? "";
+				// Show first line only for brevity
+				const firstLine = content.split("\n")[0]?.slice(0, 120) ?? "";
+				if (firstLine) console.log(`${time} [text] ${firstLine}`);
+			} else if (eventType === "status") {
+				console.log(`${time} [status] ${msg.message}`);
+			}
+			break;
+		}
+		case "task_started":
+			console.log(`${time} [task] > ${msg.title}`);
+			break;
+		case "task_completed":
+			console.log(`${time} [task] ${msg.success ? "+" : "x"} ${msg.title}`);
+			break;
+		case "orchestration_started":
+			console.log(`${time} [orch] Started`);
+			break;
+		case "orchestration_completed":
+			console.log(
+				`${time} [orch] ${msg.success ? "Success" : "Failed"}` +
+					(msg.costUsd ? ` ($${(msg.costUsd as number).toFixed(2)})` : ""),
+			);
+			break;
+		case "error":
+			console.error(`${time} [error] ${msg.message}`);
+			break;
+		default:
+			console.log(`${time} [${type}] ${JSON.stringify(msg).slice(0, 200)}`);
+	}
+}
+
 async function handleHealth(): Promise<void> {
 	try {
 		const res = await api("/health");
@@ -440,6 +527,10 @@ switch (command) {
 	case "retry":
 		await handleRetry(args);
 		break;
+	case "watch":
+	case "w":
+		await handleWatch();
+		break;
 	case "health":
 		await handleHealth();
 		break;
@@ -459,6 +550,7 @@ switch (command) {
 		);
 		console.log("  execute         Execute task tree with worktrees");
 		console.log("  retry <taskId>  Retry a failed/stuck task");
+		console.log("  watch           Watch agent activity in real-time");
 		console.log("  health          Check daemon status");
 		break;
 }
