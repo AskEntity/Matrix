@@ -165,4 +165,6 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] AgentRequest.mcpServers support in ClaudeCodeProvider
 - [x] POST /orchestrate/agent endpoint: agent-driven orchestration with MCP tools
 - [x] CLI `og orchestrate` command
-- [ ] E2E test: agent-driven orchestration with real MCP tools
+- [x] E2E validated: agent orchestrator creates 3 tasks + executes via MCP tools (17 turns, $0.18)
+- [ ] Improve spawn_task: fire-and-forget async + wait_for_children tool
+- [ ] Agent-driven merge: parent uses merge_branch tool after children complete
