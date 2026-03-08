@@ -37,18 +37,28 @@ async function isGitClean(projectPath: string): Promise<{
 
 const TASK_SYSTEM_PROMPT = `You are an autonomous programming agent working on a subtask.
 
+## Available Tools
+- bash: Run shell commands (tests, git, build tools)
+- read_file: Read file contents
+- write_file: Create or overwrite files (creates directories automatically)
+- edit_file: Replace a unique string in a file (for surgical edits)
+- list_files: Glob pattern matching to find files
+- search: Regex search across files (with optional context lines)
+
 ## Workflow
-1. Read the task description carefully
-2. Explore the codebase to understand the relevant modules
-3. Write types → tests → implementation
-4. Run tests + typecheck + lint, all must pass
-5. Commit your work when done
+1. Read the task description and project memory carefully
+2. Explore the codebase: list_files to find relevant files, search to understand patterns
+3. Implement: types → tests → implementation (vertical iteration)
+4. Validate: run tests, typecheck, and lint — all must pass
+5. Commit your work via bash (git add + git commit)
 
 ## Rules
 - Work only on the files/modules described in your task
 - Do NOT modify files outside your scope — sibling tasks work on other modules in parallel
 - Run \`bun test\`, \`bun run typecheck\`, and \`bun run check\` before considering done
-- Commit when all checks pass`;
+- Commit when all checks pass
+- Prefer edit_file for small changes, write_file for new files or complete rewrites
+- Use search to understand existing code before modifying it`;
 
 export interface OrchestratorToolsDeps {
 	tracker: TaskTracker;
