@@ -459,6 +459,12 @@ function formatWatchEvent(msg: Record<string, unknown>): void {
 				const tool = msg.tool as string;
 				const input = JSON.stringify(msg.input ?? {}).slice(0, 120);
 				console.log(`${time} [tool] ${tool} ${input}`);
+			} else if (eventType === "tool_result") {
+				const tool = msg.tool as string;
+				const ok = msg.isError ? "ERR" : "OK";
+				const content =
+					((msg.content as string) ?? "").split("\n")[0]?.slice(0, 100) ?? "";
+				console.log(`${time} [result] ${tool} ${ok} ${content}`);
 			} else if (eventType === "text") {
 				const content = (msg.content as string) ?? "";
 				// Show first line only for brevity
