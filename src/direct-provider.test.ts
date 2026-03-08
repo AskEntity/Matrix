@@ -58,17 +58,17 @@ describe("executeTool", () => {
 	});
 
 	test("bash: executes command and returns output", async () => {
-		const result = await executeTool("bash", { command: "echo hello" }, tempDir);
+		const result = await executeTool(
+			"bash",
+			{ command: "echo hello" },
+			tempDir,
+		);
 		expect(result.isError).toBe(false);
 		expect(result.content).toContain("hello");
 	});
 
 	test("bash: returns error for failing command", async () => {
-		const result = await executeTool(
-			"bash",
-			{ command: "exit 1" },
-			tempDir,
-		);
+		const result = await executeTool("bash", { command: "exit 1" }, tempDir);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("exit code: 1");
 	});
@@ -145,7 +145,11 @@ describe("executeTool", () => {
 
 	test("list_files: lists files in directory", async () => {
 		await writeFile(join(tempDir, "list_test.txt"), "");
-		const result = await executeTool("list_files", { pattern: "*.txt" }, tempDir);
+		const result = await executeTool(
+			"list_files",
+			{ pattern: "*.txt" },
+			tempDir,
+		);
 		expect(result.isError).toBe(false);
 		expect(result.content).toContain("list_test.txt");
 	});
