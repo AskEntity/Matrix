@@ -465,6 +465,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				worktrees: wm,
 				projectPath: project.path,
 				childModel: body.childModel,
+				onTaskEvent: (event) => {
+					broadcastEvent(project.id, event);
+					broadcastTreeUpdate(project.id, tracker);
+				},
 			},
 			costAccumulator,
 		);
