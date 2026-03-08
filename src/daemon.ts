@@ -7,6 +7,7 @@ import type { WSContext } from "hono/ws";
 import type { AgentProvider, AgentSession } from "./agent-provider.ts";
 import { CostAccumulator, createOrchestratorTools } from "./agent-tools.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
+import { DirectProvider } from "./direct-provider.ts";
 import { Orchestrator } from "./orchestrator.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { Runner } from "./runner.ts";
@@ -46,9 +47,17 @@ export interface DaemonConfig {
 	agentProvider: AgentProvider;
 }
 
+function defaultProvider(): AgentProvider {
+	const provider = process.env.OG_PROVIDER ?? "claude-code";
+	if (provider === "direct") {
+		return new DirectProvider(process.env.OG_MODEL);
+	}
+	return new ClaudeCodeProvider();
+}
+
 const defaultConfig: DaemonConfig = {
 	dataDir: join(homedir(), ".opengraft"),
-	agentProvider: new ClaudeCodeProvider(),
+	agentProvider: defaultProvider(),
 };
 
 export function createApp(config: DaemonConfig = defaultConfig) {
@@ -917,6 +926,7 @@ if (import.meta.main) {
 	await pm.load();
 	console.log(`OpenGraft daemon listening on http://localhost:${port}`);
 	console.log(`Web UI: http://localhost:${port}/`);
+	console.log(`Provider: ${defaultConfig.agentProvider.name}`);
 	Bun.serve({
 		fetch: app.fetch,
 		port,
