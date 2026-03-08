@@ -595,51 +595,66 @@ export class DirectProvider implements AgentProvider {
 				break;
 			}
 
-			// Execute tools and collect results
-			const toolResults: ToolResultBlockParam[] = [];
-			for (const toolUse of toolUses) {
-				const mcpHandler = mcpHandlers.get(toolUse.name);
-				if (mcpHandler) {
-					// Route to MCP tool handler
-					let text: string;
-					let isError = false;
-					try {
-						const mcpResult = await mcpHandler.handler(
-							toolUse.input as Record<string, unknown>,
-							{},
-						);
-						const content = Array.isArray(mcpResult.content)
-							? mcpResult.content
-							: [];
-						text = content
-							.map((c: { type: string; text?: string }) =>
-								c.type === "text" ? (c.text ?? "") : JSON.stringify(c),
-							)
-							.join("\n");
-						isError = mcpResult.isError ?? false;
-					} catch (e) {
-						text = `MCP tool error: ${e instanceof Error ? e.message : String(e)}`;
-						isError = true;
+			// Execute tools concurrently
+			const execResults = await Promise.all(
+				toolUses.map(async (toolUse) => {
+					const mcpHandler = mcpHandlers.get(toolUse.name);
+					if (mcpHandler) {
+						try {
+							const mcpResult = await mcpHandler.handler(
+								toolUse.input as Record<string, unknown>,
+								{},
+							);
+							const content = Array.isArray(mcpResult.content)
+								? mcpResult.content
+								: [];
+							return {
+								text: content
+									.map((c: { type: string; text?: string }) =>
+										c.type === "text" ? (c.text ?? "") : JSON.stringify(c),
+									)
+									.join("\n"),
+								isError: mcpResult.isError ?? false,
+							};
+						} catch (e) {
+							return {
+								text: `MCP tool error: ${e instanceof Error ? e.message : String(e)}`,
+								isError: true,
+							};
+						}
 					}
-					toolResults.push({
-						type: "tool_result",
-						tool_use_id: toolUse.id,
-						content: text,
-						is_error: isError,
-					});
-				} else {
-					const result = await executeTool(
+					return executeTool(
 						toolUse.name,
 						toolUse.input as Record<string, unknown>,
 						cwd,
 					);
-					toolResults.push({
-						type: "tool_result",
-						tool_use_id: toolUse.id,
-						content: result.content,
-						is_error: result.isError,
-					});
-				}
+				}),
+			);
+
+			// Emit tool_result events and build API result array
+			const toolResults: ToolResultBlockParam[] = [];
+			for (let i = 0; i < toolUses.length; i++) {
+				const toolUse = toolUses[i] as ToolUseBlock;
+				const exec = execResults[i] as {
+					text?: string;
+					content?: string;
+					isError: boolean;
+				};
+				const text = exec.text ?? exec.content ?? "";
+				const isError = exec.isError;
+
+				yield {
+					type: "tool_result",
+					tool: toolUse.name,
+					content: text.slice(0, 500),
+					isError,
+				};
+				toolResults.push({
+					type: "tool_result",
+					tool_use_id: toolUse.id,
+					content: text,
+					is_error: isError,
+				});
 			}
 
 			// Add tool results to history

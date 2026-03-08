@@ -388,6 +388,9 @@ function logAgentEvent(msg) {
 	let text;
 	if (msg.eventType === "tool_use") {
 		text = `Tool: ${msg.tool} ${JSON.stringify(msg.input || {}).slice(0, 200)}`;
+	} else if (msg.eventType === "tool_result") {
+		const prefix = msg.isError ? "✗" : "✓";
+		text = `${prefix} ${msg.tool}: ${(msg.content || "").slice(0, 300)}`;
 	} else if (msg.eventType === "text") {
 		text = msg.content || "";
 	} else if (msg.eventType === "status") {

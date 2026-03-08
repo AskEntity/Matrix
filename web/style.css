@@ -372,6 +372,12 @@ section {
 	color: var(--blue);
 }
 
+.detail-log-entry.event-tool_result {
+	color: var(--green);
+	font-size: 0.85em;
+	opacity: 0.8;
+}
+
 .detail-log-entry.event-text {
 	color: var(--text);
 }

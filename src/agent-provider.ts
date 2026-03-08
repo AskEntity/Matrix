@@ -31,6 +31,12 @@ export interface AgentRequest {
 export type AgentEvent =
 	| { type: "status"; message: string }
 	| { type: "tool_use"; tool: string; input: Record<string, unknown> }
+	| {
+			type: "tool_result";
+			tool: string;
+			content: string;
+			isError: boolean;
+	  }
 	| { type: "text"; content: string }
 	| { type: "error"; message: string };
 
