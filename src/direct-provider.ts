@@ -382,6 +382,38 @@ function zodTypeToJsonProp(zodType: unknown): {
 		};
 	}
 
+	if (typeName === "number" || typeName === "ZodNumber") {
+		return {
+			schema: {
+				type: "number",
+				...(description ? { description } : {}),
+			},
+			optional: false,
+		};
+	}
+
+	if (typeName === "boolean" || typeName === "ZodBoolean") {
+		return {
+			schema: {
+				type: "boolean",
+				...(description ? { description } : {}),
+			},
+			optional: false,
+		};
+	}
+
+	if (typeName === "array" || typeName === "ZodArray") {
+		const inner = zodTypeToJsonProp(def?.type ?? def?.innerType);
+		return {
+			schema: {
+				type: "array",
+				items: inner.schema,
+				...(description ? { description } : {}),
+			},
+			optional: false,
+		};
+	}
+
 	// Default to string
 	return {
 		schema: {
