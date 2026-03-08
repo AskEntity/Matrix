@@ -93,6 +93,9 @@ export class WorktreeManager {
 	): Promise<boolean> {
 		const branch = this.branchName(taskId, slug);
 
+		// Ensure repo is not in bare state before checkout/merge
+		await this.ensureNotBare();
+
 		// Checkout the target branch in the main repo
 		if ((await this.git(["checkout", targetBranch]).exited) !== 0) return false;
 
@@ -105,6 +108,7 @@ export class WorktreeManager {
 
 	/** List active worktrees. */
 	async list(): Promise<WorktreeInfo[]> {
+		await this.ensureNotBare();
 		const proc = this.git(["worktree", "list", "--porcelain"]);
 		await proc.exited;
 		const output = await new Response(proc.stdout).text();
@@ -145,6 +149,15 @@ export class WorktreeManager {
 
 		// Ensure main repo stays functional after cleanup
 		await this.git(["config", "core.bare", "false"]).exited;
+	}
+
+	private async ensureNotBare(): Promise<void> {
+		await Bun.spawn(["git", "config", "core.bare", "false"], {
+			cwd: this.repoPath,
+			stdout: "pipe",
+			stderr: "pipe",
+			env: cleanGitEnv(),
+		}).exited;
 	}
 
 	private git(args: string[], cwd?: string) {
