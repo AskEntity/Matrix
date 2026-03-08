@@ -174,6 +174,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Concurrent orchestration guard (409 on double-run)
 - [x] Orchestrator prompt tuning: explicit finalization steps, root marked as passed
 - [x] E2E validated: 4-node tree (root + setup + 2 modules), all passed (22 turns, $0.99)
+- [x] 自举测试成功
 
 ### Phase 3 (NEXT)
 - [ ] Direct Anthropic API: bypass Claude Code subprocess, use Messages API directly
