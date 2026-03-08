@@ -520,10 +520,15 @@ export class DirectProvider implements AgentProvider {
 				}
 			}
 
+			const systemParts = [
+				request.systemPrompt,
+				`Working directory: ${cwd}`,
+			].filter(Boolean);
+
 			const response = await this.client.messages.create({
 				model,
 				max_tokens: DEFAULT_MAX_TOKENS,
-				system: request.systemPrompt ?? undefined,
+				system: systemParts.join("\n\n"),
 				messages,
 				tools: allTools,
 			});
