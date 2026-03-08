@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
@@ -219,6 +219,7 @@ async function executeTool(
 			const path = resolvePath(input.path as string, cwd);
 			const content = input.content as string;
 			try {
+				mkdirSync(dirname(path), { recursive: true });
 				writeFileSync(path, content, "utf-8");
 				return { content: `File written: ${path}`, isError: false };
 			} catch (e) {
