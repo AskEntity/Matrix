@@ -29,6 +29,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const app = new Hono();
 	const pm = new ProjectManager(config.dataDir);
 	const trackers = new Map<string, TaskTracker>();
+	const activeOrchestrations = new Set<string>();
 
 	/** Read .ai/memory.md from a project directory. Returns empty string if not found. */
 	function readProjectMemory(projectPath: string): string {
@@ -389,6 +390,14 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "prompt is required" }, 400);
 		}
 
+		if (activeOrchestrations.has(project.id)) {
+			return c.json(
+				{ error: "Orchestration already running for this project" },
+				409,
+			);
+		}
+
+		activeOrchestrations.add(project.id);
 		const tracker = await getTracker(project.id);
 		const wtRoot = join(project.path, ".worktrees");
 		const wm = new WorktreeManager(project.path, wtRoot);
@@ -451,6 +460,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
 			return c.json({ error: message }, 500);
+		} finally {
+			activeOrchestrations.delete(project.id);
 		}
 	});
 
