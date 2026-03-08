@@ -26,10 +26,10 @@ bun run check       # biome lint + format
 
 **Pre-commit hooks are active** (.hooks/pre-commit runs typecheck + lint + unit tests).
 
-## Current Phase: Phase 3
+## Current Phase: Phase 4 — Self-Bootstrapping
 
-Phase 2 complete: agent-driven orchestration with MCP tools, bootstrap verified.
-Phase 3: Web UI, real-time streaming, user interaction, CLI debug mode.
+Phases 0–3 complete. System is functional: daemon, orchestrator, task decomposition,
+worktree isolation, DirectProvider, web UI, CLI. Phase 4: use OpenGraft to develop itself.
 
 ## Tech Stack
 
@@ -165,7 +165,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Rename .ai → .opengraft, .ai-daemon → .opengraft-daemon
 - [x] Bootstrap verified: OpenGraft orchestrates its own development (version.ts task)
 
-### Phase 3 (IN PROGRESS)
+### Phase 3 (COMPLETE)
 - [x] Web UI: dark-themed SPA with task tree + agent activity panels
 - [x] WebSocket endpoint (/ws) for live task tree + agent event streaming
 - [x] Real-time agent activity: tool calls, text output, errors streamed to UI
@@ -183,5 +183,11 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Retry → Continue: POST /tasks/:nodeId/continue with optional message
 - [x] Web UI: task detail panel (click task → status, description, branch, actions)
 - [x] Web UI: continue action for failed/stuck tasks with message input
-- [ ] MCP tool forwarding in DirectProvider (connect mcpServers from request)
-- [ ] Cost tracking per model (different pricing for Sonnet vs Opus vs Haiku)
+- [x] MCP tool forwarding in DirectProvider (Zod→JSON Schema + handler routing)
+- [x] Cost tracking per model (different pricing for Sonnet vs Opus vs Haiku)
+- [x] Per-task agent event streaming: child agents stream events tagged with taskId
+- [x] Web UI: per-task agent output log in detail panel (real-time updates)
+
+### Phase 4 (IN PROGRESS)
+- [ ] Self-bootstrap: run OpenGraft development sessions on OpenGraft itself
+- [ ] Dual-track verification: compare external toolchain vs self-hosted results
