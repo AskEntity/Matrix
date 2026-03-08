@@ -574,11 +574,26 @@ export function createOrchestratorTools(
 }
 
 function readMemory(projectPath: string): string {
+	const parts: string[] = [];
+
 	try {
-		return readFileSync(join(projectPath, ".opengraft", "memory.md"), "utf-8");
+		const claudeMd = readFileSync(join(projectPath, "CLAUDE.md"), "utf-8");
+		if (claudeMd) parts.push(claudeMd);
 	} catch {
-		return "";
+		// No CLAUDE.md
 	}
+
+	try {
+		const memory = readFileSync(
+			join(projectPath, ".opengraft", "memory.md"),
+			"utf-8",
+		);
+		if (memory) parts.push(memory);
+	} catch {
+		// No memory file
+	}
+
+	return parts.join("\n\n");
 }
 
 function buildTaskPrompt(
