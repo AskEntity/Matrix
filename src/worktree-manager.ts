@@ -64,6 +64,10 @@ export class WorktreeManager {
 			throw new Error(`Failed to create worktree: ${stderr.trim()}`);
 		}
 
+		// Workaround: git worktree add can mark the main repo as bare.
+		// Force core.bare=false to keep the main repo functional.
+		await this.git(["config", "core.bare", "false"]).exited;
+
 		return { path: wtPath, branch };
 	}
 
