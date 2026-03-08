@@ -14,9 +14,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { createApp } from "./daemon.ts";
+import { DirectProvider } from "./direct-provider.ts";
 import type { TaskNode } from "./types.ts";
 
 const hasToken = Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
+const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
 
 describe.skipIf(!hasToken)("E2E: agent execution", () => {
 	let tempDir: string;
@@ -154,5 +156,80 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 			expect(passed.length).toBeGreaterThan(0);
 		},
 		{ timeout: 600_000 },
+	);
+});
+
+describe.skipIf(!hasApiKey)("E2E: DirectProvider", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-e2e-direct-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-e2e-direct-data-"));
+		const result = createApp({
+			dataDir,
+			agentProvider: new DirectProvider(),
+		});
+		app = result.app;
+		await result.pm.load();
+	});
+
+	afterAll(async () => {
+		if (tempDir) await rm(tempDir, { recursive: true });
+		if (dataDir) await rm(dataDir, { recursive: true });
+	});
+
+	test(
+		"direct provider: agent creates calculator with tests",
+		async () => {
+			const projectPath = join(tempDir, "calc-direct-api");
+			const createRes = await app.request("/projects", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ path: projectPath }),
+			});
+			expect(createRes.status).toBe(201);
+			const project = (await createRes.json()) as { id: string };
+
+			const runRes = await app.request(`/projects/${project.id}/run`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					prompt:
+						"Create a simple calculator module in src/calc.ts with add, subtract, multiply, divide functions. " +
+						"Also create src/calc.test.ts with tests for all four operations. " +
+						"Make sure divide by zero returns Infinity. " +
+						"Run the tests and make sure they pass.",
+					maxTurns: 20,
+				}),
+			});
+
+			expect(runRes.status).toBe(200);
+			const result = (await runRes.json()) as {
+				success: boolean;
+				output: string;
+				turns?: number;
+				costUsd?: number;
+			};
+
+			console.log("DirectProvider run:", {
+				success: result.success,
+				turns: result.turns,
+				costUsd: result.costUsd,
+			});
+
+			expect(result.success).toBe(true);
+			expect(existsSync(join(projectPath, "src", "calc.ts"))).toBe(true);
+
+			// Verify tests pass independently
+			const proc = Bun.spawn(["bun", "test", "src/calc.test.ts"], {
+				cwd: projectPath,
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			expect(await proc.exited).toBe(0);
+		},
+		{ timeout: 120_000 },
 	);
 });
