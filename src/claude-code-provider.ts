@@ -134,6 +134,8 @@ export class ClaudeCodeProvider implements AgentProvider {
 				...(request.resumeSessionId ? { resume: request.resumeSessionId } : {}),
 				// MCP servers: in-process tool servers for orchestration
 				...(request.mcpServers ? { mcpServers: request.mcpServers } : {}),
+				// Model selection
+				...(request.model ? { model: request.model } : {}),
 			},
 		});
 	}

@@ -17,6 +17,8 @@ export interface AgentRequest {
 	resumeSessionId?: string;
 	/** MCP servers to attach to the agent session. */
 	mcpServers?: Record<string, McpServerConfig>;
+	/** Claude model to use (e.g. 'claude-sonnet-4-6', 'claude-opus-4-6'). */
+	model?: string;
 }
 
 /** Streaming event emitted by an agent during execution. */
