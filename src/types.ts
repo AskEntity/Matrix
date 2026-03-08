@@ -66,3 +66,10 @@ export interface HealthResponse {
 	version: string;
 	uptime: number;
 }
+
+/** Daemon version response. */
+export interface VersionResponse {
+	version: string;
+	commit: string;
+	startedAt: string;
+}
