@@ -27,6 +27,7 @@ export class ClaudeCodeProvider implements AgentProvider {
 		let isError = false;
 		let totalCostUsd = 0;
 		let numTurns = 0;
+		let sessionId = "";
 
 		for await (const message of conversation) {
 			switch (message.type) {
@@ -50,8 +51,10 @@ export class ClaudeCodeProvider implements AgentProvider {
 						resultText = message.result;
 						totalCostUsd = message.total_cost_usd;
 						numTurns = message.num_turns;
+						sessionId = message.session_id;
 					} else {
 						isError = true;
+						sessionId = message.session_id;
 						yield {
 							type: "error",
 							message: `Agent error: ${message.subtype}`,
@@ -67,6 +70,7 @@ export class ClaudeCodeProvider implements AgentProvider {
 			output: resultText,
 			costUsd: totalCostUsd,
 			turns: numTurns,
+			sessionId: sessionId || undefined,
 		};
 	}
 
@@ -77,6 +81,7 @@ export class ClaudeCodeProvider implements AgentProvider {
 		let isError = false;
 		let totalCostUsd = 0;
 		let numTurns = 0;
+		let sessionId = "";
 
 		for await (const message of conversation) {
 			if (message.type === "result") {
@@ -84,8 +89,10 @@ export class ClaudeCodeProvider implements AgentProvider {
 					resultText = message.result;
 					totalCostUsd = message.total_cost_usd;
 					numTurns = message.num_turns;
+					sessionId = message.session_id;
 				} else {
 					isError = true;
+					sessionId = message.session_id;
 				}
 			}
 		}
@@ -95,6 +102,7 @@ export class ClaudeCodeProvider implements AgentProvider {
 			output: resultText,
 			costUsd: totalCostUsd,
 			turns: numTurns,
+			sessionId: sessionId || undefined,
 		};
 	}
 
@@ -122,6 +130,8 @@ export class ClaudeCodeProvider implements AgentProvider {
 				permissionMode: "bypassPermissions",
 				allowDangerouslySkipPermissions: true,
 				env,
+				// Session management: resume previous conversation or start new
+				...(request.resumeSessionId ? { resume: request.resumeSessionId } : {}),
 			},
 		});
 	}

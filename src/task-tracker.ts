@@ -72,6 +72,23 @@ export class TaskTracker {
 		node.updatedAt = new Date().toISOString();
 	}
 
+	/** Assign session and worktree info to a task node. */
+	assignWorktree(nodeId: string, branch: string, worktreePath: string): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		node.branch = branch;
+		node.worktreePath = worktreePath;
+		node.updatedAt = new Date().toISOString();
+	}
+
+	/** Store the agent session ID for later resume. */
+	assignSession(nodeId: string, sessionId: string): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		node.sessionId = sessionId;
+		node.updatedAt = new Date().toISOString();
+	}
+
 	/** Assign a branch to a task node (1:1 agent-branch binding). */
 	assignBranch(nodeId: string, branch: string): void {
 		const node = this.nodes.get(nodeId);
@@ -152,6 +169,8 @@ export class TaskTracker {
 			branch: null,
 			parentId,
 			children: [],
+			sessionId: null,
+			worktreePath: null,
 			createdAt: now,
 			updatedAt: now,
 		};

@@ -16,6 +16,10 @@ export interface TaskNode {
 	branch: string | null;
 	parentId: string | null;
 	children: string[];
+	/** Agent session ID for resuming conversations. */
+	sessionId: string | null;
+	/** Absolute path to the git worktree for this task. */
+	worktreePath: string | null;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -28,6 +32,8 @@ export interface AgentResult {
 	costUsd?: number;
 	/** Number of agentic turns (tool-use round trips). */
 	turns?: number;
+	/** Session ID for resuming this conversation later. */
+	sessionId?: string;
 	/** Structured test results, if the step involved running tests. */
 	testResults?: {
 		passed: string[];

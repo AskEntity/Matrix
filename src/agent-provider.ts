@@ -12,6 +12,8 @@ export interface AgentRequest {
 	maxTurns?: number;
 	/** Abort signal for cancellation. */
 	signal?: AbortSignal;
+	/** Session ID to resume a previous conversation. */
+	resumeSessionId?: string;
 }
 
 /** Streaming event emitted by an agent during execution. */
