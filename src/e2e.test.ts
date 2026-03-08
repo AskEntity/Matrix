@@ -253,6 +253,61 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 	);
 
 	test(
+		"agent orchestrator: MCP tools decompose + spawn + merge",
+		async () => {
+			const projectPath = join(tempDir, "orch-agent");
+			const createRes = await app.request("/projects", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ path: projectPath }),
+			});
+			const project = (await createRes.json()) as { id: string };
+
+			// Use the agent-driven orchestration endpoint
+			const orchRes = await app.request(
+				`/projects/${project.id}/orchestrate/agent`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						prompt:
+							"Build a simple math utility library. " +
+							"Create src/math.ts with add(a,b) and multiply(a,b) functions. " +
+							"Create src/math.test.ts with tests for both functions. " +
+							"Use the create_task and spawn_task tools to decompose and execute.",
+						maxTurns: 50,
+					}),
+				},
+			);
+			expect(orchRes.status).toBe(200);
+
+			const result = (await orchRes.json()) as {
+				success: boolean;
+				output: string;
+				costUsd?: number;
+				turns?: number;
+				tree: {
+					root: TaskNode | null;
+					nodes: TaskNode[];
+				};
+			};
+
+			console.log("Agent orchestrator:", {
+				success: result.success,
+				turns: result.turns,
+				costUsd: result.costUsd,
+				nodeCount: result.tree.nodes.length,
+				tasks: result.tree.nodes.map((n) => `${n.title} [${n.status}]`),
+			});
+
+			expect(result.success).toBe(true);
+			// Agent should have created at least a root task
+			expect(result.tree.nodes.length).toBeGreaterThan(0);
+		},
+		{ timeout: 600_000 },
+	);
+
+	test(
 		"full pipeline: decompose goal then execute",
 		async () => {
 			const projectPath = join(tempDir, "calc-pipeline");
