@@ -166,5 +166,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] POST /orchestrate/agent endpoint: agent-driven orchestration with MCP tools
 - [x] CLI `og orchestrate` command
 - [x] E2E validated: agent orchestrator creates 3 tasks + executes via MCP tools (17 turns, $0.18)
-- [ ] Improve spawn_task: fire-and-forget async + wait_for_children tool
-- [ ] Agent-driven merge: parent uses merge_branch tool after children complete
+- [x] spawn_children tool for true parallel execution via Promise.all
+- [x] E2E validated: 2 independent modules spawned in parallel (23 turns, $0.32)
+- [ ] Worktree cleanup after orchestration completes
+- [ ] WebSocket endpoint for real-time orchestration status
