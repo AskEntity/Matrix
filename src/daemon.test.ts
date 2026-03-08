@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentProvider } from "./agent-provider.ts";
 import { createApp } from "./daemon.ts";
-import type { HealthResponse, Project, TaskNode } from "./types.ts";
+import type {
+	HealthResponse,
+	Project,
+	TaskNode,
+	VersionResponse,
+} from "./types.ts";
 
 function createMockProvider(
 	handler?: (request: {
@@ -38,7 +43,7 @@ describe("daemon health", () => {
 
 		const body = (await res.json()) as HealthResponse;
 		expect(body.status).toBe("ok");
-		expect(body.version).toBe("0.0.1");
+		expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
 		expect(typeof body.uptime).toBe("number");
 
 		await rm(dataDir, { recursive: true });
@@ -51,6 +56,27 @@ describe("daemon health", () => {
 
 		const res = await app.request("/unknown");
 		expect(res.status).toBe(404);
+
+		await rm(dataDir, { recursive: true });
+	});
+});
+
+describe("daemon version", () => {
+	test("GET /version returns version, commit, and startedAt", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "og-version-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const before = new Date().toISOString();
+		const res = await app.request("/version");
+		expect(res.status).toBe(200);
+
+		const body = (await res.json()) as VersionResponse;
+		expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
+		expect(body.commit).toMatch(/^[0-9a-f]+$|^unknown$/);
+		expect(typeof body.startedAt).toBe("string");
+		expect(new Date(body.startedAt).toISOString()).toBe(body.startedAt);
+		expect(body.startedAt <= before || body.startedAt === before).toBe(true);
 
 		await rm(dataDir, { recursive: true });
 	});

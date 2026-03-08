@@ -10,10 +10,27 @@ import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { DirectProvider } from "./direct-provider.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { TaskTracker } from "./task-tracker.ts";
-import type { DecomposedTask, HealthResponse, TaskStatus } from "./types.ts";
+import type {
+	DecomposedTask,
+	HealthResponse,
+	TaskStatus,
+	VersionResponse,
+} from "./types.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 
-const VERSION = "0.0.1";
+// Read version from package.json at startup.
+const _pkg = JSON.parse(
+	readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as { version: string };
+const VERSION = _pkg.version;
+
+// Capture git commit hash at startup (empty string if not in a git repo).
+const _commitProc = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], {
+	stdout: "pipe",
+	stderr: "pipe",
+});
+const GIT_COMMIT =
+	_commitProc.exitCode === 0 ? _commitProc.stdout.toString().trim() : "unknown";
 
 /** WebSocket client connection with project subscription. */
 interface WSClient {
@@ -39,6 +56,7 @@ function broadcast(
 	}
 }
 const startTime = Date.now();
+const START_AT = new Date(startTime).toISOString();
 
 export interface DaemonConfig {
 	dataDir: string;
@@ -131,6 +149,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			status: "ok",
 			version: VERSION,
 			uptime: Date.now() - startTime,
+		};
+		return c.json(response);
+	});
+
+	// Version
+	app.get("/version", (c) => {
+		const response: VersionResponse = {
+			version: VERSION,
+			commit: GIT_COMMIT,
+			startedAt: START_AT,
 		};
 		return c.json(response);
 	});
