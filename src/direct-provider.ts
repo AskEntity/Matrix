@@ -466,16 +466,20 @@ export class DirectProvider implements AgentProvider {
 		const sessionId = randomUUID();
 		const injectedMessages: string[] = [];
 		let closed = false;
+		const abortController = new AbortController();
 
 		const self = this;
 
 		async function* eventStream(): AsyncGenerator<AgentEvent, AgentResult> {
-			const gen = self.runLoop(request, () => {
-				if (injectedMessages.length > 0) {
-					return injectedMessages.shift() as string;
-				}
-				return undefined;
-			});
+			const gen = self.runLoop(
+				{ ...request, signal: abortController.signal },
+				() => {
+					if (injectedMessages.length > 0) {
+						return injectedMessages.shift() as string;
+					}
+					return undefined;
+				},
+			);
 			let result = await gen.next();
 			while (!result.done) {
 				yield result.value;
@@ -495,6 +499,7 @@ export class DirectProvider implements AgentProvider {
 			},
 			stop() {
 				closed = true;
+				abortController.abort();
 			},
 		};
 	}
@@ -541,6 +546,12 @@ export class DirectProvider implements AgentProvider {
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
 		while (turns < maxTurns) {
+			// Check abort signal
+			if (request.signal?.aborted) {
+				yield { type: "status", message: "Aborted" };
+				break;
+			}
+
 			turns++;
 
 			// Check for injected messages between turns
