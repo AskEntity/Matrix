@@ -170,5 +170,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] E2E validated: 2 independent modules spawned in parallel (23 turns, $0.32)
 - [x] cleanup_worktrees MCP tool for post-orchestration cleanup
 - [x] Orchestrator session persistence + resume (--resume flag in CLI)
-- [ ] Cost tracking: accumulate total cost across all spawned agents
-- [ ] Concurrent orchestration guard (prevent double-run on same project)
+- [x] Cost tracking: CostAccumulator across orchestrator + child agents
+- [x] Concurrent orchestration guard (409 on double-run)
+- [ ] Comprehensive orchestration E2E: parallel spawn + merge + verify on merged branch
+- [ ] Agent system prompt tuning: ensure agent uses spawn_children over spawn_task
