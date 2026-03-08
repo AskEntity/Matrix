@@ -242,6 +242,135 @@ export function createOrchestratorTools(deps: OrchestratorToolsDeps) {
 			),
 
 			tool(
+				"spawn_children",
+				"Spawn ALL pending children of a parent task in parallel. " +
+					"Each child gets its own git worktree and agent. " +
+					"This tool blocks until all children have completed. " +
+					"Use this instead of calling spawn_task multiple times — it's truly parallel.",
+				{
+					parentId: z
+						.string()
+						.describe("ID of the parent task whose children to spawn"),
+				},
+				async (args) => {
+					const parent = tracker.get(args.parentId);
+					if (!parent) {
+						return {
+							content: [
+								{ type: "text" as const, text: "Error: Parent not found" },
+							],
+							isError: true,
+						};
+					}
+
+					const children = tracker.getChildren(args.parentId);
+					const pending = children.filter((c) => c.status === "pending");
+
+					if (pending.length === 0) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: "No pending children to spawn",
+								},
+							],
+						};
+					}
+
+					// Ensure parent has a worktree so children can branch from it
+					if (!parent.worktreePath) {
+						const parentSlug = slugify(parent.title);
+						const grandparent = parent.parentId
+							? tracker.get(parent.parentId)
+							: undefined;
+						const baseBranch = grandparent?.branch ?? undefined;
+						const wt = await worktrees.create(
+							parent.id,
+							parentSlug,
+							baseBranch,
+						);
+						tracker.assignWorktree(parent.id, wt.branch, wt.path);
+						tracker.updateStatus(parent.id, "in_progress");
+						await tracker.save();
+					}
+
+					// Spawn all children in parallel
+					const results = await Promise.all(
+						pending.map(async (child) => {
+							try {
+								const slug = slugify(child.title);
+								const baseBranch = parent.branch ?? undefined;
+
+								const wt = await worktrees.create(child.id, slug, baseBranch);
+								tracker.assignWorktree(child.id, wt.branch, wt.path);
+								tracker.updateStatus(child.id, "in_progress");
+								await tracker.save();
+
+								const memory = readMemory(projectPath);
+								const prompt = buildTaskPrompt(child, tracker, memory);
+
+								const result = await provider.execute({
+									prompt,
+									cwd: wt.path,
+									systemPrompt: TASK_SYSTEM_PROMPT,
+									maxTurns: 30,
+									resumeSessionId: child.sessionId ?? undefined,
+								});
+
+								if (result.sessionId) {
+									tracker.assignSession(child.id, result.sessionId);
+								}
+
+								const newStatus = result.success ? "passed" : "failed";
+								tracker.updateStatus(child.id, newStatus);
+								await tracker.save();
+
+								return {
+									taskId: child.id,
+									title: child.title,
+									status: newStatus,
+									success: result.success,
+									branch: wt.branch,
+									costUsd: result.costUsd,
+									turns: result.turns,
+								};
+							} catch (e) {
+								tracker.updateStatus(child.id, "stuck");
+								await tracker.save();
+								const message =
+									e instanceof Error ? e.message : "Unknown error";
+								return {
+									taskId: child.id,
+									title: child.title,
+									status: "stuck" as const,
+									success: false,
+									branch: null,
+									error: message,
+								};
+							}
+						}),
+					);
+
+					const passed = results.filter((r) => r.success).length;
+					const failed = results.length - passed;
+
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify(
+									{ passed, failed, total: results.length, results },
+									null,
+									2,
+								),
+							},
+						],
+						...(failed > 0 ? { isError: true } : {}),
+					};
+				},
+			),
+
+			tool(
 				"merge_branch",
 				"Merge a task's branch into a target branch. Used after child tasks complete to integrate their work.",
 				{

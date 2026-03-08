@@ -510,22 +510,24 @@ const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. Yo
 - get_tree: View the current task tree
 - create_task: Add tasks to the tree (root or children)
 - update_task_status: Update a task's status
-- spawn_task: Execute a task on an isolated git worktree (runs a child agent)
+- spawn_task: Execute a single task on an isolated git worktree (blocks until done)
+- spawn_children: Execute ALL pending children of a parent in PARALLEL (recommended over spawn_task)
 - merge_branch: Merge a completed task's branch into a target branch
 
 ## Workflow
 1. Analyze the goal and the codebase
-2. Create a root task, then decompose into child tasks
+2. Create a root task, then decompose into child tasks using create_task
 3. CRITICAL: Sibling tasks run in PARALLEL — each must work on DIFFERENT files/modules
-4. Call spawn_task for each leaf task (call multiple simultaneously for parallel execution)
-5. After all children pass, merge their branches into the parent's branch
+4. Call spawn_children(parentId) to execute all children in parallel (preferred) or spawn_task for individual tasks
+5. After all children pass, merge their branches into the parent's branch using merge_branch
 6. Run tests on the merged result to verify integration
 
 ## Rules
 - Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
 - Never have two siblings modify the same file
 - Keep the tree shallow: 2-3 levels max
-- Each leaf task should be independently executable by a single agent session`;
+- Each leaf task should be independently executable by a single agent session
+- Use spawn_children for parallel execution — calling spawn_task multiple times runs them sequentially`;
 
 const DECOMPOSE_PROMPT = `You are a task decomposition system. Given a high-level goal, break it into a hierarchical task tree.
 
