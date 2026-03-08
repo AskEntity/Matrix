@@ -434,6 +434,40 @@ export function createOrchestratorTools(deps: OrchestratorToolsDeps) {
 					}
 				},
 			),
+			tool(
+				"cleanup_worktrees",
+				"Clean up all worktrees and their branches. Call this after orchestration is complete to free disk space.",
+				{},
+				async () => {
+					try {
+						const list = await worktrees.list();
+						await worktrees.cleanup();
+
+						// Also clean up og/ branches that may remain
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: JSON.stringify(
+										{
+											cleaned: list.length,
+											worktrees: list.map((w) => w.branch),
+										},
+										null,
+										2,
+									),
+								},
+							],
+						};
+					} catch (e) {
+						const message = e instanceof Error ? e.message : "Unknown error";
+						return {
+							content: [{ type: "text" as const, text: `Error: ${message}` }],
+							isError: true,
+						};
+					}
+				},
+			),
 		],
 	});
 }

@@ -513,6 +513,7 @@ const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. Yo
 - spawn_task: Execute a single task on an isolated git worktree (blocks until done)
 - spawn_children: Execute ALL pending children of a parent in PARALLEL (recommended over spawn_task)
 - merge_branch: Merge a completed task's branch into a target branch
+- cleanup_worktrees: Clean up all worktrees after orchestration is done
 
 ## Workflow
 1. Analyze the goal and the codebase
@@ -527,7 +528,8 @@ const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. Yo
 - Never have two siblings modify the same file
 - Keep the tree shallow: 2-3 levels max
 - Each leaf task should be independently executable by a single agent session
-- Use spawn_children for parallel execution — calling spawn_task multiple times runs them sequentially`;
+- Use spawn_children for parallel execution — calling spawn_task multiple times runs them sequentially
+- Call cleanup_worktrees when all work is complete to free disk space`;
 
 const DECOMPOSE_PROMPT = `You are a task decomposition system. Given a high-level goal, break it into a hierarchical task tree.
 
