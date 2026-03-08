@@ -86,10 +86,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 		// Read CLAUDE.md for project architecture context
 		try {
-			const claudeMd = readFileSync(
-				join(projectPath, "CLAUDE.md"),
-				"utf-8",
-			);
+			const claudeMd = readFileSync(join(projectPath, "CLAUDE.md"), "utf-8");
 			if (claudeMd) parts.push(`## CLAUDE.md\n${claudeMd}`);
 		} catch {
 			// No CLAUDE.md, that's fine
@@ -442,6 +439,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			maxTurns?: number;
 			resume?: boolean;
 			model?: string;
+			childModel?: string;
 		}>();
 		if (!body.prompt && !body.resume) {
 			return c.json({ error: "prompt is required" }, 400);
@@ -466,6 +464,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				provider: config.agentProvider,
 				worktrees: wm,
 				projectPath: project.path,
+				childModel: body.childModel,
 			},
 			costAccumulator,
 		);
@@ -568,6 +567,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							prompt?: string;
 							maxTurns?: number;
 							model?: string;
+							childModel?: string;
 						};
 
 						if (msg.type === "subscribe" && msg.projectId) {
@@ -591,6 +591,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								msg.prompt,
 								msg.maxTurns ?? 50,
 								msg.model,
+								msg.childModel,
 							);
 						}
 
@@ -628,6 +629,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		prompt: string,
 		maxTurns: number,
 		model?: string,
+		childModel?: string,
 	) {
 		const project = pm.get(projectId);
 		if (!project) return;
@@ -656,6 +658,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				provider: config.agentProvider,
 				worktrees: wm,
 				projectPath: project.path,
+				childModel,
 				onTaskEvent: (event) => {
 					broadcastEvent(projectId, event);
 					// Also broadcast tree update after any task event

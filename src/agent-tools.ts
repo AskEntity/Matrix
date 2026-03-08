@@ -57,6 +57,8 @@ export interface OrchestratorToolsDeps {
 	projectPath: string;
 	/** Optional callback for broadcasting task events (e.g., to WebSocket clients). */
 	onTaskEvent?: (event: Record<string, unknown>) => void;
+	/** Model for child agent execution (defaults to provider's default). */
+	childModel?: string;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -100,7 +102,8 @@ export function createOrchestratorTools(
 	deps: OrchestratorToolsDeps,
 	costAccumulator?: CostAccumulator,
 ): OrchestratorToolsResult {
-	const { tracker, provider, worktrees, projectPath, onTaskEvent } = deps;
+	const { tracker, provider, worktrees, projectPath, onTaskEvent, childModel } =
+		deps;
 	const costs = costAccumulator ?? new CostAccumulator();
 	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
 
@@ -290,6 +293,7 @@ export function createOrchestratorTools(
 						systemPrompt: TASK_SYSTEM_PROMPT,
 						maxTurns: 30,
 						resumeSessionId: node.sessionId ?? undefined,
+						model: childModel,
 					};
 
 					// Execute agent with streaming (forwards events to UI)
@@ -435,6 +439,7 @@ export function createOrchestratorTools(
 									systemPrompt: TASK_SYSTEM_PROMPT,
 									maxTurns: 30,
 									resumeSessionId: child.sessionId ?? undefined,
+									model: childModel,
 								},
 								child.id,
 							);
