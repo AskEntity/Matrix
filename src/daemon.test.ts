@@ -283,3 +283,71 @@ describe("daemon tasks API", () => {
 		expect(body.nodes).toHaveLength(0);
 	});
 });
+
+describe("daemon orchestrate API", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-orch-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-odata-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "orch-app") }),
+		});
+		const project = (await res.json()) as Project;
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("POST /orchestrate runs pending tasks", async () => {
+		// Create task tree
+		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "App", description: "Build it" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Feature A",
+				description: "First feature",
+				parentId: root.id,
+			}),
+		});
+
+		const orchRes = await app.request(`/projects/${projectId}/orchestrate`, {
+			method: "POST",
+		});
+		expect(orchRes.status).toBe(200);
+		const body = (await orchRes.json()) as {
+			completed: number;
+			results: { title: string; status: string; success: boolean }[];
+		};
+		expect(body.completed).toBeGreaterThan(0);
+		expect(body.results[0]?.success).toBe(true);
+	});
+
+	test("POST /orchestrate returns empty when no tasks", async () => {
+		const orchRes = await app.request(`/projects/${projectId}/orchestrate`, {
+			method: "POST",
+		});
+		expect(orchRes.status).toBe(200);
+		const body = (await orchRes.json()) as { completed: number };
+		expect(body.completed).toBe(0);
+	});
+});

@@ -11,6 +11,6 @@ echo "Running lint..."
 bun run check
 
 echo "Running tests..."
-bun test --bail src/daemon.test.ts src/project-manager.test.ts
+bun test --bail src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/orchestrator.test.ts
 
 echo "All checks passed."

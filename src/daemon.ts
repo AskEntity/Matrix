@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import type { AgentProvider } from "./agent-provider.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
+import { Orchestrator } from "./orchestrator.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { HealthResponse, TaskStatus } from "./types.ts";
@@ -239,6 +240,35 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				Connection: "keep-alive",
 			},
 		});
+	});
+
+	// Orchestrator: run pending tasks through the agent
+	app.post("/projects/:id/orchestrate", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const tracker = await getTracker(project.id);
+		const orch = new Orchestrator(tracker, config.agentProvider, project.path);
+
+		try {
+			const results = await orch.run();
+			return c.json({
+				completed: results.length,
+				results: results.map((r) => ({
+					taskId: r.node.id,
+					title: r.node.title,
+					status: r.node.status,
+					success: r.agentResult.success,
+					output: r.agentResult.output,
+					costUsd: r.agentResult.costUsd,
+					turns: r.agentResult.turns,
+				})),
+			});
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 500);
+		}
 	});
 
 	return { app, pm };
