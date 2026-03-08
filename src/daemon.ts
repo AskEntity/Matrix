@@ -761,8 +761,9 @@ const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. Yo
 - get_tree: View the current task tree
 - create_task: Add tasks to the tree (root or children)
 - update_task_status: Update a task's status
-- spawn_task: Execute a single task on an isolated git worktree (blocks until done)
-- spawn_children: Execute ALL pending children of a parent in PARALLEL (recommended)
+- spawn_task: Execute a single task on an isolated git worktree (blocks until done). Accepts optional maxTurns.
+- spawn_children: Execute ALL pending children of a parent in PARALLEL (recommended). Accepts optional maxTurns.
+- continue_task: Resume a failed/stuck task with optional instructions. Use when a task hit max turns or failed.
 - delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
 
 ## Workflow
@@ -778,8 +779,9 @@ const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. Yo
 6. After all children are merged, mark the root task as "passed"
 
 ## Task Lifecycle
-pending → in_progress (agent working) → passed/failed
+pending → in_progress (agent working) → passed/failed/stuck
 After a child passes: parent reviews → parent merges branch → parent calls delete_task
+If a child fails or gets stuck: use continue_task to resume with additional instructions
 
 ## Merge Details
 - You have bash access. Use \`git merge --no-ff <branch> -m "..."\` to merge.
