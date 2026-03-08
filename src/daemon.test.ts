@@ -19,6 +19,9 @@ function createMockProvider(
 		stream: async function* () {
 			return { success: true, output: "" };
 		},
+		startSession() {
+			throw new Error("Not implemented in mock");
+		},
 	};
 }
 
@@ -602,6 +605,9 @@ describe("daemon orchestrate/agent API", () => {
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return { success: true, output: "" };
+			},
+			startSession() {
+				throw new Error("Not implemented in mock");
 			},
 		};
 

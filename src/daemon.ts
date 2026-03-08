@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
 import type { WSContext } from "hono/ws";
-import type { AgentProvider } from "./agent-provider.ts";
+import type { AgentProvider, AgentSession } from "./agent-provider.ts";
 import { CostAccumulator, createOrchestratorTools } from "./agent-tools.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { Orchestrator } from "./orchestrator.ts";
@@ -57,6 +57,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const trackers = new Map<string, TaskTracker>();
 	const activeOrchestrations = new Set<string>();
 	const wsClients = new Set<WSClient>();
+	/** Active agent sessions by project ID, for message injection. */
+	const activeSessions = new Map<string, AgentSession>();
 
 	/** Broadcast a tree update to all subscribers of a project. */
 	function broadcastTreeUpdate(projectId: string, tracker: TaskTracker) {
@@ -584,6 +586,26 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		});
 	});
 
+	// Inject a message into a running orchestration
+	app.post("/projects/:id/message", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const body = await c.req.json<{ message: string }>();
+		if (!body.message) {
+			return c.json({ error: "message is required" }, 400);
+		}
+
+		const session = activeSessions.get(project.id);
+		if (!session) {
+			return c.json({ error: "No active session for this project" }, 404);
+		}
+
+		await session.sendMessage(body.message);
+		return c.json({ ok: true, sessionId: session.sessionId });
+	});
+
 	// WebSocket endpoint for real-time updates
 	app.get(
 		"/ws",
@@ -630,6 +652,24 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								msg.prompt,
 								msg.maxTurns ?? 50,
 							);
+						}
+
+						if (msg.type === "inject_message" && msg.projectId && msg.prompt) {
+							const session = activeSessions.get(msg.projectId);
+							if (session) {
+								session.sendMessage(msg.prompt);
+								broadcastEvent(msg.projectId, {
+									type: "message_injected",
+									message: msg.prompt,
+								});
+							} else {
+								ws.send(
+									JSON.stringify({
+										type: "error",
+										message: "No active session for this project",
+									}),
+								);
+							}
 						}
 					} catch {
 						/* ignore parse errors */
@@ -690,14 +730,17 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			: prompt;
 
 		try {
-			// Use streaming to capture agent events
-			const gen = config.agentProvider.stream({
+			// Use interactive session for message injection support
+			const session = config.agentProvider.startSession({
 				prompt: fullPrompt,
 				cwd: project.path,
 				systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
 				maxTurns,
 				mcpServers: { opengraft: mcpServer },
 			});
+
+			// Track the session for message injection
+			activeSessions.set(projectId, session);
 
 			let finalResult: {
 				success: boolean;
@@ -708,7 +751,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				success: false,
 				output: "",
 			};
-			let result = await gen.next();
+			let result = await session.events.next();
 			while (!result.done) {
 				// Forward agent events to WS clients
 				const agentEvent = result.value;
@@ -725,7 +768,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 										message: "message" in agentEvent ? agentEvent.message : "",
 									}),
 				});
-				result = await gen.next();
+				result = await session.events.next();
 			}
 			finalResult = result.value;
 
@@ -755,6 +798,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				message,
 			});
 		} finally {
+			activeSessions.delete(projectId);
 			activeOrchestrations.delete(projectId);
 		}
 	}

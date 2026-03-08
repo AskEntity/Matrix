@@ -477,6 +477,30 @@ function formatWatchEvent(msg: Record<string, unknown>): void {
 	}
 }
 
+async function handleSend(args: string[]): Promise<void> {
+	const message = args.join(" ");
+	if (!message) {
+		console.error("Usage: og send <message>");
+		process.exit(1);
+	}
+
+	const projectId = await resolveCurrentProject();
+	if (!projectId) return;
+
+	const res = await api(`/projects/${projectId}/message`, {
+		method: "POST",
+		body: JSON.stringify({ message }),
+	});
+
+	if (!res.ok) {
+		const err = (await res.json()) as { error: string };
+		console.error(`Error: ${err.error}`);
+		process.exit(1);
+	}
+
+	console.log("Message sent to running agent.");
+}
+
 async function handleHealth(): Promise<void> {
 	try {
 		const res = await api("/health");
@@ -531,6 +555,10 @@ switch (command) {
 	case "w":
 		await handleWatch();
 		break;
+	case "send":
+	case "msg":
+		await handleSend(args);
+		break;
 	case "health":
 		await handleHealth();
 		break;
@@ -551,6 +579,7 @@ switch (command) {
 		console.log("  execute         Execute task tree with worktrees");
 		console.log("  retry <taskId>  Retry a failed/stuck task");
 		console.log("  watch           Watch agent activity in real-time");
+		console.log("  send <msg>      Send instruction to running agent");
 		console.log("  health          Check daemon status");
 		break;
 }

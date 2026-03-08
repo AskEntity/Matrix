@@ -28,6 +28,18 @@ export type AgentEvent =
 	| { type: "text"; content: string }
 	| { type: "error"; message: string };
 
+/** Handle to a running agent session that supports message injection. */
+export interface AgentSession {
+	/** Unique session ID for this running agent. */
+	readonly sessionId: string;
+	/** Stream of agent events. Consume this to drive the session. */
+	events: AsyncGenerator<AgentEvent, AgentResult>;
+	/** Send a message to the agent mid-execution. */
+	sendMessage(text: string): Promise<void>;
+	/** Stop the agent. */
+	stop(): void;
+}
+
 /**
  * Interface for agent execution backends.
  *
@@ -46,4 +58,10 @@ export interface AgentProvider {
 	 * The last yielded value is always the final AgentResult.
 	 */
 	stream(request: AgentRequest): AsyncGenerator<AgentEvent, AgentResult>;
+
+	/**
+	 * Start an interactive agent session that supports mid-execution message injection.
+	 * Returns a session handle with sendMessage() and an event stream.
+	 */
+	startSession(request: AgentRequest): AgentSession;
 }

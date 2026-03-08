@@ -18,6 +18,9 @@ const autoScroll = document.getElementById("auto-scroll");
 const connectionStatus = document.getElementById("connection-status");
 const costDisplay = document.getElementById("cost-display");
 const orchestrateForm = document.getElementById("orchestrate-form");
+const injectForm = document.getElementById("inject-form");
+const injectInput = document.getElementById("inject-input");
+const btnInject = document.getElementById("btn-inject");
 
 // --- WebSocket ---
 
@@ -68,6 +71,8 @@ function handleWSMessage(msg) {
 			logEntry("orchestration_started", "Orchestration started");
 			btnOrchestrate.disabled = true;
 			btnOrchestrate.textContent = "Running...";
+			injectInput.disabled = false;
+			btnInject.disabled = false;
 			break;
 		case "orchestration_completed":
 			logEntry(
@@ -77,6 +82,8 @@ function handleWSMessage(msg) {
 			);
 			btnOrchestrate.disabled = false;
 			btnOrchestrate.textContent = "Orchestrate";
+			injectInput.disabled = true;
+			btnInject.disabled = true;
 			if (msg.costUsd) {
 				costDisplay.textContent = `Last run: $${msg.costUsd.toFixed(2)}`;
 			}
@@ -89,6 +96,9 @@ function handleWSMessage(msg) {
 				"task_completed",
 				`Task ${msg.success ? "passed" : "failed"}: ${msg.title}`,
 			);
+			break;
+		case "message_injected":
+			logEntry("orchestration_started", `You: ${msg.message}`);
 			break;
 		case "error":
 			logEntry("error", `Error: ${msg.message}`);
@@ -320,6 +330,25 @@ btnRefresh.addEventListener("click", () => {
 });
 btnClearLog.addEventListener("click", () => {
 	activityLog.innerHTML = "";
+});
+
+// --- Inject Message ---
+
+injectForm.addEventListener("submit", (e) => {
+	e.preventDefault();
+	const message = injectInput.value.trim();
+	if (!message || !selectedProjectId) return;
+
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		ws.send(
+			JSON.stringify({
+				type: "inject_message",
+				projectId: selectedProjectId,
+				prompt: message,
+			}),
+		);
+	}
+	injectInput.value = "";
 });
 
 // --- Init ---

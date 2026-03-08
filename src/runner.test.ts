@@ -50,6 +50,9 @@ function createMockProvider(
 		stream: async function* () {
 			return { success: true, output: "" };
 		},
+		startSession() {
+			throw new Error("Not implemented in mock");
+		},
 	};
 }
 
