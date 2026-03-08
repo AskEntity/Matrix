@@ -2,6 +2,8 @@
 let ws = null;
 /** @type {string} */
 let selectedProjectId = "";
+/** @type {string | null} */
+let selectedTaskId = null;
 /** @type {Map<string, object>} */
 const taskNodes = new Map();
 
@@ -21,6 +23,10 @@ const orchestrateForm = document.getElementById("orchestrate-form");
 const injectForm = document.getElementById("inject-form");
 const injectInput = document.getElementById("inject-input");
 const btnInject = document.getElementById("btn-inject");
+const taskDetail = document.getElementById("task-detail");
+const btnCloseDetail = document.getElementById("btn-close-detail");
+const continueForm = document.getElementById("continue-form");
+const continueInput = document.getElementById("continue-input");
 
 // --- WebSocket ---
 
@@ -31,7 +37,6 @@ function connectWS() {
 	ws.onopen = () => {
 		connectionStatus.className = "status-dot connected";
 		connectionStatus.title = "Connected";
-		// Subscribe to current project
 		if (selectedProjectId) {
 			ws.send(
 				JSON.stringify({ type: "subscribe", projectId: selectedProjectId }),
@@ -120,7 +125,6 @@ async function fetchProjects() {
 		opt.textContent = `${p.name} (${p.path})`;
 		projectSelect.appendChild(opt);
 	}
-	// Auto-select if only one project
 	if (projects.length === 1) {
 		projectSelect.value = projects[0].id;
 		selectProject(projects[0].id);
@@ -135,13 +139,14 @@ async function fetchTasks(projectId) {
 
 async function selectProject(projectId) {
 	selectedProjectId = projectId;
+	selectedTaskId = null;
+	closeDetail();
 	if (!projectId) {
 		taskTree.innerHTML = "";
 		noTasks.style.display = "block";
 		return;
 	}
 	await fetchTasks(projectId);
-	// Subscribe via WS
 	if (ws && ws.readyState === WebSocket.OPEN) {
 		ws.send(JSON.stringify({ type: "subscribe", projectId }));
 	}
@@ -160,7 +165,6 @@ function renderTaskTree(nodes) {
 	}
 	noTasks.style.display = "none";
 
-	// Build tree structure
 	const roots = nodes.filter((n) => !n.parentId);
 	const childMap = new Map();
 	for (const n of nodes) {
@@ -174,11 +178,17 @@ function renderTaskTree(nodes) {
 	for (const root of roots) {
 		renderNode(root, childMap, 0);
 	}
+
+	// If detail is open, refresh it
+	if (selectedTaskId && taskNodes.has(selectedTaskId)) {
+		showDetail(taskNodes.get(selectedTaskId));
+	}
 }
 
 function renderNode(node, childMap, depth) {
 	const div = document.createElement("div");
 	div.className = "task-node";
+	if (node.id === selectedTaskId) div.className += " selected";
 	div.dataset.id = node.id;
 
 	const row = document.createElement("div");
@@ -204,30 +214,130 @@ function renderNode(node, childMap, depth) {
 
 	div.appendChild(row);
 
-	// Meta info (shown on click)
-	const meta = document.createElement("div");
-	meta.className = "task-meta";
-	const parts = [];
-	if (node.description) parts.push(node.description);
-	if (node.worktreePath) parts.push(`Worktree: ${node.worktreePath}`);
-	if (node.sessionId) parts.push(`Session: ${node.sessionId.slice(0, 8)}...`);
-	parts.push(`Updated: ${new Date(node.updatedAt).toLocaleTimeString()}`);
-	meta.textContent = parts.join(" | ");
-	div.appendChild(meta);
-
 	div.addEventListener("click", (e) => {
 		e.stopPropagation();
-		div.classList.toggle("expanded");
+		selectTask(node.id);
 	});
 
 	taskTree.appendChild(div);
 
-	// Render children
 	const children = childMap.get(node.id) || [];
 	for (const child of children) {
 		renderNode(child, childMap, depth + 1);
 	}
 }
+
+// --- Task Detail ---
+
+function selectTask(taskId) {
+	selectedTaskId = taskId;
+	const node = taskNodes.get(taskId);
+	if (!node) return;
+
+	// Update selected state in tree
+	for (const el of taskTree.querySelectorAll(".task-node")) {
+		el.classList.toggle("selected", el.dataset.id === taskId);
+	}
+
+	showDetail(node);
+}
+
+function showDetail(node) {
+	taskDetail.classList.remove("hidden");
+
+	document.getElementById("detail-title").textContent = node.title;
+
+	const statusEl = document.getElementById("detail-status");
+	statusEl.innerHTML = `<div class="detail-label">Status</div><span class="status-badge ${node.status}">${node.status}</span>`;
+
+	setDetailField(
+		"detail-description",
+		"Description",
+		node.description,
+		"description",
+	);
+	setDetailField("detail-branch", "Branch", node.branch);
+	setDetailField("detail-worktree", "Worktree", node.worktreePath);
+	setDetailField(
+		"detail-session",
+		"Session",
+		node.sessionId ? node.sessionId.slice(0, 12) + "..." : null,
+	);
+	setDetailField(
+		"detail-updated",
+		"Updated",
+		node.updatedAt ? new Date(node.updatedAt).toLocaleString() : null,
+	);
+	setDetailField("detail-message", "Message", node.message);
+
+	// Show continue form for failed/stuck tasks
+	if (node.status === "failed" || node.status === "stuck") {
+		continueForm.classList.remove("hidden");
+	} else {
+		continueForm.classList.add("hidden");
+	}
+}
+
+function setDetailField(id, label, value, extraClass) {
+	const el = document.getElementById(id);
+	if (!value) {
+		el.innerHTML = "";
+		return;
+	}
+	el.innerHTML = `<div class="detail-label">${label}</div><div class="detail-value ${extraClass || ""}">${escapeHtml(value)}</div>`;
+}
+
+function escapeHtml(text) {
+	const div = document.createElement("div");
+	div.textContent = text;
+	return div.innerHTML;
+}
+
+function closeDetail() {
+	taskDetail.classList.add("hidden");
+	selectedTaskId = null;
+	for (const el of taskTree.querySelectorAll(".task-node.selected")) {
+		el.classList.remove("selected");
+	}
+}
+
+// --- Continue task ---
+
+continueForm.addEventListener("submit", async (e) => {
+	e.preventDefault();
+	if (!selectedProjectId || !selectedTaskId) return;
+
+	const message = continueInput.value.trim();
+	const body = message ? { message } : {};
+
+	try {
+		const res = await fetch(
+			`/projects/${selectedProjectId}/tasks/${selectedTaskId}/continue`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			},
+		);
+		if (res.ok) {
+			const updated = await res.json();
+			taskNodes.set(updated.id, updated);
+			showDetail(updated);
+			logEntry(
+				"task_started",
+				`Continued task: ${updated.title}${message ? ` — "${message}"` : ""}`,
+			);
+			continueInput.value = "";
+			// Refresh tree to show updated status
+			await fetchTasks(selectedProjectId);
+		} else {
+			const err = await res.json();
+			logEntry("error", `Continue failed: ${err.error}`);
+		}
+	} catch (err) {
+		logEntry("error", `Continue failed: ${err.message}`);
+	}
+});
 
 // --- Activity Log ---
 
@@ -279,7 +389,6 @@ orchestrateForm.addEventListener("submit", async (e) => {
 	promptInput.value = "";
 
 	try {
-		// Send via WS so we get streaming events
 		if (ws && ws.readyState === WebSocket.OPEN) {
 			ws.send(
 				JSON.stringify({
@@ -290,7 +399,6 @@ orchestrateForm.addEventListener("submit", async (e) => {
 				}),
 			);
 		} else {
-			// Fallback to HTTP
 			logEntry(
 				"orchestration_started",
 				"Orchestration started (HTTP fallback)",
@@ -331,6 +439,7 @@ btnRefresh.addEventListener("click", () => {
 btnClearLog.addEventListener("click", () => {
 	activityLog.innerHTML = "";
 });
+btnCloseDetail.addEventListener("click", closeDetail);
 
 // --- Inject Message ---
 

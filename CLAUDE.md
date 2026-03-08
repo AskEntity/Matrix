@@ -19,7 +19,7 @@ bun test src/e2e.test.ts
 
 **How to run unit tests + all checks**:
 ```bash
-bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/orchestrator.test.ts src/worktree-manager.test.ts src/runner.test.ts  # unit tests
+bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts  # unit tests
 bun run typecheck   # tsc --noEmit
 bun run check       # biome lint + format
 ```
@@ -66,13 +66,11 @@ Project lifecycle is deterministic code, not agent work.
 | POST | /projects/:id/tasks | Create task (root or child via `parentId`) |
 | GET | /projects/:id/tasks | Get full task tree |
 | PATCH | /projects/:id/tasks/:nodeId | Update task status/branch |
-| POST | /projects/:id/tasks/:nodeId/retry | Reset failed/stuck task to pending |
+| POST | /projects/:id/tasks/:nodeId/continue | Continue failed/stuck task (optional `{message}`) |
 | DELETE | /projects/:id/tasks/:nodeId | Remove task and descendants |
 | POST | /projects/:id/run | Execute agent task (one-shot) |
 | POST | /projects/:id/stream | Execute agent task (SSE streaming) |
 | POST | /projects/:id/decompose | Agent breaks goal into task tree |
-| POST | /projects/:id/execute | Run task tree with worktree isolation (parallel) |
-| POST | /projects/:id/orchestrate | Run pending tasks sequentially (legacy) |
 | POST | /projects/:id/orchestrate/agent | Agent-driven orchestration with MCP tools |
 | POST | /projects/:id/message | Send instruction to running agent |
 | WS | /ws | Real-time task tree + agent events + message injection |
@@ -89,12 +87,10 @@ Project lifecycle is deterministic code, not agent work.
 | src/project-manager.ts | Project init/CRUD, .opengraft/ setup, git init |
 | src/task-tracker.ts | Task tree CRUD, persistence to JSON |
 | src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
-| src/runner.ts | Agent-driven parallel task execution with worktree isolation |
-| src/orchestrator.ts | Legacy sequential orchestrator (kept for backward compat) |
-| src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, spawn_task, merge_branch) |
+| src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, spawn_task, spawn_children, delete_task) |
 | src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, orchestrate, execute, watch, send |
 | web/ | Web UI: task tree, agent activity, message injection (served by daemon) |
-| src/daemon.test.ts | API route tests (87 total across 8 files) |
+| src/daemon.test.ts | API route tests (58 total across 4 files) |
 | src/project-manager.test.ts | ProjectManager unit tests |
 | src/task-tracker.test.ts | TaskTracker unit tests |
 | src/e2e.test.ts | Real agent E2E test (token-gated) |
@@ -163,7 +159,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 
 ### Phase 2 (COMPLETE)
 - [x] CLI: `og init`, `og list`, `og status`, `og run`, `og decompose`, `og execute`, `og retry`
-- [x] MCP tools: get_tree, create_task, update_task_status, spawn_task, spawn_children, merge_branch, cleanup_worktrees
+- [x] MCP tools: get_tree, create_task, update_task_status, spawn_task, spawn_children, delete_task
 - [x] Agent-driven orchestration (POST /orchestrate/agent) with session persistence + cost tracking
 - [x] Git-clean guard: require clean working tree before spawn
 - [x] Rename .ai → .opengraft, .ai-daemon → .opengraft-daemon
@@ -181,5 +177,11 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Worktree cleanup fix: proper removal
 - [x] Direct Anthropic API: DirectProvider with Messages API + built-in tools
 - [x] Multi-model support: OG_PROVIDER + OG_MODEL env vars, model per AgentRequest
+- [x] Cleanup: removed Runner + old Orchestrator (replaced by agent-driven orchestration)
+- [x] Merge lifecycle: parent merges via bash, delete_task cleans up worktree/branch/node
+- [x] Worktree isolation: per-worktree config, hooks disabled, deps installed
+- [x] Retry → Continue: POST /tasks/:nodeId/continue with optional message
+- [x] Web UI: task detail panel (click task → status, description, branch, actions)
+- [x] Web UI: continue action for failed/stuck tasks with message input
 - [ ] MCP tool forwarding in DirectProvider (connect mcpServers from request)
 - [ ] Cost tracking per model (different pricing for Sonnet vs Opus vs Haiku)

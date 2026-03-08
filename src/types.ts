@@ -20,6 +20,8 @@ export interface TaskNode {
 	sessionId: string | null;
 	/** Absolute path to the git worktree for this task. */
 	worktreePath: string | null;
+	/** Optional message to pass when continuing a failed/stuck task. */
+	message: string | null;
 	createdAt: string;
 	updatedAt: string;
 }

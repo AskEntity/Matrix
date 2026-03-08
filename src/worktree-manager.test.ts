@@ -141,27 +141,6 @@ describe("WorktreeManager", () => {
 		expect(existsSync(join(repoDir, "new-file.txt"))).toBe(true);
 	});
 
-	test("mergeAndCleanup merges and removes worktree", async () => {
-		const taskId = "dddddddd-2222-3333-4444-555555555555";
-		const info = await mgr.create(taskId, "finalize-me");
-
-		// Make a change in the worktree
-		await writeFile(join(info.path, "finalized.txt"), "done\n");
-		await exec(["git", "add", "-A"], info.path);
-		await exec(["git", "commit", "-m", "add finalized file"], info.path);
-
-		const success = await mgr.mergeAndCleanup(taskId, "finalize-me", repoDir);
-		expect(success).toBe(true);
-
-		// File should be merged
-		expect(existsSync(join(repoDir, "finalized.txt"))).toBe(true);
-		// Worktree should be gone
-		expect(existsSync(info.path)).toBe(false);
-		// Branch should be gone
-		const branches = await exec(["git", "branch"], repoDir);
-		expect(branches).not.toContain("og/dddddddd/finalize-me");
-	});
-
 	test("merge returns false on conflict", async () => {
 		const taskId = "eeeeeeee-1111-2222-3333-444444444444";
 		const info = await mgr.create(taskId, "conflict");

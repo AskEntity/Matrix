@@ -103,6 +103,14 @@ export class TaskTracker {
 		node.updatedAt = new Date().toISOString();
 	}
 
+	/** Set a message on a task (e.g. instructions when continuing a failed task). */
+	setMessage(nodeId: string, message: string): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		node.message = message;
+		node.updatedAt = new Date().toISOString();
+	}
+
 	/** Assign a branch to a task node (1:1 agent-branch binding). */
 	assignBranch(nodeId: string, branch: string): void {
 		const node = this.nodes.get(nodeId);
@@ -185,6 +193,7 @@ export class TaskTracker {
 			children: [],
 			sessionId: null,
 			worktreePath: null,
+			message: null,
 			createdAt: now,
 			updatedAt: now,
 		};

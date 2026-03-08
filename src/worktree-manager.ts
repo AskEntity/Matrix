@@ -120,23 +120,6 @@ export class WorktreeManager {
 		);
 	}
 
-	/**
-	 * Merge a child's branch and then clean up its worktree + branch.
-	 * Atomic operation: merge → remove worktree → delete branch.
-	 * mergeCwd is the directory that has the target branch checked out.
-	 */
-	async mergeAndCleanup(
-		taskId: string,
-		slug: string,
-		mergeCwd: string,
-	): Promise<boolean> {
-		const merged = await this.merge(taskId, slug, mergeCwd);
-		if (!merged) return false;
-
-		await this.remove(taskId, slug);
-		return true;
-	}
-
 	/** List active worktrees. */
 	async list(): Promise<WorktreeInfo[]> {
 		const proc = this.git(["worktree", "list", "--porcelain"]);

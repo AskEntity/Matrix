@@ -27,19 +27,47 @@
 			<div id="no-tasks" class="empty-state">No tasks yet. Start an orchestration to see the task tree.</div>
 		</section>
 
-		<section id="activity-panel">
-			<div class="panel-header">
-				<h2>Agent Activity</h2>
-				<div class="panel-actions">
-					<button type="button" id="btn-clear-log" title="Clear">&#x2715;</button>
-					<label><input type="checkbox" id="auto-scroll" checked> Auto-scroll</label>
+		<section id="right-panel">
+			<!-- Task detail (shown when a task is selected) -->
+			<div id="task-detail" class="hidden">
+				<div class="panel-header">
+					<h2 id="detail-title">Task Detail</h2>
+					<div class="panel-actions">
+						<button type="button" id="btn-close-detail" title="Close">&#x2715;</button>
+					</div>
+				</div>
+				<div id="detail-content">
+					<div id="detail-status" class="detail-field"></div>
+					<div id="detail-description" class="detail-field"></div>
+					<div id="detail-branch" class="detail-field"></div>
+					<div id="detail-worktree" class="detail-field"></div>
+					<div id="detail-session" class="detail-field"></div>
+					<div id="detail-updated" class="detail-field"></div>
+					<div id="detail-message" class="detail-field"></div>
+				</div>
+				<div id="detail-actions">
+					<form id="continue-form" class="hidden">
+						<input type="text" id="continue-input" placeholder="Instructions for the agent..." autocomplete="off">
+						<button type="submit" id="btn-continue">Continue</button>
+					</form>
 				</div>
 			</div>
-			<div id="activity-log"></div>
-			<form id="inject-form">
-				<input type="text" id="inject-input" placeholder="Send instruction to running agent..." autocomplete="off" disabled>
-				<button type="submit" id="btn-inject" disabled>Send</button>
-			</form>
+
+			<!-- Activity log -->
+			<div id="activity-section">
+				<div class="panel-header">
+					<h2>Agent Activity</h2>
+					<div class="panel-actions">
+						<button type="button" id="btn-clear-log" title="Clear">&#x2715;</button>
+						<label><input type="checkbox" id="auto-scroll" checked> Auto-scroll</label>
+					</div>
+				</div>
+				<div id="activity-log"></div>
+				<form id="inject-form">
+					<input type="text" id="inject-input" placeholder="Send instruction to running agent..." autocomplete="off" disabled>
+					<button type="submit" id="btn-inject" disabled>Send</button>
+				</form>
+			</div>
 		</section>
 	</main>
 

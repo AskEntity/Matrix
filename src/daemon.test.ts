@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentProvider } from "./agent-provider.ts";
@@ -295,7 +295,7 @@ describe("daemon tasks API", () => {
 		expect(body.nodes).toHaveLength(0);
 	});
 
-	test("POST /tasks/:nodeId/retry resets failed task to pending", async () => {
+	test("POST /tasks/:nodeId/continue resets failed task to pending", async () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -310,17 +310,22 @@ describe("daemon tasks API", () => {
 			body: JSON.stringify({ status: "failed" }),
 		});
 
-		// Retry
-		const retryRes = await app.request(
-			`/projects/${projectId}/tasks/${root.id}/retry`,
-			{ method: "POST" },
+		// Continue with a message
+		const contRes = await app.request(
+			`/projects/${projectId}/tasks/${root.id}/continue`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "Try a different approach" }),
+			},
 		);
-		expect(retryRes.status).toBe(200);
-		const retried = (await retryRes.json()) as TaskNode;
-		expect(retried.status).toBe("pending");
+		expect(contRes.status).toBe(200);
+		const continued = (await contRes.json()) as TaskNode;
+		expect(continued.status).toBe("pending");
+		expect(continued.message).toBe("Try a different approach");
 	});
 
-	test("POST /tasks/:nodeId/retry rejects non-failed task", async () => {
+	test("POST /tasks/:nodeId/continue rejects non-failed task", async () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -328,79 +333,11 @@ describe("daemon tasks API", () => {
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
-		const retryRes = await app.request(
-			`/projects/${projectId}/tasks/${root.id}/retry`,
+		const contRes = await app.request(
+			`/projects/${projectId}/tasks/${root.id}/continue`,
 			{ method: "POST" },
 		);
-		expect(retryRes.status).toBe(400);
-	});
-});
-
-describe("daemon orchestrate API", () => {
-	let tempDir: string;
-	let dataDir: string;
-	let app: ReturnType<typeof createApp>["app"];
-	let projectId: string;
-
-	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-orch-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-odata-"));
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		app = result.app;
-		await result.pm.load();
-
-		const res = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: join(tempDir, "orch-app") }),
-		});
-		const project = (await res.json()) as Project;
-		projectId = project.id;
-	});
-
-	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
-	});
-
-	test("POST /orchestrate runs pending tasks", async () => {
-		// Create task tree
-		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "App", description: "Build it" }),
-		});
-		const root = (await rootRes.json()) as TaskNode;
-
-		await app.request(`/projects/${projectId}/tasks`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				title: "Feature A",
-				description: "First feature",
-				parentId: root.id,
-			}),
-		});
-
-		const orchRes = await app.request(`/projects/${projectId}/orchestrate`, {
-			method: "POST",
-		});
-		expect(orchRes.status).toBe(200);
-		const body = (await orchRes.json()) as {
-			completed: number;
-			results: { title: string; status: string; success: boolean }[];
-		};
-		expect(body.completed).toBeGreaterThan(0);
-		expect(body.results[0]?.success).toBe(true);
-	});
-
-	test("POST /orchestrate returns empty when no tasks", async () => {
-		const orchRes = await app.request(`/projects/${projectId}/orchestrate`, {
-			method: "POST",
-		});
-		expect(orchRes.status).toBe(200);
-		const body = (await orchRes.json()) as { completed: number };
-		expect(body.completed).toBe(0);
+		expect(contRes.status).toBe(400);
 	});
 });
 
@@ -679,193 +616,6 @@ describe("daemon orchestrate/agent API", () => {
 		});
 		expect(res.status).toBe(404);
 
-		await rm(dataDir, { recursive: true });
-	});
-});
-
-/** Clean git env for test isolation. */
-const cleanGitEnv: Record<string, string | undefined> = {
-	...process.env,
-	GIT_DIR: undefined,
-	GIT_WORK_TREE: undefined,
-	GIT_INDEX_FILE: undefined,
-	GIT_OBJECT_DIRECTORY: undefined,
-	GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
-};
-
-async function gitExec(cmd: string[], cwd: string): Promise<void> {
-	const proc = Bun.spawn(cmd, {
-		cwd,
-		stdout: "pipe",
-		stderr: "pipe",
-		env: cleanGitEnv,
-	});
-	await proc.exited;
-}
-
-describe("daemon execute API", () => {
-	test("POST /execute runs tasks with worktree isolation", async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "og-exec-"));
-		const dataDir = await mkdtemp(join(tmpdir(), "og-edata-"));
-		const projectPath = join(tempDir, "exec-app");
-
-		// Init a real git repo for worktree support
-		await Bun.spawn(["mkdir", "-p", projectPath]).exited;
-		await gitExec(["git", "init"], projectPath);
-		await gitExec(
-			["git", "config", "user.email", "test@test.com"],
-			projectPath,
-		);
-		await gitExec(["git", "config", "user.name", "Test"], projectPath);
-		await writeFile(join(projectPath, "README.md"), "# Test\n");
-		await gitExec(["git", "add", "-A"], projectPath);
-		await gitExec(["git", "commit", "-m", "init"], projectPath);
-
-		const execProvider = createMockProvider(async () => ({
-			success: true,
-			output: "task done",
-			sessionId: "sess-1",
-		}));
-
-		const { app, pm } = createApp({
-			dataDir,
-			agentProvider: execProvider,
-		});
-		await pm.load();
-
-		// Register the project (it already exists, so it's a "convert")
-		const projectRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectPath }),
-		});
-		const project = (await projectRes.json()) as Project;
-
-		// Create task tree
-		const rootRes = await app.request(`/projects/${project.id}/tasks`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "App", description: "Build it" }),
-		});
-		const root = (await rootRes.json()) as TaskNode;
-
-		await app.request(`/projects/${project.id}/tasks`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				title: "Feature A",
-				description: "First feature",
-				parentId: root.id,
-			}),
-		});
-
-		// Execute
-		const execRes = await app.request(`/projects/${project.id}/execute`, {
-			method: "POST",
-		});
-		expect(execRes.status).toBe(200);
-
-		const result = (await execRes.json()) as {
-			completed: number;
-			failed: number;
-			events: { type: string }[];
-		};
-		expect(result.completed).toBeGreaterThan(0);
-		expect(result.events.length).toBeGreaterThan(0);
-
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
-	});
-
-	test("POST /execute returns empty when no tasks", async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "og-exec2-"));
-		const dataDir = await mkdtemp(join(tmpdir(), "og-edata2-"));
-		const projectPath = join(tempDir, "empty-app");
-
-		await Bun.spawn(["mkdir", "-p", projectPath]).exited;
-		await gitExec(["git", "init"], projectPath);
-		await gitExec(
-			["git", "config", "user.email", "test@test.com"],
-			projectPath,
-		);
-		await gitExec(["git", "config", "user.name", "Test"], projectPath);
-		await writeFile(join(projectPath, "README.md"), "# Test\n");
-		await gitExec(["git", "add", "-A"], projectPath);
-		await gitExec(["git", "commit", "-m", "init"], projectPath);
-
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
-		await pm.load();
-
-		const projectRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectPath }),
-		});
-		const project = (await projectRes.json()) as Project;
-
-		const execRes = await app.request(`/projects/${project.id}/execute`, {
-			method: "POST",
-		});
-		expect(execRes.status).toBe(200);
-		const result = (await execRes.json()) as { completed: number };
-		expect(result.completed).toBe(0);
-
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
-	});
-
-	test("POST /execute/stream returns SSE events", async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "og-sse-"));
-		const dataDir = await mkdtemp(join(tmpdir(), "og-sdata-"));
-		const projectPath = join(tempDir, "sse-app");
-
-		await Bun.spawn(["mkdir", "-p", projectPath]).exited;
-		await gitExec(["git", "init"], projectPath);
-		await gitExec(
-			["git", "config", "user.email", "test@test.com"],
-			projectPath,
-		);
-		await gitExec(["git", "config", "user.name", "Test"], projectPath);
-		await writeFile(join(projectPath, "README.md"), "# Test\n");
-		await gitExec(["git", "add", "-A"], projectPath);
-		await gitExec(["git", "commit", "-m", "init"], projectPath);
-
-		const sseProvider = createMockProvider(async () => ({
-			success: true,
-			output: "done",
-		}));
-
-		const { app, pm } = createApp({
-			dataDir,
-			agentProvider: sseProvider,
-		});
-		await pm.load();
-
-		const projectRes = await app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: projectPath }),
-		});
-		const project = (await projectRes.json()) as Project;
-
-		await app.request(`/projects/${project.id}/tasks`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Task", description: "Do it" }),
-		});
-
-		const sseRes = await app.request(`/projects/${project.id}/execute/stream`, {
-			method: "POST",
-		});
-		expect(sseRes.status).toBe(200);
-		expect(sseRes.headers.get("Content-Type")).toBe("text/event-stream");
-
-		const body = await sseRes.text();
-		expect(body).toContain("event: event");
-		expect(body).toContain("event: result");
-		expect(body).toContain("task_started");
-
-		await rm(tempDir, { recursive: true });
 		await rm(dataDir, { recursive: true });
 	});
 });

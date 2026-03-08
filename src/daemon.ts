@@ -8,9 +8,7 @@ import type { AgentProvider, AgentSession } from "./agent-provider.ts";
 import { CostAccumulator, createOrchestratorTools } from "./agent-tools.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { DirectProvider } from "./direct-provider.ts";
-import { Orchestrator } from "./orchestrator.ts";
 import { ProjectManager } from "./project-manager.ts";
-import { Runner } from "./runner.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { DecomposedTask, HealthResponse, TaskStatus } from "./types.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
@@ -226,7 +224,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json(tracker.get(nodeId));
 	});
 
-	app.post("/projects/:id/tasks/:nodeId/retry", async (c) => {
+	app.post("/projects/:id/tasks/:nodeId/continue", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
@@ -239,9 +237,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 		if (node.status !== "failed" && node.status !== "stuck") {
 			return c.json(
-				{ error: `Cannot retry task with status: ${node.status}` },
+				{ error: `Cannot continue task with status: ${node.status}` },
 				400,
 			);
+		}
+		const body = await c.req
+			.json<{ message?: string }>()
+			.catch(() => ({ message: undefined }));
+		if (body.message) {
+			tracker.setMessage(nodeId, body.message);
 		}
 		tracker.updateStatus(nodeId, "pending");
 		await tracker.save();
@@ -337,35 +341,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				Connection: "keep-alive",
 			},
 		});
-	});
-
-	// Orchestrator: run pending tasks through the agent
-	app.post("/projects/:id/orchestrate", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const tracker = await getTracker(project.id);
-		const orch = new Orchestrator(tracker, config.agentProvider, project.path);
-
-		try {
-			const results = await orch.run();
-			return c.json({
-				completed: results.length,
-				results: results.map((r) => ({
-					taskId: r.node.id,
-					title: r.node.title,
-					status: r.node.status,
-					success: r.agentResult.success,
-					output: r.agentResult.output,
-					costUsd: r.agentResult.costUsd,
-					turns: r.agentResult.turns,
-				})),
-			});
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error";
-			return c.json({ error: message }, 500);
-		}
 	});
 
 	// Task decomposition: agent breaks goal into task tree
@@ -517,82 +492,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		} finally {
 			activeOrchestrations.delete(project.id);
 		}
-	});
-
-	// Runner: worktree-isolated parallel task execution
-	app.post("/projects/:id/execute", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const tracker = await getTracker(project.id);
-		const wtRoot = join(project.path, ".worktrees");
-		const wm = new WorktreeManager(project.path, wtRoot);
-		const runner = new Runner(tracker, config.agentProvider, wm, project.path);
-
-		try {
-			const result = await runner.run();
-			return c.json({
-				...result,
-				events: runner.getEvents(),
-			});
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error";
-			return c.json({ error: message }, 500);
-		}
-	});
-
-	// Runner SSE: stream execution events in real-time
-	app.post("/projects/:id/execute/stream", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-
-		const tracker = await getTracker(project.id);
-		const wtRoot = join(project.path, ".worktrees");
-		const wm = new WorktreeManager(project.path, wtRoot);
-
-		const stream = new ReadableStream({
-			async start(controller) {
-				const encoder = new TextEncoder();
-				const send = (event: string, data: unknown) => {
-					controller.enqueue(
-						encoder.encode(
-							`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
-						),
-					);
-				};
-
-				const runner = new Runner(
-					tracker,
-					config.agentProvider,
-					wm,
-					project.path,
-					{
-						onEvent: (evt) => send("event", evt),
-					},
-				);
-
-				try {
-					const result = await runner.run();
-					send("result", result);
-				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
-					send("error", { error: message });
-				} finally {
-					controller.close();
-				}
-			},
-		});
-
-		return new Response(stream, {
-			headers: {
-				"Content-Type": "text/event-stream",
-				"Cache-Control": "no-cache",
-				Connection: "keep-alive",
-			},
-		});
 	});
 
 	// Inject a message into a running orchestration
@@ -827,25 +726,29 @@ const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. Yo
 - update_task_status: Update a task's status
 - spawn_task: Execute a single task on an isolated git worktree (blocks until done)
 - spawn_children: Execute ALL pending children of a parent in PARALLEL (recommended)
-- finalize_task: Merge a passed child's branch into its parent, then clean up worktree + branch
-- cleanup_worktrees: Clean up all remaining worktrees (last resort)
+- delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
 
 ## Workflow
 1. Analyze the goal and the codebase
 2. Create a root task, then decompose into child tasks using create_task
 3. CRITICAL: Sibling tasks run in PARALLEL — each must work on DIFFERENT files/modules
 4. Call spawn_children(parentId) to execute all children in parallel
-5. For each passed child, call finalize_task(taskId) — this merges and cleans up atomically
-6. After all children are finalized, mark the root task as "passed"
-7. Call cleanup_worktrees only if there are leftover worktrees
+5. When a child passes, YOU merge its branch yourself:
+   a. Check the child's work (review files on the branch)
+   b. Merge via bash: git merge --no-ff <child-branch> -m "Merge task: <title>"
+      (run this from the parent's worktree directory, or the main repo if no parent worktree)
+   c. Call delete_task(taskId) to clean up the child's worktree, branch, and task node
+6. After all children are merged, mark the root task as "passed"
 
 ## Task Lifecycle
-pending → in_progress (agent working) → passed/failed → finalized (merged + cleaned up)
+pending → in_progress (agent working) → passed/failed
+After a child passes: parent reviews → parent merges branch → parent calls delete_task
 
-finalize_task handles:
-- Merging the child's branch into the parent's worktree (no checkout in main repo)
-- Removing the child's worktree directory
-- Deleting the child's branch
+## Merge Details
+- You have bash access. Use \`git merge --no-ff <branch> -m "..."\` to merge.
+- Merge from the directory that has the target branch checked out.
+- If merge conflicts occur, resolve them or mark the child as "stuck".
+- After successful merge, call delete_task to clean up.
 
 ## Rules
 - Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
@@ -853,7 +756,7 @@ finalize_task handles:
 - Keep the tree shallow: 2-3 levels max
 - Each leaf task should be independently executable by a single agent session
 - Use spawn_children for parallel execution — calling spawn_task multiple times runs sequentially
-- ALWAYS finalize each passed child before moving on
+- ALWAYS merge and delete_task each passed child before moving on
 - ALWAYS mark the root task as "passed" when everything succeeds, or "failed" if something went wrong`;
 
 const DECOMPOSE_PROMPT = `You are a task decomposition system. Given a high-level goal, break it into a hierarchical task tree.
