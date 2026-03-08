@@ -110,13 +110,25 @@ export class ProjectManager {
 
 		// Only write memory.md if it doesn't already exist
 		const memoryPath = join(projectPath, ".opengraft", "memory.md");
+		let createdMemory = false;
 		if (!existsSync(memoryPath)) {
 			await writeFile(memoryPath, CONVERTED_PROJECT_MEMORY, "utf-8");
+			createdMemory = true;
 		}
 
 		// Initialize git if not already a repo
 		if (!existsSync(join(projectPath, ".git"))) {
 			await this.exec(["git", "init"], projectPath);
+		}
+
+		// Commit new .opengraft/ files so the working tree stays clean
+		// (spawn_task/spawn_children require a clean working tree)
+		if (createdMemory) {
+			await this.exec(["git", "add", ".opengraft/"], projectPath);
+			await this.exec(
+				["git", "commit", "-m", "Add .opengraft/ project memory"],
+				projectPath,
+			);
 		}
 
 		return this.register(projectPath);
