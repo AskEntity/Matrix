@@ -383,8 +383,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const body = await c.req.json<{
 			prompt: string;
 			maxTurns?: number;
+			resume?: boolean;
 		}>();
-		if (!body.prompt) {
+		if (!body.prompt && !body.resume) {
 			return c.json({ error: "prompt is required" }, 400);
 		}
 
@@ -400,9 +401,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		});
 
 		const memory = readProjectMemory(project.path);
-		const prompt = memory
-			? `## Project Memory\n${memory}\n\n${body.prompt}`
-			: body.prompt;
+		const prompt = body.resume
+			? (body.prompt ??
+				"Continue where you left off. Check the task tree and proceed.")
+			: memory
+				? `## Project Memory\n${memory}\n\n${body.prompt}`
+				: body.prompt;
+
+		const resumeSessionId = body.resume
+			? (tracker.orchestratorSessionId ?? undefined)
+			: undefined;
 
 		try {
 			const result = await config.agentProvider.execute({
@@ -411,7 +419,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
 				maxTurns: body.maxTurns ?? 50,
 				mcpServers: { opengraft: mcpServer },
+				resumeSessionId,
 			});
+
+			// Persist orchestrator session ID for future resume
+			if (result.sessionId) {
+				tracker.orchestratorSessionId = result.sessionId;
+				await tracker.save();
+			}
+
 			return c.json({
 				...result,
 				tree: {

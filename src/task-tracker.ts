@@ -11,6 +11,7 @@ import type { TaskNode, TaskStatus } from "./types.ts";
 export class TaskTracker {
 	private nodes: Map<string, TaskNode> = new Map();
 	private rootId: string | null = null;
+	private _orchestratorSessionId: string | null = null;
 
 	constructor(private readonly treePath: string) {}
 
@@ -21,8 +22,10 @@ export class TaskTracker {
 			const data = JSON.parse(raw) as {
 				rootId: string | null;
 				nodes: TaskNode[];
+				orchestratorSessionId?: string | null;
 			};
 			this.rootId = data.rootId;
+			this._orchestratorSessionId = data.orchestratorSessionId ?? null;
 			for (const node of data.nodes) {
 				this.nodes.set(node.id, node);
 			}
@@ -35,9 +38,20 @@ export class TaskTracker {
 		await mkdir(dir, { recursive: true });
 		const data = {
 			rootId: this.rootId,
+			orchestratorSessionId: this._orchestratorSessionId,
 			nodes: Array.from(this.nodes.values()),
 		};
 		await writeFile(this.treePath, JSON.stringify(data, null, "\t"), "utf-8");
+	}
+
+	/** Get the orchestrator agent's session ID (for resuming). */
+	get orchestratorSessionId(): string | null {
+		return this._orchestratorSessionId;
+	}
+
+	/** Store the orchestrator agent's session ID. */
+	set orchestratorSessionId(id: string | null) {
+		this._orchestratorSessionId = id;
 	}
 
 	/** Create the root task node for the project. */

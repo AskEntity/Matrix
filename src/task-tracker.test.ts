@@ -121,4 +121,19 @@ describe("TaskTracker", () => {
 
 		expect(tracker.allNodes()).toHaveLength(3);
 	});
+
+	test("orchestratorSessionId persists across save/load", async () => {
+		tracker.createRoot("App", "desc");
+		tracker.orchestratorSessionId = "session-abc-123";
+		await tracker.save();
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+
+		expect(tracker2.orchestratorSessionId).toBe("session-abc-123");
+	});
+
+	test("orchestratorSessionId defaults to null", () => {
+		expect(tracker.orchestratorSessionId).toBeNull();
+	});
 });

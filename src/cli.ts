@@ -204,19 +204,30 @@ async function handleDecompose(args: string[]): Promise<void> {
 }
 
 async function handleOrchestrate(args: string[]): Promise<void> {
-	const goal = args.join(" ");
-	if (!goal) {
+	const isResume = args[0] === "--resume";
+	const goal = isResume ? args.slice(1).join(" ") : args.join(" ");
+
+	if (!goal && !isResume) {
 		console.error("Usage: og orchestrate <goal>");
+		console.error("       og orchestrate --resume [prompt]");
 		process.exit(1);
 	}
 
 	const projectId = await resolveCurrentProject();
 	if (!projectId) return;
 
-	console.log("Orchestrating...");
+	console.log(isResume ? "Resuming orchestration..." : "Orchestrating...");
+	const body: Record<string, unknown> = {};
+	if (isResume) {
+		body.resume = true;
+		if (goal) body.prompt = goal;
+	} else {
+		body.prompt = goal;
+	}
+
 	const res = await api(`/projects/${projectId}/orchestrate/agent`, {
 		method: "POST",
-		body: JSON.stringify({ prompt: goal }),
+		body: JSON.stringify(body),
 	});
 
 	if (!res.ok) {
