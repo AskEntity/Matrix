@@ -84,7 +84,8 @@ Project lifecycle is deterministic code, not agent work.
 | src/types.ts | All type definitions (TaskNode, AgentResult, Project, etc.) |
 | src/daemon.ts | Hono HTTP server, all routes, createApp() factory |
 | src/agent-provider.ts | AgentProvider interface (decoupled, swappable) |
-| src/claude-code-provider.ts | Phase 0 impl: delegates to Claude Agent SDK |
+| src/claude-code-provider.ts | Claude Code Agent SDK provider (subprocess, full tool access) |
+| src/direct-provider.ts | Direct Anthropic API provider (lightweight, no subprocess) |
 | src/project-manager.ts | Project init/CRUD, .opengraft/ setup, git init |
 | src/task-tracker.ts | Task tree CRUD, persistence to JSON |
 | src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
@@ -178,5 +179,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] CLI `og orchestrate` streams via WebSocket for real-time output
 - [x] Interactive AgentSession with streamInput() for mid-execution messages
 - [x] Worktree cleanup fix: proper removal + core.bare=false guard
-- [ ] Direct Anthropic API: bypass Claude Code subprocess, use Messages API directly
-- [ ] Multi-model support: select model per task (cheap model for simple tasks)
+- [x] Direct Anthropic API: DirectProvider with Messages API + built-in tools
+- [x] Multi-model support: OG_PROVIDER + OG_MODEL env vars, model per AgentRequest
+- [ ] MCP tool forwarding in DirectProvider (connect mcpServers from request)
+- [ ] Cost tracking per model (different pricing for Sonnet vs Opus vs Haiku)
