@@ -205,10 +205,23 @@ async function handleDecompose(args: string[]): Promise<void> {
 
 async function handleOrchestrate(args: string[]): Promise<void> {
 	const isResume = args[0] === "--resume";
-	const goal = isResume ? args.slice(1).join(" ") : args.join(" ");
+	// Parse --model flag
+	let model: string | undefined;
+	const filteredArgs: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--model" && i + 1 < args.length) {
+			model = args[++i] as string;
+		} else if (arg) {
+			filteredArgs.push(arg);
+		}
+	}
+	const goal = isResume
+		? filteredArgs.slice(1).join(" ")
+		: filteredArgs.join(" ");
 
 	if (!goal && !isResume) {
-		console.error("Usage: og orchestrate <goal>");
+		console.error("Usage: og orchestrate [--model <model>] <goal>");
 		console.error("       og orchestrate --resume [prompt]");
 		process.exit(1);
 	}
@@ -225,6 +238,7 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 	} else {
 		body.prompt = goal;
 	}
+	if (model) body.model = model;
 
 	// Connect WS in background for real-time event display
 	const wsUrl = `${DAEMON_URL.replace(/^http/, "ws")}/ws`;
