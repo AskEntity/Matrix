@@ -724,6 +724,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				message,
 			});
 		} finally {
+			const session = activeSessions.get(projectId);
+			if (session) session.stop();
 			activeSessions.delete(projectId);
 			activeOrchestrations.delete(projectId);
 		}

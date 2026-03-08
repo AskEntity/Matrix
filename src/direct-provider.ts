@@ -566,20 +566,31 @@ export class DirectProvider implements AgentProvider {
 				const mcpHandler = mcpHandlers.get(toolUse.name);
 				if (mcpHandler) {
 					// Route to MCP tool handler
-					const mcpResult = await mcpHandler.handler(
-						toolUse.input as Record<string, unknown>,
-						{},
-					);
-					const text = mcpResult.content
-						.map((c: { type: string; text?: string }) =>
-							c.type === "text" ? (c.text ?? "") : JSON.stringify(c),
-						)
-						.join("\n");
+					let text: string;
+					let isError = false;
+					try {
+						const mcpResult = await mcpHandler.handler(
+							toolUse.input as Record<string, unknown>,
+							{},
+						);
+						const content = Array.isArray(mcpResult.content)
+							? mcpResult.content
+							: [];
+						text = content
+							.map((c: { type: string; text?: string }) =>
+								c.type === "text" ? (c.text ?? "") : JSON.stringify(c),
+							)
+							.join("\n");
+						isError = mcpResult.isError ?? false;
+					} catch (e) {
+						text = `MCP tool error: ${e instanceof Error ? e.message : String(e)}`;
+						isError = true;
+					}
 					toolResults.push({
 						type: "tool_result",
 						tool_use_id: toolUse.id,
 						content: text,
-						is_error: mcpResult.isError ?? false,
+						is_error: isError,
 					});
 				} else {
 					const result = await executeTool(

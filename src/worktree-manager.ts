@@ -71,17 +71,24 @@ export class WorktreeManager {
 			throw new Error(`Failed to create worktree: ${stderr.trim()}`);
 		}
 
-		// Disable hooks for this worktree — child agents must not trigger
-		// the parent project's pre-commit hook (which runs typecheck/lint/test
-		// against the main project, not the worktree's isolated code)
-		await this.git(
-			["config", "--worktree", "core.hooksPath", "/dev/null"],
-			wtPath,
-		).exited;
+		try {
+			// Disable hooks for this worktree — child agents must not trigger
+			// the parent project's pre-commit hook (which runs typecheck/lint/test
+			// against the main project, not the worktree's isolated code)
+			await this.git(
+				["config", "--worktree", "core.hooksPath", "/dev/null"],
+				wtPath,
+			).exited;
 
-		// Install dependencies so the worktree has a complete environment
-		// (.gitignore'd files like node_modules don't exist in new worktrees)
-		await this.installDeps(wtPath);
+			// Install dependencies so the worktree has a complete environment
+			// (.gitignore'd files like node_modules don't exist in new worktrees)
+			await this.installDeps(wtPath);
+		} catch (e) {
+			// Rollback: remove partially created worktree
+			await this.git(["worktree", "remove", "--force", wtPath]).exited;
+			await this.git(["branch", "-D", branch]).exited;
+			throw e;
+		}
 
 		return { path: wtPath, branch };
 	}
