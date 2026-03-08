@@ -19,17 +19,17 @@ bun test src/e2e.test.ts
 
 **How to run unit tests + all checks**:
 ```bash
-bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts  # unit tests
+bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/orchestrator.test.ts src/worktree-manager.test.ts src/runner.test.ts  # unit tests
 bun run typecheck   # tsc --noEmit
 bun run check       # biome lint + format
 ```
 
 **Pre-commit hooks are active** (.hooks/pre-commit runs typecheck + lint + unit tests).
 
-## Current Phase: Phase 1 → Phase 2 transition
+## Current Phase: Phase 2
 
-Phase 1 is complete: task decomposition + worktree-isolated parallel execution + parent merge.
-Phase 2: Main agent as orchestrator — agent decides what to spawn (tools, not HTTP calls).
+Phase 1 complete: task decomposition + worktree-isolated parallel execution + parent merge.
+Phase 2: Main agent as orchestrator — agent observes tree, spawns tasks via MCP tools.
 
 ## Tech Stack
 
@@ -73,6 +73,7 @@ Project lifecycle is deterministic code, not agent work.
 | POST | /projects/:id/decompose | Agent breaks goal into task tree |
 | POST | /projects/:id/execute | Run task tree with worktree isolation (parallel) |
 | POST | /projects/:id/orchestrate | Run pending tasks sequentially (legacy) |
+| POST | /projects/:id/orchestrate/agent | Agent-driven orchestration with MCP tools |
 
 ## Key Files
 
@@ -87,9 +88,9 @@ Project lifecycle is deterministic code, not agent work.
 | src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
 | src/runner.ts | Agent-driven parallel task execution with worktree isolation |
 | src/orchestrator.ts | Legacy sequential orchestrator (kept for backward compat) |
-| src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, execute |
-| src/orchestrator.ts | Picks pending tasks, spawns agents, updates status |
-| src/daemon.test.ts | API route tests (30 tests) |
+| src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, spawn_task, merge_branch) |
+| src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, orchestrate, execute |
+| src/daemon.test.ts | API route tests (33 tests) |
 | src/project-manager.test.ts | ProjectManager unit tests |
 | src/task-tracker.test.ts | TaskTracker unit tests |
 | src/e2e.test.ts | Real agent E2E test (token-gated) |
@@ -160,5 +161,8 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] CLI: `og init`, `og list`, `og status`, `og run`, `og decompose`, `og execute`, `og retry`
 - [x] Better decomposition: merge-safe prompt (non-overlapping file boundaries)
 - [x] Retry endpoint: POST /tasks/:nodeId/retry (reset failed/stuck → pending)
-- [ ] Main agent as orchestrator: observes tree, decides spawns via tools
-- [ ] MCP server for agent tools: spawn_task, get_tree, merge_branch
+- [x] MCP server for agent tools: get_tree, create_task, update_task_status, spawn_task, merge_branch
+- [x] AgentRequest.mcpServers support in ClaudeCodeProvider
+- [x] POST /orchestrate/agent endpoint: agent-driven orchestration with MCP tools
+- [x] CLI `og orchestrate` command
+- [ ] E2E test: agent-driven orchestration with real MCP tools

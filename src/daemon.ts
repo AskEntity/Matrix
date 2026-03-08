@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import type { AgentProvider } from "./agent-provider.ts";
+import { createOrchestratorTools } from "./agent-tools.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { Orchestrator } from "./orchestrator.ts";
 import { ProjectManager } from "./project-manager.ts";
@@ -373,6 +374,57 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	});
 
+	// Agent-driven orchestration: main agent gets MCP tools to observe/manipulate task tree
+	app.post("/projects/:id/orchestrate/agent", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const body = await c.req.json<{
+			prompt: string;
+			maxTurns?: number;
+		}>();
+		if (!body.prompt) {
+			return c.json({ error: "prompt is required" }, 400);
+		}
+
+		const tracker = await getTracker(project.id);
+		const wtRoot = join(project.path, ".worktrees");
+		const wm = new WorktreeManager(project.path, wtRoot);
+
+		const mcpServer = createOrchestratorTools({
+			tracker,
+			provider: config.agentProvider,
+			worktrees: wm,
+			projectPath: project.path,
+		});
+
+		const memory = readProjectMemory(project.path);
+		const prompt = memory
+			? `## Project Memory\n${memory}\n\n${body.prompt}`
+			: body.prompt;
+
+		try {
+			const result = await config.agentProvider.execute({
+				prompt,
+				cwd: project.path,
+				systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
+				maxTurns: body.maxTurns ?? 50,
+				mcpServers: { opengraft: mcpServer },
+			});
+			return c.json({
+				...result,
+				tree: {
+					root: tracker.getRoot() ?? null,
+					nodes: tracker.allNodes(),
+				},
+			});
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 500);
+		}
+	});
+
 	// Runner: worktree-isolated parallel task execution
 	app.post("/projects/:id/execute", async (c) => {
 		const project = pm.get(c.req.param("id"));
@@ -451,6 +503,29 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	return { app, pm };
 }
+
+const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. You break goals into tasks and execute them.
+
+## Available Tools (via MCP server "opengraft")
+- get_tree: View the current task tree
+- create_task: Add tasks to the tree (root or children)
+- update_task_status: Update a task's status
+- spawn_task: Execute a task on an isolated git worktree (runs a child agent)
+- merge_branch: Merge a completed task's branch into a target branch
+
+## Workflow
+1. Analyze the goal and the codebase
+2. Create a root task, then decompose into child tasks
+3. CRITICAL: Sibling tasks run in PARALLEL — each must work on DIFFERENT files/modules
+4. Call spawn_task for each leaf task (call multiple simultaneously for parallel execution)
+5. After all children pass, merge their branches into the parent's branch
+6. Run tests on the merged result to verify integration
+
+## Rules
+- Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
+- Never have two siblings modify the same file
+- Keep the tree shallow: 2-3 levels max
+- Each leaf task should be independently executable by a single agent session`;
 
 const DECOMPOSE_PROMPT = `You are a task decomposition system. Given a high-level goal, break it into a hierarchical task tree.
 

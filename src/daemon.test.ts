@@ -584,6 +584,99 @@ describe("daemon decompose API", () => {
 	});
 });
 
+describe("daemon orchestrate/agent API", () => {
+	test("POST /orchestrate/agent invokes agent with MCP tools", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-orchagent-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-oadata-"));
+
+		// Mock provider that verifies mcpServers was passed
+		let receivedMcpServers = false;
+		const agentProvider: AgentProvider = {
+			name: "mock",
+			execute: async (req) => {
+				if (req.mcpServers && "opengraft" in req.mcpServers) {
+					receivedMcpServers = true;
+				}
+				return { success: true, output: "orchestrated" };
+			},
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+		};
+
+		const { app, pm } = createApp({ dataDir, agentProvider });
+		await pm.load();
+
+		const projectRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "oa-app") }),
+		});
+		const project = (await projectRes.json()) as Project;
+
+		const res = await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "Build a todo app" }),
+		});
+		expect(res.status).toBe(200);
+
+		const body = (await res.json()) as {
+			success: boolean;
+			output: string;
+			tree: { root: null; nodes: unknown[] };
+		};
+		expect(body.success).toBe(true);
+		expect(body.output).toBe("orchestrated");
+		expect(body.tree).toBeDefined();
+		expect(receivedMcpServers).toBe(true);
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("POST /orchestrate/agent requires prompt", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-oa2-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-oa2d-"));
+
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const projectRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "oa2") }),
+		});
+		const project = (await projectRes.json()) as Project;
+
+		const res = await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(400);
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("POST /orchestrate/agent returns 404 for unknown project", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "og-oa3d-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const res = await app.request("/projects/nonexistent/orchestrate/agent", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "test" }),
+		});
+		expect(res.status).toBe(404);
+
+		await rm(dataDir, { recursive: true });
+	});
+});
+
 /** Clean git env for test isolation. */
 const cleanGitEnv: Record<string, string | undefined> = {
 	...process.env,

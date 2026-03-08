@@ -132,6 +132,8 @@ export class ClaudeCodeProvider implements AgentProvider {
 				env,
 				// Session management: resume previous conversation or start new
 				...(request.resumeSessionId ? { resume: request.resumeSessionId } : {}),
+				// MCP servers: in-process tool servers for orchestration
+				...(request.mcpServers ? { mcpServers: request.mcpServers } : {}),
 			},
 		});
 	}

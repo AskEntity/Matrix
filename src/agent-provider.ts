@@ -1,3 +1,4 @@
+import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentResult } from "./types.ts";
 
 /** What the orchestrator sends to an agent. */
@@ -14,6 +15,8 @@ export interface AgentRequest {
 	signal?: AbortSignal;
 	/** Session ID to resume a previous conversation. */
 	resumeSessionId?: string;
+	/** MCP servers to attach to the agent session. */
+	mcpServers?: Record<string, McpServerConfig>;
 }
 
 /** Streaming event emitted by an agent during execution. */

@@ -203,6 +203,53 @@ async function handleDecompose(args: string[]): Promise<void> {
 	if (result.costUsd) console.log(`Cost: $${result.costUsd.toFixed(4)}`);
 }
 
+async function handleOrchestrate(args: string[]): Promise<void> {
+	const goal = args.join(" ");
+	if (!goal) {
+		console.error("Usage: og orchestrate <goal>");
+		process.exit(1);
+	}
+
+	const projectId = await resolveCurrentProject();
+	if (!projectId) return;
+
+	console.log("Orchestrating...");
+	const res = await api(`/projects/${projectId}/orchestrate/agent`, {
+		method: "POST",
+		body: JSON.stringify({ prompt: goal }),
+	});
+
+	if (!res.ok) {
+		const err = (await res.json()) as { error: string };
+		console.error(`Error: ${err.error}`);
+		process.exit(1);
+	}
+
+	const result = (await res.json()) as {
+		success: boolean;
+		output: string;
+		costUsd?: number;
+		turns?: number;
+		tree?: {
+			root: { title: string; status: string } | null;
+			nodes: { id: string; title: string; status: string }[];
+		};
+	};
+
+	console.log(result.success ? "Success" : "Failed");
+	if (result.turns) console.log(`Turns: ${result.turns}`);
+	if (result.costUsd) console.log(`Cost: $${result.costUsd.toFixed(4)}`);
+	if (result.tree) {
+		console.log(`\nTask tree: ${result.tree.nodes.length} nodes`);
+		for (const node of result.tree.nodes) {
+			const icon = statusEmoji(node.status);
+			console.log(`  ${icon} ${node.title} [${node.status}]`);
+		}
+	}
+	console.log("");
+	console.log(result.output);
+}
+
 async function handleExecute(): Promise<void> {
 	const projectId = await resolveCurrentProject();
 	if (!projectId) return;
@@ -361,6 +408,10 @@ switch (command) {
 	case "dec":
 		await handleDecompose(args);
 		break;
+	case "orchestrate":
+	case "orch":
+		await handleOrchestrate(args);
+		break;
 	case "execute":
 	case "exec":
 		await handleExecute();
@@ -382,6 +433,9 @@ switch (command) {
 		console.log("  status [id]     Show task tree status");
 		console.log("  run <prompt>    Run agent task (one-shot)");
 		console.log("  decompose <goal>  Break goal into task tree");
+		console.log(
+			"  orchestrate <goal>  Agent-driven: decompose + execute + merge",
+		);
 		console.log("  execute         Execute task tree with worktrees");
 		console.log("  retry <taskId>  Retry a failed/stuck task");
 		console.log("  health          Check daemon status");
