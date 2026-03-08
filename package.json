@@ -1,0 +1,20 @@
+{
+	"name": "opengraft",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"dev": "bun run --watch src/daemon.ts",
+		"test": "bun test",
+		"check": "biome check --write .",
+		"typecheck": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.6",
+		"@types/bun": "latest",
+		"typescript": "^5"
+	},
+	"dependencies": {
+		"@anthropic-ai/claude-agent-sdk": "^0.2.71",
+		"hono": "^4.12.5"
+	}
+}
