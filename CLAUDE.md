@@ -90,7 +90,7 @@ Project lifecycle is deterministic code, not agent work.
 | src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, spawn_task, spawn_children, continue_task, delete_task) |
 | src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, orchestrate, continue, watch, send |
 | web/ | Web UI: task tree, agent activity, message injection (served by daemon) |
-| src/daemon.test.ts | API route tests (74 total across 5 files) |
+| src/daemon.test.ts | API route tests (76 total across 5 files) |
 | src/project-manager.test.ts | ProjectManager unit tests |
 | src/task-tracker.test.ts | TaskTracker unit tests |
 | src/e2e.test.ts | Real agent E2E test (token-gated) |
@@ -192,7 +192,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] DirectProvider robustness: path resolution, mkdir, cwd in prompt, max-turns detection
 - [x] Error handling: session cleanup, worktree rollback, MCP safety checks
 - [x] Model selection: --model + --child-model on all API/CLI/WS endpoints, web UI selector
-- [x] DirectProvider unit tests (16 tests, 74 total)
+- [x] DirectProvider unit tests (18 tests, 76 total)
 - [x] CLI cleanup: removed dead execute command, renamed retry→continue
 - [x] Zod schema: number, boolean, array type support
 - [x] CLAUDE.md injection: orchestrator + child agents receive project architecture context

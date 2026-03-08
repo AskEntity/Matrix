@@ -154,6 +154,36 @@ describe("executeTool", () => {
 		expect(result.content).toContain("list_test.txt");
 	});
 
+	test("search: finds pattern in files", async () => {
+		await writeFile(
+			join(tempDir, "searchable.ts"),
+			"const foo = 42;\nconst bar = 99;\n",
+		);
+		const result = await executeTool(
+			"search",
+			{ pattern: "foo", path: tempDir },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("foo");
+	});
+
+	test("search: returns context lines", async () => {
+		await writeFile(
+			join(tempDir, "ctx.ts"),
+			"line1\nline2\ntarget\nline4\nline5\n",
+		);
+		const result = await executeTool(
+			"search",
+			{ pattern: "target", path: tempDir, context: 1 },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("target");
+		expect(result.content).toContain("line2");
+		expect(result.content).toContain("line4");
+	});
+
 	test("unknown tool: returns error", async () => {
 		const result = await executeTool("unknown_tool", {}, tempDir);
 		expect(result.isError).toBe(true);

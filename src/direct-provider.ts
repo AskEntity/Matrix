@@ -136,7 +136,8 @@ const TOOLS: Tool[] = [
 	},
 	{
 		name: "search",
-		description: "Search for a pattern in files using ripgrep (rg).",
+		description:
+			"Search for a pattern in files using ripgrep (rg). Returns matching lines with file paths and line numbers.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -152,11 +153,34 @@ const TOOLS: Tool[] = [
 					type: "string",
 					description: 'File glob filter (e.g. "*.ts")',
 				},
+				context: {
+					type: "number",
+					description:
+						"Number of context lines before and after each match (default: 0)",
+				},
 			},
 			required: ["pattern"],
 		},
 	},
 ];
+
+/** Check if a command is available in PATH. Caches results. */
+const commandCache = new Map<string, boolean>();
+async function isCommandAvailable(cmd: string): Promise<boolean> {
+	if (commandCache.has(cmd)) return commandCache.get(cmd) as boolean;
+	try {
+		const proc = Bun.spawn(["which", cmd], {
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const available = (await proc.exited) === 0;
+		commandCache.set(cmd, available);
+		return available;
+	} catch {
+		commandCache.set(cmd, false);
+		return false;
+	}
+}
 
 /** @internal Exported for testing */
 export function resolvePath(p: string, cwd: string): string {
@@ -285,11 +309,29 @@ export async function executeTool(
 
 		case "search": {
 			const pattern = input.pattern as string;
-			const path = (input.path as string) ?? ".";
+			const searchPath = (input.path as string) ?? ".";
 			const glob = input.glob as string | undefined;
-			const args = ["rg", "--no-heading", "-n", pattern, path];
-			if (glob) args.push("--glob", glob);
-			args.push("--max-count", "50");
+			const contextLines = input.context as number | undefined;
+
+			// Try rg first, fall back to grep if rg is not available
+			const useRg = await isCommandAvailable("rg");
+			const args: string[] = useRg
+				? ["rg", "--no-heading", "-n", pattern, searchPath]
+				: ["grep", "-rn", pattern, searchPath];
+
+			if (useRg) {
+				if (glob) args.push("--glob", glob);
+				if (contextLines && contextLines > 0) {
+					args.push("-C", String(Math.min(contextLines, 10)));
+				}
+				args.push("--max-count", "50");
+			} else {
+				if (glob) args.push("--include", glob);
+				if (contextLines && contextLines > 0) {
+					args.push(`-C${Math.min(contextLines, 10)}`);
+				}
+			}
+
 			try {
 				const proc = Bun.spawn(args, {
 					cwd,
