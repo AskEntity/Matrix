@@ -218,49 +218,86 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 
 	console.log(isResume ? "Resuming orchestration..." : "Orchestrating...");
 
-	// Use WebSocket for real-time streaming output
+	const body: Record<string, unknown> = {};
+	if (isResume) {
+		body.resume = true;
+		if (goal) body.prompt = goal;
+	} else {
+		body.prompt = goal;
+	}
+
+	// Connect WS in background for real-time event display
 	const wsUrl = `${DAEMON_URL.replace(/^http/, "ws")}/ws`;
 	const ws = new WebSocket(wsUrl);
-
-	const done = new Promise<void>((resolve) => {
-		ws.onopen = () => {
-			ws.send(JSON.stringify({ type: "subscribe", projectId }));
-			ws.send(
-				JSON.stringify({
-					type: "orchestrate",
-					projectId,
-					prompt: goal || undefined,
-					maxTurns: 50,
-				}),
-			);
-		};
-
-		ws.onmessage = (evt) => {
-			try {
-				const msg = JSON.parse(
-					typeof evt.data === "string" ? evt.data : "",
-				) as Record<string, unknown>;
+	ws.onopen = () => {
+		ws.send(JSON.stringify({ type: "subscribe", projectId }));
+	};
+	ws.onmessage = (evt) => {
+		try {
+			const msg = JSON.parse(
+				typeof evt.data === "string" ? evt.data : "",
+			) as Record<string, unknown>;
+			if (msg.type !== "tree_updated") {
 				formatWatchEvent(msg);
-
-				if (msg.type === "orchestration_completed" || msg.type === "error") {
-					ws.close();
-					resolve();
-				}
-			} catch {
-				/* ignore */
 			}
-		};
+		} catch {
+			/* ignore */
+		}
+	};
+	ws.onerror = () => {};
 
-		ws.onerror = () => {
-			console.error("WebSocket error. Falling back to HTTP...");
-			ws.close();
-			resolve();
-		};
+	// Wait briefly for WS to connect, then run via HTTP (blocks until done)
+	await new Promise<void>((r) => setTimeout(r, 200));
 
-		ws.onclose = () => resolve();
+	const res = await api(`/projects/${projectId}/orchestrate/agent`, {
+		method: "POST",
+		body: JSON.stringify(body),
 	});
 
-	await done;
+	try {
+		ws.close();
+	} catch {
+		/* ignore */
+	}
+
+	if (!res.ok) {
+		const err = (await res.json()) as { error: string };
+		console.error(`Error: ${err.error}`);
+		process.exit(1);
+	}
+
+	const result = (await res.json()) as {
+		success: boolean;
+		output: string;
+		costUsd?: number;
+		turns?: number;
+		childCosts?: {
+			totalCostUsd: number;
+			totalTurns: number;
+			taskCount: number;
+		};
+		tree?: {
+			root: { title: string; status: string } | null;
+			nodes: { id: string; title: string; status: string }[];
+		};
+	};
+
+	console.log("");
+	console.log(result.success ? "Success" : "Failed");
+	if (result.turns) console.log(`Orchestrator turns: ${result.turns}`);
+	if (result.costUsd) console.log(`Total cost: $${result.costUsd.toFixed(4)}`);
+	if (result.childCosts && result.childCosts.taskCount > 0) {
+		console.log(
+			`  Child agents: ${result.childCosts.taskCount} tasks, ${result.childCosts.totalTurns} turns, $${result.childCosts.totalCostUsd.toFixed(4)}`,
+		);
+	}
+	if (result.tree) {
+		console.log(`\nTask tree: ${result.tree.nodes.length} nodes`);
+		for (const node of result.tree.nodes) {
+			const icon = statusEmoji(node.status);
+			console.log(`  ${icon} ${node.title} [${node.status}]`);
+		}
+	}
 }
 
 async function handleExecute(): Promise<void> {
