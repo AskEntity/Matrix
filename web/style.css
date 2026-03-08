@@ -162,7 +162,7 @@ section {
 }
 
 .hidden {
-	display: none !important;
+	display: none;
 }
 
 .empty-state {

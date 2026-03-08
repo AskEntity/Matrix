@@ -264,7 +264,7 @@ function showDetail(node) {
 	setDetailField(
 		"detail-session",
 		"Session",
-		node.sessionId ? node.sessionId.slice(0, 12) + "..." : null,
+		node.sessionId ? `${node.sessionId.slice(0, 12)}...` : null,
 	);
 	setDetailField(
 		"detail-updated",
