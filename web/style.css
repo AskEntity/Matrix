@@ -536,6 +536,16 @@ footer {
 	border-color: var(--accent);
 }
 
+#model-select {
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	color: var(--text);
+	padding: 8px 8px;
+	border-radius: 8px;
+	font-size: 13px;
+	cursor: pointer;
+}
+
 #btn-orchestrate {
 	background: var(--accent);
 	color: var(--bg);

@@ -411,10 +411,14 @@ function logAgentEvent(msg) {
 
 // --- Orchestrate ---
 
+const modelSelect = document.getElementById("model-select");
+
 orchestrateForm.addEventListener("submit", async (e) => {
 	e.preventDefault();
 	const prompt = promptInput.value.trim();
 	if (!prompt || !selectedProjectId) return;
+
+	const model = modelSelect.value || undefined;
 
 	btnOrchestrate.disabled = true;
 	btnOrchestrate.textContent = "Starting...";
@@ -422,14 +426,14 @@ orchestrateForm.addEventListener("submit", async (e) => {
 
 	try {
 		if (ws && ws.readyState === WebSocket.OPEN) {
-			ws.send(
-				JSON.stringify({
-					type: "orchestrate",
-					projectId: selectedProjectId,
-					prompt,
-					maxTurns: 50,
-				}),
-			);
+			const msg = {
+				type: "orchestrate",
+				projectId: selectedProjectId,
+				prompt,
+				maxTurns: 50,
+			};
+			if (model) msg.model = model;
+			ws.send(JSON.stringify(msg));
 		} else {
 			logEntry(
 				"orchestration_started",
@@ -440,7 +444,7 @@ orchestrateForm.addEventListener("submit", async (e) => {
 				{
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ prompt, maxTurns: 50 }),
+					body: JSON.stringify({ prompt, maxTurns: 50, model }),
 				},
 			);
 			const result = await res.json();
