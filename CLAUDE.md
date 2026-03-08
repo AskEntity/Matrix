@@ -189,5 +189,11 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Web UI: per-task agent output log in detail panel (real-time updates)
 
 ### Phase 4 (IN PROGRESS)
+- [x] DirectProvider robustness: path resolution, mkdir, cwd in prompt, max-turns detection
+- [x] Error handling: session cleanup, worktree rollback, MCP safety checks
+- [x] Model selection: --model flag on all API/CLI/WS endpoints, web UI selector
+- [x] DirectProvider unit tests (16 tests, 74 total)
+- [x] CLI cleanup: removed dead execute command, renamed retry→continue
+- [x] Zod schema: number, boolean, array type support
 - [ ] Self-bootstrap: run OpenGraft development sessions on OpenGraft itself
 - [ ] Dual-track verification: compare external toolchain vs self-hosted results
