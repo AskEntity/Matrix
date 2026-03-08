@@ -253,7 +253,7 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 	);
 
 	test(
-		"agent orchestrator: MCP tools decompose + spawn + merge",
+		"agent orchestrator: decompose + parallel spawn + merge",
 		async () => {
 			const projectPath = join(tempDir, "orch-agent");
 			const createRes = await app.request("/projects", {
@@ -263,7 +263,8 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 			});
 			const project = (await createRes.json()) as { id: string };
 
-			// Use the agent-driven orchestration endpoint
+			// Use the agent-driven orchestration endpoint with a task that requires
+			// parallel decomposition into separate modules
 			const orchRes = await app.request(
 				`/projects/${project.id}/orchestrate/agent`,
 				{
@@ -271,11 +272,14 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
 						prompt:
-							"Build a simple math utility library. " +
-							"Create src/math.ts with add(a,b) and multiply(a,b) functions. " +
-							"Create src/math.test.ts with tests for both functions. " +
-							"Use the create_task and spawn_task tools to decompose and execute.",
-						maxTurns: 50,
+							"Build a utility library with TWO separate modules: " +
+							"1) src/strings.ts — capitalize(str) and reverse(str) functions, with src/strings.test.ts " +
+							"2) src/arrays.ts — unique(arr) and flatten(arr) functions, with src/arrays.test.ts " +
+							"These modules are INDEPENDENT. Use create_task to create a root and 2 child tasks " +
+							"(one per module), then use spawn_children to execute them in parallel. " +
+							"After both pass, use merge_branch to merge each child's branch into the root's branch. " +
+							"Finally verify all tests pass on the merged branch.",
+						maxTurns: 60,
 					}),
 				},
 			);
@@ -297,12 +301,17 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 				turns: result.turns,
 				costUsd: result.costUsd,
 				nodeCount: result.tree.nodes.length,
-				tasks: result.tree.nodes.map((n) => `${n.title} [${n.status}]`),
+				tasks: result.tree.nodes.map(
+					(n) => `${n.title} [${n.status}] branch=${n.branch}`,
+				),
 			});
 
 			expect(result.success).toBe(true);
-			// Agent should have created at least a root task
-			expect(result.tree.nodes.length).toBeGreaterThan(0);
+			// Should have root + 2 children minimum
+			expect(result.tree.nodes.length).toBeGreaterThanOrEqual(3);
+			// At least some tasks should have passed
+			const passed = result.tree.nodes.filter((n) => n.status === "passed");
+			expect(passed.length).toBeGreaterThan(0);
 		},
 		{ timeout: 600_000 },
 	);
