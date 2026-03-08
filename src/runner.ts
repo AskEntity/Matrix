@@ -293,6 +293,14 @@ export class Runner {
 				success: result.success,
 			});
 
+			// Clean up child worktrees after successful merge
+			if (result.success) {
+				for (const child of passed) {
+					const slug = this.slugify(child.title);
+					await this.worktrees.remove(child.id, slug).catch(() => {});
+				}
+			}
+
 			return result;
 		} catch (e) {
 			this.tracker.updateStatus(node.id, "stuck");

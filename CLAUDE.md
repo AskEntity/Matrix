@@ -148,5 +148,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Session persistence: AgentRequest.resumeSessionId + AgentResult.sessionId
 - [x] Runner: parallel task execution with worktree isolation, event system
 - [x] POST /projects/:id/execute endpoint (worktree-based parallel)
-- [ ] SSE streaming for /execute (real-time runner events)
-- [ ] Parent agent resume: wake parent when all children complete and merge
+- [x] SSE streaming: POST /execute/stream with real-time runner events
+- [x] Parent agent resume: wake parent with merge prompt when children complete
+- [ ] Full pipeline E2E: decompose → execute → merge (end-to-end with real agent)
+- [ ] Worktree cleanup after successful merge
