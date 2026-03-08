@@ -82,14 +82,31 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	/** Read .opengraft/memory.md from a project directory. Returns empty string if not found. */
 	function readProjectMemory(projectPath: string): string {
+		const parts: string[] = [];
+
+		// Read CLAUDE.md for project architecture context
 		try {
-			return readFileSync(
+			const claudeMd = readFileSync(
+				join(projectPath, "CLAUDE.md"),
+				"utf-8",
+			);
+			if (claudeMd) parts.push(`## CLAUDE.md\n${claudeMd}`);
+		} catch {
+			// No CLAUDE.md, that's fine
+		}
+
+		// Read .opengraft/memory.md for agent-specific memory
+		try {
+			const memory = readFileSync(
 				join(projectPath, ".opengraft", "memory.md"),
 				"utf-8",
 			);
+			if (memory) parts.push(`## Agent Memory\n${memory}`);
 		} catch {
-			return "";
+			// No memory file, that's fine
 		}
+
+		return parts.join("\n\n");
 	}
 
 	/** Prepend project memory to a prompt if available. */
