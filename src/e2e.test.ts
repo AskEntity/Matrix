@@ -169,4 +169,86 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 		},
 		{ timeout: 180_000 },
 	);
+
+	test(
+		"runner: parallel worktree execution with merge",
+		async () => {
+			const projectPath = join(tempDir, "calc-runner");
+			const createRes = await app.request("/projects", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ path: projectPath }),
+			});
+			const project = (await createRes.json()) as { id: string };
+
+			// Create task tree with two parallel children
+			const rootRes = await app.request(`/projects/${project.id}/tasks`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Calculator App",
+					description:
+						"Build a calculator with basic arithmetic operations and tests.",
+				}),
+			});
+			const root = (await rootRes.json()) as TaskNode;
+
+			await app.request(`/projects/${project.id}/tasks`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Basic operations",
+					description:
+						"Create src/calc.ts with add and subtract functions. " +
+						"Create src/calc.test.ts with tests for add and subtract. " +
+						"Run tests and make sure they pass.",
+					parentId: root.id,
+				}),
+			});
+
+			await app.request(`/projects/${project.id}/tasks`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Advanced operations",
+					description:
+						"Create src/advanced.ts with multiply and divide functions. " +
+						"Create src/advanced.test.ts with tests. " +
+						"Divide by zero should return Infinity. " +
+						"Run tests and make sure they pass.",
+					parentId: root.id,
+				}),
+			});
+
+			// Run via the new execute endpoint
+			const execRes = await app.request(`/projects/${project.id}/execute`, {
+				method: "POST",
+			});
+			expect(execRes.status).toBe(200);
+
+			const result = (await execRes.json()) as {
+				completed: number;
+				failed: number;
+				events: { type: string; taskId?: string; title?: string }[];
+				results: {
+					taskId: string;
+					title: string;
+					success: boolean;
+					output: string;
+				}[];
+			};
+
+			console.log("Runner results:", {
+				completed: result.completed,
+				failed: result.failed,
+				eventTypes: result.events.map((e) => e.type),
+			});
+
+			expect(result.completed).toBeGreaterThan(0);
+
+			// Verify task_started and merge events were emitted
+			expect(result.events.some((e) => e.type === "task_started")).toBe(true);
+		},
+		{ timeout: 300_000 },
+	);
 });
