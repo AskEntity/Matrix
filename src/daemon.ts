@@ -701,18 +701,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			while (!result.done) {
 				// Forward agent events to WS clients
 				const agentEvent = result.value;
+				const { type: eventType, ...eventData } = agentEvent;
 				broadcastEvent(projectId, {
 					type: "agent_event",
-					eventType: agentEvent.type,
-					...(agentEvent.type === "tool_use"
-						? { tool: agentEvent.tool, input: agentEvent.input }
-						: agentEvent.type === "text"
-							? { content: agentEvent.content }
-							: agentEvent.type === "status"
-								? { message: agentEvent.message }
-								: {
-										message: "message" in agentEvent ? agentEvent.message : "",
-									}),
+					eventType,
+					...eventData,
 				});
 				result = await session.events.next();
 			}

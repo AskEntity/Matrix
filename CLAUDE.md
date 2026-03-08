@@ -87,7 +87,7 @@ Project lifecycle is deterministic code, not agent work.
 | src/project-manager.ts | Project init/CRUD, .opengraft/ setup, git init |
 | src/task-tracker.ts | Task tree CRUD, persistence to JSON |
 | src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
-| src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, spawn_task, spawn_children, delete_task) |
+| src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, spawn_task, spawn_children, continue_task, delete_task) |
 | src/cli.ts | CLI (`og` command) — init, list, status, run, decompose, orchestrate, continue, watch, send |
 | web/ | Web UI: task tree, agent activity, message injection (served by daemon) |
 | src/daemon.test.ts | API route tests (74 total across 5 files) |
@@ -198,5 +198,9 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] CLAUDE.md injection: orchestrator + child agents receive project architecture context
 - [x] Child agent event streaming with per-task filtering in web UI
 - [x] Separate orchestrator/child model selection for cost optimization
+- [x] Tool result event streaming for real-time observability in web UI
+- [x] Parallel tool execution in DirectProvider (Promise.all)
+- [x] continue_task MCP tool for resuming failed/stuck child agents
+- [x] Configurable maxTurns per spawn_task/spawn_children
 - [ ] Self-bootstrap: run OpenGraft development sessions on OpenGraft itself
 - [ ] Dual-track verification: compare external toolchain vs self-hosted results
