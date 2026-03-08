@@ -69,6 +69,8 @@ Project lifecycle is deterministic code, not agent work.
 | DELETE | /projects/:id/tasks/:nodeId | Remove task and descendants |
 | POST | /projects/:id/run | Execute agent task (one-shot) |
 | POST | /projects/:id/stream | Execute agent task (SSE streaming) |
+| POST | /projects/:id/decompose | Agent breaks goal into task tree |
+| POST | /projects/:id/orchestrate | Run pending tasks through agent |
 
 ## Key Files
 
@@ -80,7 +82,8 @@ Project lifecycle is deterministic code, not agent work.
 | src/claude-code-provider.ts | Phase 0 impl: delegates to Claude Agent SDK |
 | src/project-manager.ts | Project init/CRUD, .ai/ setup, git init |
 | src/task-tracker.ts | Task tree CRUD, persistence to JSON |
-| src/daemon.test.ts | API route tests (36 tests) |
+| src/orchestrator.ts | Picks pending tasks, spawns agents, updates status |
+| src/daemon.test.ts | API route tests (30 tests) |
 | src/project-manager.test.ts | ProjectManager unit tests |
 | src/task-tracker.test.ts | TaskTracker unit tests |
 | src/e2e.test.ts | Real agent E2E test (token-gated) |
@@ -132,6 +135,9 @@ Identify layer → add logs → trust logs → isolate → minimize
 ### Phase 1 (IN PROGRESS)
 - [x] TaskTracker: tree CRUD, persistence, status management
 - [x] Task API endpoints: POST/GET/PATCH/DELETE /projects/:id/tasks
-- [ ] Orchestrator loop: pick pending task → spawn agent → update status on result
-- [ ] System prompt injection (methodology from OpenGraft.md section 9)
-- [ ] Task decomposition: agent breaks abstract goal into subtasks via API
+- [x] Orchestrator: leaf-first task execution, methodology injection, pass/fail/stuck handling
+- [x] POST /projects/:id/orchestrate endpoint
+- [x] E2E validated: orchestrator completes 2-node task tree (37 turns, $0.47)
+- [x] Context compression survival: memory.md read on agent start
+- [x] Task decomposition: POST /projects/:id/decompose — agent breaks goal into task tree
+- [ ] Orchestrator SSE streaming (real-time progress for UI)

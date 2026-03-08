@@ -6,14 +6,23 @@ import type { AgentProvider } from "./agent-provider.ts";
 import { createApp } from "./daemon.ts";
 import type { HealthResponse, Project, TaskNode } from "./types.ts";
 
-const mockProvider: AgentProvider = {
-	name: "mock",
-	execute: async () => ({ success: true, output: "" }),
-	// biome-ignore lint/correctness/useYield: mock provider never streams
-	stream: async function* () {
-		return { success: true, output: "" };
-	},
-};
+function createMockProvider(
+	handler?: (request: {
+		prompt: string;
+	}) => Promise<{ success: boolean; output: string }>,
+): AgentProvider {
+	const execute = handler ?? (async () => ({ success: true, output: "" }));
+	return {
+		name: "mock",
+		execute,
+		// biome-ignore lint/correctness/useYield: mock provider never streams
+		stream: async function* () {
+			return { success: true, output: "" };
+		},
+	};
+}
+
+const mockProvider = createMockProvider();
 
 describe("daemon health", () => {
 	test("GET /health returns ok with version and uptime", async () => {
@@ -349,5 +358,188 @@ describe("daemon orchestrate API", () => {
 		expect(orchRes.status).toBe(200);
 		const body = (await orchRes.json()) as { completed: number };
 		expect(body.completed).toBe(0);
+	});
+});
+
+describe("daemon decompose API", () => {
+	test("POST /decompose creates task tree from agent output", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-decomp-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-ddata-"));
+
+		const taskTree = JSON.stringify({
+			title: "Chat App",
+			description: "Build a real-time chat application",
+			children: [
+				{ title: "Setup project", description: "Init project with deps" },
+				{
+					title: "Implement backend",
+					description: "WebSocket server",
+					children: [
+						{ title: "Auth module", description: "JWT auth" },
+						{ title: "Message handling", description: "Send/receive messages" },
+					],
+				},
+			],
+		});
+
+		const decompProvider = createMockProvider(async () => ({
+			success: true,
+			output: taskTree,
+		}));
+
+		const { app, pm } = createApp({ dataDir, agentProvider: decompProvider });
+		await pm.load();
+
+		const projectRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "chat") }),
+		});
+		const project = (await projectRes.json()) as Project;
+
+		const decompRes = await app.request(`/projects/${project.id}/decompose`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ goal: "Build a chat app" }),
+		});
+		expect(decompRes.status).toBe(200);
+
+		const result = (await decompRes.json()) as {
+			root: TaskNode;
+			nodes: TaskNode[];
+		};
+		expect(result.root.title).toBe("Chat App");
+		expect(result.nodes).toHaveLength(5); // root + 2 top-level + 2 nested
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("POST /decompose handles markdown-fenced JSON", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-decomp2-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-ddata2-"));
+
+		const output = `Here's the task breakdown:\n\`\`\`json\n${JSON.stringify({
+			title: "API Server",
+			description: "REST API",
+			children: [{ title: "Routes", description: "Define routes" }],
+		})}\n\`\`\`\nThis should work well.`;
+
+		const decompProvider = createMockProvider(async () => ({
+			success: true,
+			output,
+		}));
+
+		const { app, pm } = createApp({ dataDir, agentProvider: decompProvider });
+		await pm.load();
+
+		const projectRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "api") }),
+		});
+		const project = (await projectRes.json()) as Project;
+
+		const decompRes = await app.request(`/projects/${project.id}/decompose`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ goal: "Build an API" }),
+		});
+		expect(decompRes.status).toBe(200);
+
+		const result = (await decompRes.json()) as {
+			root: TaskNode;
+			nodes: TaskNode[];
+		};
+		expect(result.root.title).toBe("API Server");
+		expect(result.nodes).toHaveLength(2);
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("POST /decompose returns 500 on unparseable output", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-decomp3-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-ddata3-"));
+
+		const decompProvider = createMockProvider(async () => ({
+			success: true,
+			output: "I cannot decompose this goal into tasks.",
+		}));
+
+		const { app, pm } = createApp({ dataDir, agentProvider: decompProvider });
+		await pm.load();
+
+		const projectRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "bad") }),
+		});
+		const project = (await projectRes.json()) as Project;
+
+		const decompRes = await app.request(`/projects/${project.id}/decompose`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ goal: "Something vague" }),
+		});
+		expect(decompRes.status).toBe(500);
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("POST /decompose requires goal", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-decomp4-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-ddata4-"));
+
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const projectRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "no-goal") }),
+		});
+		const project = (await projectRes.json()) as Project;
+
+		const decompRes = await app.request(`/projects/${project.id}/decompose`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(decompRes.status).toBe(400);
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("POST /decompose returns 500 on agent failure", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-decomp5-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-ddata5-"));
+
+		const failProvider = createMockProvider(async () => ({
+			success: false,
+			output: "Agent crashed",
+		}));
+
+		const { app, pm } = createApp({ dataDir, agentProvider: failProvider });
+		await pm.load();
+
+		const projectRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "fail") }),
+		});
+		const project = (await projectRes.json()) as Project;
+
+		const decompRes = await app.request(`/projects/${project.id}/decompose`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ goal: "Build something" }),
+		});
+		expect(decompRes.status).toBe(500);
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
 	});
 });
