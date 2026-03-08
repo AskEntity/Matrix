@@ -176,11 +176,11 @@ describe("Orchestrator", () => {
 		expect(prompts[0]).toContain("passed");
 	});
 
-	test("prompt includes project memory when .ai/memory.md exists", async () => {
-		// Create .ai/memory.md in the project directory
-		mkdirSync(join(tempDir, ".ai"), { recursive: true });
+	test("prompt includes project memory when .opengraft/memory.md exists", async () => {
+		// Create .opengraft/memory.md in the project directory
+		mkdirSync(join(tempDir, ".opengraft"), { recursive: true });
 		writeFileSync(
-			join(tempDir, ".ai", "memory.md"),
+			join(tempDir, ".opengraft", "memory.md"),
 			"# Project Notes\nUse bun for all commands.\nDatabase is SQLite.",
 		);
 
@@ -200,7 +200,7 @@ describe("Orchestrator", () => {
 		expect(prompts[0]).toContain("Database is SQLite");
 	});
 
-	test("prompt works without .ai/memory.md", async () => {
+	test("prompt works without .opengraft/memory.md", async () => {
 		tracker.createRoot("App", "desc");
 
 		const prompts: string[] = [];

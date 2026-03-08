@@ -52,7 +52,7 @@ export class ProjectManager {
 	 * Initialize a project at the given path.
 	 * - If the directory does not exist, create it as a fresh project.
 	 * - If the directory exists, convert it into an OpenGraft project.
-	 * Sets up .ai/ structure and daemon-side metadata.
+	 * Sets up .opengraft/ structure and daemon-side metadata.
 	 */
 	async init(path: string): Promise<Project> {
 		this.ensureLoaded();
@@ -76,11 +76,11 @@ export class ProjectManager {
 	/** Create a fresh project from scratch. */
 	private async createNew(projectPath: string): Promise<Project> {
 		await mkdir(projectPath, { recursive: true });
-		await mkdir(join(projectPath, ".ai"), { recursive: true });
+		await mkdir(join(projectPath, ".opengraft"), { recursive: true });
 		await mkdir(join(projectPath, "src"), { recursive: true });
 
 		await writeFile(
-			join(projectPath, ".ai", "memory.md"),
+			join(projectPath, ".opengraft", "memory.md"),
 			NEW_PROJECT_MEMORY,
 			"utf-8",
 		);
@@ -105,11 +105,11 @@ export class ProjectManager {
 
 	/** Convert an existing directory into an OpenGraft project. */
 	private async convertExisting(projectPath: string): Promise<Project> {
-		// Create .ai/ if it doesn't exist
-		await mkdir(join(projectPath, ".ai"), { recursive: true });
+		// Create .opengraft/ if it doesn't exist
+		await mkdir(join(projectPath, ".opengraft"), { recursive: true });
 
 		// Only write memory.md if it doesn't already exist
-		const memoryPath = join(projectPath, ".ai", "memory.md");
+		const memoryPath = join(projectPath, ".opengraft", "memory.md");
 		if (!existsSync(memoryPath)) {
 			await writeFile(memoryPath, CONVERTED_PROJECT_MEMORY, "utf-8");
 		}

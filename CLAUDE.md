@@ -83,7 +83,7 @@ Project lifecycle is deterministic code, not agent work.
 | src/daemon.ts | Hono HTTP server, all routes, createApp() factory |
 | src/agent-provider.ts | AgentProvider interface (decoupled, swappable) |
 | src/claude-code-provider.ts | Phase 0 impl: delegates to Claude Agent SDK |
-| src/project-manager.ts | Project init/CRUD, .ai/ setup, git init |
+| src/project-manager.ts | Project init/CRUD, .opengraft/ setup, git init |
 | src/task-tracker.ts | Task tree CRUD, persistence to JSON |
 | src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
 | src/runner.ts | Agent-driven parallel task execution with worktree isolation |
@@ -139,7 +139,7 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] E2E validated: agent creates calculator (13 tests) in 11 turns
 - [x] Pre-commit hooks (typecheck + lint + test)
 
-### Phase 1 (IN PROGRESS)
+### Phase 1 (COMPLETE)
 - [x] TaskTracker: tree CRUD, persistence, status management
 - [x] Task API endpoints: POST/GET/PATCH/DELETE /projects/:id/tasks
 - [x] Orchestrator: leaf-first task execution, methodology injection, pass/fail/stuck handling

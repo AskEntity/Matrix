@@ -454,7 +454,10 @@ export class Runner {
 
 	private readMemory(): string {
 		try {
-			return readFileSync(join(this.projectPath, ".ai", "memory.md"), "utf-8");
+			return readFileSync(
+				join(this.projectPath, ".opengraft", "memory.md"),
+				"utf-8",
+			);
 		} catch {
 			return "";
 		}

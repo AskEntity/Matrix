@@ -31,10 +31,13 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const trackers = new Map<string, TaskTracker>();
 	const activeOrchestrations = new Set<string>();
 
-	/** Read .ai/memory.md from a project directory. Returns empty string if not found. */
+	/** Read .opengraft/memory.md from a project directory. Returns empty string if not found. */
 	function readProjectMemory(projectPath: string): string {
 		try {
-			return readFileSync(join(projectPath, ".ai", "memory.md"), "utf-8");
+			return readFileSync(
+				join(projectPath, ".opengraft", "memory.md"),
+				"utf-8",
+			);
 		} catch {
 			return "";
 		}

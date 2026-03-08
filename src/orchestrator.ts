@@ -148,10 +148,13 @@ export class Orchestrator {
 		return pending[0];
 	}
 
-	/** Read .ai/memory.md from the project directory. Returns empty string if not found. */
+	/** Read .opengraft/memory.md from the project directory. Returns empty string if not found. */
 	private readMemory(): string {
 		try {
-			return readFileSync(join(this.projectPath, ".ai", "memory.md"), "utf-8");
+			return readFileSync(
+				join(this.projectPath, ".opengraft", "memory.md"),
+				"utf-8",
+			);
 		} catch {
 			return "";
 		}

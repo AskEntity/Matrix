@@ -227,7 +227,7 @@ AI 生成代码的系统性问题：**功能正确但架构判断缺失**。GitC
 - **每个 agent 一个分支**：agent 和 branch 是 1:1 绑定的。agent 的生命周期 = 分支的生命周期
 
 **API 层**：
-- `POST /projects` — 指定文件夹，创建项目（初始化 git + `.ai/`）
+- `POST /projects` — 指定文件夹，创建项目（初始化 git + `.opengraft/`）
 - `DELETE /projects/:id` — 删除项目（只删元数据，不删代码）
 - `POST /projects/:id/start` — 启动 root agent
 - `POST /projects/:id/stop` — 优雅停止（root 通知所有子 agent 完成当前原子操作后停）
@@ -244,10 +244,10 @@ AI 生成代码的系统性问题：**功能正确但架构判断缺失**。GitC
 
 判断标准：**`git clone` 到别处还有用吗？**
 
-**在 git 仓库内**（`.ai/` 目录，随代码版本化）：
+**在 git 仓库内**（`.opengraft/` 目录，随代码版本化）：
 ```
 project/
-├── .ai/
+├── .opengraft/
 │   ├── memory.md          # 积累的知识（随分支合并，见 4.3）
 │   └── project.yaml       # 项目级配置（autonomy level、质量门禁阈值）
 ├── src/
@@ -258,9 +258,9 @@ project/
 - **memory.md**：AI 积累的经验。跟随分支走、合并时汇聚。clone 到别处这些知识仍然有价值
 - **project.yaml**：项目自身的配置偏好。新的 daemon 接手这个项目时应该读到同样的配置
 
-**在 daemon 数据目录**（`~/.ai-daemon/projects/{id}/`）：
+**在 daemon 数据目录**（`~/.opengraft-daemon/projects/{id}/`）：
 ```
-~/.ai-daemon/
+~/.opengraft-daemon/
 ├── daemon.yaml                # 全局配置：API keys、模型偏好、默认安全策略模板
 ├── projects/
 │   ├── {project-id}/
@@ -282,8 +282,8 @@ project/
 | 数据 | 位置 | 理由 |
 |------|------|------|
 | 代码、测试 | git | 核心产物 |
-| Agent 记忆 | git `.ai/memory.md` | scratch pad，每个 agent 在自己分支上自由写，merge 时上浮 + 父 agent 审查 |
-| 项目配置 | git `.ai/project.yaml` | 项目自带偏好，换 daemon 仍适用 |
+| Agent 记忆 | git `.opengraft/memory.md` | scratch pad，每个 agent 在自己分支上自由写，merge 时上浮 + 父 agent 审查 |
+| 项目配置 | git `.opengraft/project.yaml` | 项目自带偏好，换 daemon 仍适用 |
 | 任务树状态 | daemon `tree.json` | 运行时状态，变化极频繁（每秒级），不适合 git commit |
 | 分支绑定 | daemon `tree.json` | 是关于 git 的元数据，不是 git 管理的内容 |
 | AI 对话日志 | daemon `sessions/` | 体积大、仅调试用、不是项目知识 |
@@ -291,7 +291,7 @@ project/
 | 安全策略 | daemon `security.yaml` | per project，但在 AI 的沙箱之外，不可被项目内的 AI 修改 |
 | API keys | daemon `daemon.yaml` | 敏感信息，绝对不进 git |
 
-**关键设计**：安全策略在 daemon 侧（per project），**不在项目 git 内**。这意味着项目内的所有 agent（root 和子 agent）都无法通过修改 `.ai/` 文件来突破安全边界——安全规则在它们的修改范围之外。
+**关键设计**：安全策略在 daemon 侧（per project），**不在项目 git 内**。这意味着项目内的所有 agent（root 和子 agent）都无法通过修改 `.opengraft/` 文件来突破安全边界——安全规则在它们的修改范围之外。
 
 ### 4.3 每个 Agent 的内部结构
 
@@ -340,7 +340,7 @@ project: "多人聊天应用"
 
 **记忆系统**：
 
-每个 agent 有自己的记忆文件（`.ai/memory.md`），性质是 **scratch pad**——不是正式文档，而是 agent 随手记下的笔记、踩坑记录、发现的模式。类似 Claude 的 auto memory，不是 CLAUDE.md。
+每个 agent 有自己的记忆文件（`.opengraft/memory.md`），性质是 **scratch pad**——不是正式文档，而是 agent 随手记下的笔记、踩坑记录、发现的模式。类似 Claude 的 auto memory，不是 CLAUDE.md。
 
 ```
 feat/auth 分支上 agent 的 memory.md：
@@ -369,7 +369,7 @@ feat/realtime-msg 分支上 agent 的 memory.md：
 
 **鼓励同步写入**：agent 每次 commit 功能代码时，同时 commit 相关记忆。不要等功能全做完再补——中途的发现最容易遗忘。
 
-这解决了 Context Manager 的核心难题：context window 会被压缩，对话历史会丢失，但**记忆已经持久化在 git 中**。新 session / 新 agent 启动时读 `.ai/memory.md`，就能继承之前积累的经验，无需从对话历史中恢复。
+这解决了 Context Manager 的核心难题：context window 会被压缩，对话历史会丢失，但**记忆已经持久化在 git 中**。新 session / 新 agent 启动时读 `.opengraft/memory.md`，就能继承之前积累的经验，无需从对话历史中恢复。
 
 **任务树即 UI**：
 
@@ -409,7 +409,7 @@ feat/realtime-msg 分支上 agent 的 memory.md：
 - `failed`/`stuck` 节点：保留完整信息（试过什么、卡在哪里）
 - `pending` 节点：只保留名称和简要描述
 
-跨 session 持久化的核心——session 恢复时先读任务树 + `.ai/memory.md`，就知道从哪里继续、带着什么经验继续。
+跨 session 持久化的核心——session 恢复时先读任务树 + `.opengraft/memory.md`，就知道从哪里继续、带着什么经验继续。
 
 **Context Manager**（per agent）：
 - 每个 agent 独立管理自己的 context window
@@ -418,7 +418,7 @@ feat/realtime-msg 分支上 agent 的 memory.md：
   - **永不压缩**：方法论、架构规则、禁止事项
   - **保留摘要**：已完成步骤的结果、关键决策
   - **可丢弃**：成功步骤的对话细节、中间探索过程
-- 注意：模型自己生成的摘要[不够全面](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)，需要外部状态文件（进度文件 + git log + `.ai/memory.md`）补充
+- 注意：模型自己生成的摘要[不够全面](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)，需要外部状态文件（进度文件 + git log + `.opengraft/memory.md`）补充
 - **子 agent 不需要全局 context**：它只需要知道自己负责的子树 + 从 root 继承的方法论和架构约束
 
 **Stimulus Generator**（per agent，但 root 和子 agent 行为不同）：
@@ -666,7 +666,7 @@ autonomy:
 | 失败模式 | 表现 | 检测 | 防御 |
 |---------|------|------|------|
 | **无限循环** | 反复尝试同一个修复，永远过不了测试 | 同一错误出现 3+ 次；同一文件编辑 5+ 次 | 标记 stuck，切换节点 |
-| **上下文污染** | 压缩丢失关键信息，AI 重复之前的错误决策 | 重复相同的失败路径；与记忆中的决策矛盾 | 记忆持久化在 git 中；压缩后强制重读 `.ai/memory.md` |
+| **上下文污染** | 压缩丢失关键信息，AI 重复之前的错误决策 | 重复相同的失败路径；与记忆中的决策矛盾 | 记忆持久化在 git 中；压缩后强制重读 `.opengraft/memory.md` |
 | **抽象层级错误** | AI 在实现细节上打转，没意识到是设计问题 | 一个节点内反复重构但测试不变；代码量增长但功能未增加 | 节点预算用尽时强制回退到规划阶段，重新分解 |
 | **依赖地狱** | 引入互相冲突的库，或版本不兼容 | 安装依赖失败；类型错误来自第三方包 | 依赖变更需要 autonomy level 检查；lockfile 变更 diff 审查 |
 | **镀金（Gold Plating）** | 功能已完成但 AI 不停优化、重构、加"改进" | 测试早已全绿但仍在提交；改动集中在非功能性方面 | Stimulus Generator 在全绿后进入收敛模式：只修 stuck 节点和质量门禁不通过的问题 |
@@ -687,7 +687,7 @@ autonomy:
 - AI 修改自身的安全规则 → 永远需要用户确认，无论 autonomy level
 - 安全规则本身是**不可被 AI 绕过的硬编码约束**，不是 prompt 中的"建议"
 
-**架构保证**（见 4.2.1）：安全策略存储在 daemon 侧（`~/.ai-daemon/projects/{id}/security.yaml`），per project 配置，但不在项目 git 仓库内。AI 的文件系统访问被限制在项目目录——它物理上无法修改自己的安全规则。这不是靠 prompt 约束，是靠沙箱隔离。
+**架构保证**（见 4.2.1）：安全策略存储在 daemon 侧（`~/.opengraft-daemon/projects/{id}/security.yaml`），per project 配置，但不在项目 git 仓库内。AI 的文件系统访问被限制在项目目录——它物理上无法修改自己的安全规则。这不是靠 prompt 约束，是靠沙箱隔离。
 
 ## 八、实现路径
 

@@ -23,13 +23,15 @@ describe("ProjectManager", () => {
 	});
 
 	describe("init — new directory", () => {
-		test("creates directory structure with .ai/memory.md and git", async () => {
+		test("creates directory structure with .opengraft/memory.md and git", async () => {
 			const projectPath = join(tempDir, "new-app");
 			const project = await pm.init(projectPath);
 
 			expect(project.name).toBe("new-app");
 			expect(project.path).toBe(projectPath);
-			expect(existsSync(join(projectPath, ".ai", "memory.md"))).toBe(true);
+			expect(existsSync(join(projectPath, ".opengraft", "memory.md"))).toBe(
+				true,
+			);
 			expect(existsSync(join(projectPath, ".git"))).toBe(true);
 			expect(existsSync(join(projectPath, "src"))).toBe(true);
 			expect(existsSync(join(projectPath, ".gitignore"))).toBe(true);
@@ -40,7 +42,7 @@ describe("ProjectManager", () => {
 			await pm.init(projectPath);
 
 			const memory = await readFile(
-				join(projectPath, ".ai", "memory.md"),
+				join(projectPath, ".opengraft", "memory.md"),
 				"utf-8",
 			);
 			expect(memory).toContain("scratch pad");
@@ -59,8 +61,10 @@ describe("ProjectManager", () => {
 			// Original file preserved
 			const readme = await readFile(join(projectPath, "README.md"), "utf-8");
 			expect(readme).toBe("# My App\n");
-			// .ai/ created
-			expect(existsSync(join(projectPath, ".ai", "memory.md"))).toBe(true);
+			// .opengraft/ created
+			expect(existsSync(join(projectPath, ".opengraft", "memory.md"))).toBe(
+				true,
+			);
 		});
 
 		test("converted project memory says to explore codebase", async () => {
@@ -70,18 +74,18 @@ describe("ProjectManager", () => {
 			await pm.init(projectPath);
 
 			const memory = await readFile(
-				join(projectPath, ".ai", "memory.md"),
+				join(projectPath, ".opengraft", "memory.md"),
 				"utf-8",
 			);
 			expect(memory).toContain("Converted existing project");
 			expect(memory).toContain("CLAUDE.md");
 		});
 
-		test("does not overwrite existing .ai/memory.md", async () => {
+		test("does not overwrite existing .opengraft/memory.md", async () => {
 			const projectPath = join(tempDir, "has-memory");
-			await mkdir(join(projectPath, ".ai"), { recursive: true });
+			await mkdir(join(projectPath, ".opengraft"), { recursive: true });
 			await writeFile(
-				join(projectPath, ".ai", "memory.md"),
+				join(projectPath, ".opengraft", "memory.md"),
 				"# Custom memory\n",
 				"utf-8",
 			);
@@ -89,7 +93,7 @@ describe("ProjectManager", () => {
 			await pm.init(projectPath);
 
 			const memory = await readFile(
-				join(projectPath, ".ai", "memory.md"),
+				join(projectPath, ".opengraft", "memory.md"),
 				"utf-8",
 			);
 			expect(memory).toBe("# Custom memory\n");

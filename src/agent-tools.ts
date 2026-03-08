@@ -6,6 +6,31 @@ import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
 
+/**
+ * Check if the git working tree is clean (no uncommitted changes).
+ * Worktrees branch from the current HEAD, so dirty state would be lost.
+ */
+async function isGitClean(projectPath: string): Promise<{
+	clean: boolean;
+	message: string;
+}> {
+	const proc = Bun.spawn(["git", "status", "--porcelain"], {
+		cwd: projectPath,
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	await proc.exited;
+	const output = (await new Response(proc.stdout).text()).trim();
+	if (!output) {
+		return { clean: true, message: "" };
+	}
+	const lines = output.split("\n").filter((l) => l.trim());
+	return {
+		clean: false,
+		message: `Working tree has ${lines.length} uncommitted change(s):\n${output}\n\nCommit or stash changes before spawning tasks.`,
+	};
+}
+
 const TASK_SYSTEM_PROMPT = `You are an autonomous programming agent working on a subtask.
 
 ## Workflow
@@ -175,6 +200,20 @@ export function createOrchestratorTools(
 					taskId: z.string().describe("ID of the task to execute"),
 				},
 				async (args) => {
+					// Guard: require clean working tree before spawning
+					const gitCheck = await isGitClean(projectPath);
+					if (!gitCheck.clean) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Error: ${gitCheck.message}`,
+								},
+							],
+							isError: true,
+						};
+					}
+
 					const node = tracker.get(args.taskId);
 					if (!node) {
 						return {
@@ -281,6 +320,20 @@ export function createOrchestratorTools(
 						.describe("ID of the parent task whose children to spawn"),
 				},
 				async (args) => {
+					// Guard: require clean working tree before spawning
+					const gitCheck = await isGitClean(projectPath);
+					if (!gitCheck.clean) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Error: ${gitCheck.message}`,
+								},
+							],
+							isError: true,
+						};
+					}
+
 					const parent = tracker.get(args.parentId);
 					if (!parent) {
 						return {
@@ -503,7 +556,7 @@ export function createOrchestratorTools(
 
 function readMemory(projectPath: string): string {
 	try {
-		return readFileSync(join(projectPath, ".ai", "memory.md"), "utf-8");
+		return readFileSync(join(projectPath, ".opengraft", "memory.md"), "utf-8");
 	} catch {
 		return "";
 	}

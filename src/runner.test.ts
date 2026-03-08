@@ -183,8 +183,8 @@ describe("Runner", () => {
 	});
 
 	test("executeTask includes memory in prompt", async () => {
-		await exec(["mkdir", "-p", join(repoDir, ".ai")], repoDir);
-		writeFileSync(join(repoDir, ".ai", "memory.md"), "Use bun.");
+		await exec(["mkdir", "-p", join(repoDir, ".opengraft")], repoDir);
+		writeFileSync(join(repoDir, ".opengraft", "memory.md"), "Use bun.");
 
 		const root = tracker.createRoot("App", "desc");
 		const prompts: string[] = [];
