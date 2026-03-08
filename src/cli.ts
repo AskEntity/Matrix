@@ -132,9 +132,19 @@ function statusEmoji(status: string): string {
 }
 
 async function handleRun(args: string[]): Promise<void> {
-	const prompt = args.join(" ");
+	let model: string | undefined;
+	const filteredArgs: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--model" && i + 1 < args.length) {
+			model = args[++i] as string;
+		} else if (arg) {
+			filteredArgs.push(arg);
+		}
+	}
+	const prompt = filteredArgs.join(" ");
 	if (!prompt) {
-		console.error("Usage: og run <prompt>");
+		console.error("Usage: og run [--model <model>] <prompt>");
 		process.exit(1);
 	}
 
@@ -142,9 +152,11 @@ async function handleRun(args: string[]): Promise<void> {
 	if (!projectId) return;
 
 	console.log("Running agent...");
+	const body: Record<string, unknown> = { prompt };
+	if (model) body.model = model;
 	const res = await api(`/projects/${projectId}/run`, {
 		method: "POST",
-		body: JSON.stringify({ prompt }),
+		body: JSON.stringify(body),
 	});
 
 	if (!res.ok) {
