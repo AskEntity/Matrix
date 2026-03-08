@@ -251,4 +251,67 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 		},
 		{ timeout: 300_000 },
 	);
+
+	test(
+		"full pipeline: decompose goal then execute",
+		async () => {
+			const projectPath = join(tempDir, "calc-pipeline");
+			const createRes = await app.request("/projects", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ path: projectPath }),
+			});
+			const project = (await createRes.json()) as { id: string };
+
+			// Step 1: Decompose the goal into a task tree
+			const decompRes = await app.request(`/projects/${project.id}/decompose`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					goal: "Build a simple string utility library with functions: capitalize(str), reverse(str), truncate(str, maxLen). Include tests for each function.",
+					maxTurns: 10,
+				}),
+			});
+			expect(decompRes.status).toBe(200);
+
+			const decomposed = (await decompRes.json()) as {
+				root: TaskNode;
+				nodes: TaskNode[];
+			};
+			console.log("Decomposed:", {
+				root: decomposed.root.title,
+				nodeCount: decomposed.nodes.length,
+				tasks: decomposed.nodes.map((n) => n.title),
+			});
+
+			expect(decomposed.nodes.length).toBeGreaterThan(1);
+
+			// Step 2: Execute the task tree
+			const execRes = await app.request(`/projects/${project.id}/execute`, {
+				method: "POST",
+			});
+			expect(execRes.status).toBe(200);
+
+			const result = (await execRes.json()) as {
+				completed: number;
+				failed: number;
+				results: {
+					title: string;
+					success: boolean;
+				}[];
+			};
+
+			console.log("Pipeline results:", {
+				completed: result.completed,
+				failed: result.failed,
+				results: result.results.map((r) => ({
+					title: r.title,
+					success: r.success,
+				})),
+			});
+
+			expect(result.completed).toBeGreaterThan(0);
+		},
+		{ timeout: 600_000 },
+	);
 });
