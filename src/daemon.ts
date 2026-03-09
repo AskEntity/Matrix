@@ -363,6 +363,18 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	});
 
+	// Event history
+	app.get("/projects/:id/events", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const events = eventHistory.has(project.id)
+			? (eventHistory.get(project.id) as Record<string, unknown>[])
+			: await loadEventHistory(project.id);
+		return c.json({ events });
+	});
+
 	// Task tree
 	app.get("/projects/:id/tasks", async (c) => {
 		const project = pm.get(c.req.param("id"));
