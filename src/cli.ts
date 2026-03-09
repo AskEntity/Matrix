@@ -131,6 +131,97 @@ function statusEmoji(status: string): string {
 	}
 }
 
+async function handleTasks(args: string[]): Promise<void> {
+	const projectId = await resolveProject(args[0]);
+	if (!projectId) return;
+
+	const res = await api(`/projects/${projectId}/tasks`);
+	const body = (await res.json()) as {
+		root: { title: string; status: string } | null;
+		nodes: {
+			id: string;
+			title: string;
+			status: string;
+			parentId: string | null;
+			branch: string | null;
+			description?: string;
+		}[];
+	};
+
+	if (!body.root || body.nodes.length === 0) {
+		console.log("No tasks.");
+		return;
+	}
+
+	// Build parent map for tree display
+	const byParent = new Map<string | null, typeof body.nodes>();
+	for (const node of body.nodes) {
+		const key = node.parentId;
+		if (!byParent.has(key)) byParent.set(key, []);
+		byParent.get(key)?.push(node);
+	}
+
+	function printTaskTree(
+		node: (typeof body.nodes)[0],
+		indent: string,
+		isChild: boolean,
+	): void {
+		const icon = statusEmoji(node.status);
+		const shortId = node.id.slice(0, 8);
+		const title = node.title.padEnd(36).slice(0, 36);
+		const branch = node.branch ?? "";
+		const prefix = isChild ? "↳ " : "  ";
+		console.log(`${indent}${prefix}${icon} ${shortId}  ${title}  ${branch}`);
+
+		if (node.description) {
+			const desc = node.description.slice(0, 60);
+			console.log(`${indent}   ${" ".repeat(12)}${desc}`);
+		}
+
+		const children = byParent.get(node.id) ?? [];
+		for (const child of children) {
+			printTaskTree(child, indent + "  ", true);
+		}
+	}
+
+	const rootNodes = byParent.get(null) ?? [];
+	for (const node of rootNodes) {
+		printTaskTree(node, "", false);
+	}
+}
+
+async function handleDelete(args: string[]): Promise<void> {
+	const taskId = args[0];
+	if (!taskId) {
+		console.error("Usage: og delete <taskId>");
+		process.exit(1);
+	}
+
+	const projectId = await resolveCurrentProject();
+	if (!projectId) return;
+
+	const res = await api(`/projects/${projectId}/tasks/${taskId}`, {
+		method: "DELETE",
+	});
+
+	if (!res.ok) {
+		if (res.status === 404) {
+			console.error(`Task not found: ${taskId}`);
+		} else if (res.status === 409) {
+			const err = (await res.json()) as { error: string };
+			console.error(`Conflict: ${err.error}`);
+		} else {
+			const err = (await res.json()) as { error: string };
+			console.error(`Error: ${err.error}`);
+		}
+		process.exit(1);
+	}
+
+	const result = (await res.json()) as { title?: string };
+	const title = result.title ?? taskId;
+	console.log(`Deleted task: ${title}`);
+}
+
 async function handleRun(args: string[]): Promise<void> {
 	let model: string | undefined;
 	let childModel: string | undefined;
@@ -731,6 +822,13 @@ switch (command) {
 	case "st":
 		await handleStatus(args);
 		break;
+	case "tasks":
+		await handleTasks(args);
+		break;
+	case "delete":
+	case "del":
+		await handleDelete(args);
+		break;
 	case "run":
 		await handleRun(args);
 		break;
@@ -781,6 +879,10 @@ switch (command) {
 		console.log("  init [path]     Initialize a project");
 		console.log("  list            List all projects");
 		console.log("  status [id]     Show task tree status");
+		console.log(
+			"  tasks [id]      List all tasks with details (id, status, title, branch)",
+		);
+		console.log("  delete <taskId> Delete a task and its descendants");
 		console.log(
 			"  orchestrate <goal>  Start agent orchestration (fire-and-forget)",
 		);
