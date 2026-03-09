@@ -834,8 +834,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}),
 	);
 
-	// Static file serving for the web UI
-	app.get("/", (c) => c.redirect("/web/index.html"));
+	// Static file serving for the web UI (fallback for non-Bun environments)
 	app.use("/web/*", serveStatic({ root: "./" }));
 
 	return { app, pm, wsClients };
@@ -985,9 +984,19 @@ if (import.meta.main) {
 	console.log(`OpenGraft daemon listening on http://localhost:${port}`);
 	console.log(`Web UI: http://localhost:${port}/`);
 	console.log(`Provider: ${defaultConfig.agentProvider.name}`);
+
+	// Use Bun's HTML import for the web UI (auto-bundles TSX/CSS)
+	const webIndex = await import("../web/index.html");
 	Bun.serve({
+		routes: {
+			"/": webIndex.default,
+		},
 		fetch: app.fetch,
 		port,
 		websocket,
+		development: {
+			hmr: true,
+			console: true,
+		},
 	});
 }
