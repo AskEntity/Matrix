@@ -37,7 +37,7 @@ You are bootstrapping OpenGraft — using the system to improve itself. This is 
 
 **How to run unit tests + all checks**:
 ```bash
-bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/direct-provider.test.ts src/message-queue.test.ts
+bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/direct-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts
 bun run typecheck   # tsc --noEmit
 bun run check       # biome lint + format
 ```
@@ -76,11 +76,11 @@ Daemon (Hono: HTTP + WS on :7433)
 | src/daemon.ts | Hono HTTP server, all routes, WS, createApp() |
 | src/agent-provider.ts | AgentProvider interface, AgentRequest, AgentEvent, AgentSession |
 | src/claude-code-provider.ts | Claude Code Agent SDK provider (subprocess) |
-| src/direct-provider.ts | Direct Anthropic API provider (prompt caching, context compact, implicit yield) |
+| src/direct-provider.ts | Direct Anthropic API provider (prompt caching, context compact, implicit yield, CWD tracking) |
 | src/project-manager.ts | Project init/CRUD, .opengraft/ setup |
 | src/task-tracker.ts | Task tree CRUD, short ID prefix matching, JSON persistence, per-task cost |
 | src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
-| src/agent-tools.ts | MCP tools (10 tools) + system prompts (ORCHESTRATION_KNOWLEDGE, TASK_SYSTEM_PROMPT) |
+| src/agent-tools.ts | MCP tools (10 tools) + system prompts + helpers (`buildTaskPrompt`, `slugify`, `isDescendantOf`) |
 | src/message-queue.ts | MessageQueue class + globalAgentQueues registry |
 | src/cli.ts | CLI (`og` command): init, list, status, tasks, delete, orchestrate, watch, send, stop, logs |
 | web/App.tsx | Web UI: task tree, activity log, message input, project management |
@@ -107,7 +107,7 @@ Daemon (Hono: HTTP + WS on :7433)
 | create_task | Create task (top-level or child) |
 | update_task_status | Update status: pending/in_progress/testing/passed/failed |
 | execute_tasks | Fire-and-forget: spawn children in parallel, returns immediately |
-| yield | Suspend and wait for queue messages. Returns messages + ## Pending summary |
+| yield | Suspend and wait for queue messages. Returns messages + ## Pending summary. Emits queue_message events for UI acknowledgment. |
 | send_message_to_child | Send parent_update to a running child |
 | report_to_parent | Non-blocking upward message to parent as child_report |
 | delete_task | Clean up worktree + branch + task node (after merge) |
@@ -126,6 +126,7 @@ Daemon (Hono: HTTP + WS on :7433)
 - **MessageQueue** (`src/message-queue.ts`): async channel per agent session
 - **QueueMessage types**: `user` | `child_complete` | `parent_update` | `clarify_response` | `child_report`
 - **globalAgentQueues**: global Map for routing messages to specific agents by task ID
+- **Message delivery**: messages piggybacked on tool results at cancellation points, or delivered via yield() tool. Both paths emit `queue_message` events for UI.
 
 ## API Reference
 
@@ -139,10 +140,12 @@ Daemon (Hono: HTTP + WS on :7433)
 | PATCH | /projects/:id/tasks/:nodeId | Update task |
 | DELETE | /projects/:id/tasks/:nodeId | Remove task + descendants |
 | POST | /projects/:id/orchestrate/agent | Start orchestration |
+| POST | /projects/:id/tasks/:nodeId/continue | Continue failed/stuck task |
 | POST | /projects/:id/stop | Stop running agent |
 | POST | /projects/:id/message | Send message to root agent |
 | POST | /projects/:id/tasks/:nodeId/message | Send message to specific child |
 | POST | /projects/:id/sessions/clear | Wipe session history |
+| POST | /projects/:id/sessions/prune | Prune old sessions (keep N) |
 | GET | /projects/:id/events | Event history (up to 500 events) |
 | WS | /ws | Real-time task tree + agent events |
 
@@ -155,36 +158,20 @@ Three explicit cache breakpoints per API call:
 
 **Critical**: Do NOT put per-agent-variable info (e.g. `Working directory: ${cwd}`) in the system prompt — every distinct value breaks cross-agent cache sharing. Prepend it to the first user message only (skip on resume).
 
+## Bash Tool CWD Tracking
+
+- `executeTool` for bash returns `{ content, isError, cwd? }` — `cwd` set only when working directory changed
+- Uses bash EXIT trap to always capture `pwd`: `trap ___og_trap EXIT`
+- CWD marker `___OPENGRAFT_CWD___` stripped from stdout; if cwd changed, `cwd: /new/path` appended to output
+- `runLoop` uses mutable `let cwd` — updated after each bash tool execution, affects all subsequent tool calls
+- **Pitfall**: macOS `/var` → `/private/var` symlink. Fixed with `realpathSync(cwd)` for comparison.
+
 ## Daemon Startup & Restart
 
 - **Auto-resume**: On restart, `autoResumeProjects()` re-launches orchestrators with saved sessions.
 - **Orphan reset**: In-progress child tasks are reset to `failed` before resume (their agent sessions died).
-- **Startup guard**: `startupReady` flag prevents orchestration requests until auto-resume completes (prevents duplicate orchestration race condition). Tests must call `markReady()`.
+- **Startup guard**: `startupReady` flag prevents orchestration requests until auto-resume completes.
 - **Sessions**: stored in `~/.opengraft/sessions/{projectId}/{sessionId}.json`
-
-## Web UI Features
-
-- Auto-target: selecting an in_progress task auto-targets messages to it
-- OrchestratorDetail: real task stats (passed/active/failed), session cost, total project cost, turns, clear sessions button
-- Project management: add/remove projects from header
-- Pending message chips: sent-but-unacknowledged messages shown as dismissible chips in footer
-- Per-task cost display in TaskDetail panel (`costUsd` from tree.json)
-- Task timing display: "Running Xm", "Waiting X ago", "Age X ago" in TaskDetail (uses createdAt/updatedAt)
-- Collapsible task tree nodes (chevron toggle, state per node ID)
-- Activity log search/filter: text search input in log header, clears on task change
-- Dark/light mode toggle: persisted to localStorage, `.light-mode` class on `document.documentElement`
-- queue_message parsing into typed log entries
-
-## Web UI: Dark/Light Mode Toggle
-
-- Theme toggle button added to top-right of header (`og-header-right`) in `web/App.tsx`
-- `isDark` state initialized from `localStorage.getItem("og-theme") !== "light"` (defaults to dark)
-- `useEffect` applies `.light-mode` class to `document.documentElement` and persists to localStorage
-- Light mode CSS overrides are in `:root.light-mode { }` block in `web/style.css`
-- The CSS uses exact `:root` variable names: `--bg-base`, `--bg-surface`, `--bg-raised`, `--bg-overlay`, `--bg-subtle`, `--border`, `--border-subtle`, `--border-muted`, `--text-primary`, `--text-secondary`, `--text-muted`, `--text-faint`, plus status/accent/shadow vars
-- **Pitfall**: Several hover backgrounds use hardcoded `rgba(255,255,255,0.04)` — invisible on light bg. Fixed with `:root.light-mode .og-task-node:hover { background: rgba(0,0,0,0.04) }` etc. at end of CSS
-- Layout/spacing/font/radius/transition variables intentionally NOT overridden — only color variables
-- IconSun and IconMoon SVG icons added as inline components (matching existing icon pattern)
 
 ## Known Pitfalls
 
@@ -196,6 +183,9 @@ Three explicit cache breakpoints per API call:
 - **`git merge --no-ff`**: run from the correct directory (parent worktree or main repo root).
 - **TaskTracker.get()**: supports short ID prefix matching (8+ chars), returns undefined on ambiguity.
 - **Continue handler**: uses `provider.startSession()` (not `stream()`), creates `MessageQueue` + `createOrchestratorTools()`. Status from `doneRef.done` first, `agentResult.success` as fallback.
+- **CSS `var(--radius)`**: not defined — use `var(--radius-sm)`, `var(--radius-md)` etc.
+- **`c.req.json<T>().catch(() => ({}))`**: gives union type. Cast fallback: `.catch(() => ({} as T))`.
+- **Search tool `rg --max-count`**: limits per-file, not total. Use post-processing truncation instead (`truncateSearchOutput()`).
 
 ## Methodology
 
@@ -229,56 +219,24 @@ Three explicit cache breakpoints per API call:
 | `og logs [id]` | Show event history |
 | `og cost [id]` | Show cost breakdown by task |
 | `og sessions clear` | Wipe session history |
+| `og sessions prune [--keep N]` | Prune old session files |
 | `og health` | Check daemon health |
 | `og daemon <cmd>` | Manage daemon service |
 
-## Per-Task Cost Tracking
+## Web UI Features
 
-- `costUsd?: number` field on `TaskNode` (optional, backward compatible)
-- `TaskTracker.updateCost(nodeId, costUsd)` accumulates cost (NOT `setCost` which was removed)
-- Cost is accumulated in `agent-tools.ts` after each child task completes
-- Persisted to `tree.json` — survives daemon restart
-- Shown in Web UI TaskDetail and `og tasks`/`og cost` CLI commands
-
-## Web UI: Task Tree Search Filter (added)
-
-- Search input added at top of `TaskTree` component in `web/App.tsx`
-- `taskFilter` state lives in `TaskTree` (self-contained, resets naturally on project change if component remounts)
-- `nodeMap` (id→TaskNode) built via `useMemo` for ancestor traversal
-- `matchingIds: Set<string> | null` — null means show all; when active, includes matching nodes + all ancestors up the tree
-- `filteredRoots` filters top-level roots by `matchingIds`
-- `TaskNodeView` accepts `matchingIds` prop: filters children to those in set, force-expands (overrides `isCollapsed`) when filter active
-- Empty state: "No tasks match '…'" shown when filter active but no roots remain
-- CSS classes: `og-tree-search-bar`, `og-tree-search`, `og-tree-empty` in `web/style.css`
-- **Pitfall**: `var(--radius)` is not defined in the CSS (only `--radius-sm`, `--radius-md` etc). The existing log search uses `var(--radius)` which silently fails. Use `var(--radius-sm)` for correct behavior.
-
-## Bash Tool CWD Tracking
-
-- `executeTool` for bash now returns `{ content, isError, cwd? }` — `cwd` is set only when the working directory changed
-- Uses bash EXIT trap to capture `pwd` even when the command calls `exit`: `trap ___og_trap EXIT`
-- CWD marker `___OPENGRAFT_CWD___` is stripped from stdout; if cwd changed, `cwd: /new/path` is appended to output
-- `runLoop` in DirectProvider uses `let cwd` (mutable) and updates it after each bash tool execution with a new cwd
-- **Pitfall**: macOS `/var` → `/private/var` symlink causes `pwd` output to differ from input `cwd`. Fixed by using `realpathSync(cwd)` for comparison.
-- All subsequent tool calls (bash, read_file, write_file, edit_file, list_files, search) automatically use the updated cwd
-
-## Search Tool head_limit Fix
-
-- `rg --max-count N` limits matches **per file**, not total. Replaced with post-processing truncation via `truncateSearchOutput()`.
-- For content mode with context (`-C`), entries are separated by `\n--\n` lines — split on that separator.
-- For line-based modes, split on `\n` and handle trailing newline (empty last element).
-- `truncateSearchOutput` is exported from `direct-provider.ts` for testing.
-- `buildTaskPrompt` and `slugify` exported from `agent-tools.ts` with `@internal` JSDoc for testing.
+- Auto-target: selecting an in_progress task auto-targets messages to it
+- OrchestratorDetail: task stats, session cost, total project cost, turns, clear sessions
+- Project management: add/remove projects from header
+- Pending message chips: dismissible chips in footer, auto-dismiss on acknowledgment
+- Per-task cost, timing display in TaskDetail panel
+- Collapsible task tree nodes, task tree search filter
+- Activity log search/filter, dark/light mode toggle
+- queue_message parsing into typed log entries
+- "Message queued" no longer shown in activity log (pending chips provide this feedback)
 
 ## Backlog (next improvements to consider)
 
 - Token budget per task: cost limits and alerts
-- `og run` endpoint: currently just runs agent without watching (consider deprecating in favor of `og orchestrate`)
+- Web UI: continue/retry button for failed tasks in TaskDetail panel
 - WebSocket reconnect in CLI `og watch` when connection drops
-
-## Sessions Prune (added)
-
-- `POST /projects/:id/sessions/prune` — prunes old session JSON files, keeps N most recent (default 10). Sorts by mtime. Returns `{ pruned, remaining }`.
-- `og sessions prune [--keep N]` — CLI command. Usage error now says `og sessions clear|prune [--keep N]`.
-- **TypeScript pitfall**: `c.req.json<T>().catch(() => ({}))` gives union type `T | {}`. Cast the fallback: `.catch(() => ({} as T))` to avoid TS2339.
-- `readdir`, `stat`, `unlink` added to static imports from `node:fs/promises` in daemon.ts (don't use dynamic import — use static like the rest of the file).
-- `/projects/:id/run` now has tests: 404 unknown project, 400 missing prompt, 200 running status, 409 conflict when already running.
