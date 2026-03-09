@@ -78,13 +78,13 @@ Daemon (Hono: HTTP + WS on :7433)
 | src/claude-code-provider.ts | Claude Code Agent SDK provider (subprocess) |
 | src/direct-provider.ts | Direct Anthropic API provider (prompt caching, context compact, implicit yield) |
 | src/project-manager.ts | Project init/CRUD, .opengraft/ setup |
-| src/task-tracker.ts | Task tree CRUD, short ID prefix matching, JSON persistence |
+| src/task-tracker.ts | Task tree CRUD, short ID prefix matching, JSON persistence, per-task cost |
 | src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
 | src/agent-tools.ts | MCP tools (10 tools) + system prompts (ORCHESTRATION_KNOWLEDGE, TASK_SYSTEM_PROMPT) |
 | src/message-queue.ts | MessageQueue class + globalAgentQueues registry |
-| src/cli.ts | CLI (`og` command) |
-| web/App.tsx | Web UI: task tree, activity log, message input, auto-scroll |
-| web/hooks.ts | React hooks: useWebSocket, message routing |
+| src/cli.ts | CLI (`og` command): init, list, status, tasks, delete, orchestrate, watch, send, stop, logs |
+| web/App.tsx | Web UI: task tree, activity log, message input, project management |
+| web/hooks.ts | React hooks: useWebSocket, useProjects, useTasks, useAgent |
 | web/style.css | Design system: `og-` prefix CSS variables |
 
 ## Tech Stack
@@ -126,10 +126,6 @@ Daemon (Hono: HTTP + WS on :7433)
 - **MessageQueue** (`src/message-queue.ts`): async channel per agent session
 - **QueueMessage types**: `user` | `child_complete` | `parent_update` | `clarify_response` | `child_report`
 - **globalAgentQueues**: global Map for routing messages to specific agents by task ID
-- **Cancellation points**: queue drained after each tool batch in runLoop
-
-### yield() Output Format
-Messages + `## Pending` section showing running children list + pending clarification count.
 
 ## API Reference
 
@@ -149,60 +145,31 @@ Messages + `## Pending` section showing running children list + pending clarific
 | POST | /projects/:id/sessions/clear | Wipe session history |
 | WS | /ws | Real-time task tree + agent events |
 
-## Anthropic Prompt Caching (DirectProvider)
+## Prompt Caching (DirectProvider)
 
 Three explicit cache breakpoints per API call:
 1. System prompt (last block gets `cache_control`)
 2. Last tool definition
 3. Second-to-last user message (`addMessagesCacheControl()`)
 
-Cost formula: `input * 1x + cache_creation * 1.25x + cache_read * 0.1x + output * outputRate`
-- `input_tokens` from API = non-cached tokens only. Do NOT subtract cache tokens.
+**Critical**: Do NOT put per-agent-variable info (e.g. `Working directory: ${cwd}`) in the system prompt — every distinct value breaks cross-agent cache sharing. Prepend it to the first user message only (skip on resume).
 
-**Caching pitfall**: Do NOT put per-agent-variable info (e.g. `Working directory: ${cwd}`) in the
-system prompt. Every distinct value breaks cache sharing. Instead, prepend it to the first user
-message only (and skip on resume). This lets all agents share an identical system prompt and
-benefit from cache reads after the first agent's cache-creation turn.
+## Daemon Startup & Restart
 
-## Session Persistence
-
-- Sessions stored in daemon data dir: `~/.opengraft/sessions/{projectId}/{sessionId}.json`
-- NOT in project repo — keeps repo clean, sessions are daemon-internal state
-- On resume: loads from disk if not in memory
-- Restart: stop → restart daemon → orchestrate with `resume: true` → full history restored
-
-## Real-time Task Tree Updates
-
-All task mutations broadcast `tree_update` via WebSocket:
-- HTTP routes: POST/PATCH/DELETE `/projects/:id/tasks`
-- MCP tools: `create_task`, `update_task_status`, `delete_task` via `deps.broadcastTreeUpdate?()`
+- **Auto-resume**: On restart, `autoResumeProjects()` re-launches orchestrators with saved sessions.
+- **Orphan reset**: In-progress child tasks are reset to `failed` before resume (their agent sessions died).
+- **Startup guard**: `startupReady` flag prevents orchestration requests until auto-resume completes (prevents duplicate orchestration race condition). Tests must call `markReady()`.
+- **Sessions**: stored in `~/.opengraft/sessions/{projectId}/{sessionId}.json`
 
 ## Web UI Features
 
-- Modern design system: `og-` prefix CSS variables
-- Status colors: pending=gray, in_progress=blue, testing=purple, passed=green, failed=red, stuck=amber
-- Message input: send messages to root or specific child agents (targetNodeId)
-- Auto-scroll lock: toggle button in activity header, auto-unlocks on manual scroll
-- Token breakdown: `$0.043 · 500 in · 10k write · 5k read · 200 out`
-- Orchestration prompt shown as user message bubble before start
-- Queue message events styled in activity log
-- Compact boundary with collapsible checkpoint content
-- **Auto-target on task selection**: selecting an in_progress task auto-sets targetNodeId.
-  Selecting anything else resets to null (sends to orchestrator). Footer shows targeting status.
-- **queue_message parsing**: Split on `\n`, filter `## ` section headers, regex `^\[([^\]]+)\] (.*)`.
-  Map `child_complete` → `task_completed`, `user` → `user_prompt`, others → `queue_message`.
-- **OrchestratorDetail stats**: Shows real passed/active/failed counts from nodes array.
-
-## Code Rules
-
-1. All code and comments in English
-2. Pre-commit hooks enforce all checks
-3. Three repetitions before abstracting
-4. No synchronous mutable APIs — fire-and-forget + WS observe
-
-## Known Bugs / TODO
-
-(none — continue handler bug fixed, UI targeting improved, prompt caching bug fixed, startup race condition fixed)
+- Auto-target: selecting an in_progress task auto-targets messages to it
+- OrchestratorDetail: real task stats (passed/active/failed), cost, turns, clear sessions button
+- Project management: add/remove projects from header
+- Pending message chips: sent-but-unacknowledged messages shown as dismissible chips in footer
+- Per-task cost display in TaskDetail panel
+- Collapsible task tree nodes
+- queue_message parsing into typed log entries
 
 ## Known Pitfalls
 
@@ -211,12 +178,9 @@ All task mutations broadcast `tree_update` via WebSocket:
 - **OAuth token**: requires `anthropic-beta: oauth-2025-04-20` header.
 - **Template strings in agent-tools.ts**: backticks must be escaped as `` \` ``.
 - **Biome SVG rule**: `noSvgWithoutTitle` requires `aria-hidden="true"` on decorative SVGs.
-- **Zod v4**: array elements at `def.element`; enum values at `def.entries` (record).
 - **`git merge --no-ff`**: run from the correct directory (parent worktree or main repo root).
 - **TaskTracker.get()**: supports short ID prefix matching (8+ chars), returns undefined on ambiguity.
-- **`createApp` returns `getTracker`**: to test daemon internals that depend on the in-memory `TaskTracker` (e.g., the continue handler's worktreePath branch), use `const { getTracker } = createApp(...)` to get the daemon's own tracker instance. Writing to the tracker file externally won't affect an already-loaded in-memory tracker.
-- **Continue handler pattern**: uses `provider.startSession()` (not `stream()`), creates a `MessageQueue` registered in `globalAgentQueues`, and calls `createOrchestratorTools()` with `depth: 1`, `currentTaskId: nodeId`. Queue is cleaned up in `finally` block. Status determined by `doneRef.done` first, with `agentResult.success` as fallback.
-- **Startup ready guard**: `createApp` has a `startupReady` flag (default false). All orchestration endpoints (WS orchestrate, POST /orchestrate/agent, /run, /agents/start) return 503 until `markReady()` is called. Tests must call `markReady()` after `createApp()` to use these endpoints.
+- **Continue handler**: uses `provider.startSession()` (not `stream()`), creates `MessageQueue` + `createOrchestratorTools()`. Status from `doneRef.done` first, `agentResult.success` as fallback.
 
 ## Methodology
 
@@ -226,19 +190,16 @@ All task mutations broadcast `tree_update` via WebSocket:
 - Flaky test = Bug. Never fix with retries.
 - No old-system fallbacks when replacing something
 
-## Bootstrap Strategy: Large-Scale Parallelism
+## Bootstrap Strategy
 
-The bootstrapping process is most efficient when using **massive parallelism** — spawn many child agents simultaneously to tackle different features/modules in parallel, then merge results.
+- **Fan out aggressively**: spawn many parallel tasks touching different files
+- **Sub-agents can orchestrate**: tree can be 3+ levels deep
+- **Merge order**: simpler tasks first; reset smaller ones if conflicts are complex
+- Safe parallel splits: daemon.ts + App.tsx, different CLI commands, new test + new feature files
 
-**Key patterns**:
-- **Fan out aggressively**: When you have 5+ improvements to make, create all tasks and spawn them all at once. Don't serialize what can be parallel.
-- **Sub-agents can also orchestrate**: Child agents that encounter large tasks should themselves spawn sub-agents. The tree can be 3+ levels deep: orchestrator → feature agent → sub-feature agents.
-- **Merge order matters**: Merge simpler/smaller tasks first. If a larger task conflicts, reset the smaller one on top of the merged main branch.
-- **Identify non-overlapping work**: tasks touching different files (e.g., daemon.ts vs App.tsx vs types.ts vs CLI) can always run in parallel safely.
-- **Batch improvements**: Instead of fixing one bug at a time, assess 5-10 improvements, decompose all of them into tasks, and spawn all at once. Check memory.md and OpenGraft.md for the full list of known gaps.
+## Backlog (next improvements to consider)
 
-**What to parallelize** (examples of safe parallel splits):
-- Backend fix (daemon.ts) + Frontend feature (App.tsx) = always safe
-- New test file + New feature file = usually safe
-- Different CLI commands = safe
-- Different API routes = safe (same file but different functions, merge usually clean)
+- Bash tool cwd tracking: detect `cd` in commands, update agent's working directory
+- Token budget per task: cost limits and alerts
+- Model selection per task (Haiku for simple, Opus for complex)
+- Cost rate alerts and loop detection
