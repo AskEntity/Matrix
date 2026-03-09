@@ -1,5 +1,10 @@
 #!/usr/bin/env bun
 
+const _pkg = JSON.parse(
+	await Bun.file(new URL("../package.json", import.meta.url).pathname).text(),
+) as { version: string };
+const VERSION = _pkg.version;
+
 const DAEMON_URL = process.env.OG_DAEMON_URL ?? "http://localhost:7433";
 
 async function api(path: string, options?: RequestInit): Promise<Response> {
@@ -1046,6 +1051,11 @@ async function handleDaemon(args: string[]): Promise<void> {
 // Main
 const [command, ...args] = process.argv.slice(2);
 
+if (command === "--version" || command === "-v" || command === "version") {
+	console.log(`og v${VERSION}`);
+	process.exit(0);
+}
+
 switch (command) {
 	case "init":
 		await handleInit(args);
@@ -1116,53 +1126,64 @@ switch (command) {
 		await handleDaemon(args);
 		break;
 	default:
-		console.log("OpenGraft CLI");
+		console.log(`OpenGraft v${VERSION}`);
 		console.log("");
-		console.log("Usage: og <command> [args]");
+		console.log("USAGE");
+		console.log("  og <command> [options]");
 		console.log("");
-		console.log("Commands:");
-		console.log(
-			"  daemon <cmd>    Manage daemon (install/start/stop/restart/status/logs)",
-		);
-		console.log("  init [path]     Initialize a project");
-		console.log("  list            List all projects");
-		console.log("  status [id]     Show task tree status");
-		console.log(
-			"  tasks [id]      List all tasks with details (id, status, title, branch)",
-		);
-		console.log("  delete <taskId> Delete a task and its descendants");
-		console.log(
-			"  orchestrate <goal>  Start agent orchestration (fire-and-forget)",
-		);
-		console.log(
-			"  orchestrate --resume [prompt]  Resume from saved session history",
-		);
-		console.log("  continue <taskId> [msg]  Continue a failed/stuck task");
-		console.log("  watch           Watch agent activity in real-time");
-		console.log("  send <msg>      Send instruction to running agent");
-		console.log("  stop            Stop running agent (session saved to disk)");
-		console.log(
-			"  sessions clear  Wipe session history (start fresh on next run)",
-		);
-		console.log(
-			"  sessions prune [--keep N]  Remove old session files, keep N most recent (default 10)",
-		);
-		console.log(
-			"  logs [-n N] [id]  Show project event history (last N events)",
-		);
-		console.log(
-			"  agent [id]      Check if an agent is running for the project",
-		);
-		console.log("  cost [id]       Show cost summary for project");
-		console.log("  health          Check daemon health");
+		console.log("COMMANDS");
+		console.log("  Project");
+		console.log("    init [path]              Initialize a project");
+		console.log("    list                     List all projects");
 		console.log("");
-		console.log("Quick start:");
+		console.log("  Agent");
 		console.log(
-			"  og daemon install    # Install as background service (auto-starts on login)",
+			"    orchestrate <goal>       Start orchestration (auto-watches)",
 		);
 		console.log(
-			"  og init .            # Register current directory as project",
+			"    orchestrate --resume     Resume from saved session history",
 		);
-		console.log("  og orchestrate 'build feature X'");
+		console.log("    continue <taskId> [msg]  Continue a failed/stuck task");
+		console.log("    stop                     Stop running agent");
+		console.log("    agent [id]               Check if an agent is running");
+		console.log("    send <msg>               Send message to running agent");
+		console.log("");
+		console.log("  Tasks");
+		console.log("    status [id]              Show task tree");
+		console.log("    tasks [id]               List tasks with cost details");
+		console.log("    delete <taskId>          Delete a task and descendants");
+		console.log("    cost [id]                Show cost breakdown by task");
+		console.log("");
+		console.log("  Logs & Sessions");
+		console.log(
+			"    logs [-n N] [id]         Show event history (last N events)",
+		);
+		console.log("    watch                    Watch live agent activity");
+		console.log("    sessions clear           Clear session history");
+		console.log(
+			"    sessions prune [--keep N]  Prune old session files (default keep 10)",
+		);
+		console.log("");
+		console.log("  Daemon");
+		console.log("    daemon install           Install as background service");
+		console.log("    daemon start/stop/restart  Manage daemon");
+		console.log("    daemon status            Check daemon status");
+		console.log("    daemon logs              View daemon logs");
+		console.log("");
+		console.log("  Other");
+		console.log("    health                   Check daemon health");
+		console.log("    version                  Show version");
+		console.log("");
+		console.log("QUICK START");
+		console.log(
+			"  og daemon install                  # Install and start daemon",
+		);
+		console.log(
+			"  og init .                          # Register current directory",
+		);
+		console.log("  og orchestrate 'build feature X'   # Start agent");
+		console.log(
+			"  og watch                           # Watch in separate terminal",
+		);
 		break;
 }
