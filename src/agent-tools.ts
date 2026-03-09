@@ -165,6 +165,10 @@ The parent has more context and can help. Failing early is better than wasting t
 - If merge conflicts occur: resolve them with edit_file. This is expected with parallel work.
 - If conflicts are too complex: merge the larger/more complex feature first, then reset and re-spawn the simpler one.
 - After successful merge: ALWAYS call delete_task to clean up worktree + branch + node
+- After merging a child, if other children are still running, send them a message via
+  send_message_to_child to sync with main: "Main updated — run \`git merge main\`
+  to stay in sync and reduce merge conflicts."
+  Only do this if you merged substantial changes that could affect sibling work.
 - After ALL merges: run full test suite to catch integration issues
 - Intermediate merges may not typecheck (e.g., types merged but implementors not yet).
   Use \`--no-verify\` for intermediate commits. The final state MUST pass all hooks.
