@@ -145,6 +145,12 @@ describe("TaskTracker", () => {
 		expect(tracker.get(task.id)).toBe(task);
 	});
 
+	test("setCost stores cost on node", () => {
+		const node = tracker.addTask("test", "desc");
+		tracker.setCost(node.id, 0.0123);
+		expect(tracker.get(node.id)?.costUsd).toBe(0.0123);
+	});
+
 	test("get() returns undefined for ambiguous prefix", () => {
 		const task1 = tracker.addTask("Task A", "First");
 		const task2 = tracker.addTask("Task B", "Second");

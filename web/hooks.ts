@@ -19,6 +19,7 @@ export interface TaskNode {
 	worktreePath: string | null;
 	sessionId: string | null;
 	message: string | null;
+	costUsd?: number;
 	updatedAt: string | null;
 }
 
