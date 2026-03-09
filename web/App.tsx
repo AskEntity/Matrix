@@ -799,8 +799,15 @@ function OrchestratorDetail({
 // ── Main App ───────────────────────────────────────────────────────────────
 
 export function App() {
-	const { projects, refresh: refreshProjects } = useProjects();
+	const {
+		projects,
+		refresh: refreshProjects,
+		initProject,
+		deleteProject,
+	} = useProjects();
 	const [projectId, setProjectId] = useState("");
+	const [showAddProject, setShowAddProject] = useState(false);
+	const [newProjectPath, setNewProjectPath] = useState("");
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 	/** Which task/agent receives the next message. null = orchestrator (default). */
 	const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
@@ -1090,6 +1097,34 @@ export function App() {
 		}
 	}
 
+	async function handleAddProject(e: React.FormEvent) {
+		e.preventDefault();
+		const path = newProjectPath.trim();
+		if (!path) return;
+		try {
+			const project = await initProject(path);
+			setProjectId(project.id);
+			setNewProjectPath("");
+			setShowAddProject(false);
+		} catch (err) {
+			addLog("error", (err as Error).message);
+		}
+	}
+
+	async function handleDeleteProject() {
+		if (!projectId) return;
+		const project = projects.find((p) => p.id === projectId);
+		if (!confirm(`Remove project "${project?.name ?? projectId}"?`)) return;
+		try {
+			await deleteProject(projectId);
+			setProjectId("");
+			setSelectedTaskId(null);
+			setLogs([]);
+		} catch (err) {
+			addLog("error", (err as Error).message);
+		}
+	}
+
 	async function handleAddTask() {
 		if (!projectId) return;
 		const title = window.prompt("Task title:");
@@ -1136,27 +1171,81 @@ export function App() {
 				</div>
 
 				<div className="og-header-right">
-					{projects.length > 0 && (
-						<select
-							className="og-select"
-							value={projectId}
-							onChange={(e) => {
-								setProjectId(e.target.value);
-								setSelectedTaskId(null);
-								setLogs([]);
-							}}
+					{showAddProject ? (
+						<form
+							onSubmit={handleAddProject}
+							style={{ display: "flex", alignItems: "center", gap: "6px" }}
 						>
-							{projects.map((p) => (
-								<option key={p.id} value={p.id}>
-									{p.name}
-								</option>
-							))}
-						</select>
-					)}
-					{projects.length === 0 && (
-						<span style={{ fontSize: "12px", color: "var(--text-faint)" }}>
-							No projects
-						</span>
+							<input
+								className="og-continue-input"
+								type="text"
+								placeholder="Project path…"
+								value={newProjectPath}
+								onChange={(e) => setNewProjectPath(e.target.value)}
+								style={{ width: "220px" }}
+							/>
+							<button
+								type="submit"
+								className="og-btn og-btn-primary"
+								style={{ fontSize: "12px", padding: "4px 10px" }}
+							>
+								Add
+							</button>
+							<button
+								type="button"
+								className="og-btn-icon"
+								title="Cancel"
+								onClick={() => {
+									setShowAddProject(false);
+									setNewProjectPath("");
+								}}
+							>
+								<IconClose size={11} />
+							</button>
+						</form>
+					) : (
+						<>
+							{projects.length > 0 && (
+								<select
+									className="og-select"
+									value={projectId}
+									onChange={(e) => {
+										setProjectId(e.target.value);
+										setSelectedTaskId(null);
+										setLogs([]);
+									}}
+								>
+									{projects.map((p) => (
+										<option key={p.id} value={p.id}>
+											{p.name}
+										</option>
+									))}
+								</select>
+							)}
+							{projects.length === 0 && (
+								<span style={{ fontSize: "12px", color: "var(--text-faint)" }}>
+									No projects
+								</span>
+							)}
+							{projectId && (
+								<button
+									type="button"
+									className="og-btn-icon"
+									title="Remove project"
+									onClick={handleDeleteProject}
+								>
+									<IconTrash size={13} />
+								</button>
+							)}
+							<button
+								type="button"
+								className="og-btn-icon"
+								title="Add project"
+								onClick={() => setShowAddProject(true)}
+							>
+								<IconPlus size={14} />
+							</button>
+						</>
 					)}
 				</div>
 			</header>
