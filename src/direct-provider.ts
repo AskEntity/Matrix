@@ -1208,6 +1208,16 @@ export class DirectProvider implements AgentProvider {
 			// Add tool results to history
 			messages.push({ role: "user", content: toolResults });
 
+			// Persist after tool results too (captures full turn)
+			this.sessionHistory.set(sessionId, [...messages]);
+			if (sessionsDir) {
+				writeFile(
+					join(sessionsDir, `${sessionId}.json`),
+					JSON.stringify(messages),
+					"utf-8",
+				).catch(() => {});
+			}
+
 			// Check if done() was called by a tool in this batch — exit immediately
 			if (request.doneRef?.done) {
 				break;

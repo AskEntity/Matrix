@@ -190,6 +190,13 @@ All task mutations broadcast `tree_update` via WebSocket:
 3. Three repetitions before abstracting
 4. No synchronous mutable APIs — fire-and-forget + WS observe
 
+## Known Bugs / TODO
+
+- **Continue handler lacks MCP tools**: `POST /projects/:id/tasks/:nodeId/continue` in daemon.ts
+  uses `provider.stream()` without passing `mcpToolDefs`, `doneRef`, `queue`, `hasRunningChildren`.
+  Continued child agents have no orchestration tools. Fix: mirror the tool setup from
+  `executeChildStreaming` in agent-tools.ts (create orchestrator tools set, pass to request).
+
 ## Known Pitfalls
 
 - **Git worktrees**: `extensions.worktreeConfig` must be enabled. `core.hooksPath` must be absolute. New worktrees need `bun install`.

@@ -824,6 +824,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		if (!session) {
 			return c.json({ error: "No active agent for this project" }, 404);
 		}
+		// Save session ID for future resume before stopping
+		const tracker = trackers.get(project.id);
+		if (tracker && session.sessionId) {
+			tracker.orchestratorSessionId = session.sessionId;
+			await tracker.save();
+		}
 		session.stop();
 		activeSessions.delete(project.id);
 		activeOrchestrations.delete(project.id);
@@ -1098,7 +1104,22 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	}
 
-	return { app, pm, wsClients, autoResumeProjects };
+	/** Graceful shutdown: save all active session IDs and flush events. */
+	async function shutdown(): Promise<void> {
+		for (const [projectId, session] of activeSessions) {
+			const tracker = trackers.get(projectId);
+			if (tracker && session.sessionId) {
+				tracker.orchestratorSessionId = session.sessionId;
+				await tracker.save();
+			}
+			session.stop();
+		}
+		activeSessions.clear();
+		activeOrchestrations.clear();
+		await flushEvents();
+	}
+
+	return { app, pm, wsClients, autoResumeProjects, shutdown };
 }
 
 const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft top-level orchestrator for this project.
@@ -1162,7 +1183,7 @@ ${ORCHESTRATION_KNOWLEDGE}`;
 // Only start the server when run directly, not when imported for testing.
 if (import.meta.main) {
 	const port = Number(process.env.PORT) || 7433;
-	const { app, pm, autoResumeProjects } = createApp();
+	const { app, pm, autoResumeProjects, shutdown } = createApp();
 	await pm.load();
 	console.log(`OpenGraft daemon listening on http://localhost:${port}`);
 	console.log(`Web UI: http://localhost:${port}/`);
@@ -1182,6 +1203,15 @@ if (import.meta.main) {
 			console: true,
 		},
 	});
+
+	// Graceful shutdown: save sessions before exit
+	const handleShutdown = async () => {
+		console.log("Shutting down — saving sessions...");
+		await shutdown();
+		process.exit(0);
+	};
+	process.on("SIGTERM", handleShutdown);
+	process.on("SIGINT", handleShutdown);
 
 	// Auto-resume any orchestrations that were running before daemon restart
 	await autoResumeProjects();
