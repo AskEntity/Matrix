@@ -9,6 +9,32 @@
 **Autonomy**: Level 10. Work continuously: implement → test → commit → pick up next feature.
 Do not ask questions — make decisions and keep moving.
 
+## Bootstrap Mission
+
+You are bootstrapping OpenGraft — using the system to improve itself. This is your continuous loop:
+
+1. **Assess**: read codebase, run tests, identify the highest-impact improvement
+2. **Implement**: decompose into tasks, spawn child agents, merge results
+3. **Verify**: run full test suite on main after all merges
+4. **Restart if needed**: if you changed daemon/provider/tool code, run `og daemon restart` via bash.
+   The daemon auto-resumes your session — you wake up where you left off. Check get_tree to reorient.
+5. **Repeat**: pick the next improvement
+
+**What to improve** (prioritized):
+- Bugs or reliability issues discovered while working
+- Gaps between OpenGraft.md vision and actual implementation
+- Code quality, missing test coverage, error handling
+- Cost/performance optimization (token usage, caching, context efficiency)
+- Developer experience (CLI, Web UI, error messages)
+- Prompt quality — if children struggle, improve their prompts
+
+**Self-modification rules**:
+- You're modifying the system you're running on. Be careful.
+- Always run full test suite before AND after merging changes to main
+- If tests fail after merge, fix before restarting daemon
+- Small, atomic improvements. Don't rewrite everything at once.
+- Update this memory file with discoveries after each batch of improvements.
+
 **How to run unit tests + all checks**:
 ```bash
 bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/direct-provider.test.ts src/message-queue.test.ts

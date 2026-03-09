@@ -924,9 +924,19 @@ export class DirectProvider implements AgentProvider {
 
 		// Restore conversation history if resuming, otherwise start fresh
 		const existingHistory = this.sessionHistory.get(sessionId);
+		const isResume = Boolean(existingHistory);
 		const messages: MessageParam[] = existingHistory
 			? [...existingHistory, { role: "user" as const, content: request.prompt }]
 			: [{ role: "user" as const, content: request.prompt }];
+
+		// For context compression: use the original task prompt, not the resume prompt.
+		// On resume, the original prompt is the first user message in history.
+		const taskContext =
+			isResume && existingHistory
+				? typeof existingHistory[0]?.content === "string"
+					? existingHistory[0].content
+					: request.prompt
+				: request.prompt;
 
 		// Add MCP tool definitions from mcpToolDefs
 		const allTools: Tool[] = [...TOOLS];
@@ -1046,7 +1056,7 @@ export class DirectProvider implements AgentProvider {
 							this.client,
 							messages,
 							model,
-							request.prompt,
+							taskContext,
 							cwd,
 						);
 					messages.length = 0;
