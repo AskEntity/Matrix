@@ -1143,6 +1143,32 @@ export function App() {
 		};
 	}, [isDragging]);
 
+	// Global keyboard shortcuts
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			const target = e.target as HTMLElement;
+			const isInput =
+				target.tagName === "INPUT" ||
+				target.tagName === "TEXTAREA" ||
+				target.isContentEditable;
+
+			if (e.key === "Escape" && !isInput) {
+				setSelectedTaskId(null);
+				setTargetNodeId(null);
+			}
+
+			if (e.key === "/" && !isInput) {
+				e.preventDefault();
+				const searchInput = document.querySelector(
+					".og-log-search",
+				) as HTMLInputElement | null;
+				searchInput?.focus();
+			}
+		};
+		document.addEventListener("keydown", handleKeyDown);
+		return () => document.removeEventListener("keydown", handleKeyDown);
+	}, []);
+
 	// WebSocket handler
 	const handleWS = useCallback(
 		(msg: Record<string, unknown>) => {
