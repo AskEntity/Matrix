@@ -704,10 +704,16 @@ function OrchestratorDetail({
 	running,
 	nodeCount,
 	nodes,
+	costUsd,
+	turns,
+	onClearSessions,
 }: {
 	running: boolean;
 	nodeCount: number;
 	nodes: import("./hooks.ts").TaskNode[];
+	costUsd?: number | null;
+	turns?: number | null;
+	onClearSessions?: () => void;
 }) {
 	const passed = nodes.filter((n) => n.status === "passed").length;
 	const failed = nodes.filter(
@@ -791,7 +797,31 @@ function OrchestratorDetail({
 						</span>
 					</div>
 				)}
+				{costUsd != null && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">Cost</span>
+						<span className="og-stat-value">${costUsd.toFixed(3)}</span>
+					</div>
+				)}
+				{turns != null && turns > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">Turns</span>
+						<span className="og-stat-value">{turns}</span>
+					</div>
+				)}
 			</div>
+			{!running && onClearSessions && (
+				<div style={{ marginTop: "12px" }}>
+					<button
+						type="button"
+						className="og-btn og-btn-sm og-btn-danger"
+						onClick={onClearSessions}
+					>
+						<IconTrash size={12} />
+						Clear Sessions
+					</button>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -804,6 +834,8 @@ export function App() {
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 	/** Which task/agent receives the next message. null = orchestrator (default). */
 	const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
+	const [lastCostUsd, setLastCostUsd] = useState<number | null>(null);
+	const [lastTurns, setLastTurns] = useState<number | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [prompt, setPrompt] = useState("");
 	const [model, setModel] = useState("claude-opus-4-6");
@@ -956,6 +988,8 @@ export function App() {
 					const tokenStr = hasTokens
 						? ` · ${formatTokenCount((msg.inputTokens as number) ?? 0)} in · ${formatTokenCount((msg.cacheCreationTokens as number) ?? 0)} write · ${formatTokenCount((msg.cacheReadTokens as number) ?? 0)} read · ${formatTokenCount((msg.outputTokens as number) ?? 0)} out`
 						: "";
+					if (msg.costUsd !== undefined) setLastCostUsd(msg.costUsd as number);
+					if (msg.turns !== undefined) setLastTurns(msg.turns as number);
 					addLog(
 						"lifecycle",
 						`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${costStr}${tokenStr}`,
@@ -1057,6 +1091,27 @@ export function App() {
 	async function handleStop() {
 		try {
 			await stop();
+		} catch (err) {
+			addLog("error", (err as Error).message);
+		}
+	}
+
+	async function handleClearSessions() {
+		if (
+			!confirm(
+				"Clear session history? The orchestrator will start fresh next time.",
+			)
+		)
+			return;
+		try {
+			const res = await fetch(`/projects/${projectId}/sessions/clear`, {
+				method: "POST",
+			});
+			if (!res.ok) throw new Error((await res.json()).error);
+			setLastCostUsd(null);
+			setLastTurns(null);
+			setLogs([]);
+			addLog("lifecycle", "Session history cleared");
 		} catch (err) {
 			addLog("error", (err as Error).message);
 		}
@@ -1238,6 +1293,9 @@ export function App() {
 								running={running}
 								nodeCount={nodes.length}
 								nodes={nodes}
+								costUsd={lastCostUsd}
+								turns={lastTurns}
+								onClearSessions={handleClearSessions}
 							/>
 						) : selectedNode ? (
 							<TaskDetail
