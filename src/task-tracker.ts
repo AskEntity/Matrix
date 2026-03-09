@@ -12,6 +12,7 @@ import type { TaskNode, TaskStatus } from "./types.ts";
 export class TaskTracker {
 	private nodes: Map<string, TaskNode> = new Map();
 	private _orchestratorSessionId: string | null = null;
+	private _autoResume = false;
 
 	constructor(private readonly treePath: string) {}
 
@@ -23,8 +24,10 @@ export class TaskTracker {
 				rootId?: string | null;
 				nodes: TaskNode[];
 				orchestratorSessionId?: string | null;
+				autoResume?: boolean;
 			};
 			this._orchestratorSessionId = data.orchestratorSessionId ?? null;
+			this._autoResume = data.autoResume ?? false;
 			for (const node of data.nodes) {
 				// Backward compat: old nodes may lack failCount
 				if (node.failCount === undefined) node.failCount = 0;
@@ -39,6 +42,7 @@ export class TaskTracker {
 		await mkdir(dir, { recursive: true });
 		const data = {
 			orchestratorSessionId: this._orchestratorSessionId,
+			autoResume: this._autoResume,
 			nodes: Array.from(this.nodes.values()),
 		};
 		await writeFile(this.treePath, JSON.stringify(data, null, "\t"), "utf-8");
@@ -52,6 +56,15 @@ export class TaskTracker {
 	/** Store the orchestrator agent's session ID. */
 	set orchestratorSessionId(id: string | null) {
 		this._orchestratorSessionId = id;
+	}
+
+	/** Whether this project should auto-resume orchestration on daemon restart. */
+	get autoResume(): boolean {
+		return this._autoResume;
+	}
+
+	set autoResume(value: boolean) {
+		this._autoResume = value;
 	}
 
 	/** Create a top-level task (direct child of the project). */

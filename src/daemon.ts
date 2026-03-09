@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -100,9 +100,62 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const wsClients = new Set<WSClient>();
 	/** Active agent sessions by project ID, for message injection. */
 	const activeSessions = new Map<string, AgentSession>();
-	/** Event history per project (capped at 500 entries). */
+	/** Event history per project (capped at 500 entries, persisted to disk). */
 	const eventHistory = new Map<string, Record<string, unknown>[]>();
 	const MAX_EVENT_HISTORY = 500;
+	const eventsDirty = new Set<string>();
+	let eventFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function eventsPath(projectId: string): string {
+		return join(config.dataDir, "events", `${projectId}.json`);
+	}
+
+	async function loadEventHistory(
+		projectId: string,
+	): Promise<Record<string, unknown>[]> {
+		const path = eventsPath(projectId);
+		try {
+			const raw = await readFile(path, "utf-8");
+			const events = JSON.parse(raw) as Record<string, unknown>[];
+			eventHistory.set(projectId, events);
+			return events;
+		} catch {
+			const events: Record<string, unknown>[] = [];
+			eventHistory.set(projectId, events);
+			return events;
+		}
+	}
+
+	async function flushEvents(): Promise<void> {
+		const dirty = [...eventsDirty];
+		eventsDirty.clear();
+		const eventsDir = join(config.dataDir, "events");
+		await mkdir(eventsDir, { recursive: true });
+		for (const projectId of dirty) {
+			const history = eventHistory.get(projectId);
+			if (history) {
+				try {
+					await writeFile(
+						eventsPath(projectId),
+						JSON.stringify(history),
+						"utf-8",
+					);
+				} catch {
+					/* non-fatal */
+				}
+			}
+		}
+	}
+
+	function scheduleEventFlush(projectId: string): void {
+		eventsDirty.add(projectId);
+		if (!eventFlushTimer) {
+			eventFlushTimer = setTimeout(async () => {
+				eventFlushTimer = null;
+				await flushEvents();
+			}, 2000); // batch writes every 2s
+		}
+	}
 
 	function getEventHistory(projectId: string): Record<string, unknown>[] {
 		if (!eventHistory.has(projectId)) eventHistory.set(projectId, []);
@@ -126,6 +179,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			if (history.length > MAX_EVENT_HISTORY) {
 				history.splice(0, history.length - MAX_EVENT_HISTORY);
 			}
+			scheduleEventFlush(projectId);
 		}
 		broadcast(wsClients, projectId, event);
 	}
@@ -568,6 +622,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		if (!tracker) return;
 
 		activeOrchestrations.add(project.id);
+
+		// Mark project for auto-resume on daemon restart
+		tracker.autoResume = true;
+		tracker.save().catch(() => {});
+
 		broadcastEvent(project.id, {
 			type: "orchestration_started",
 			prompt: opts.prompt,
@@ -779,6 +838,19 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const sessionsDir = join(config.dataDir, "sessions", project.id);
 		await rm(sessionsDir, { recursive: true, force: true });
 		await mkdir(sessionsDir, { recursive: true });
+		// Also clear event history and disable auto-resume
+		eventHistory.delete(project.id);
+		try {
+			await rm(eventsPath(project.id));
+		} catch {
+			/* ok */
+		}
+		const tracker = trackers.get(project.id);
+		if (tracker) {
+			tracker.autoResume = false;
+			tracker.orchestratorSessionId = null;
+			await tracker.save();
+		}
 		return c.json({ cleared: true });
 	});
 
@@ -874,7 +946,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					client.ws = ws;
 					wsClients.add(client);
 				},
-				onMessage(evt, ws) {
+				async onMessage(evt, ws) {
 					try {
 						const msg = JSON.parse(
 							typeof evt.data === "string" ? evt.data : "",
@@ -891,7 +963,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						if (msg.type === "subscribe" && msg.projectId) {
 							client.projectId = msg.projectId;
 							// Send current tree immediately
-							const tracker = trackers.get(msg.projectId);
+							let tracker = trackers.get(msg.projectId);
+							if (!tracker) {
+								// Load tracker if not in memory yet
+								try {
+									tracker = await getTracker(msg.projectId);
+								} catch {
+									/* project data not found — ok */
+								}
+							}
 							if (tracker) {
 								ws.send(
 									JSON.stringify({
@@ -900,8 +980,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 									}),
 								);
 							}
-							// Send event history so client has full context
-							const history = getEventHistory(msg.projectId);
+							// Send event history so client has full context (load from disk if needed)
+							let history = eventHistory.get(msg.projectId);
+							if (!history) {
+								history = await loadEventHistory(msg.projectId);
+							}
 							if (history.length > 0) {
 								ws.send(
 									JSON.stringify({
@@ -995,7 +1078,27 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	// Static file serving for the web UI (fallback for non-Bun environments)
 	app.use("/web/*", serveStatic({ root: "./" }));
 
-	return { app, pm, wsClients };
+	/** Auto-resume orchestrations that were running before daemon restart. */
+	async function autoResumeProjects(): Promise<void> {
+		const projects = pm.list();
+		for (const project of projects) {
+			const tracker = await getTracker(project.id);
+			if (tracker.autoResume && tracker.orchestratorSessionId) {
+				// Load event history from disk so UI can show previous logs
+				await loadEventHistory(project.id);
+				console.log(
+					`Auto-resuming orchestration for ${project.name} (${project.id.slice(0, 8)})`,
+				);
+				launchAgent(project, {
+					prompt:
+						"Continue where you left off. Check the task tree and proceed.",
+					resume: true,
+				});
+			}
+		}
+	}
+
+	return { app, pm, wsClients, autoResumeProjects };
 }
 
 const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft top-level orchestrator for this project.
@@ -1049,7 +1152,7 @@ ${ORCHESTRATION_KNOWLEDGE}`;
 // Only start the server when run directly, not when imported for testing.
 if (import.meta.main) {
 	const port = Number(process.env.PORT) || 7433;
-	const { app, pm } = createApp();
+	const { app, pm, autoResumeProjects } = createApp();
 	await pm.load();
 	console.log(`OpenGraft daemon listening on http://localhost:${port}`);
 	console.log(`Web UI: http://localhost:${port}/`);
@@ -1069,4 +1172,7 @@ if (import.meta.main) {
 			console: true,
 		},
 	});
+
+	// Auto-resume any orchestrations that were running before daemon restart
+	await autoResumeProjects();
 }
