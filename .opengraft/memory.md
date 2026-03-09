@@ -147,6 +147,7 @@ Daemon (Hono: HTTP + WS on :7433)
 | POST | /projects/:id/sessions/clear | Wipe session history |
 | POST | /projects/:id/sessions/prune | Prune old sessions (keep N) |
 | GET | /projects/:id/events | Event history (up to 500 events) |
+| GET | /projects/:id/pending-messages | Pending messages waiting for agent consumption |
 | WS | /ws | Real-time task tree + agent events |
 
 ## Prompt Caching (DirectProvider)
@@ -228,7 +229,7 @@ Three explicit cache breakpoints per API call:
 - Auto-target: selecting an in_progress task auto-targets messages to it
 - OrchestratorDetail: task stats, session cost, total project cost, turns, clear sessions
 - Project management: add/remove projects from header
-- Pending message chips: dismissible chips in footer, auto-dismiss on acknowledgment
+- Pending message chips: backend-driven (daemon tracks per-agent), filtered by targetNodeId, auto-dismiss when agent consumes via queue_message events
 - Per-task cost, timing display in TaskDetail panel
 - Collapsible task tree nodes, task tree search filter
 - Activity log search/filter, dark/light mode toggle
@@ -241,6 +242,7 @@ Three explicit cache breakpoints per API call:
 - **GET /projects/:id/tasks/:nodeId/gitlog**: returns `{ commits: [{hash, message}] }`. Runs `git log --oneline -20 <branch>` from project root. Returns empty array if no worktreePath/branch set, or if git fails (e.g., branch not yet pushed).
 - **PATCH /projects/:id/tasks/:nodeId**: only handles `status` and `branch` — does NOT handle `worktreePath`. Use `tracker.assignWorktree()` directly to set both branch + worktreePath.
 - **Git default branch**: `git init` uses "master" by default (git < 3.0 without config). Tests must use `git branch --show-current` via `Bun.spawn` to detect actual branch name, not hardcode "main".
+- **GET /projects/:id/pending-messages**: returns `{ messages: [{id, taskId, text, timestamp}] }`. `taskId` is null for root orchestrator messages, string for task-specific messages. Daemon auto-removes pending messages when `queue_message` events with `[user]` lines fire. WS event `pending_messages` broadcasts the full list on changes.
 
 ## Backlog (next improvements to consider)
 

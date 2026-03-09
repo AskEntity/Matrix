@@ -115,6 +115,61 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const eventsDirty = new Set<string>();
 	let eventFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
+	/** Pending messages per project — user messages waiting to be consumed by agents. */
+	interface PendingMessage {
+		id: string;
+		taskId: string | null;
+		text: string;
+		timestamp: number;
+	}
+	const pendingMessages = new Map<string, PendingMessage[]>();
+
+	function getPendingMessages(projectId: string): PendingMessage[] {
+		if (!pendingMessages.has(projectId)) pendingMessages.set(projectId, []);
+		return pendingMessages.get(projectId) as PendingMessage[];
+	}
+
+	function addPendingMessage(
+		projectId: string,
+		taskId: string | null,
+		text: string,
+	): void {
+		const msgs = getPendingMessages(projectId);
+		msgs.push({
+			id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			taskId,
+			text,
+			timestamp: Date.now(),
+		});
+		broadcast(wsClients, projectId, {
+			type: "pending_messages",
+			projectId,
+			messages: msgs,
+		});
+	}
+
+	function removePendingMessagesByText(
+		projectId: string,
+		textsToRemove: string[],
+	): void {
+		const msgs = getPendingMessages(projectId);
+		let changed = false;
+		for (const text of textsToRemove) {
+			const idx = msgs.findIndex((m) => m.text === text);
+			if (idx !== -1) {
+				msgs.splice(idx, 1);
+				changed = true;
+			}
+		}
+		if (changed) {
+			broadcast(wsClients, projectId, {
+				type: "pending_messages",
+				projectId,
+				messages: msgs,
+			});
+		}
+	}
+
 	function eventsPath(projectId: string): string {
 		return join(config.dataDir, "events", `${projectId}.json`);
 	}
@@ -191,6 +246,23 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			scheduleEventFlush(projectId);
 		}
 		broadcast(wsClients, projectId, event);
+
+		// Auto-remove pending messages when queue_message events fire (agent consumed the message)
+		if (
+			event.type === "agent_event" &&
+			event.eventType === "queue_message" &&
+			typeof event.messages === "string"
+		) {
+			const raw = event.messages as string;
+			const acknowledgedTexts: string[] = [];
+			for (const line of raw.split("\n")) {
+				const m = /^\[user\] (.*)$/s.exec(line);
+				if (m?.[1]) acknowledgedTexts.push(m[1]);
+			}
+			if (acknowledgedTexts.length > 0) {
+				removePendingMessagesByText(projectId, acknowledgedTexts);
+			}
+		}
 	}
 
 	/** Read project files and format as pre-read context for the agent. */
@@ -382,6 +454,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			? (eventHistory.get(project.id) as Record<string, unknown>[])
 			: await loadEventHistory(project.id);
 		return c.json({ events });
+	});
+
+	// Pending messages
+	app.get("/projects/:id/pending-messages", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		return c.json({ messages: getPendingMessages(project.id) });
 	});
 
 	// Task tree
@@ -1035,6 +1116,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		} catch {
 			return c.json({ error: "Queue closed" }, 409);
 		}
+		addPendingMessage(project.id, null, body.message);
 		return c.json({ ok: true, sessionId: session.sessionId });
 	});
 
@@ -1060,6 +1142,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		} catch {
 			return c.json({ error: "Queue closed" }, 409);
 		}
+		addPendingMessage(project.id, nodeId, body.content);
 		return c.json({ ok: true, taskId: nodeId });
 	});
 
@@ -1153,6 +1236,17 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 									}),
 								);
 							}
+							// Send current pending messages
+							const pending = getPendingMessages(msg.projectId);
+							if (pending.length > 0) {
+								ws.send(
+									JSON.stringify({
+										type: "pending_messages",
+										projectId: msg.projectId,
+										messages: pending,
+									}),
+								);
+							}
 						}
 
 						if (msg.type === "orchestrate" && msg.projectId && msg.prompt) {
@@ -1220,6 +1314,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								} catch {
 									// Queue may be closed
 								}
+								addPendingMessage(msg.projectId, null, msg.prompt as string);
 								broadcastEvent(msg.projectId, {
 									type: "message_injected",
 									message: msg.prompt,

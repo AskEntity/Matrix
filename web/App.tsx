@@ -1196,7 +1196,7 @@ export function App() {
 		return localStorage.getItem("og-theme") !== "light";
 	});
 	const [pendingMessages, setPendingMessages] = useState<
-		{ id: number; text: string }[]
+		{ id: string; taskId: string | null; text: string; timestamp: number }[]
 	>([]);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
@@ -1352,7 +1352,6 @@ export function App() {
 							.split("\n")
 							.filter((l) => l.trim() && !l.startsWith("## "));
 						let parsed = false;
-						const acknowledgedTexts: string[] = [];
 						for (const line of lines) {
 							const m = /^\[([^\]]+)\] (.*)$/s.exec(line);
 							if (m) {
@@ -1364,23 +1363,11 @@ export function App() {
 									logType = "task_completed";
 								} else if (msgType === "user") {
 									logType = "user_prompt";
-									acknowledgedTexts.push(msgText);
 								} else {
 									logType = "queue_message";
 								}
 								addLog(logType, msgText, taskId);
 							}
-						}
-						// Remove acknowledged messages from pending
-						if (acknowledgedTexts.length > 0) {
-							setPendingMessages((prev) => {
-								const remaining = [...prev];
-								for (const ack of acknowledgedTexts) {
-									const idx = remaining.findIndex((p) => p.text === ack);
-									if (idx !== -1) remaining.splice(idx, 1);
-								}
-								return remaining;
-							});
 						}
 						if (!parsed) {
 							// Fallback: show raw text as single queue_message entry
@@ -1458,6 +1445,16 @@ export function App() {
 					for (const evt of events) handleWS(evt);
 					break;
 				}
+				case "pending_messages": {
+					const messages = msg.messages as {
+						id: string;
+						taskId: string | null;
+						text: string;
+						timestamp: number;
+					}[];
+					setPendingMessages(messages ?? []);
+					break;
+				}
 			}
 		},
 		[addLog, updateFromWS, setRunning],
@@ -1476,6 +1473,29 @@ export function App() {
 	useEffect(() => {
 		if (projectId) checkStatus();
 	}, [projectId, checkStatus]);
+
+	// Fetch pending messages on project change
+	useEffect(() => {
+		if (!projectId) {
+			setPendingMessages([]);
+			return;
+		}
+		fetch(`/projects/${projectId}/pending-messages`)
+			.then((r) => r.json())
+			.then(
+				(data: {
+					messages: {
+						id: string;
+						taskId: string | null;
+						text: string;
+						timestamp: number;
+					}[];
+				}) => {
+					setPendingMessages(data.messages ?? []);
+				},
+			)
+			.catch(() => setPendingMessages([]));
+	}, [projectId]);
 
 	// Auto-target selected in_progress tasks for messages
 	useEffect(() => {
@@ -1502,10 +1522,6 @@ export function App() {
 				} else {
 					await sendMessage(prompt.trim());
 				}
-				setPendingMessages((prev) => [
-					...prev,
-					{ id: Date.now(), text: prompt.trim() },
-				]);
 			} else {
 				await start({
 					prompt: prompt.trim(),
@@ -1896,28 +1912,23 @@ export function App() {
 
 			{/* ── Footer ── */}
 			<footer className="og-footer">
-				{pendingMessages.length > 0 && (
-					<div className="og-pending-messages">
-						<span className="og-pending-label">Pending:</span>
-						{pendingMessages.map((m) => (
-							<span key={m.id} className="og-pending-chip">
-								{m.text.length > 30 ? `${m.text.slice(0, 30)}…` : m.text}
-								<button
-									type="button"
-									className="og-pending-chip-dismiss"
-									onClick={() =>
-										setPendingMessages((prev) =>
-											prev.filter((p) => p.id !== m.id),
-										)
-									}
-									title="Dismiss"
-								>
-									×
-								</button>
-							</span>
-						))}
-					</div>
-				)}
+				{(() => {
+					const filtered = pendingMessages.filter((m) =>
+						targetNodeId ? m.taskId === targetNodeId : m.taskId === null,
+					);
+					return (
+						filtered.length > 0 && (
+							<div className="og-pending-messages">
+								<span className="og-pending-label">Pending:</span>
+								{filtered.map((m) => (
+									<span key={m.id} className="og-pending-chip">
+										{m.text.length > 30 ? `${m.text.slice(0, 30)}…` : m.text}
+									</span>
+								))}
+							</div>
+						)
+					);
+				})()}
 				{running && targetNodeId && (
 					<div className="og-message-target">
 						<span className="og-message-target-label">
