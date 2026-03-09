@@ -316,3 +316,35 @@ export function createLogEntry(
 		taskId,
 	};
 }
+
+// --- useProjectConfig ---
+
+export function useProjectConfig(projectId: string | null) {
+	const [config, setConfig] = useState<Record<string, unknown>>({});
+
+	useEffect(() => {
+		if (!projectId) {
+			setConfig({});
+			return;
+		}
+		fetch(`/projects/${projectId}/config`)
+			.then((r) => r.json())
+			.then(setConfig)
+			.catch(() => {});
+	}, [projectId]);
+
+	const updateConfig = useCallback(
+		async (partial: Record<string, unknown>) => {
+			if (!projectId) return;
+			const res = await fetch(`/projects/${projectId}/config`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(partial),
+			});
+			if (res.ok) setConfig(await res.json());
+		},
+		[projectId],
+	);
+
+	return { config, updateConfig };
+}

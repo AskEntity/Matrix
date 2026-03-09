@@ -5,6 +5,7 @@ import {
 	type LogEntry,
 	type TaskNode,
 	useAgent,
+	useProjectConfig,
 	useProjects,
 	useTasks,
 	useWebSocket,
@@ -348,6 +349,25 @@ function IconMoon({ size = 14 }: { size?: number }) {
 			strokeLinejoin="round"
 		>
 			<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+		</svg>
+	);
+}
+
+function IconGear({ size = 14 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<circle cx="12" cy="12" r="3" />
+			<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
 		</svg>
 	);
 }
@@ -1208,8 +1228,7 @@ export function App() {
 	const [lastOutputTokens, setLastOutputTokens] = useState<number | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [prompt, setPrompt] = useState("");
-	const [model, setModel] = useState("claude-opus-4-6");
-	const [childModel, setChildModel] = useState("claude-opus-4-6");
+	const [showSettings, setShowSettings] = useState(false);
 	const [splitRatio, setSplitRatio] = useState(0.35);
 	const [isDragging, setIsDragging] = useState(false);
 	const [autoScroll, setAutoScroll] = useState(true);
@@ -1243,6 +1262,7 @@ export function App() {
 		sendMessage,
 		sendMessageToTask,
 	} = useAgent(projectId);
+	const { config: projectConfig, updateConfig } = useProjectConfig(projectId);
 
 	const nodeMap = useMemo(() => {
 		const map = new Map<string, TaskNode>();
@@ -1592,11 +1612,7 @@ export function App() {
 					await sendMessage(prompt.trim());
 				}
 			} else {
-				await start({
-					prompt: prompt.trim(),
-					model: model || undefined,
-					childModel: childModel || undefined,
-				});
+				await start({ prompt: prompt.trim() });
 			}
 			setPrompt("");
 		} catch (err) {
@@ -1841,6 +1857,17 @@ export function App() {
 							</button>
 						</>
 					)}
+					{projectId && (
+						<button
+							type="button"
+							className={`og-btn-icon${showSettings ? " active" : ""}`}
+							title="Project settings"
+							aria-label="Project settings"
+							onClick={() => setShowSettings((s) => !s)}
+						>
+							<IconGear size={14} />
+						</button>
+					)}
 					<button
 						type="button"
 						className="og-btn-icon"
@@ -1852,6 +1879,70 @@ export function App() {
 					</button>
 				</div>
 			</header>
+
+			{/* ── Settings Panel ── */}
+			{showSettings && projectId && (
+				<div className="og-settings-panel">
+					<div className="og-settings-header">
+						<span className="og-settings-title">Project Settings</span>
+						<button
+							type="button"
+							className="og-btn-icon"
+							onClick={() => setShowSettings(false)}
+						>
+							<IconClose size={11} />
+						</button>
+					</div>
+					<label className="og-settings-field">
+						<span className="og-settings-label">Model</span>
+						<select
+							className="og-select"
+							value={(projectConfig.model as string) || ""}
+							onChange={(e) => updateConfig({ model: e.target.value || null })}
+						>
+							<option value="">Default</option>
+							<option value="claude-sonnet-4-6">Sonnet</option>
+							<option value="claude-opus-4-6">Opus</option>
+							<option value="claude-haiku-4-5-20251001">Haiku</option>
+						</select>
+					</label>
+					<label className="og-settings-field">
+						<span className="og-settings-label">Child Model</span>
+						<select
+							className="og-select"
+							value={(projectConfig.childModel as string) || ""}
+							onChange={(e) =>
+								updateConfig({ childModel: e.target.value || null })
+							}
+						>
+							<option value="">Default</option>
+							<option value="claude-sonnet-4-6">Sonnet</option>
+							<option value="claude-opus-4-6">Opus</option>
+							<option value="claude-haiku-4-5-20251001">Haiku</option>
+						</select>
+					</label>
+					<label className="og-settings-field">
+						<span className="og-settings-label">Default Budget (USD)</span>
+						<input
+							type="number"
+							className="og-settings-input"
+							placeholder="Unlimited"
+							min="0"
+							step="0.01"
+							value={
+								projectConfig.budgetUsd != null
+									? String(projectConfig.budgetUsd)
+									: ""
+							}
+							onChange={(e) =>
+								updateConfig({
+									budgetUsd: e.target.value ? Number(e.target.value) : null,
+								})
+							}
+						/>
+					</label>
+				</div>
+			)}
 
 			{/* ── Main ── */}
 			<main className="og-main">
@@ -2111,28 +2202,6 @@ export function App() {
 						disabled={!projectId}
 					/>
 					<div className="og-footer-controls">
-						<select
-							className="og-select"
-							value={model}
-							onChange={(e) => setModel(e.target.value)}
-							title="Model"
-						>
-							<option value="">Model</option>
-							<option value="claude-sonnet-4-6">Sonnet</option>
-							<option value="claude-opus-4-6">Opus</option>
-							<option value="claude-haiku-4-5-20251001">Haiku</option>
-						</select>
-						<select
-							className="og-select"
-							value={childModel}
-							onChange={(e) => setChildModel(e.target.value)}
-							title="Child model"
-						>
-							<option value="">Child</option>
-							<option value="claude-sonnet-4-6">Sonnet</option>
-							<option value="claude-opus-4-6">Opus</option>
-							<option value="claude-haiku-4-5-20251001">Haiku</option>
-						</select>
 						{running ? (
 							<>
 								<button
