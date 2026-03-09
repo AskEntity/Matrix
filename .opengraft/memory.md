@@ -252,6 +252,14 @@ Three explicit cache breakpoints per API call:
 - CSS classes: `og-tree-search-bar`, `og-tree-search`, `og-tree-empty` in `web/style.css`
 - **Pitfall**: `var(--radius)` is not defined in the CSS (only `--radius-sm`, `--radius-md` etc). The existing log search uses `var(--radius)` which silently fails. Use `var(--radius-sm)` for correct behavior.
 
+## Search Tool head_limit Fix
+
+- `rg --max-count N` limits matches **per file**, not total. Replaced with post-processing truncation via `truncateSearchOutput()`.
+- For content mode with context (`-C`), entries are separated by `\n--\n` lines — split on that separator.
+- For line-based modes, split on `\n` and handle trailing newline (empty last element).
+- `truncateSearchOutput` is exported from `direct-provider.ts` for testing.
+- `buildTaskPrompt` and `slugify` exported from `agent-tools.ts` with `@internal` JSDoc for testing.
+
 ## Backlog (next improvements to consider)
 
 - Token budget per task: cost limits and alerts

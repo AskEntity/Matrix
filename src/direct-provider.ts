@@ -382,6 +382,32 @@ async function isCommandAvailable(cmd: string): Promise<boolean> {
 	}
 }
 
+/**
+ * Truncate search output to a maximum number of entries.
+ * For context mode (rg -C), entries are separated by "--" lines.
+ * For other modes, each line is an entry.
+ */
+export function truncateSearchOutput(
+	output: string,
+	limit: number,
+	hasContext: boolean,
+): string {
+	if (hasContext) {
+		// Context mode: entries are blocks separated by "--" on its own line
+		const blocks = output.split(/\n--\n/);
+		if (blocks.length <= limit) return output;
+		return `${blocks.slice(0, limit).join("\n--\n")}\n[... truncated at ${limit} entries]`;
+	}
+	// Line-based modes: each line is an entry
+	const lines = output.split("\n");
+	// Trailing newline produces an empty last element — don't count it
+	const hasTrailingNewline = lines.length > 0 && lines[lines.length - 1] === "";
+	const contentLines = hasTrailingNewline ? lines.slice(0, -1) : lines;
+	if (contentLines.length <= limit) return output;
+	const result = contentLines.slice(0, limit).join("\n");
+	return `${result}\n[... truncated at ${limit} entries]`;
+}
+
 /** @internal Exported for testing */
 export function resolvePath(p: string, cwd: string): string {
 	return isAbsolute(p) ? p : join(cwd, p);
@@ -545,6 +571,9 @@ export async function executeTool(
 
 			if (caseInsensitive) args.push("-i");
 
+			const useContext =
+				contextLines && contextLines > 0 && outputMode === "content";
+
 			if (useRg) {
 				if (outputMode === "files_with_matches") {
 					args.push("-l");
@@ -552,17 +581,15 @@ export async function executeTool(
 					args.push("-c");
 				}
 				if (glob) args.push("--glob", glob);
-				if (contextLines && contextLines > 0 && outputMode === "content") {
+				if (useContext) {
 					args.push("-C", String(Math.min(contextLines, 10)));
 				}
-				args.push("--max-count", String(headLimit));
 				args.push(pattern, searchPath);
 			} else {
 				if (outputMode === "files_with_matches") args.push("-l");
 				if (outputMode === "count") args.push("-c");
 				if (glob) args.push("--include", glob);
-				if (contextLines && contextLines > 0)
-					args.push(`-C${Math.min(contextLines, 10)}`);
+				if (useContext) args.push(`-C${Math.min(contextLines, 10)}`);
 				args.push(pattern, searchPath);
 			}
 
@@ -574,8 +601,12 @@ export async function executeTool(
 				});
 				await proc.exited;
 				const stdout = await new Response(proc.stdout).text();
+				if (!stdout) return { content: "(no matches)", isError: false };
+
+				// Truncate to headLimit entries
+				const truncated = truncateSearchOutput(stdout, headLimit, !!useContext);
 				return {
-					content: stdout.slice(0, 20000) || "(no matches)",
+					content: truncated.slice(0, 20000),
 					isError: false,
 				};
 			} catch (e) {

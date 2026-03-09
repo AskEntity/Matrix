@@ -1229,7 +1229,8 @@ function readMemory(projectPath: string): string {
 	return parts.join("\n\n");
 }
 
-function buildTaskPrompt(
+/** @internal Exported for testing */
+export function buildTaskPrompt(
 	node: {
 		id: string;
 		title: string;
@@ -1286,7 +1287,8 @@ function buildTaskPrompt(
 	return parts.join("\n");
 }
 
-function slugify(title: string): string {
+/** @internal Exported for testing */
+export function slugify(title: string): string {
 	return title
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")

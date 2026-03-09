@@ -14,6 +14,7 @@ import {
 	executeTool,
 	getModelPricing,
 	resolvePath,
+	truncateSearchOutput,
 	zodShapeToJsonSchema,
 } from "./direct-provider.ts";
 import { MessageQueue } from "./message-queue.ts";
@@ -383,7 +384,7 @@ describe("executeTool", () => {
 		expect(lines.length).toBeGreaterThanOrEqual(2);
 	});
 
-	test("search: head_limit parameter is accepted without error", async () => {
+	test("search: head_limit truncates total output entries", async () => {
 		// Write a file with many matching lines
 		const lines = Array.from(
 			{ length: 20 },
@@ -395,16 +396,53 @@ describe("executeTool", () => {
 			{ pattern: "const", path: tempDir, head_limit: 5 },
 			tempDir,
 		);
-		// head_limit is supported by rg (--max-count); grep fallback does not limit.
-		// Either way the call must succeed and return matches.
 		expect(result.isError).toBe(false);
 		expect(result.content).toContain("const");
+		// Should be truncated to 5 entries
+		const matchLines = result.content
+			.split("\n")
+			.filter((l) => l.includes("const"));
+		expect(matchLines.length).toBe(5);
+		expect(result.content).toContain("[... truncated at 5 entries]");
 	});
 
 	test("unknown tool: returns error", async () => {
 		const result = await executeTool("unknown_tool", {}, tempDir);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("Unknown tool");
+	});
+});
+
+describe("truncateSearchOutput", () => {
+	test("returns output unchanged when within limit", () => {
+		const output = "line1\nline2\nline3\n";
+		expect(truncateSearchOutput(output, 5, false)).toBe(output);
+	});
+
+	test("truncates lines exceeding limit", () => {
+		const output = "a\nb\nc\nd\ne\nf\n";
+		const result = truncateSearchOutput(output, 3, false);
+		expect(result).toBe("a\nb\nc\n[... truncated at 3 entries]");
+	});
+
+	test("handles output without trailing newline", () => {
+		const output = "a\nb\nc\nd\ne";
+		const result = truncateSearchOutput(output, 3, false);
+		expect(result).toBe("a\nb\nc\n[... truncated at 3 entries]");
+	});
+
+	test("truncates context blocks separated by --", () => {
+		const output =
+			"file:1:block1_line1\nfile:2:block1_line2\n--\nfile:5:block2_line1\n--\nfile:10:block3_line1\n--\nfile:15:block4_line1";
+		const result = truncateSearchOutput(output, 2, true);
+		expect(result).toBe(
+			"file:1:block1_line1\nfile:2:block1_line2\n--\nfile:5:block2_line1\n[... truncated at 2 entries]",
+		);
+	});
+
+	test("returns context output unchanged when within limit", () => {
+		const output = "block1\n--\nblock2";
+		expect(truncateSearchOutput(output, 5, true)).toBe(output);
 	});
 });
 
