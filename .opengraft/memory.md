@@ -250,3 +250,11 @@ Three explicit cache breakpoints per API call:
 - Token budget per task: cost limits and alerts
 - After merging a child, send_message_to_child to notify long-running siblings to merge latest main (reduce conflict risk)
 - Compact checkpoint should include "Rejected Approaches" more aggressively — agents often retry failed paths after compaction
+
+## Queue Message Delivery — Confirmed Behavior (tested 2025-03)
+
+**Queue drain works correctly for both yield() and bash tool calls:**
+- `yield()`: blocks waiting for queue, returns all pending messages
+- `bash`: after bash completes, DirectProvider checks `queue.pending > 0` and appends messages to the tool result under `"Messages received while you were working"` section
+- Race condition: if agent calls `done()` before message arrives, message is lost (queue closed). This is expected — messages only arrive at tool-call boundaries.
+- Timing: messages are delivered between tool calls, not mid-execution. A message sent while `sleep 20` runs will appear in the bash tool result when the sleep finishes.
