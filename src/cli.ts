@@ -587,13 +587,9 @@ async function watchProject(projectId: string): Promise<void> {
 		ws.onclose = () => {
 			if (userCancelled) return;
 			retryCount++;
-			if (retryCount > 5) {
-				console.error("Failed to reconnect after 5 attempts. Exiting.");
-				process.exit(1);
-			}
-			const delay = Math.min(1000 * 2 ** (retryCount - 1), 10000);
+			const delay = Math.min(1000 * 2 ** (retryCount - 1), 30000);
 			console.log(
-				`\nDisconnected. Reconnecting in ${delay / 1000}s... (attempt ${retryCount}/5)`,
+				`\nDisconnected. Reconnecting in ${delay / 1000}s... (attempt ${retryCount})`,
 			);
 			setTimeout(connect, delay);
 		};
