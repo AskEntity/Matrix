@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentProvider } from "./agent-provider.ts";
+import type { AgentEvent, AgentProvider } from "./agent-provider.ts";
 import { createApp } from "./daemon.ts";
 import type {
+	AgentResult,
 	HealthResponse,
 	Project,
 	StatsResponse,
@@ -622,8 +623,20 @@ describe("daemon orchestrate/agent API", () => {
 			stream: async function* () {
 				return { success: true, output: "" };
 			},
-			startSession() {
-				throw new Error("Not implemented in mock");
+			startSession(req) {
+				if (req.mcpServers && "opengraft" in req.mcpServers) {
+					receivedMcpServers = true;
+				}
+				// biome-ignore lint/correctness/useYield: mock session never streams
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					return { success: true, output: "orchestrated" };
+				}
+				return {
+					sessionId: "mock-session",
+					events: events(),
+					sendMessage: async () => {},
+					stop: () => {},
+				};
 			},
 		};
 
@@ -644,14 +657,12 @@ describe("daemon orchestrate/agent API", () => {
 		});
 		expect(res.status).toBe(200);
 
-		const body = (await res.json()) as {
-			success: boolean;
-			output: string;
-			tree: { root: null; nodes: unknown[] };
-		};
-		expect(body.success).toBe(true);
-		expect(body.output).toBe("orchestrated");
-		expect(body.tree).toBeDefined();
+		const body = (await res.json()) as { status: string; projectId: string };
+		expect(body.status).toBe("running");
+		expect(body.projectId).toBe(project.id);
+
+		// Wait briefly for the background agent to complete
+		await new Promise((r) => setTimeout(r, 100));
 		expect(receivedMcpServers).toBe(true);
 
 		await rm(tempDir, { recursive: true });

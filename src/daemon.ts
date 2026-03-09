@@ -593,7 +593,123 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	});
 
-	// Agent-driven orchestration: main agent gets MCP tools to observe/manipulate task tree
+	/**
+	 * Launch an agent for a project. Returns immediately.
+	 * The agent runs in the background; observe via WebSocket.
+	 * Uses startSession() for message injection support.
+	 */
+	function launchAgent(
+		project: { id: string; path: string },
+		opts: {
+			prompt: string;
+			resume?: boolean;
+			model?: string;
+			childModel?: string;
+			maxTurns?: number;
+		},
+	) {
+		const tracker = trackers.get(project.id);
+		if (!tracker) return;
+
+		activeOrchestrations.add(project.id);
+		broadcastEvent(project.id, { type: "orchestration_started" });
+
+		const wtRoot = join(project.path, ".worktrees");
+		const wm = new WorktreeManager(project.path, wtRoot);
+		const costAccumulator = new CostAccumulator();
+
+		const { mcpServer, toolDefs } = createOrchestratorTools(
+			{
+				tracker,
+				provider: config.agentProvider,
+				worktrees: wm,
+				projectPath: project.path,
+				repoPath: project.path,
+				depth: 0,
+				childModel: opts.childModel,
+				onTaskEvent: (event) => {
+					broadcastEvent(project.id, event);
+					broadcastTreeUpdate(project.id, tracker);
+				},
+			},
+			costAccumulator,
+		);
+
+		const memory = readProjectMemory(project.path);
+		const prompt = opts.resume
+			? (opts.prompt ??
+				"Continue where you left off. Check the task tree and proceed.")
+			: memory
+				? `## Project Memory\n${memory}\n\n${opts.prompt}`
+				: opts.prompt;
+
+		const resumeSessionId = opts.resume
+			? (tracker.orchestratorSessionId ?? undefined)
+			: undefined;
+
+		// Use startSession for message injection support
+		const session = config.agentProvider.startSession({
+			prompt,
+			cwd: project.path,
+			systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
+			maxTurns: opts.maxTurns,
+			mcpServers: { opengraft: mcpServer },
+			mcpToolDefs: { opengraft: toolDefs },
+			resumeSessionId,
+			model: opts.model,
+		});
+
+		activeSessions.set(project.id, session);
+
+		// Fire-and-forget: consume events in background
+		(async () => {
+			try {
+				let result = await session.events.next();
+				while (!result.done) {
+					const { type: eventType, ...eventData } = result.value;
+					broadcastEvent(project.id, {
+						type: "agent_event",
+						eventType,
+						...eventData,
+					});
+					result = await session.events.next();
+				}
+				const finalResult = result.value;
+
+				if (finalResult.sessionId) {
+					tracker.orchestratorSessionId = finalResult.sessionId;
+					await tracker.save();
+				}
+
+				const totalCostUsd =
+					(finalResult.costUsd ?? 0) + costAccumulator.totalCostUsd;
+				broadcastEvent(project.id, {
+					type: "orchestration_completed",
+					success: finalResult.success,
+					costUsd: totalCostUsd,
+					turns: finalResult.turns,
+					childCosts: {
+						totalCostUsd: costAccumulator.totalCostUsd,
+						totalTurns: costAccumulator.totalTurns,
+						taskCount: costAccumulator.taskCount,
+					},
+				});
+				broadcastTreeUpdate(project.id, tracker);
+			} catch (e) {
+				const message = e instanceof Error ? e.message : "Unknown error";
+				broadcastEvent(project.id, {
+					type: "error",
+					message: `Agent failed: ${message}`,
+				});
+			} finally {
+				session.stop();
+				activeSessions.delete(project.id);
+				activeOrchestrations.delete(project.id);
+			}
+		})();
+	}
+
+	// Agent-driven orchestration: fire-and-forget, observe via WebSocket
 	app.post("/projects/:id/orchestrate/agent", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) {
@@ -611,87 +727,13 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 
 		if (activeOrchestrations.has(project.id)) {
-			return c.json(
-				{ error: "Orchestration already running for this project" },
-				409,
-			);
+			return c.json({ error: "Agent already running for this project" }, 409);
 		}
 
-		activeOrchestrations.add(project.id);
-		const tracker = await getTracker(project.id);
-		const wtRoot = join(project.path, ".worktrees");
-		const wm = new WorktreeManager(project.path, wtRoot);
+		await getTracker(project.id);
+		launchAgent(project, body);
 
-		const costAccumulator = new CostAccumulator();
-		const { mcpServer, toolDefs } = createOrchestratorTools(
-			{
-				tracker,
-				provider: config.agentProvider,
-				worktrees: wm,
-				projectPath: project.path,
-				repoPath: project.path,
-				depth: 0,
-				childModel: body.childModel,
-				onTaskEvent: (event) => {
-					broadcastEvent(project.id, event);
-					broadcastTreeUpdate(project.id, tracker);
-				},
-			},
-			costAccumulator,
-		);
-
-		const memory = readProjectMemory(project.path);
-		const prompt = body.resume
-			? (body.prompt ??
-				"Continue where you left off. Check the task tree and proceed.")
-			: memory
-				? `## Project Memory\n${memory}\n\n${body.prompt}`
-				: body.prompt;
-
-		const resumeSessionId = body.resume
-			? (tracker.orchestratorSessionId ?? undefined)
-			: undefined;
-
-		try {
-			const result = await config.agentProvider.execute({
-				prompt,
-				cwd: project.path,
-				systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
-				maxTurns: body.maxTurns,
-				mcpServers: { opengraft: mcpServer },
-				mcpToolDefs: { opengraft: toolDefs },
-				resumeSessionId,
-				model: body.model,
-			});
-
-			// Persist orchestrator session ID for future resume
-			if (result.sessionId) {
-				tracker.orchestratorSessionId = result.sessionId;
-				await tracker.save();
-			}
-
-			// Combine orchestrator cost with child agent costs
-			const totalCostUsd = (result.costUsd ?? 0) + costAccumulator.totalCostUsd;
-
-			return c.json({
-				...result,
-				costUsd: totalCostUsd,
-				childCosts: {
-					totalCostUsd: costAccumulator.totalCostUsd,
-					totalTurns: costAccumulator.totalTurns,
-					taskCount: costAccumulator.taskCount,
-				},
-				tree: {
-					root: tracker.getRoot() ?? null,
-					nodes: tracker.allNodes(),
-				},
-			});
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error";
-			return c.json({ error: message }, 500);
-		} finally {
-			activeOrchestrations.delete(project.id);
-		}
+		return c.json({ status: "running", projectId: project.id });
 	});
 
 	// Inject a message into a running orchestration
@@ -756,14 +798,25 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						}
 
 						if (msg.type === "orchestrate" && msg.projectId && msg.prompt) {
-							// Trigger orchestration asynchronously
-							runOrchestrateViaWS(
-								msg.projectId,
-								msg.prompt,
-								msg.maxTurns,
-								msg.model,
-								msg.childModel,
-							);
+							// Trigger orchestration via launchAgent (fire-and-forget)
+							const proj = pm.get(msg.projectId);
+							if (proj && !activeOrchestrations.has(msg.projectId)) {
+								getTracker(msg.projectId).then(() => {
+									launchAgent(proj, {
+										prompt: msg.prompt as string,
+										maxTurns: msg.maxTurns,
+										model: msg.model,
+										childModel: msg.childModel,
+									});
+								});
+							} else if (activeOrchestrations.has(msg.projectId)) {
+								ws.send(
+									JSON.stringify({
+										type: "error",
+										message: "Orchestration already running",
+									}),
+								);
+							}
 						}
 
 						if (msg.type === "inject_message" && msg.projectId && msg.prompt) {
@@ -793,129 +846,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			};
 		}),
 	);
-
-	/** Run orchestration triggered via WebSocket, broadcasting events. */
-	async function runOrchestrateViaWS(
-		projectId: string,
-		prompt: string,
-		maxTurns?: number,
-		model?: string,
-		childModel?: string,
-	) {
-		const project = pm.get(projectId);
-		if (!project) return;
-
-		if (activeOrchestrations.has(projectId)) {
-			broadcastEvent(projectId, {
-				type: "error",
-				message: "Orchestration already running",
-			});
-			return;
-		}
-
-		activeOrchestrations.add(projectId);
-		broadcastEvent(projectId, { type: "orchestration_started" });
-
-		const tracker = await getTracker(projectId);
-		const wtRoot = join(project.path, ".worktrees");
-		const wm = new WorktreeManager(project.path, wtRoot);
-
-		const costAccumulator = new CostAccumulator();
-
-		// Wrap the orchestrator tools to broadcast events on state changes
-		const { mcpServer, toolDefs } = createOrchestratorTools(
-			{
-				tracker,
-				provider: config.agentProvider,
-				worktrees: wm,
-				projectPath: project.path,
-				repoPath: project.path,
-				depth: 0,
-				childModel,
-				onTaskEvent: (event) => {
-					broadcastEvent(projectId, event);
-					// Also broadcast tree update after any task event
-					broadcastTreeUpdate(projectId, tracker);
-				},
-			},
-			costAccumulator,
-		);
-
-		const memory = readProjectMemory(project.path);
-		const fullPrompt = memory
-			? `## Project Memory\n${memory}\n\n${prompt}`
-			: prompt;
-
-		try {
-			// Use interactive session for message injection support
-			const session = config.agentProvider.startSession({
-				prompt: fullPrompt,
-				cwd: project.path,
-				systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
-				maxTurns,
-				mcpServers: { opengraft: mcpServer },
-				mcpToolDefs: { opengraft: toolDefs },
-				model,
-			});
-
-			// Track the session for message injection
-			activeSessions.set(projectId, session);
-
-			let finalResult: {
-				success: boolean;
-				output: string;
-				sessionId?: string;
-				costUsd?: number;
-			} = {
-				success: false,
-				output: "",
-			};
-			let result = await session.events.next();
-			while (!result.done) {
-				// Forward agent events to WS clients
-				const agentEvent = result.value;
-				const { type: eventType, ...eventData } = agentEvent;
-				broadcastEvent(projectId, {
-					type: "agent_event",
-					eventType,
-					...eventData,
-				});
-				result = await session.events.next();
-			}
-			finalResult = result.value;
-
-			if (finalResult.sessionId) {
-				tracker.orchestratorSessionId = finalResult.sessionId;
-				await tracker.save();
-			}
-
-			const totalCostUsd =
-				(finalResult.costUsd ?? 0) + costAccumulator.totalCostUsd;
-
-			broadcastEvent(projectId, {
-				type: "orchestration_completed",
-				success: finalResult.success,
-				costUsd: totalCostUsd,
-				childCosts: {
-					totalCostUsd: costAccumulator.totalCostUsd,
-					totalTurns: costAccumulator.totalTurns,
-					taskCount: costAccumulator.taskCount,
-				},
-			});
-			broadcastTreeUpdate(projectId, tracker);
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error";
-			broadcastEvent(projectId, {
-				type: "error",
-				message,
-			});
-		} finally {
-			const session = activeSessions.get(projectId);
-			if (session) session.stop();
-			activeSessions.delete(projectId);
-			activeOrchestrations.delete(projectId);
-		}
-	}
 
 	// Static file serving for the web UI
 	app.get("/", (c) => c.redirect("/web/index.html"));
