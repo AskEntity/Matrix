@@ -925,7 +925,7 @@ export class DirectProvider implements AgentProvider {
 		request: AgentRequest,
 	): AsyncGenerator<AgentEvent, AgentResult> {
 		const sessionId = request.resumeSessionId ?? randomUUID();
-		const gen = this.runLoop(request, sessionId);
+		const gen = this.runLoop(request, sessionId, request.queue);
 		let result = await gen.next();
 		while (!result.done) {
 			yield result.value;

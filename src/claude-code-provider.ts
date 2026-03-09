@@ -7,6 +7,7 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
+import { formatQueueMessage } from "./agent-tools.ts";
 import { MessageQueue } from "./message-queue.ts";
 import type { AgentResult } from "./types.ts";
 
@@ -47,6 +48,12 @@ export class ClaudeCodeProvider implements AgentProvider {
 								input: block.input as Record<string, unknown>,
 							};
 						}
+					}
+					// Drain queue after each assistant turn (cancellation point)
+					if (request.queue && request.queue.pending > 0) {
+						const msgs = request.queue.drain();
+						const formatted = msgs.map(formatQueueMessage).join("\n");
+						yield { type: "queue_message" as const, messages: formatted };
 					}
 					break;
 				}
@@ -134,6 +141,27 @@ export class ClaudeCodeProvider implements AgentProvider {
 									tool: block.name,
 									input: block.input as Record<string, unknown>,
 								};
+							}
+						}
+						// Drain queue after each assistant turn and inject into conversation
+						if (queue.pending > 0) {
+							const msgs = queue.drain();
+							const formatted = msgs.map(formatQueueMessage).join("\n");
+							yield { type: "queue_message" as const, messages: formatted };
+							const sdkMsg: SDKUserMessage = {
+								type: "user",
+								message: {
+									role: "user",
+									content: `[Messages received while you were working:]\n${formatted}`,
+								},
+								parent_tool_use_id: null,
+								priority: "now",
+								session_id: sessionId,
+							};
+							messageQueue.push(sdkMsg);
+							if (messageResolve) {
+								messageResolve();
+								messageResolve = null;
 							}
 						}
 						break;
