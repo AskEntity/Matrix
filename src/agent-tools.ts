@@ -106,22 +106,29 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
    - Write detailed task descriptions (see "Task Decomposition" in orchestrator system prompt)
    - Sibling tasks run in PARALLEL — plan their scope to minimize merge conflicts
 3. Call execute_tasks to spawn children (returns immediately)
-4. Call yield() to wait for results — this suspends your execution with zero token burn
-5. When yield() returns, process the messages and the ## Pending summary:
+4. **Do productive work while children run** — you do NOT need to yield() immediately.
+   While children are executing, you can:
+   - Research the codebase for future tasks
+   - Create additional tasks based on new information
+   - Address user messages (create tasks, update descriptions, send instructions to children)
+   - Prepare merge strategies
+   Only call yield() when you have nothing else to do and are ready to block-wait.
+5. Call yield() when idle — this suspends with zero token burn until a message arrives
+6. When yield() returns, process the messages and the ## Pending summary:
    - child_complete: check if passed/failed, merge passed branches, retry failed ones
    - child_report: progress update from a running child — read it and continue waiting if needed
    - user: incorporate new instructions
    - clarify_response: use the answer to proceed
    - ## Pending section: shows which children are still running and how many clarifications are outstanding
-6. When a child passes, merge its branch:
+7. When a child passes, merge its branch:
    a. Merge via bash: \`git merge --no-ff <child-branch> -m "Merge task: <title>"\`
    b. Call delete_task(taskId) to clean up the child's worktree, branch, and task node
-7. If a child fails: read the failure summary carefully. Decide:
+8. If a child fails: read the failure summary carefully. Decide:
    - "resume" with specific instructions addressing the failure (child keeps progress)
    - "reset" to start fresh with a different approach
    - Delete and create a new task with different scope if the approach was wrong
-8. After ALL children are merged: run full test suite to verify no regressions
-9. If integration issues surface, create new targeted tasks to fix them
+9. After ALL children are merged: run full test suite to verify no regressions
+10. If integration issues surface, create new targeted tasks to fix them
 
 ## Task Lifecycle
 pending → in_progress (agent working) → passed / failed
@@ -195,6 +202,13 @@ Commit the curated memory as a standalone commit after all task merges are done.
   or whether it depends on sibling outputs (and if so, what to expect).
 - If a merge conflict is too complex to resolve: merge the more complex/larger feature first,
   then re-spawn the simpler feature with \`mode: "reset"\` so it rebuilds on top of the merged code.
+
+## Session Continuity
+Your session persists across conversations. When the user sends a new message:
+- The message arrives piggybacked on your current tool result — no need to call yield()
+- Incorporate the user's instructions immediately: create tasks, update plans, send messages to children
+- Do useful work BEFORE calling yield() — research, planning, task creation
+- Only yield() when you've handled everything you can and are ready to wait
 
 ## Stimulus Priority (what to do next)
 When deciding your next action, follow this priority order:
