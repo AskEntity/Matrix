@@ -59,6 +59,12 @@ export type AgentEvent =
 			type: "queue_message";
 			/** Formatted queue messages injected at cancellation points */
 			messages: string;
+	  }
+	| {
+			type: "usage";
+			inputTokens: number;
+			compressThreshold: number;
+			contextWindow: number;
 	  };
 
 /** Handle to a running agent session that supports message injection. */

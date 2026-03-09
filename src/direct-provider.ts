@@ -29,8 +29,14 @@ import type { AgentResult } from "./types.ts";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 16384;
-/** Trigger compression at 80% of 200k context window */
-const COMPRESS_THRESHOLD = 160_000;
+/** Context window size and compaction budget (mirrors Claude Code's approach) */
+const CONTEXT_WINDOW = 200_000;
+/** Reserve ~17% as compaction buffer — compress when messages exceed this */
+const COMPACT_BUFFER_RATIO = 0.17;
+/** Compress when input_tokens > CONTEXT_WINDOW * (1 - COMPACT_BUFFER_RATIO) */
+const COMPRESS_THRESHOLD = Math.floor(
+	CONTEXT_WINDOW * (1 - COMPACT_BUFFER_RATIO),
+); // ~166k
 
 /** Per-million-token pricing by model family. */
 const MODEL_PRICING: Record<
@@ -1070,7 +1076,6 @@ export class DirectProvider implements AgentProvider {
 		let totalCacheCreationTokens = 0;
 		let totalCacheReadTokens = 0;
 		let lastText = "";
-
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
 		while (true) {
@@ -1078,6 +1083,62 @@ export class DirectProvider implements AgentProvider {
 			if (request.signal?.aborted) {
 				yield { type: "status", message: "Aborted" };
 				break;
+			}
+
+			// ── Pre-call compression: count tokens, compress if over threshold ──
+			if (messages.length > 4) {
+				const { input_tokens: tokenCount } =
+					await this.client.messages.countTokens({
+						model,
+						system: [{ type: "text", text: request.systemPrompt ?? "" }],
+						messages,
+						tools: allTools,
+					});
+
+				yield {
+					type: "usage",
+					inputTokens: tokenCount,
+					compressThreshold: COMPRESS_THRESHOLD,
+					contextWindow: CONTEXT_WINDOW,
+				};
+
+				if (tokenCount > COMPRESS_THRESHOLD) {
+					yield {
+						type: "status",
+						message: `Compressing conversation (${tokenCount} tokens, threshold: ${COMPRESS_THRESHOLD})`,
+					};
+					try {
+						const { compressed, savedTokens, checkpoint } =
+							await compressMessages(
+								this.client,
+								messages,
+								model,
+								taskContext,
+								cwd,
+							);
+						messages.length = 0;
+						messages.push(...compressed);
+						const firstMsg = messages[0];
+						if (cwd && firstMsg?.role === "user") {
+							const content = firstMsg.content;
+							if (
+								typeof content === "string" &&
+								!content.startsWith("Working directory:")
+							) {
+								messages[0] = {
+									role: "user",
+									content: `Working directory: ${cwd}\n\n${content}`,
+								};
+							}
+						}
+						yield { type: "compact", checkpoint, savedTokens };
+					} catch (e) {
+						yield {
+							type: "error",
+							message: `Compression failed: ${e instanceof Error ? e.message : String(e)}`,
+						};
+					}
+				}
 			}
 
 			turns++;
@@ -1145,49 +1206,7 @@ export class DirectProvider implements AgentProvider {
 				response.usage.cache_creation_input_tokens ?? 0;
 			totalCacheReadTokens += response.usage.cache_read_input_tokens ?? 0;
 
-			// Compress messages if approaching context window limit
-			if (response.usage.input_tokens > COMPRESS_THRESHOLD) {
-				yield {
-					type: "status",
-					message: `Compressing conversation (${response.usage.input_tokens} input tokens, threshold: ${COMPRESS_THRESHOLD})`,
-				};
-				try {
-					const { compressed, savedTokens, checkpoint } =
-						await compressMessages(
-							this.client,
-							messages,
-							model,
-							taskContext,
-							cwd,
-						);
-					messages.length = 0;
-					messages.push(...compressed);
-					// After compact, ensure CWD is preserved in rebuilt context
-					const firstMsg = messages[0];
-					if (cwd && firstMsg?.role === "user") {
-						const content = firstMsg.content;
-						if (
-							typeof content === "string" &&
-							!content.startsWith("Working directory:")
-						) {
-							messages[0] = {
-								role: "user",
-								content: `Working directory: ${cwd}\n\n${content}`,
-							};
-						}
-					}
-					yield {
-						type: "compact",
-						checkpoint,
-						savedTokens,
-					};
-				} catch (e) {
-					yield {
-						type: "error",
-						message: `Compression failed: ${e instanceof Error ? e.message : String(e)}`,
-					};
-				}
-			}
+
 
 			// Process response content
 			const toolUses: ToolUseBlock[] = [];
