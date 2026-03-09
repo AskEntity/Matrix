@@ -23,7 +23,7 @@
 		-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
 	--font-mono: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
 	--header-height: 48px;
-	--task-panel-width: 360px;
+	--task-panel-width: 320px;
 	--transition-fast: 120ms ease;
 	--transition-slide: 240ms cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -152,7 +152,7 @@ select:focus {
 }
 
 /* =========================================================
-   Main Layout: task panel left, activity right
+   Main Layout: task sidebar left, content right
    ========================================================= */
 
 main {
@@ -168,7 +168,7 @@ main {
 
 .task-panel {
 	width: var(--task-panel-width);
-	min-width: 260px;
+	min-width: 240px;
 	flex-shrink: 0;
 	border-right: 1px solid var(--border);
 	background: var(--bg-secondary);
@@ -333,15 +333,60 @@ main {
 }
 
 /* =========================================================
-   Activity Panel (right, fills remaining space)
+   Content Panel (right main area)
    ========================================================= */
 
-.activity-panel {
+.content-panel {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
 	min-width: 0;
+}
+
+.content-empty {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--text-faint);
+	font-size: 13px;
+}
+
+/* Task detail inline (top of content panel) */
+.content-detail {
+	padding: 16px 20px;
+	border-bottom: 1px solid var(--border);
+	flex-shrink: 0;
+	background: var(--bg-secondary);
+}
+.content-detail h2 {
+	font-size: 15px;
+	font-weight: 600;
+	margin-bottom: 10px;
+}
+.content-detail-fields {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 12px 24px;
+}
+.content-detail-actions {
+	margin-top: 12px;
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+/* Activity panel (below detail in content area) */
+.activity-panel {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	min-height: 0;
+}
+.activity-panel .section-bar {
+	border-top: none;
 }
 
 .activity-log {
@@ -523,81 +568,34 @@ footer {
 }
 
 /* =========================================================
-   Task Detail — Slide-out Overlay
+   Inline Task Detail (top of content panel)
    ========================================================= */
 
-.task-detail {
-	position: fixed;
-	inset: 0;
-	z-index: 100;
-}
-
-.detail-backdrop {
-	position: absolute;
-	inset: 0;
-	background: rgba(0, 0, 0, 0.4);
-	animation: fadeIn var(--transition-slide) forwards;
-}
-
-.detail-panel {
-	position: absolute;
-	top: 0;
-	right: 0;
-	bottom: 0;
-	width: 440px;
-	max-width: 90vw;
-	background: var(--bg-secondary);
-	border-left: 1px solid var(--border);
-	display: flex;
-	flex-direction: column;
-	animation: slideIn var(--transition-slide) forwards;
-	box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4);
-}
-
-@keyframes fadeIn {
-	from {
-		opacity: 0;
-	}
-	to {
-		opacity: 1;
-	}
-}
-@keyframes slideIn {
-	from {
-		transform: translateX(100%);
-	}
-	to {
-		transform: translateX(0);
-	}
-}
-
-.detail-header {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 0 16px;
-	height: 46px;
+.content-detail {
+	padding: 16px 20px;
 	border-bottom: 1px solid var(--border);
-}
-.detail-header h2 {
-	font-size: 13px;
-	font-weight: 600;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.detail-content {
-	padding: 14px 16px;
-	overflow-y: auto;
 	flex-shrink: 0;
-	border-bottom: 1px solid var(--border-subtle);
+	background: var(--bg-secondary);
+}
+.content-detail h2 {
+	font-size: 15px;
+	font-weight: 600;
+	margin-bottom: 8px;
+}
+.content-detail-fields {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 20px;
+	margin-top: 8px;
+}
+.content-detail-actions {
+	margin-top: 10px;
+	display: flex;
+	gap: 8px;
+	align-items: center;
 }
 
 .detail-field {
-	margin-bottom: 10px;
-}
-.detail-field:last-child {
 	margin-bottom: 0;
 }
 
@@ -607,7 +605,7 @@ footer {
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
 	color: var(--text-faint);
-	margin-bottom: 3px;
+	margin-bottom: 2px;
 }
 .detail-value {
 	font-size: 12px;
@@ -622,6 +620,7 @@ footer {
 	color: var(--text);
 	white-space: pre-wrap;
 	line-height: 1.5;
+	margin-bottom: 4px;
 }
 
 .status-badge {
@@ -664,15 +663,6 @@ footer {
 .status-badge.stuck {
 	background: rgba(212, 119, 58, 0.15);
 	color: var(--orange);
-}
-
-.detail-actions {
-	padding: 12px 16px;
-	border-top: 1px solid var(--border-subtle);
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
-	margin-top: auto;
 }
 
 .continue-form {

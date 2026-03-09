@@ -164,96 +164,85 @@ function LogEntryView({
 	);
 }
 
-// --- Task Detail Panel ---
+// --- Inline Task Detail (shown in content area) ---
 
-function TaskDetail({
+function ContentDetail({
 	node,
-	onClose,
 	onContinue,
 	onDelete,
 }: {
 	node: TaskNode;
-	onClose: () => void;
 	onContinue: (msg?: string) => void;
 	onDelete: () => void;
 }) {
 	const [continueMsg, setContinueMsg] = useState("");
 
 	return (
-		<div className="task-detail open">
-			{/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop dismiss */}
-			{/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss */}
-			<div className="detail-backdrop" onClick={onClose} />
-			<div className="detail-panel">
-				<div className="detail-header">
-					<h2>{node.title}</h2>
-					<button type="button" onClick={onClose} className="btn-icon">
-						&#x2715;
-					</button>
+		<div className="content-detail">
+			<h2>{node.title}</h2>
+			{node.description && (
+				<div className="detail-value desc">{node.description}</div>
+			)}
+			<div className="content-detail-fields">
+				<div className="detail-field">
+					<div className="detail-label">Status</div>
+					<span className={`status-badge ${node.status}`}>{node.status}</span>
 				</div>
-				<div className="detail-content">
+				{node.branch && (
 					<div className="detail-field">
-						<div className="detail-label">Status</div>
-						<span className={`status-badge ${node.status}`}>{node.status}</span>
+						<div className="detail-label">Branch</div>
+						<div className="detail-value mono">{node.branch}</div>
 					</div>
-					{node.description && (
-						<div className="detail-field">
-							<div className="detail-label">Description</div>
-							<div className="detail-value desc">{node.description}</div>
+				)}
+				{node.worktreePath && (
+					<div className="detail-field">
+						<div className="detail-label">Worktree</div>
+						<div className="detail-value mono">{node.worktreePath}</div>
+					</div>
+				)}
+				{node.updatedAt && (
+					<div className="detail-field">
+						<div className="detail-label">Updated</div>
+						<div className="detail-value">
+							{new Date(node.updatedAt).toLocaleString()}
 						</div>
-					)}
-					{node.branch && (
-						<div className="detail-field">
-							<div className="detail-label">Branch</div>
-							<div className="detail-value mono">{node.branch}</div>
-						</div>
-					)}
-					{node.worktreePath && (
-						<div className="detail-field">
-							<div className="detail-label">Worktree</div>
-							<div className="detail-value mono">{node.worktreePath}</div>
-						</div>
-					)}
-					{node.updatedAt && (
-						<div className="detail-field">
-							<div className="detail-label">Updated</div>
-							<div className="detail-value">
-								{new Date(node.updatedAt).toLocaleString()}
-							</div>
-						</div>
-					)}
-					{node.message && (
-						<div className="detail-field">
-							<div className="detail-label">Message</div>
-							<div className="detail-value">{node.message}</div>
-						</div>
-					)}
-				</div>
-				<div className="detail-actions">
-					{(node.status === "failed" || node.status === "stuck") && (
-						<form
-							className="continue-form"
-							onSubmit={(e) => {
-								e.preventDefault();
-								onContinue(continueMsg || undefined);
-								setContinueMsg("");
-							}}
-						>
-							<input
-								type="text"
-								value={continueMsg}
-								onChange={(e) => setContinueMsg(e.target.value)}
-								placeholder="Instructions for the agent..."
-							/>
-							<button type="submit" className="btn-continue">
-								Continue
-							</button>
-						</form>
-					)}
-					<button type="button" className="btn-danger" onClick={onDelete}>
-						Delete Task
-					</button>
-				</div>
+					</div>
+				)}
+				{node.message && (
+					<div className="detail-field">
+						<div className="detail-label">Message</div>
+						<div className="detail-value">{node.message}</div>
+					</div>
+				)}
+			</div>
+			<div className="content-detail-actions">
+				{(node.status === "failed" || node.status === "stuck") && (
+					<form
+						className="continue-form"
+						onSubmit={(e) => {
+							e.preventDefault();
+							onContinue(continueMsg || undefined);
+							setContinueMsg("");
+						}}
+					>
+						<input
+							type="text"
+							value={continueMsg}
+							onChange={(e) => setContinueMsg(e.target.value)}
+							placeholder="Instructions for the agent..."
+						/>
+						<button type="submit" className="btn-continue">
+							Continue
+						</button>
+					</form>
+				)}
+				<button
+					type="button"
+					className="btn-danger btn-small"
+					onClick={onDelete}
+				>
+					Delete
+				</button>
 			</div>
 		</div>
 	);
@@ -528,7 +517,7 @@ export function App() {
 								<>
 									<span className="filter-badge">
 										{selectedNode?.title?.slice(0, 12)}
-										{(selectedNode?.title?.length ?? 0) > 12 ? "…" : ""}
+										{(selectedNode?.title?.length ?? 0) > 12 ? "..." : ""}
 									</span>
 									<button
 										type="button"
@@ -568,13 +557,34 @@ export function App() {
 					/>
 				</section>
 
-				{/* Right: Activity Log */}
-				<section className="activity-panel">
-					<ActivityLog
-						entries={logs}
-						filterTaskId={selectedTaskId}
-						nodeMap={nodeMap}
-					/>
+				{/* Right: Content Area (task detail + activity log) */}
+				<section className="content-panel">
+					{selectedNode && (
+						<ContentDetail
+							node={selectedNode}
+							onContinue={handleContinueTask}
+							onDelete={handleDeleteTask}
+						/>
+					)}
+					{logs.length > 0 ? (
+						<div className="activity-panel">
+							<div className="section-bar">
+								<span className="section-title">
+									Activity
+									{selectedNode ? ` — ${selectedNode.title}` : ""}
+								</span>
+							</div>
+							<ActivityLog
+								entries={logs}
+								filterTaskId={selectedTaskId}
+								nodeMap={nodeMap}
+							/>
+						</div>
+					) : !selectedNode ? (
+						<div className="content-empty">
+							Select a task or start an agent to see activity
+						</div>
+					) : null}
 				</section>
 			</main>
 
@@ -625,16 +635,6 @@ export function App() {
 					</div>
 				</form>
 			</footer>
-
-			{/* Task Detail Overlay */}
-			{selectedNode && (
-				<TaskDetail
-					node={selectedNode}
-					onClose={() => setSelectedTaskId(null)}
-					onContinue={handleContinueTask}
-					onDelete={handleDeleteTask}
-				/>
-			)}
 		</>
 	);
 }
@@ -643,8 +643,8 @@ function formatArgs(input: Record<string, unknown> | undefined): string {
 	if (!input) return "";
 	const parts = Object.entries(input).map(([k, v]) => {
 		const val = typeof v === "string" ? v : JSON.stringify(v);
-		return `${k}=${val.length > 30 ? `${val.slice(0, 30)}…` : val}`;
+		return `${k}=${val.length > 30 ? `${val.slice(0, 30)}...` : val}`;
 	});
 	const joined = parts.join(", ");
-	return joined.length > 80 ? `${joined.slice(0, 80)}…` : joined;
+	return joined.length > 80 ? `${joined.slice(0, 80)}...` : joined;
 }
