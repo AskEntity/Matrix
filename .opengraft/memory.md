@@ -248,5 +248,5 @@ Three explicit cache breakpoints per API call:
 ## Backlog (next improvements to consider)
 
 - Token budget per task: cost limits and alerts
-- Web UI: continue/retry button for failed tasks in TaskDetail panel
-- WebSocket reconnect in CLI `og watch` when connection drops
+- After merging a child, send_message_to_child to notify long-running siblings to merge latest main (reduce conflict risk)
+- Compact checkpoint should include "Rejected Approaches" more aggressively — agents often retry failed paths after compaction
