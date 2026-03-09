@@ -7,6 +7,7 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
+import { MessageQueue } from "./message-queue.ts";
 import type { AgentResult } from "./types.ts";
 
 /**
@@ -80,6 +81,7 @@ export class ClaudeCodeProvider implements AgentProvider {
 	startSession(request: AgentRequest): AgentSession {
 		const conversation = this.createQuery(request);
 		const sessionId = request.resumeSessionId ?? randomUUID();
+		const queue = request.queue ?? new MessageQueue();
 
 		// Create a message queue for injecting messages via streamInput
 		const messageQueue: SDKUserMessage[] = [];
@@ -170,6 +172,7 @@ export class ClaudeCodeProvider implements AgentProvider {
 		return {
 			sessionId,
 			events: eventStream(),
+			queue,
 			async sendMessage(text: string): Promise<void> {
 				if (closed) return;
 				const msg: SDKUserMessage = {
@@ -187,6 +190,7 @@ export class ClaudeCodeProvider implements AgentProvider {
 			},
 			stop() {
 				closed = true;
+				queue.close();
 				if (messageResolve) messageResolve();
 				conversation.close();
 			},

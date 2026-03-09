@@ -24,6 +24,8 @@ export interface AgentRequest {
 	mcpToolDefs?: Record<string, SdkMcpToolDefinition<any>[]>;
 	/** Claude model to use (e.g. 'claude-sonnet-4-6', 'claude-opus-4-6'). */
 	model?: string;
+	/** External MessageQueue — if provided, startSession uses this instead of creating a new one. */
+	queue?: MessageQueue;
 }
 
 /** Streaming event emitted by an agent during execution. */

@@ -7,7 +7,6 @@ import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
 import type { WSContext } from "hono/ws";
 import type { AgentProvider, AgentSession } from "./agent-provider.ts";
 import {
-	type ClarificationMap,
 	CostAccumulator,
 	createOrchestratorTools,
 	ORCHESTRATION_KNOWLEDGE,
@@ -15,6 +14,7 @@ import {
 } from "./agent-tools.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { DirectProvider } from "./direct-provider.ts";
+import { MessageQueue } from "./message-queue.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type {
@@ -99,8 +99,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const wsClients = new Set<WSClient>();
 	/** Active agent sessions by project ID, for message injection. */
 	const activeSessions = new Map<string, AgentSession>();
-	/** Active clarification maps by project ID, for clarify tool responses. */
-	const activeClarifications = new Map<string, ClarificationMap>();
 	/** Event history per project (capped at 500 entries). */
 	const eventHistory = new Map<string, Record<string, unknown>[]>();
 	const MAX_EVENT_HISTORY = 500;
@@ -571,8 +569,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const wtRoot = join(project.path, ".worktrees");
 		const wm = new WorktreeManager(project.path, wtRoot);
 		const costAccumulator = new CostAccumulator();
-		const clarifications: ClarificationMap = new Map();
-		activeClarifications.set(project.id, clarifications);
+		const queue = new MessageQueue();
 
 		const { mcpServer, toolDefs } = createOrchestratorTools(
 			{
@@ -583,7 +580,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				repoPath: project.path,
 				depth: 0,
 				childModel: opts.childModel,
-				clarifications,
+				queue,
 				onTaskEvent: (event) => {
 					broadcastEvent(project.id, event);
 					broadcastTreeUpdate(project.id, tracker);
@@ -617,6 +614,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			mcpToolDefs: { opengraft: toolDefs },
 			resumeSessionId,
 			model: opts.model,
+			queue,
 		});
 
 		activeSessions.set(project.id, session);
@@ -668,7 +666,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				session.stop();
 				activeSessions.delete(project.id);
 				activeOrchestrations.delete(project.id);
-				activeClarifications.delete(project.id);
 			}
 		})();
 	}
@@ -771,7 +768,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "No active session for this project" }, 404);
 		}
 
-		await session.sendMessage(body.message);
+		try {
+			session.queue.enqueue({ source: "user", content: body.message });
+		} catch {
+			return c.json({ error: "Queue closed" }, 409);
+		}
 		return c.json({ ok: true, sessionId: session.sessionId });
 	});
 
@@ -783,13 +784,19 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "taskId and answer are required" }, 400);
 		}
 
-		const clarifications = activeClarifications.get(projectId);
-		const pending = clarifications?.get(body.taskId);
-		if (!pending) {
-			return c.json({ error: "No pending clarification for this task" }, 404);
+		const session = activeSessions.get(projectId);
+		if (!session) {
+			return c.json({ error: "No active session for this project" }, 404);
 		}
 
-		pending.resolve(body.answer);
+		try {
+			session.queue.enqueue({
+				source: "clarify_response",
+				answer: body.answer,
+			});
+		} catch {
+			return c.json({ error: "Queue closed" }, 409);
+		}
 		broadcastEvent(projectId, {
 			type: "clarification_answered",
 			taskId: body.taskId,
@@ -877,12 +884,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							msg.taskId &&
 							msg.answer
 						) {
-							const clarifications = activeClarifications.get(
-								msg.projectId as string,
-							);
-							const pending = clarifications?.get(msg.taskId as string);
-							if (pending) {
-								pending.resolve(msg.answer as string);
+							const session = activeSessions.get(msg.projectId as string);
+							if (session) {
+								try {
+									session.queue.enqueue({
+										source: "clarify_response",
+										answer: msg.answer as string,
+									});
+								} catch {
+									// Queue may be closed
+								}
 								broadcastEvent(msg.projectId as string, {
 									type: "clarification_answered",
 									taskId: msg.taskId,
@@ -894,7 +905,14 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						if (msg.type === "inject_message" && msg.projectId && msg.prompt) {
 							const session = activeSessions.get(msg.projectId);
 							if (session) {
-								session.sendMessage(msg.prompt);
+								try {
+									session.queue.enqueue({
+										source: "user",
+										content: msg.prompt,
+									});
+								} catch {
+									// Queue may be closed
+								}
 								broadcastEvent(msg.projectId, {
 									type: "message_injected",
 									message: msg.prompt,
