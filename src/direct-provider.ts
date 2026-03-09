@@ -37,6 +37,8 @@ const COMPACT_BUFFER_RATIO = 0.17;
 const COMPRESS_THRESHOLD = Math.floor(
 	CONTEXT_WINDOW * (1 - COMPACT_BUFFER_RATIO),
 ); // ~166k
+/** Only call countTokens when estimated tokens exceed this threshold */
+const LAZY_COUNT_THRESHOLD = COMPRESS_THRESHOLD - 16_000; // ~150k
 
 /** Per-million-token pricing by model family. */
 const MODEL_PRICING: Record<
@@ -1075,6 +1077,7 @@ export class DirectProvider implements AgentProvider {
 		let totalOutputTokens = 0;
 		let totalCacheCreationTokens = 0;
 		let totalCacheReadTokens = 0;
+		let estimatedInputTokens = 0;
 		let lastText = "";
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
@@ -1087,22 +1090,29 @@ export class DirectProvider implements AgentProvider {
 
 			// ── Pre-call compression: count tokens, compress if over threshold ──
 			if (messages.length > 4) {
-				const { input_tokens: tokenCount } =
-					await this.client.messages.countTokens({
+				let tokenCount = estimatedInputTokens;
+				let isEstimated = true;
+
+				if (estimatedInputTokens >= LAZY_COUNT_THRESHOLD) {
+					const result = await this.client.messages.countTokens({
 						model,
 						system: [{ type: "text", text: request.systemPrompt ?? "" }],
 						messages,
 						tools: allTools,
 					});
+					tokenCount = result.input_tokens;
+					isEstimated = false;
+				}
 
 				yield {
 					type: "usage",
 					inputTokens: tokenCount,
 					compressThreshold: COMPRESS_THRESHOLD,
 					contextWindow: CONTEXT_WINDOW,
+					...(isEstimated ? { estimated: true } : {}),
 				};
 
-				if (tokenCount > COMPRESS_THRESHOLD) {
+				if (!isEstimated && tokenCount > COMPRESS_THRESHOLD) {
 					yield {
 						type: "status",
 						message: `Compressing conversation (${tokenCount} tokens, threshold: ${COMPRESS_THRESHOLD})`,
@@ -1205,6 +1215,10 @@ export class DirectProvider implements AgentProvider {
 			totalCacheCreationTokens +=
 				response.usage.cache_creation_input_tokens ?? 0;
 			totalCacheReadTokens += response.usage.cache_read_input_tokens ?? 0;
+
+			// Update estimated token count for next turn's lazy threshold check
+			estimatedInputTokens =
+				response.usage.input_tokens + response.usage.output_tokens;
 
 			// Process response content
 			const toolUses: ToolUseBlock[] = [];
