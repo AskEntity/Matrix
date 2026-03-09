@@ -73,7 +73,6 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 						"Also create src/calc.test.ts with tests for all four operations. " +
 						"Make sure divide by zero returns Infinity. " +
 						"Run the tests and make sure they pass.",
-					maxTurns: 20,
 				}),
 			});
 
@@ -117,7 +116,6 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 						"Steps: create_task for root, create_task for each module as children, " +
 						"spawn_children to execute in parallel, merge each passed child's branch yourself, then delete_task to clean up, " +
 						"then update_task_status root to passed when done.",
-					maxTurns: 50,
 				}),
 			});
 			expect(startRes.status).toBe(200);
@@ -187,7 +185,6 @@ describe.skipIf(!hasApiKey)("E2E: DirectProvider", () => {
 						"Also create src/calc.test.ts with tests for all four operations. " +
 						"Make sure divide by zero returns Infinity. " +
 						"Run the tests and make sure they pass.",
-					maxTurns: 20,
 				}),
 			});
 

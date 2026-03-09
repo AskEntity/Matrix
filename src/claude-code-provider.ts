@@ -244,7 +244,6 @@ export class ClaudeCodeProvider implements AgentProvider {
 			options: {
 				cwd: request.cwd,
 				systemPrompt: request.systemPrompt ?? undefined,
-				maxTurns: request.maxTurns,
 				abortController,
 				permissionMode: "bypassPermissions",
 				allowDangerouslySkipPermissions: true,

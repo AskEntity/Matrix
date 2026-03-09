@@ -447,7 +447,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 		const body = await c.req.json<{
 			prompt: string;
-			maxTurns?: number;
 			model?: string;
 			childModel?: string;
 		}>();
@@ -468,7 +467,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		const body = await c.req.json<{ goal: string; maxTurns?: number }>();
+		const body = await c.req.json<{ goal: string }>();
 		if (!body.goal) {
 			return c.json({ error: "goal is required" }, 400);
 		}
@@ -481,7 +480,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				prompt,
 				cwd: project.path,
 				systemPrompt: DECOMPOSE_PROMPT,
-				maxTurns: body.maxTurns,
 			});
 
 			if (!result.success) {
@@ -535,7 +533,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			resume?: boolean;
 			model?: string;
 			childModel?: string;
-			maxTurns?: number;
 		},
 	) {
 		const tracker = trackers.get(project.id);
@@ -582,7 +579,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			prompt,
 			cwd: project.path,
 			systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
-			maxTurns: opts.maxTurns,
 			mcpServers: { opengraft: mcpServer },
 			mcpToolDefs: { opengraft: toolDefs },
 			resumeSessionId,
@@ -647,7 +643,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 		const body = await c.req.json<{
 			prompt: string;
-			maxTurns?: number;
 			resume?: boolean;
 			model?: string;
 			childModel?: string;
@@ -671,7 +666,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const body = await c.req.json<{
 			path: string;
 			prompt: string;
-			maxTurns?: number;
 			model?: string;
 			childModel?: string;
 		}>();
@@ -765,7 +759,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							type: string;
 							projectId?: string;
 							prompt?: string;
-							maxTurns?: number;
 							model?: string;
 							childModel?: string;
 						};
@@ -791,7 +784,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								getTracker(msg.projectId).then(() => {
 									launchAgent(proj, {
 										prompt: msg.prompt as string,
-										maxTurns: msg.maxTurns,
 										model: msg.model,
 										childModel: msg.childModel,
 									});
@@ -868,9 +860,9 @@ const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. Yo
 - get_tree: View the current task tree
 - create_task: Add tasks to the tree (root or children)
 - update_task_status: Update a task's status
-- spawn_task: Execute a single task on an isolated git worktree (blocks until done). Accepts optional maxTurns.
-- spawn_children: Execute ALL pending children of a parent in PARALLEL (recommended). Accepts optional maxTurns.
-- continue_task: Resume a failed/stuck task with optional instructions. Use when a task hit max turns or failed.
+- spawn_task: Execute a single task on an isolated git worktree (blocks until done).
+- spawn_children: Execute ALL pending children of a parent in PARALLEL (recommended).
+- continue_task: Resume a failed/stuck task with optional instructions.
 - delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
 
 ## Workflow

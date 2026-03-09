@@ -127,7 +127,7 @@ function ActivityLog({
 	}, [entries.length]);
 
 	const visible = filterTaskId
-		? entries.filter((e) => !e.taskId || e.taskId === filterTaskId)
+		? entries.filter((e) => e.taskId === filterTaskId)
 		: entries;
 
 	return (

@@ -12,8 +12,6 @@ export interface AgentRequest {
 	cwd: string;
 	/** System prompt injected into the agent session. */
 	systemPrompt?: string;
-	/** Maximum number of agentic turns (tool-use round trips). */
-	maxTurns?: number;
 	/** Abort signal for cancellation. */
 	signal?: AbortSignal;
 	/** Session ID to resume a previous conversation. */

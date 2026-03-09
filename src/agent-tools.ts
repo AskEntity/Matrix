@@ -282,12 +282,6 @@ export function createOrchestratorTools(
 				"Call this for multiple tasks simultaneously — they will run in parallel.",
 			{
 				taskId: z.string().describe("ID of the task to execute"),
-				maxTurns: z
-					.number()
-					.optional()
-					.describe(
-						"Max agentic turns for this task (default: 30). Increase for complex tasks.",
-					),
 			},
 			async (args) => {
 				// Guard: require clean working tree before spawning
@@ -346,7 +340,6 @@ export function createOrchestratorTools(
 						prompt,
 						cwd: wt.path,
 						systemPrompt: TASK_SYSTEM_PROMPT,
-						maxTurns: args.maxTurns,
 						resumeSessionId: node.sessionId ?? undefined,
 						model: childModel,
 					};
@@ -414,12 +407,6 @@ export function createOrchestratorTools(
 				parentId: z
 					.string()
 					.describe("ID of the parent task whose children to spawn"),
-				maxTurns: z
-					.number()
-					.optional()
-					.describe(
-						"Max agentic turns per child (default: 30). Increase for complex tasks.",
-					),
 			},
 			async (args) => {
 				// Guard: require clean working tree before spawning
@@ -498,7 +485,6 @@ export function createOrchestratorTools(
 									prompt,
 									cwd: wt.path,
 									systemPrompt: TASK_SYSTEM_PROMPT,
-									maxTurns: args.maxTurns,
 									resumeSessionId: child.sessionId ?? undefined,
 									model: childModel,
 								},
@@ -569,7 +555,7 @@ export function createOrchestratorTools(
 			"continue_task",
 			"Continue a failed or stuck task. Resumes the agent on the same worktree " +
 				"with an optional message (e.g., instructions on what went wrong). " +
-				"Use this when a task hit max turns or failed and you want to give it another chance.",
+				"Use this when a task failed and you want to give it another chance.",
 			{
 				taskId: z.string().describe("ID of the failed/stuck task to continue"),
 				message: z
@@ -578,10 +564,6 @@ export function createOrchestratorTools(
 					.describe(
 						"Additional instructions for the agent (e.g., what to fix)",
 					),
-				maxTurns: z
-					.number()
-					.optional()
-					.describe("Max additional turns (default: 30)"),
 			},
 			async (args) => {
 				const node = tracker.get(args.taskId);
@@ -644,7 +626,6 @@ export function createOrchestratorTools(
 							prompt,
 							cwd: node.worktreePath,
 							systemPrompt: TASK_SYSTEM_PROMPT,
-							maxTurns: args.maxTurns,
 							resumeSessionId: node.sessionId ?? undefined,
 							model: childModel,
 						},

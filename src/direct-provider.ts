@@ -679,7 +679,6 @@ export class DirectProvider implements AgentProvider {
 		checkInjectedMessage?: () => string | undefined,
 	): AsyncGenerator<AgentEvent, AgentResult> {
 		const model = request.model ?? this.model;
-		const maxTurns = request.maxTurns ?? 0; // 0 = unlimited
 		const cwd = request.cwd;
 
 		// Restore conversation history if resuming, otherwise start fresh
@@ -717,7 +716,7 @@ export class DirectProvider implements AgentProvider {
 
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
-		while (maxTurns === 0 || turns < maxTurns) {
+		while (true) {
 			// Check abort signal
 			if (request.signal?.aborted) {
 				yield { type: "status", message: "Aborted" };
@@ -890,14 +889,6 @@ export class DirectProvider implements AgentProvider {
 			messages.push({ role: "user", content: toolResults });
 		}
 
-		const hitMaxTurns = maxTurns > 0 && turns >= maxTurns;
-		if (hitMaxTurns) {
-			yield {
-				type: "status",
-				message: `Max turns (${maxTurns}) reached, stopping`,
-			};
-		}
-
 		// Persist conversation history for future resume
 		this.sessionHistory.set(sessionId, [...messages]);
 
@@ -907,7 +898,7 @@ export class DirectProvider implements AgentProvider {
 			(totalOutputTokens * outputPer1M) / 1_000_000;
 
 		return {
-			success: !hitMaxTurns,
+			success: true,
 			output: lastText,
 			costUsd,
 			turns,
