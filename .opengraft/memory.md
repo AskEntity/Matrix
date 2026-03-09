@@ -237,6 +237,30 @@ Completed modern UI redesign with:
 - **Biome lint**: `noSvgWithoutTitle` rule requires `aria-hidden="true"` on decorative SVGs
 - **CSS naming**: Using `og-` prefix for all CSS classes to avoid collisions
 
+## Real-time Task Tree Updates via WebSocket (Fixed)
+
+Root cause: Three HTTP routes and three MCP tools modified the task tracker but did not call `broadcastTreeUpdate()`.
+
+### Fixed: HTTP routes in daemon.ts
+- `POST /projects/:id/tasks` — now calls `broadcastTreeUpdate()` after saving
+- `PATCH /projects/:id/tasks/:nodeId` — now calls `broadcastTreeUpdate()` after saving
+- `DELETE /projects/:id/tasks/:nodeId` — now calls `broadcastTreeUpdate()` after saving
+
+### Fixed: MCP tools in agent-tools.ts
+Added `broadcastTreeUpdate?: () => void` to `OrchestratorToolsDeps` interface.
+- `create_task` tool — calls `broadcastTreeUpdate?.()` after `tracker.save()`
+- `update_task_status` tool — calls `broadcastTreeUpdate?.()` after `tracker.save()`
+- `delete_task` tool — calls `broadcastTreeUpdate?.()` after `tracker.save()`
+- Recursive child tools also receive `broadcastTreeUpdate` so nested agents broadcast too
+
+### Passing callback from daemon.ts to agent-tools.ts
+In `launchAgent()`, pass `broadcastTreeUpdate: () => broadcastTreeUpdate(project.id, tracker)` when calling `createOrchestratorTools()`.
+
+### What was already working
+- `execute_tasks` tool already broadcast via `onTaskEvent` (which calls `broadcastTreeUpdate`)
+- `web/App.tsx` `tree_updated` case correctly calls `updateFromWS(msg.nodes)` → `setNodes(wsNodes)`
+- `useWebSocket` in hooks.ts correctly connects and subscribes
+
 ## Pending Feature Request: Enhanced yield() Status Summary
 
 User requested: When yield() returns, it should show not just the messages that woke the agent, but also a summary of what's still pending:

@@ -251,6 +251,8 @@ export interface OrchestratorToolsDeps {
 	depth?: number;
 	/** Optional callback for broadcasting task events (e.g., to WebSocket clients). */
 	onTaskEvent?: (event: Record<string, unknown>) => void;
+	/** Optional callback to broadcast tree updates to WebSocket clients after task mutations. */
+	broadcastTreeUpdate?: () => void;
 	/** Model for child agent execution (defaults to provider's default). */
 	childModel?: string;
 	/** MessageQueue for the parent agent session (for fire-and-forget results). */
@@ -312,6 +314,7 @@ export function createOrchestratorTools(
 		repoPath,
 		onTaskEvent,
 		childModel,
+		broadcastTreeUpdate,
 	} = deps;
 	const currentTaskId = deps.currentTaskId ?? null;
 	const depth = deps.depth ?? 0;
@@ -365,6 +368,7 @@ export function createOrchestratorTools(
 					childModel,
 					queue: childQueue,
 					doneRef: childDoneRef,
+					broadcastTreeUpdate,
 				},
 				childCosts,
 			);
@@ -447,6 +451,7 @@ export function createOrchestratorTools(
 						? tracker.addChild(args.parentId, args.title, args.description)
 						: tracker.addTask(args.title, args.description);
 					await tracker.save();
+					broadcastTreeUpdate?.();
 					return {
 						content: [
 							{
@@ -478,6 +483,7 @@ export function createOrchestratorTools(
 				try {
 					tracker.updateStatus(args.taskId, args.status);
 					await tracker.save();
+					broadcastTreeUpdate?.();
 					const node = tracker.get(args.taskId);
 					return {
 						content: [
@@ -911,6 +917,7 @@ export function createOrchestratorTools(
 					// Remove task from tree
 					tracker.remove(node.id);
 					await tracker.save();
+					broadcastTreeUpdate?.();
 
 					return {
 						content: [
