@@ -24,6 +24,7 @@ import {
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { DirectProvider } from "./direct-provider.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
+import { loadProjectConfig, mergeProjectConfig } from "./project-config.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type {
@@ -897,6 +898,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		broadcastEvent(project.id, {
 			type: "orchestration_started",
 			prompt: opts.prompt,
+			provider: config.agentProvider.name,
+			model: opts.model ?? process.env.OG_MODEL ?? "claude-sonnet-4-6",
 		});
 
 		const wtRoot = join(project.path, ".worktrees");
@@ -1075,15 +1078,40 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	});
 
 	// Check if an agent is running for a project
+	// Project config CRUD
+	app.get("/projects/:id/config", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const cfg = await loadProjectConfig(config.dataDir, project.id);
+		return c.json(cfg);
+	});
+
+	app.patch("/projects/:id/config", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const partial = await c.req.json();
+		const merged = await mergeProjectConfig(
+			config.dataDir,
+			project.id,
+			partial,
+		);
+		return c.json(merged);
+	});
+
 	app.get("/projects/:id/agent", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
 		const session = activeSessions.get(project.id);
+		const projectCfg = await loadProjectConfig(config.dataDir, project.id);
+		const model =
+			projectCfg.model ?? process.env.OG_MODEL ?? "claude-sonnet-4-6";
 		return c.json({
 			running: !!session,
 			sessionId: session?.sessionId ?? null,
+			provider: config.agentProvider.name,
+			model,
 		});
 	});
 
