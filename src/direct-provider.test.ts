@@ -119,6 +119,53 @@ describe("executeTool", () => {
 		expect(result.content).toContain("Error reading file");
 	});
 
+	test("read_file: offset skips lines", async () => {
+		const path = join(tempDir, "multiline.txt");
+		await writeFile(path, "line1\nline2\nline3\nline4\nline5");
+
+		const result = await executeTool("read_file", { path, offset: 3 }, tempDir);
+		expect(result.isError).toBe(false);
+		expect(result.content).toBe("line3\nline4\nline5");
+	});
+
+	test("read_file: limit restricts lines returned", async () => {
+		const path = join(tempDir, "multiline2.txt");
+		await writeFile(path, "line1\nline2\nline3\nline4\nline5");
+
+		const result = await executeTool("read_file", { path, limit: 2 }, tempDir);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("line1\nline2");
+		expect(result.content).toContain(
+			"[... 3 more lines, use offset=3 to continue]",
+		);
+	});
+
+	test("read_file: offset and limit together", async () => {
+		const path = join(tempDir, "multiline3.txt");
+		await writeFile(path, "line1\nline2\nline3\nline4\nline5");
+
+		const result = await executeTool(
+			"read_file",
+			{ path, offset: 2, limit: 2 },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("line2\nline3");
+		expect(result.content).toContain(
+			"[... 2 more lines, use offset=4 to continue]",
+		);
+	});
+
+	test("read_file: no trailing hint when all lines returned", async () => {
+		const path = join(tempDir, "multiline4.txt");
+		await writeFile(path, "line1\nline2\nline3");
+
+		const result = await executeTool("read_file", { path, offset: 2 }, tempDir);
+		expect(result.isError).toBe(false);
+		expect(result.content).toBe("line2\nline3");
+		expect(result.content).not.toContain("[...");
+	});
+
 	test("edit_file: replaces string in file", async () => {
 		const path = join(tempDir, "editable.txt");
 		await writeFile(path, "hello world");

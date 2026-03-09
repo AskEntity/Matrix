@@ -235,6 +235,15 @@ const TOOLS: Tool[] = [
 					type: "string",
 					description: "Absolute or relative path to the file",
 				},
+				offset: {
+					type: "number",
+					description:
+						"Start reading from this line number, 1-based (default: 1)",
+				},
+				limit: {
+					type: "number",
+					description: "Maximum number of lines to return (default: all)",
+				},
 			},
 			required: ["path"],
 		},
@@ -398,8 +407,24 @@ export async function executeTool(
 
 		case "read_file": {
 			const path = resolvePath(input.path as string, cwd);
+			const offset = Math.max(1, (input.offset as number) ?? 1);
+			const limit = input.limit as number | undefined;
 			try {
-				const content = readFileSync(path, "utf-8");
+				const raw = readFileSync(path, "utf-8");
+				if (offset === 1 && !limit) {
+					return { content: raw, isError: false };
+				}
+				const lines = raw.split("\n");
+				const start = offset - 1; // convert to 0-based
+				const sliced =
+					limit !== undefined
+						? lines.slice(start, start + limit)
+						: lines.slice(start);
+				const remaining = lines.length - (start + sliced.length);
+				let content = sliced.join("\n");
+				if (remaining > 0) {
+					content += `\n[... ${remaining} more lines, use offset=${offset + sliced.length} to continue]`;
+				}
 				return { content, isError: false };
 			} catch (e) {
 				return {
