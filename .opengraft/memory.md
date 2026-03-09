@@ -261,6 +261,14 @@ Three explicit cache breakpoints per API call:
 - **Pitfall**: macOS `/var` → `/private/var` symlink causes `pwd` output to differ from input `cwd`. Fixed by using `realpathSync(cwd)` for comparison.
 - All subsequent tool calls (bash, read_file, write_file, edit_file, list_files, search) automatically use the updated cwd
 
+## Search Tool head_limit Fix
+
+- `rg --max-count N` limits matches **per file**, not total. Replaced with post-processing truncation via `truncateSearchOutput()`.
+- For content mode with context (`-C`), entries are separated by `\n--\n` lines — split on that separator.
+- For line-based modes, split on `\n` and handle trailing newline (empty last element).
+- `truncateSearchOutput` is exported from `direct-provider.ts` for testing.
+- `buildTaskPrompt` and `slugify` exported from `agent-tools.ts` with `@internal` JSDoc for testing.
+
 ## Backlog (next improvements to consider)
 
 - Token budget per task: cost limits and alerts
