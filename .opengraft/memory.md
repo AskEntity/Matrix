@@ -189,3 +189,10 @@ User requested: When a task/agent is selected in the web UI, messages should be 
 1. UI changes to track which agent/task is selected
 2. API changes to route messages to specific agent queues (may already be possible via existing queue infrastructure)
 3. Will be addressed after the done() tool lifecycle feature is complete.
+
+## Pending Feature Request: Enhanced yield() Status Summary
+
+User requested: When yield() returns, it should show not just the messages that woke the agent, but also a summary of what's still pending:
+- Which children are still running (from childQueues map)
+- Which clarifications are still unanswered
+This gives the agent better situational awareness after being woken up.
