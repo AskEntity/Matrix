@@ -183,6 +183,11 @@ The parent has more context and can help. Failing early is better than wasting t
 - **Update memory BEFORE calling done()** — memory updates are part of task completion, not an afterthought.
 - Focus on: pitfalls discovered, API patterns that worked, decisions made and why.
 
+**How to write memory entries (CRITICAL — prevents duplication)**:
+- Use \`edit_file\` to append: set \`old_string\` to the last line(s) of the file, \`new_string\` to those same lines + your new content.
+- Or use bash: \`echo "\\n## My Section\\n- bullet" >> .opengraft/memory.md\`
+- **NEVER use \`write_file\` on memory.md** — it rewrites the whole file and risks embedding the old content inside the new content, causing triplication. Use \`edit_file\` or bash append only.
+
 ### After merging all children: curate memory
 After resolving merge conflicts, do a full review of \`.opengraft/memory.md\`:
 1. **Reorder**: Important, broadly-applicable knowledge floats up; narrow task-specific details sink down or are removed.
@@ -275,6 +280,7 @@ When acting as sub-orchestrator: do NOT write code yourself — only manage chil
    - Patterns you discovered that future agents should know
    - Anything you wish you had known at the start of this task
    No format constraints. No approval needed. The parent will curate after merge — your job is to capture, not to filter.
+   **APPEND ONLY** — use \`edit_file\` (match last lines, extend them) or bash \`echo >> .opengraft/memory.md\`. NEVER use \`write_file\` on memory.md — it duplicates content.
 6. Commit your work via bash (git add + git commit) — include memory updates in the same commit.
    Stage specific files by name — avoid \`git add .\` which can stage unintended files.
 
@@ -1350,7 +1356,7 @@ export function buildTaskPrompt(
 		"1. Read `.opengraft/memory.md` first for project-specific knowledge.",
 		"2. Implement this task: types → tests → implementation → all checks passing.",
 		"3. Run `bun test`, `bun run typecheck`, and `bun run check` before considering done.",
-		"4. If you discover something important, append it to `.opengraft/memory.md`.",
+		"4. If you discover something important, append it to `.opengraft/memory.md` using edit_file (match last lines + extend) or bash `echo >> .opengraft/memory.md`. Never use write_file on memory.md — it duplicates content.",
 		"5. Commit all changes (including memory updates) when all checks pass.",
 	);
 
