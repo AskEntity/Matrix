@@ -319,3 +319,21 @@ Implementation: Existing `report_to_parent`, `yield()`, `send_message_to_child` 
 `autoResumeProjects()` in `src/daemon.ts` now auto-prunes old session files for every project on daemon startup. Controlled by `OG_SESSION_KEEP` env var (default: 5). Keeps the N most-recent `.json` files by mtime; deletes the rest. Non-critical: failures are silently ignored. Runs for ALL projects (not just auto-resuming ones).
 
 **Test pattern**: To test mtime-based sorting in bun:test, write files sequentially with `await new Promise(r => setTimeout(r, 5))` between each write — this gives distinct filesystem mtimes reliably.
+
+## Project Configuration Design
+
+Two config levels by design:
+
+1. **Project-traveling config** (`.opengraft/` in repo, committed to git):
+   - `memory.md` — agent knowledge
+   - Future: project-level rules, task templates, etc. that travel with the repo
+
+2. **Daemon-local per-project config** (`~/.opengraft/projects/{id}/config.json`):
+   - `model` — default model for orchestrator (e.g., "claude-sonnet-4-6")
+   - `childModel` — default model for child agents
+   - `provider` — which provider to use ("direct" | "claude-code")
+   - `budgetUsd` — default budget per task
+   - These are machine-specific (different machines may use different models/keys)
+   - Daemon reads these when launching agents, falling back to env vars / global defaults
+
+The split: things that are environment/machine-specific go daemon-side; things that define project behavior go in-repo.
