@@ -126,9 +126,32 @@ function ActivityLog({
 		}
 	}, [entries.length]);
 
-	const visible = filterTaskId
-		? entries.filter((e) => e.taskId === filterTaskId)
-		: entries;
+	const visible = useMemo(() => {
+		if (!filterTaskId) return entries;
+
+		// Build set of descendant IDs (includes the selected task itself)
+		const descendantIds = new Set<string>();
+		const collect = (id: string) => {
+			descendantIds.add(id);
+			const node = nodeMap.get(id);
+			if (node?.children) {
+				for (const childId of node.children) {
+					collect(childId);
+				}
+			}
+		};
+		collect(filterTaskId);
+
+		const selectedNode = nodeMap.get(filterTaskId);
+		const isRoot = !selectedNode?.parentId;
+
+		return entries.filter((e) => {
+			if (e.taskId && descendantIds.has(e.taskId)) return true;
+			// Show untagged events (orchestrator-level) when viewing root task
+			if (!e.taskId && isRoot) return true;
+			return false;
+		});
+	}, [entries, filterTaskId, nodeMap]);
 
 	return (
 		<div className="activity-log" ref={logRef}>
