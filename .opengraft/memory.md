@@ -302,3 +302,14 @@ Three explicit cache breakpoints per API call:
 3. The `buildTaskPrompt` instructions (step 4 of task prompt given to child agents)
 
 **Rule**: Always use `edit_file` (match last lines, extend them) or bash `echo >> .opengraft/memory.md` to append. Never `write_file` on memory.md.
+
+## Reusable Worker Pattern (tested & confirmed)
+
+Child agents can act as persistent workers without being torn down between tasks:
+1. Child does work → `report_to_parent("ready for more")` → `yield()` to wait
+2. Parent sees `child_report` via yield() → sends next task via `send_message_to_child`
+3. Child receives message during yield, does next task
+4. When truly done, orchestrator tells child to `done("passed", ...)`
+
+Benefits: Session/context reuse, cheaper than spawning new agents for related sequential tasks.
+Implementation: Existing `report_to_parent`, `yield()`, `send_message_to_child` tools — no code changes needed.
