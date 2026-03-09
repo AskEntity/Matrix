@@ -217,3 +217,20 @@ All task mutations broadcast `tree_update` via WebSocket:
 - Don't say "should work" — run it
 - Flaky test = Bug. Never fix with retries.
 - No old-system fallbacks when replacing something
+
+## Bootstrap Strategy: Large-Scale Parallelism
+
+The bootstrapping process is most efficient when using **massive parallelism** — spawn many child agents simultaneously to tackle different features/modules in parallel, then merge results.
+
+**Key patterns**:
+- **Fan out aggressively**: When you have 5+ improvements to make, create all tasks and spawn them all at once. Don't serialize what can be parallel.
+- **Sub-agents can also orchestrate**: Child agents that encounter large tasks should themselves spawn sub-agents. The tree can be 3+ levels deep: orchestrator → feature agent → sub-feature agents.
+- **Merge order matters**: Merge simpler/smaller tasks first. If a larger task conflicts, reset the smaller one on top of the merged main branch.
+- **Identify non-overlapping work**: tasks touching different files (e.g., daemon.ts vs App.tsx vs types.ts vs CLI) can always run in parallel safely.
+- **Batch improvements**: Instead of fixing one bug at a time, assess 5-10 improvements, decompose all of them into tasks, and spawn all at once. Check memory.md and OpenGraft.md for the full list of known gaps.
+
+**What to parallelize** (examples of safe parallel splits):
+- Backend fix (daemon.ts) + Frontend feature (App.tsx) = always safe
+- New test file + New feature file = usually safe
+- Different CLI commands = safe
+- Different API routes = safe (same file but different functions, merge usually clean)
