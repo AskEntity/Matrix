@@ -1162,6 +1162,20 @@ export class DirectProvider implements AgentProvider {
 						);
 					messages.length = 0;
 					messages.push(...compressed);
+					// After compact, ensure CWD is preserved in rebuilt context
+					const firstMsg = messages[0];
+					if (cwd && firstMsg?.role === "user") {
+						const content = firstMsg.content;
+						if (
+							typeof content === "string" &&
+							!content.startsWith("Working directory:")
+						) {
+							messages[0] = {
+								role: "user",
+								content: `Working directory: ${cwd}\n\n${content}`,
+							};
+						}
+					}
 					yield {
 						type: "compact",
 						checkpoint,
