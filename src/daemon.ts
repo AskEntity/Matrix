@@ -1229,9 +1229,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					`Auto-resuming orchestration for ${project.name} (${project.id.slice(0, 8)})`,
 				);
 				const resumePrompt =
-					orphanCount > 0
-						? `Continue where you left off. Note: ${orphanCount} in_progress task(s) were reset to failed due to daemon restart — check the task tree.`
-						: "Continue where you left off. Check the task tree and proceed.";
+					`Continue where you left off. The daemon restart you triggered has completed successfully — your code changes are now live.${
+						orphanCount > 0
+							? ` Note: ${orphanCount} in_progress task(s) were reset to failed because their agent sessions were lost during the restart — check the task tree.`
+							: " Check the task tree and proceed."
+					}`;
 				launchAgent(project, {
 					prompt: resumePrompt,
 					resume: true,

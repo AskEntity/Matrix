@@ -972,22 +972,33 @@ async function handleDaemon(args: string[]): Promise<void> {
 		}
 
 		case "restart": {
-			if (await daemonIsLoaded()) {
-				Bun.spawnSync(["launchctl", "unload", PLIST_PATH]);
-			}
-			const load = Bun.spawnSync(["launchctl", "load", PLIST_PATH]);
-			if (load.exitCode !== 0) {
+			// Use kickstart -k to restart in-place. This is safe even when called
+			// from a child agent process — unlike unload+load, kickstart doesn't
+			// kill the caller before the reload can happen.
+			const kick = Bun.spawnSync([
+				"launchctl",
+				"kickstart",
+				"-kp",
+				`gui/${process.getuid?.() ?? Bun.spawnSync(["id", "-u"]).stdout.toString().trim()}/${PLIST_LABEL}`,
+			]);
+			if (kick.exitCode !== 0) {
+				// Fallback: maybe not loaded yet
 				const { existsSync } = await import("node:fs");
 				if (!existsSync(PLIST_PATH)) {
 					console.log("Daemon not installed. Running: og daemon install");
 					await handleDaemon(["install"]);
 					return;
 				}
-				console.error(
-					"Failed to restart:",
-					new TextDecoder().decode(load.stderr),
-				);
-				process.exit(1);
+				// Try unload+load as fallback
+				Bun.spawnSync(["launchctl", "unload", PLIST_PATH]);
+				const load = Bun.spawnSync(["launchctl", "load", PLIST_PATH]);
+				if (load.exitCode !== 0) {
+					console.error(
+						"Failed to restart:",
+						new TextDecoder().decode(load.stderr),
+					);
+					process.exit(1);
+				}
 			}
 			console.log("Daemon restarted.");
 			break;
