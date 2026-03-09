@@ -353,6 +353,98 @@ async function handleSessionsClear(): Promise<void> {
 	console.log("Session history cleared. Next orchestration will start fresh.");
 }
 
+async function handleLogs(args: string[]): Promise<void> {
+	let tail: number | undefined;
+	const filteredArgs: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if ((arg === "-n" || arg === "--tail") && i + 1 < args.length) {
+			tail = Number.parseInt(args[++i] as string, 10);
+		} else if (arg) {
+			filteredArgs.push(arg);
+		}
+	}
+
+	const projectId = await resolveProject(filteredArgs[0]);
+	if (!projectId) return;
+
+	const res = await api(`/projects/${projectId}/events`);
+	if (!res.ok) {
+		const err = (await res.json()) as { error: string };
+		console.error(`Error: ${err.error}`);
+		process.exit(1);
+	}
+
+	const body = (await res.json()) as { events: Record<string, unknown>[] };
+	let events = body.events;
+
+	if (events.length === 0) {
+		console.log("No events recorded yet.");
+		return;
+	}
+
+	if (tail !== undefined) {
+		events = events.slice(-tail);
+	}
+
+	for (const event of events) {
+		const ts = event.timestamp
+			? new Date(event.timestamp as number).toLocaleTimeString()
+			: "??:??:??";
+		const type = event.type as string;
+		let line: string;
+
+		switch (type) {
+			case "orchestration_started": {
+				const prompt = String(event.prompt ?? "").slice(0, 200);
+				line = `🚀 Orchestration started: ${prompt}`;
+				break;
+			}
+			case "task_created": {
+				const title = String(event.title ?? "");
+				const taskId = String(event.taskId ?? "");
+				line = `➕ Task created: ${title} (${taskId})`;
+				break;
+			}
+			case "task_completed": {
+				const title = String(event.title ?? "");
+				const success = Boolean(event.success);
+				const icon = success ? "✅" : "❌";
+				line = `${icon} Task completed: ${title} - ${success ? "passed" : "failed"}`;
+				break;
+			}
+			case "agent_turn": {
+				const turns = event.turns ?? event.turnCount ?? "?";
+				line = `💬 Agent turn (turns: ${turns})`;
+				break;
+			}
+			case "tree_updated":
+				// Too noisy, skip
+				continue;
+			case "queue_message": {
+				const source = String(event.source ?? event.messageType ?? "");
+				const content = String(event.content ?? event.message ?? "").slice(
+					0,
+					200,
+				);
+				line = `📨 Queue message: ${source} - ${content}`;
+				break;
+			}
+			case "compact_boundary":
+				line = "📦 Context compacted";
+				break;
+			default: {
+				const { type: _t, timestamp: _ts, ...rest } = event;
+				const details = JSON.stringify(rest).slice(0, 200);
+				line = `• ${type}: ${details}`;
+				break;
+			}
+		}
+
+		console.log(`[${ts}] ${line}`);
+	}
+}
+
 async function resolveProject(idOrPath?: string): Promise<string | null> {
 	if (idOrPath) {
 		// Try as ID first
@@ -861,6 +953,10 @@ switch (command) {
 		}
 		break;
 	}
+	case "logs":
+	case "log":
+		await handleLogs(args);
+		break;
 	case "health":
 		await handleHealth();
 		break;
@@ -895,6 +991,9 @@ switch (command) {
 		console.log("  stop            Stop running agent (session saved to disk)");
 		console.log(
 			"  sessions clear  Wipe session history (start fresh on next run)",
+		);
+		console.log(
+			"  logs [-n N] [id]  Show project event history (last N events)",
 		);
 		console.log("  health          Check daemon health");
 		console.log("");
