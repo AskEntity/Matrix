@@ -169,10 +169,34 @@ function LogEntryView({
 	entry: LogEntry;
 	nodeMap: Map<string, TaskNode>;
 }) {
+	const [expanded, setExpanded] = useState(false);
 	const taskLabel = entry.taskId
 		? (nodeMap.get(entry.taskId)?.title?.slice(0, 16) ??
 			entry.taskId.slice(0, 8))
 		: null;
+
+	if (entry.type === "compact" && entry.checkpoint) {
+		return (
+			<div className="compact-boundary">
+				<div className="compact-faded-hint">
+					Content above this line is not visible to the agent
+				</div>
+				<div className="compact-divider">
+					<span className="compact-label">{entry.text}</span>
+					<button
+						type="button"
+						className="compact-toggle"
+						onClick={() => setExpanded(!expanded)}
+					>
+						{expanded ? "▼ Collapse" : "▶ Show checkpoint"}
+					</button>
+				</div>
+				{expanded && (
+					<pre className="compact-checkpoint">{entry.checkpoint}</pre>
+				)}
+			</div>
+		);
+	}
 
 	return (
 		<div className={`log-entry event-${entry.type}`}>
@@ -306,9 +330,14 @@ export function App() {
 		? (nodeMap.get(selectedTaskId) ?? null)
 		: null;
 
-	const addLog = useCallback((type: string, text: string, taskId?: string) => {
-		setLogs((prev) => [...prev, createLogEntry(type, text, taskId)]);
-	}, []);
+	const addLog = useCallback(
+		(type: string, text: string, taskId?: string, checkpoint?: string) => {
+			const entry = createLogEntry(type, text, taskId);
+			if (checkpoint) entry.checkpoint = checkpoint;
+			setLogs((prev) => [...prev, entry]);
+		},
+		[],
+	);
 
 	// Draggable divider handlers
 	const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
@@ -355,6 +384,15 @@ export function App() {
 						text = (msg.content as string) || "";
 					} else if (et === "error") {
 						text = (msg.message as string) || "";
+					} else if (et === "compact") {
+						text = `Context compacted (saved ~${msg.savedTokens} tokens)`;
+						addLog(
+							et,
+							text,
+							msg.taskId as string | undefined,
+							msg.checkpoint as string,
+						);
+						break;
 					} else if (et === "status") {
 						text = (msg.message as string) || "";
 					} else {

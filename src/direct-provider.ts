@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import Anthropic from "@anthropic-ai/sdk";
@@ -45,26 +46,32 @@ export function getModelPricing(model: string): {
 }
 
 /**
- * Compress conversation messages when approaching context window limit.
- * Summarizes the first half of messages into a single summary, keeping recent messages intact.
+ * Compact conversation by summarizing ALL messages into a structured checkpoint,
+ * then rebuilding context from scratch (like Claude Code's compaction model).
+ *
+ * After compaction, messages = [task context + fresh memory + checkpoint, assistant ack].
+ * System prompt is re-sent every API call so it's always fresh.
  */
 /** @internal Exported for testing */
 export async function compressMessages(
 	client: Anthropic,
 	messages: MessageParam[],
 	model: string,
-): Promise<{ compressed: MessageParam[]; savedTokens: number }> {
+	/** Original task context to re-inject after compression (task description, memory, etc.) */
+	taskContext?: string,
+	/** Working directory — used to re-read fresh memory from disk */
+	cwd?: string,
+): Promise<{
+	compressed: MessageParam[];
+	savedTokens: number;
+	checkpoint: string;
+}> {
 	if (messages.length < 4) {
-		return { compressed: messages, savedTokens: 0 };
+		return { compressed: messages, savedTokens: 0, checkpoint: "" };
 	}
 
-	// Keep the last ~40% of messages intact, summarize the rest
-	const keepCount = Math.max(2, Math.ceil(messages.length * 0.4));
-	const toSummarize = messages.slice(0, messages.length - keepCount);
-	const toKeep = messages.slice(messages.length - keepCount);
-
-	// Build a text representation of messages to summarize
-	const summaryInput = toSummarize
+	// Serialize ALL messages into text for the checkpoint generator
+	const fullTranscript = messages
 		.map((m, i) => {
 			const content =
 				typeof m.content === "string"
@@ -74,13 +81,16 @@ export async function compressMessages(
 								.map((b) => {
 									if (typeof b === "string") return b;
 									if ("text" in b && typeof b.text === "string") return b.text;
-									if ("type" in b && b.type === "tool_use")
-										return `[tool_use: ${(b as ToolUseBlock).name}]`;
+									if ("type" in b && b.type === "tool_use") {
+										const tu = b as ToolUseBlock;
+										const inputStr = JSON.stringify(tu.input).slice(0, 500);
+										return `[tool_use: ${tu.name}(${inputStr})]`;
+									}
 									if ("type" in b && b.type === "tool_result") {
 										const tr = b as ToolResultBlockParam;
 										const text =
 											typeof tr.content === "string"
-												? tr.content.slice(0, 200)
+												? tr.content.slice(0, 500)
 												: "[result]";
 										return `[tool_result: ${text}]`;
 									}
@@ -88,57 +98,109 @@ export async function compressMessages(
 								})
 								.join("\n")
 						: String(m.content);
-			return `[${i}] ${m.role}: ${content.slice(0, 1000)}`;
+			return `[${i}] ${m.role}: ${content.slice(0, 2000)}`;
 		})
 		.join("\n---\n");
 
-	// Use haiku for cheap summarization
+	// Use sonnet for high-quality checkpoint (haiku loses too much nuance)
 	const summaryModel = model.includes("haiku")
 		? model
-		: "claude-haiku-4-5-20251001";
+		: model.includes("opus")
+			? model.replace("opus", "sonnet")
+			: model;
 
 	const summaryResponse = await client.messages.create({
 		model: summaryModel,
-		max_tokens: 4096,
-		system:
-			"Summarize the following conversation history between a user and an AI coding assistant. " +
-			"Preserve key facts: what files were created/modified, what tools were used, what decisions were made, " +
-			"what the current task is, and any important context. Be concise but complete. " +
-			"Output ONLY the summary, no preamble.",
-		messages: [{ role: "user", content: summaryInput.slice(0, 50000) }],
+		max_tokens: 8192,
+		system: CHECKPOINT_SYSTEM_PROMPT,
+		messages: [{ role: "user", content: fullTranscript.slice(0, 100000) }],
 	});
 
-	const summaryText =
+	const checkpoint =
 		summaryResponse.content[0]?.type === "text"
 			? summaryResponse.content[0].text
-			: "Failed to generate summary";
+			: "Failed to generate checkpoint";
 
 	// Estimate saved tokens (~4 chars per token)
-	const oldChars = summaryInput.length;
-	const newChars = summaryText.length;
+	const oldChars = fullTranscript.length;
+	const newChars = checkpoint.length;
 	const savedTokens = Math.max(0, Math.floor((oldChars - newChars) / 4));
 
-	// Build compressed messages: summary + kept messages
-	// Ensure first message is role=user (API requirement)
+	// Re-read fresh memory from disk (agent may have updated it during session)
+	let freshMemory = "";
+	if (cwd) {
+		try {
+			const memPath = join(cwd, ".opengraft", "memory.md");
+			freshMemory = await readFile(memPath, "utf-8");
+		} catch {
+			// No memory file — that's fine
+		}
+	}
+
+	// Rebuild from scratch: task context + fresh memory + checkpoint
+	const parts: string[] = [];
+	if (taskContext) {
+		parts.push(`## Original Task\n${taskContext}`);
+	}
+	if (freshMemory) {
+		parts.push(`## Project Memory (fresh)\n${freshMemory}`);
+	}
+	parts.push(
+		`## Checkpoint (conversation compacted)\n\n${checkpoint}\n\nResume from this checkpoint. Continue working — do not repeat completed steps.`,
+	);
+
 	const compressed: MessageParam[] = [
+		{ role: "user" as const, content: parts.join("\n\n---\n\n") },
 		{
-			role: "user" as const,
-			content: `[Context from earlier conversation, summarized to save space]\n\n${summaryText}\n\n[End of summary. Continue from the recent messages below.]`,
+			role: "assistant" as const,
+			content:
+				"I have the full checkpoint context and fresh memory. Continuing where I left off.",
 		},
-		// Ensure alternating roles — if toKeep starts with user, add assistant ack
-		...(toKeep[0]?.role === "user"
-			? []
-			: [
-					{
-						role: "assistant" as const,
-						content: "Understood, continuing from the summary.",
-					} satisfies MessageParam,
-				]),
-		...toKeep,
 	];
 
-	return { compressed, savedTokens };
+	return { compressed, savedTokens, checkpoint };
 }
+
+/** Structured checkpoint prompt for context compression. */
+const CHECKPOINT_SYSTEM_PROMPT = `You are generating a structured checkpoint for an autonomous coding agent.
+The agent will resume from this checkpoint after context compression — it must be able to
+continue working as if it never stopped.
+
+Analyze the conversation and output a checkpoint in EXACTLY this format:
+
+## Task
+[What the agent is working on — the original goal]
+
+## Current Phase
+[Where in the workflow: exploring / implementing / testing / debugging / done]
+
+## Completed
+- [What's been done, with specific file paths and line numbers]
+- [Key decisions made and WHY (not just what)]
+
+## Files Modified
+- [path/to/file — what was changed and why]
+
+## Current State
+[What the agent was doing RIGHT NOW when compression happened]
+[If debugging: the exact error, what's been tried, what hasn't]
+[If implementing: what's done, what remains]
+
+## Next Action
+[The specific next thing the agent should do — not vague, but actionable]
+[e.g. "Run bun test to verify the fix in src/foo.ts:42" not "continue testing"]
+
+## Key Context
+[Any critical details that would be lost: env vars, API quirks, gotchas discovered]
+[Errors that were encountered and their root causes]
+[Approaches that were tried and REJECTED (so the agent doesn't retry them)]
+
+Rules:
+- Be precise: file paths, line numbers, function names, error messages
+- Be forward-looking: the checkpoint exists to RESUME work, not to document history
+- Omit anything that's in the system prompt (no need to repeat task descriptions)
+- Include rejected approaches — preventing re-exploration is the highest-value information
+- Output ONLY the checkpoint, no preamble or commentary`;
 
 const TOOLS: Tool[] = [
 	{
@@ -799,16 +861,20 @@ export class DirectProvider implements AgentProvider {
 					message: `Compressing conversation (${response.usage.input_tokens} input tokens, threshold: ${COMPRESS_THRESHOLD})`,
 				};
 				try {
-					const { compressed, savedTokens } = await compressMessages(
-						this.client,
-						messages,
-						model,
-					);
+					const { compressed, savedTokens, checkpoint } =
+						await compressMessages(
+							this.client,
+							messages,
+							model,
+							request.prompt,
+							cwd,
+						);
 					messages.length = 0;
 					messages.push(...compressed);
 					yield {
-						type: "status",
-						message: `Compressed: saved ~${savedTokens} tokens (${compressed.length} messages remaining)`,
+						type: "compact",
+						checkpoint,
+						savedTokens,
 					};
 				} catch (e) {
 					yield {

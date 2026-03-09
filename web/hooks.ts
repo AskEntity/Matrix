@@ -28,6 +28,8 @@ export interface LogEntry {
 	type: string;
 	text: string;
 	taskId?: string;
+	/** Full checkpoint content for compact events (collapsible in UI). */
+	checkpoint?: string;
 }
 
 let logIdCounter = 0;

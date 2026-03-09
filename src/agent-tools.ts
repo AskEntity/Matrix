@@ -403,13 +403,7 @@ export function createOrchestratorTools(
 			{
 				taskId: z.string().describe("Task node ID"),
 				status: z
-					.enum([
-						"pending",
-						"in_progress",
-						"testing",
-						"passed",
-						"failed",
-					])
+					.enum(["pending", "in_progress", "testing", "passed", "failed"])
 					.describe("New status"),
 			},
 			async (args) => {

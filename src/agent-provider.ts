@@ -36,7 +36,12 @@ export type AgentEvent =
 			isError: boolean;
 	  }
 	| { type: "text"; content: string }
-	| { type: "error"; message: string };
+	| { type: "error"; message: string }
+	| {
+			type: "compact";
+			checkpoint: string;
+			savedTokens: number;
+	  };
 
 /** Handle to a running agent session that supports message injection. */
 export interface AgentSession {

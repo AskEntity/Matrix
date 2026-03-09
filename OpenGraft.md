@@ -327,14 +327,13 @@ project: "多人聊天应用"
 - **分支寿命 ≤ 1-2 天**：每个功能节点绑定一个 feature branch，从父分支 checkout，完成后 merge 回父分支并删除。超过 2 天说明任务拆得不够细——继续分解、spawn 子 agent
 - **频繁同步父分支**：工作中定期从父分支 merge，保持距离最小
 - **一个 agent 一个分支**：agent 和 branch 是 1:1 的。分支是 agent 的工作空间，agent 结束 = 分支合并或丢弃
-- **小改动不开分支**：root agent 可以在 main 上直接做 bug fix、文档更新等小事，不 spawn 子 agent
+- **所有改动通过子 agent**：root agent 是纯 orchestrator，不直接修改代码。即使是小改动也 spawn 子 agent 在独立分支上完成
 
-**节点状态**：`pending → in_progress → testing → passed | failed | stuck`
+**节点状态**：`pending → in_progress → testing → passed | failed`（`stuck` 是系统内部的断路器，对 agent 不可见——连续失败 3 次后自动标记）
 
 **Agent 生命周期 = 分支生命周期**：
 - **passed** → 子 agent 的分支 merge 回父分支，子 agent 销毁，记忆汇入父 agent
-- **failed** → 子 agent 在分支上继续修复。反复失败 → 子 agent 可以继续分解 spawn 孙子 agent
-- **stuck** → 子 agent 停止，分支保留现场。父 agent 决定：换个思路重新 spawn、自己接手、或上报 stuck
+- **failed** → 子 agent 遇到困难或无法解决，返回父 agent。父 agent 决定：resume（给指示继续）、reset（擦除分支重来）、或删除任务换方案
 
 **回退天然内置**：分支就是回退边界。一个子 agent 走错方向，父 agent `git branch -D` 丢弃即可，其他 agent 零影响。不需要单独设计回退机制——agent 树 + 分支隔离本身就是回退机制。
 
@@ -389,8 +388,8 @@ feat/realtime-msg 分支上 agent 的 memory.md：
 │  │                                                     │
 │  ⏳ 消息持久化 + 历史记录  (root agent 决定何时启动)    │
 │  ⏳ 多房间/频道                                         │
-│  🔴 在线状态 + 输入指示器  agent #6 · stuck             │
-│     点击展开 → 查看卡在哪里、agent 的分析、保留的分支   │
+│  🔴 在线状态 + 输入指示器  agent #6 · failed             │
+│     点击展开 → 查看失败原因、agent 的分析、保留的分支   │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -400,41 +399,42 @@ feat/realtime-msg 分支上 agent 的 memory.md：
 - **commit 历史**：该 agent 在分支上的 git log
 - **记忆条目**：该 agent 积累的经验和决策
 - **子 agent 列表**：该 agent spawn 了哪些子 agent，各自状态
-- **stuck 详情**：尝试过什么、卡在哪里、需要什么帮助
+- **失败详情**：尝试过什么、卡在哪里、需要什么帮助
 
-用户在这个 UI 上可以：给 stuck agent 提供指引、调整节点优先级、插入新需求节点（root agent 响应）、拆分过大的节点。
+用户在这个 UI 上可以：给 failed agent 发送 continue 指令、调整节点优先级、插入新需求节点（root agent 响应）、拆分过大的节点。
 
-**Context 压缩时的行为**：
-- `passed` 节点：只保留摘要（做了什么、关键决策）——详细记忆已在 git 中
-- `failed`/`stuck` 节点：保留完整信息（试过什么、卡在哪里）
-- `pending` 节点：只保留名称和简要描述
+**Context 压缩**（Claude Code 式 compact）：
+
+接近 context window 上限时，对**全部对话**生成结构化 checkpoint，然后**重建上下文**：
+
+1. 用同级模型对完整对话生成 checkpoint（Task / Current Phase / Completed / Files Modified / Current State / Next Action / Key Context）
+2. 清空全部消息
+3. 重建：原始 task prompt + 从磁盘重读 fresh memory + checkpoint
+4. System prompt 每次 API 调用都重新发送（方法论、架构规则不会丢失）
+
+关键设计：
+- **前瞻性**：checkpoint 重点在"下一步该做什么"，不是回顾历史
+- **记录被拒绝的方案**：防止 compact 后重复尝试已失败的路径
+- **Fresh memory**：从磁盘重读 `.opengraft/memory.md`（agent 可能在 session 中修改了它）
+- **UI 显示**：compact 事件在 activity log 中显示为可折叠的边界线，附带 checkpoint 内容，并标注"上方内容对 AI 不可见"
 
 跨 session 持久化的核心——session 恢复时先读任务树 + `.opengraft/memory.md`，就知道从哪里继续、带着什么经验继续。
 
-**Context Manager**（per agent）：
-- 每个 agent 独立管理自己的 context window
-- 监控 token 使用量，接近上限时触发压缩
-- **压缩分层**（参考 [Anthropic: Context Engineering](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)）：
-  - **永不压缩**：方法论、架构规则、禁止事项
-  - **保留摘要**：已完成步骤的结果、关键决策
-  - **可丢弃**：成功步骤的对话细节、中间探索过程
-- 注意：模型自己生成的摘要[不够全面](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)，需要外部状态文件（进度文件 + git log + `.opengraft/memory.md`）补充
 - **子 agent 不需要全局 context**：它只需要知道自己负责的子树 + 从 root 继承的方法论和架构约束
 
 **Stimulus Generator**（per agent，但 root 和子 agent 行为不同）：
 
-Root agent：
-  1. 有 failed 的子 agent → 审查失败原因，决定是让它继续、换方案、还是自己接手
-  2. 有 stuck 的子 agent → 尝试提供指引，或上报给用户
+Root agent（优先级从高到低）：
+  1. 有 failed 的子 agent → 审查失败原因，resume（给指示）或 reset（换方案）
+  2. 有 passed 但未 merge 的子 agent → merge 分支，delete_task 清理
   3. 有 pending 的子节点 → 评估依赖关系，spawn 下一个子 agent
-  4. 所有子 agent passed → 在 main 上跑完整测试套件确认无回归
-  5. 完整套件通过 → 审查代码质量，提出改进
-  6. 所有节点 passed 或 stuck → 停止，报告完成状态和阻塞项
+  4. 所有子 agent done → 在 main 上跑完整测试套件确认无回归
+  5. 所有任务完成 → 停止，报告最终状态
 
 子 agent：
   1. 当前任务测试失败 → 修复
   2. 当前任务通过 → 看有无子节点待做，有则继续或 spawn 孙子 agent
-  3. 反复失败（3 次未果）→ 考虑拆分为子 agent，或标记 stuck 上报父 agent
+  3. 遇到困难无法解决 → fail 返回父 agent（不是自己标 stuck）
   4. 所有子节点完成 → merge 回父分支，自己销毁
 
 ### 4.4 Tool 设计
@@ -532,18 +532,20 @@ models:
 
 ### 5.1 永不停止原则
 
-系统启动后持续运行，**只有三种情况停止**：
+Root agent 启动后持续运行，session 永久保留。**只有两种情况停止**：
 
-1. **完成**：用户的所有需求已实现，测试全绿，AI 对 codebase 真正满意——不只是"功能做完了"，而是认为架构合理、无已知 bug、测试覆盖充分、代码质量达标
-2. **需要澄清**：遇到无法独立判断的歧义（需求矛盾、优先级不明确），需要用户输入方向
-3. **需要协助**：技术上卡住了。试了 N 种方案都失败，或者认为当前任务超出自身能力。与"澄清"的区别：澄清是"我不知道你要什么"，协助是"我知道你要什么，但我做不到"
+1. **完成**：所有任务 passed 并已 merge，测试全绿
+2. **所有任务 failed**：无法继续推进，等待用户
 
-**stuck 的处理**：
-- AI 将当前任务节点标记为 `stuck`，保留分支现场（已尝试的方案、失败日志、分析结论）
-- 切换到任务树中其他 `pending` 节点继续工作——不是完全停止，而是绕过卡点
-- 如果所有可做的节点都完成或 stuck，才真正停止等待用户
+**Agent 退出模型**（对 agent 可见的只有两种）：
+- **passed** — 完成任务，测试通过，代码已提交。父 agent merge 分支
+- **failed** — 遇到困难或无法解决，返回父 agent。包含清晰的失败原因和已尝试的方案
 
-除此之外，AI 永远有事可做：功能未完成 → 实现；测试未覆盖 → 补；代码可以更好 → 重构；文档缺失 → 写。Stimulus Generator 保证了这一点。
+**需要澄清时**：agent 调用 `clarify(question)` 工具，阻塞等待回答。超时后 agent 自行判断继续。这是工具调用，不是退出条件。
+
+**stuck 是断路器**：agent 不知道 stuck 的存在。系统在一个任务连续失败 3 次后自动标记为 stuck，父 agent 跳过它处理其他任务。这是防止无限循环的内部机制。
+
+除此之外，AI 永远有事可做：failed 的子 agent 需要 resume/reset；pending 的任务需要启动。Stimulus Generator 保证了这一点。
 
 ### 5.2 自主程度（Autonomy Level）
 
@@ -562,27 +564,21 @@ models:
 | 9 | 元修改宽松 | 用户项目 + 小型元修改 | 系统核心（orchestrator、tool 实现）的修改 |
 | 10 | 全自主 | 一切 | 从不询问（仅在完成或遇到技术阻塞时停止） |
 
-### 5.3 询问超时与 Fallback
+### 5.3 澄清机制
 
-当 AI 需要用户输入时，行为取决于停止类型：
+Agent 通过 `clarify(question)` MCP 工具请求澄清。这是阻塞式工具调用：
 
 ```
-AI 发起询问（澄清 或 协助）
+Agent 调用 clarify("用户认证是用 JWT 还是 session?")
     │
-    ├── 用户在 timeout 内回复 → 按用户指示继续
+    ├── 用户/父 agent 在 timeout 内回复 → agent 收到回答，继续工作
     │
-    └── 超时（可配置：5min / 30min / 2h / never）
-        │
-        ├── 类型 = 澄清（不知道要什么）
-        │   ├── timeout_action: "search" → 搜索最佳实践 → 自主决定 → 标注 "auto-decided"
-        │   ├── timeout_action: "skip"   → 标记 blocked，切换到其他任务
-        │   └── timeout_action: "wait"   → 等待用户
-        │
-        └── 类型 = 协助（技术卡住）
-            → 无论 timeout_action 设定如何：标记 stuck，切换到其他任务
-            → 不自动决定（技术卡住靠搜索解决的概率低，强行继续只会烧 token）
-            → 保留分支现场供用户/更高能力的 AI 后续接手
+    └── 超时（可配置，默认 5min）
+        → agent 收到 "No response received. Use your best judgement."
+        → agent 自行决策，在 memory 中记录决策理由，继续工作
 ```
+
+**技术上卡住**：agent 不用 clarify，而是直接 fail 返回父 agent。父 agent 有更多上下文，可以 resume（给指示）或 reset（换方案）。
 
 ### 5.4 用户中途交互
 
@@ -665,7 +661,7 @@ autonomy:
 
 | 失败模式 | 表现 | 检测 | 防御 |
 |---------|------|------|------|
-| **无限循环** | 反复尝试同一个修复，永远过不了测试 | 同一错误出现 3+ 次；同一文件编辑 5+ 次 | 标记 stuck，切换节点 |
+| **无限循环** | 反复尝试同一个修复，永远过不了测试 | 同一错误出现 3+ 次；同一文件编辑 5+ 次 | 自动标记 stuck（断路器），父 agent 跳过处理其他任务 |
 | **上下文污染** | 压缩丢失关键信息，AI 重复之前的错误决策 | 重复相同的失败路径；与记忆中的决策矛盾 | 记忆持久化在 git 中；压缩后强制重读 `.opengraft/memory.md` |
 | **抽象层级错误** | AI 在实现细节上打转，没意识到是设计问题 | 一个节点内反复重构但测试不变；代码量增长但功能未增加 | 节点预算用尽时强制回退到规划阶段，重新分解 |
 | **依赖地狱** | 引入互相冲突的库，或版本不兼容 | 安装依赖失败；类型错误来自第三方包 | 依赖变更需要 autonomy level 检查；lockfile 变更 diff 审查 |

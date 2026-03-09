@@ -220,45 +220,53 @@ describe("compressMessages", () => {
 		expect(compressed).toEqual(messages);
 	});
 
-	test("compresses long conversations", async () => {
+	test("compacts all messages into checkpoint + ack", async () => {
 		const messages: MessageParam[] = [];
 		for (let i = 0; i < 20; i++) {
 			messages.push({ role: "user", content: `message ${i}` });
 			messages.push({ role: "assistant", content: `reply ${i}` });
 		}
 		const client = makeMockClient("This is the conversation summary.");
-		const { compressed, savedTokens } = await compressMessages(
+		const { compressed, savedTokens, checkpoint } = await compressMessages(
 			client,
 			messages,
 			"claude-sonnet-4-6",
 		);
-		// Should be fewer messages than original
-		expect(compressed.length).toBeLessThan(messages.length);
-		// First message should be the summary
+		// Should be exactly 2 messages: user (context+checkpoint) + assistant ack
+		expect(compressed.length).toBe(2);
+		expect(compressed[0]?.role).toBe("user");
+		expect(compressed[1]?.role).toBe("assistant");
+		// First message should contain the checkpoint
 		expect(
 			typeof compressed[0]?.content === "string" && compressed[0].content,
-		).toContain("summary");
+		).toContain("Checkpoint");
+		// Should return checkpoint text
+		expect(checkpoint).toBe("This is the conversation summary.");
 		// Should report saved tokens
 		expect(savedTokens).toBeGreaterThan(0);
 	});
 
-	test("preserves alternating role structure", async () => {
+	test("re-injects task context and fresh memory", async () => {
 		const messages: MessageParam[] = [];
 		for (let i = 0; i < 10; i++) {
 			messages.push({ role: "user", content: `msg ${i}` });
 			messages.push({ role: "assistant", content: `reply ${i}` });
 		}
-		const client = makeMockClient("summary");
+		const client = makeMockClient("checkpoint content");
 		const { compressed } = await compressMessages(
 			client,
 			messages,
 			"claude-sonnet-4-6",
+			"Build a calculator app",
 		);
-		// First message must be user role (API requirement)
-		expect(compressed[0]?.role).toBe("user");
+		const content = compressed[0]?.content as string;
+		// Should contain original task context
+		expect(content).toContain("Build a calculator app");
+		// Should contain checkpoint
+		expect(content).toContain("checkpoint content");
 	});
 
-	test("uses haiku model for summarization", async () => {
+	test("uses same-tier model for checkpoint generation", async () => {
 		let calledModel = "";
 		const client = {
 			messages: {
@@ -274,7 +282,7 @@ describe("compressMessages", () => {
 			messages.push({ role: "assistant", content: `reply ${i}` });
 		}
 		await compressMessages(client, messages, "claude-sonnet-4-6");
-		expect(calledModel).toBe("claude-haiku-4-5-20251001");
+		expect(calledModel).toBe("claude-sonnet-4-6");
 	});
 });
 
