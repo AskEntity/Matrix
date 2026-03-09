@@ -252,6 +252,15 @@ Three explicit cache breakpoints per API call:
 - CSS classes: `og-tree-search-bar`, `og-tree-search`, `og-tree-empty` in `web/style.css`
 - **Pitfall**: `var(--radius)` is not defined in the CSS (only `--radius-sm`, `--radius-md` etc). The existing log search uses `var(--radius)` which silently fails. Use `var(--radius-sm)` for correct behavior.
 
+## Bash Tool CWD Tracking
+
+- `executeTool` for bash now returns `{ content, isError, cwd? }` — `cwd` is set only when the working directory changed
+- Uses bash EXIT trap to capture `pwd` even when the command calls `exit`: `trap ___og_trap EXIT`
+- CWD marker `___OPENGRAFT_CWD___` is stripped from stdout; if cwd changed, `cwd: /new/path` is appended to output
+- `runLoop` in DirectProvider uses `let cwd` (mutable) and updates it after each bash tool execution with a new cwd
+- **Pitfall**: macOS `/var` → `/private/var` symlink causes `pwd` output to differ from input `cwd`. Fixed by using `realpathSync(cwd)` for comparison.
+- All subsequent tool calls (bash, read_file, write_file, edit_file, list_files, search) automatically use the updated cwd
+
 ## Backlog (next improvements to consider)
 
 - Token budget per task: cost limits and alerts

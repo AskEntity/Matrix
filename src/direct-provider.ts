@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	realpathSync,
+	writeFileSync,
+} from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
@@ -392,13 +398,16 @@ export async function executeTool(
 	name: string,
 	input: Record<string, unknown>,
 	cwd: string,
-): Promise<{ content: string; isError: boolean }> {
+): Promise<{ content: string; isError: boolean; cwd?: string }> {
 	switch (name) {
 		case "bash": {
 			const command = input.command as string;
 			const timeout = (input.timeout as number) ?? 120000;
+			const CWD_MARKER = "___OPENGRAFT_CWD___";
 			try {
-				const proc = Bun.spawn(["bash", "-c", command], {
+				// EXIT trap ensures CWD marker + pwd run even if command calls `exit`
+				const wrappedCommand = `___og_trap() { echo "${CWD_MARKER}"; pwd; }; trap ___og_trap EXIT; ${command}`;
+				const proc = Bun.spawn(["bash", "-c", wrappedCommand], {
 					cwd,
 					stdout: "pipe",
 					stderr: "pipe",
@@ -409,18 +418,46 @@ export async function executeTool(
 				const exitCode = await proc.exited;
 				clearTimeout(timer);
 
-				const stdout = await new Response(proc.stdout).text();
+				let stdout = await new Response(proc.stdout).text();
 				const stderr = await new Response(proc.stderr).text();
 
-				const result = [
+				// Extract final CWD from marker in stdout
+				let newCwd: string | undefined;
+				const markerIdx = stdout.lastIndexOf(CWD_MARKER);
+				if (markerIdx !== -1) {
+					const afterMarker = stdout
+						.slice(markerIdx + CWD_MARKER.length)
+						.trim();
+					const pwdLine = afterMarker.split("\n")[0]?.trim();
+					if (pwdLine) {
+						// Compare resolved paths to avoid false positives from symlinks (e.g. /var → /private/var on macOS)
+						let resolvedCwd: string;
+						try {
+							resolvedCwd = realpathSync(cwd);
+						} catch {
+							resolvedCwd = cwd;
+						}
+						if (pwdLine !== resolvedCwd) {
+							newCwd = pwdLine;
+						}
+					}
+					// Strip marker + pwd from stdout
+					stdout = stdout.slice(0, markerIdx);
+				}
+
+				const parts = [
 					stdout ? `stdout:\n${stdout.slice(0, 10000)}` : "",
 					stderr ? `stderr:\n${stderr.slice(0, 5000)}` : "",
 					`exit code: ${exitCode}`,
-				]
-					.filter(Boolean)
-					.join("\n");
+				].filter(Boolean);
 
-				return { content: result, isError: exitCode !== 0 };
+				if (newCwd) {
+					parts.push(`\ncwd: ${newCwd}`);
+				}
+
+				const result = parts.join("\n");
+
+				return { content: result, isError: exitCode !== 0, cwd: newCwd };
 			} catch (e) {
 				return {
 					content: `Error: ${e instanceof Error ? e.message : String(e)}`,
@@ -911,7 +948,7 @@ export class DirectProvider implements AgentProvider {
 		queue?: MessageQueue,
 	): AsyncGenerator<AgentEvent, AgentResult> {
 		const model = request.model ?? this.model;
-		const cwd = request.cwd;
+		let cwd = request.cwd;
 		const sessionsDir = request.sessionsDir;
 
 		// Load session history from disk if not already in memory (survives daemon restart)
@@ -1186,7 +1223,14 @@ export class DirectProvider implements AgentProvider {
 				const exec = execResults[i] as {
 					content: string;
 					isError: boolean;
+					cwd?: string;
 				};
+
+				// Update cwd if bash tool changed it
+				if (exec.cwd) {
+					cwd = exec.cwd;
+				}
+
 				const text = exec.content;
 				const isError = exec.isError;
 

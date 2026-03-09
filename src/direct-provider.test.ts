@@ -130,6 +130,49 @@ describe("executeTool", () => {
 		expect(result.content).toContain("exit code: 1");
 	});
 
+	test("bash: no cwd returned when directory unchanged", async () => {
+		const result = await executeTool(
+			"bash",
+			{ command: "echo hello" },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.cwd).toBeUndefined();
+		expect(result.content).not.toContain("___OPENGRAFT_CWD___");
+	});
+
+	test("bash: cwd returned when cd changes directory", async () => {
+		const result = await executeTool("bash", { command: "cd /tmp" }, tempDir);
+		expect(result.isError).toBe(false);
+		expect(result.cwd).toBe("/tmp");
+		expect(result.content).toContain("cwd: /tmp");
+		// Marker should be stripped from output
+		expect(result.content).not.toContain("___OPENGRAFT_CWD___");
+	});
+
+	test("bash: cwd tracks cd within a multi-command chain", async () => {
+		const result = await executeTool(
+			"bash",
+			{ command: "cd /tmp && echo working" },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.cwd).toBe("/tmp");
+		expect(result.content).toContain("working");
+		expect(result.content).toContain("cwd: /tmp");
+	});
+
+	test("bash: failed command still captures cwd if cd happened before failure", async () => {
+		const result = await executeTool(
+			"bash",
+			{ command: "cd /tmp && exit 1" },
+			tempDir,
+		);
+		expect(result.isError).toBe(true);
+		expect(result.cwd).toBe("/tmp");
+		expect(result.content).toContain("exit code: 1");
+	});
+
 	test("write_file: creates file with directories", async () => {
 		const path = join(tempDir, "sub", "dir", "file.txt");
 		const result = await executeTool(
