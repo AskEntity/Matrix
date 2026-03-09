@@ -171,6 +171,17 @@ Three explicit cache breakpoints per API call:
 - Collapsible task tree nodes
 - queue_message parsing into typed log entries
 
+## Web UI: Dark/Light Mode Toggle
+
+- Theme toggle button added to top-right of header (`og-header-right`) in `web/App.tsx`
+- `isDark` state initialized from `localStorage.getItem("og-theme") !== "light"` (defaults to dark)
+- `useEffect` applies `.light-mode` class to `document.documentElement` and persists to localStorage
+- Light mode CSS overrides are in `:root.light-mode { }` block in `web/style.css`
+- The CSS uses exact `:root` variable names: `--bg-base`, `--bg-surface`, `--bg-raised`, `--bg-overlay`, `--bg-subtle`, `--border`, `--border-subtle`, `--border-muted`, `--text-primary`, `--text-secondary`, `--text-muted`, `--text-faint`, plus status/accent/shadow vars
+- **Pitfall**: Several hover backgrounds use hardcoded `rgba(255,255,255,0.04)` — invisible on light bg. Fixed with `:root.light-mode .og-task-node:hover { background: rgba(0,0,0,0.04) }` etc. at end of CSS
+- Layout/spacing/font/radius/transition variables intentionally NOT overridden — only color variables
+- IconSun and IconMoon SVG icons added as inline components (matching existing icon pattern)
+
 ## Known Pitfalls
 
 - **Git worktrees**: `extensions.worktreeConfig` must be enabled. `core.hooksPath` must be absolute. New worktrees need `bun install`.
