@@ -40,6 +40,7 @@ export function useWebSocket(
 ) {
 	const wsRef = useRef<WebSocket | null>(null);
 	const [connected, setConnected] = useState(false);
+	const [lastMessageAt, setLastMessageAt] = useState<Date | null>(null);
 
 	useEffect(() => {
 		let delay = 1000;
@@ -61,6 +62,7 @@ export function useWebSocket(
 
 			ws.onmessage = (evt) => {
 				try {
+					setLastMessageAt(new Date());
 					onMessage(JSON.parse(evt.data));
 				} catch {
 					/* ignore */
@@ -94,7 +96,7 @@ export function useWebSocket(
 		}
 	}, [projectId]);
 
-	return { connected };
+	return { connected, lastMessageAt };
 }
 
 // --- useProjects ---

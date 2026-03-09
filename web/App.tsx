@@ -348,7 +348,7 @@ export function App() {
 		[addLog, updateFromWS, setRunning],
 	);
 
-	const { connected } = useWebSocket(projectId, handleWS);
+	const { connected, lastMessageAt } = useWebSocket(projectId, handleWS);
 
 	// Auto-select single project
 	useEffect(() => {
@@ -468,6 +468,11 @@ export function App() {
 						className={`status-dot ${connected ? "connected" : "disconnected"}`}
 						title={connected ? "Connected" : "Disconnected"}
 					/>
+					{lastMessageAt && (
+						<span className="last-update-time">
+							Last update: {lastMessageAt.toLocaleTimeString()}
+						</span>
+					)}
 				</div>
 				<div className="header-right">
 					<select

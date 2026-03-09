@@ -26,14 +26,6 @@ const _pkg = JSON.parse(
 ) as { version: string };
 const VERSION = _pkg.version;
 
-// Capture git commit hash at startup (empty string if not in a git repo).
-const _commitProc = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], {
-	stdout: "pipe",
-	stderr: "pipe",
-});
-const GIT_COMMIT =
-	_commitProc.exitCode === 0 ? _commitProc.stdout.toString().trim() : "unknown";
-
 /** WebSocket client connection with project subscription. */
 interface WSClient {
 	ws: WSContext;
@@ -58,7 +50,6 @@ function broadcast(
 	}
 }
 const startTime = Date.now();
-const START_AT = new Date(startTime).toISOString();
 
 export interface DaemonConfig {
 	dataDir: string;
@@ -165,11 +156,20 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	});
 
 	// Version
-	app.get("/version", (c) => {
+	app.get("/version", async (c) => {
+		const projects = pm.list();
+		const projectCount = projects.length;
+
+		let nodeCount = 0;
+		for (const project of projects) {
+			const tracker = await getTracker(project.id);
+			nodeCount += tracker.allNodes().length;
+		}
+
 		const response: VersionResponse = {
 			version: VERSION,
-			commit: GIT_COMMIT,
-			startedAt: START_AT,
+			nodeCount,
+			projectCount,
 		};
 		return c.json(response);
 	});

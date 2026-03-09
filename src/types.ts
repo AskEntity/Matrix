@@ -70,8 +70,8 @@ export interface HealthResponse {
 /** Daemon version response. */
 export interface VersionResponse {
 	version: string;
-	commit: string;
-	startedAt: string;
+	nodeCount: number;
+	projectCount: number;
 }
 
 /** Daemon stats response. */

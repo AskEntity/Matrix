@@ -64,21 +64,21 @@ describe("daemon health", () => {
 });
 
 describe("daemon version", () => {
-	test("GET /version returns version, commit, and startedAt", async () => {
+	test("GET /version returns version, nodeCount, and projectCount", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "og-version-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
-		const before = new Date().toISOString();
 		const res = await app.request("/version");
 		expect(res.status).toBe(200);
 
 		const body = (await res.json()) as VersionResponse;
-		expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
-		expect(body.commit).toMatch(/^[0-9a-f]+$|^unknown$/);
-		expect(typeof body.startedAt).toBe("string");
-		expect(new Date(body.startedAt).toISOString()).toBe(body.startedAt);
-		expect(body.startedAt <= before || body.startedAt === before).toBe(true);
+		expect(typeof body.version).toBe("string");
+		expect(body.version.length).toBeGreaterThan(0);
+		expect(typeof body.nodeCount).toBe("number");
+		expect(body.nodeCount).toBeGreaterThanOrEqual(0);
+		expect(typeof body.projectCount).toBe("number");
+		expect(body.projectCount).toBeGreaterThanOrEqual(0);
 
 		await rm(dataDir, { recursive: true });
 	});
