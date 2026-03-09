@@ -745,11 +745,17 @@ function TaskDetail({
 function OrchestratorDetail({
 	running,
 	nodeCount,
+	nodes,
 }: {
 	running: boolean;
 	nodeCount: number;
+	nodes: import("./hooks.ts").TaskNode[];
 }) {
-	const passed = 0; // Could compute from nodes
+	const passed = nodes.filter((n) => n.status === "passed").length;
+	const failed = nodes.filter(
+		(n) => n.status === "failed" || n.status === "stuck",
+	).length;
+	const inProgress = nodes.filter((n) => n.status === "in_progress").length;
 	return (
 		<div className="og-orch-detail">
 			<div className="og-orch-detail-header">
@@ -782,6 +788,18 @@ function OrchestratorDetail({
 					<span className="og-stat-label">Tasks</span>
 					<span className="og-stat-value">{nodeCount}</span>
 				</div>
+				{nodeCount > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">Done</span>
+						<span className="og-stat-value" style={{ fontSize: "14px" }}>
+							<span style={{ color: "var(--color-passed)" }}>{passed}</span>
+							<span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
+								{" "}
+								/ {nodeCount}
+							</span>
+						</span>
+					</div>
+				)}
 				{passed > 0 && (
 					<div className="og-stat-card">
 						<span className="og-stat-label">Passed</span>
@@ -790,6 +808,28 @@ function OrchestratorDetail({
 							style={{ color: "var(--color-passed)" }}
 						>
 							{passed}
+						</span>
+					</div>
+				)}
+				{inProgress > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">Active</span>
+						<span
+							className="og-stat-value"
+							style={{ color: "var(--color-in-progress)" }}
+						>
+							{inProgress}
+						</span>
+					</div>
+				)}
+				{failed > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">Failed</span>
+						<span
+							className="og-stat-value"
+							style={{ color: "var(--color-failed)" }}
+						>
+							{failed}
 						</span>
 					</div>
 				)}
@@ -1194,7 +1234,11 @@ export function App() {
 						</div>
 
 						{isOrchestratorNode ? (
-							<OrchestratorDetail running={running} nodeCount={nodes.length} />
+							<OrchestratorDetail
+								running={running}
+								nodeCount={nodes.length}
+								nodes={nodes}
+							/>
 						) : selectedNode ? (
 							<TaskDetail
 								node={selectedNode}
