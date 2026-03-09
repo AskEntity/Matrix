@@ -777,7 +777,7 @@ export function App() {
 	const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [prompt, setPrompt] = useState("");
-	const [model, setModel] = useState("");
+	const [model, setModel] = useState("claude-opus-4-6");
 	const [childModel, setChildModel] = useState("");
 	const [splitRatio, setSplitRatio] = useState(0.35);
 	const [isDragging, setIsDragging] = useState(false);
