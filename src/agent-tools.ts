@@ -212,6 +212,17 @@ Commit the curated memory as a standalone commit after all task merges are done.
 - If a merge conflict is too complex to resolve: merge the more complex/larger feature first,
   then re-spawn the simpler feature with \`mode: "reset"\` so it rebuilds on top of the merged code.
 
+## Reusable Worker Pattern
+To assign multiple sequential tasks to the same agent without spawning new ones:
+1. Spawn child via execute_tasks with initial task
+2. Child does work → calls report_to_parent("ready for more") → calls yield() to wait
+3. Parent receives child_report via yield() → sends next task via send_message_to_child
+4. Child receives message during yield, does next task, reports again, and yields again
+5. When truly done, parent tells child via send_message_to_child("All done, call done('passed')")
+
+Benefits: Session context reuse (cheaper), no worktree setup overhead for related tasks.
+Use when: child has expensive startup context, or tasks are closely related and benefit from shared memory.
+
 ## Session Continuity
 Your session persists across conversations. When the user sends a new message:
 - The message arrives piggybacked on your current tool result — no need to call yield()
