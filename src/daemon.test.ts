@@ -869,6 +869,139 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 });
 
+describe("POST /projects/:id/message", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-projmsg-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-projmsgd-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "proj") }),
+		});
+		const project = (await projRes.json()) as Project;
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request("/projects/nonexistent/message", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "hello" }),
+		});
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("Project not found");
+	});
+
+	test("returns 400 when message is missing", async () => {
+		const res = await app.request(`/projects/${projectId}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("message is required");
+	});
+
+	test("returns 404 when no active session", async () => {
+		const res = await app.request(`/projects/${projectId}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "hello" }),
+		});
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("No active session for this project");
+	});
+});
+
+describe("POST /projects/:id/clarify", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-clarify-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-clarifyd-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "proj") }),
+		});
+		const project = (await projRes.json()) as Project;
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns 400 when taskId is missing", async () => {
+		const res = await app.request(`/projects/${projectId}/clarify`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ answer: "yes" }),
+		});
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("taskId and answer are required");
+	});
+
+	test("returns 400 when answer is missing", async () => {
+		const res = await app.request(`/projects/${projectId}/clarify`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ taskId: "some-task-id" }),
+		});
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("taskId and answer are required");
+	});
+
+	test("returns 404 when no active session", async () => {
+		const res = await app.request(`/projects/${projectId}/clarify`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ taskId: "some-task-id", answer: "yes" }),
+		});
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("No active session for this project");
+	});
+
+	test("returns 404 for unknown project (no session)", async () => {
+		const res = await app.request("/projects/nonexistent/clarify", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ taskId: "some-task-id", answer: "yes" }),
+		});
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("No active session for this project");
+	});
+});
+
 describe("daemon orchestrate/agent API", () => {
 	test("POST /orchestrate/agent invokes agent with MCP tools", async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "og-orchagent-"));
