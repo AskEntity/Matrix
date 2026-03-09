@@ -279,10 +279,20 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 	// Wait briefly for WS to connect, then run via HTTP (blocks until done)
 	await new Promise<void>((r) => setTimeout(r, 200));
 
-	const res = await api(`/projects/${projectId}/orchestrate/agent`, {
-		method: "POST",
-		body: JSON.stringify(body),
-	});
+	// Long timeout — orchestration can run for many minutes
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), 30 * 60 * 1000); // 30 min
+	let res: Response;
+	try {
+		res = await fetch(`${DAEMON_URL}/projects/${projectId}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(body),
+			signal: controller.signal,
+		});
+	} finally {
+		clearTimeout(timeoutId);
+	}
 
 	try {
 		ws.close();
