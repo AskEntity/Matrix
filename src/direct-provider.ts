@@ -1206,8 +1206,6 @@ export class DirectProvider implements AgentProvider {
 				response.usage.cache_creation_input_tokens ?? 0;
 			totalCacheReadTokens += response.usage.cache_read_input_tokens ?? 0;
 
-
-
 			// Process response content
 			const toolUses: ToolUseBlock[] = [];
 			for (const block of response.content) {
