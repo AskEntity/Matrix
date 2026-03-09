@@ -273,3 +273,16 @@ Three explicit cache breakpoints per API call:
 ## Backlog (next improvements to consider)
 
 - Compact checkpoint should include "Rejected Approaches" more aggressively — agents often retry failed paths after compaction
+
+## memory.md Duplication Root Cause (Investigated)
+
+**Root cause found in commit `7ad2cf6`**: The child agent (token budget task) used `write_file` to write memory.md. When constructing the content, it embedded the entire existing file content inside the new section text. This caused the new section to contain the full old content literally embedded in it (e.g., the dollar sign pitfall line became `use \`${"$"}\` to inject a literal \`# OpenGraft Project Memory...` followed by the whole file).
+
+**Pattern**: Agent read file → constructed new content with `write_file` → accidentally included old content as part of the new bullet point string → resulted in 3 copies of the file (old + embedded old + continuation).
+
+**Fix applied in `src/agent-tools.ts`**: Added explicit "NEVER use write_file on memory.md" warning to:
+1. The `## Memory System` section (orchestrator system prompt)
+2. The `## Worker Workflow` step 5 (worker system prompt)  
+3. The `buildTaskPrompt` instructions (step 4 of task prompt given to child agents)
+
+**Rule**: Always use `edit_file` (match last lines, extend them) or bash `echo >> .opengraft/memory.md` to append. Never `write_file` on memory.md.
