@@ -148,6 +148,8 @@ Daemon (Hono: HTTP + WS on :7433)
 | POST | /projects/:id/sessions/prune | Prune old sessions (keep N) |
 | GET | /projects/:id/events | Event history (up to 500 events) |
 | GET | /projects/:id/pending-messages | Pending messages waiting for agent consumption |
+| GET | /projects/:id/clarifications | Pending clarifications waiting for user answer |
+| POST | /projects/:id/clarify | Answer a pending clarification (taskId + answer) |
 | WS | /ws | Real-time task tree + agent events |
 
 ## Prompt Caching (DirectProvider)
