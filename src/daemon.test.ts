@@ -1888,3 +1888,188 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(globalAgentQueues.has(task.id)).toBe(false);
 	});
 });
+
+describe("GET /projects/:id/pending-messages", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-pending-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-pendingd-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+		result.markReady();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "proj") }),
+		});
+		const project = (await res.json()) as Project;
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns empty array initially", async () => {
+		const res = await app.request(`/projects/${projectId}/pending-messages`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { messages: unknown[] };
+		expect(body.messages).toBeInstanceOf(Array);
+		expect(body.messages.length).toBe(0);
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request("/projects/nonexistent/pending-messages");
+		expect(res.status).toBe(404);
+	});
+
+	test("includes message after POST /projects/:id/message", async () => {
+		// Create a provider with a long-running session
+		let resolveSession: (() => void) | null = null;
+		const longRunningProvider: AgentProvider = {
+			name: "mock-long",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					// Wait until explicitly resolved, keeping the session alive
+					await new Promise<void>((resolve) => {
+						resolveSession = resolve;
+					});
+					return { success: true, output: "" };
+				}
+				return {
+					sessionId: "mock-long-session",
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						if (resolveSession) resolveSession();
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const localDataDir = await mkdtemp(join(tmpdir(), "og-pending-msg-"));
+		const {
+			app: localApp,
+			pm: localPm,
+			markReady: localMarkReady,
+		} = createApp({
+			dataDir: localDataDir,
+			agentProvider: longRunningProvider,
+		});
+		await localPm.load();
+		localMarkReady();
+
+		// Create a project
+		const projRes = await localApp.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "pending-proj") }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		// Start an agent
+		const orchRes = await localApp.request(
+			`/projects/${project.id}/orchestrate/agent`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ prompt: "do something" }),
+			},
+		);
+		expect(orchRes.status).toBe(200);
+		await new Promise((r) => setTimeout(r, 50));
+
+		// Send a message to the orchestrator
+		const msgRes = await localApp.request(`/projects/${project.id}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "hello agent" }),
+		});
+		expect(msgRes.status).toBe(200);
+
+		// Check pending messages
+		const res = await localApp.request(
+			`/projects/${project.id}/pending-messages`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			messages: {
+				id: string;
+				taskId: string | null;
+				text: string;
+				timestamp: number;
+			}[];
+		};
+		expect(body.messages.length).toBe(1);
+		expect(body.messages[0]?.text).toBe("hello agent");
+		expect(body.messages[0]?.taskId).toBeNull();
+		expect(typeof body.messages[0]?.id).toBe("string");
+		expect(typeof body.messages[0]?.timestamp).toBe("number");
+
+		// Clean up: stop the agent
+		await localApp.request(`/projects/${project.id}/stop`, {
+			method: "POST",
+		});
+		await new Promise((r) => setTimeout(r, 50));
+		await rm(localDataDir, { recursive: true });
+	});
+
+	test("includes message with taskId after POST /projects/:id/tasks/:nodeId/message", async () => {
+		// Create a task
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Test task", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		// Register a queue for this task
+		const taskQueue = new MessageQueue();
+		globalAgentQueues.set(task.id, taskQueue);
+
+		try {
+			// Send a message to the task
+			const msgRes = await app.request(
+				`/projects/${projectId}/tasks/${task.id}/message`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ content: "task message" }),
+				},
+			);
+			expect(msgRes.status).toBe(200);
+
+			// Check pending messages
+			const res = await app.request(`/projects/${projectId}/pending-messages`);
+			expect(res.status).toBe(200);
+			const body = (await res.json()) as {
+				messages: {
+					id: string;
+					taskId: string | null;
+					text: string;
+					timestamp: number;
+				}[];
+			};
+			expect(body.messages.length).toBe(1);
+			expect(body.messages[0]?.text).toBe("task message");
+			expect(body.messages[0]?.taskId).toBe(task.id);
+		} finally {
+			globalAgentQueues.delete(task.id);
+		}
+	});
+});
