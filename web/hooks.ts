@@ -183,16 +183,22 @@ export function useTasks(projectId: string) {
 
 export function useAgent(projectId: string) {
 	const [running, setRunning] = useState(false);
+	const [provider, setProvider] = useState<string | null>(null);
+	const [model, setModel] = useState<string | null>(null);
 
 	const checkStatus = useCallback(async () => {
 		if (!projectId) {
 			setRunning(false);
+			setProvider(null);
+			setModel(null);
 			return;
 		}
 		try {
 			const res = await fetch(`/projects/${projectId}/agent`);
 			const data = await res.json();
 			setRunning(data.running);
+			if (data.provider) setProvider(data.provider);
+			if (data.model) setModel(data.model);
 		} catch {
 			/* ignore */
 		}
@@ -281,6 +287,10 @@ export function useAgent(projectId: string) {
 	return {
 		running,
 		setRunning,
+		provider,
+		setProvider,
+		model,
+		setModel,
 		start,
 		stop,
 		checkStatus,
