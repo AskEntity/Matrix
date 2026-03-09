@@ -656,6 +656,14 @@ function TaskDetail({
 						</div>
 					</div>
 				)}
+				{node.costUsd != null && node.costUsd > 0 && (
+					<div className="og-detail-field">
+						<div className="og-detail-label">Cost</div>
+						<div className="og-detail-value mono">
+							${node.costUsd.toFixed(4)}
+						</div>
+					</div>
+				)}
 				{node.message && (
 					<div className="og-detail-field" style={{ width: "100%" }}>
 						<div className="og-detail-label">Message</div>
