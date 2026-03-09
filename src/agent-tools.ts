@@ -82,8 +82,9 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   Call this after spawning tasks. Returns all accumulated messages. Zero token burn while suspended.
 - send_message_to_child: Send a requirement update or instruction to a running child agent.
 - delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
-- clarify: Send a clarification question to the user. Returns immediately.
-  Call yield() to wait for the response — it arrives as a clarify_response message.
+- clarify: Send a clarification question to the user or parent orchestrator. Returns immediately —
+  you can continue doing other work that doesn't need the answer, then call yield() when ready
+  to wait for the clarify_response.
 
 ## Event-Driven Workflow Pattern
 1. Analyze the goal and the codebase (read files to understand structure)
@@ -113,7 +114,8 @@ When you finish working on a task, you exit with one of two results:
    → Parent decides: resume (with new instructions) or reset (wipe branch, try differently).
 
 If you're unsure about a requirement, use the \`clarify\` tool to ask — it sends a question
-to the user and returns immediately. Call \`yield()\` to wait for the response.
+to the user and returns immediately. You can continue doing other work that doesn't depend on
+the answer, then call \`yield()\` when you're ready to wait for the response.
 
 If you encounter problems you can't overcome, don't spin — just fail and return to parent.
 The parent has more context and can help. Failing early is better than wasting turns.
@@ -917,8 +919,8 @@ export function createOrchestratorTools(
 		tool(
 			"clarify",
 			"Ask a clarification question and send it to the user or parent orchestrator. " +
-				"Returns immediately — call yield() to wait for the response. " +
-				"The answer will arrive as a clarify_response message. " +
+				"Returns immediately — you can continue doing other work that doesn't need the answer, " +
+				"then call yield() when ready to wait for the clarify_response. " +
 				"Only use this for genuine ambiguities that could lead to wasted work.",
 			{
 				question: z
@@ -940,7 +942,7 @@ export function createOrchestratorTools(
 					content: [
 						{
 							type: "text" as const,
-							text: "Question sent. Call yield() to wait for the response. The answer will arrive as a clarify_response message.",
+							text: "Question sent. You can continue working on other things that don't need the answer, then call yield() when ready to receive the clarify_response.",
 						},
 					],
 				};
