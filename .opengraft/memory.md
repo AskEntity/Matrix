@@ -205,6 +205,26 @@ Added in Phase 4 alongside the MessageQueue feature:
 - **ORCHESTRATION_KNOWLEDGE** updated: `report_to_parent` listed in tools, `child_report` added to yield() message types
 - **TASK_SYSTEM_PROMPT** updated: `report_to_parent` listed in Worker Tools section
 
+## Anthropic Prompt Caching in DirectProvider
+
+Implemented in `src/direct-provider.ts`. Three cache breakpoints per API call:
+
+1. **System prompt**: Converted from `string` to `TextBlockParam[]` with `cache_control: { type: "ephemeral" }`. The SDK `system` field accepts `string | Array<TextBlockParam>`.
+
+2. **Tools**: `allTools` is mapped so the **last** tool gets `cache_control: { type: "ephemeral" }`. The `Tool` interface in the SDK supports `cache_control` natively.
+
+3. **Messages history**: `addMessagesCacheControl()` helper (exported for testing) adds a cache breakpoint to the **second-to-last user message** — this caches all stable history while leaving the current (newest) user message uncached.
+
+Key SDK facts:
+- `CacheControlEphemeral` type: `{ type: 'ephemeral' }` (optional `ttl` field: `'5m'` | `'1h'`)
+- `TextBlockParam` supports `cache_control?: CacheControlEphemeral | null`
+- `Tool` interface supports `cache_control?: CacheControlEphemeral | null`
+- `MessageCreateParamsBase.system` accepts `string | Array<TextBlockParam>`
+- `ToolResultBlockParam` supports `cache_control` natively (no `as any` needed)
+- Already-cached blocks (where `cache_control` is set) are skipped to avoid double-caching
+
+Cost calculation already accounts for cache tokens (`cache_creation` at 1.25x, `cache_read` at 0.1x).
+
 ## Pending Feature Request: Enhanced yield() Status Summary
 
 User requested: When yield() returns, it should show not just the messages that woke the agent, but also a summary of what's still pending:
