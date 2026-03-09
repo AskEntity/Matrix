@@ -796,6 +796,39 @@ footer {
 }
 
 /* =========================================================
+   Auto-scroll lock button
+   ========================================================= */
+
+.btn-scroll-lock {
+	background: rgba(74, 158, 255, 0.1);
+	color: var(--accent);
+	border: 1px solid rgba(74, 158, 255, 0.3);
+	padding: 1px 8px;
+	border-radius: 5px;
+	font-size: 11px;
+	font-weight: 600;
+	cursor: pointer;
+	transition:
+		background var(--transition-fast),
+		border-color var(--transition-fast);
+	animation: scroll-lock-pulse 2s ease-in-out infinite;
+}
+.btn-scroll-lock:hover {
+	background: rgba(74, 158, 255, 0.2);
+	border-color: var(--accent);
+}
+
+@keyframes scroll-lock-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.6;
+	}
+}
+
+/* =========================================================
    Scrollbar
    ========================================================= */
 
