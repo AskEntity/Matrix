@@ -1214,7 +1214,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		startupReady = true;
 	}
 
-	return { app, pm, wsClients, autoResumeProjects, shutdown, getTracker, markReady };
+	return {
+		app,
+		pm,
+		wsClients,
+		autoResumeProjects,
+		shutdown,
+		getTracker,
+		markReady,
+	};
 }
 
 const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft top-level orchestrator for this project.

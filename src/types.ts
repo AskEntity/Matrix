@@ -24,7 +24,7 @@ export interface TaskNode {
 	message: string | null;
 	/** Number of consecutive failures (auto-stuck at 3). */
 	failCount: number;
-	/** Cost in USD for this task's agent execution. */
+	/** Accumulated cost in USD for this task's agent execution. */
 	costUsd?: number;
 	createdAt: string;
 	updatedAt: string;

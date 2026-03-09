@@ -198,6 +198,14 @@ export class TaskTracker {
 		this.nodes.delete(nodeId);
 	}
 
+	/** Accumulate cost on a task node. */
+	updateCost(nodeId: string, costUsd: number): void {
+		const node = this.get(nodeId);
+		if (!node) return;
+		node.costUsd = (node.costUsd ?? 0) + costUsd;
+		node.updatedAt = new Date().toISOString();
+	}
+
 	/** Get nodes filtered by status. */
 	byStatus(status: TaskStatus): TaskNode[] {
 		return Array.from(this.nodes.values()).filter((n) => n.status === status);
