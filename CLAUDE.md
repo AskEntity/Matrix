@@ -68,10 +68,11 @@ Project lifecycle is deterministic code, not agent work.
 | PATCH | /projects/:id/tasks/:nodeId | Update task status/branch |
 | POST | /projects/:id/tasks/:nodeId/continue | Continue failed/stuck task (optional `{message}`) |
 | DELETE | /projects/:id/tasks/:nodeId | Remove task and descendants |
-| POST | /projects/:id/run | Execute agent task (one-shot) |
-| POST | /projects/:id/stream | Execute agent task (SSE streaming) |
+| POST | /projects/:id/run | Start agent (fire-and-forget, returns `{status:"running"}`) |
 | POST | /projects/:id/decompose | Agent breaks goal into task tree |
-| POST | /projects/:id/orchestrate/agent | Agent-driven orchestration with MCP tools |
+| POST | /projects/:id/orchestrate/agent | Start orchestration (fire-and-forget) |
+| GET | /projects/:id/agent | Check if agent is running |
+| POST | /projects/:id/stop | Stop running agent |
 | POST | /projects/:id/message | Send instruction to running agent |
 | WS | /ws | Real-time task tree + agent events + message injection |
 
@@ -101,6 +102,7 @@ Project lifecycle is deterministic code, not agent work.
 2. **All user-facing text must go through i18n.** No raw string literals in HTML/UI.
 3. **Pre-commit hooks enforce all checks** (typecheck, lint, test).
 4. Three repetitions before abstracting. No premature helpers.
+5. **No synchronous mutable APIs.** All state-changing endpoints return immediately (fire-and-forget). Synchronous endpoints are read-only state probes or event streams. Mutations = submit signal → daemon acks → observe via WS/SSE.
 
 ## Methodology Summary (read every session)
 
@@ -207,4 +209,9 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Resource leak fixes: dead WS client cleanup, worktree cleanup on task delete
 - [x] API retry with exponential backoff (up to 4 retries, handles 529/500/rate limit)
 - [x] WS reconnection with exponential backoff in web UI
+- [x] Fire-and-forget architecture: all mutable APIs return immediately, observe via WS
+- [x] Removed synchronous /stream endpoint (replaced by fire-and-forget + WS)
+- [x] Agent lifecycle: GET /agent (status), POST /stop, POST /message
+- [x] CLI stop command, orchestrate auto-watches via WS after submit
+- [ ] Auto-detect projects (no manual init required)
 - [ ] Dual-track verification: compare external toolchain vs self-hosted results

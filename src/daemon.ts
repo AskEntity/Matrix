@@ -142,13 +142,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return parts.join("\n\n");
 	}
 
-	/** Prepend project memory to a prompt if available. */
-	function withMemory(projectPath: string, prompt: string): string {
-		const memory = readProjectMemory(projectPath);
-		if (!memory) return prompt;
-		return `## Project Memory\n${memory}\n\n${prompt}`;
-	}
-
 	/** Get or create a TaskTracker for a project. */
 	async function getTracker(projectId: string): Promise<TaskTracker> {
 		let tracker = trackers.get(projectId);
@@ -446,7 +439,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ ok: true });
 	});
 
-	// Agent execution (one-shot)
+	// Agent execution (fire-and-forget, same as orchestrate)
 	app.post("/projects/:id/run", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) {
@@ -456,80 +449,17 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			prompt: string;
 			maxTurns?: number;
 			model?: string;
+			childModel?: string;
 		}>();
 		if (!body.prompt) {
 			return c.json({ error: "prompt is required" }, 400);
 		}
-		try {
-			const result = await config.agentProvider.execute({
-				prompt: withMemory(project.path, body.prompt),
-				cwd: project.path,
-				maxTurns: body.maxTurns,
-				model: body.model,
-			});
-			return c.json(result);
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error";
-			return c.json({ error: message }, 500);
+		if (activeOrchestrations.has(project.id)) {
+			return c.json({ error: "Agent already running for this project" }, 409);
 		}
-	});
-
-	// Agent execution (SSE streaming)
-	app.post("/projects/:id/stream", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const body = await c.req.json<{
-			prompt: string;
-			maxTurns?: number;
-			model?: string;
-		}>();
-		if (!body.prompt) {
-			return c.json({ error: "prompt is required" }, 400);
-		}
-
-		const stream = new ReadableStream({
-			async start(controller) {
-				const encoder = new TextEncoder();
-				const send = (event: string, data: unknown) => {
-					controller.enqueue(
-						encoder.encode(
-							`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
-						),
-					);
-				};
-
-				try {
-					const gen = config.agentProvider.stream({
-						prompt: withMemory(project.path, body.prompt),
-						cwd: project.path,
-						maxTurns: body.maxTurns,
-						model: body.model,
-					});
-
-					let result = await gen.next();
-					while (!result.done) {
-						send("event", result.value);
-						result = await gen.next();
-					}
-					send("result", result.value);
-				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
-					send("error", { error: message });
-				} finally {
-					controller.close();
-				}
-			},
-		});
-
-		return new Response(stream, {
-			headers: {
-				"Content-Type": "text/event-stream",
-				"Cache-Control": "no-cache",
-				Connection: "keep-alive",
-			},
-		});
+		await getTracker(project.id);
+		launchAgent(project, body);
+		return c.json({ status: "running", projectId: project.id });
 	});
 
 	// Task decomposition: agent breaks goal into task tree
@@ -736,7 +666,37 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ status: "running", projectId: project.id });
 	});
 
-	// Inject a message into a running orchestration
+	// Check if an agent is running for a project
+	app.get("/projects/:id/agent", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const session = activeSessions.get(project.id);
+		return c.json({
+			running: !!session,
+			sessionId: session?.sessionId ?? null,
+		});
+	});
+
+	// Stop a running agent
+	app.post("/projects/:id/stop", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const session = activeSessions.get(project.id);
+		if (!session) {
+			return c.json({ error: "No active agent for this project" }, 404);
+		}
+		session.stop();
+		activeSessions.delete(project.id);
+		activeOrchestrations.delete(project.id);
+		broadcastEvent(project.id, { type: "agent_stopped" });
+		return c.json({ ok: true });
+	});
+
+	// Inject a message into a running agent
 	app.post("/projects/:id/message", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) {

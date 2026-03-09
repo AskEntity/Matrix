@@ -147,6 +147,10 @@ function handleWSMessage(msg) {
 		case "message_injected":
 			logEntry("orchestration_started", `You: ${msg.message}`);
 			break;
+		case "agent_stopped":
+			logLifecycleEntry("orchestration_completed", "Agent stopped");
+			setOrchestrationRunning(false);
+			break;
 		case "error":
 			logEntry("error", `Error: ${msg.message}`);
 			break;
@@ -209,9 +213,18 @@ async function selectProject(projectId) {
 	if (!projectId) {
 		taskTree.innerHTML = "";
 		noTasks.style.display = "block";
+		setOrchestrationRunning(false);
 		return;
 	}
 	await fetchTasks(projectId);
+	// Check if an agent is currently running
+	try {
+		const agentRes = await fetch(`/projects/${projectId}/agent`);
+		const agentStatus = await agentRes.json();
+		setOrchestrationRunning(agentStatus.running);
+	} catch {
+		/* ignore */
+	}
 	if (ws && ws.readyState === WebSocket.OPEN) {
 		ws.send(JSON.stringify({ type: "subscribe", projectId }));
 	}
@@ -635,58 +648,45 @@ orchestrateForm.addEventListener("submit", async (e) => {
 	promptInput.value = "";
 
 	try {
-		if (ws && ws.readyState === WebSocket.OPEN) {
-			const msg = {
-				type: "orchestrate",
-				projectId: selectedProjectId,
-				prompt,
-			};
-			if (model) msg.model = model;
-			if (childModel) msg.childModel = childModel;
-			ws.send(JSON.stringify(msg));
-		} else {
-			setOrchestrationRunning(true);
-			logLifecycleEntry(
-				"orchestration_started",
-				"Orchestration started (HTTP fallback)",
-			);
-			const res = await fetch(
-				`/projects/${selectedProjectId}/orchestrate/agent`,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ prompt, model, childModel }),
-				},
-			);
-			const result = await res.json();
-			logLifecycleEntry(
-				"orchestration_completed",
-				`Completed: ${result.success ? "SUCCESS" : "FAILED"} ($${(result.costUsd || 0).toFixed(2)})`,
-			);
-			if (result.tree) renderTaskTree(result.tree.nodes || []);
-			setOrchestrationRunning(false);
+		// Always use HTTP POST (fire-and-forget), observe via WS
+		const body = { prompt };
+		if (model) body.model = model;
+		if (childModel) body.childModel = childModel;
+
+		const res = await fetch(
+			`/projects/${selectedProjectId}/orchestrate/agent`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			},
+		);
+		const result = await res.json();
+		if (!res.ok) {
+			logEntry("error", result.error || "Failed to start orchestration");
 		}
+		// orchestration_started event will come via WS
 	} catch (err) {
 		logEntry("error", err.message);
-		setOrchestrationRunning(false);
 	}
 });
 
 // --- Stop orchestration ---
 
-btnStop.addEventListener("click", () => {
+btnStop.addEventListener("click", async () => {
 	if (!selectedProjectId) return;
-	// Send stop via inject message (the agent will receive it)
-	if (ws && ws.readyState === WebSocket.OPEN) {
-		ws.send(
-			JSON.stringify({
-				type: "inject_message",
-				projectId: selectedProjectId,
-				prompt:
-					"STOP: The user has requested to stop the orchestration. Finish your current step, update task statuses, and stop.",
-			}),
-		);
-		logEntry("orchestration_started", "Stop requested...");
+	try {
+		const res = await fetch(`/projects/${selectedProjectId}/stop`, {
+			method: "POST",
+		});
+		if (res.ok) {
+			logEntry("agent_event", "Stop requested");
+		} else {
+			const err = await res.json();
+			logEntry("error", err.error || "Failed to stop agent");
+		}
+	} catch (err) {
+		logEntry("error", `Stop failed: ${err.message}`);
 	}
 });
 

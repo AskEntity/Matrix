@@ -151,10 +151,10 @@ async function handleRun(args: string[]): Promise<void> {
 	const projectId = await resolveCurrentProject();
 	if (!projectId) return;
 
-	console.log("Running agent...");
+	// Submit orchestration (fire-and-forget, same as orchestrate but simpler)
 	const body: Record<string, unknown> = { prompt };
 	if (model) body.model = model;
-	const res = await api(`/projects/${projectId}/run`, {
+	const res = await api(`/projects/${projectId}/orchestrate/agent`, {
 		method: "POST",
 		body: JSON.stringify(body),
 	});
@@ -165,18 +165,8 @@ async function handleRun(args: string[]): Promise<void> {
 		process.exit(1);
 	}
 
-	const result = (await res.json()) as {
-		success: boolean;
-		output: string;
-		turns?: number;
-		costUsd?: number;
-	};
-
-	console.log(result.success ? "Success" : "Failed");
-	if (result.turns) console.log(`Turns: ${result.turns}`);
-	if (result.costUsd) console.log(`Cost: $${result.costUsd.toFixed(4)}`);
-	console.log("");
-	console.log(result.output);
+	console.log("Agent started. Watching activity (Ctrl+C to detach)...\n");
+	await watchProject(projectId);
 }
 
 async function handleDecompose(args: string[]): Promise<void> {
@@ -244,8 +234,6 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 	const projectId = await resolveCurrentProject();
 	if (!projectId) return;
 
-	console.log(isResume ? "Resuming orchestration..." : "Orchestrating...");
-
 	const body: Record<string, unknown> = {};
 	if (isResume) {
 		body.resume = true;
@@ -256,49 +244,11 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 	if (model) body.model = model;
 	if (childModel) body.childModel = childModel;
 
-	// Connect WS in background for real-time event display
-	const wsUrl = `${DAEMON_URL.replace(/^http/, "ws")}/ws`;
-	const ws = new WebSocket(wsUrl);
-	ws.onopen = () => {
-		ws.send(JSON.stringify({ type: "subscribe", projectId }));
-	};
-	ws.onmessage = (evt) => {
-		try {
-			const msg = JSON.parse(
-				typeof evt.data === "string" ? evt.data : "",
-			) as Record<string, unknown>;
-			if (msg.type !== "tree_updated") {
-				formatWatchEvent(msg);
-			}
-		} catch {
-			/* ignore */
-		}
-	};
-	ws.onerror = () => {};
-
-	// Wait briefly for WS to connect, then run via HTTP (blocks until done)
-	await new Promise<void>((r) => setTimeout(r, 200));
-
-	// Long timeout — orchestration can run for many minutes
-	const controller = new AbortController();
-	const timeoutId = setTimeout(() => controller.abort(), 30 * 60 * 1000); // 30 min
-	let res: Response;
-	try {
-		res = await fetch(`${DAEMON_URL}/projects/${projectId}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-			signal: controller.signal,
-		});
-	} finally {
-		clearTimeout(timeoutId);
-	}
-
-	try {
-		ws.close();
-	} catch {
-		/* ignore */
-	}
+	// Submit orchestration (returns immediately)
+	const res = await api(`/projects/${projectId}/orchestrate/agent`, {
+		method: "POST",
+		body: JSON.stringify(body),
+	});
 
 	if (!res.ok) {
 		const err = (await res.json()) as { error: string };
@@ -306,38 +256,26 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 		process.exit(1);
 	}
 
-	const result = (await res.json()) as {
-		success: boolean;
-		output: string;
-		costUsd?: number;
-		turns?: number;
-		childCosts?: {
-			totalCostUsd: number;
-			totalTurns: number;
-			taskCount: number;
-		};
-		tree?: {
-			root: { title: string; status: string } | null;
-			nodes: { id: string; title: string; status: string }[];
-		};
-	};
+	console.log(
+		isResume ? "Resuming orchestration..." : "Orchestration started.",
+	);
+	console.log("Watching agent activity (Ctrl+C to detach)...\n");
 
-	console.log("");
-	console.log(result.success ? "Success" : "Failed");
-	if (result.turns) console.log(`Orchestrator turns: ${result.turns}`);
-	if (result.costUsd) console.log(`Total cost: $${result.costUsd.toFixed(4)}`);
-	if (result.childCosts && result.childCosts.taskCount > 0) {
-		console.log(
-			`  Child agents: ${result.childCosts.taskCount} tasks, ${result.childCosts.totalTurns} turns, $${result.childCosts.totalCostUsd.toFixed(4)}`,
-		);
+	// Auto-switch to watch mode
+	await watchProject(projectId);
+}
+
+async function handleStop(): Promise<void> {
+	const projectId = await resolveCurrentProject();
+	if (!projectId) return;
+
+	const res = await api(`/projects/${projectId}/stop`, { method: "POST" });
+	if (!res.ok) {
+		const err = (await res.json()) as { error: string };
+		console.error(`Error: ${err.error}`);
+		process.exit(1);
 	}
-	if (result.tree) {
-		console.log(`\nTask tree: ${result.tree.nodes.length} nodes`);
-		for (const node of result.tree.nodes) {
-			const icon = statusEmoji(node.status);
-			console.log(`  ${icon} ${node.title} [${node.status}]`);
-		}
-	}
+	console.log("Agent stopped.");
 }
 
 async function resolveProject(idOrPath?: string): Promise<string | null> {
@@ -405,19 +343,16 @@ async function handleContinue(args: string[]): Promise<void> {
 
 	const node = (await res.json()) as { title: string; status: string };
 	console.log(`Continued: ${node.title} -> ${node.status}`);
+	console.log("Watching activity (Ctrl+C to detach)...\n");
+	await watchProject(projectId);
 }
 
-async function handleWatch(): Promise<void> {
-	const projectId = await resolveCurrentProject();
-	if (!projectId) return;
-
+/** Watch a project's agent activity via WebSocket. Resolves never (runs until Ctrl+C). */
+async function watchProject(projectId: string): Promise<void> {
 	const wsUrl = `${DAEMON_URL.replace(/^http/, "ws")}/ws`;
-	console.log(`Connecting to ${wsUrl}...`);
-
 	const ws = new WebSocket(wsUrl);
 
 	ws.onopen = () => {
-		console.log("Connected. Watching agent activity...\n");
 		ws.send(JSON.stringify({ type: "subscribe", projectId }));
 	};
 
@@ -444,6 +379,14 @@ async function handleWatch(): Promise<void> {
 
 	// Keep process alive
 	await new Promise(() => {});
+}
+
+async function handleWatch(): Promise<void> {
+	const projectId = await resolveCurrentProject();
+	if (!projectId) return;
+
+	console.log("Watching agent activity (Ctrl+C to stop)...\n");
+	await watchProject(projectId);
 }
 
 function formatWatchEvent(msg: Record<string, unknown>): void {
@@ -587,6 +530,9 @@ switch (command) {
 	case "msg":
 		await handleSend(args);
 		break;
+	case "stop":
+		await handleStop();
+		break;
 	case "health":
 		await handleHealth();
 		break;
@@ -602,11 +548,12 @@ switch (command) {
 		console.log("  run <prompt>    Run agent task (one-shot)");
 		console.log("  decompose <goal>  Break goal into task tree");
 		console.log(
-			"  orchestrate <goal>  Agent-driven: decompose + execute + merge",
+			"  orchestrate <goal>  Start agent orchestration (fire-and-forget)",
 		);
 		console.log("  continue <taskId> [msg]  Continue a failed/stuck task");
 		console.log("  watch           Watch agent activity in real-time");
 		console.log("  send <msg>      Send instruction to running agent");
+		console.log("  stop            Stop running agent");
 		console.log("  health          Check daemon status");
 		break;
 }
