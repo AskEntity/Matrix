@@ -1398,15 +1398,8 @@ export function App() {
 				if (targetNodeId) {
 					// Send to specific agent's queue
 					await sendMessageToTask(targetNodeId, prompt.trim());
-					const targetNode = nodeMap.get(targetNodeId);
-					const targetLabel = targetNode?.title ?? targetNodeId.slice(0, 8);
-					addLog(
-						"lifecycle",
-						`Message queued to "${targetLabel}": ${prompt.trim()}`,
-					);
 				} else {
 					await sendMessage(prompt.trim());
-					addLog("lifecycle", `Message queued: ${prompt.trim()}`);
 				}
 				setPendingMessages((prev) => [
 					...prev,
