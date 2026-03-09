@@ -180,4 +180,35 @@ describe("TaskTracker", () => {
 		expect(tracker.get(task1.id)).toBe(task1);
 		expect(tracker.get(task2.id)).toBe(task2);
 	});
+
+	test("addTask accepts budgetUsd option", () => {
+		const task = tracker.addTask("Budgeted task", "desc", {
+			budgetUsd: 0.5,
+		});
+		expect(task.budgetUsd).toBe(0.5);
+	});
+
+	test("addChild accepts budgetUsd option", () => {
+		const parent = tracker.addTask("Parent", "desc");
+		const child = tracker.addChild(parent.id, "Child", "desc", {
+			budgetUsd: 1.25,
+		});
+		expect(child.budgetUsd).toBe(1.25);
+	});
+
+	test("budgetUsd is undefined when not provided", () => {
+		const task = tracker.addTask("No budget", "desc");
+		expect(task.budgetUsd).toBeUndefined();
+	});
+
+	test("budgetUsd persists across save/load", async () => {
+		const task = tracker.addTask("Budget persist", "desc", {
+			budgetUsd: 2.0,
+		});
+		await tracker.save();
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+		expect(tracker2.get(task.id)?.budgetUsd).toBe(2.0);
+	});
 });

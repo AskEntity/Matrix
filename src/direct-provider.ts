@@ -1341,6 +1341,33 @@ export class DirectProvider implements AgentProvider {
 				).catch(() => {});
 			}
 
+			// Budget check: compute running cost and warn the agent if approaching limit
+			if (request.budgetUsd && request.budgetUsd > 0) {
+				const { inputPer1M, outputPer1M } = getModelPricing(model);
+				const runningCost =
+					(totalInputTokens * inputPer1M) / 1_000_000 +
+					(totalCacheCreationTokens * inputPer1M * 1.25) / 1_000_000 +
+					(totalCacheReadTokens * inputPer1M * 0.1) / 1_000_000 +
+					(totalOutputTokens * outputPer1M) / 1_000_000;
+				const ratio = runningCost / request.budgetUsd;
+
+				if (ratio >= 1.0) {
+					const warning = `⚠️ Budget exceeded (${runningCost.toFixed(4)} / ${request.budgetUsd.toFixed(2)} budget). Call done() now.`;
+					messages.push({
+						role: "user" as const,
+						content: warning,
+					});
+					yield { type: "status", message: warning };
+				} else if (ratio >= 0.8) {
+					const warning = `⚠️ Warning: task has used ${Math.round(ratio * 100)}% of its ${request.budgetUsd.toFixed(2)} budget (${runningCost.toFixed(4)} spent). Wrap up soon.`;
+					messages.push({
+						role: "user" as const,
+						content: warning,
+					});
+					yield { type: "status", message: warning };
+				}
+			}
+
 			// Check if done() was called by a tool in this batch — exit immediately
 			if (request.doneRef?.done) {
 				break;

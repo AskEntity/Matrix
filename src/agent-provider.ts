@@ -34,6 +34,8 @@ export interface AgentRequest {
 	doneRef?: { done: null | { status: "passed" | "failed"; summary: string } };
 	/** Callback to check if this agent has running children (for implicit yield on end_turn). */
 	hasRunningChildren?: () => boolean;
+	/** Budget limit in USD — provider will inject warnings at 80% and 100%. */
+	budgetUsd?: number;
 }
 
 /** Streaming event emitted by an agent during execution. */
