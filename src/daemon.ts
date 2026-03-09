@@ -1137,14 +1137,27 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		for (const project of projects) {
 			const tracker = await getTracker(project.id);
 			if (tracker.autoResume && tracker.orchestratorSessionId) {
+				// Reset orphaned in_progress tasks — their agent sessions died with the daemon
+				let orphanCount = 0;
+				for (const node of tracker.allNodes()) {
+					if (node.status === "in_progress") {
+						tracker.updateStatus(node.id, "failed");
+						orphanCount++;
+					}
+				}
+				if (orphanCount > 0) await tracker.save();
+
 				// Load event history from disk so UI can show previous logs
 				await loadEventHistory(project.id);
 				console.log(
 					`Auto-resuming orchestration for ${project.name} (${project.id.slice(0, 8)})`,
 				);
+				const resumePrompt =
+					orphanCount > 0
+						? `Continue where you left off. Note: ${orphanCount} in_progress task(s) were reset to failed due to daemon restart — check the task tree.`
+						: "Continue where you left off. Check the task tree and proceed.";
 				launchAgent(project, {
-					prompt:
-						"Continue where you left off. Check the task tree and proceed.",
+					prompt: resumePrompt,
 					resume: true,
 				});
 			}
