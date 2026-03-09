@@ -150,6 +150,9 @@ Daemon (Hono: HTTP + WS on :7433)
 | GET | /projects/:id/pending-messages | Pending messages waiting for agent consumption |
 | GET | /projects/:id/clarifications | Pending clarifications waiting for user answer |
 | POST | /projects/:id/clarify | Answer a pending clarification (taskId + answer) |
+| GET | /projects/:id/config | Get project config |
+| PATCH | /projects/:id/config | Merge partial config update |
+| GET | /projects/:id/tasks/:nodeId/conversation | Get task conversation history from session file |
 | WS | /ws | Real-time task tree + agent events |
 
 ## Prompt Caching (DirectProvider)
@@ -224,6 +227,9 @@ Three explicit cache breakpoints per API call:
 | `og cost [id]` | Show cost breakdown by task |
 | `og sessions clear` | Wipe session history |
 | `og sessions prune [--keep N]` | Prune old session files |
+| `og config` | Show project config |
+| `og config set <key> <value>` | Set a config value |
+| `og config unset <key>` | Remove a config value |
 | `og health` | Check daemon health |
 | `og daemon <cmd>` | Manage daemon service |
 
@@ -289,51 +295,52 @@ Three explicit cache breakpoints per API call:
 ## Backlog (next improvements to consider)
 
 - Compact checkpoint should include "Rejected Approaches" more aggressively — agents often retry failed paths after compaction
+- Activity log and conversation history unification — user wants them as one view (activity IS the conversation)
 
-## memory.md Duplication Root Cause (Investigated)
+## Known Pitfalls (Additional)
 
-**Root cause found in commit `7ad2cf6`**: The child agent (token budget task) used `write_file` to write memory.md. When constructing the content, it embedded the entire existing file content inside the new section text. This caused the new section to contain the full old content literally embedded in it (e.g., the dollar sign pitfall line became `use \`${"$"}\` to inject a literal \`# OpenGraft Project Memory...` followed by the whole file).
-
-**Pattern**: Agent read file → constructed new content with `write_file` → accidentally included old content as part of the new bullet point string → resulted in 3 copies of the file (old + embedded old + continuation).
-
-**Fix applied in `src/agent-tools.ts`**: Added explicit "NEVER use write_file on memory.md" warning to:
-1. The `## Memory System` section (orchestrator system prompt)
-2. The `## Worker Workflow` step 5 (worker system prompt)  
-3. The `buildTaskPrompt` instructions (step 4 of task prompt given to child agents)
-
-**Rule**: Always use `edit_file` (match last lines, extend them) or bash `echo >> .opengraft/memory.md` to append. Never `write_file` on memory.md.
+- **memory.md duplication**: Never use `write_file` on memory.md. Always `edit_file` (append) or `echo >>`. Agents accidentally embed full file contents when using write_file. Fix is in agent-tools.ts system prompts.
+- **Budget for child tasks**: Don't set budgets on child tasks from the orchestrator. Opus agents burn through $1 budgets just reading context. Budgets should be project-level safety limits only, set by the operator.
+- **Child task budget**: Agents no longer control budgets. `create_task` MCP tool doesn't accept `budgetUsd`. Default budget comes from project config `budgetUsd` field.
 
 ## Reusable Worker Pattern (tested & confirmed)
 
-Child agents can act as persistent workers without being torn down between tasks:
-1. Child does work → `report_to_parent("ready for more")` → `yield()` to wait
-2. Parent sees `child_report` via yield() → sends next task via `send_message_to_child`
-3. Child receives message during yield, does next task
-4. When truly done, orchestrator tells child to `done("passed", ...)`
-
+Child agents can act as persistent workers without being torn down between tasks.
 Benefits: Session/context reuse, cheaper than spawning new agents for related sequential tasks.
-Implementation: Existing `report_to_parent`, `yield()`, `send_message_to_child` tools — no code changes needed.
+Implementation: `report_to_parent`, `yield()`, `send_message_to_child` tools — no code changes needed.
 
 ## Auto-Prune Sessions on Daemon Startup
 
-`autoResumeProjects()` in `src/daemon.ts` now auto-prunes old session files for every project on daemon startup. Controlled by `OG_SESSION_KEEP` env var (default: 5). Keeps the N most-recent `.json` files by mtime; deletes the rest. Non-critical: failures are silently ignored. Runs for ALL projects (not just auto-resuming ones).
+`autoResumeProjects()` auto-prunes old session files on startup. `OG_SESSION_KEEP` env var (default: 5).
 
-**Test pattern**: To test mtime-based sorting in bun:test, write files sequentially with `await new Promise(r => setTimeout(r, 5))` between each write — this gives distinct filesystem mtimes reliably.
+## Project Configuration
 
-## Project Configuration Design
+Two config levels:
 
-Two config levels by design:
+1. **In-repo** (`.opengraft/` in git): `memory.md` (agent knowledge), future: rules, templates
+2. **Daemon-local** (`~/.opengraft/projects/{id}/config.json`): machine-specific settings
 
-1. **Project-traveling config** (`.opengraft/` in repo, committed to git):
-   - `memory.md` — agent knowledge
-   - Future: project-level rules, task templates, etc. that travel with the repo
+**Config fields** (`ProjectConfig` in `src/project-config.ts`):
+- `model` — orchestrator model (e.g., "claude-sonnet-4-6")
+- `childModel` — child agent model
+- `provider` — "direct" | "claude-code"
+- `budgetUsd` — default budget per task (safety limit, undefined = unlimited)
+- `clarifyTimeoutMs` — timeout for clarify tool responses
 
-2. **Daemon-local per-project config** (`~/.opengraft/projects/{id}/config.json`):
-   - `model` — default model for orchestrator (e.g., "claude-sonnet-4-6")
-   - `childModel` — default model for child agents
-   - `provider` — which provider to use ("direct" | "claude-code")
-   - `budgetUsd` — default budget per task
-   - These are machine-specific (different machines may use different models/keys)
-   - Daemon reads these when launching agents, falling back to env vars / global defaults
+**Priority**: explicit API/CLI param > project config > env var > hardcoded default
 
-The split: things that are environment/machine-specific go daemon-side; things that define project behavior go in-repo.
+**API routes**: `GET /projects/:id/config`, `PATCH /projects/:id/config`
+**CLI**: `og config`, `og config set <key> <value>`, `og config unset <key>`
+**Web UI**: Project settings panel (gear icon in sidebar), auto-saves on change
+
+**Integration**: `launchAgent()` loads config and uses it for model/childModel/budget defaults.
+`GET /projects/:id/agent` returns `{ running, sessionId, provider, model }`.
+`orchestration_started` WS event includes `provider` and `model` fields.
+
+## Token Counting Optimization
+
+DirectProvider estimates token counts from `usage.input_tokens + usage.output_tokens` instead of calling `countTokens` API every turn. Only calls `countTokens` when estimated tokens >= `LAZY_COUNT_THRESHOLD` (COMPRESS_THRESHOLD - 16k ≈ 150k). Usage events include `estimated?: boolean` field.
+
+## Conversation History API
+
+`GET /projects/:id/tasks/:nodeId/conversation` — reads session file, transforms Anthropic MessageParam[] into `{ role, content, hasToolUse, toolNames? }[]`. Last 100 messages. Returns `{ messages: [] }` on error/missing.
