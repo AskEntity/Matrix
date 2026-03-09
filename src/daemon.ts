@@ -672,6 +672,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					const doneRef: {
 						done: null | { status: "passed" | "failed"; summary: string };
 					} = { done: null };
+					const continueCfg = await loadProjectConfig(
+						config.dataDir,
+						project.id,
+					);
 
 					const { mcpServer, toolDefs, hasRunningChildren } =
 						createOrchestratorTools(
@@ -685,6 +689,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								depth: 1,
 								queue: childQueue,
 								doneRef,
+								defaultBudgetUsd: continueCfg.budgetUsd,
 								onTaskEvent: (event) => {
 									broadcastEvent(project.id, event);
 									broadcastTreeUpdate(project.id, tracker);
@@ -980,6 +985,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				childModel: effectiveChildModel,
 				queue,
 				doneRef,
+				defaultBudgetUsd: projectCfg.budgetUsd,
 				onTaskEvent: (event) => {
 					broadcastEvent(project.id, event);
 					broadcastTreeUpdate(project.id, tracker);
