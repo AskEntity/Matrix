@@ -652,6 +652,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					success: finalResult.success,
 					costUsd: totalCostUsd,
 					turns: finalResult.turns,
+					inputTokens: finalResult.inputTokens,
+					cacheCreationTokens: finalResult.cacheCreationTokens,
+					cacheReadTokens: finalResult.cacheReadTokens,
+					outputTokens: finalResult.outputTokens,
 					childCosts: {
 						totalCostUsd: costAccumulator.totalCostUsd,
 						totalTurns: costAccumulator.totalTurns,
