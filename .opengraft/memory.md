@@ -313,3 +313,9 @@ Child agents can act as persistent workers without being torn down between tasks
 
 Benefits: Session/context reuse, cheaper than spawning new agents for related sequential tasks.
 Implementation: Existing `report_to_parent`, `yield()`, `send_message_to_child` tools — no code changes needed.
+
+## Auto-Prune Sessions on Daemon Startup
+
+`autoResumeProjects()` in `src/daemon.ts` now auto-prunes old session files for every project on daemon startup. Controlled by `OG_SESSION_KEEP` env var (default: 5). Keeps the N most-recent `.json` files by mtime; deletes the rest. Non-critical: failures are silently ignored. Runs for ALL projects (not just auto-resuming ones).
+
+**Test pattern**: To test mtime-based sorting in bun:test, write files sequentially with `await new Promise(r => setTimeout(r, 5))` between each write — this gives distinct filesystem mtimes reliably.

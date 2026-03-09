@@ -1437,8 +1437,36 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	/** Auto-resume orchestrations that were running before daemon restart. */
 	async function autoResumeProjects(): Promise<void> {
+		const sessionKeep = Number.parseInt(process.env.OG_SESSION_KEEP ?? "5", 10);
 		const projects = pm.list();
 		for (const project of projects) {
+			// Auto-prune old session files to prevent unbounded disk growth
+			const sessionsDir = join(config.dataDir, "sessions", project.id);
+			try {
+				const files = await readdir(sessionsDir).catch(() => []);
+				const jsonFiles = files.filter((f) => f.endsWith(".json"));
+				if (jsonFiles.length > sessionKeep) {
+					const withMtime = await Promise.all(
+						jsonFiles.map(async (f) => ({
+							name: f,
+							mtime: (await stat(join(sessionsDir, f))).mtimeMs,
+						})),
+					);
+					withMtime.sort((a, b) => b.mtime - a.mtime);
+					const toDelete = withMtime.slice(sessionKeep);
+					await Promise.all(
+						toDelete.map((f) => unlink(join(sessionsDir, f.name))),
+					);
+					if (toDelete.length > 0) {
+						console.log(
+							`Auto-pruned ${toDelete.length} old session(s) for ${project.name}`,
+						);
+					}
+				}
+			} catch {
+				// Non-critical — ignore prune failures
+			}
+
 			const tracker = await getTracker(project.id);
 			if (tracker.autoResume && tracker.orchestratorSessionId) {
 				// Reset orphaned in_progress tasks — their agent sessions died with the daemon
