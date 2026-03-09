@@ -957,8 +957,43 @@ export class DirectProvider implements AgentProvider {
 			// Add assistant message to history
 			messages.push({ role: "assistant", content: response.content });
 
-			// If no tool use, we're done
+			// If no tool use, handle end_turn
 			if (response.stop_reason === "end_turn" || toolUses.length === 0) {
+				// Check if done() was called in a previous tool batch
+				if (request.doneRef?.done) {
+					break;
+				}
+
+				// Implicit yield: if agent has running children, wait for messages
+				if (request.hasRunningChildren?.() && queue) {
+					yield {
+						type: "status",
+						message:
+							"Agent ended turn with running children — implicit yield (waiting for messages)",
+					};
+					try {
+						const first = await queue.wait();
+						const rest = queue.drain();
+						const all = [first, ...rest];
+						const formatted = all.map(formatQueueMessage).join("\n");
+						yield { type: "queue_message", messages: formatted };
+						// Inject messages as a new user turn and continue the loop
+						messages.push({
+							role: "user" as const,
+							content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+						});
+						continue;
+					} catch {
+						// Queue closed — fall through to normal exit
+					}
+				}
+
+				// Default exit — agent stopped without calling done()
+				yield {
+					type: "status",
+					message:
+						"Warning: agent ended without calling done() — treating as success",
+				};
 				break;
 			}
 
@@ -1036,6 +1071,11 @@ export class DirectProvider implements AgentProvider {
 
 			// Add tool results to history
 			messages.push({ role: "user", content: toolResults });
+
+			// Check if done() was called by a tool in this batch — exit immediately
+			if (request.doneRef?.done) {
+				break;
+			}
 		}
 
 		// Persist conversation history for future resume
@@ -1050,9 +1090,11 @@ export class DirectProvider implements AgentProvider {
 			(totalCacheReadTokens * inputPer1M * 0.1) / 1_000_000 +
 			(totalOutputTokens * outputPer1M) / 1_000_000;
 
+		// Use doneRef result if the done() tool was called
+		const doneResult = request.doneRef?.done;
 		return {
-			success: true,
-			output: lastText,
+			success: doneResult ? doneResult.status === "passed" : true,
+			output: doneResult ? doneResult.summary : lastText,
 			costUsd,
 			turns,
 			sessionId,
