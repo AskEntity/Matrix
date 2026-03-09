@@ -627,6 +627,56 @@ function formatWatchEvent(msg: Record<string, unknown>): void {
 	}
 }
 
+async function handleCost(args: string[]): Promise<void> {
+	const projectId = await resolveProject(args[0]);
+	if (!projectId) return;
+
+	// Fetch task tree
+	const res = await api(`/projects/${projectId}/tasks`);
+	if (!res.ok) {
+		console.error("Error fetching tasks");
+		process.exit(1);
+	}
+	const { nodes } = (await res.json()) as {
+		nodes: Array<{ title: string; costUsd?: number; status: string }>;
+	};
+
+	const withCost = nodes.filter((n) => n.costUsd && n.costUsd > 0);
+	const total = withCost.reduce((acc, n) => acc + (n.costUsd ?? 0), 0);
+
+	if (total === 0) {
+		console.log("No cost data recorded yet. Run some tasks first.");
+		return;
+	}
+
+	// Get project name
+	const projectRes = await api(`/projects/${projectId}`);
+	const project = (await projectRes.json()) as { name: string };
+
+	console.log(`Cost Summary for ${project.name}`);
+	console.log("─".repeat(40));
+	console.log(`Total: ${total.toFixed(4)}`);
+
+	if (withCost.length > 0) {
+		console.log("");
+		console.log("By task (top 10):");
+		const sorted = [...withCost].sort(
+			(a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0),
+		);
+		for (const task of sorted.slice(0, 10)) {
+			const cost = `${(task.costUsd ?? 0).toFixed(4)}`;
+			const status =
+				task.status === "passed" ? "✓" : task.status === "failed" ? "✗" : "·";
+			console.log(`  ${cost.padEnd(10)} ${status} ${task.title}`);
+		}
+	}
+
+	console.log("");
+	console.log(
+		`${withCost.length} task${withCost.length !== 1 ? "s" : ""} with recorded cost.`,
+	);
+}
+
 async function handleSend(args: string[]): Promise<void> {
 	const message = args.join(" ");
 	if (!message) {
@@ -967,6 +1017,9 @@ switch (command) {
 	case "health":
 		await handleHealth();
 		break;
+	case "cost":
+		await handleCost(args);
+		break;
 	case "daemon":
 		await handleDaemon(args);
 		break;
@@ -1002,6 +1055,7 @@ switch (command) {
 		console.log(
 			"  logs [-n N] [id]  Show project event history (last N events)",
 		);
+		console.log("  cost [id]       Show cost summary for project");
 		console.log("  health          Check daemon health");
 		console.log("");
 		console.log("Quick start:");
