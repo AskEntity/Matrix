@@ -3,7 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent, AgentProvider } from "./agent-provider.ts";
+import { createOrchestratorTools, isDescendantOf } from "./agent-tools.ts";
 import { createApp } from "./daemon.ts";
+import { TaskTracker } from "./task-tracker.ts";
 import type {
 	AgentResult,
 	HealthResponse,
@@ -599,5 +601,135 @@ describe("daemon orchestrate/agent API", () => {
 		expect(res.status).toBe(404);
 
 		await rm(dataDir, { recursive: true });
+	});
+});
+
+describe("create_task validation", () => {
+	let tempDir: string;
+	let tracker: TaskTracker;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-ct-val-"));
+		tracker = new TaskTracker(join(tempDir, "tree.json"));
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+	});
+
+	/** Helper to invoke the create_task tool from the MCP tool definitions. */
+	async function invokeCreateTask(
+		currentTaskId: string | null,
+		args: { title: string; description: string; parentId?: string },
+	) {
+		const { toolDefs } = createOrchestratorTools({
+			tracker,
+			provider: mockProvider,
+			worktrees: {} as never,
+			projectPath: tempDir,
+			repoPath: tempDir,
+			currentTaskId,
+		});
+		const createTaskTool = toolDefs.find((t) => t.name === "create_task");
+		if (!createTaskTool) throw new Error("create_task tool not found");
+		// biome-ignore lint/suspicious/noExplicitAny: test helper accesses internal handler
+		return (createTaskTool as any).handler(args);
+	}
+
+	test("isDescendantOf returns true for direct child", () => {
+		const parent = tracker.addTask("parent", "");
+		const child = tracker.addChild(parent.id, "child", "");
+		expect(isDescendantOf(tracker, child.id, parent.id)).toBe(true);
+	});
+
+	test("isDescendantOf returns true for deep descendant", () => {
+		const root = tracker.addTask("root", "");
+		const mid = tracker.addChild(root.id, "mid", "");
+		const leaf = tracker.addChild(mid.id, "leaf", "");
+		expect(isDescendantOf(tracker, leaf.id, root.id)).toBe(true);
+	});
+
+	test("isDescendantOf returns false for non-ancestor", () => {
+		const a = tracker.addTask("a", "");
+		const b = tracker.addTask("b", "");
+		expect(isDescendantOf(tracker, b.id, a.id)).toBe(false);
+	});
+
+	test("isDescendantOf returns false for self", () => {
+		const a = tracker.addTask("a", "");
+		expect(isDescendantOf(tracker, a.id, a.id)).toBe(false);
+	});
+
+	test("agent can create a child under itself (parentId === currentTaskId)", async () => {
+		const agent = tracker.addTask("agent", "");
+		const result = await invokeCreateTask(agent.id, {
+			title: "child",
+			description: "desc",
+			parentId: agent.id,
+		});
+		expect(result.isError).toBeUndefined();
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.parentId).toBe(agent.id);
+	});
+
+	test("agent can create a child under its own descendant", async () => {
+		const agent = tracker.addTask("agent", "");
+		const child = tracker.addChild(agent.id, "child", "");
+		const result = await invokeCreateTask(agent.id, {
+			title: "grandchild",
+			description: "desc",
+			parentId: child.id,
+		});
+		expect(result.isError).toBeUndefined();
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.parentId).toBe(child.id);
+	});
+
+	test("agent cannot create a task under its parent", async () => {
+		const parent = tracker.addTask("parent", "");
+		const agent = tracker.addChild(parent.id, "agent", "");
+		const result = await invokeCreateTask(agent.id, {
+			title: "bad",
+			description: "desc",
+			parentId: parent.id,
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("not your task or descendant");
+	});
+
+	test("agent cannot create a task under a sibling", async () => {
+		const parent = tracker.addTask("parent", "");
+		const agent = tracker.addChild(parent.id, "agent", "");
+		const sibling = tracker.addChild(parent.id, "sibling", "");
+		const result = await invokeCreateTask(agent.id, {
+			title: "bad",
+			description: "desc",
+			parentId: sibling.id,
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("not your task or descendant");
+	});
+
+	test("top-level orchestrator (currentTaskId=null) can create anywhere", async () => {
+		const existing = tracker.addTask("existing", "");
+		const result = await invokeCreateTask(null, {
+			title: "anywhere",
+			description: "desc",
+			parentId: existing.id,
+		});
+		expect(result.isError).toBeUndefined();
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.parentId).toBe(existing.id);
+	});
+
+	test("agent can create top-level task (no parentId)", async () => {
+		const agent = tracker.addTask("agent", "");
+		const result = await invokeCreateTask(agent.id, {
+			title: "toplevel",
+			description: "desc",
+		});
+		expect(result.isError).toBeUndefined();
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.parentId).toBeNull();
 	});
 });
