@@ -270,6 +270,20 @@ Three explicit cache breakpoints per API call:
 - ClaudeCodeProvider: drains queue after each `assistant` event, injects via `sendMessage()` in startSession mode
 - Race condition: if agent calls `done()` before message arrives, message is lost (queue closed). Expected — messages only arrive at tool-call boundaries.
 
+## Clarify UI Feature (implemented)
+
+- `clarification_requested` events (emitted by the `clarify()` MCP tool via `onTaskEvent`) are now intercepted inside `broadcastEvent()` and stored in `pendingClarifications` per-project Map.
+- `GET /projects/:id/clarifications` returns current list: `{ clarifications: [{id, taskId, question, timestamp}] }`
+- `POST /projects/:id/clarify` calls `removePendingClarification()` after enqueuing response, which broadcasts updated `pending_clarifications` WS event.
+- WS `clarify_response` handler (from Web UI / old path) also calls `removePendingClarification()`.
+- On WS subscribe, sends current `pending_clarifications` to new client.
+- Web UI: `pendingClarifications` state + `clarifyAnswers` state (per-taskId input values).
+- Web UI: Handles `pending_clarifications` WS event, fetches on project change.
+- Web UI: Shows clarification cards above footer with question, task name, text input, Answer button.
+- Web UI: Calls `POST /projects/:id/clarify` with `{taskId, answer}` on submit.
+- CSS: `.og-clarification-card`, `.og-clarification-form`, `.og-clarification-input` etc. in blue accent.
+- **Key design**: clarification is per-taskId. Only one clarification per taskId is tracked (first one wins); removal is by taskId not id. This mirrors the session routing (root session only).
+
 ## Backlog (next improvements to consider)
 
 - Compact checkpoint should include "Rejected Approaches" more aggressively — agents often retry failed paths after compaction

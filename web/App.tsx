@@ -1199,6 +1199,12 @@ export function App() {
 	const [pendingMessages, setPendingMessages] = useState<
 		{ id: string; taskId: string | null; text: string; timestamp: number }[]
 	>([]);
+	const [pendingClarifications, setPendingClarifications] = useState<
+		{ id: string; taskId: string; question: string; timestamp: number }[]
+	>([]);
+	const [clarifyAnswers, setClarifyAnswers] = useState<Record<string, string>>(
+		{},
+	);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
 	const { nodes, refresh: refreshTasks, updateFromWS } = useTasks(projectId);
@@ -1456,6 +1462,16 @@ export function App() {
 					setPendingMessages(messages ?? []);
 					break;
 				}
+				case "pending_clarifications": {
+					const clarifications = msg.clarifications as {
+						id: string;
+						taskId: string;
+						question: string;
+						timestamp: number;
+					}[];
+					setPendingClarifications(clarifications ?? []);
+					break;
+				}
 			}
 		},
 		[addLog, updateFromWS, setRunning],
@@ -1496,6 +1512,30 @@ export function App() {
 				},
 			)
 			.catch(() => setPendingMessages([]));
+	}, [projectId]);
+
+	// Fetch pending clarifications on project change
+	useEffect(() => {
+		if (!projectId) {
+			setPendingClarifications([]);
+			setClarifyAnswers({});
+			return;
+		}
+		fetch(`/projects/${projectId}/clarifications`)
+			.then((r) => r.json())
+			.then(
+				(data: {
+					clarifications: {
+						id: string;
+						taskId: string;
+						question: string;
+						timestamp: number;
+					}[];
+				}) => {
+					setPendingClarifications(data.clarifications ?? []);
+				},
+			)
+			.catch(() => setPendingClarifications([]));
 	}, [projectId]);
 
 	// Auto-target selected in_progress tasks for messages
@@ -1539,6 +1579,32 @@ export function App() {
 	async function handleStop() {
 		try {
 			await stop();
+		} catch (err) {
+			addLog("error", (err as Error).message);
+		}
+	}
+
+	async function handleClarifySubmit(taskId: string) {
+		if (!projectId) return;
+		const answer = clarifyAnswers[taskId]?.trim();
+		if (!answer) return;
+		try {
+			const res = await fetch(`/projects/${projectId}/clarify`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ taskId, answer }),
+			});
+			if (!res.ok) {
+				const body = (await res.json()) as { error: string };
+				addLog("error", `Failed to answer clarification: ${body.error}`);
+				return;
+			}
+			// Clear the answer input
+			setClarifyAnswers((prev) => {
+				const next = { ...prev };
+				delete next[taskId];
+				return next;
+			});
 		} catch (err) {
 			addLog("error", (err as Error).message);
 		}
@@ -1913,6 +1979,57 @@ export function App() {
 
 			{/* ── Footer ── */}
 			<footer className="og-footer">
+				{/* Pending clarifications — shown above footer when agent called clarify() */}
+				{pendingClarifications.length > 0 && (
+					<div className="og-clarifications">
+						{pendingClarifications.map((c) => {
+							const taskTitle =
+								nodeMap.get(c.taskId)?.title ?? c.taskId.slice(0, 8);
+							return (
+								<div key={c.id} className="og-clarification-card">
+									<div className="og-clarification-header">
+										<span className="og-clarification-badge">
+											❓ Clarification needed
+										</span>
+										<span className="og-clarification-task">
+											from: {taskTitle}
+										</span>
+									</div>
+									<p className="og-clarification-question">{c.question}</p>
+									<form
+										className="og-clarification-form"
+										onSubmit={(e) => {
+											e.preventDefault();
+											handleClarifySubmit(c.taskId);
+										}}
+									>
+										<input
+											type="text"
+											className="og-clarification-input"
+											placeholder="Type your answer…"
+											value={clarifyAnswers[c.taskId] ?? ""}
+											onChange={(e) =>
+												setClarifyAnswers((prev) => ({
+													...prev,
+													[c.taskId]: e.target.value,
+												}))
+											}
+											// biome-ignore lint/a11y/noAutofocus: clarification input should grab focus immediately
+											autoFocus
+										/>
+										<button
+											type="submit"
+											className="og-btn-run"
+											disabled={!clarifyAnswers[c.taskId]?.trim()}
+										>
+											Answer
+										</button>
+									</form>
+								</div>
+							);
+						})}
+					</div>
+				)}
 				{(() => {
 					const filtered = pendingMessages.filter((m) =>
 						targetNodeId ? m.taskId === targetNodeId : m.taskId === null,
