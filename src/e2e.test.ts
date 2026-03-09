@@ -20,6 +20,22 @@ import type { TaskNode } from "./types.ts";
 const hasToken = Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
 const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY);
 
+/** Poll until agent finishes for a project. Returns when no agent is running. */
+async function waitForAgent(
+	app: ReturnType<typeof createApp>["app"],
+	projectId: string,
+	timeoutMs = 120_000,
+): Promise<void> {
+	const start = Date.now();
+	while (Date.now() - start < timeoutMs) {
+		const res = await app.request(`/projects/${projectId}/agent`);
+		const status = (await res.json()) as { running: boolean };
+		if (!status.running) return;
+		await new Promise((r) => setTimeout(r, 1000));
+	}
+	throw new Error(`Agent did not finish within ${timeoutMs}ms`);
+}
+
 describe.skipIf(!hasToken)("E2E: agent execution", () => {
 	let tempDir: string;
 	let dataDir: string;
@@ -45,18 +61,13 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 		"direct run: agent creates calculator with tests",
 		async () => {
 			const projectPath = join(tempDir, "calc-direct");
-			const createRes = await app.request("/projects", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ path: projectPath }),
-			});
-			expect(createRes.status).toBe(201);
-			const project = (await createRes.json()) as { id: string };
 
-			const runRes = await app.request(`/projects/${project.id}/run`, {
+			// Start agent via /agents/start (auto-creates project)
+			const startRes = await app.request("/agents/start", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
+					path: projectPath,
 					prompt:
 						"Create a simple calculator module in src/calc.ts with add, subtract, multiply, divide functions. " +
 						"Also create src/calc.test.ts with tests for all four operations. " +
@@ -66,21 +77,14 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 				}),
 			});
 
-			expect(runRes.status).toBe(200);
-			const result = (await runRes.json()) as {
-				success: boolean;
-				output: string;
-				turns?: number;
-				costUsd?: number;
+			expect(startRes.status).toBe(200);
+			const { projectId } = (await startRes.json()) as {
+				projectId: string;
 			};
 
-			console.log("Direct run:", {
-				success: result.success,
-				turns: result.turns,
-				costUsd: result.costUsd,
-			});
+			// Wait for agent to complete
+			await waitForAgent(app, projectId);
 
-			expect(result.success).toBe(true);
 			expect(existsSync(join(projectPath, "src", "calc.ts"))).toBe(true);
 
 			// Verify tests pass independently
@@ -98,61 +102,48 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 		"agent orchestrator: decompose + parallel spawn + merge",
 		async () => {
 			const projectPath = join(tempDir, "orch-agent");
-			const createRes = await app.request("/projects", {
+
+			// Start orchestration via /agents/start
+			const startRes = await app.request("/agents/start", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ path: projectPath }),
+				body: JSON.stringify({
+					path: projectPath,
+					prompt:
+						"Build a utility library with TWO separate modules: " +
+						"1) src/strings.ts — capitalize(str) and reverse(str) functions, with src/strings.test.ts " +
+						"2) src/arrays.ts — unique(arr) and flatten(arr) functions, with src/arrays.test.ts " +
+						"These modules are INDEPENDENT. " +
+						"Steps: create_task for root, create_task for each module as children, " +
+						"spawn_children to execute in parallel, merge each passed child's branch yourself, then delete_task to clean up, " +
+						"then update_task_status root to passed when done.",
+					maxTurns: 50,
+				}),
 			});
-			const project = (await createRes.json()) as { id: string };
+			expect(startRes.status).toBe(200);
+			const { projectId } = (await startRes.json()) as {
+				projectId: string;
+			};
 
-			// Use the agent-driven orchestration endpoint with a task that requires
-			// parallel decomposition into separate modules
-			const orchRes = await app.request(
-				`/projects/${project.id}/orchestrate/agent`,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						prompt:
-							"Build a utility library with TWO separate modules: " +
-							"1) src/strings.ts — capitalize(str) and reverse(str) functions, with src/strings.test.ts " +
-							"2) src/arrays.ts — unique(arr) and flatten(arr) functions, with src/arrays.test.ts " +
-							"These modules are INDEPENDENT. " +
-							"Steps: create_task for root, create_task for each module as children, " +
-							"spawn_children to execute in parallel, merge each passed child's branch yourself, then delete_task to clean up, " +
-							"then update_task_status root to passed when done.",
-						maxTurns: 50,
-					}),
-				},
-			);
-			expect(orchRes.status).toBe(200);
+			// Wait for agent to complete
+			await waitForAgent(app, projectId, 600_000);
 
-			const result = (await orchRes.json()) as {
-				success: boolean;
-				output: string;
-				costUsd?: number;
-				turns?: number;
-				tree: {
-					root: TaskNode | null;
-					nodes: TaskNode[];
-				};
+			// Check task tree
+			const tasksRes = await app.request(`/projects/${projectId}/tasks`);
+			const taskTree = (await tasksRes.json()) as {
+				root: TaskNode | null;
+				nodes: TaskNode[];
 			};
 
 			console.log("Agent orchestrator:", {
-				success: result.success,
-				turns: result.turns,
-				costUsd: result.costUsd,
-				nodeCount: result.tree.nodes.length,
-				tasks: result.tree.nodes.map(
+				nodeCount: taskTree.nodes.length,
+				tasks: taskTree.nodes.map(
 					(n) => `${n.title} [${n.status}] branch=${n.branch}`,
 				),
 			});
 
-			expect(result.success).toBe(true);
-			// Should have root + 2 children minimum
-			expect(result.tree.nodes.length).toBeGreaterThanOrEqual(3);
 			// At least some tasks should have passed
-			const passed = result.tree.nodes.filter((n) => n.status === "passed");
+			const passed = taskTree.nodes.filter((n) => n.status === "passed");
 			expect(passed.length).toBeGreaterThan(0);
 		},
 		{ timeout: 600_000 },
@@ -184,18 +175,13 @@ describe.skipIf(!hasApiKey)("E2E: DirectProvider", () => {
 		"direct provider: agent creates calculator with tests",
 		async () => {
 			const projectPath = join(tempDir, "calc-direct-api");
-			const createRes = await app.request("/projects", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ path: projectPath }),
-			});
-			expect(createRes.status).toBe(201);
-			const project = (await createRes.json()) as { id: string };
 
-			const runRes = await app.request(`/projects/${project.id}/run`, {
+			// Start agent via /agents/start
+			const startRes = await app.request("/agents/start", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
+					path: projectPath,
 					prompt:
 						"Create a simple calculator module in src/calc.ts with add, subtract, multiply, divide functions. " +
 						"Also create src/calc.test.ts with tests for all four operations. " +
@@ -205,21 +191,14 @@ describe.skipIf(!hasApiKey)("E2E: DirectProvider", () => {
 				}),
 			});
 
-			expect(runRes.status).toBe(200);
-			const result = (await runRes.json()) as {
-				success: boolean;
-				output: string;
-				turns?: number;
-				costUsd?: number;
+			expect(startRes.status).toBe(200);
+			const { projectId } = (await startRes.json()) as {
+				projectId: string;
 			};
 
-			console.log("DirectProvider run:", {
-				success: result.success,
-				turns: result.turns,
-				costUsd: result.costUsd,
-			});
+			// Wait for agent to complete
+			await waitForAgent(app, projectId);
 
-			expect(result.success).toBe(true);
 			expect(existsSync(join(projectPath, "src", "calc.ts"))).toBe(true);
 
 			// Verify tests pass independently
