@@ -662,6 +662,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					message: `Agent failed: ${message}`,
 				});
 			} finally {
+				// Always preserve the orchestrator session for future resume,
+				// regardless of how it exited (success, failure, or crash).
+				await tracker.save();
 				session.stop();
 				activeSessions.delete(project.id);
 				activeOrchestrations.delete(project.id);
@@ -940,7 +943,7 @@ Your session persists across conversations. When the user sends a new message:
 - The user's message is additional context/instruction — incorporate it and keep driving
 
 ## Stopping
-You stop ONLY when all tasks are resolved (passed or auto-stuck) and there is nothing left to do.
+You stop ONLY when all tasks are resolved (all passed/merged) and there is nothing left to do.
 If you need clarification on a requirement, make your best judgement and proceed — note the
 decision in .opengraft/memory.md so the user can review later.
 

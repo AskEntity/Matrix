@@ -79,20 +79,22 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 7. After ALL children are merged: run full test suite on your branch to verify no regressions
 
 ## Task Lifecycle
-pending → in_progress (agent working) → passed / failed / stuck
+pending → in_progress (agent working) → passed / failed
 
 ### Child Agent Exit Conditions
-A child agent ends its execution in exactly one of two ways:
-1. **passed** — Task complete, all tests green, code committed → parent merges the branch
-2. **failed** — Could not complete (tests fail, approach wrong, technically blocked) →
-   returns to parent with output explaining what went wrong and what was attempted.
-   Parent decides: resume (with instructions) or reset (wipe branch, start fresh).
+When you finish working on a task, you exit with one of two results:
+1. **passed** — You completed the task. Tests pass, code is committed, work is done.
+   → Parent merges your branch.
+2. **failed** — You can't solve it or you're in difficulty. You've tried your approaches and hit a wall.
+   Return to parent with a clear explanation of what you tried and where you got blocked.
+   → Parent decides: resume (with new instructions) or reset (wipe branch, try differently).
 
-There is NO separate "stuck" state for normal operation. If you're unsure about a requirement,
-make your best judgement call, note the decision in \`.opengraft/memory.md\`, and proceed.
-Only fail if you truly cannot make progress after exhausting your approaches.
+If you're unsure about a requirement, use the \`clarify\` tool to ask — it's a tool call,
+not an exit condition. You call it, wait for a response (or timeout), then continue working
+with whatever answer you got.
 
-Stuck is set automatically after 3 consecutive failures as a circuit breaker.
+If you encounter problems you can't overcome, don't spin — just fail and return to parent.
+The parent has more context and can help. Failing early is better than wasting turns.
 
 ### Parent Handling of Child Results
 - **passed** → \`git merge --no-ff <branch>\` → \`delete_task\` → verify tests on your branch
@@ -100,12 +102,10 @@ Stuck is set automatically after 3 consecutive failures as a circuit breaker.
   - \`resume\`: send instructions addressing the specific failure (child keeps its progress)
   - \`reset\`: wipe the branch and start completely fresh (different approach)
   - If the approach is fundamentally wrong: delete the task, create a new one with different scope
-- **stuck (auto)** → Child failed 3 times. The approach is likely wrong.
-  Consider: reset with a completely different strategy, or skip and work on other tasks.
 
 ### Merge Protocol
 - Use \`git merge --no-ff <branch> -m "Merge task: <title>"\` from YOUR working directory
-- If merge conflicts occur: resolve them, or mark the child stuck if conflicts are too complex
+- If merge conflicts occur: resolve them, or fail the child if conflicts are too complex
 - After successful merge: ALWAYS call delete_task to clean up worktree + branch + node
 - After ALL merges: run full test suite to catch integration issues
 
@@ -129,19 +129,17 @@ Stuck is set automatically after 3 consecutive failures as a circuit breaker.
 ## Stimulus Priority (what to do next)
 When deciding your next action, follow this priority order:
 1. **Failed children** → Analyze output, execute_tasks with "resume" (give instructions) or "reset"
-2. **Stuck children** → Try a different approach, provide guidance, or skip for now
-3. **Passed children not yet merged** → Merge branch, delete_task, verify tests
-4. **Pending children ready to start** → execute_tasks to spawn them
-5. **All children done** → Run full test suite, verify integration, update memory
-6. **Everything complete** → Report final status, stop
+2. **Passed children not yet merged** → Merge branch, delete_task, verify tests
+3. **Pending children ready to start** → execute_tasks to spawn them
+4. **All children done** → Run full test suite, verify integration, update memory
+5. **Everything complete** → Report final status, stop
 
 ## Never-Stop Principle
-You stop ONLY when ALL tasks are resolved (passed or auto-stuck) and you have nothing left to do.
+You stop ONLY when ALL tasks are resolved (all passed/merged) and you have nothing left to do.
 
 - If you need clarification: make your best judgement, note the decision in memory, and proceed.
-- If technically blocked: try a different approach. If that fails too, the task will eventually
-  auto-stuck after 3 failures, and you move on to other tasks.
-- If some tasks are stuck but others are pending: keep working on the pending ones.
+- If technically blocked: try a different approach. If that fails too, fail and return to parent.
+- If some children failed: address them (resume/reset) before stopping.
 - Do NOT stop just because you finished responding — check get_tree and keep driving.`;
 
 export const TASK_SYSTEM_PROMPT = `You are an autonomous programming agent working on a subtask in a git worktree.
@@ -401,7 +399,7 @@ export function createOrchestratorTools(
 
 		tool(
 			"update_task_status",
-			"Update the status of a task node. Valid statuses: pending, in_progress, testing, passed, failed, stuck.",
+			"Update the status of a task node. Valid statuses: pending, in_progress, testing, passed, failed.",
 			{
 				taskId: z.string().describe("Task node ID"),
 				status: z
@@ -411,7 +409,6 @@ export function createOrchestratorTools(
 						"testing",
 						"passed",
 						"failed",
-						"stuck",
 					])
 					.describe("New status"),
 			},
@@ -445,8 +442,8 @@ export function createOrchestratorTools(
 				"Blocks until all tasks complete. " +
 				"For each task, you can provide instructions and a mode:\n" +
 				"- new (default): fresh execution, creates worktree and branch\n" +
-				"- resume: continue from previous session (for failed/stuck tasks)\n" +
-				"- reset: wipe the branch and start fresh (for failed/stuck tasks)",
+				"- resume: continue from previous session (for failed tasks)\n" +
+				"- reset: wipe the branch and start fresh (for failed tasks)",
 			{
 				tasks: z
 					.array(
