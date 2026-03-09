@@ -183,12 +183,20 @@ Enhanced built-in tools to close gap with Claude SDK capabilities:
 
 Cost calculation also fixed: now accounts for cache_creation (1.25x) and cache_read (0.1x) tokens.
 
-## Pending Feature Request: UI Message Routing to Specific Agents
+## UI Message Routing to Specific Agents (COMPLETED)
 
-User requested: When a task/agent is selected in the web UI, messages should be sent to that specific agent (via send_message_to_child routing), not always to the root orchestrator. This requires:
-1. UI changes to track which agent/task is selected
-2. API changes to route messages to specific agent queues (may already be possible via existing queue infrastructure)
-3. Will be addressed after the done() tool lifecycle feature is complete.
+Implemented in task `f2ca66e9`. Messages can now be routed to specific child agent queues.
+
+### Architecture
+- **`globalAgentQueues`** in `src/message-queue.ts`: `Map<string, MessageQueue>` — global registry of running agents
+- In `src/agent-tools.ts`: `executeChildStreaming()` registers/unregisters in `globalAgentQueues` alongside the local `childQueues` map
+- **New API endpoint**: `POST /projects/:id/tasks/:nodeId/message` — looks up `globalAgentQueues.get(nodeId)`, enqueues `{ source: "user", content }`. Returns 404 if no active agent.
+- **Web UI** (`web/App.tsx`): `targetNodeId` state tracks which agent receives messages
+  - "Send messages here" button in TaskDetail (visible when `node.status === "in_progress"` and orchestrator running)
+  - Footer shows "→ Sending to: Task Name" bar with close button when target is set
+  - Input placeholder changes to show which agent is targeted
+  - `sendMessageToTask(taskId, content)` in hooks.ts calls the new endpoint
+- **CSS** (`web/style.css`): `.og-message-target` and `.og-btn-targeted` classes added
 
 ## Child-to-Parent Messaging (report_to_parent tool)
 

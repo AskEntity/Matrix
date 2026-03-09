@@ -7,7 +7,11 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
-import { MessageQueue, type QueueMessage } from "./message-queue.ts";
+import {
+	globalAgentQueues,
+	MessageQueue,
+	type QueueMessage,
+} from "./message-queue.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
 
@@ -340,6 +344,7 @@ export function createOrchestratorTools(
 		// Create a queue for this child agent
 		const childQueue = new MessageQueue();
 		childQueues.set(taskId, childQueue);
+		globalAgentQueues.set(taskId, childQueue);
 		request.queue = childQueue;
 
 		// Give children MCP tools if we haven't hit max depth
@@ -385,6 +390,7 @@ export function createOrchestratorTools(
 			return result.value;
 		} finally {
 			childQueues.delete(taskId);
+			globalAgentQueues.delete(taskId);
 			childQueue.close();
 		}
 	}

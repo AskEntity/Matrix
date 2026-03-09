@@ -14,7 +14,7 @@ import {
 } from "./agent-tools.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { DirectProvider } from "./direct-provider.ts";
-import { MessageQueue } from "./message-queue.ts";
+import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type {
@@ -780,6 +780,31 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "Queue closed" }, 409);
 		}
 		return c.json({ ok: true, sessionId: session.sessionId });
+	});
+
+	// Inject a message into a specific running child agent's queue
+	app.post("/projects/:id/tasks/:nodeId/message", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const nodeId = c.req.param("nodeId");
+		const body = await c.req.json<{ content: string }>();
+		if (!body.content) {
+			return c.json({ error: "content is required" }, 400);
+		}
+
+		const queue = globalAgentQueues.get(nodeId);
+		if (!queue) {
+			return c.json({ error: "No active agent for this task" }, 404);
+		}
+
+		try {
+			queue.enqueue({ source: "user", content: body.content });
+		} catch {
+			return c.json({ error: "Queue closed" }, 409);
+		}
+		return c.json({ ok: true, taskId: nodeId });
 	});
 
 	// Respond to a pending clarification request
