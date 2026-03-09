@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AgentEvent, AgentProvider } from "./agent-provider.ts";
 import { createOrchestratorTools, isDescendantOf } from "./agent-tools.ts";
 import { createApp } from "./daemon.ts";
+import { MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type {
 	AgentResult,
@@ -28,8 +29,21 @@ function createMockProvider(
 		stream: async function* () {
 			return { success: true, output: "" };
 		},
-		startSession() {
-			throw new Error("Not implemented in mock");
+		startSession(req) {
+			const queue = req.queue ?? new MessageQueue();
+			// biome-ignore lint/correctness/useYield: mock session never streams
+			async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				return { success: true, output: "" };
+			}
+			return {
+				sessionId: "mock-session",
+				events: events(),
+				queue,
+				sendMessage: async () => {},
+				stop: () => {
+					queue.close();
+				},
+			};
 		},
 	};
 }
@@ -569,6 +583,7 @@ describe("daemon orchestrate/agent API", () => {
 				if (req.mcpServers && "opengraft" in req.mcpServers) {
 					receivedMcpServers = true;
 				}
+				const queue = req.queue ?? new MessageQueue();
 				// biome-ignore lint/correctness/useYield: mock session never streams
 				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
 					return { success: true, output: "orchestrated" };
@@ -576,8 +591,11 @@ describe("daemon orchestrate/agent API", () => {
 				return {
 					sessionId: "mock-session",
 					events: events(),
+					queue,
 					sendMessage: async () => {},
-					stop: () => {},
+					stop: () => {
+						queue.close();
+					},
 				};
 			},
 		};

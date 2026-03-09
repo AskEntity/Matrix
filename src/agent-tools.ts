@@ -7,6 +7,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
+import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
 
@@ -52,6 +53,20 @@ async function isGitClean(projectPath: string): Promise<{
 	};
 }
 
+/** Format a QueueMessage for display to the agent. */
+export function formatQueueMessage(msg: QueueMessage): string {
+	switch (msg.source) {
+		case "child_complete":
+			return `[child_complete] Task "${msg.title}" (${msg.taskId}) ${msg.success ? "passed" : "failed"}: ${msg.output.slice(0, 500)}`;
+		case "user":
+			return `[user] ${msg.content}`;
+		case "parent_update":
+			return `[parent_update] ${msg.content}`;
+		case "clarify_response":
+			return `[clarify_response] ${msg.answer}`;
+	}
+}
+
 /**
  * Shared orchestration knowledge — every agent gets this because any agent
  * can become an orchestrator if it judges a task is too complex.
@@ -60,23 +75,31 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 - get_tree: View the current task tree (always check this first)
 - create_task: Create tasks (omit parentId for top-level, or provide parentId for children)
 - update_task_status: Update a task's status
-- execute_tasks: Execute 1+ of your direct children in parallel. Each task gets an isolated worktree.
+- execute_tasks: Fire-and-forget. Spawns children in background, returns immediately with task IDs.
+  Results arrive via yield() as child_complete messages.
   Modes: "new" (fresh start), "resume" (continue failed task's session), "reset" (wipe branch, restart)
+- yield: Suspend execution and wait for messages (child completions, user messages, clarify responses).
+  Call this after spawning tasks. Returns all accumulated messages. Zero token burn while suspended.
+- send_message_to_child: Send a requirement update or instruction to a running child agent.
 - delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
-- clarify: Ask a question and BLOCK until answered or timeout. Use sparingly — only for
-  genuine ambiguities. On timeout, make your own decision and note it in memory.
+- clarify: Send a clarification question to the user. Returns immediately.
+  Call yield() to wait for the response — it arrives as a clarify_response message.
 
-## Orchestration Workflow
+## Event-Driven Workflow Pattern
 1. Analyze the goal and the codebase (read files to understand structure)
 2. Create tasks using create_task (top-level or as children of a parent)
 3. CRITICAL: Sibling tasks run in PARALLEL — each must work on DIFFERENT files/modules
-4. Call execute_tasks to run your children in parallel
-5. When a child passes, merge its branch:
+4. Call execute_tasks to spawn children (returns immediately)
+5. Call yield() to wait for results — this suspends your execution with zero token burn
+6. When yield() returns, process the messages:
+   - child_complete: check if passed/failed, merge passed branches, retry failed ones
+   - user: incorporate new instructions
+   - clarify_response: use the answer to proceed
+7. When a child passes, merge its branch:
    a. Merge via bash: \`git merge --no-ff <child-branch> -m "Merge task: <title>"\`
-      (run this from YOUR worktree directory, or the main repo if you are the top-level orchestrator)
    b. Call delete_task(taskId) to clean up the child's worktree, branch, and task node
-6. If a child fails: use execute_tasks with mode "resume" (with instructions) or "reset" (start over)
-7. After ALL children are merged: run full test suite on your branch to verify no regressions
+8. If a child fails: use execute_tasks with mode "resume" (with instructions) or "reset" (start over)
+9. After ALL children are merged: run full test suite on your branch to verify no regressions
 
 ## Task Lifecycle
 pending → in_progress (agent working) → passed / failed
@@ -89,9 +112,8 @@ When you finish working on a task, you exit with one of two results:
    Return to parent with a clear explanation of what you tried and where you got blocked.
    → Parent decides: resume (with new instructions) or reset (wipe branch, try differently).
 
-If you're unsure about a requirement, use the \`clarify\` tool to ask — it's a tool call,
-not an exit condition. You call it, wait for a response (or timeout), then continue working
-with whatever answer you got.
+If you're unsure about a requirement, use the \`clarify\` tool to ask — it sends a question
+to the user and returns immediately. Call \`yield()\` to wait for the response.
 
 If you encounter problems you can't overcome, don't spin — just fail and return to parent.
 The parent has more context and can help. Failing early is better than wasting turns.
@@ -188,12 +210,6 @@ When acting as sub-orchestrator: do NOT write code yourself — only manage chil
 
 ${ORCHESTRATION_KNOWLEDGE}`;
 
-/** Shared map for pending clarification requests. Resolvers are called when a response arrives. */
-export type ClarificationMap = Map<
-	string,
-	{ resolve: (answer: string) => void; question: string }
->;
-
 export interface OrchestratorToolsDeps {
 	tracker: TaskTracker;
 	provider: AgentProvider;
@@ -210,10 +226,10 @@ export interface OrchestratorToolsDeps {
 	onTaskEvent?: (event: Record<string, unknown>) => void;
 	/** Model for child agent execution (defaults to provider's default). */
 	childModel?: string;
-	/** Shared map for pending clarifications — agents block waiting for responses. */
-	clarifications?: ClarificationMap;
-	/** Timeout in ms for clarification requests (default: 300000 = 5 min). */
-	clarifyTimeout?: number;
+	/** MessageQueue for the parent agent session (for fire-and-forget results). */
+	queue?: MessageQueue;
+	/** Registry of child agent queues for send_message_to_child. Managed internally. */
+	childQueues?: Map<string, MessageQueue>;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -271,10 +287,12 @@ export function createOrchestratorTools(
 	const maxDepth = 3;
 	const costs = costAccumulator ?? new CostAccumulator();
 	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
+	const childQueues = deps.childQueues ?? new Map<string, MessageQueue>();
 
 	/**
 	 * Execute a child agent with streaming, forwarding events tagged with taskId.
 	 * If depth < maxDepth, the child also receives MCP tools for recursive spawning.
+	 * Returns the child's queue so the parent can send messages to it.
 	 */
 	async function executeChildStreaming(
 		request: AgentRequest,
@@ -287,6 +305,11 @@ export function createOrchestratorTools(
 		turns?: number;
 		sessionId?: string;
 	}> {
+		// Create a queue for this child agent
+		const childQueue = new MessageQueue();
+		childQueues.set(taskId, childQueue);
+		request.queue = childQueue;
+
 		// Give children MCP tools if we haven't hit max depth
 		if (depth < maxDepth && !request.mcpToolDefs) {
 			const childCosts = new CostAccumulator();
@@ -302,8 +325,7 @@ export function createOrchestratorTools(
 						depth: depth + 1,
 						onTaskEvent,
 						childModel,
-						clarifications: deps.clarifications,
-						clarifyTimeout: deps.clarifyTimeout,
+						queue: childQueue,
 					},
 					childCosts,
 				);
@@ -311,14 +333,19 @@ export function createOrchestratorTools(
 			request.mcpServers = { opengraft: childMcpServer };
 		}
 
-		const stream = provider.stream(request);
-		let result = await stream.next();
-		while (!result.done) {
-			const { type: eventType, ...eventData } = result.value;
-			emit({ type: "agent_event", taskId, eventType, ...eventData });
-			result = await stream.next();
+		try {
+			const stream = provider.stream(request);
+			let result = await stream.next();
+			while (!result.done) {
+				const { type: eventType, ...eventData } = result.value;
+				emit({ type: "agent_event", taskId, eventType, ...eventData });
+				result = await stream.next();
+			}
+			return result.value;
+		} finally {
+			childQueues.delete(taskId);
+			childQueue.close();
 		}
-		return result.value;
 	}
 
 	const toolDefs = [
@@ -433,7 +460,8 @@ export function createOrchestratorTools(
 			"execute_tasks",
 			"Execute 1 or more of your direct children tasks in parallel. " +
 				"Each task runs on an isolated git worktree with its own agent. " +
-				"Blocks until all tasks complete. " +
+				"Fire-and-forget: returns immediately after spawning. " +
+				"Call yield() to wait for child_complete messages. " +
 				"For each task, you can provide instructions and a mode:\n" +
 				"- new (default): fresh execution, creates worktree and branch\n" +
 				"- resume: continue from previous session (for failed tasks)\n" +
@@ -508,177 +536,304 @@ export function createOrchestratorTools(
 					: undefined;
 				const baseBranch = currentNode?.branch ?? undefined;
 
-				// Execute all tasks in parallel
-				const results = await Promise.all(
-					args.tasks.map(async (taskSpec) => {
-						const node = tracker.get(taskSpec.taskId);
-						if (!node) {
-							return {
-								taskId: taskSpec.taskId,
-								title: "?",
-								status: "stuck" as const,
-								success: false,
-								error: "Task not found",
-							};
+				// Spawn all tasks in background (fire-and-forget)
+				const spawnedTasks: {
+					taskId: string;
+					title: string;
+					branch: string | null;
+				}[] = [];
+				const errors: { taskId: string; title: string; error: string }[] = [];
+
+				for (const taskSpec of args.tasks) {
+					const node = tracker.get(taskSpec.taskId);
+					if (!node) {
+						errors.push({
+							taskId: taskSpec.taskId,
+							title: "?",
+							error: "Task not found",
+						});
+						continue;
+					}
+
+					const mode = taskSpec.mode ?? "new";
+
+					// Validate mode vs status
+					if (mode === "new" && node.status !== "pending") {
+						errors.push({
+							taskId: node.id,
+							title: node.title,
+							error: `Cannot use mode "new" on task with status "${node.status}" — use "resume" or "reset"`,
+						});
+						continue;
+					}
+					if (
+						(mode === "resume" || mode === "reset") &&
+						node.status !== "failed" &&
+						node.status !== "stuck"
+					) {
+						errors.push({
+							taskId: node.id,
+							title: node.title,
+							error: `Cannot use mode "${mode}" on task with status "${node.status}"`,
+						});
+						continue;
+					}
+
+					try {
+						// Handle reset: wipe existing worktree/branch and start fresh
+						if (mode === "reset" && node.worktreePath) {
+							const slug = slugify(node.title);
+							await worktrees.remove(node.id, slug);
+							node.worktreePath = null;
+							node.branch = null;
+							node.sessionId = null;
 						}
 
-						const mode = taskSpec.mode ?? "new";
-
-						// Validate mode vs status
-						if (mode === "new" && node.status !== "pending") {
-							return {
-								taskId: node.id,
-								title: node.title,
-								status: node.status,
-								success: false,
-								error: `Cannot use mode "new" on task with status "${node.status}" — use "resume" or "reset"`,
-							};
-						}
-						if (
-							(mode === "resume" || mode === "reset") &&
-							node.status !== "failed" &&
-							node.status !== "stuck"
-						) {
-							return {
-								taskId: node.id,
-								title: node.title,
-								status: node.status,
-								success: false,
-								error: `Cannot use mode "${mode}" on task with status "${node.status}"`,
-							};
+						// Create worktree if needed (new or reset)
+						if (!node.worktreePath) {
+							const slug = slugify(node.title);
+							const wt = await worktrees.create(node.id, slug, baseBranch);
+							tracker.assignWorktree(node.id, wt.branch, wt.path);
 						}
 
-						try {
-							// Handle reset: wipe existing worktree/branch and start fresh
-							if (mode === "reset" && node.worktreePath) {
-								const slug = slugify(node.title);
-								await worktrees.remove(node.id, slug);
-								node.worktreePath = null;
-								node.branch = null;
-								node.sessionId = null;
-							}
+						tracker.updateStatus(node.id, "in_progress");
+						await tracker.save();
+						emit({
+							type: "task_started",
+							taskId: node.id,
+							title: node.title,
+						});
 
-							// Create worktree if needed (new or reset)
-							if (!node.worktreePath) {
-								const slug = slugify(node.title);
-								const wt = await worktrees.create(node.id, slug, baseBranch);
-								tracker.assignWorktree(node.id, wt.branch, wt.path);
-							}
+						spawnedTasks.push({
+							taskId: node.id,
+							title: node.title,
+							branch: node.branch,
+						});
 
-							tracker.updateStatus(node.id, "in_progress");
-							await tracker.save();
-							emit({
-								type: "task_started",
-								taskId: node.id,
-								title: node.title,
-							});
+						// Build prompt based on mode
+						const memory = readMemory(projectPath);
+						let prompt: string;
+						const branchReminder = node.branch
+							? `\n\nYou are on branch \`${node.branch}\`. Do NOT switch branches.`
+							: "";
 
-							// Build prompt based on mode
-							const memory = readMemory(projectPath);
-							let prompt: string;
-							const branchReminder = node.branch
-								? `\n\nYou are on branch \`${node.branch}\`. Do NOT switch branches.`
-								: "";
-
-							if (mode === "resume" && node.sessionId) {
-								// Resume: send message to existing session
-								prompt = taskSpec.message
-									? `${taskSpec.message}${branchReminder}`
-									: `Continue working. Pick up where you left off.${branchReminder}`;
-							} else {
-								// New or reset: full task context
-								const taskPrompt = buildTaskPrompt(node, tracker, memory);
-								prompt = taskSpec.message
-									? `${taskSpec.message}\n\n${taskPrompt}`
-									: taskPrompt;
-							}
-
-							const result = await executeChildStreaming(
-								{
-									prompt,
-									cwd: node.worktreePath as string,
-									systemPrompt: TASK_SYSTEM_PROMPT,
-									resumeSessionId:
-										mode === "resume"
-											? (node.sessionId ?? undefined)
-											: undefined,
-									model: childModel,
-								},
-								node.id,
-								node.worktreePath as string,
-							);
-
-							if (result.sessionId) {
-								tracker.assignSession(node.id, result.sessionId);
-							}
-							costs.add(result.costUsd, result.turns);
-
-							let newStatus: "passed" | "failed" | "stuck";
-							if (result.success) {
-								newStatus = "passed";
-								node.failCount = 0;
-							} else {
-								node.failCount = (node.failCount ?? 0) + 1;
-								// Auto-stuck after 3 consecutive failures
-								newStatus = node.failCount >= 3 ? "stuck" : "failed";
-							}
-							tracker.updateStatus(node.id, newStatus);
-							await tracker.save();
-							emit({
-								type: "task_completed",
-								taskId: node.id,
-								title: node.title,
-								success: result.success,
-							});
-
-							return {
-								taskId: node.id,
-								title: node.title,
-								status: newStatus,
-								success: result.success,
-								branch: node.branch,
-								output: result.output.slice(0, 2000),
-								costUsd: result.costUsd,
-								turns: result.turns,
-								failCount: node.failCount,
-								...(newStatus === "stuck"
-									? {
-											autoStuck: true,
-											reason: `Failed ${node.failCount} consecutive times — marked stuck automatically`,
-										}
-									: {}),
-							};
-						} catch (e) {
-							tracker.updateStatus(node.id, "stuck");
-							await tracker.save();
-							const message = e instanceof Error ? e.message : "Unknown error";
-							return {
-								taskId: node.id,
-								title: node.title,
-								status: "stuck" as const,
-								success: false,
-								error: message,
-							};
+						if (mode === "resume" && node.sessionId) {
+							prompt = taskSpec.message
+								? `${taskSpec.message}${branchReminder}`
+								: `Continue working. Pick up where you left off.${branchReminder}`;
+						} else {
+							const taskPrompt = buildTaskPrompt(node, tracker, memory);
+							prompt = taskSpec.message
+								? `${taskSpec.message}\n\n${taskPrompt}`
+								: taskPrompt;
 						}
-					}),
-				);
 
-				const passed = results.filter((r) => r.success).length;
-				const failed = results.length - passed;
+						// Spawn child in background — don't await
+						const childRequest: AgentRequest = {
+							prompt,
+							cwd: node.worktreePath as string,
+							systemPrompt: TASK_SYSTEM_PROMPT,
+							resumeSessionId:
+								mode === "resume" ? (node.sessionId ?? undefined) : undefined,
+							model: childModel,
+						};
+
+						// Fire-and-forget: spawn child agent in background
+						const nodeRef = node;
+						(async () => {
+							try {
+								const result = await executeChildStreaming(
+									childRequest,
+									nodeRef.id,
+									nodeRef.worktreePath as string,
+								);
+
+								if (result.sessionId) {
+									tracker.assignSession(nodeRef.id, result.sessionId);
+								}
+								costs.add(result.costUsd, result.turns);
+
+								let newStatus: "passed" | "failed" | "stuck";
+								if (result.success) {
+									newStatus = "passed";
+									nodeRef.failCount = 0;
+								} else {
+									nodeRef.failCount = (nodeRef.failCount ?? 0) + 1;
+									newStatus = nodeRef.failCount >= 3 ? "stuck" : "failed";
+								}
+								tracker.updateStatus(nodeRef.id, newStatus);
+								await tracker.save();
+								emit({
+									type: "task_completed",
+									taskId: nodeRef.id,
+									title: nodeRef.title,
+									success: result.success,
+								});
+
+								// Enqueue child_complete message to parent's queue
+								if (deps.queue) {
+									try {
+										deps.queue.enqueue({
+											source: "child_complete",
+											taskId: nodeRef.id,
+											title: nodeRef.title,
+											success: result.success,
+											output: result.output.slice(0, 2000),
+										});
+									} catch {
+										// Queue may be closed if parent already finished
+									}
+								}
+							} catch (e) {
+								tracker.updateStatus(nodeRef.id, "stuck");
+								await tracker.save();
+								const message =
+									e instanceof Error ? e.message : "Unknown error";
+								emit({
+									type: "task_completed",
+									taskId: nodeRef.id,
+									title: nodeRef.title,
+									success: false,
+									error: message,
+								});
+
+								// Enqueue child_complete (failure) to parent's queue
+								if (deps.queue) {
+									try {
+										deps.queue.enqueue({
+											source: "child_complete",
+											taskId: nodeRef.id,
+											title: nodeRef.title,
+											success: false,
+											output: `Error: ${message}`,
+										});
+									} catch {
+										// Queue may be closed
+									}
+								}
+							}
+						})();
+					} catch (e) {
+						const message = e instanceof Error ? e.message : "Unknown error";
+						errors.push({
+							taskId: node.id,
+							title: node.title,
+							error: message,
+						});
+					}
+				}
+
+				const responseData = {
+					status: "spawned",
+					spawned: spawnedTasks.length,
+					tasks: spawnedTasks,
+					...(errors.length > 0 ? { errors } : {}),
+				};
 
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: JSON.stringify(
-								{ passed, failed, total: results.length, results },
-								null,
-								2,
-							),
+							text: JSON.stringify(responseData, null, 2),
 						},
 					],
-					...(failed > 0 ? { isError: true } : {}),
+					...(errors.length > 0 && spawnedTasks.length === 0
+						? { isError: true }
+						: {}),
 				};
+			},
+		),
+
+		tool(
+			"yield",
+			"Suspend execution and wait for messages (child completions, user messages, etc.). " +
+				"Call this when you have spawned tasks and are waiting for results. " +
+				"Returns all accumulated messages. Zero token burn while waiting.",
+			{},
+			async () => {
+				if (!deps.queue) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "No message queue available",
+							},
+						],
+						isError: true,
+					};
+				}
+				try {
+					// Wait for at least one message
+					const first = await deps.queue.wait();
+					// Drain any additional messages that accumulated
+					const rest = deps.queue.drain();
+					const all = [first, ...rest];
+					// Format messages for the agent
+					const formatted = all.map(formatQueueMessage).join("\n");
+					return {
+						content: [{ type: "text" as const, text: formatted }],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Queue error: ${message}`,
+							},
+						],
+						isError: true,
+					};
+				}
+			},
+		),
+
+		tool(
+			"send_message_to_child",
+			"Send a message to a running child agent. " +
+				"The message appears in the child's queue as a parent_update.",
+			{
+				taskId: z.string().describe("ID of the running child task to message"),
+				message: z.string().describe("Message content to send"),
+			},
+			async (args) => {
+				const childQueue = childQueues.get(args.taskId);
+				if (!childQueue) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: No running child with taskId "${args.taskId}". The child may have already completed or not been spawned yet.`,
+							},
+						],
+						isError: true,
+					};
+				}
+				try {
+					childQueue.enqueue({
+						source: "parent_update",
+						content: args.message,
+					});
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Message sent to child ${args.taskId}`,
+							},
+						],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error sending message: ${message}`,
+							},
+						],
+						isError: true,
+					};
+				}
 			},
 		),
 
@@ -749,10 +904,9 @@ export function createOrchestratorTools(
 
 		tool(
 			"clarify",
-			"Ask a clarification question and wait for a response. " +
-				"This BLOCKS your execution until the user responds or a timeout occurs. " +
-				"If no response within the timeout, you receive a timeout message — " +
-				"make your best judgement, note the decision in .opengraft/memory.md, and proceed. " +
+			"Ask a clarification question and send it to the user or parent orchestrator. " +
+				"Returns immediately — call yield() to wait for the response. " +
+				"The answer will arrive as a clarify_response message. " +
 				"Only use this for genuine ambiguities that could lead to wasted work.",
 			{
 				question: z
@@ -763,8 +917,6 @@ export function createOrchestratorTools(
 			},
 			async (args) => {
 				const taskId = currentTaskId ?? "orchestrator";
-				const clarifyTimeout = deps.clarifyTimeout ?? 300_000;
-				const clarifications = deps.clarifications;
 
 				emit({
 					type: "clarification_requested",
@@ -772,37 +924,13 @@ export function createOrchestratorTools(
 					question: args.question,
 				});
 
-				if (!clarifications) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: "No clarification channel available. Make your best judgement and proceed. Note the decision in .opengraft/memory.md.",
-							},
-						],
-					};
-				}
-
-				const answer = await new Promise<string>((resolve) => {
-					const timer = setTimeout(() => {
-						clarifications.delete(taskId);
-						resolve(
-							`[Timeout after ${Math.round(clarifyTimeout / 1000)}s] No response received. Make your best judgement and proceed. Note the decision in .opengraft/memory.md.`,
-						);
-					}, clarifyTimeout);
-
-					clarifications.set(taskId, {
-						question: args.question,
-						resolve: (ans: string) => {
-							clearTimeout(timer);
-							clarifications.delete(taskId);
-							resolve(ans);
-						},
-					});
-				});
-
 				return {
-					content: [{ type: "text" as const, text: answer }],
+					content: [
+						{
+							type: "text" as const,
+							text: "Question sent. Call yield() to wait for the response. The answer will arrive as a clarify_response message.",
+						},
+					],
 				};
 			},
 		),

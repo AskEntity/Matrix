@@ -16,6 +16,8 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
+import { formatQueueMessage } from "./agent-tools.ts";
+import { MessageQueue } from "./message-queue.ts";
 import type { AgentResult } from "./types.ts";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -712,8 +714,7 @@ export class DirectProvider implements AgentProvider {
 
 	startSession(request: AgentRequest): AgentSession {
 		const sessionId = request.resumeSessionId ?? randomUUID();
-		const injectedMessages: string[] = [];
-		let closed = false;
+		const queue = request.queue ?? new MessageQueue();
 		const abortController = new AbortController();
 
 		const self = this;
@@ -722,32 +723,29 @@ export class DirectProvider implements AgentProvider {
 			const gen = self.runLoop(
 				{ ...request, signal: abortController.signal },
 				sessionId,
-				() => {
-					if (injectedMessages.length > 0) {
-						return injectedMessages.shift() as string;
-					}
-					return undefined;
-				},
+				queue,
 			);
 			let result = await gen.next();
 			while (!result.done) {
 				yield result.value;
 				result = await gen.next();
 			}
-			closed = true;
 			return result.value;
 		}
 
 		return {
 			sessionId,
 			events: eventStream(),
+			queue,
 			async sendMessage(text: string): Promise<void> {
-				if (!closed) {
-					injectedMessages.push(text);
+				try {
+					queue.enqueue({ source: "user", content: text });
+				} catch {
+					// Queue may be closed
 				}
 			},
 			stop() {
-				closed = true;
+				queue.close();
 				abortController.abort();
 			},
 		};
@@ -756,7 +754,7 @@ export class DirectProvider implements AgentProvider {
 	private async *runLoop(
 		request: AgentRequest,
 		sessionId: string,
-		checkInjectedMessage?: () => string | undefined,
+		queue?: MessageQueue,
 	): AsyncGenerator<AgentEvent, AgentResult> {
 		const model = request.model ?? this.model;
 		const cwd = request.cwd;
@@ -804,18 +802,6 @@ export class DirectProvider implements AgentProvider {
 			}
 
 			turns++;
-
-			// Check for injected messages between turns
-			if (checkInjectedMessage) {
-				const injected = checkInjectedMessage();
-				if (injected) {
-					messages.push({ role: "user", content: injected });
-					yield {
-						type: "text",
-						content: `[Injected message: ${injected}]`,
-					};
-				}
-			}
 
 			const systemParts = [
 				request.systemPrompt,
@@ -967,6 +953,17 @@ export class DirectProvider implements AgentProvider {
 					content: text,
 					is_error: isError,
 				});
+			}
+
+			// Cancellation point: drain queue and append messages to tool results
+			if (queue && queue.pending > 0) {
+				const queueMsgs = queue.drain();
+				const formatted = queueMsgs.map(formatQueueMessage).join("\n");
+				const lastResult = toolResults[toolResults.length - 1];
+				if (lastResult && typeof lastResult.content === "string") {
+					lastResult.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
+				}
+				yield { type: "queue_message", messages: formatted };
 			}
 
 			// Add tool results to history
