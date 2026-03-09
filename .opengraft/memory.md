@@ -182,3 +182,10 @@ Enhanced built-in tools to close gap with Claude SDK capabilities:
 | `edit_file` | `replace_all` (replaces all occurrences, skips uniqueness check); reports count in success message |
 
 Cost calculation also fixed: now accounts for cache_creation (1.25x) and cache_read (0.1x) tokens.
+
+## Pending Feature Request: UI Message Routing to Specific Agents
+
+User requested: When a task/agent is selected in the web UI, messages should be sent to that specific agent (via send_message_to_child routing), not always to the root orchestrator. This requires:
+1. UI changes to track which agent/task is selected
+2. API changes to route messages to specific agent queues (may already be possible via existing queue infrastructure)
+3. Will be addressed after the done() tool lifecycle feature is complete.
