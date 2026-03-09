@@ -66,6 +66,7 @@ async function handleStatus(args: string[]): Promise<void> {
 			status: string;
 			parentId: string | null;
 			branch: string | null;
+			costUsd?: number;
 		}[];
 	};
 
@@ -88,6 +89,16 @@ async function handleStatus(args: string[]): Promise<void> {
 	const rootNodes = byParent.get(null) ?? [];
 	for (const node of rootNodes) {
 		printTree(node, byParent, "");
+	}
+
+	// Show cost summary if any tasks have cost data
+	const withCost = body.nodes.filter((n) => n.costUsd && n.costUsd > 0);
+	const total = withCost.reduce((acc, n) => acc + (n.costUsd ?? 0), 0);
+	if (total > 0) {
+		console.log("");
+		console.log(
+			`Total cost: ${total.toFixed(4)} across ${withCost.length} task(s)`,
+		);
 	}
 }
 
@@ -677,6 +688,31 @@ async function handleCost(args: string[]): Promise<void> {
 	);
 }
 
+async function handleAgent(args: string[]): Promise<void> {
+	const projectId = await resolveProject(args[0]);
+	if (!projectId) return;
+
+	const res = await api(`/projects/${projectId}/agent`);
+	if (!res.ok) {
+		console.error("Error checking agent status");
+		process.exit(1);
+	}
+	const body = (await res.json()) as {
+		running: boolean;
+		sessionId: string | null;
+	};
+	if (body.running) {
+		console.log("Agent is RUNNING");
+		if (body.sessionId) console.log(`Session: ${body.sessionId.slice(0, 8)}`);
+	} else {
+		console.log("Agent is IDLE");
+		if (body.sessionId)
+			console.log(
+				`Last session: ${body.sessionId.slice(0, 8)} (saved, can resume)`,
+			);
+	}
+}
+
 async function handleSend(args: string[]): Promise<void> {
 	const message = args.join(" ");
 	if (!message) {
@@ -1014,6 +1050,9 @@ switch (command) {
 	case "log":
 		await handleLogs(args);
 		break;
+	case "agent":
+		await handleAgent(args);
+		break;
 	case "health":
 		await handleHealth();
 		break;
@@ -1054,6 +1093,9 @@ switch (command) {
 		);
 		console.log(
 			"  logs [-n N] [id]  Show project event history (last N events)",
+		);
+		console.log(
+			"  agent [id]      Check if an agent is running for the project",
 		);
 		console.log("  cost [id]       Show cost summary for project");
 		console.log("  health          Check daemon health");
