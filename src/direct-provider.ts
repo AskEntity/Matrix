@@ -169,40 +169,46 @@ const CHECKPOINT_SYSTEM_PROMPT = `You are generating a structured checkpoint for
 The agent will resume from this checkpoint after context compression — it must be able to
 continue working as if it never stopped.
 
-Analyze the conversation and output a checkpoint in EXACTLY this format:
-
-## Task
-[What the agent is working on — the original goal]
+Analyze the conversation and output a checkpoint in EXACTLY this format (all sections required):
 
 ## Current Phase
-[Where in the workflow: exploring / implementing / testing / debugging / done]
+[What phase of the task the agent is in: design / implementation / testing / fixing / done]
 
-## Completed
-- [What's been done, with specific file paths and line numbers]
-- [Key decisions made and WHY (not just what)]
+## Completed Work
+[What has been implemented, tested, and committed successfully — with specific file paths and line numbers]
+[Key decisions made and WHY, not just what]
 
-## Files Modified
+## Modified Files
 - [path/to/file — what was changed and why]
 
 ## Current State
 [What the agent was doing RIGHT NOW when compression happened]
-[If debugging: the exact error, what's been tried, what hasn't]
-[If implementing: what's done, what remains]
+[If debugging: the exact error message, what's been tried, what hasn't]
+[If implementing: what's done, what remains in progress]
+
+## Rejected Approaches
+[Approaches that were tried and FAILED — this is the MOST VALUABLE section]
+[Each entry: what was tried, why it failed, why it should NOT be retried]
+[If nothing was rejected, write "None so far"]
+[Example: "Tried X approach — failed because Y. Do not retry because Z."]
+
+## Open Questions
+[Unresolved uncertainties that may affect next steps]
+[Things the agent was unsure about that still need verification]
+[If none, write "None"]
+[Example: "Need to verify whether X API is available in this environment"]
 
 ## Next Action
-[The specific next thing the agent should do — not vague, but actionable]
-[e.g. "Run bun test to verify the fix in src/foo.ts:42" not "continue testing"]
-
-## Key Context
-[Any critical details that would be lost: env vars, API quirks, gotchas discovered]
-[Errors that were encountered and their root causes]
-[Approaches that were tried and REJECTED (so the agent doesn't retry them)]
+[Single, specific, concrete action to take immediately — start with a verb]
+[e.g. "Run \`bun test src/foo.test.ts\` to verify the fix" not "continue testing"]
+[e.g. "Edit src/bar.ts line 42 to change X to Y" not "fix the bug"]
 
 Rules:
-- Be precise: file paths, line numbers, function names, error messages
+- Be precise: file paths, line numbers, function names, exact error messages
 - Be forward-looking: the checkpoint exists to RESUME work, not to document history
-- Omit anything that's in the system prompt (no need to repeat task descriptions)
-- Include rejected approaches — preventing re-exploration is the highest-value information
+- Do NOT repeat information from the system prompt (task description, methodology, instructions)
+- Do NOT include file contents that can be re-read — only state/context hard to reconstruct
+- Rejected Approaches is the highest-value section — fill it thoroughly even if it seems obvious
 - Output ONLY the checkpoint, no preamble or commentary`;
 
 const TOOLS: Tool[] = [
