@@ -243,7 +243,8 @@ Three explicit cache breakpoints per API call:
 ## Backlog (next improvements to consider)
 
 - Token budget per task: cost limits and alerts
-- Browser tab title showing task progress count
+- `og run` endpoint: currently just runs agent without watching (consider deprecating in favor of `og orchestrate`)
+- WebSocket reconnect in CLI `og watch` when connection drops
 
 ## Sessions Prune (added)
 
