@@ -622,6 +622,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			prompt,
 			cwd: project.path,
 			projectPath: project.path,
+			sessionsDir: join(config.dataDir, "sessions", project.id),
 			systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
 			mcpServers: { opengraft: mcpServer },
 			mcpToolDefs: { opengraft: toolDefs },
@@ -775,7 +776,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	app.post("/projects/:id/sessions/clear", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) return c.json({ error: "Project not found" }, 404);
-		const sessionsDir = join(project.path, ".opengraft", "sessions");
+		const sessionsDir = join(config.dataDir, "sessions", project.id);
 		await rm(sessionsDir, { recursive: true, force: true });
 		await mkdir(sessionsDir, { recursive: true });
 		return c.json({ cleared: true });

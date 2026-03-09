@@ -904,12 +904,11 @@ export class DirectProvider implements AgentProvider {
 	): AsyncGenerator<AgentEvent, AgentResult> {
 		const model = request.model ?? this.model;
 		const cwd = request.cwd;
-		const projectPath = request.projectPath ?? cwd;
+		const sessionsDir = request.sessionsDir;
 
 		// Load session history from disk if not already in memory (survives daemon restart)
-		if (sessionId && !this.sessionHistory.has(sessionId)) {
+		if (sessionId && sessionsDir && !this.sessionHistory.has(sessionId)) {
 			try {
-				const sessionsDir = join(projectPath, ".opengraft", "sessions");
 				const data = await readFile(
 					join(sessionsDir, `${sessionId}.json`),
 					"utf-8",
@@ -1207,16 +1206,17 @@ export class DirectProvider implements AgentProvider {
 		const finalMessages = [...messages];
 		this.sessionHistory.set(sessionId, finalMessages);
 		// Also write to disk so the history survives daemon restarts
-		try {
-			const sessionsDir = join(projectPath, ".opengraft", "sessions");
-			await mkdir(sessionsDir, { recursive: true });
-			await writeFile(
-				join(sessionsDir, `${sessionId}.json`),
-				JSON.stringify(finalMessages),
-				"utf-8",
-			);
-		} catch {
-			// Non-fatal: if we can't persist to disk, in-memory history still works
+		if (sessionsDir) {
+			try {
+				await mkdir(sessionsDir, { recursive: true });
+				await writeFile(
+					join(sessionsDir, `${sessionId}.json`),
+					JSON.stringify(finalMessages),
+					"utf-8",
+				);
+			} catch {
+				// Non-fatal: if we can't persist to disk, in-memory history still works
+			}
 		}
 
 		const { inputPer1M, outputPer1M } = getModelPricing(model);
