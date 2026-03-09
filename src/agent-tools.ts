@@ -353,6 +353,8 @@ export interface OrchestratorToolsDeps {
 	childQueues?: Map<string, MessageQueue>;
 	/** Mutable ref shared between done tool and runLoop — when done tool is called, sets the result here. */
 	doneRef?: { done: null | { status: "passed" | "failed"; summary: string } };
+	/** Parent's queue — used by report_to_parent to send messages UP. Null for top-level orchestrator. */
+	parentQueue?: MessageQueue;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -462,6 +464,7 @@ export function createOrchestratorTools(
 					onTaskEvent,
 					childModel,
 					queue: childQueue,
+					parentQueue: deps.queue,
 					doneRef: childDoneRef,
 					broadcastTreeUpdate,
 				},
@@ -1145,7 +1148,7 @@ export function createOrchestratorTools(
 					.describe("The message content to send to the parent agent"),
 			},
 			async (args) => {
-				if (!deps.queue) {
+				if (!deps.parentQueue) {
 					// No parent queue — silently no-op (top-level orchestrator has no parent)
 					return {
 						content: [
@@ -1161,7 +1164,7 @@ export function createOrchestratorTools(
 				const taskTitle = node?.title ?? "unknown";
 
 				try {
-					deps.queue.enqueue({
+					deps.parentQueue.enqueue({
 						source: "child_report",
 						taskId: currentTaskId ?? "unknown",
 						title: taskTitle,
