@@ -133,11 +133,14 @@ function statusEmoji(status: string): string {
 
 async function handleRun(args: string[]): Promise<void> {
 	let model: string | undefined;
+	let childModel: string | undefined;
 	const filteredArgs: string[] = [];
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (arg === "--model" && i + 1 < args.length) {
 			model = args[++i] as string;
+		} else if (arg === "--child-model" && i + 1 < args.length) {
+			childModel = args[++i] as string;
 		} else if (arg) {
 			filteredArgs.push(arg);
 		}
@@ -148,13 +151,12 @@ async function handleRun(args: string[]): Promise<void> {
 		process.exit(1);
 	}
 
-	const projectId = await resolveCurrentProject();
-	if (!projectId) return;
-
-	// Submit orchestration (fire-and-forget, same as orchestrate but simpler)
-	const body: Record<string, unknown> = { prompt };
+	// Auto-detect project from cwd
+	const body: Record<string, unknown> = { path: process.cwd(), prompt };
 	if (model) body.model = model;
-	const res = await api(`/projects/${projectId}/orchestrate/agent`, {
+	if (childModel) body.childModel = childModel;
+
+	const res = await api("/agents/start", {
 		method: "POST",
 		body: JSON.stringify(body),
 	});
@@ -165,8 +167,9 @@ async function handleRun(args: string[]): Promise<void> {
 		process.exit(1);
 	}
 
+	const result = (await res.json()) as { projectId: string };
 	console.log("Agent started. Watching activity (Ctrl+C to detach)...\n");
-	await watchProject(projectId);
+	await watchProject(result.projectId);
 }
 
 async function handleDecompose(args: string[]): Promise<void> {
@@ -231,10 +234,8 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 		process.exit(1);
 	}
 
-	const projectId = await resolveCurrentProject();
-	if (!projectId) return;
-
-	const body: Record<string, unknown> = {};
+	// Auto-detect project from cwd
+	const body: Record<string, unknown> = { path: process.cwd() };
 	if (isResume) {
 		body.resume = true;
 		if (goal) body.prompt = goal;
@@ -245,7 +246,7 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 	if (childModel) body.childModel = childModel;
 
 	// Submit orchestration (returns immediately)
-	const res = await api(`/projects/${projectId}/orchestrate/agent`, {
+	const res = await api("/agents/start", {
 		method: "POST",
 		body: JSON.stringify(body),
 	});
@@ -256,13 +257,14 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 		process.exit(1);
 	}
 
+	const result = (await res.json()) as { projectId: string };
 	console.log(
 		isResume ? "Resuming orchestration..." : "Orchestration started.",
 	);
 	console.log("Watching agent activity (Ctrl+C to detach)...\n");
 
 	// Auto-switch to watch mode
-	await watchProject(projectId);
+	await watchProject(result.projectId);
 }
 
 async function handleStop(): Promise<void> {
@@ -308,7 +310,9 @@ async function resolveCurrentProject(): Promise<string | null> {
 	);
 
 	if (!match) {
-		console.error("No project found for current directory. Run: og init");
+		console.error(
+			"No project found for current directory. Run: og run <prompt>",
+		);
 		process.exit(1);
 	}
 

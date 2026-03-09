@@ -666,6 +666,33 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ status: "running", projectId: project.id });
 	});
 
+	// Start agent by project path (auto-creates project if needed)
+	app.post("/agents/start", async (c) => {
+		const body = await c.req.json<{
+			path: string;
+			prompt: string;
+			maxTurns?: number;
+			model?: string;
+			childModel?: string;
+		}>();
+		if (!body.path) {
+			return c.json({ error: "path is required" }, 400);
+		}
+		if (!body.prompt) {
+			return c.json({ error: "prompt is required" }, 400);
+		}
+
+		const project = await pm.ensureProject(body.path);
+
+		if (activeOrchestrations.has(project.id)) {
+			return c.json({ error: "Agent already running for this project" }, 409);
+		}
+
+		await getTracker(project.id);
+		launchAgent(project, body);
+		return c.json({ status: "running", projectId: project.id });
+	});
+
 	// Check if an agent is running for a project
 	app.get("/projects/:id/agent", async (c) => {
 		const project = pm.get(c.req.param("id"));

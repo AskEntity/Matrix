@@ -161,6 +161,27 @@ export class ProjectManager {
 		return this.projects.get(id);
 	}
 
+	/** Find a project by its path. */
+	getByPath(path: string): Project | undefined {
+		this.ensureLoaded();
+		const resolved = resolve(path);
+		for (const p of this.projects.values()) {
+			if (p.path === resolved) return p;
+		}
+		return undefined;
+	}
+
+	/**
+	 * Find or auto-create a project at the given path.
+	 * If the path is already registered, returns the existing project.
+	 * Otherwise, initializes it as a new project.
+	 */
+	async ensureProject(path: string): Promise<Project> {
+		const existing = this.getByPath(path);
+		if (existing) return existing;
+		return this.init(path);
+	}
+
 	/** List all projects. */
 	list(): Project[] {
 		this.ensureLoaded();
