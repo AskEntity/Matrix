@@ -73,3 +73,9 @@ export interface VersionResponse {
 	commit: string;
 	startedAt: string;
 }
+
+/** Daemon stats response. */
+export interface StatsResponse {
+	uptime: number;
+	requestCount: number;
+}

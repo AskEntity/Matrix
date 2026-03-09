@@ -7,6 +7,7 @@ import { createApp } from "./daemon.ts";
 import type {
 	HealthResponse,
 	Project,
+	StatsResponse,
 	TaskNode,
 	VersionResponse,
 } from "./types.ts";
@@ -77,6 +78,58 @@ describe("daemon version", () => {
 		expect(typeof body.startedAt).toBe("string");
 		expect(new Date(body.startedAt).toISOString()).toBe(body.startedAt);
 		expect(body.startedAt <= before || body.startedAt === before).toBe(true);
+
+		await rm(dataDir, { recursive: true });
+	});
+});
+
+describe("daemon stats", () => {
+	test("GET /stats returns uptime in seconds and requestCount", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "og-stats-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const res = await app.request("/stats");
+		expect(res.status).toBe(200);
+
+		const body = (await res.json()) as StatsResponse;
+		expect(typeof body.uptime).toBe("number");
+		expect(body.uptime).toBeGreaterThanOrEqual(0);
+		expect(typeof body.requestCount).toBe("number");
+		expect(body.requestCount).toBeGreaterThan(0);
+
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("GET /stats requestCount increments with each request", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "og-stats2-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const res1 = await app.request("/stats");
+		const body1 = (await res1.json()) as StatsResponse;
+		const count1 = body1.requestCount;
+
+		const res2 = await app.request("/stats");
+		const body2 = (await res2.json()) as StatsResponse;
+		const count2 = body2.requestCount;
+
+		expect(count2).toBeGreaterThan(count1);
+
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("GET /stats uptime is in seconds not milliseconds", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "og-stats3-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const res = await app.request("/stats");
+		const body = (await res.json()) as StatsResponse;
+
+		// uptime should be a small number (seconds since test start), not thousands (ms)
+		// A test run shouldn't take more than 60 seconds
+		expect(body.uptime).toBeLessThan(60);
 
 		await rm(dataDir, { recursive: true });
 	});
