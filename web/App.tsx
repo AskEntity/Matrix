@@ -820,15 +820,31 @@ function LogEntryView({
 
 function TaskDetail({
 	node,
+	projectId,
 	onContinue,
 	onDelete,
 }: {
 	node: TaskNode;
+	projectId: string;
 	onContinue: (msg?: string) => void;
 	onDelete: () => void;
 }) {
 	const [continueMsg, setContinueMsg] = useState("");
+	const [commits, setCommits] = useState<{ hash: string; message: string }[]>(
+		[],
+	);
 	const canContinue = node.status === "failed" || node.status === "stuck";
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: refetch when status changes so new commits appear after task completes
+	useEffect(() => {
+		if (!projectId || !node.id) return;
+		fetch(`/projects/${projectId}/tasks/${node.id}/gitlog`)
+			.then((r) => r.json())
+			.then((data: { commits: { hash: string; message: string }[] }) => {
+				setCommits(data.commits ?? []);
+			})
+			.catch(() => setCommits([]));
+	}, [node.id, node.status, projectId]);
 
 	return (
 		<div className="og-detail-content">
@@ -904,6 +920,36 @@ function TaskDetail({
 					</div>
 				)}
 			</div>
+
+			{commits.length > 0 && (
+				<div className="og-detail-section">
+					<div className="og-detail-label" style={{ marginBottom: "6px" }}>
+						Commits
+					</div>
+					{commits.slice(0, 10).map((commit) => (
+						<div
+							key={commit.hash}
+							style={{
+								display: "flex",
+								gap: "8px",
+								fontSize: "11px",
+								lineHeight: "1.5",
+								padding: "2px 0",
+							}}
+						>
+							<span
+								className="mono"
+								style={{ color: "var(--text-faint)", flexShrink: 0 }}
+							>
+								{commit.hash.slice(0, 7)}
+							</span>
+							<span style={{ color: "var(--text-secondary)" }}>
+								{commit.message}
+							</span>
+						</div>
+					))}
+				</div>
+			)}
 
 			<div className="og-detail-actions">
 				{canContinue && (
@@ -1785,6 +1831,7 @@ export function App() {
 						) : selectedNode ? (
 							<TaskDetail
 								node={selectedNode}
+								projectId={projectId}
 								onContinue={handleContinueTask}
 								onDelete={handleDeleteTask}
 							/>

@@ -203,7 +203,7 @@ async function handleTasks(args: string[]): Promise<void> {
 
 		const children = byParent.get(node.id) ?? [];
 		for (const child of children) {
-			printTaskTree(child, indent + "  ", true);
+			printTaskTree(child, `${indent}  `, true);
 		}
 	}
 

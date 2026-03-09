@@ -650,6 +650,46 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ ok: true });
 	});
 
+	// Git log for a task branch
+	app.get("/projects/:id/tasks/:nodeId/gitlog", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const tracker = await getTracker(project.id);
+		const nodeId = c.req.param("nodeId");
+		const node = tracker.get(nodeId);
+		if (!node) {
+			return c.json({ error: "Task not found" }, 404);
+		}
+		if (!node.worktreePath || !node.branch) {
+			return c.json({ commits: [] });
+		}
+		try {
+			const proc = Bun.spawn(["git", "log", "--oneline", "-20", node.branch], {
+				cwd: project.path,
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			await proc.exited;
+			const output = await new Response(proc.stdout).text();
+			const commits = output
+				.trim()
+				.split("\n")
+				.filter((line) => line.trim())
+				.map((line) => {
+					const spaceIdx = line.indexOf(" ");
+					return {
+						hash: spaceIdx >= 0 ? line.slice(0, spaceIdx) : line,
+						message: spaceIdx >= 0 ? line.slice(spaceIdx + 1) : "",
+					};
+				});
+			return c.json({ commits });
+		} catch {
+			return c.json({ commits: [] });
+		}
+	});
+
 	// Agent execution (fire-and-forget, same as orchestrate)
 	app.post("/projects/:id/run", async (c) => {
 		if (!startupReady) {
@@ -1228,12 +1268,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				console.log(
 					`Auto-resuming orchestration for ${project.name} (${project.id.slice(0, 8)})`,
 				);
-				const resumePrompt =
-					`Continue where you left off. The daemon restart you triggered has completed successfully — your code changes are now live.${
-						orphanCount > 0
-							? ` Note: ${orphanCount} in_progress task(s) were reset to failed because their agent sessions were lost during the restart — check the task tree.`
-							: " Check the task tree and proceed."
-					}`;
+				const resumePrompt = `Continue where you left off. The daemon restart you triggered has completed successfully — your code changes are now live.${
+					orphanCount > 0
+						? ` Note: ${orphanCount} in_progress task(s) were reset to failed because their agent sessions were lost during the restart — check the task tree.`
+						: " Check the task tree and proceed."
+				}`;
 				launchAgent(project, {
 					prompt: resumePrompt,
 					resume: true,
