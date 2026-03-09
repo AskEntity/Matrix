@@ -3,9 +3,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
-import type { MessageParam } from "@anthropic-ai/sdk/resources/messages/messages";
+import type {
+	MessageParam,
+	TextBlockParam,
+} from "@anthropic-ai/sdk/resources/messages/messages";
 import { createOrchestratorTools } from "./agent-tools.ts";
 import {
+	addMessagesCacheControl,
 	compressMessages,
 	executeTool,
 	getModelPricing,
@@ -508,6 +512,118 @@ describe("zodShapeToJsonSchema", () => {
 			active: { type: "boolean" },
 		});
 		expect(result.required).toEqual(["name", "count", "active"]);
+	});
+});
+
+describe("addMessagesCacheControl", () => {
+	test("returns messages unchanged if fewer than 3", () => {
+		const messages: MessageParam[] = [
+			{ role: "user", content: "hello" },
+			{ role: "assistant", content: "hi" },
+		];
+		const result = addMessagesCacheControl(messages);
+		expect(result).toEqual(messages);
+	});
+
+	test("adds cache_control to second-to-last user message (string content)", () => {
+		const messages: MessageParam[] = [
+			{ role: "user", content: "first user message" },
+			{ role: "assistant", content: "first assistant reply" },
+			{ role: "user", content: "second user message" },
+			{ role: "assistant", content: "second assistant reply" },
+			{ role: "user", content: "current user message (no cache)" },
+		];
+		const result = addMessagesCacheControl(messages);
+
+		// The last user message (index 4) should NOT have cache_control
+		const lastUser = result[4];
+		expect(lastUser?.content).toBe("current user message (no cache)");
+
+		// The second-to-last user message (index 2) should be converted to array with cache_control
+		const secondToLastUser = result[2];
+		expect(Array.isArray(secondToLastUser?.content)).toBe(true);
+		const content = secondToLastUser?.content as TextBlockParam[];
+		expect(content[0]?.cache_control).toEqual({ type: "ephemeral" });
+		expect(content[0]?.text).toBe("second user message");
+
+		// Other messages should be unchanged
+		expect(result[0]).toEqual(messages[0]);
+		expect(result[1]).toEqual(messages[1]);
+		expect(result[3]).toEqual(messages[3]);
+	});
+
+	test("adds cache_control to last block of array content", () => {
+		const messages: MessageParam[] = [
+			{ role: "user", content: "first" },
+			{ role: "assistant", content: "reply1" },
+			{
+				role: "user",
+				content: [
+					{
+						type: "tool_result" as const,
+						tool_use_id: "tu_1",
+						content: "result text",
+					},
+				],
+			},
+			{ role: "assistant", content: "reply2" },
+			{ role: "user", content: "current" },
+		];
+		const result = addMessagesCacheControl(messages);
+		const secondToLastUser = result[2];
+		expect(Array.isArray(secondToLastUser?.content)).toBe(true);
+		// biome-ignore lint/suspicious/noExplicitAny: accessing cache_control after transformation
+		const content = secondToLastUser?.content as any[];
+		expect(content[0]?.cache_control).toEqual({ type: "ephemeral" });
+	});
+
+	test("does not mutate original messages", () => {
+		const messages: MessageParam[] = [
+			{ role: "user", content: "first" },
+			{ role: "assistant", content: "a1" },
+			{ role: "user", content: "second" },
+			{ role: "assistant", content: "a2" },
+			{ role: "user", content: "third" },
+		];
+		const original = JSON.stringify(messages);
+		addMessagesCacheControl(messages);
+		expect(JSON.stringify(messages)).toBe(original);
+	});
+
+	test("skips caching if fewer than 2 user messages", () => {
+		const messages: MessageParam[] = [
+			{ role: "assistant", content: "hi" },
+			{ role: "assistant", content: "there" },
+			{ role: "user", content: "only one user message" },
+		];
+		const result = addMessagesCacheControl(messages);
+		expect(result).toEqual(messages);
+	});
+
+	test("does not double-cache an already-cached block", () => {
+		const messages: MessageParam[] = [
+			{ role: "user", content: "first" },
+			{ role: "assistant", content: "a1" },
+			{
+				role: "user",
+				content: [
+					{
+						type: "tool_result" as const,
+						tool_use_id: "tu_1",
+						content: "result",
+						cache_control: { type: "ephemeral" as const },
+					},
+				],
+			},
+			{ role: "assistant", content: "a2" },
+			{ role: "user", content: "current" },
+		];
+		const result = addMessagesCacheControl(messages);
+		// Already has cache_control — should remain as-is (not add another)
+		// biome-ignore lint/suspicious/noExplicitAny: accessing cache_control after transformation
+		const cached = result[2]?.content as any[];
+		// Should still have exactly one cache_control (not duplicated)
+		expect(cached[0]?.cache_control).toEqual({ type: "ephemeral" });
 	});
 });
 

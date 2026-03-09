@@ -6,6 +6,7 @@ import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
 	MessageParam,
+	TextBlockParam,
 	Tool,
 	ToolResultBlockParam,
 	ToolUseBlock,
@@ -710,6 +711,88 @@ function zodTypeToJsonProp(zodType: unknown): {
 }
 
 /**
+ * Add cache_control breakpoints to the messages array for prompt caching.
+ *
+ * Strategy: Mark the second-to-last user message with a cache breakpoint.
+ * This caches all accumulated history up to the previous turn, which is the
+ * stable portion of the conversation. The very last user message is the new
+ * input and must not be cached (it changes every turn).
+ *
+ * Anthropic supports up to 4 cache breakpoints. We use 1 here to keep it
+ * simple and predictable.
+ *
+ * Returns a new array — does NOT mutate the original messages.
+ */
+export function addMessagesCacheControl(
+	messages: MessageParam[],
+): MessageParam[] {
+	if (messages.length < 3) {
+		// Not enough history to be worth caching
+		return messages;
+	}
+
+	// Find the index of the second-to-last user message (skip the last one which is the
+	// current turn's input).
+	let lastUserIdx = -1;
+	let secondToLastUserIdx = -1;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i]?.role === "user") {
+			if (lastUserIdx === -1) {
+				lastUserIdx = i;
+			} else {
+				secondToLastUserIdx = i;
+				break;
+			}
+		}
+	}
+
+	if (secondToLastUserIdx === -1) {
+		// Fewer than 2 user messages — nothing to cache yet
+		return messages;
+	}
+
+	// Clone messages and add cache_control to the second-to-last user message.
+	// If its content is a string, convert to TextBlockParam array first.
+	return messages.map((msg, i) => {
+		if (i !== secondToLastUserIdx) return msg;
+
+		const content = msg.content;
+		if (typeof content === "string") {
+			// Convert string content to array with cache_control
+			return {
+				...msg,
+				content: [
+					{
+						type: "text" as const,
+						text: content,
+						cache_control: { type: "ephemeral" as const },
+					},
+				],
+			};
+		}
+
+		// Array content: add cache_control to the last block
+		if (Array.isArray(content) && content.length > 0) {
+			const last = content[content.length - 1];
+			// Only add cache_control to text or tool_result blocks (supported types)
+			if (
+				last &&
+				(last.type === "text" || last.type === "tool_result") &&
+				!("cache_control" in last && last.cache_control)
+			) {
+				const updatedContent = [
+					...content.slice(0, -1),
+					{ ...last, cache_control: { type: "ephemeral" as const } },
+				];
+				return { ...msg, content: updatedContent };
+			}
+		}
+
+		return msg;
+	});
+}
+
+/**
  * Direct Anthropic API provider.
  * Uses the Messages API with tool use for a lightweight, controllable agent loop.
  * No Claude Code subprocess — direct API calls with custom tool execution.
@@ -873,12 +956,38 @@ export class DirectProvider implements AgentProvider {
 				`Working directory: ${cwd}`,
 			].filter(Boolean);
 
+			// Cache control: system prompt cached as array of TextBlockParam
+			const systemWithCache: TextBlockParam[] = [
+				{
+					type: "text",
+					text: systemParts.join("\n\n"),
+					cache_control: { type: "ephemeral" },
+				},
+			];
+
+			// Cache control: add cache breakpoint on the last tool definition so the
+			// full tool list is cached across turns.
+			const toolsWithCache: Tool[] =
+				allTools.length > 0
+					? allTools.map((tool, i) =>
+							i === allTools.length - 1
+								? { ...tool, cache_control: { type: "ephemeral" } }
+								: tool,
+						)
+					: allTools;
+
+			// Cache control: add a cache breakpoint at the second-to-last user message
+			// (i.e. the last user turn before the current one), so that accumulated
+			// conversation history is cached between turns.
+			const messagesWithCache: MessageParam[] =
+				addMessagesCacheControl(messages);
+
 			const createParams = {
 				model,
 				max_tokens: DEFAULT_MAX_TOKENS,
-				system: systemParts.join("\n\n"),
-				messages,
-				tools: allTools,
+				system: systemWithCache,
+				messages: messagesWithCache,
+				tools: toolsWithCache,
 			};
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {
