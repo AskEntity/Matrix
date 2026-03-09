@@ -555,6 +555,25 @@ function LogEntryView({
 		);
 	}
 
+	if (entry.type === "queue_message") {
+		return (
+			<div className={`og-log-entry og-event-${entry.type}`}>
+				<span className="og-log-time">{entry.time}</span>
+				{taskLabel && (
+					<span className="og-log-badge" title={entry.taskId}>
+						{taskLabel}
+					</span>
+				)}
+				<div className="og-log-body">
+					<span className="og-queue-message">
+						<IconSend size={10} />
+						<span className="og-queue-message-text">{entry.text}</span>
+					</span>
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<div className={`og-log-entry og-event-${entry.type}`}>
 			<span className="og-log-time">{entry.time}</span>
@@ -870,6 +889,8 @@ export function App() {
 							msg.checkpoint as string,
 						);
 						break;
+					} else if (et === "queue_message") {
+						text = (msg.messages as string) || "";
 					} else if (et === "status") {
 						text = (msg.message as string) || "";
 					} else {
@@ -959,11 +980,11 @@ export function App() {
 					const targetLabel = targetNode?.title ?? targetNodeId.slice(0, 8);
 					addLog(
 						"lifecycle",
-						`Message sent to "${targetLabel}": ${prompt.trim()}`,
+						`Message queued to "${targetLabel}": ${prompt.trim()}`,
 					);
 				} else {
 					await sendMessage(prompt.trim());
-					addLog("lifecycle", `Message sent: ${prompt.trim()}`);
+					addLog("lifecycle", `Message queued: ${prompt.trim()}`);
 				}
 			} else {
 				await start({
