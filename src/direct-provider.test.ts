@@ -9,6 +9,7 @@ import {
 	executeTool,
 	getModelPricing,
 	resolvePath,
+	zodShapeToJsonSchema,
 } from "./direct-provider.ts";
 
 describe("getModelPricing", () => {
@@ -274,5 +275,66 @@ describe("compressMessages", () => {
 		}
 		await compressMessages(client, messages, "claude-sonnet-4-6");
 		expect(calledModel).toBe("claude-haiku-4-5-20251001");
+	});
+});
+
+describe("zodShapeToJsonSchema", () => {
+	test("converts nested object in array (execute_tasks schema)", async () => {
+		const { z } = await import("zod");
+		const shape = {
+			tasks: z
+				.array(
+					z.object({
+						taskId: z.string().describe("ID of the child task"),
+						message: z.string().optional().describe("Instructions"),
+						mode: z
+							.enum(["new", "resume", "reset"])
+							.optional()
+							.default("new")
+							.describe("Execution mode"),
+					}),
+				)
+				.describe("Tasks to execute"),
+		};
+		const result = zodShapeToJsonSchema(shape);
+		expect(result).toEqual({
+			type: "object",
+			properties: {
+				tasks: {
+					type: "array",
+					description: "Tasks to execute",
+					items: {
+						type: "object",
+						properties: {
+							taskId: { type: "string", description: "ID of the child task" },
+							message: { type: "string", description: "Instructions" },
+							mode: {
+								type: "string",
+								enum: ["new", "resume", "reset"],
+								description: "Execution mode",
+							},
+						},
+						required: ["taskId"],
+					},
+				},
+			},
+			required: ["tasks"],
+		});
+	});
+
+	test("handles simple string and number types", async () => {
+		const { z } = await import("zod");
+		const shape = {
+			name: z.string(),
+			count: z.number(),
+			active: z.boolean(),
+		};
+		const result = zodShapeToJsonSchema(shape);
+		expect(result.properties).toEqual({
+			name: { type: "string" },
+			count: { type: "number" },
+			active: { type: "boolean" },
+		});
+		expect(result.required).toEqual(["name", "count", "active"]);
 	});
 });

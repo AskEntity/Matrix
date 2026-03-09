@@ -459,7 +459,7 @@ export async function executeTool(
  * Convert a Zod raw shape (from SdkMcpToolDefinition.inputSchema) to JSON Schema.
  * Handles the types used in our orchestrator tools: string, enum, optional.
  */
-function zodShapeToJsonSchema(
+export function zodShapeToJsonSchema(
 	shape: Record<string, unknown>,
 ): Record<string, unknown> {
 	const properties: Record<string, unknown> = {};
@@ -515,7 +515,7 @@ function zodTypeToJsonProp(zodType: unknown): {
 		return {
 			schema: {
 				type: "string",
-				enum: def?.values ?? [],
+				enum: def?.values ?? (def?.entries ? Object.values(def.entries) : []),
 				...(description ? { description } : {}),
 			},
 			optional: false,
@@ -543,7 +543,12 @@ function zodTypeToJsonProp(zodType: unknown): {
 	}
 
 	if (typeName === "array" || typeName === "ZodArray") {
-		const inner = zodTypeToJsonProp(def?.type ?? def?.innerType);
+		// Zod v4: def.element, Zod v3: def.type (non-string) or def.innerType
+		const elementType =
+			def?.element ??
+			(typeof def?.type !== "string" ? def?.type : undefined) ??
+			def?.innerType;
+		const inner = zodTypeToJsonProp(elementType);
 		return {
 			schema: {
 				type: "array",
@@ -552,6 +557,19 @@ function zodTypeToJsonProp(zodType: unknown): {
 			},
 			optional: false,
 		};
+	}
+
+	if (typeName === "object" || typeName === "ZodObject") {
+		const shape = typeof def?.shape === "function" ? def.shape() : def?.shape;
+		if (shape) {
+			return {
+				schema: {
+					...zodShapeToJsonSchema(shape),
+					...(description ? { description } : {}),
+				},
+				optional: false,
+			};
+		}
 	}
 
 	// Default to string
