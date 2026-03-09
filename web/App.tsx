@@ -1097,6 +1097,27 @@ export function App() {
 		localStorage.setItem("og-theme", isDark ? "dark" : "light");
 	}, [isDark]);
 
+	// Browser tab title progress
+	useEffect(() => {
+		const total = nodes.length;
+		if (total === 0) {
+			document.title = "OpenGraft";
+			return;
+		}
+		const passed = nodes.filter((n) => n.status === "passed").length;
+		const failed = nodes.filter(
+			(n) => n.status === "failed" || n.status === "stuck",
+		).length;
+
+		if (failed > 0) {
+			document.title = `[!${failed}] OpenGraft`;
+		} else if (passed === total) {
+			document.title = `[✓] OpenGraft`;
+		} else {
+			document.title = `[${passed}/${total}] OpenGraft`;
+		}
+	}, [nodes]);
+
 	// Draggable divider
 	const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
 		e.preventDefault();
