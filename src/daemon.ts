@@ -16,7 +16,6 @@ import { DirectProvider } from "./direct-provider.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type {
-	DecomposedTask,
 	HealthResponse,
 	StatsResponse,
 	TaskNode,
@@ -504,66 +503,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ status: "running", projectId: project.id });
 	});
 
-	// Task decomposition: agent breaks goal into task tree
-	app.post("/projects/:id/decompose", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const body = await c.req.json<{ goal: string }>();
-		if (!body.goal) {
-			return c.json({ error: "goal is required" }, 400);
-		}
-
-		const memory = readProjectMemory(project.path);
-		const prompt = buildDecomposePrompt(body.goal, memory);
-
-		try {
-			const result = await config.agentProvider.execute({
-				prompt,
-				cwd: project.path,
-				systemPrompt: DECOMPOSE_PROMPT,
-			});
-
-			if (!result.success) {
-				return c.json(
-					{ error: "Decomposition failed", output: result.output },
-					500,
-				);
-			}
-
-			// Extract JSON from the agent's output
-			const tasks = parseDecomposedTasks(result.output);
-			if (!tasks) {
-				return c.json(
-					{
-						error: "Could not parse task tree from agent output",
-						output: result.output,
-					},
-					500,
-				);
-			}
-
-			// Create the task tree in the tracker
-			const tracker = await getTracker(project.id);
-			const root = tracker.createRoot(tasks.title, tasks.description);
-			if (tasks.children) {
-				createChildTasks(tracker, root.id, tasks.children);
-			}
-			await tracker.save();
-
-			return c.json({
-				root: tracker.getRoot(),
-				nodes: tracker.allNodes(),
-				costUsd: result.costUsd,
-				turns: result.turns,
-			});
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error";
-			return c.json({ error: message }, 500);
-		}
-	});
-
 	/**
 	 * Launch an agent for a project. Returns immediately.
 	 * The agent runs in the background; observe via WebSocket.
@@ -890,77 +829,6 @@ All implementation is done by child agents in isolated worktrees.
 Even for "simple" tasks, create a child task and spawn it.
 
 ${ORCHESTRATION_KNOWLEDGE}`;
-
-const DECOMPOSE_PROMPT = `You are a task decomposition system. Given a high-level goal, break it into a hierarchical task tree.
-
-## Rules
-1. The root task is the overall goal.
-2. Each leaf task should be independently executable by a single agent session.
-3. Leaf tasks should be concrete and actionable (not abstract).
-4. Each task needs a clear title and description.
-5. Keep the tree shallow: prefer 2-3 levels max.
-6. Order children so dependencies come first.
-7. CRITICAL: Sibling tasks will run IN PARALLEL on separate git branches and then be merged.
-   - Each sibling MUST work on DIFFERENT files/modules to avoid merge conflicts.
-   - Never have two siblings modify the same file.
-   - Split by module/feature boundary, not by step (e.g. "auth module" vs "payment module", NOT "write types" vs "write tests").
-   - If tasks share a dependency, create that dependency as an earlier sibling or parent task.
-
-## Output Format
-Respond with ONLY a JSON object (no markdown fences, no explanation):
-{
-  "title": "Root task title",
-  "description": "What the overall goal is",
-  "children": [
-    {
-      "title": "Subtask 1",
-      "description": "Concrete steps for this subtask",
-      "children": []
-    }
-  ]
-}`;
-
-function buildDecomposePrompt(goal: string, memory: string): string {
-	const parts: string[] = [];
-	if (memory) {
-		parts.push(`## Project Memory\n${memory}\n`);
-	}
-	parts.push(`## Goal\n${goal}`);
-	return parts.join("\n");
-}
-
-function parseDecomposedTasks(output: string): DecomposedTask | null {
-	// Try to extract JSON from the output — agent may wrap it in markdown fences
-	const jsonMatch =
-		output.match(/```(?:json)?\s*([\s\S]*?)```/) ??
-		output.match(/(\{[\s\S]*\})/);
-	if (!jsonMatch?.[1]) return null;
-
-	try {
-		const parsed = JSON.parse(jsonMatch[1].trim()) as DecomposedTask;
-		if (!parsed.title) return null;
-		return parsed;
-	} catch {
-		return null;
-	}
-}
-
-function createChildTasks(
-	tracker: TaskTracker,
-	parentId: string,
-	children: DecomposedTask[],
-): void {
-	for (const child of children) {
-		const node = tracker.addChild(
-			parentId,
-			child.title,
-			child.description ?? "",
-		);
-		if (child.children && child.children.length > 0) {
-			createChildTasks(tracker, node.id, child.children);
-		}
-	}
-}
 
 // Only start the server when run directly, not when imported for testing.
 if (import.meta.main) {

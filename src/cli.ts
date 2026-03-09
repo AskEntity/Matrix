@@ -172,42 +172,6 @@ async function handleRun(args: string[]): Promise<void> {
 	await watchProject(result.projectId);
 }
 
-async function handleDecompose(args: string[]): Promise<void> {
-	const goal = args.join(" ");
-	if (!goal) {
-		console.error("Usage: og decompose <goal>");
-		process.exit(1);
-	}
-
-	const projectId = await resolveCurrentProject();
-	if (!projectId) return;
-
-	console.log("Decomposing goal...");
-	const res = await api(`/projects/${projectId}/decompose`, {
-		method: "POST",
-		body: JSON.stringify({ goal }),
-	});
-
-	if (!res.ok) {
-		const err = (await res.json()) as { error: string };
-		console.error(`Error: ${err.error}`);
-		process.exit(1);
-	}
-
-	const result = (await res.json()) as {
-		root: { title: string };
-		nodes: { title: string; status: string }[];
-		costUsd?: number;
-	};
-
-	console.log(`Created task tree: ${result.root.title}`);
-	console.log(`Tasks: ${result.nodes.length}`);
-	for (const node of result.nodes) {
-		console.log(`  - ${node.title}`);
-	}
-	if (result.costUsd) console.log(`Cost: $${result.costUsd.toFixed(4)}`);
-}
-
 async function handleOrchestrate(args: string[]): Promise<void> {
 	const isResume = args[0] === "--resume";
 	// Parse --model and --child-model flags
@@ -514,10 +478,6 @@ switch (command) {
 	case "run":
 		await handleRun(args);
 		break;
-	case "decompose":
-	case "dec":
-		await handleDecompose(args);
-		break;
 	case "orchestrate":
 	case "orch":
 		await handleOrchestrate(args);
@@ -550,7 +510,6 @@ switch (command) {
 		console.log("  list            List all projects");
 		console.log("  status [id]     Show task tree status");
 		console.log("  run <prompt>    Run agent task (one-shot)");
-		console.log("  decompose <goal>  Break goal into task tree");
 		console.log(
 			"  orchestrate <goal>  Start agent orchestration (fire-and-forget)",
 		);

@@ -53,13 +53,6 @@ export interface Project {
 	createdAt: string;
 }
 
-/** A task description produced by the decomposition agent. */
-export interface DecomposedTask {
-	title: string;
-	description: string;
-	children?: DecomposedTask[];
-}
-
 /** Daemon health response. */
 export interface HealthResponse {
 	status: "ok";
