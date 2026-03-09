@@ -377,6 +377,12 @@ function TaskTree({
 		return map;
 	}, [nodes]);
 
+	const nodeMap = useMemo(() => {
+		const map = new Map<string, TaskNode>();
+		for (const n of nodes) map.set(n.id, n);
+		return map;
+	}, [nodes]);
+
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 	const toggleCollapse = useCallback((id: string) => {
 		setCollapsed((prev) => {
@@ -387,10 +393,46 @@ function TaskTree({
 		});
 	}, []);
 
+	const [taskFilter, setTaskFilter] = useState("");
+
+	const matchingIds = useMemo((): Set<string> | null => {
+		const trimmed = taskFilter.trim();
+		if (!trimmed) return null; // null = show all
+		const lower = trimmed.toLowerCase();
+		const matched = new Set<string>();
+		for (const node of nodes) {
+			if (node.title.toLowerCase().includes(lower)) {
+				// Include this node AND all its ancestors
+				let current: TaskNode | undefined = node;
+				while (current) {
+					matched.add(current.id);
+					current = current.parentId
+						? nodeMap.get(current.parentId)
+						: undefined;
+				}
+			}
+		}
+		return matched;
+	}, [nodes, taskFilter, nodeMap]);
+
 	const isOrchestratorSelected = selectedTaskId === PROJECT_NODE_ID;
+	const filteredRoots = matchingIds
+		? roots.filter((r) => matchingIds.has(r.id))
+		: roots;
 
 	return (
 		<div className="og-task-tree">
+			{/* Search bar */}
+			<div className="og-tree-search-bar">
+				<input
+					type="text"
+					className="og-tree-search"
+					placeholder="Filter tasks…"
+					value={taskFilter}
+					onChange={(e) => setTaskFilter(e.target.value)}
+				/>
+			</div>
+
 			{/* Orchestrator row */}
 			<button
 				type="button"
@@ -411,7 +453,7 @@ function TaskTree({
 
 			{nodes.length > 0 && <div className="og-sidebar-divider" />}
 
-			{roots.map((root) => (
+			{filteredRoots.map((root) => (
 				<TaskNodeView
 					key={root.id}
 					node={root}
@@ -421,6 +463,7 @@ function TaskTree({
 					onSelect={onSelect}
 					collapsed={collapsed}
 					toggleCollapse={toggleCollapse}
+					matchingIds={matchingIds}
 				/>
 			))}
 
@@ -435,6 +478,10 @@ function TaskTree({
 					</span>
 				</div>
 			)}
+
+			{nodes.length > 0 && filteredRoots.length === 0 && taskFilter && (
+				<div className="og-tree-empty">No tasks match "{taskFilter}"</div>
+			)}
 		</div>
 	);
 }
@@ -447,6 +494,7 @@ function TaskNodeView({
 	onSelect,
 	collapsed,
 	toggleCollapse,
+	matchingIds,
 }: {
 	node: TaskNode;
 	childMap: Map<string, TaskNode[]>;
@@ -455,11 +503,17 @@ function TaskNodeView({
 	onSelect: (id: string | null) => void;
 	collapsed: Set<string>;
 	toggleCollapse: (id: string) => void;
+	matchingIds: Set<string> | null;
 }) {
 	const isSelected = node.id === selectedTaskId;
-	const children = childMap.get(node.id) ?? [];
+	const allChildren = childMap.get(node.id) ?? [];
+	// When filtering, only show children that are in the matching set
+	const children = matchingIds
+		? allChildren.filter((c) => matchingIds.has(c.id))
+		: allChildren;
 	const hasChildren = children.length > 0;
-	const isCollapsed = collapsed.has(node.id);
+	// When filter is active, force-expand all ancestor nodes
+	const isCollapsed = matchingIds ? false : collapsed.has(node.id);
 
 	return (
 		<>
@@ -512,6 +566,7 @@ function TaskNodeView({
 						onSelect={onSelect}
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}
+						matchingIds={matchingIds}
 					/>
 				))}
 		</>

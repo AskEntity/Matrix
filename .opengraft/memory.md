@@ -240,6 +240,18 @@ Three explicit cache breakpoints per API call:
 - Persisted to `tree.json` — survives daemon restart
 - Shown in Web UI TaskDetail and `og tasks`/`og cost` CLI commands
 
+## Web UI: Task Tree Search Filter (added)
+
+- Search input added at top of `TaskTree` component in `web/App.tsx`
+- `taskFilter` state lives in `TaskTree` (self-contained, resets naturally on project change if component remounts)
+- `nodeMap` (id→TaskNode) built via `useMemo` for ancestor traversal
+- `matchingIds: Set<string> | null` — null means show all; when active, includes matching nodes + all ancestors up the tree
+- `filteredRoots` filters top-level roots by `matchingIds`
+- `TaskNodeView` accepts `matchingIds` prop: filters children to those in set, force-expands (overrides `isCollapsed`) when filter active
+- Empty state: "No tasks match '…'" shown when filter active but no roots remain
+- CSS classes: `og-tree-search-bar`, `og-tree-search`, `og-tree-empty` in `web/style.css`
+- **Pitfall**: `var(--radius)` is not defined in the CSS (only `--radius-sm`, `--radius-md` etc). The existing log search uses `var(--radius)` which silently fails. Use `var(--radius-sm)` for correct behavior.
+
 ## Backlog (next improvements to consider)
 
 - Token budget per task: cost limits and alerts
