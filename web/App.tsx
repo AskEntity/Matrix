@@ -12,16 +12,253 @@ import {
 
 const PROJECT_NODE_ID = "__project__";
 
-// --- Task Tree Component ---
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function statusDotClass(status: string): string {
+	const map: Record<string, string> = {
+		pending: "status-dot-pending",
+		in_progress: "status-dot-in_progress",
+		testing: "status-dot-testing",
+		passed: "status-dot-passed",
+		failed: "status-dot-failed",
+		stuck: "status-dot-stuck",
+	};
+	return map[status] ?? "status-dot-pending";
+}
+
+function StatusBadge({ status }: { status: string }) {
+	const labels: Record<string, string> = {
+		pending: "Pending",
+		in_progress: "In Progress",
+		testing: "Testing",
+		passed: "Passed",
+		failed: "Failed",
+		stuck: "Stuck",
+		idle: "Idle",
+		running: "Running",
+	};
+	return (
+		<span className={`og-status-badge ${status}`}>
+			<span className="badge-dot" />
+			{labels[status] ?? status}
+		</span>
+	);
+}
+
+// ── Icons (inline SVG, no external dep) ───────────────────────────────────
+
+function IconHexagon({ size = 16 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<polygon points="11 2 21 7 21 17 11 22 1 17 1 7" />
+		</svg>
+	);
+}
+
+function IconPlus({ size = 14 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2.5"
+			strokeLinecap="round"
+		>
+			<line x1="12" y1="5" x2="12" y2="19" />
+			<line x1="5" y1="12" x2="19" y2="12" />
+		</svg>
+	);
+}
+
+function IconRefresh({ size = 14 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<polyline points="23 4 23 10 17 10" />
+			<polyline points="1 20 1 14 7 14" />
+			<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+		</svg>
+	);
+}
+
+function IconClose({ size = 12 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2.5"
+			strokeLinecap="round"
+		>
+			<line x1="18" y1="6" x2="6" y2="18" />
+			<line x1="6" y1="6" x2="18" y2="18" />
+		</svg>
+	);
+}
+
+function IconArrowDown({ size = 12 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2.5"
+			strokeLinecap="round"
+		>
+			<line x1="12" y1="5" x2="12" y2="19" />
+			<polyline points="19 12 12 19 5 12" />
+		</svg>
+	);
+}
+
+function IconSend({ size = 14 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<line x1="22" y1="2" x2="11" y2="13" />
+			<polygon points="22 2 15 22 11 13 2 9 22 2" />
+		</svg>
+	);
+}
+
+function IconStop({ size = 14 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="currentColor"
+		>
+			<rect x="3" y="3" width="18" height="18" rx="2" />
+		</svg>
+	);
+}
+
+function IconPlay({ size = 14 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="currentColor"
+		>
+			<polygon points="5 3 19 12 5 21 5 3" />
+		</svg>
+	);
+}
+
+function IconTrash({ size = 13 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<polyline points="3 6 5 6 21 6" />
+			<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+			<path d="M10 11v6M14 11v6" />
+			<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+		</svg>
+	);
+}
+
+function IconRepeat({ size = 13 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<polyline points="17 1 21 5 17 9" />
+			<path d="M3 11V9a4 4 0 0 1 4-4h14" />
+			<polyline points="7 23 3 19 7 15" />
+			<path d="M21 13v2a4 4 0 0 1-4 4H3" />
+		</svg>
+	);
+}
+
+function IconTerminal({ size = 12 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<polyline points="4 17 10 11 4 5" />
+			<line x1="12" y1="19" x2="20" y2="19" />
+		</svg>
+	);
+}
+
+// ── Task Tree ──────────────────────────────────────────────────────────────
 
 function TaskTree({
 	nodes,
 	selectedTaskId,
 	onSelect,
+	running,
 }: {
 	nodes: TaskNode[];
 	selectedTaskId: string | null;
 	onSelect: (id: string | null) => void;
+	running: boolean;
 }) {
 	const roots = useMemo(() => nodes.filter((n) => !n.parentId), [nodes]);
 	const childMap = useMemo(() => {
@@ -35,23 +272,30 @@ function TaskTree({
 		return map;
 	}, [nodes]);
 
-	const isProjectSelected = selectedTaskId === PROJECT_NODE_ID;
+	const isOrchestratorSelected = selectedTaskId === PROJECT_NODE_ID;
 
 	return (
-		<div className="task-tree">
+		<div className="og-task-tree">
+			{/* Orchestrator row */}
 			<button
 				type="button"
-				className={`task-node project-node${isProjectSelected ? " selected" : ""}`}
+				className={`og-orch-node${isOrchestratorSelected ? " selected" : ""}`}
 				onClick={(e) => {
 					e.stopPropagation();
-					onSelect(isProjectSelected ? null : PROJECT_NODE_ID);
+					onSelect(isOrchestratorSelected ? null : PROJECT_NODE_ID);
 				}}
 			>
-				<div className="task-row" style={{ paddingLeft: "14px" }}>
-					<span className="project-icon">⬡</span>
-					<span className="task-title">Orchestrator</span>
-				</div>
+				<span className="og-orch-icon">
+					<IconHexagon size={14} />
+				</span>
+				<span className="og-orch-label">Orchestrator</span>
+				<span className={`og-orch-badge ${running ? "running" : "idle"}`}>
+					{running ? "running" : "idle"}
+				</span>
 			</button>
+
+			{nodes.length > 0 && <div className="og-sidebar-divider" />}
+
 			{roots.map((root) => (
 				<TaskNodeView
 					key={root.id}
@@ -62,7 +306,18 @@ function TaskTree({
 					onSelect={onSelect}
 				/>
 			))}
-			{nodes.length === 0 && <div className="empty-state">No tasks yet.</div>}
+
+			{nodes.length === 0 && (
+				<div className="og-empty-state">
+					<span className="og-empty-icon">
+						<IconHexagon size={24} />
+					</span>
+					<span>No tasks yet</span>
+					<span style={{ color: "var(--text-faint)", fontSize: "11px" }}>
+						Start an agent to create tasks
+					</span>
+				</div>
+			)}
 		</div>
 	);
 }
@@ -81,27 +336,30 @@ function TaskNodeView({
 	onSelect: (id: string | null) => void;
 }) {
 	const isSelected = node.id === selectedTaskId;
-	const children = childMap.get(node.id) || [];
+	const children = childMap.get(node.id) ?? [];
 
 	return (
 		<>
 			<button
 				type="button"
-				className={`task-node${isSelected ? " selected" : ""}`}
+				className={`og-task-node${isSelected ? " selected" : ""}`}
 				onClick={(e) => {
 					e.stopPropagation();
 					onSelect(isSelected ? null : node.id);
 				}}
 			>
 				<div
-					className="task-row"
-					style={{ paddingLeft: `${14 + depth * 16}px` }}
+					className="og-task-row"
+					style={{ paddingLeft: `${12 + depth * 16}px` }}
 				>
-					<span className={`task-status status-${node.status}`} />
-					<span className="task-title">{node.title}</span>
+					<span
+						className={`og-task-status-dot ${statusDotClass(node.status)}`}
+					/>
+					<span className="og-task-title">{node.title}</span>
 					{node.branch && (
-						<span className="task-branch">
-							{node.branch.replace("og/", "")}
+						<span className="og-task-branch-tag" title={node.branch}>
+							{node.branch.replace("og/", "").split("/").slice(1).join("/") ||
+								node.branch.replace("og/", "")}
 						</span>
 					)}
 				</div>
@@ -120,7 +378,7 @@ function TaskNodeView({
 	);
 }
 
-// --- Activity Log ---
+// ── Activity Log ───────────────────────────────────────────────────────────
 
 function ActivityLog({
 	entries,
@@ -147,39 +405,45 @@ function ActivityLog({
 	const handleScroll = useCallback(() => {
 		const el = logRef.current;
 		if (!el) return;
-		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
 		onAutoScrollChange(atBottom);
 	}, [onAutoScrollChange]);
 
 	const visible = useMemo(() => {
 		if (!filterTaskId) return entries;
-
-		// Project node: show only orchestrator-level events (no taskId)
 		if (filterTaskId === PROJECT_NODE_ID) {
 			return entries.filter((e) => !e.taskId);
 		}
-
-		// Real task: show events for this task and all its descendants
 		const descendantIds = new Set<string>();
 		const collect = (id: string) => {
 			descendantIds.add(id);
 			const node = nodeMap.get(id);
 			if (node?.children) {
-				for (const childId of node.children) {
-					collect(childId);
-				}
+				for (const childId of node.children) collect(childId);
 			}
 		};
 		collect(filterTaskId);
-
 		return entries.filter((e) => e.taskId && descendantIds.has(e.taskId));
 	}, [entries, filterTaskId, nodeMap]);
 
 	return (
-		<div className="activity-log" ref={logRef} onScroll={handleScroll}>
+		<div className="og-activity-log" ref={logRef} onScroll={handleScroll}>
 			{visible.map((entry) => (
 				<LogEntryView key={entry.id} entry={entry} nodeMap={nodeMap} />
 			))}
+			{visible.length === 0 && (
+				<div
+					style={{
+						padding: "32px 20px",
+						textAlign: "center",
+						color: "var(--text-faint)",
+						fontSize: "12px",
+						fontFamily: "var(--font-mono)",
+					}}
+				>
+					No events yet
+				</div>
+			)}
 		</div>
 	);
 }
@@ -193,49 +457,115 @@ function LogEntryView({
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const taskLabel = entry.taskId
-		? (nodeMap.get(entry.taskId)?.title?.slice(0, 16) ??
+		? (nodeMap.get(entry.taskId)?.title?.slice(0, 18) ??
 			entry.taskId.slice(0, 8))
 		: null;
 
 	if (entry.type === "compact" && entry.checkpoint) {
 		return (
-			<div className="compact-boundary">
-				<div className="compact-faded-hint">
-					Content above this line is not visible to the agent
+			<div className="og-compact-boundary">
+				<div className="og-compact-hint">
+					↑ Content above is not visible to the agent
 				</div>
-				<div className="compact-divider">
-					<span className="compact-label">{entry.text}</span>
+				<div className="og-compact-bar">
+					<span className="og-compact-label">◈ {entry.text}</span>
 					<button
 						type="button"
-						className="compact-toggle"
+						className="og-compact-toggle"
 						onClick={() => setExpanded(!expanded)}
 					>
-						{expanded ? "▼ Collapse" : "▶ Show checkpoint"}
+						{expanded ? "▼ Collapse" : "▶ Checkpoint"}
 					</button>
 				</div>
 				{expanded && (
-					<pre className="compact-checkpoint">{entry.checkpoint}</pre>
+					<pre className="og-compact-checkpoint">{entry.checkpoint}</pre>
 				)}
 			</div>
 		);
 	}
 
+	if (entry.type === "tool_use") {
+		const parts = entry.text.split("(");
+		const toolName = parts[0] ?? entry.text;
+		const args = parts.slice(1).join("(").replace(/\)$/, "");
+		return (
+			<div className={`og-log-entry og-event-${entry.type}`}>
+				<span className="og-log-time">{entry.time}</span>
+				{taskLabel && (
+					<span className="og-log-badge" title={entry.taskId}>
+						{taskLabel}
+					</span>
+				)}
+				<div className="og-log-body">
+					<span className="og-tool-call">
+						<span className="og-tool-name">
+							<IconTerminal size={10} />
+							{toolName}
+						</span>
+						{args && (
+							<span className="og-tool-args">
+								({args.length > 80 ? `${args.slice(0, 80)}…` : args})
+							</span>
+						)}
+					</span>
+				</div>
+			</div>
+		);
+	}
+
+	if (entry.type === "tool_result") {
+		const isOk = entry.text.startsWith("OK ");
+		const isErr = entry.text.startsWith("ERR ");
+		const rest = entry.text.replace(/^(OK|ERR) [^:]+: /, "");
+		const toolMatch = /^(OK|ERR) ([^:]+):/.exec(entry.text);
+		const toolName = toolMatch?.[2] ?? "";
+		return (
+			<div className={`og-log-entry og-event-${entry.type}`}>
+				<span className="og-log-time">{entry.time}</span>
+				{taskLabel && (
+					<span className="og-log-badge" title={entry.taskId}>
+						{taskLabel}
+					</span>
+				)}
+				<div className="og-log-body">
+					<span className="og-tool-result">
+						<span
+							className={
+								isOk ? "og-tool-result-ok" : isErr ? "og-tool-result-err" : ""
+							}
+						>
+							{isOk ? "✓" : isErr ? "✗" : "→"} {toolName}
+						</span>
+						{rest && (
+							<span className="og-tool-result-content">
+								{" "}
+								{rest.length > 120 ? `${rest.slice(0, 120)}…` : rest}
+							</span>
+						)}
+					</span>
+				</div>
+			</div>
+		);
+	}
+
 	return (
-		<div className={`log-entry event-${entry.type}`}>
-			<span className="log-time">{entry.time}</span>
+		<div className={`og-log-entry og-event-${entry.type}`}>
+			<span className="og-log-time">{entry.time}</span>
 			{taskLabel && (
-				<span className="log-task-badge" title={entry.taskId}>
+				<span className="og-log-badge" title={entry.taskId}>
 					{taskLabel}
 				</span>
 			)}
-			<span className="log-text">{entry.text}</span>
+			<div className="og-log-body">
+				<span className="og-log-text">{entry.text}</span>
+			</div>
 		</div>
 	);
 }
 
-// --- Inline Task Detail (shown in content area) ---
+// ── Task Detail ────────────────────────────────────────────────────────────
 
-function ContentDetail({
+function TaskDetail({
 	node,
 	onContinue,
 	onDelete,
@@ -245,49 +575,61 @@ function ContentDetail({
 	onDelete: () => void;
 }) {
 	const [continueMsg, setContinueMsg] = useState("");
+	const canContinue = node.status === "failed" || node.status === "stuck";
 
 	return (
-		<div className="content-detail">
-			<h2>{node.title}</h2>
+		<div className="og-detail-content">
+			<div className="og-detail-title">
+				<span
+					className={`og-task-status-dot ${statusDotClass(node.status)}`}
+					style={{ width: "10px", height: "10px", flexShrink: 0 }}
+				/>
+				{node.title}
+			</div>
+
 			{node.description && (
-				<div className="detail-value desc">{node.description}</div>
+				<div className="og-detail-description">{node.description}</div>
 			)}
-			<div className="content-detail-fields">
-				<div className="detail-field">
-					<div className="detail-label">Status</div>
-					<span className={`status-badge ${node.status}`}>{node.status}</span>
+
+			<div className="og-detail-grid">
+				<div className="og-detail-field">
+					<div className="og-detail-label">Status</div>
+					<StatusBadge status={node.status} />
 				</div>
 				{node.branch && (
-					<div className="detail-field">
-						<div className="detail-label">Branch</div>
-						<div className="detail-value mono">{node.branch}</div>
+					<div className="og-detail-field">
+						<div className="og-detail-label">Branch</div>
+						<div className="og-detail-value mono">{node.branch}</div>
 					</div>
 				)}
 				{node.worktreePath && (
-					<div className="detail-field">
-						<div className="detail-label">Worktree</div>
-						<div className="detail-value mono">{node.worktreePath}</div>
+					<div className="og-detail-field">
+						<div className="og-detail-label">Worktree</div>
+						<div className="og-detail-value mono" style={{ fontSize: "10px" }}>
+							{node.worktreePath}
+						</div>
 					</div>
 				)}
 				{node.updatedAt && (
-					<div className="detail-field">
-						<div className="detail-label">Updated</div>
-						<div className="detail-value">
+					<div className="og-detail-field">
+						<div className="og-detail-label">Updated</div>
+						<div className="og-detail-value">
 							{new Date(node.updatedAt).toLocaleString()}
 						</div>
 					</div>
 				)}
 				{node.message && (
-					<div className="detail-field">
-						<div className="detail-label">Message</div>
-						<div className="detail-value">{node.message}</div>
+					<div className="og-detail-field" style={{ width: "100%" }}>
+						<div className="og-detail-label">Message</div>
+						<div className="og-detail-value">{node.message}</div>
 					</div>
 				)}
 			</div>
-			<div className="content-detail-actions">
-				{(node.status === "failed" || node.status === "stuck") && (
+
+			<div className="og-detail-actions">
+				{canContinue && (
 					<form
-						className="continue-form"
+						className="og-continue-form"
 						onSubmit={(e) => {
 							e.preventDefault();
 							onContinue(continueMsg || undefined);
@@ -296,20 +638,23 @@ function ContentDetail({
 					>
 						<input
 							type="text"
+							className="og-continue-input"
 							value={continueMsg}
 							onChange={(e) => setContinueMsg(e.target.value)}
-							placeholder="Instructions for the agent..."
+							placeholder="Instructions for retry…"
 						/>
-						<button type="submit" className="btn-continue">
+						<button type="submit" className="og-btn og-btn-warning og-btn-sm">
+							<IconRepeat size={12} />
 							Continue
 						</button>
 					</form>
 				)}
 				<button
 					type="button"
-					className="btn-danger btn-small"
+					className="og-btn og-btn-danger og-btn-sm"
 					onClick={onDelete}
 				>
+					<IconTrash size={12} />
 					Delete
 				</button>
 			</div>
@@ -317,7 +662,63 @@ function ContentDetail({
 	);
 }
 
-// --- Main App ---
+function OrchestratorDetail({
+	running,
+	nodeCount,
+}: {
+	running: boolean;
+	nodeCount: number;
+}) {
+	const passed = 0; // Could compute from nodes
+	return (
+		<div className="og-orch-detail">
+			<div className="og-orch-detail-header">
+				<div className="og-orch-icon-lg">
+					<IconHexagon size={18} />
+				</div>
+				<div>
+					<div className="og-orch-name">Orchestrator</div>
+					<div className="og-orch-sub">Root agent session</div>
+				</div>
+			</div>
+			<div className="og-stats-row">
+				<div className="og-stat-card">
+					<span className="og-stat-label">State</span>
+					<span
+						className={`og-stat-value ${running ? "running" : ""}`}
+						style={{ fontSize: "14px" }}
+					>
+						{running ? (
+							<span className="og-running-indicator">
+								<span className="og-spinner" />
+								Running
+							</span>
+						) : (
+							"Idle"
+						)}
+					</span>
+				</div>
+				<div className="og-stat-card">
+					<span className="og-stat-label">Tasks</span>
+					<span className="og-stat-value">{nodeCount}</span>
+				</div>
+				{passed > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">Passed</span>
+						<span
+							className="og-stat-value"
+							style={{ color: "var(--color-passed)" }}
+						>
+							{passed}
+						</span>
+					</div>
+				)}
+			</div>
+		</div>
+	);
+}
+
+// ── Main App ───────────────────────────────────────────────────────────────
 
 export function App() {
 	const { projects, refresh: refreshProjects } = useProjects();
@@ -327,7 +728,7 @@ export function App() {
 	const [prompt, setPrompt] = useState("");
 	const [model, setModel] = useState("");
 	const [childModel, setChildModel] = useState("");
-	const [splitRatio, setSplitRatio] = useState(0.5);
+	const [splitRatio, setSplitRatio] = useState(0.35);
 	const [isDragging, setIsDragging] = useState(false);
 	const [autoScroll, setAutoScroll] = useState(true);
 	const contentPanelRef = useRef<HTMLElement>(null);
@@ -350,9 +751,9 @@ export function App() {
 		return map;
 	}, [nodes]);
 
-	const isProjectNode = selectedTaskId === PROJECT_NODE_ID;
+	const isOrchestratorNode = selectedTaskId === PROJECT_NODE_ID;
 	const selectedNode =
-		selectedTaskId && !isProjectNode
+		selectedTaskId && !isOrchestratorNode
 			? (nodeMap.get(selectedTaskId) ?? null)
 			: null;
 
@@ -365,7 +766,7 @@ export function App() {
 		[],
 	);
 
-	// Draggable divider handlers
+	// Draggable divider
 	const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
 		e.preventDefault();
 		setIsDragging(true);
@@ -378,12 +779,10 @@ export function App() {
 			if (!panel) return;
 			const rect = panel.getBoundingClientRect();
 			const y = e.clientY - rect.top;
-			const ratio = Math.min(0.85, Math.max(0.15, y / rect.height));
+			const ratio = Math.min(0.85, Math.max(0.1, y / rect.height));
 			setSplitRatio(ratio);
 		};
-		const handleMouseUp = () => {
-			setIsDragging(false);
-		};
+		const handleMouseUp = () => setIsDragging(false);
 		document.addEventListener("mousemove", handleMouseMove);
 		document.addEventListener("mouseup", handleMouseUp);
 		return () => {
@@ -392,7 +791,7 @@ export function App() {
 		};
 	}, [isDragging]);
 
-	// WebSocket message handler
+	// WebSocket handler
 	const handleWS = useCallback(
 		(msg: Record<string, unknown>) => {
 			switch (msg.type) {
@@ -405,7 +804,7 @@ export function App() {
 					if (et === "tool_use") {
 						text = `${msg.tool}(${formatArgs(msg.input as Record<string, unknown>)})`;
 					} else if (et === "tool_result") {
-						text = `${msg.isError ? "ERR" : "OK"} ${msg.tool}: ${((msg.content as string) || "").slice(0, 150)}`;
+						text = `${msg.isError ? "ERR" : "OK"} ${msg.tool}: ${((msg.content as string) || "").slice(0, 200)}`;
 					} else if (et === "text") {
 						text = (msg.content as string) || "";
 					} else if (et === "error") {
@@ -434,7 +833,7 @@ export function App() {
 				case "orchestration_completed":
 					addLog(
 						"lifecycle",
-						`Orchestration ${msg.success ? "completed" : "failed"}${msg.costUsd ? ` ($${(msg.costUsd as number).toFixed(2)})` : ""}`,
+						`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${msg.costUsd ? ` · $${(msg.costUsd as number).toFixed(3)}` : ""}`,
 					);
 					setRunning(false);
 					break;
@@ -443,12 +842,16 @@ export function App() {
 					setRunning(false);
 					break;
 				case "task_started":
-					addLog("task_started", `Started: ${msg.title}`, msg.taskId as string);
+					addLog(
+						"task_started",
+						`↳ Started: ${msg.title}`,
+						msg.taskId as string,
+					);
 					break;
 				case "task_completed":
 					addLog(
 						"task_completed",
-						`${msg.success ? "Passed" : "Failed"}: ${msg.title}`,
+						`${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`,
 						msg.taskId as string,
 					);
 					break;
@@ -456,12 +859,9 @@ export function App() {
 					addLog("error", msg.message as string);
 					break;
 				case "event_history": {
-					// Clear and replay historical events on connect
 					setLogs([]);
 					const events = msg.events as Record<string, unknown>[];
-					for (const evt of events) {
-						handleWS(evt);
-					}
+					for (const evt of events) handleWS(evt);
 					break;
 				}
 			}
@@ -517,7 +917,7 @@ export function App() {
 			await continueTask(selectedTaskId, msg);
 			addLog(
 				"task_started",
-				`Continued: ${selectedNode?.title}`,
+				`↳ Continued: ${selectedNode?.title}`,
 				selectedTaskId,
 			);
 			await refreshTasks();
@@ -543,172 +943,197 @@ export function App() {
 		if (!projectId) return;
 		const title = window.prompt("Task title:");
 		if (!title) return;
-		const description = window.prompt("Description:") || "";
+		const description = window.prompt("Description:") ?? "";
 		const body: Record<string, string> = { title, description };
-		if (selectedTaskId) body.parentId = selectedTaskId;
+		if (selectedTaskId && !isOrchestratorNode) body.parentId = selectedTaskId;
 		try {
 			const res = await fetch(`/projects/${projectId}/tasks`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(body),
 			});
-			if (!res.ok) throw new Error((await res.json()).error);
+			if (!res.ok)
+				throw new Error(((await res.json()) as { error: string }).error);
 			await refreshTasks();
 		} catch (err) {
 			addLog("error", (err as Error).message);
 		}
 	}
 
+	// Compute activity filter label
+	const filterLabel = isOrchestratorNode
+		? "Orchestrator"
+		: selectedNode
+			? selectedNode.title
+			: null;
+
 	return (
 		<>
-			{/* Header */}
-			<header>
-				<div className="header-left">
-					<span className="brand-icon">⬡</span>
-					<h1>OpenGraft</h1>
-					<span
-						className={`status-dot ${connected ? "connected" : "disconnected"}`}
-						title={connected ? "Connected" : "Disconnected"}
-					/>
-				</div>
-				<div className="header-right">
-					<select
-						value={projectId}
-						onChange={(e) => {
-							setProjectId(e.target.value);
-							setSelectedTaskId(null);
-							setLogs([]);
-						}}
+			{/* ── Header ── */}
+			<header className="og-header">
+				<div className="og-header-brand">
+					<div className="og-logo">
+						<IconHexagon size={14} />
+					</div>
+					<span className="og-header-title">OpenGraft</span>
+					<div
+						className={`og-connection-badge${connected ? " connected" : ""}`}
 					>
-						{projects.map((p) => (
-							<option key={p.id} value={p.id}>
-								{p.name}
-							</option>
-						))}
-					</select>
+						<span className="og-connection-dot" />
+						{connected ? "Connected" : "Disconnected"}
+					</div>
+				</div>
+
+				<div className="og-header-right">
+					{projects.length > 0 && (
+						<select
+							className="og-select"
+							value={projectId}
+							onChange={(e) => {
+								setProjectId(e.target.value);
+								setSelectedTaskId(null);
+								setLogs([]);
+							}}
+						>
+							{projects.map((p) => (
+								<option key={p.id} value={p.id}>
+									{p.name}
+								</option>
+							))}
+						</select>
+					)}
+					{projects.length === 0 && (
+						<span style={{ fontSize: "12px", color: "var(--text-faint)" }}>
+							No projects
+						</span>
+					)}
 				</div>
 			</header>
 
-			{/* Main */}
-			<main>
-				{/* Left: Task Panel */}
-				<section className="task-panel">
-					<div className="section-bar">
-						<span className="section-title">Tasks</span>
-						<div className="section-actions">
+			{/* ── Main ── */}
+			<main className="og-main">
+				{/* Left Sidebar */}
+				<aside className="og-sidebar">
+					<div className="og-panel-header">
+						<span className="og-panel-title">Tasks</span>
+						<div className="og-panel-actions">
 							{selectedTaskId && (
 								<>
-									<span className="filter-badge">
-										{isProjectNode
-											? "Orchestrator"
-											: (selectedNode?.title?.slice(0, 20) ?? "") +
-												((selectedNode?.title?.length ?? 0) > 20 ? "..." : "")}
+									<span className="og-filter-chip" title={filterLabel ?? ""}>
+										{filterLabel}
 									</span>
 									<button
 										type="button"
-										className="btn-small"
+										className="og-btn-icon"
 										onClick={() => setSelectedTaskId(null)}
-										title="Clear filter"
+										data-tip="Clear filter"
 									>
-										All
+										<IconClose size={11} />
 									</button>
 								</>
 							)}
 							<button
 								type="button"
-								className="btn-small"
+								className="og-btn-icon"
 								onClick={handleAddTask}
-								title="Add task"
+								data-tip="Add task"
 							>
-								+
+								<IconPlus size={13} />
 							</button>
 							<button
 								type="button"
-								className="btn-small"
+								className="og-btn-icon"
 								onClick={() => {
 									refreshTasks();
 									refreshProjects();
 								}}
-								title="Refresh"
+								data-tip="Refresh"
 							>
-								↻
+								<IconRefresh size={13} />
 							</button>
 						</div>
 					</div>
+
 					<TaskTree
 						nodes={nodes}
 						selectedTaskId={selectedTaskId}
 						onSelect={setSelectedTaskId}
+						running={running}
 					/>
-				</section>
+				</aside>
 
-				{/* Right: Content Area (status + activity, split vertically) */}
+				{/* Right Content */}
 				<section
-					className={`content-panel${isDragging ? " dragging" : ""}`}
+					className={`og-content${isDragging ? " dragging" : ""}`}
 					ref={contentPanelRef}
 				>
-					{/* Top: STATUS */}
-					<div className="content-status-panel" style={{ flex: splitRatio }}>
-						<div className="section-bar">
-							<span className="section-title">Status</span>
+					{/* Top: Detail panel */}
+					<div
+						className="og-detail-panel"
+						style={{ flex: splitRatio, minHeight: 0 }}
+					>
+						<div className="og-panel-header">
+							<span className="og-panel-title">
+								{isOrchestratorNode
+									? "Orchestrator"
+									: selectedNode
+										? "Task Details"
+										: "Details"}
+							</span>
 						</div>
-						{isProjectNode ? (
-							<div className="content-detail">
-								<h2>
-									<span className="project-icon">⬡</span> Orchestrator
-								</h2>
-								<div className="content-detail-fields">
-									<div className="detail-field">
-										<div className="detail-label">Status</div>
-										<span
-											className={`status-badge ${running ? "in_progress" : "idle"}`}
-										>
-											{running ? "running" : "idle"}
-										</span>
-									</div>
-									<div className="detail-field">
-										<div className="detail-label">Tasks</div>
-										<div className="detail-value">{nodes.length}</div>
-									</div>
-								</div>
-							</div>
+
+						{isOrchestratorNode ? (
+							<OrchestratorDetail running={running} nodeCount={nodes.length} />
 						) : selectedNode ? (
-							<ContentDetail
+							<TaskDetail
 								node={selectedNode}
 								onContinue={handleContinueTask}
 								onDelete={handleDeleteTask}
 							/>
 						) : (
-							<div className="content-empty">Select a task to view details</div>
+							<div className="og-detail-empty">
+								<IconHexagon size={28} />
+								<span>Select a task to view details</span>
+							</div>
 						)}
 					</div>
 
-					{/* biome-ignore lint/a11y/noStaticElementInteractions: drag-only resize divider */}
+					{/* Resize divider */}
+					{/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */}
 					<div
-						className="resize-divider"
+						className="og-resize-divider"
 						onMouseDown={handleDividerMouseDown}
 					/>
 
-					{/* Bottom: ACTIVITY */}
-					<div className="activity-panel" style={{ flex: 1 - splitRatio }}>
-						<div className="section-bar">
-							<span className="section-title">
+					{/* Bottom: Activity panel */}
+					<div className="og-activity-panel" style={{ flex: 1 - splitRatio }}>
+						<div className="og-panel-header">
+							<span className="og-panel-title">
 								Activity
-								{isProjectNode
-									? " — Orchestrator"
-									: selectedNode
-										? ` — ${selectedNode.title}`
-										: ""}
+								{filterLabel && (
+									<span
+										style={{
+											color: "var(--text-faint)",
+											marginLeft: "6px",
+											fontSize: "10px",
+											fontWeight: 400,
+											textTransform: "none",
+											letterSpacing: 0,
+										}}
+									>
+										— {filterLabel}
+									</span>
+								)}
 							</span>
-							<div className="section-actions">
+							<div className="og-panel-actions">
 								{!autoScroll && (
 									<button
 										type="button"
-										className="btn-scroll-lock"
+										className="og-scroll-follow-btn"
 										onClick={() => setAutoScroll(true)}
-										title="Resume auto-scroll"
 									>
-										↓ Follow
+										<IconArrowDown size={10} />
+										Follow
 									</button>
 								)}
 							</div>
@@ -724,20 +1149,24 @@ export function App() {
 				</section>
 			</main>
 
-			{/* Footer */}
-			<footer>
-				<form onSubmit={handleSubmit} className="prompt-form">
+			{/* ── Footer ── */}
+			<footer className="og-footer">
+				<form className="og-footer-form" onSubmit={handleSubmit}>
 					<input
 						type="text"
+						className="og-prompt-input"
 						value={prompt}
 						onChange={(e) => setPrompt(e.target.value)}
 						placeholder={
-							running ? "Send message to agent..." : "Describe what to build..."
+							running
+								? "Send a message to the agent…"
+								: "Describe what to build…"
 						}
 						disabled={!projectId}
 					/>
-					<div className="footer-controls">
+					<div className="og-footer-controls">
 						<select
+							className="og-select"
 							value={model}
 							onChange={(e) => setModel(e.target.value)}
 							title="Model"
@@ -748,6 +1177,7 @@ export function App() {
 							<option value="claude-haiku-4-5-20251001">Haiku</option>
 						</select>
 						<select
+							className="og-select"
 							value={childModel}
 							onChange={(e) => setChildModel(e.target.value)}
 							title="Child model"
@@ -761,21 +1191,28 @@ export function App() {
 							<>
 								<button
 									type="submit"
+									className="og-btn-run"
 									disabled={!projectId || !prompt.trim()}
-									className="btn-run"
 								>
+									<IconSend size={13} />
 									Send
 								</button>
-								<button type="button" onClick={handleStop} className="btn-stop">
+								<button
+									type="button"
+									className="og-btn-stop-lg"
+									onClick={handleStop}
+								>
+									<IconStop size={13} />
 									Stop
 								</button>
 							</>
 						) : (
 							<button
 								type="submit"
+								className="og-btn-run"
 								disabled={!projectId || !prompt.trim()}
-								className="btn-run"
 							>
+								<IconPlay size={13} />
 								Run
 							</button>
 						)}
@@ -786,12 +1223,14 @@ export function App() {
 	);
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+
 function formatArgs(input: Record<string, unknown> | undefined): string {
 	if (!input) return "";
 	const parts = Object.entries(input).map(([k, v]) => {
 		const val = typeof v === "string" ? v : JSON.stringify(v);
-		return `${k}=${val.length > 30 ? `${val.slice(0, 30)}...` : val}`;
+		return `${k}=${val.length > 40 ? `${val.slice(0, 40)}…` : val}`;
 	});
 	const joined = parts.join(", ");
-	return joined.length > 80 ? `${joined.slice(0, 80)}...` : joined;
+	return joined.length > 100 ? `${joined.slice(0, 100)}…` : joined;
 }

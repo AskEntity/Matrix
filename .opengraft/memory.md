@@ -190,6 +190,18 @@ User requested: When a task/agent is selected in the web UI, messages should be 
 2. API changes to route messages to specific agent queues (may already be possible via existing queue infrastructure)
 3. Will be addressed after the done() tool lifecycle feature is complete.
 
+## Web UI Redesign (Phase 4 Feature)
+
+Completed modern UI redesign with:
+- **Design system**: Custom CSS variables-based design system (no external UI library needed)
+- **Status colors**: pending=gray, in_progress=**blue** (#388bfd), testing=purple, passed=green, failed=red, stuck=amber
+- **Layout**: Fixed header + left sidebar (task tree) + right content panel (detail + activity split)
+- **Inline SVG icons**: All icons are inline SVGs with `aria-hidden="true"` (biome lint requirement)
+- **No new deps**: Kept original package.json — no tailwindcss, no lucide-react needed
+- **Bun build**: `bun build ./web/index.html` works, bundles 15 modules cleanly
+- **Biome lint**: `noSvgWithoutTitle` rule requires `aria-hidden="true"` on decorative SVGs
+- **CSS naming**: Using `og-` prefix for all CSS classes to avoid collisions
+
 ## Pending Feature Request: Enhanced yield() Status Summary
 
 User requested: When yield() returns, it should show not just the messages that woke the agent, but also a summary of what's still pending:
