@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
 import type { WSContext } from "hono/ws";
@@ -166,12 +167,54 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	}
 
 	// Health
-	app.get("/health", (c) => {
+	app.get("/health", async (c) => {
 		const response: HealthResponse = {
 			status: "ok",
 			version: VERSION,
 			uptime: Date.now() - startTime,
 		};
+
+		if (c.req.query("check_model") === "true") {
+			const modelName = process.env.OG_MODEL ?? "claude-sonnet-4-6";
+			const apiKey = process.env.ANTHROPIC_API_KEY;
+			const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			const useOAuth = Boolean(oauthToken && !apiKey);
+
+			let client: Anthropic;
+			if (useOAuth) {
+				client = new Anthropic({
+					authToken: oauthToken,
+					defaultHeaders: {
+						"anthropic-beta": "oauth-2025-04-20",
+					},
+				});
+			} else {
+				client = new Anthropic();
+			}
+
+			const msgParams = {
+				model: modelName,
+				messages: [{ role: "user" as const, content: "ping" }],
+				max_tokens: 10,
+			};
+			const t0 = Date.now();
+			try {
+				if (useOAuth) {
+					// biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
+					await (client.beta.messages.create as any)(msgParams);
+				} else {
+					await client.messages.create(msgParams);
+				}
+				const latencyMs = Date.now() - t0;
+				response.model = { status: "ok", model: modelName, latencyMs };
+			} catch (err) {
+				response.model = {
+					status: "error",
+					error: err instanceof Error ? err.message : String(err),
+				};
+			}
+		}
+
 		return c.json(response);
 	});
 

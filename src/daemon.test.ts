@@ -53,6 +53,54 @@ describe("daemon health", () => {
 		await rm(dataDir, { recursive: true });
 	});
 
+	test("GET /health without check_model has no model field", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "og-health-nomodel-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const res = await app.request("/health");
+		expect(res.status).toBe(200);
+
+		const body = (await res.json()) as HealthResponse;
+		expect(body.status).toBe("ok");
+		expect(body.model).toBeUndefined();
+
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("GET /health?check_model=true returns model status", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "og-health-model-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const res = await app.request("/health?check_model=true");
+		expect(res.status).toBe(200);
+
+		const body = (await res.json()) as HealthResponse;
+		expect(body.status).toBe("ok");
+		// The model field must be present (either ok or error — no real API key in test env)
+		expect(body.model).toBeDefined();
+		expect(body.model?.status).toMatch(/^(ok|error)$/);
+		if (body.model?.status === "error") {
+			expect(
+				typeof (body.model as { status: "error"; error: string }).error,
+			).toBe("string");
+			expect(
+				(body.model as { status: "error"; error: string }).error.length,
+			).toBeGreaterThan(0);
+		} else if (body.model?.status === "ok") {
+			const m = body.model as {
+				status: "ok";
+				model: string;
+				latencyMs: number;
+			};
+			expect(typeof m.model).toBe("string");
+			expect(typeof m.latencyMs).toBe("number");
+		}
+
+		await rm(dataDir, { recursive: true });
+	});
+
 	test("GET /unknown returns 404", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "og-404-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });

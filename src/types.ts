@@ -57,6 +57,9 @@ export interface HealthResponse {
 	status: "ok";
 	version: string;
 	uptime: number;
+	model?:
+		| { status: "ok"; model: string; latencyMs: number }
+		| { status: "error"; error: string };
 }
 
 /** Daemon version response. */
