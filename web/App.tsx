@@ -254,6 +254,34 @@ function IconTerminal({ size = 12 }: { size?: number }) {
 	);
 }
 
+function IconChevron({
+	size = 10,
+	expanded,
+}: {
+	size?: number;
+	expanded: boolean;
+}) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2.5"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			style={{
+				transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
+				transition: "transform 0.15s",
+			}}
+		>
+			<polyline points="9 18 15 12 9 6" />
+		</svg>
+	);
+}
+
 // ── Task Tree ──────────────────────────────────────────────────────────────
 
 function TaskTree({
@@ -278,6 +306,16 @@ function TaskTree({
 		}
 		return map;
 	}, [nodes]);
+
+	const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+	const toggleCollapse = useCallback((id: string) => {
+		setCollapsed((prev) => {
+			const next = new Set(prev);
+			if (next.has(id)) next.delete(id);
+			else next.add(id);
+			return next;
+		});
+	}, []);
 
 	const isOrchestratorSelected = selectedTaskId === PROJECT_NODE_ID;
 
@@ -311,6 +349,8 @@ function TaskTree({
 					depth={1}
 					selectedTaskId={selectedTaskId}
 					onSelect={onSelect}
+					collapsed={collapsed}
+					toggleCollapse={toggleCollapse}
 				/>
 			))}
 
@@ -335,15 +375,21 @@ function TaskNodeView({
 	depth,
 	selectedTaskId,
 	onSelect,
+	collapsed,
+	toggleCollapse,
 }: {
 	node: TaskNode;
 	childMap: Map<string, TaskNode[]>;
 	depth: number;
 	selectedTaskId: string | null;
 	onSelect: (id: string | null) => void;
+	collapsed: Set<string>;
+	toggleCollapse: (id: string) => void;
 }) {
 	const isSelected = node.id === selectedTaskId;
 	const children = childMap.get(node.id) ?? [];
+	const hasChildren = children.length > 0;
+	const isCollapsed = collapsed.has(node.id);
 
 	return (
 		<>
@@ -359,6 +405,20 @@ function TaskNodeView({
 					className="og-task-row"
 					style={{ paddingLeft: `${12 + depth * 16}px` }}
 				>
+					{hasChildren ? (
+						<button
+							type="button"
+							className="og-tree-toggle"
+							onClick={(e) => {
+								e.stopPropagation();
+								toggleCollapse(node.id);
+							}}
+						>
+							<IconChevron expanded={!isCollapsed} />
+						</button>
+					) : (
+						<span className="og-tree-toggle-placeholder" />
+					)}
 					<span
 						className={`og-task-status-dot ${statusDotClass(node.status)}`}
 					/>
@@ -371,16 +431,19 @@ function TaskNodeView({
 					)}
 				</div>
 			</button>
-			{children.map((child) => (
-				<TaskNodeView
-					key={child.id}
-					node={child}
-					childMap={childMap}
-					depth={depth + 1}
-					selectedTaskId={selectedTaskId}
-					onSelect={onSelect}
-				/>
-			))}
+			{!isCollapsed &&
+				children.map((child) => (
+					<TaskNodeView
+						key={child.id}
+						node={child}
+						childMap={childMap}
+						depth={depth + 1}
+						selectedTaskId={selectedTaskId}
+						onSelect={onSelect}
+						collapsed={collapsed}
+						toggleCollapse={toggleCollapse}
+					/>
+				))}
 		</>
 	);
 }
