@@ -645,37 +645,34 @@ export class DirectProvider implements AgentProvider {
 				`Working directory: ${cwd}`,
 			].filter(Boolean);
 
-			let response: Anthropic.Messages.Message;
-			try {
-				response = await this.createMessage({
-					model,
-					max_tokens: DEFAULT_MAX_TOKENS,
-					system: systemParts.join("\n\n"),
-					messages,
-					tools: allTools,
-				});
-			} catch (e) {
-				// Retry once on transient errors (rate limit, network)
-				if (
-					e instanceof Anthropic.RateLimitError ||
-					e instanceof Anthropic.APIConnectionError
-				) {
+			const createParams = {
+				model,
+				max_tokens: DEFAULT_MAX_TOKENS,
+				system: systemParts.join("\n\n"),
+				messages,
+				tools: allTools,
+			};
+			let response: Anthropic.Messages.Message | undefined;
+			for (let attempt = 0; attempt < 5; attempt++) {
+				try {
+					response = await this.createMessage(createParams);
+					break;
+				} catch (e) {
+					const isTransient =
+						e instanceof Anthropic.RateLimitError ||
+						e instanceof Anthropic.APIConnectionError ||
+						e instanceof Anthropic.InternalServerError ||
+						(e instanceof Anthropic.APIError && e.status === 529);
+					if (!isTransient || attempt >= 4) throw e;
+					const delay = Math.min(2000 * 2 ** attempt, 60000);
 					yield {
 						type: "error",
-						message: `API error (retrying): ${e.message}`,
+						message: `API error (retry ${attempt + 1}/4): ${e.message}`,
 					};
-					await new Promise((r) => setTimeout(r, 5000));
-					response = await this.createMessage({
-						model,
-						max_tokens: DEFAULT_MAX_TOKENS,
-						system: systemParts.join("\n\n"),
-						messages,
-						tools: allTools,
-					});
-				} else {
-					throw e;
+					await new Promise((r) => setTimeout(r, delay));
 				}
 			}
+			if (!response) throw new Error("Failed to get API response");
 
 			totalInputTokens += response.usage.input_tokens;
 			totalOutputTokens += response.usage.output_tokens;
