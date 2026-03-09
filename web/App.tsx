@@ -251,12 +251,7 @@ function ContentDetail({
 // --- Main App ---
 
 export function App() {
-	const {
-		projects,
-		initProject,
-		deleteProject,
-		refresh: refreshProjects,
-	} = useProjects();
+	const { projects, refresh: refreshProjects } = useProjects();
 	const [projectId, setProjectId] = useState("");
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -348,11 +343,11 @@ export function App() {
 		[addLog, updateFromWS, setRunning],
 	);
 
-	const { connected, lastMessageAt } = useWebSocket(projectId, handleWS);
+	const { connected } = useWebSocket(projectId, handleWS);
 
-	// Auto-select single project
+	// Auto-select first project
 	useEffect(() => {
-		if (projects.length === 1 && !projectId && projects[0]) {
+		if (projects.length > 0 && !projectId && projects[0]) {
 			setProjectId(projects[0].id);
 		}
 	}, [projects, projectId]);
@@ -380,30 +375,6 @@ export function App() {
 	async function handleStop() {
 		try {
 			await stop();
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
-	async function handleInitProject() {
-		const path = window.prompt("Enter project path:");
-		if (!path) return;
-		try {
-			const p = await initProject(path);
-			setProjectId(p.id);
-			addLog("lifecycle", `Project created: ${p.name}`);
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
-	async function handleDeleteProject() {
-		if (!projectId) return;
-		const name = projects.find((p) => p.id === projectId)?.name ?? projectId;
-		if (!confirm(`Delete project ${name}?`)) return;
-		try {
-			await deleteProject(projectId);
-			setProjectId("");
 		} catch (err) {
 			addLog("error", (err as Error).message);
 		}
@@ -468,11 +439,6 @@ export function App() {
 						className={`status-dot ${connected ? "connected" : "disconnected"}`}
 						title={connected ? "Connected" : "Disconnected"}
 					/>
-					{lastMessageAt && (
-						<span className="last-update-time">
-							Last update: {lastMessageAt.toLocaleTimeString()}
-						</span>
-					)}
 				</div>
 				<div className="header-right">
 					<select
@@ -483,31 +449,12 @@ export function App() {
 							setLogs([]);
 						}}
 					>
-						<option value="">Select project...</option>
 						{projects.map((p) => (
 							<option key={p.id} value={p.id}>
-								{p.name} ({p.path})
+								{p.name}
 							</option>
 						))}
 					</select>
-					<button
-						type="button"
-						onClick={handleInitProject}
-						className="btn-small"
-						title="Add project"
-					>
-						+
-					</button>
-					{projectId && (
-						<button
-							type="button"
-							onClick={handleDeleteProject}
-							className="btn-danger btn-small"
-							title="Delete project"
-						>
-							Del
-						</button>
-					)}
 				</div>
 			</header>
 

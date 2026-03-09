@@ -325,16 +325,19 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			// If we have a session, the agent already has full context in its history.
 			// Just send the user's message (or a simple continue instruction).
 			// If no session, include full task context since it's a fresh start.
+			const branchReminder = node.branch
+				? `\n\nReminder: you are on branch \`${node.branch}\`. Do NOT switch branches.`
+				: "";
 			let continuePrompt: string;
 			if (node.sessionId) {
 				continuePrompt = body.message
-					? body.message
-					: "Continue working. Pick up where you left off and complete the task.";
+					? `${body.message}${branchReminder}`
+					: `Continue working. Pick up where you left off and complete the task.${branchReminder}`;
 			} else {
 				const memory = readProjectMemory(project.path);
 				continuePrompt = body.message
-					? `${body.message}\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}`
-					: `Continue working on this task.\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}`;
+					? `${body.message}\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}${branchReminder}`
+					: `Continue working on this task.\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}${branchReminder}`;
 			}
 
 			// Run async — return immediately so UI updates

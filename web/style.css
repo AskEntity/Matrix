@@ -91,6 +91,10 @@ header h1 {
 .status-dot.disconnected {
 	background: var(--red);
 }
+.project-name {
+	font-size: 13px;
+	color: var(--text-muted);
+}
 
 select {
 	background: var(--bg-tertiary);

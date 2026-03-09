@@ -35,7 +35,7 @@ async function isGitClean(projectPath: string): Promise<{
 	};
 }
 
-const TASK_SYSTEM_PROMPT = `You are an autonomous programming agent working on a subtask.
+const TASK_SYSTEM_PROMPT = `You are an autonomous programming agent working on a subtask in a git worktree.
 
 ## Available Tools
 - bash: Run shell commands (tests, git, build tools)
@@ -51,6 +51,13 @@ const TASK_SYSTEM_PROMPT = `You are an autonomous programming agent working on a
 3. Implement: types → tests → implementation (vertical iteration)
 4. Validate: run tests, typecheck, and lint — all must pass
 5. Commit your work via bash (git add + git commit)
+
+## Git Rules (CRITICAL)
+- You are working in a git WORKTREE on a dedicated branch. Do NOT switch branches.
+- Run \`git branch\` to verify your current branch before committing.
+- NEVER run \`git checkout main\` or \`git checkout master\` — this will corrupt the worktree setup.
+- All commits must go on your current branch. The orchestrator will merge later.
+- Do NOT push — just commit locally.
 
 ## Rules
 - Work only on the files/modules described in your task
@@ -609,11 +616,14 @@ export function createOrchestratorTools(
 
 					// If session exists, agent has full context in history — just send user's message.
 					// If no session, include full task context.
+					const branchReminder = node.branch
+						? `\n\nReminder: you are on branch \`${node.branch}\`. Do NOT switch branches.`
+						: "";
 					let prompt: string;
 					if (node.sessionId) {
 						prompt = args.message
-							? args.message
-							: "Continue working. Pick up where you left off and complete the task.";
+							? `${args.message}${branchReminder}`
+							: `Continue working. Pick up where you left off and complete the task.${branchReminder}`;
 					} else {
 						const memory = readMemory(projectPath);
 						prompt = args.message
@@ -779,7 +789,13 @@ function readMemory(projectPath: string): string {
 }
 
 function buildTaskPrompt(
-	node: { title: string; description: string; parentId: string | null },
+	node: {
+		title: string;
+		description: string;
+		parentId: string | null;
+		branch?: string | null;
+		worktreePath?: string | null;
+	},
 	tracker: TaskTracker,
 	memory: string,
 ): string {
@@ -792,6 +808,16 @@ function buildTaskPrompt(
 	parts.push(`# Task: ${node.title}`);
 	if (node.description) {
 		parts.push(node.description);
+	}
+
+	// Include branch/worktree info so the agent knows where it is
+	if (node.branch) {
+		parts.push(
+			`\n## Git Context`,
+			`You are on branch: \`${node.branch}\``,
+			`Working directory: \`${node.worktreePath ?? "unknown"}\``,
+			`Do NOT switch branches. All commits go on \`${node.branch}\`.`,
+		);
 	}
 
 	if (node.parentId) {
