@@ -221,7 +221,7 @@ const TOOLS: Tool[] = [
 	{
 		name: "bash",
 		description:
-			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). Working directory is automatically tracked across calls — if you `cd` in one command, subsequent commands run from the new directory. No need to prefix every command with `cd /path &&`.",
+			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). Working directory is automatically tracked across calls — if you `cd` in one command, subsequent commands run from the new directory. No need to prefix every command with `cd /path &&`. Exception: after a daemon restart, your workdir resets to the project root.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -484,7 +484,7 @@ export async function executeTool(
 				// Warn if we fell back from a deleted directory
 				if (effectiveCwd !== cwd) {
 					parts.push(
-						`Warning: working directory '${cwd}' no longer exists, reset to '${effectiveCwd}'`,
+						`workdir reset to ${effectiveCwd} (previous dir '${cwd}' no longer exists)`,
 					);
 					// If command didn't cd elsewhere, report the fallback as the new cwd
 					if (!newCwd) {
@@ -501,7 +501,7 @@ export async function executeTool(
 				);
 
 				if (newCwd) {
-					parts.push(`\ncwd: ${newCwd}`);
+					parts.push(`\nworkdir set to ${newCwd} from now on`);
 				}
 
 				const result = parts.join("\n");

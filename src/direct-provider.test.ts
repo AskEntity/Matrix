@@ -146,7 +146,7 @@ describe("executeTool", () => {
 		const result = await executeTool("bash", { command: "cd /tmp" }, tempDir);
 		expect(result.isError).toBe(false);
 		expect(result.cwd).toBe("/tmp");
-		expect(result.content).toContain("cwd: /tmp");
+		expect(result.content).toContain("workdir set to /tmp from now on");
 		// Marker should be stripped from output
 		expect(result.content).not.toContain("___OPENGRAFT_CWD___");
 	});
@@ -160,7 +160,7 @@ describe("executeTool", () => {
 		expect(result.isError).toBe(false);
 		expect(result.cwd).toBe("/tmp");
 		expect(result.content).toContain("working");
-		expect(result.content).toContain("cwd: /tmp");
+		expect(result.content).toContain("workdir set to /tmp from now on");
 	});
 
 	test("bash: failed command still captures cwd if cd happened before failure", async () => {
@@ -186,7 +186,7 @@ describe("executeTool", () => {
 			tempDir, // fallbackCwd
 		);
 		expect(result.isError).toBe(false);
-		expect(result.content).toContain("Warning: working directory");
+		expect(result.content).toContain("workdir reset to");
 		expect(result.content).toContain("no longer exists");
 		expect(result.content).toContain("hello");
 		// Should report the fallback as the new cwd
