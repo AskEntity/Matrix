@@ -13,6 +13,7 @@ import { TaskTracker } from "./task-tracker.ts";
 import type {
 	DecomposedTask,
 	HealthResponse,
+	StatsResponse,
 	TaskStatus,
 	VersionResponse,
 } from "./types.ts";
@@ -78,6 +79,11 @@ const defaultConfig: DaemonConfig = {
 
 export function createApp(config: DaemonConfig = defaultConfig) {
 	const app = new Hono();
+	let requestCount = 0;
+	app.use("*", async (_c, next) => {
+		requestCount++;
+		await next();
+	});
 	const pm = new ProjectManager(config.dataDir);
 	const trackers = new Map<string, TaskTracker>();
 	const activeOrchestrations = new Set<string>();
@@ -159,6 +165,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			version: VERSION,
 			commit: GIT_COMMIT,
 			startedAt: START_AT,
+		};
+		return c.json(response);
+	});
+
+	// Stats
+	app.get("/stats", (c) => {
+		const response: StatsResponse = {
+			uptime: Math.floor((Date.now() - startTime) / 1000),
+			requestCount,
 		};
 		return c.json(response);
 	});
