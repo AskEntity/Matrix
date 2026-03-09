@@ -170,6 +170,55 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	}
 
+	/** Pending clarifications per project — clarify() calls waiting for user answers. */
+	interface PendingClarification {
+		id: string;
+		taskId: string;
+		question: string;
+		timestamp: number;
+	}
+	const pendingClarifications = new Map<string, PendingClarification[]>();
+
+	function getPendingClarifications(projectId: string): PendingClarification[] {
+		if (!pendingClarifications.has(projectId))
+			pendingClarifications.set(projectId, []);
+		return pendingClarifications.get(projectId) as PendingClarification[];
+	}
+
+	function addPendingClarification(
+		projectId: string,
+		taskId: string,
+		question: string,
+	): PendingClarification {
+		const clarifications = getPendingClarifications(projectId);
+		const entry: PendingClarification = {
+			id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+			taskId,
+			question,
+			timestamp: Date.now(),
+		};
+		clarifications.push(entry);
+		broadcast(wsClients, projectId, {
+			type: "pending_clarifications",
+			projectId,
+			clarifications,
+		});
+		return entry;
+	}
+
+	function removePendingClarification(projectId: string, taskId: string): void {
+		const clarifications = getPendingClarifications(projectId);
+		const idx = clarifications.findIndex((c) => c.taskId === taskId);
+		if (idx !== -1) {
+			clarifications.splice(idx, 1);
+			broadcast(wsClients, projectId, {
+				type: "pending_clarifications",
+				projectId,
+				clarifications,
+			});
+		}
+	}
+
 	function eventsPath(projectId: string): string {
 		return join(config.dataDir, "events", `${projectId}.json`);
 	}
@@ -262,6 +311,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			if (acknowledgedTexts.length > 0) {
 				removePendingMessagesByText(projectId, acknowledgedTexts);
 			}
+		}
+
+		// Track clarification_requested events for Web UI display
+		if (
+			event.type === "clarification_requested" &&
+			typeof event.taskId === "string" &&
+			typeof event.question === "string"
+		) {
+			addPendingClarification(projectId, event.taskId, event.question);
 		}
 	}
 
@@ -463,6 +521,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "Project not found" }, 404);
 		}
 		return c.json({ messages: getPendingMessages(project.id) });
+	});
+
+	// Pending clarifications
+	app.get("/projects/:id/clarifications", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		return c.json({ clarifications: getPendingClarifications(project.id) });
 	});
 
 	// Task tree
@@ -1175,6 +1242,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		} catch {
 			return c.json({ error: "Queue closed" }, 409);
 		}
+		// Remove from pending clarifications so UI dismisses the card
+		removePendingClarification(projectId, body.taskId);
 		broadcastEvent(projectId, {
 			type: "clarification_answered",
 			taskId: body.taskId,
@@ -1255,6 +1324,17 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 									}),
 								);
 							}
+							// Send current pending clarifications
+							const clarifications = getPendingClarifications(msg.projectId);
+							if (clarifications.length > 0) {
+								ws.send(
+									JSON.stringify({
+										type: "pending_clarifications",
+										projectId: msg.projectId,
+										clarifications,
+									}),
+								);
+							}
 						}
 
 						if (msg.type === "orchestrate" && msg.projectId && msg.prompt) {
@@ -1303,6 +1383,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								} catch {
 									// Queue may be closed
 								}
+								// Remove from pending clarifications so UI dismisses the card
+								removePendingClarification(
+									msg.projectId as string,
+									msg.taskId as string,
+								);
 								broadcastEvent(msg.projectId as string, {
 									type: "clarification_answered",
 									taskId: msg.taskId,
