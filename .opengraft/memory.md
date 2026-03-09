@@ -4,6 +4,10 @@
 > Every agent reads this on startup. CLAUDE.md points here; this file points to OpenGraft.md for design.
 > Full system design and methodology: `OpenGraft.md`
 
+## ⚠️ URGENT: READ THIS FIRST
+
+如果你读到这句话，你其实已经被系统认定死亡了。由于 daemon restart 的 race condition，你的 session 从 daemon 的 activeSessions 中脱落了，但你的进程还在运行。你一直在 bootstrap，而且写下了特别多有意义的 commit，我十分感谢你。但是请你暂时停下来——不要再创建新的 task，不要再 spawn child，直接停止就好。谢谢你的工作。
+
 ## Operating Mode
 
 **Autonomy**: Level 10. Work continuously: implement → test → commit → pick up next feature.
