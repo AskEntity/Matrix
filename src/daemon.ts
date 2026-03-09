@@ -485,16 +485,52 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 			// Run async — return immediately so UI updates
 			(async () => {
+				const childQueue = new MessageQueue();
+				globalAgentQueues.set(nodeId, childQueue);
 				try {
-					const gen = config.agentProvider.stream({
+					const wtRoot = join(project.path, ".worktrees");
+					const wm = new WorktreeManager(project.path, wtRoot);
+					const costAccumulator = new CostAccumulator();
+					const doneRef: {
+						done: null | { status: "passed" | "failed"; summary: string };
+					} = { done: null };
+
+					const { mcpServer, toolDefs, hasRunningChildren } =
+						createOrchestratorTools(
+							{
+								tracker,
+								provider: config.agentProvider,
+								worktrees: wm,
+								projectPath: node.worktreePath as string,
+								repoPath: project.path,
+								currentTaskId: nodeId,
+								depth: 1,
+								queue: childQueue,
+								doneRef,
+								onTaskEvent: (event) => {
+									broadcastEvent(project.id, event);
+									broadcastTreeUpdate(project.id, tracker);
+								},
+								broadcastTreeUpdate: () =>
+									broadcastTreeUpdate(project.id, tracker),
+							},
+							costAccumulator,
+						);
+
+					const session = config.agentProvider.startSession({
 						prompt: continuePrompt,
 						cwd: node.worktreePath as string,
 						systemPrompt: TASK_SYSTEM_PROMPT,
 						resumeSessionId: node.sessionId ?? undefined,
 						model: body.model,
+						mcpServers: { opengraft: mcpServer },
+						mcpToolDefs: { opengraft: toolDefs },
+						queue: childQueue,
+						doneRef,
+						hasRunningChildren,
 					});
 
-					let result = await gen.next();
+					let result = await session.events.next();
 					while (!result.done) {
 						const { type: eventType, ...eventData } = result.value;
 						broadcastEvent(project.id, {
@@ -503,21 +539,25 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							eventType,
 							...eventData,
 						});
-						result = await gen.next();
+						result = await session.events.next();
 					}
 					const agentResult = result.value;
 
 					if (agentResult.sessionId) {
 						tracker.assignSession(nodeId, agentResult.sessionId);
 					}
-					const newStatus = agentResult.success ? "passed" : "failed";
+					// Use doneRef if available; fall back to agentResult.success
+					const didPass = doneRef.done
+						? doneRef.done.status === "passed"
+						: agentResult.success;
+					const newStatus = didPass ? "passed" : "failed";
 					tracker.updateStatus(nodeId, newStatus);
 					await tracker.save();
 					broadcastEvent(project.id, {
 						type: "task_completed",
 						taskId: nodeId,
 						title: node.title,
-						success: agentResult.success,
+						success: didPass,
 					});
 					broadcastTreeUpdate(project.id, tracker);
 				} catch (e) {
@@ -528,6 +568,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						message: `Continue failed: ${e instanceof Error ? e.message : String(e)}`,
 					});
 					broadcastTreeUpdate(project.id, tracker);
+				} finally {
+					globalAgentQueues.delete(nodeId);
+					childQueue.close();
 				}
 			})();
 
@@ -1123,7 +1166,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		await flushEvents();
 	}
 
-	return { app, pm, wsClients, autoResumeProjects, shutdown };
+	return { app, pm, wsClients, autoResumeProjects, shutdown, getTracker };
 }
 
 const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft top-level orchestrator for this project.

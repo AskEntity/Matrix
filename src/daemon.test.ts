@@ -558,6 +558,124 @@ describe("daemon tasks API", () => {
 		);
 		expect(contRes.status).toBe(400);
 	});
+
+	test("POST /tasks/:nodeId/continue uses startSession with MCP tools when task has worktree", async () => {
+		// Track what startSession receives
+		let startSessionCalled = false;
+		let receivedMcpServers = false;
+		let receivedMcpToolDefs = false;
+		let receivedQueue = false;
+		let receivedDoneRef = false;
+
+		const agentProvider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				startSessionCalled = true;
+				if (req.mcpServers && "opengraft" in req.mcpServers) {
+					receivedMcpServers = true;
+				}
+				if (req.mcpToolDefs && "opengraft" in req.mcpToolDefs) {
+					receivedMcpToolDefs = true;
+				}
+				if (req.queue) {
+					receivedQueue = true;
+				}
+				if (req.doneRef) {
+					receivedDoneRef = true;
+				}
+				const queue = req.queue ?? new MessageQueue();
+				// biome-ignore lint/correctness/useYield: mock session never streams
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					return { success: true, output: "done" };
+				}
+				return {
+					sessionId: "mock-session",
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const localDataDir = await mkdtemp(join(tmpdir(), "og-cont-wt-"));
+		const {
+			app: localApp,
+			pm: localPm,
+			getTracker: localGetTracker,
+		} = createApp({
+			dataDir: localDataDir,
+			agentProvider,
+		});
+		await localPm.load();
+
+		// Create a project
+		const projRes = await localApp.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "cont-wt-app") }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		// Create a task
+		const taskRes = await localApp.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Cont task", description: "desc" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		// Manually patch to failed
+		await localApp.request(`/projects/${project.id}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "failed" }),
+		});
+
+		// Inject worktreePath directly into the daemon's in-memory tracker.
+		// We use the project path itself as a fake worktree path (it exists as a dir).
+		const daemonTracker = await localGetTracker(project.id);
+		// assignWorktree(nodeId, branch, worktreePath)
+		daemonTracker.assignWorktree(
+			task.id,
+			"og/fake/branch",
+			join(tempDir, "cont-wt-app"),
+		);
+		await daemonTracker.save();
+
+		// Continue the task
+		const contRes = await localApp.request(
+			`/projects/${project.id}/tasks/${task.id}/continue`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "Keep going" }),
+			},
+		);
+		expect(contRes.status).toBe(200);
+
+		// Wait briefly for the background agent to start
+		await new Promise((r) => setTimeout(r, 100));
+
+		expect(startSessionCalled).toBe(true);
+		expect(receivedMcpServers).toBe(true);
+		expect(receivedMcpToolDefs).toBe(true);
+		expect(receivedQueue).toBe(true);
+		expect(receivedDoneRef).toBe(true);
+
+		// Ensure global queue registry is cleaned up after agent completes
+		await new Promise((r) => setTimeout(r, 50));
+		expect(globalAgentQueues.has(task.id)).toBe(false);
+
+		await rm(localDataDir, { recursive: true });
+	});
 });
 
 describe("POST /projects/:id/tasks/:nodeId/message", () => {
