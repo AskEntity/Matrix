@@ -159,6 +159,11 @@ Three explicit cache breakpoints per API call:
 Cost formula: `input * 1x + cache_creation * 1.25x + cache_read * 0.1x + output * outputRate`
 - `input_tokens` from API = non-cached tokens only. Do NOT subtract cache tokens.
 
+**Caching pitfall**: Do NOT put per-agent-variable info (e.g. `Working directory: ${cwd}`) in the
+system prompt. Every distinct value breaks cache sharing. Instead, prepend it to the first user
+message only (and skip on resume). This lets all agents share an identical system prompt and
+benefit from cache reads after the first agent's cache-creation turn.
+
 ## Session Persistence
 
 - Sessions stored in daemon data dir: `~/.opengraft/sessions/{projectId}/{sessionId}.json`
@@ -197,7 +202,7 @@ All task mutations broadcast `tree_update` via WebSocket:
 
 ## Known Bugs / TODO
 
-(none — continue handler bug fixed, UI targeting improved)
+(none — continue handler bug fixed, UI targeting improved, prompt caching bug fixed)
 
 ## Known Pitfalls
 
