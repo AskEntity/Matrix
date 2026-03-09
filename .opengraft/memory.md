@@ -170,3 +170,15 @@ Daemon (Hono: HTTP + SSE + WS on :7433)
 - `{ source: "child_complete", taskId, title, success, output }` — child finished
 - `{ source: "parent_update", content }` — parent sent update to child
 - `{ source: "clarify_response", answer }` — user answered clarification
+
+## DirectProvider Tool Upgrades (Phase 4)
+
+Enhanced built-in tools to close gap with Claude SDK capabilities:
+
+| Tool | Added |
+|------|-------|
+| `search` | `output_mode` (content/files_with_matches/count), `head_limit` (max 200), `case_insensitive` |
+| `read_file` | `offset` (1-based line start), `limit` (max lines); appends "N more lines, use offset=X" hint |
+| `edit_file` | `replace_all` (replaces all occurrences, skips uniqueness check); reports count in success message |
+
+Cost calculation also fixed: now accounts for cache_creation (1.25x) and cache_read (0.1x) tokens.
