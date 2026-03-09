@@ -1250,3 +1250,95 @@ describe("create_task validation", () => {
 		expect(parsed.parentId).toBeNull();
 	});
 });
+
+describe("GET /projects/:id/agent", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-agent-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-agentd-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+		result.markReady();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await res.json()) as { id: string };
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request("/projects/nonexistent/agent");
+		expect(res.status).toBe(404);
+	});
+
+	test("returns running=false when no agent is active", async () => {
+		const res = await app.request(`/projects/${projectId}/agent`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			running: boolean;
+			sessionId: string | null;
+		};
+		expect(body.running).toBe(false);
+		expect(body.sessionId).toBeNull();
+	});
+});
+
+describe("POST /projects/:id/stop", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-stop-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-stopd-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+		result.markReady();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await res.json()) as { id: string };
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request("/projects/nonexistent/stop", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	test("returns 404 when no agent is running", async () => {
+		const res = await app.request(`/projects/${projectId}/stop`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(404);
+	});
+});
