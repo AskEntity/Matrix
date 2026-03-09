@@ -948,6 +948,10 @@ function OrchestratorDetail({
 	costUsd,
 	totalCost,
 	turns,
+	inputTokens,
+	cacheCreationTokens,
+	cacheReadTokens,
+	outputTokens,
 	onClearSessions,
 }: {
 	running: boolean;
@@ -956,6 +960,10 @@ function OrchestratorDetail({
 	costUsd?: number | null;
 	totalCost?: number | null;
 	turns?: number | null;
+	inputTokens?: number | null;
+	cacheCreationTokens?: number | null;
+	cacheReadTokens?: number | null;
+	outputTokens?: number | null;
 	onClearSessions?: () => void;
 }) {
 	const passed = nodes.filter((n) => n.status === "passed").length;
@@ -1059,6 +1067,37 @@ function OrchestratorDetail({
 					</div>
 				)}
 			</div>
+			{(inputTokens != null ||
+				cacheCreationTokens != null ||
+				cacheReadTokens != null ||
+				outputTokens != null) && (
+				<div className="og-stats-row" style={{ marginTop: "8px" }}>
+					<div className="og-stat-card">
+						<span className="og-stat-label">Input</span>
+						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+							{(inputTokens ?? 0).toLocaleString()}
+						</span>
+					</div>
+					<div className="og-stat-card">
+						<span className="og-stat-label">Cache Write</span>
+						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+							{(cacheCreationTokens ?? 0).toLocaleString()}
+						</span>
+					</div>
+					<div className="og-stat-card">
+						<span className="og-stat-label">Cache Read</span>
+						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+							{(cacheReadTokens ?? 0).toLocaleString()}
+						</span>
+					</div>
+					<div className="og-stat-card">
+						<span className="og-stat-label">Output</span>
+						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+							{(outputTokens ?? 0).toLocaleString()}
+						</span>
+					</div>
+				</div>
+			)}
 			{!running && onClearSessions && (
 				<div style={{ marginTop: "12px" }}>
 					<button
@@ -1092,6 +1131,14 @@ export function App() {
 	const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
 	const [lastCostUsd, setLastCostUsd] = useState<number | null>(null);
 	const [lastTurns, setLastTurns] = useState<number | null>(null);
+	const [lastInputTokens, setLastInputTokens] = useState<number | null>(null);
+	const [lastCacheCreationTokens, setLastCacheCreationTokens] = useState<
+		number | null
+	>(null);
+	const [lastCacheReadTokens, setLastCacheReadTokens] = useState<number | null>(
+		null,
+	);
+	const [lastOutputTokens, setLastOutputTokens] = useState<number | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [prompt, setPrompt] = useState("");
 	const [model, setModel] = useState("claude-opus-4-6");
@@ -1323,6 +1370,14 @@ export function App() {
 						: "";
 					if (msg.costUsd !== undefined) setLastCostUsd(msg.costUsd as number);
 					if (msg.turns !== undefined) setLastTurns(msg.turns as number);
+					if (msg.inputTokens !== undefined)
+						setLastInputTokens(msg.inputTokens as number);
+					if (msg.cacheCreationTokens !== undefined)
+						setLastCacheCreationTokens(msg.cacheCreationTokens as number);
+					if (msg.cacheReadTokens !== undefined)
+						setLastCacheReadTokens(msg.cacheReadTokens as number);
+					if (msg.outputTokens !== undefined)
+						setLastOutputTokens(msg.outputTokens as number);
 					addLog(
 						"lifecycle",
 						`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${costStr}${tokenStr}`,
@@ -1440,6 +1495,10 @@ export function App() {
 			if (!res.ok) throw new Error((await res.json()).error);
 			setLastCostUsd(null);
 			setLastTurns(null);
+			setLastInputTokens(null);
+			setLastCacheCreationTokens(null);
+			setLastCacheReadTokens(null);
+			setLastOutputTokens(null);
 			setLogs([]);
 			addLog("lifecycle", "Session history cleared");
 		} catch (err) {
@@ -1717,6 +1776,10 @@ export function App() {
 								costUsd={lastCostUsd}
 								totalCost={totalCost}
 								turns={lastTurns}
+								inputTokens={lastInputTokens}
+								cacheCreationTokens={lastCacheCreationTokens}
+								cacheReadTokens={lastCacheReadTokens}
+								outputTokens={lastOutputTokens}
 								onClearSessions={handleClearSessions}
 							/>
 						) : selectedNode ? (
