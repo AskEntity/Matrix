@@ -2,6 +2,7 @@ import type {
 	McpServerConfig,
 	SdkMcpToolDefinition,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { MessageQueue } from "./message-queue.ts";
 import type { AgentResult } from "./types.ts";
 
 /** What the orchestrator sends to an agent. */
@@ -41,6 +42,11 @@ export type AgentEvent =
 			type: "compact";
 			checkpoint: string;
 			savedTokens: number;
+	  }
+	| {
+			type: "queue_message";
+			/** Formatted queue messages injected at cancellation points */
+			messages: string;
 	  };
 
 /** Handle to a running agent session that supports message injection. */
@@ -49,7 +55,9 @@ export interface AgentSession {
 	readonly sessionId: string;
 	/** Stream of agent events. Consume this to drive the session. */
 	events: AsyncGenerator<AgentEvent, AgentResult>;
-	/** Send a message to the agent mid-execution. */
+	/** Message queue for async event delivery (user messages, child completions, etc.) */
+	readonly queue: MessageQueue;
+	/** @deprecated Use queue.enqueue({ source: "user", content: text }) instead */
 	sendMessage(text: string): Promise<void>;
 	/** Stop the agent. */
 	stop(): void;
