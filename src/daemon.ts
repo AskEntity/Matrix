@@ -1,5 +1,13 @@
 import { readFileSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	readdir,
+	readFile,
+	rm,
+	stat,
+	unlink,
+	writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -927,6 +935,43 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			await tracker.save();
 		}
 		return c.json({ cleared: true });
+	});
+
+	// Prune old session files (keep only the most recent N)
+	app.post("/projects/:id/sessions/prune", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+
+		const body = await c.req
+			.json<{ keepCount?: number }>()
+			.catch(() => ({}) as { keepCount?: number });
+		const keepCount = body?.keepCount ?? 10;
+
+		const sessionsDir = join(config.dataDir, "sessions", project.id);
+		try {
+			const files = await readdir(sessionsDir);
+			const jsonFiles = files.filter((f) => f.endsWith(".json"));
+
+			if (jsonFiles.length <= keepCount) {
+				return c.json({ pruned: 0, remaining: jsonFiles.length });
+			}
+
+			// Sort by modification time, oldest first
+			const withStats = await Promise.all(
+				jsonFiles.map(async (f) => ({
+					name: f,
+					mtime: (await stat(join(sessionsDir, f))).mtimeMs,
+				})),
+			);
+			withStats.sort((a, b) => a.mtime - b.mtime);
+
+			const toDelete = withStats.slice(0, withStats.length - keepCount);
+			await Promise.all(toDelete.map((f) => unlink(join(sessionsDir, f.name))));
+
+			return c.json({ pruned: toDelete.length, remaining: keepCount });
+		} catch {
+			return c.json({ pruned: 0, remaining: 0 });
+		}
 	});
 
 	// Inject a message into a running agent

@@ -243,6 +243,12 @@ Three explicit cache breakpoints per API call:
 ## Backlog (next improvements to consider)
 
 - Token budget per task: cost limits and alerts
-- `og run` endpoint tests — currently untested
-- Session cleanup: prune old session files from disk
 - Browser tab title showing task progress count
+
+## Sessions Prune (added)
+
+- `POST /projects/:id/sessions/prune` — prunes old session JSON files, keeps N most recent (default 10). Sorts by mtime. Returns `{ pruned, remaining }`.
+- `og sessions prune [--keep N]` — CLI command. Usage error now says `og sessions clear|prune [--keep N]`.
+- **TypeScript pitfall**: `c.req.json<T>().catch(() => ({}))` gives union type `T | {}`. Cast the fallback: `.catch(() => ({} as T))` to avoid TS2339.
+- `readdir`, `stat`, `unlink` added to static imports from `node:fs/promises` in daemon.ts (don't use dynamic import — use static like the rest of the file).
+- `/projects/:id/run` now has tests: 404 unknown project, 400 missing prompt, 200 running status, 409 conflict when already running.

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent, AgentProvider } from "./agent-provider.ts";
@@ -1340,5 +1340,185 @@ describe("POST /projects/:id/stop", () => {
 			body: JSON.stringify({}),
 		});
 		expect(res.status).toBe(404);
+	});
+});
+
+describe("POST /projects/:id/run", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-run-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-rund-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+		result.markReady();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await res.json()) as { id: string };
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request("/projects/unknown/run", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "test" }),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	test("returns 400 when prompt is missing", async () => {
+		const res = await app.request(`/projects/${projectId}/run`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	test("returns running status for valid request", async () => {
+		const res = await app.request(`/projects/${projectId}/run`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "do something" }),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { status: string; projectId: string };
+		expect(body.status).toBe("running");
+		expect(body.projectId).toBe(projectId);
+	});
+
+	test("returns 409 when agent already running", async () => {
+		// Start once
+		await app.request(`/projects/${projectId}/run`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "first run" }),
+		});
+		// Try again immediately — agent is still considered active
+		const res = await app.request(`/projects/${projectId}/run`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "second run" }),
+		});
+		expect(res.status).toBe(409);
+	});
+});
+
+describe("POST /projects/:id/sessions/prune", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-prune-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-pruned-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await res.json()) as { id: string };
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request("/projects/unknown/sessions/prune", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	test("returns pruned=0 when no session files exist", async () => {
+		const res = await app.request(`/projects/${projectId}/sessions/prune`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ keepCount: 5 }),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { pruned: number; remaining: number };
+		expect(body.pruned).toBe(0);
+	});
+
+	test("returns pruned=0 when file count is within keepCount", async () => {
+		// Create 3 session files
+		const sessionsDir = join(dataDir, "sessions", projectId);
+		await mkdir(sessionsDir, { recursive: true });
+		for (let i = 0; i < 3; i++) {
+			await writeFile(join(sessionsDir, `session-${i}.json`), "{}");
+		}
+
+		const res = await app.request(`/projects/${projectId}/sessions/prune`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ keepCount: 5 }),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { pruned: number; remaining: number };
+		expect(body.pruned).toBe(0);
+		expect(body.remaining).toBe(3);
+	});
+
+	test("prunes oldest session files keeping only keepCount", async () => {
+		// Create 5 session files
+		const sessionsDir = join(dataDir, "sessions", projectId);
+		await mkdir(sessionsDir, { recursive: true });
+		for (let i = 0; i < 5; i++) {
+			await writeFile(join(sessionsDir, `session-${i}.json`), "{}");
+		}
+
+		const res = await app.request(`/projects/${projectId}/sessions/prune`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ keepCount: 2 }),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { pruned: number; remaining: number };
+		expect(body.pruned).toBe(3);
+		expect(body.remaining).toBe(2);
+	});
+
+	test("defaults to keepCount=10 when not specified", async () => {
+		// Create 12 session files
+		const sessionsDir = join(dataDir, "sessions", projectId);
+		await mkdir(sessionsDir, { recursive: true });
+		for (let i = 0; i < 12; i++) {
+			await writeFile(join(sessionsDir, `session-${i}.json`), "{}");
+		}
+
+		const res = await app.request(`/projects/${projectId}/sessions/prune`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { pruned: number; remaining: number };
+		expect(body.pruned).toBe(2);
+		expect(body.remaining).toBe(10);
 	});
 });

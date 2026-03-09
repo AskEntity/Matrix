@@ -360,6 +360,27 @@ async function handleSessionsClear(): Promise<void> {
 	console.log("Session history cleared. Next orchestration will start fresh.");
 }
 
+async function handleSessionsPrune(args: string[]): Promise<void> {
+	const keepIdx = args.indexOf("--keep");
+	const keepCount = keepIdx >= 0 ? parseInt(args[keepIdx + 1] ?? "10", 10) : 10;
+
+	const projectId = await resolveCurrentProject();
+	if (!projectId) return;
+
+	const res = await api(`/projects/${projectId}/sessions/prune`, {
+		method: "POST",
+		body: JSON.stringify({ keepCount }),
+	});
+	if (!res.ok) {
+		console.error("Error pruning sessions");
+		process.exit(1);
+	}
+	const body = (await res.json()) as { pruned: number; remaining: number };
+	console.log(
+		`Pruned ${body.pruned} old session file(s). ${body.remaining} remain.`,
+	);
+}
+
 async function handleLogs(args: string[]): Promise<void> {
 	let tail: number | undefined;
 	const filteredArgs: string[] = [];
@@ -1004,8 +1025,10 @@ switch (command) {
 		const sub = args[0];
 		if (sub === "clear") {
 			await handleSessionsClear();
+		} else if (sub === "prune") {
+			await handleSessionsPrune(args.slice(1));
 		} else {
-			console.error("Usage: og sessions clear");
+			console.error("Usage: og sessions clear|prune [--keep N]");
 			process.exit(1);
 		}
 		break;
@@ -1051,6 +1074,9 @@ switch (command) {
 		console.log("  stop            Stop running agent (session saved to disk)");
 		console.log(
 			"  sessions clear  Wipe session history (start fresh on next run)",
+		);
+		console.log(
+			"  sessions prune [--keep N]  Remove old session files, keep N most recent (default 10)",
 		);
 		console.log(
 			"  logs [-n N] [id]  Show project event history (last N events)",
