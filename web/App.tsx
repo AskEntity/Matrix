@@ -329,6 +329,7 @@ export function App() {
 		checkStatus,
 		continueTask,
 		deleteTask,
+		sendMessage,
 	} = useAgent(projectId);
 
 	const nodeMap = useMemo(() => {
@@ -474,11 +475,16 @@ export function App() {
 		e.preventDefault();
 		if (!prompt.trim() || !projectId) return;
 		try {
-			await start({
-				prompt: prompt.trim(),
-				model: model || undefined,
-				childModel: childModel || undefined,
-			});
+			if (running) {
+				await sendMessage(prompt.trim());
+				addLog("lifecycle", `Message sent: ${prompt.trim()}`);
+			} else {
+				await start({
+					prompt: prompt.trim(),
+					model: model || undefined,
+					childModel: childModel || undefined,
+				});
+			}
 			setPrompt("");
 		} catch (err) {
 			addLog("error", (err as Error).message);
@@ -699,7 +705,9 @@ export function App() {
 						type="text"
 						value={prompt}
 						onChange={(e) => setPrompt(e.target.value)}
-						placeholder="Describe what to build..."
+						placeholder={
+							running ? "Send message to agent..." : "Describe what to build..."
+						}
 						disabled={!projectId}
 					/>
 					<div className="footer-controls">
@@ -724,9 +732,18 @@ export function App() {
 							<option value="claude-haiku-4-5-20251001">Haiku</option>
 						</select>
 						{running ? (
-							<button type="button" onClick={handleStop} className="btn-stop">
-								Stop
-							</button>
+							<>
+								<button
+									type="submit"
+									disabled={!projectId || !prompt.trim()}
+									className="btn-run"
+								>
+									Send
+								</button>
+								<button type="button" onClick={handleStop} className="btn-stop">
+									Stop
+								</button>
+							</>
 						) : (
 							<button
 								type="submit"
