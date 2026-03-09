@@ -184,14 +184,18 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		broadcast(wsClients, projectId, event);
 	}
 
-	/** Read .opengraft/memory.md from a project directory. Returns empty string if not found. */
+	/** Read project files and format as pre-read context for the agent. */
 	function readProjectMemory(projectPath: string): string {
 		const parts: string[] = [];
+
+		parts.push(
+			"The following files have been pre-read for you. Do NOT re-read them unless you need to check for updates.",
+		);
 
 		// Read CLAUDE.md for project architecture context
 		try {
 			const claudeMd = readFileSync(join(projectPath, "CLAUDE.md"), "utf-8");
-			if (claudeMd) parts.push(`## CLAUDE.md\n${claudeMd}`);
+			if (claudeMd) parts.push(`[read_file: CLAUDE.md]\n${claudeMd}`);
 		} catch {
 			// No CLAUDE.md, that's fine
 		}
@@ -202,7 +206,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				join(projectPath, ".opengraft", "memory.md"),
 				"utf-8",
 			);
-			if (memory) parts.push(`## Agent Memory\n${memory}`);
+			if (memory) parts.push(`[read_file: .opengraft/memory.md]\n${memory}`);
 		} catch {
 			// No memory file, that's fine
 		}
@@ -669,7 +673,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			? (opts.prompt ??
 				"Continue where you left off. Check the task tree and proceed.")
 			: memory
-				? `## Project Memory\n${memory}\n\n${opts.prompt}`
+				? `${memory}\n\n---\n\n${opts.prompt}`
 				: opts.prompt;
 
 		const resumeSessionId = shouldResume
