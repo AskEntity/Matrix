@@ -568,7 +568,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		if (!tracker) return;
 
 		activeOrchestrations.add(project.id);
-		broadcastEvent(project.id, { type: "orchestration_started" });
+		broadcastEvent(project.id, {
+			type: "orchestration_started",
+			prompt: opts.prompt,
+		});
 
 		const wtRoot = join(project.path, ".worktrees");
 		const wm = new WorktreeManager(project.path, wtRoot);

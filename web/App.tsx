@@ -574,6 +574,18 @@ function LogEntryView({
 		);
 	}
 
+	if (entry.type === "user_prompt") {
+		return (
+			<div className="og-log-entry og-event-user_prompt">
+				<span className="og-log-time">{entry.time}</span>
+				<div className="og-user-prompt-bubble">
+					<span className="og-user-prompt-label">You →</span>
+					<span className="og-user-prompt-text">{entry.text}</span>
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<div className={`og-log-entry og-event-${entry.type}`}>
 			<span className="og-log-time">{entry.time}</span>
@@ -900,6 +912,9 @@ export function App() {
 					break;
 				}
 				case "orchestration_started":
+					if (msg.prompt) {
+						addLog("user_prompt", msg.prompt as string);
+					}
 					addLog("lifecycle", "Orchestration started");
 					setRunning(true);
 					break;
