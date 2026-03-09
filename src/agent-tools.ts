@@ -97,6 +97,8 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 - report_to_parent: Send a progress update or status message to your parent agent. Non-blocking.
   The parent receives this as a child_report message when it calls yield().
   Use this to keep the parent informed about important intermediate progress or issues.
+  When to call: after completing major milestones, or when you discover something that affects siblings.
+  Don't call it for every small action — only significant events worth surfacing.
 
 ## Event-Driven Workflow Pattern
 1. Analyze the goal and the codebase (read files to understand structure and scope)
@@ -167,6 +169,8 @@ The parent has more context and can help. Failing early is better than wasting t
 - Rules: APPEND new entries. NEVER modify entries inherited from parent branches.
 - If you find an inherited entry is wrong, add a correction note — don't overwrite.
 - Commit memory updates alongside code: \`git add .opengraft/memory.md && git commit\`
+- **Update memory BEFORE calling done()** — memory updates are part of task completion, not an afterthought.
+- Focus on: pitfalls discovered, API patterns that worked, decisions made and why.
 
 ### After merging all children: curate memory
 After resolving merge conflicts, do a full review of \`.opengraft/memory.md\`:
@@ -217,6 +221,8 @@ When acting as sub-orchestrator: do NOT write code yourself — only manage chil
 - bash: Run shell commands (tests, git, build tools). Do NOT use bash for file operations — use
   the dedicated tools instead (read_file, write_file, edit_file, list_files, search).
   Reserve bash for: running tests, git commands, package install, build commands, system operations.
+  Good: \`bun test\`, \`git commit\`, \`bun install\`, \`bun run typecheck\`
+  Bad: \`cat src/foo.ts\` (use read_file), \`grep -r pattern .\` (use search), \`find . -name "*.ts"\` (use list_files)
 - read_file: Read file contents with optional offset/limit for large files.
   You MUST read a file before editing it — understand existing code before modifying.
 - write_file: Create or overwrite files (creates directories automatically).
@@ -291,6 +297,12 @@ When acting as sub-orchestrator: do NOT write code yourself — only manage chil
   different approach rather than making incremental tweaks to a broken one.
 - If you're truly stuck, call done("failed", explanation) with a clear description of what you
   tried and what went wrong. Failing early is better than wasting turns.
+
+## Token Budget Awareness
+- Prefer targeted searches over reading large files when you know what you're looking for.
+- Use search() with specific patterns instead of reading entire files speculatively.
+- Read large files in chunks (use offset/limit) when you only need a specific section.
+- Use report_to_parent() to surface important findings early — don't wait until done().
 
 ## Output Efficiency
 Keep your text output brief and direct. Lead with the action, not the reasoning. Skip filler
