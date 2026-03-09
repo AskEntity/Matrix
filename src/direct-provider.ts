@@ -925,9 +925,16 @@ export class DirectProvider implements AgentProvider {
 		// Restore conversation history if resuming, otherwise start fresh
 		const existingHistory = this.sessionHistory.get(sessionId);
 		const isResume = Boolean(existingHistory);
+		// Prepend working directory to the first user message (not on resume turns) so that
+		// the system prompt stays identical across agents in different worktrees, enabling
+		// Anthropic prompt caching to cache the system prompt once and share it across agents.
+		const firstUserContent =
+			cwd && !isResume
+				? `Working directory: ${cwd}\n\n${request.prompt}`
+				: request.prompt;
 		const messages: MessageParam[] = existingHistory
 			? [...existingHistory, { role: "user" as const, content: request.prompt }]
-			: [{ role: "user" as const, content: request.prompt }];
+			: [{ role: "user" as const, content: firstUserContent }];
 
 		// For context compression: use the original task prompt, not the resume prompt.
 		// On resume, the original prompt is the first user message in history.
@@ -978,10 +985,7 @@ export class DirectProvider implements AgentProvider {
 
 			turns++;
 
-			const systemParts = [
-				request.systemPrompt,
-				`Working directory: ${cwd}`,
-			].filter(Boolean);
+			const systemParts = [request.systemPrompt].filter(Boolean);
 
 			// Cache control: system prompt cached as array of TextBlockParam
 			const systemWithCache: TextBlockParam[] = [
