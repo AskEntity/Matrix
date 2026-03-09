@@ -530,6 +530,12 @@ section {
 	color: var(--text-muted);
 }
 
+/* Tool call visibility toggle */
+#activity-log.hide-tool-calls .log-entry.event-tool_use,
+#activity-log.hide-tool-calls .log-entry.event-tool_result {
+	display: none;
+}
+
 /* =========================================================
    Inject Form (send to agent)
    ========================================================= */
@@ -737,8 +743,8 @@ footer {
 	pointer-events: none;
 }
 
-/* When not hidden, enable pointer events */
-#task-detail:not(.hidden) {
+/* When open, enable pointer events */
+#task-detail.open {
 	pointer-events: auto;
 }
 
@@ -750,7 +756,7 @@ footer {
 	opacity: 0;
 	transition: opacity var(--transition-slide);
 }
-#task-detail:not(.hidden) .detail-overlay-backdrop {
+#task-detail.open .detail-overlay-backdrop {
 	opacity: 1;
 }
 
@@ -771,7 +777,7 @@ footer {
 	transition: transform var(--transition-slide);
 	box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4);
 }
-#task-detail:not(.hidden) .detail-overlay-panel {
+#task-detail.open .detail-overlay-panel {
 	transform: translateX(0);
 }
 
