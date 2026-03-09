@@ -10,17 +10,17 @@
 **Autonomy**: Level 10. Work continuously: implement → test → commit → pick up next feature.
 Do not ask questions — make decisions and keep moving.
 
-**How to run E2E tests** (needs this every time after context compression):
-```bash
-source .env && export CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_MODEL
-bun test src/e2e.test.ts
-```
-
 **How to run unit tests + all checks**:
 ```bash
 bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/direct-provider.test.ts
 bun run typecheck   # tsc --noEmit
 bun run check       # biome lint + format
+```
+
+**How to run E2E tests** (needs this every time after context compression):
+```bash
+source .env && export CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_MODEL
+bun test src/e2e.test.ts
 ```
 
 **Pre-commit hooks are active** (.hooks/pre-commit runs typecheck + lint + unit tests).
@@ -29,17 +29,6 @@ bun run check       # biome lint + format
 
 Phases 0–3 complete. System is functional: daemon, orchestrator, task decomposition,
 worktree isolation, DirectProvider, web UI, CLI. Phase 4: use OpenGraft to develop itself.
-
-## Tech Stack
-
-| Decision | Choice | Reason |
-|----------|--------|--------|
-| Language | TypeScript strict | Strong type inference, large training data, unified front/back |
-| Runtime | Bun | Fast startup, built-in test framework, native TS support |
-| Lint/Format | Biome | Single tool, minimal config, AI-friendly |
-| Test | bun:test | Zero config, integrated with runtime (tests colocated in src/) |
-| HTTP framework | Hono | Lightweight, Bun-native, TS-first, built-in WS helper |
-| AI engine | Claude Agent SDK + Direct Anthropic API | Two providers, swappable |
 
 ## Architecture
 
@@ -55,43 +44,34 @@ Daemon (Hono: HTTP + SSE + WS on :7433)
 - All mutable APIs are fire-and-forget. Observe via WebSocket.
 - MCP tools enable recursive orchestration: any agent can become a sub-orchestrator.
 
-## API
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /health | Daemon health check (optional ?check_model=true) |
-| POST | /projects | Init project at `{path}` |
-| GET | /projects | List all projects |
-| GET | /projects/:id | Get project by ID |
-| DELETE | /projects/:id | Remove project metadata |
-| POST | /projects/:id/tasks | Create task (root or child via `parentId`) |
-| GET | /projects/:id/tasks | Get full task tree |
-| PATCH | /projects/:id/tasks/:nodeId | Update task status/branch |
-| POST | /projects/:id/tasks/:nodeId/continue | Continue failed task |
-| DELETE | /projects/:id/tasks/:nodeId | Remove task and descendants |
-| POST | /projects/:id/run | Start agent (fire-and-forget) |
-| POST | /projects/:id/orchestrate/agent | Start orchestration (fire-and-forget) |
-| GET | /projects/:id/agent | Check if agent is running |
-| POST | /projects/:id/stop | Stop running agent |
-| POST | /projects/:id/message | Send instruction to running agent |
-| POST | /projects/:id/clarify | Respond to agent clarification request |
-| WS | /ws | Real-time task tree + agent events + message injection |
-
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | src/types.ts | All type definitions (TaskNode, AgentResult, Project, etc.) |
 | src/daemon.ts | Hono HTTP server, all routes, createApp() factory |
-| src/agent-provider.ts | AgentProvider interface (decoupled, swappable) |
+| src/agent-provider.ts | AgentProvider interface + AgentRequest type |
 | src/claude-code-provider.ts | Claude Code Agent SDK provider (subprocess) |
 | src/direct-provider.ts | Direct Anthropic API provider (lightweight, context compact) |
 | src/project-manager.ts | Project init/CRUD, .opengraft/ setup, git init |
 | src/task-tracker.ts | Task tree CRUD, persistence to JSON |
 | src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
 | src/agent-tools.ts | MCP tools + system prompts (orchestration + child agents) |
+| src/message-queue.ts | MessageQueue + globalAgentQueues registry |
 | src/cli.ts | CLI (`og` command) |
-| web/ | Web UI: task tree, agent activity, compact display |
+| web/App.tsx | Web UI: task tree, agent activity |
+| web/hooks.ts | React hooks: useWebSocket, sendMessageToTask |
+
+## Tech Stack
+
+| Decision | Choice | Reason |
+|----------|--------|--------|
+| Language | TypeScript strict | Strong type inference, large training data, unified front/back |
+| Runtime | Bun | Fast startup, built-in test framework, native TS support |
+| Lint/Format | Biome | Single tool, minimal config, AI-friendly |
+| Test | bun:test | Zero config, integrated with runtime (tests colocated in src/) |
+| HTTP framework | Hono | Lightweight, Bun-native, TS-first, built-in WS helper |
+| AI engine | Claude Agent SDK + Direct Anthropic API | Two providers, swappable |
 
 ## Code Rules
 
@@ -100,219 +80,83 @@ Daemon (Hono: HTTP + SSE + WS on :7433)
 3. Three repetitions before abstracting. No premature helpers.
 4. **No synchronous mutable APIs.** Fire-and-forget + WS observe.
 
-## Agent Exit Model
+## API Reference
 
-- Agents only see two exit states: **passed** (done) and **failed** (can't continue)
-- **stuck** is an internal circuit breaker: auto-set after 3 consecutive failures, invisible to agents
-- **clarify(question)** is an MCP tool call, not an exit condition — blocks the agent, waits for response or timeout
-- Root orchestrator session is always preserved (saved in finally block) for future resume
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /health | Daemon health check |
+| POST | /projects | Init project at `{path}` |
+| GET/DELETE | /projects/:id | Get or remove project |
+| POST | /projects/:id/tasks | Create task (root or child via `parentId`) |
+| GET | /projects/:id/tasks | Get full task tree |
+| PATCH | /projects/:id/tasks/:nodeId | Update task status/branch |
+| DELETE | /projects/:id/tasks/:nodeId | Remove task and descendants |
+| POST | /projects/:id/orchestrate/agent | Start orchestration (fire-and-forget) |
+| POST | /projects/:id/stop | Stop running agent |
+| POST | /projects/:id/message | Send instruction to root agent |
+| POST | /projects/:id/tasks/:nodeId/message | Send instruction to specific child agent |
+| POST | /projects/:id/sessions/clear | Wipe session history (fresh start) |
+| WS | /ws | Real-time task tree + agent events |
 
-## Context Compression (Compact)
+## Event-Driven Agent Model (MessageQueue)
 
-- Claude Code-style: compact ALL messages into structured checkpoint, then rebuild from scratch
-- After compact: original task prompt + fresh memory (re-read from disk) + checkpoint
-- Checkpoint format: Task / Current Phase / Completed / Files Modified / Current State / Next Action / Key Context
-- Uses same-tier model (not haiku) for high-quality checkpoint generation
-- UI shows compact as a boundary line with collapsible checkpoint content
+- **MessageQueue** (`src/message-queue.ts`): Single async channel per agent session for all events
+- **execute_tasks**: Fire-and-forget — spawns children in background. Results arrive as `child_complete` via queue.
+- **yield()**: Suspends agent loop (zero token burn), waits for queue message, returns messages + `## Pending` summary.
+- **clarify()**: Non-blocking — emits event, agent can continue. Call yield() when ready for `clarify_response`.
+- **send_message_to_child**: Sends `parent_update` to a running child via `childQueues` registry.
+- **report_to_parent**: Non-blocking upward message to parent's queue as `child_report`.
+- **globalAgentQueues** in `src/message-queue.ts`: global `Map<string, MessageQueue>` for all running agents, used by `POST /tasks/:nodeId/message` to route messages to specific agents.
 
-## Git Worktree Configuration
+### QueueMessage types
+`user` | `child_complete` | `parent_update` | `clarify_response` | `child_report`
 
-- `extensions.worktreeConfig` MUST be enabled before `git config --worktree` works
-- Without it, `--worktree` silently writes to shared `.git/config`
-- Hooks are shared across all worktrees — use per-worktree `core.hooksPath` to override
-- `core.hooksPath` must be absolute path (relative resolves differently in worktrees)
-- New worktrees don't have node_modules — must run `bun install` after creation
-- WorktreeManager.create() handles all of this
+### yield() output format
+Messages + `## Pending` section (running children list + pending clarification count). Always present.
 
-## Zod v4 Schema Conversion (DirectProvider)
+## Session Persistence (Daemon Restart)
 
-- Zod v4 stores array elements at `def.element` (not `def.type`)
-- Zod v4 stores enum values at `def.entries` (record), not `def.values` (array)
-- `zodShapeToJsonSchema` handles: string, number, boolean, enum, optional, default, array, object
+- DirectProvider writes session messages to `{projectPath}/.opengraft/sessions/{sessionId}.json` after each run.
+- On resume: if sessionId exists but not in memory, loads from disk automatically.
+- `sessions/` excluded from git via `.opengraft/.gitignore`.
+- **Restart workflow**: `og stop` → restart daemon → `og orchestrate --resume` → full history restored.
+- `POST /projects/:id/sessions/clear` wipes session files for a fresh start.
+
+## Anthropic Prompt Caching (DirectProvider)
+
+Three cache breakpoints per API call: system prompt, last tool definition, second-to-last user message.
+- `input_tokens` = non-cached tokens ONLY. Do NOT subtract cache tokens from it (that was a bug).
+- Cost = `input * 1x + cache_creation * 1.25x + cache_read * 0.1x + output * outputRate`
+- `addMessagesCacheControl()` (exported, tested) handles message-level caching.
+
+## Real-time Task Tree Updates
+
+All task mutations now broadcast `tree_update` via WebSocket:
+- HTTP routes: `POST/PATCH/DELETE /projects/:id/tasks` — each calls `broadcastTreeUpdate()`.
+- MCP tools: `create_task`, `update_task_status`, `delete_task` — call `deps.broadcastTreeUpdate?.()`.
+- `broadcastTreeUpdate` callback is passed from `daemon.ts` into `createOrchestratorTools()` and propagated to child tool sets.
 
 ## Known Pitfalls
 
-- Nested Claude Code sessions: must strip CLAUDECODE env vars to prevent conflicts
-- OAuth token requires `anthropic-beta: oauth-2025-04-20` header
-- DirectProvider maxTurns: default 200, detect infinite loops early
-- `git merge --no-ff` from the correct directory (parent's worktree or main repo)
-- After merge + delete_task: worktree, branch, and task node are all cleaned up
+- **Git worktrees**: `extensions.worktreeConfig` must be enabled before `git config --worktree` works. `core.hooksPath` must be absolute. New worktrees need `bun install`.
+- **Nested Claude Code sessions**: must strip CLAUDECODE env vars to prevent conflicts.
+- **OAuth token**: requires `anthropic-beta: oauth-2025-04-20` header.
+- **Template strings in agent-tools.ts**: backticks inside the prompt strings must be escaped as `` \` `` to avoid TS parse errors.
+- **Biome SVG rule**: `noSvgWithoutTitle` requires `aria-hidden="true"` on decorative inline SVGs.
+- **Zod v4**: array elements at `def.element` (not `def.type`); enum values at `def.entries` (record).
+- **`git merge --no-ff`**: run from the correct directory (parent worktree or main repo root).
 
-## Methodology (from OpenGraft.md)
+## Methodology
 
-- Vertical iteration: one feature at a time (types → implementation → tests → all passing)
-- Don't guess APIs — read docs or run --help first
-- Don't say "should work" — run it and see
-- Flaky test = Bug. Never "fix" with retries.
-- Identify layer → add logs → trust logs → isolate → minimize
-- No old-system fallbacks when replacing
+- Vertical iteration: one feature at a time (types → implementation → tests → all passing).
+- Don't guess APIs — read source or run `--help` first. Don't say "should work" — run it.
+- Flaky test = Bug. Never fix with retries.
+- No old-system fallbacks when replacing something.
 
-## MessageQueue + yield() Scheduler (Phase 4 Feature)
+## Web UI
 
-**Architecture change**: Replaced blocking execute_tasks + clarify with event-driven model.
-
-### New Model
-- **MessageQueue** (`src/message-queue.ts`): Single async channel per agent session for all events
-- **execute_tasks**: Fire-and-forget — spawns children in background, returns immediately. Results arrive as `child_complete` messages via queue.
-- **yield()**: New MCP tool — suspends agent loop (zero token burn), waits for any queue message, returns all accumulated messages.
-- **send_message_to_child**: New MCP tool — sends `parent_update` to a running child via `childQueues` registry.
-- **clarify**: Now non-blocking — emits event, returns immediately. After calling clarify(), the agent can continue doing other work that doesn't need the answer, then call yield() when ready to wait for the `clarify_response`.
-- **Cancellation points**: After each tool batch execution, queue is drained and messages appended to tool results.
-
-### Key Design Decisions
-- Queue created in daemon.ts `launchAgent`, shared between tools and session via `AgentRequest.queue`
-- `childQueues: Map<string, MessageQueue>` tracks running children for send_message_to_child
-- Old mechanisms removed: `ClarificationMap`, `activeClarifications`, `checkInjectedMessage`, `injectedMessages`
-- `sendMessage()` on AgentSession is deprecated — use `queue.enqueue()` directly
-
-### QueueMessage Types
-- `{ source: "user", content }` — user/parent message
-- `{ source: "child_complete", taskId, title, success, output }` — child finished
-- `{ source: "parent_update", content }` — parent sent update to child
-- `{ source: "clarify_response", answer }` — user answered clarification
-
-## DirectProvider Tool Upgrades (Phase 4)
-
-Enhanced built-in tools to close gap with Claude SDK capabilities:
-
-| Tool | Added |
-|------|-------|
-| `search` | `output_mode` (content/files_with_matches/count), `head_limit` (max 200), `case_insensitive` |
-| `read_file` | `offset` (1-based line start), `limit` (max lines); appends "N more lines, use offset=X" hint |
-| `edit_file` | `replace_all` (replaces all occurrences, skips uniqueness check); reports count in success message |
-
-Cost calculation also fixed: now accounts for cache_creation (1.25x) and cache_read (0.1x) tokens.
-
-## UI Message Routing to Specific Agents (COMPLETED)
-
-Implemented in task `f2ca66e9`. Messages can now be routed to specific child agent queues.
-
-### Architecture
-- **`globalAgentQueues`** in `src/message-queue.ts`: `Map<string, MessageQueue>` — global registry of running agents
-- In `src/agent-tools.ts`: `executeChildStreaming()` registers/unregisters in `globalAgentQueues` alongside the local `childQueues` map
-- **New API endpoint**: `POST /projects/:id/tasks/:nodeId/message` — looks up `globalAgentQueues.get(nodeId)`, enqueues `{ source: "user", content }`. Returns 404 if no active agent.
-- **Web UI** (`web/App.tsx`): `targetNodeId` state tracks which agent receives messages
-  - "Send messages here" button in TaskDetail (visible when `node.status === "in_progress"` and orchestrator running)
-  - Footer shows "→ Sending to: Task Name" bar with close button when target is set
-  - Input placeholder changes to show which agent is targeted
-  - `sendMessageToTask(taskId, content)` in hooks.ts calls the new endpoint
-- **CSS** (`web/style.css`): `.og-message-target` and `.og-btn-targeted` classes added
-
-## Child-to-Parent Messaging (report_to_parent tool)
-
-Added in Phase 4 alongside the MessageQueue feature:
-
-- **New QueueMessage type**: `{ source: "child_report"; taskId: string; title: string; content: string }` in `src/message-queue.ts`
-- **New MCP tool**: `report_to_parent` in `src/agent-tools.ts`
-  - Parameter: `message` (string)
-  - Behavior: enqueues to `deps.queue` (parent's queue) with source `"child_report"`
-  - Non-blocking: returns immediately like `clarify`
-  - If `deps.queue` is absent (top-level orchestrator), silently no-ops with an informational message
-  - Gets current task's `taskId` and `title` from `currentTaskId` + `tracker.get()`
-- **formatQueueMessage** handles `child_report`: `[child_report] From child "${title}" (${taskId}): ${content}`
-- **ORCHESTRATION_KNOWLEDGE** updated: `report_to_parent` listed in tools, `child_report` added to yield() message types
-- **TASK_SYSTEM_PROMPT** updated: `report_to_parent` listed in Worker Tools section
-
-## Anthropic Prompt Caching in DirectProvider
-
-Implemented in `src/direct-provider.ts`. Three cache breakpoints per API call:
-
-1. **System prompt**: Converted from `string` to `TextBlockParam[]` with `cache_control: { type: "ephemeral" }`. The SDK `system` field accepts `string | Array<TextBlockParam>`.
-
-2. **Tools**: `allTools` is mapped so the **last** tool gets `cache_control: { type: "ephemeral" }`. The `Tool` interface in the SDK supports `cache_control` natively.
-
-3. **Messages history**: `addMessagesCacheControl()` helper (exported for testing) adds a cache breakpoint to the **second-to-last user message** — this caches all stable history while leaving the current (newest) user message uncached.
-
-Key SDK facts:
-- `CacheControlEphemeral` type: `{ type: 'ephemeral' }` (optional `ttl` field: `'5m'` | `'1h'`)
-- `TextBlockParam` supports `cache_control?: CacheControlEphemeral | null`
-- `Tool` interface supports `cache_control?: CacheControlEphemeral | null`
-- `MessageCreateParamsBase.system` accepts `string | Array<TextBlockParam>`
-- `ToolResultBlockParam` supports `cache_control` natively (no `as any` needed)
-- Already-cached blocks (where `cache_control` is set) are skipped to avoid double-caching
-
-Cost calculation already accounts for cache tokens (`cache_creation` at 1.25x, `cache_read` at 0.1x).
-
-## Web UI Redesign (Phase 4 Feature)
-
-Completed modern UI redesign with:
-- **Design system**: Custom CSS variables-based design system (no external UI library needed)
-- **Status colors**: pending=gray, in_progress=**blue** (#388bfd), testing=purple, passed=green, failed=red, stuck=amber
-- **Layout**: Fixed header + left sidebar (task tree) + right content panel (detail + activity split)
-- **Inline SVG icons**: All icons are inline SVGs with `aria-hidden="true"` (biome lint requirement)
-- **No new deps**: Kept original package.json — no tailwindcss, no lucide-react needed
-- **Bun build**: `bun build ./web/index.html` works, bundles 15 modules cleanly
-- **Biome lint**: `noSvgWithoutTitle` rule requires `aria-hidden="true"` on decorative SVGs
-- **CSS naming**: Using `og-` prefix for all CSS classes to avoid collisions
-
-## Session Persistence (Daemon Restart Feature)
-
-Implemented in Phase 4. Orchestrator session history now survives daemon restarts.
-
-### How It Works
-- **DirectProvider**: After each `runLoop` completes, session messages are written to `{projectPath}/.opengraft/sessions/{sessionId}.json`
-- **Load on resume**: At the start of `runLoop`, if `sessionId` is provided but not in memory, the file is read from disk and loaded into `sessionHistory`
-- **`projectPath`**: Added to `AgentRequest` interface (optional, defaults to `cwd`). Passed from `daemon.ts` `launchAgent` → `startSession`.
-- **Sessions dir**: Created by `ProjectManager.init()` (both `createNew` and `convertExisting`). `.opengraft/.gitignore` excludes `sessions/` from git.
-
-### API
-- `POST /projects/:id/sessions/clear` — wipes sessions dir and recreates it (fresh start)
-
-### CLI
-- `og stop` — now prints tip about session persistence
-- `og sessions clear` — clears session history
-- `og orchestrate --resume` — resumes from saved history
-
-### Restart Workflow
-1. `og stop` — stops agent (session saved to disk)
-2. Kill and restart daemon (session data persists in `.opengraft/sessions/`)
-3. `og orchestrate --resume` — resumes with full history
-
-### Key Implementation Details
-- Disk write is non-fatal (wrapped in try/catch) — in-memory still works if disk fails
-- `.opengraft/.gitignore` contains `sessions/` so session files don't pollute git
-- `ProjectManager.convertExisting` also creates sessions dir + gitignore (idempotent)
-
-## Real-time Task Tree Updates via WebSocket (Fixed)
-
-Root cause: Three HTTP routes and three MCP tools modified the task tracker but did not call `broadcastTreeUpdate()`.
-
-### Fixed: HTTP routes in daemon.ts
-- `POST /projects/:id/tasks` — now calls `broadcastTreeUpdate()` after saving
-- `PATCH /projects/:id/tasks/:nodeId` — now calls `broadcastTreeUpdate()` after saving
-- `DELETE /projects/:id/tasks/:nodeId` — now calls `broadcastTreeUpdate()` after saving
-
-### Fixed: MCP tools in agent-tools.ts
-Added `broadcastTreeUpdate?: () => void` to `OrchestratorToolsDeps` interface.
-- `create_task` tool — calls `broadcastTreeUpdate?.()` after `tracker.save()`
-- `update_task_status` tool — calls `broadcastTreeUpdate?.()` after `tracker.save()`
-- `delete_task` tool — calls `broadcastTreeUpdate?.()` after `tracker.save()`
-- Recursive child tools also receive `broadcastTreeUpdate` so nested agents broadcast too
-
-### Passing callback from daemon.ts to agent-tools.ts
-In `launchAgent()`, pass `broadcastTreeUpdate: () => broadcastTreeUpdate(project.id, tracker)` when calling `createOrchestratorTools()`.
-
-### What was already working
-- `execute_tasks` tool already broadcast via `onTaskEvent` (which calls `broadcastTreeUpdate`)
-- `web/App.tsx` `tree_updated` case correctly calls `updateFromWS(msg.nodes)` → `setNodes(wsNodes)`
-- `useWebSocket` in hooks.ts correctly connects and subscribes
-
-## Enhanced yield() Status Summary (Implemented)
-
-yield() now appends a `## Pending` section to every response:
-
-```
-[child_complete] Task "Auth module" (abc123) passed: All tests passing
-
-## Pending
-- Running children: "Payment module" (def456), "UI components" (ghi789)
-- Pending clarifications: none
-```
-
-**Implementation details** (in `src/agent-tools.ts`):
-- `pendingClarifications` counter (closure var) tracks outstanding clarify calls
-- `clarify()` tool increments `pendingClarifications` on each call
-- `yield()` decrements `pendingClarifications` for each `clarify_response` message drained
-- Running children are read from `childQueues` map (keys = taskIds of in-flight children)
-- `## Pending` section always appears, even if no messages and nothing pending ("none")
-- When no messages exist (empty string), `pendingSection.trimStart()` avoids leading newline
+- Design system: custom CSS variables, `og-` prefix for all classes.
+- Status colors: pending=gray, in_progress=blue (#388bfd), testing=purple, passed=green, failed=red, stuck=amber.
+- Inline SVG icons with `aria-hidden="true"` (biome requirement). No external icon libs.
+- Agent message targeting: `targetNodeId` state in App.tsx; "Send messages here" button on in-progress tasks.
+- Token breakdown shown on `orchestration_completed`: `$0.043 · 500 in · 10k write · 5k read · 200 out`.
