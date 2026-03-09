@@ -221,7 +221,7 @@ const TOOLS: Tool[] = [
 	{
 		name: "bash",
 		description:
-			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search).",
+			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). Working directory is automatically tracked across calls — if you `cd` in one command, subsequent commands run from the new directory. No need to prefix every command with `cd /path &&`.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -424,17 +424,25 @@ export async function executeTool(
 	name: string,
 	input: Record<string, unknown>,
 	cwd: string,
+	fallbackCwd?: string,
 ): Promise<{ content: string; isError: boolean; cwd?: string }> {
 	switch (name) {
 		case "bash": {
 			const command = input.command as string;
 			const timeout = (input.timeout as number) ?? 120000;
 			const CWD_MARKER = "___OPENGRAFT_CWD___";
+
+			// Fall back if tracked CWD no longer exists (e.g., temp dir cleaned up)
+			let effectiveCwd = cwd;
+			if (!existsSync(cwd)) {
+				effectiveCwd = fallbackCwd ?? cwd;
+			}
+
 			try {
 				// EXIT trap ensures CWD marker + pwd run even if command calls `exit`
 				const wrappedCommand = `___og_trap() { echo "${CWD_MARKER}"; pwd; }; trap ___og_trap EXIT; ${command}`;
 				const proc = Bun.spawn(["bash", "-c", wrappedCommand], {
-					cwd,
+					cwd: effectiveCwd,
 					stdout: "pipe",
 					stderr: "pipe",
 					env: process.env,
@@ -459,9 +467,9 @@ export async function executeTool(
 						// Compare resolved paths to avoid false positives from symlinks (e.g. /var → /private/var on macOS)
 						let resolvedCwd: string;
 						try {
-							resolvedCwd = realpathSync(cwd);
+							resolvedCwd = realpathSync(effectiveCwd);
 						} catch {
-							resolvedCwd = cwd;
+							resolvedCwd = effectiveCwd;
 						}
 						if (pwdLine !== resolvedCwd) {
 							newCwd = pwdLine;
@@ -471,11 +479,26 @@ export async function executeTool(
 					stdout = stdout.slice(0, markerIdx);
 				}
 
-				const parts = [
-					stdout ? `stdout:\n${stdout.slice(0, 10000)}` : "",
-					stderr ? `stderr:\n${stderr.slice(0, 5000)}` : "",
-					`exit code: ${exitCode}`,
-				].filter(Boolean);
+				const parts: string[] = [];
+
+				// Warn if we fell back from a deleted directory
+				if (effectiveCwd !== cwd) {
+					parts.push(
+						`Warning: working directory '${cwd}' no longer exists, reset to '${effectiveCwd}'`,
+					);
+					// If command didn't cd elsewhere, report the fallback as the new cwd
+					if (!newCwd) {
+						newCwd = effectiveCwd;
+					}
+				}
+
+				parts.push(
+					...[
+						stdout ? `stdout:\n${stdout.slice(0, 10000)}` : "",
+						stderr ? `stderr:\n${stderr.slice(0, 5000)}` : "",
+						`exit code: ${exitCode}`,
+					].filter(Boolean),
+				);
 
 				if (newCwd) {
 					parts.push(`\ncwd: ${newCwd}`);
@@ -1243,6 +1266,7 @@ export class DirectProvider implements AgentProvider {
 						toolUse.name,
 						toolUse.input as Record<string, unknown>,
 						cwd,
+						request.cwd,
 					);
 				}),
 			);

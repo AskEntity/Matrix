@@ -165,6 +165,7 @@ Three explicit cache breakpoints per API call:
 - CWD marker `___OPENGRAFT_CWD___` stripped from stdout; if cwd changed, `cwd: /new/path` appended to output
 - `runLoop` uses mutable `let cwd` — updated after each bash tool execution, affects all subsequent tool calls
 - **Pitfall**: macOS `/var` → `/private/var` symlink. Fixed with `realpathSync(cwd)` for comparison.
+- **CWD fallback**: `executeTool` accepts optional `fallbackCwd` param. If tracked `cwd` no longer exists (e.g., temp dir cleaned up), falls back to `fallbackCwd` (typically `request.cwd`, the project root). Emits a warning and updates tracked CWD to prevent repeated failures.
 
 ## Daemon Startup & Restart
 
