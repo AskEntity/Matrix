@@ -868,8 +868,9 @@ describe("daemon orchestrate/agent API", () => {
 			},
 		};
 
-		const { app, pm } = createApp({ dataDir, agentProvider });
+		const { app, pm, markReady } = createApp({ dataDir, agentProvider });
 		await pm.load();
+		markReady();
 
 		const projectRes = await app.request("/projects", {
 			method: "POST",
@@ -901,8 +902,9 @@ describe("daemon orchestrate/agent API", () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "og-oa2-"));
 		const dataDir = await mkdtemp(join(tmpdir(), "og-oa2d-"));
 
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const { app, pm, markReady } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
+		markReady();
 
 		const projectRes = await app.request("/projects", {
 			method: "POST",
@@ -924,8 +926,9 @@ describe("daemon orchestrate/agent API", () => {
 
 	test("POST /orchestrate/agent returns 404 for unknown project", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "og-oa3d-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const { app, pm, markReady } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
+		markReady();
 
 		const res = await app.request("/projects/nonexistent/orchestrate/agent", {
 			method: "POST",

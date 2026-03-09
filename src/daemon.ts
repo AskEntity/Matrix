@@ -90,6 +90,7 @@ const defaultConfig: DaemonConfig = {
 export function createApp(config: DaemonConfig = defaultConfig) {
 	const app = new Hono();
 	let requestCount = 0;
+	let startupReady = false;
 	app.use("*", async (_c, next) => {
 		requestCount++;
 		await next();
@@ -631,6 +632,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Agent execution (fire-and-forget, same as orchestrate)
 	app.post("/projects/:id/run", async (c) => {
+		if (!startupReady) {
+			return c.json({ error: "Server starting up, please wait..." }, 503);
+		}
 		const project = pm.get(c.req.param("id"));
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
@@ -798,6 +802,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Agent-driven orchestration: fire-and-forget, observe via WebSocket
 	app.post("/projects/:id/orchestrate/agent", async (c) => {
+		if (!startupReady) {
+			return c.json({ error: "Server starting up, please wait..." }, 503);
+		}
 		const project = pm.get(c.req.param("id"));
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
@@ -824,6 +831,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Start agent by project path (auto-creates project if needed)
 	app.post("/agents/start", async (c) => {
+		if (!startupReady) {
+			return c.json({ error: "Server starting up, please wait..." }, 503);
+		}
 		const body = await c.req.json<{
 			path: string;
 			prompt: string;
@@ -1049,6 +1059,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						}
 
 						if (msg.type === "orchestrate" && msg.projectId && msg.prompt) {
+							if (!startupReady) {
+								ws.send(
+									JSON.stringify({
+										type: "error",
+										message: "Server starting up, please wait...",
+									}),
+								);
+								return;
+							}
 							// Trigger orchestration via launchAgent (fire-and-forget)
 							const proj = pm.get(msg.projectId);
 							if (proj && !activeOrchestrations.has(msg.projectId)) {
@@ -1179,7 +1198,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		await flushEvents();
 	}
 
-	return { app, pm, wsClients, autoResumeProjects, shutdown, getTracker };
+	function markReady() {
+		startupReady = true;
+	}
+
+	return { app, pm, wsClients, autoResumeProjects, shutdown, getTracker, markReady };
 }
 
 const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft top-level orchestrator for this project.
@@ -1243,7 +1266,7 @@ ${ORCHESTRATION_KNOWLEDGE}`;
 // Only start the server when run directly, not when imported for testing.
 if (import.meta.main) {
 	const port = Number(process.env.PORT) || 7433;
-	const { app, pm, autoResumeProjects, shutdown } = createApp();
+	const { app, pm, autoResumeProjects, shutdown, markReady } = createApp();
 	await pm.load();
 	console.log(`OpenGraft daemon listening on http://localhost:${port}`);
 	console.log(`Web UI: http://localhost:${port}/`);
@@ -1275,4 +1298,5 @@ if (import.meta.main) {
 
 	// Auto-resume any orchestrations that were running before daemon restart
 	await autoResumeProjects();
+	markReady();
 }
