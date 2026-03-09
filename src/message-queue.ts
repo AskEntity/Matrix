@@ -1,3 +1,10 @@
+/**
+ * Global registry of all currently running agent queues, keyed by taskId.
+ * Populated when a child agent starts, removed when it finishes.
+ * Allows daemon.ts to route messages to specific agent queues.
+ */
+export const globalAgentQueues = new Map<string, MessageQueue>();
+
 /** Message types that can flow through the queue. */
 export type QueueMessage =
 	| { source: "user"; content: string }

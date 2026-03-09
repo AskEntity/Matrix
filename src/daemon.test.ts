@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { AgentEvent, AgentProvider } from "./agent-provider.ts";
 import { createOrchestratorTools, isDescendantOf } from "./agent-tools.ts";
 import { createApp } from "./daemon.ts";
-import { MessageQueue } from "./message-queue.ts";
+import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type {
 	AgentResult,
@@ -557,6 +557,156 @@ describe("daemon tasks API", () => {
 			{ method: "POST" },
 		);
 		expect(contRes.status).toBe(400);
+	});
+});
+
+describe("POST /projects/:id/tasks/:nodeId/message", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let projectId: string;
+	let taskId: string;
+	let taskQueue: MessageQueue;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-taskmsg-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-taskmsgd-"));
+		const { app: localApp, pm: localPm } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+		});
+		await localPm.load();
+
+		const projRes = await localApp.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "proj") }),
+		});
+		const project = (await projRes.json()) as Project;
+		projectId = project.id;
+
+		const taskRes = await localApp.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Test task", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+		taskId = task.id;
+	});
+
+	afterEach(async () => {
+		// Clean up global registry
+		globalAgentQueues.delete(taskId);
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns 404 when no queue registered for task", async () => {
+		const { app, pm } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+		});
+		await pm.load();
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: "hello" }),
+			},
+		);
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("No active agent for this task");
+	});
+
+	test("routes message to registered task queue", async () => {
+		const { app, pm } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+		});
+		await pm.load();
+
+		// Register a queue for this task in the global registry
+		taskQueue = new MessageQueue();
+		globalAgentQueues.set(taskId, taskQueue);
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: "ping from UI" }),
+			},
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { ok: boolean; taskId: string };
+		expect(body.ok).toBe(true);
+		expect(body.taskId).toBe(taskId);
+
+		// Verify message was enqueued
+		const msgs = taskQueue.drain();
+		expect(msgs).toHaveLength(1);
+		expect(msgs[0]).toEqual({ source: "user", content: "ping from UI" });
+	});
+
+	test("returns 400 when content is missing", async () => {
+		const { app, pm } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+		});
+		await pm.load();
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			},
+		);
+		expect(res.status).toBe(400);
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const { app, pm } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+		});
+		await pm.load();
+
+		const res = await app.request(
+			`/projects/nonexistent/tasks/${taskId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: "hello" }),
+			},
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("returns 409 when queue is closed", async () => {
+		const { app, pm } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+		});
+		await pm.load();
+
+		taskQueue = new MessageQueue();
+		taskQueue.close();
+		globalAgentQueues.set(taskId, taskQueue);
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: "ping" }),
+			},
+		);
+		expect(res.status).toBe(409);
+
+		globalAgentQueues.delete(taskId);
 	});
 });
 

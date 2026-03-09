@@ -260,6 +260,21 @@ export function useAgent(projectId: string) {
 		[projectId],
 	);
 
+	const sendMessageToTask = useCallback(
+		async (taskId: string, content: string) => {
+			const res = await fetch(
+				`/projects/${projectId}/tasks/${taskId}/message`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ content }),
+				},
+			);
+			if (!res.ok) throw new Error((await res.json()).error);
+		},
+		[projectId],
+	);
+
 	return {
 		running,
 		setRunning,
@@ -269,6 +284,7 @@ export function useAgent(projectId: string) {
 		continueTask,
 		deleteTask,
 		sendMessage,
+		sendMessageToTask,
 	};
 }
 

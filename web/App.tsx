@@ -572,17 +572,44 @@ function LogEntryView({
 
 // ── Task Detail ────────────────────────────────────────────────────────────
 
+function IconTarget({ size = 13 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			strokeWidth="2"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+		>
+			<circle cx="12" cy="12" r="10" />
+			<circle cx="12" cy="12" r="6" />
+			<circle cx="12" cy="12" r="2" />
+		</svg>
+	);
+}
+
 function TaskDetail({
 	node,
 	onContinue,
 	onDelete,
+	running,
+	isTargeted,
+	onSetTarget,
 }: {
 	node: TaskNode;
 	onContinue: (msg?: string) => void;
 	onDelete: () => void;
+	running: boolean;
+	isTargeted: boolean;
+	onSetTarget: () => void;
 }) {
 	const [continueMsg, setContinueMsg] = useState("");
 	const canContinue = node.status === "failed" || node.status === "stuck";
+	const canTarget = running && node.status === "in_progress";
 
 	return (
 		<div className="og-detail-content">
@@ -634,6 +661,21 @@ function TaskDetail({
 			</div>
 
 			<div className="og-detail-actions">
+				{canTarget && (
+					<button
+						type="button"
+						className={`og-btn og-btn-sm${isTargeted ? " og-btn-targeted" : " og-btn-ghost"}`}
+						onClick={onSetTarget}
+						title={
+							isTargeted
+								? "Messages targeting this agent (click to cancel)"
+								: "Send messages to this agent"
+						}
+					>
+						<IconTarget size={12} />
+						{isTargeted ? "Targeting this agent" : "Send messages here"}
+					</button>
+				)}
 				{canContinue && (
 					<form
 						className="og-continue-form"
@@ -731,6 +773,8 @@ export function App() {
 	const { projects, refresh: refreshProjects } = useProjects();
 	const [projectId, setProjectId] = useState("");
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+	/** Which task/agent receives the next message. null = orchestrator (default). */
+	const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [prompt, setPrompt] = useState("");
 	const [model, setModel] = useState("");
@@ -750,6 +794,7 @@ export function App() {
 		continueTask,
 		deleteTask,
 		sendMessage,
+		sendMessageToTask,
 	} = useAgent(projectId);
 
 	const nodeMap = useMemo(() => {
@@ -907,8 +952,19 @@ export function App() {
 		if (!prompt.trim() || !projectId) return;
 		try {
 			if (running) {
-				await sendMessage(prompt.trim());
-				addLog("lifecycle", `Message sent: ${prompt.trim()}`);
+				if (targetNodeId) {
+					// Send to specific agent's queue
+					await sendMessageToTask(targetNodeId, prompt.trim());
+					const targetNode = nodeMap.get(targetNodeId);
+					const targetLabel = targetNode?.title ?? targetNodeId.slice(0, 8);
+					addLog(
+						"lifecycle",
+						`Message sent to "${targetLabel}": ${prompt.trim()}`,
+					);
+				} else {
+					await sendMessage(prompt.trim());
+					addLog("lifecycle", `Message sent: ${prompt.trim()}`);
+				}
 			} else {
 				await start({
 					prompt: prompt.trim(),
@@ -1108,6 +1164,13 @@ export function App() {
 								node={selectedNode}
 								onContinue={handleContinueTask}
 								onDelete={handleDeleteTask}
+								running={running}
+								isTargeted={targetNodeId === selectedNode.id}
+								onSetTarget={() =>
+									setTargetNodeId(
+										targetNodeId === selectedNode.id ? null : selectedNode.id,
+									)
+								}
 							/>
 						) : (
 							<div className="og-detail-empty">
@@ -1170,6 +1233,24 @@ export function App() {
 
 			{/* ── Footer ── */}
 			<footer className="og-footer">
+				{running && targetNodeId && (
+					<div className="og-message-target">
+						<span className="og-message-target-label">
+							→ Sending to:{" "}
+							<strong>
+								{nodeMap.get(targetNodeId)?.title ?? targetNodeId.slice(0, 8)}
+							</strong>
+						</span>
+						<button
+							type="button"
+							className="og-btn-icon"
+							onClick={() => setTargetNodeId(null)}
+							title="Send to orchestrator instead"
+						>
+							<IconClose size={11} />
+						</button>
+					</div>
+				)}
 				<form className="og-footer-form" onSubmit={handleSubmit}>
 					<input
 						type="text"
@@ -1177,9 +1258,11 @@ export function App() {
 						value={prompt}
 						onChange={(e) => setPrompt(e.target.value)}
 						placeholder={
-							running
-								? "Send a message to the agent…"
-								: "Describe what to build…"
+							running && targetNodeId
+								? `Message to "${nodeMap.get(targetNodeId)?.title ?? "task"}"…`
+								: running
+									? "Send a message to the agent…"
+									: "Describe what to build…"
 						}
 						disabled={!projectId}
 					/>
