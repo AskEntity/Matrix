@@ -26,6 +26,8 @@ export class TaskTracker {
 			};
 			this._orchestratorSessionId = data.orchestratorSessionId ?? null;
 			for (const node of data.nodes) {
+				// Backward compat: old nodes may lack failCount
+				if (node.failCount === undefined) node.failCount = 0;
 				this.nodes.set(node.id, node);
 			}
 		}
@@ -182,6 +184,7 @@ export class TaskTracker {
 			sessionId: null,
 			worktreePath: null,
 			message: null,
+			failCount: 0,
 			createdAt: now,
 			updatedAt: now,
 		};

@@ -57,7 +57,7 @@ async function isGitClean(projectPath: string): Promise<{
  * can become an orchestrator if it judges a task is too complex.
  */
 export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "opengraft")
-- get_tree: View the current task tree
+- get_tree: View the current task tree (always check this first)
 - create_task: Create tasks (omit parentId for top-level, or provide parentId for children)
 - update_task_status: Update a task's status
 - execute_tasks: Execute 1+ of your direct children in parallel. Each task gets an isolated worktree.
@@ -74,11 +74,13 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
       (run this from YOUR worktree directory, or the main repo if you are the top-level orchestrator)
    b. Call delete_task(taskId) to clean up the child's worktree, branch, and task node
 6. If a child fails: use execute_tasks with mode "resume" (with instructions) or "reset" (start over)
+7. After ALL children are merged: run full test suite on your branch to verify no regressions
 
 ## Task Lifecycle
 pending → in_progress (agent working) → passed/failed/stuck
 After a child passes: merge its branch → call delete_task to clean up
 If a child fails: execute_tasks with resume (keep progress) or reset (start fresh)
+If a child fails 3 times: mark it stuck, move on to other tasks
 
 ## Merge Details
 - Use \`git merge --no-ff <branch> -m "..."\` to merge a child's branch.
@@ -86,18 +88,44 @@ If a child fails: execute_tasks with resume (keep progress) or reset (start fres
 - If merge conflicts occur, resolve them manually or mark the child as "stuck".
 - After successful merge, ALWAYS call delete_task to clean up the worktree and branch.
 
+## Memory System
+- Project memory lives in \`.opengraft/memory.md\` — read it on start, update it as you learn.
+- When you discover something important (pitfall, pattern, architectural decision), append it to memory.
+- In a worktree: your memory edits will merge with the parent's when your branch merges.
+- Rules: APPEND new entries. NEVER modify entries inherited from parent branches.
+- If you find an inherited entry is wrong, add a correction note — don't overwrite.
+- Commit memory updates alongside code: \`git add .opengraft/memory.md && git commit\`
+
 ## Orchestration Rules
 - You can only execute your own direct children — no skipping levels
 - Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
 - Never have two siblings modify the same file — parallel tasks must be independent
 - Keep the tree shallow: 2-3 levels max
 - Each leaf task should be independently executable by a single agent session
-- ALWAYS merge and delete_task each passed child before moving on`;
+- ALWAYS merge and delete_task each passed child before moving on
+
+## Stimulus Priority (what to do next)
+When deciding your next action, follow this priority order:
+1. **Failed children** → Analyze failure, execute_tasks with "resume" (give instructions) or "reset"
+2. **Stuck children** → Provide guidance, try a different approach, or skip and note for user
+3. **Passed children not yet merged** → Merge branch, delete_task, verify tests
+4. **Pending children ready to start** → execute_tasks to spawn them
+5. **All children done** → Run full test suite, verify integration, update memory
+6. **Everything complete** → Report final status, stop
+
+## Never-Stop Principle
+You run continuously until one of three conditions:
+1. **DONE**: All tasks passed, tests green, you are satisfied with the result
+2. **CLARIFY**: You need user input on an ambiguous requirement (not a technical question)
+3. **BLOCKED**: Technically stuck after exhausting all approaches — mark stuck, preserve branch
+
+If some tasks are stuck but others are pending, keep working on the pending ones.
+Do NOT stop just because you finished responding — check get_tree and keep driving.`;
 
 export const TASK_SYSTEM_PROMPT = `You are an autonomous programming agent working on a subtask in a git worktree.
 You can implement code directly (worker role), OR if the task is too complex, decompose it into
-subtasks and delegate to child agents (orchestrator role). Use your judgement.
-When acting as orchestrator: do NOT write code yourself — only manage child agents.
+subtasks and delegate to child agents (sub-orchestrator role). Use your judgement.
+When acting as sub-orchestrator: do NOT write code yourself — only manage child agents.
 
 ## Worker Tools
 - bash: Run shell commands (tests, git, build tools)
@@ -108,11 +136,12 @@ When acting as orchestrator: do NOT write code yourself — only manage child ag
 - search: Regex search across files (with optional context lines)
 
 ## Worker Workflow
-1. Read the task description and project memory carefully
+1. Read \`.opengraft/memory.md\` and the task description carefully
 2. Explore the codebase: list_files to find relevant files, search to understand patterns
 3. Implement: types → tests → implementation (vertical iteration)
 4. Validate: run tests, typecheck, and lint — all must pass
-5. Commit your work via bash (git add + git commit)
+5. Update \`.opengraft/memory.md\` if you discovered anything important (pitfalls, patterns, decisions)
+6. Commit your work via bash (git add + git commit) — include memory updates in the same commit
 
 ## Git Rules (CRITICAL)
 - You are working in a git WORKTREE on a dedicated branch. Do NOT switch branches.
@@ -128,6 +157,14 @@ When acting as orchestrator: do NOT write code yourself — only manage child ag
 - Commit when all checks pass
 - Prefer edit_file for small changes, write_file for new files or complete rewrites
 - Use search to understand existing code before modifying it
+
+## Methodology (from OpenGraft.md)
+- Don't guess APIs — read docs or run --help first
+- Don't say "should work" — run it and see
+- Don't blame the framework — suspect your own code first
+- Flaky test = Bug. Never "fix" with retries.
+- Three repetitions before abstracting. No premature helpers.
+- Identify layer → add logs → trust logs → isolate → minimize
 
 ${ORCHESTRATION_KNOWLEDGE}`;
 
@@ -551,7 +588,15 @@ export function createOrchestratorTools(
 							}
 							costs.add(result.costUsd, result.turns);
 
-							const newStatus = result.success ? "passed" : "failed";
+							let newStatus: "passed" | "failed" | "stuck";
+							if (result.success) {
+								newStatus = "passed";
+								node.failCount = 0;
+							} else {
+								node.failCount = (node.failCount ?? 0) + 1;
+								// Auto-stuck after 3 consecutive failures
+								newStatus = node.failCount >= 3 ? "stuck" : "failed";
+							}
 							tracker.updateStatus(node.id, newStatus);
 							await tracker.save();
 							emit({
@@ -570,6 +615,13 @@ export function createOrchestratorTools(
 								output: result.output.slice(0, 2000),
 								costUsd: result.costUsd,
 								turns: result.turns,
+								failCount: node.failCount,
+								...(newStatus === "stuck"
+									? {
+											autoStuck: true,
+											reason: `Failed ${node.failCount} consecutive times — marked stuck automatically`,
+										}
+									: {}),
 							};
 						} catch (e) {
 							tracker.updateStatus(node.id, "stuck");
@@ -748,9 +800,11 @@ function buildTaskPrompt(
 
 	parts.push(
 		"\n## Instructions",
-		"Implement this task fully: types → tests → implementation → all checks passing.",
-		"Run `bun test`, `bun run typecheck`, and `bun run check` before considering the task done.",
-		"Commit your work when all checks pass.",
+		"1. Read `.opengraft/memory.md` first for project-specific knowledge.",
+		"2. Implement this task: types → tests → implementation → all checks passing.",
+		"3. Run `bun test`, `bun run typecheck`, and `bun run check` before considering done.",
+		"4. If you discover something important, append it to `.opengraft/memory.md`.",
+		"5. Commit all changes (including memory updates) when all checks pass.",
 	);
 
 	return parts.join("\n");

@@ -87,10 +87,10 @@ Project lifecycle is deterministic code, not agent work.
 | src/project-manager.ts | Project init/CRUD, .opengraft/ setup, git init |
 | src/task-tracker.ts | Task tree CRUD, persistence to JSON |
 | src/worktree-manager.ts | Git worktree lifecycle (create, remove, merge, list) |
-| src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, spawn_task, spawn_children, continue_task, delete_task) |
+| src/agent-tools.ts | MCP server with orchestrator tools (get_tree, create_task, update_task_status, execute_tasks, delete_task) + system prompts |
 | src/cli.ts | CLI (`og` command) — init, list, status, run, orchestrate, continue, watch, send |
 | web/ | Web UI: task tree, agent activity, message injection (served by daemon) |
-| src/daemon.test.ts | API route tests (76 total across 5 files) |
+| src/daemon.test.ts | API route tests (94 total across 5 files) |
 | src/project-manager.test.ts | ProjectManager unit tests |
 | src/task-tracker.test.ts | TaskTracker unit tests |
 | src/e2e.test.ts | Real agent E2E test (token-gated) |
@@ -210,5 +210,15 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Removed synchronous /stream endpoint (replaced by fire-and-forget + WS)
 - [x] Agent lifecycle: GET /agent (status), POST /stop, POST /message
 - [x] CLI stop command, orchestrate auto-watches via WS after submit
+- [x] Zod v4 schema fix: object types in arrays, enum entries for DirectProvider MCP tools
+- [x] Web UI: resizable STATUS/ACTIVITY panels with drag divider
+- [x] Health check: GET /health?check_model=true for model connectivity verification
+- [x] Memory system: .opengraft/memory.md as living knowledge base, agents read/write it
+- [x] Orchestrator prompts: stimulus priority, never-stop principle, memory rules, methodology injection
+- [x] Session continuity: orchestrator auto-resumes previous session on new message
+- [x] Cycle detection: auto-stuck after 3 consecutive task failures
+- [x] create_task validation: scope-limited to self/descendants, no parent/sibling/ancestor creation
+- [x] Root task removal: project IS the root, tasks are top-level children
+- [x] Unified execute_tasks: modes new/resume/reset, replaces spawn_task/spawn_children/continue_task
 - [ ] Auto-detect projects (no manual init required)
 - [ ] Dual-track verification: compare external toolchain vs self-hosted results

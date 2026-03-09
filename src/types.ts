@@ -22,6 +22,8 @@ export interface TaskNode {
 	worktreePath: string | null;
 	/** Optional message to pass when continuing a failed/stuck task. */
 	message: string | null;
+	/** Number of consecutive failures (auto-stuck at 3). */
+	failCount: number;
 	createdAt: string;
 	updatedAt: string;
 }
