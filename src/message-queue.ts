@@ -9,7 +9,8 @@ export type QueueMessage =
 			output: string;
 	  }
 	| { source: "parent_update"; content: string }
-	| { source: "clarify_response"; answer: string };
+	| { source: "clarify_response"; answer: string }
+	| { source: "child_report"; taskId: string; title: string; content: string };
 
 /**
  * A simple async message queue for inter-agent communication.
