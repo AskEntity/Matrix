@@ -2,7 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type Anthropic from "@anthropic-ai/sdk";
+import type { MessageParam } from "@anthropic-ai/sdk/resources/messages/messages";
 import {
+	compressMessages,
 	executeTool,
 	getModelPricing,
 	resolvePath,
@@ -188,5 +191,88 @@ describe("executeTool", () => {
 		const result = await executeTool("unknown_tool", {}, tempDir);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("Unknown tool");
+	});
+});
+
+describe("compressMessages", () => {
+	function makeMockClient(summaryText: string) {
+		return {
+			messages: {
+				create: async () => ({
+					content: [{ type: "text", text: summaryText }],
+				}),
+			},
+		} as unknown as Anthropic;
+	}
+
+	test("skips compression for short conversations", async () => {
+		const messages: MessageParam[] = [
+			{ role: "user", content: "hello" },
+			{ role: "assistant", content: "hi" },
+		];
+		const client = makeMockClient("summary");
+		const { compressed } = await compressMessages(
+			client,
+			messages,
+			"claude-sonnet-4-6",
+		);
+		expect(compressed).toEqual(messages);
+	});
+
+	test("compresses long conversations", async () => {
+		const messages: MessageParam[] = [];
+		for (let i = 0; i < 20; i++) {
+			messages.push({ role: "user", content: `message ${i}` });
+			messages.push({ role: "assistant", content: `reply ${i}` });
+		}
+		const client = makeMockClient("This is the conversation summary.");
+		const { compressed, savedTokens } = await compressMessages(
+			client,
+			messages,
+			"claude-sonnet-4-6",
+		);
+		// Should be fewer messages than original
+		expect(compressed.length).toBeLessThan(messages.length);
+		// First message should be the summary
+		expect(
+			typeof compressed[0]?.content === "string" && compressed[0].content,
+		).toContain("summary");
+		// Should report saved tokens
+		expect(savedTokens).toBeGreaterThan(0);
+	});
+
+	test("preserves alternating role structure", async () => {
+		const messages: MessageParam[] = [];
+		for (let i = 0; i < 10; i++) {
+			messages.push({ role: "user", content: `msg ${i}` });
+			messages.push({ role: "assistant", content: `reply ${i}` });
+		}
+		const client = makeMockClient("summary");
+		const { compressed } = await compressMessages(
+			client,
+			messages,
+			"claude-sonnet-4-6",
+		);
+		// First message must be user role (API requirement)
+		expect(compressed[0]?.role).toBe("user");
+	});
+
+	test("uses haiku model for summarization", async () => {
+		let calledModel = "";
+		const client = {
+			messages: {
+				create: async (params: { model: string }) => {
+					calledModel = params.model;
+					return { content: [{ type: "text", text: "summary" }] };
+				},
+			},
+		} as unknown as Anthropic;
+		const messages: MessageParam[] = [];
+		for (let i = 0; i < 10; i++) {
+			messages.push({ role: "user", content: `msg ${i}` });
+			messages.push({ role: "assistant", content: `reply ${i}` });
+		}
+		await compressMessages(client, messages, "claude-sonnet-4-6");
+		expect(calledModel).toBe("claude-haiku-4-5-20251001");
 	});
 });

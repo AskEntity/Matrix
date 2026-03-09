@@ -19,6 +19,8 @@ import type { AgentResult } from "./types.ts";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 16384;
+/** Trigger compression at 80% of 200k context window */
+const COMPRESS_THRESHOLD = 160_000;
 
 /** Per-million-token pricing by model family. */
 const MODEL_PRICING: Record<
@@ -40,6 +42,102 @@ export function getModelPricing(model: string): {
 	}
 	// Default to Sonnet pricing for unknown models
 	return MODEL_PRICING.sonnet as { inputPer1M: number; outputPer1M: number };
+}
+
+/**
+ * Compress conversation messages when approaching context window limit.
+ * Summarizes the first half of messages into a single summary, keeping recent messages intact.
+ */
+/** @internal Exported for testing */
+export async function compressMessages(
+	client: Anthropic,
+	messages: MessageParam[],
+	model: string,
+): Promise<{ compressed: MessageParam[]; savedTokens: number }> {
+	if (messages.length < 4) {
+		return { compressed: messages, savedTokens: 0 };
+	}
+
+	// Keep the last ~40% of messages intact, summarize the rest
+	const keepCount = Math.max(2, Math.ceil(messages.length * 0.4));
+	const toSummarize = messages.slice(0, messages.length - keepCount);
+	const toKeep = messages.slice(messages.length - keepCount);
+
+	// Build a text representation of messages to summarize
+	const summaryInput = toSummarize
+		.map((m, i) => {
+			const content =
+				typeof m.content === "string"
+					? m.content
+					: Array.isArray(m.content)
+						? m.content
+								.map((b) => {
+									if (typeof b === "string") return b;
+									if ("text" in b && typeof b.text === "string") return b.text;
+									if ("type" in b && b.type === "tool_use")
+										return `[tool_use: ${(b as ToolUseBlock).name}]`;
+									if ("type" in b && b.type === "tool_result") {
+										const tr = b as ToolResultBlockParam;
+										const text =
+											typeof tr.content === "string"
+												? tr.content.slice(0, 200)
+												: "[result]";
+										return `[tool_result: ${text}]`;
+									}
+									return "[block]";
+								})
+								.join("\n")
+						: String(m.content);
+			return `[${i}] ${m.role}: ${content.slice(0, 1000)}`;
+		})
+		.join("\n---\n");
+
+	// Use haiku for cheap summarization
+	const summaryModel = model.includes("haiku")
+		? model
+		: "claude-haiku-4-5-20251001";
+
+	const summaryResponse = await client.messages.create({
+		model: summaryModel,
+		max_tokens: 4096,
+		system:
+			"Summarize the following conversation history between a user and an AI coding assistant. " +
+			"Preserve key facts: what files were created/modified, what tools were used, what decisions were made, " +
+			"what the current task is, and any important context. Be concise but complete. " +
+			"Output ONLY the summary, no preamble.",
+		messages: [{ role: "user", content: summaryInput.slice(0, 50000) }],
+	});
+
+	const summaryText =
+		summaryResponse.content[0]?.type === "text"
+			? summaryResponse.content[0].text
+			: "Failed to generate summary";
+
+	// Estimate saved tokens (~4 chars per token)
+	const oldChars = summaryInput.length;
+	const newChars = summaryText.length;
+	const savedTokens = Math.max(0, Math.floor((oldChars - newChars) / 4));
+
+	// Build compressed messages: summary + kept messages
+	// Ensure first message is role=user (API requirement)
+	const compressed: MessageParam[] = [
+		{
+			role: "user" as const,
+			content: `[Context from earlier conversation, summarized to save space]\n\n${summaryText}\n\n[End of summary. Continue from the recent messages below.]`,
+		},
+		// Ensure alternating roles — if toKeep starts with user, add assistant ack
+		...(toKeep[0]?.role === "user"
+			? []
+			: [
+					{
+						role: "assistant" as const,
+						content: "Understood, continuing from the summary.",
+					} satisfies MessageParam,
+				]),
+		...toKeep,
+	];
+
+	return { compressed, savedTokens };
 }
 
 const TOOLS: Tool[] = [
@@ -676,6 +774,32 @@ export class DirectProvider implements AgentProvider {
 
 			totalInputTokens += response.usage.input_tokens;
 			totalOutputTokens += response.usage.output_tokens;
+
+			// Compress messages if approaching context window limit
+			if (response.usage.input_tokens > COMPRESS_THRESHOLD) {
+				yield {
+					type: "status",
+					message: `Compressing conversation (${response.usage.input_tokens} input tokens, threshold: ${COMPRESS_THRESHOLD})`,
+				};
+				try {
+					const { compressed, savedTokens } = await compressMessages(
+						this.client,
+						messages,
+						model,
+					);
+					messages.length = 0;
+					messages.push(...compressed);
+					yield {
+						type: "status",
+						message: `Compressed: saved ~${savedTokens} tokens (${compressed.length} messages remaining)`,
+					};
+				} catch (e) {
+					yield {
+						type: "error",
+						message: `Compression failed: ${e instanceof Error ? e.message : String(e)}`,
+					};
+				}
+			}
 
 			// Process response content
 			const toolUses: ToolUseBlock[] = [];

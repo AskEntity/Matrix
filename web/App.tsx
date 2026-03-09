@@ -516,8 +516,8 @@ export function App() {
 							{selectedTaskId && (
 								<>
 									<span className="filter-badge">
-										{selectedNode?.title?.slice(0, 12)}
-										{(selectedNode?.title?.length ?? 0) > 12 ? "..." : ""}
+										{selectedNode?.title?.slice(0, 20)}
+										{(selectedNode?.title?.length ?? 0) > 20 ? "..." : ""}
 									</span>
 									<button
 										type="button"
