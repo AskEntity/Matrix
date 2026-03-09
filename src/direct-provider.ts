@@ -790,6 +790,8 @@ export class DirectProvider implements AgentProvider {
 		let turns = 0;
 		let totalInputTokens = 0;
 		let totalOutputTokens = 0;
+		let totalCacheCreationTokens = 0;
+		let totalCacheReadTokens = 0;
 		let lastText = "";
 
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
@@ -839,6 +841,9 @@ export class DirectProvider implements AgentProvider {
 
 			totalInputTokens += response.usage.input_tokens;
 			totalOutputTokens += response.usage.output_tokens;
+			totalCacheCreationTokens +=
+				response.usage.cache_creation_input_tokens ?? 0;
+			totalCacheReadTokens += response.usage.cache_read_input_tokens ?? 0;
 
 			// Compress messages if approaching context window limit
 			if (response.usage.input_tokens > COMPRESS_THRESHOLD) {
@@ -974,8 +979,12 @@ export class DirectProvider implements AgentProvider {
 		this.sessionHistory.set(sessionId, [...messages]);
 
 		const { inputPer1M, outputPer1M } = getModelPricing(model);
+		const baseInputTokens =
+			totalInputTokens - totalCacheCreationTokens - totalCacheReadTokens;
 		const costUsd =
-			(totalInputTokens * inputPer1M) / 1_000_000 +
+			(baseInputTokens * inputPer1M) / 1_000_000 +
+			(totalCacheCreationTokens * inputPer1M * 1.25) / 1_000_000 +
+			(totalCacheReadTokens * inputPer1M * 0.1) / 1_000_000 +
 			(totalOutputTokens * outputPer1M) / 1_000_000;
 
 		return {
