@@ -1522,3 +1522,290 @@ describe("POST /projects/:id/sessions/prune", () => {
 		expect(body.remaining).toBe(10);
 	});
 });
+
+describe("POST /projects/:id/tasks/:nodeId/continue", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+	let getTracker: ReturnType<typeof createApp>["getTracker"];
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-continue-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-continued-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		getTracker = result.getTracker;
+		await result.pm.load();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "cont-proj") }),
+		});
+		const project = (await res.json()) as Project;
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request(
+			"/projects/nonexistent/tasks/some-task/continue",
+			{ method: "POST" },
+		);
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("Project not found");
+	});
+
+	test("returns 404 for unknown task", async () => {
+		const res = await app.request(
+			`/projects/${projectId}/tasks/nonexistent-task-id/continue`,
+			{ method: "POST" },
+		);
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("Task not found");
+	});
+
+	test("returns 400 for task with status pending", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Pending task", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+		expect(task.status).toBe("pending");
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{ method: "POST" },
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("Cannot continue task with status: pending");
+	});
+
+	test("returns 400 for task with status passed", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Passed task", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "passed" }),
+		});
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{ method: "POST" },
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("Cannot continue task with status: passed");
+	});
+
+	test("returns 400 for task with status in_progress", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Active task", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "in_progress" }),
+		});
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{ method: "POST" },
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("Cannot continue task with status: in_progress");
+	});
+
+	test("resets failed task without worktree to pending", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Failed task", description: "Do stuff" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "failed" }),
+		});
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{ method: "POST" },
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as TaskNode;
+		expect(body.status).toBe("pending");
+	});
+
+	test("resets stuck task without worktree to pending", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Stuck task", description: "Do stuff" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "stuck" }),
+		});
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{ method: "POST" },
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as TaskNode;
+		expect(body.status).toBe("pending");
+	});
+
+	test("stores message when provided for task without worktree", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Msg task", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "failed" }),
+		});
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "Try a different approach" }),
+			},
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as TaskNode;
+		expect(body.status).toBe("pending");
+		expect(body.message).toBe("Try a different approach");
+	});
+
+	test("sets status to in_progress for failed task with worktree", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "WT task", description: "desc" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "failed" }),
+		});
+
+		// Inject worktreePath directly into the tracker
+		const tracker = await getTracker(projectId);
+		tracker.assignWorktree(
+			task.id,
+			"og/fake/branch",
+			join(tempDir, "cont-proj"),
+		);
+		await tracker.save();
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "Keep going" }),
+			},
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as TaskNode;
+		expect(body.status).toBe("in_progress");
+
+		// Wait for background agent to finish
+		await new Promise((r) => setTimeout(r, 150));
+	});
+
+	test("works with no request body", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "No body", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "failed" }),
+		});
+
+		// POST with no body at all — the .catch() in the handler should handle it
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{ method: "POST" },
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as TaskNode;
+		expect(body.status).toBe("pending");
+	});
+
+	test("cleans up global queue after agent completes for worktree task", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Cleanup task", description: "desc" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "failed" }),
+		});
+
+		const tracker = await getTracker(projectId);
+		tracker.assignWorktree(
+			task.id,
+			"og/fake/branch2",
+			join(tempDir, "cont-proj"),
+		);
+		await tracker.save();
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}/continue`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		// Queue should be registered during execution
+		// Wait for background agent to complete
+		await new Promise((r) => setTimeout(r, 150));
+
+		// Queue should be cleaned up after completion
+		expect(globalAgentQueues.has(task.id)).toBe(false);
+	});
+});
