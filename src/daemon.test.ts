@@ -85,7 +85,7 @@ describe("daemon version", () => {
 });
 
 describe("daemon stats", () => {
-	test("GET /stats returns uptime in seconds and requestCount", async () => {
+	test("GET /stats returns uptime, requestCount, projectCount, and taskCounts", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "og-stats-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
@@ -98,6 +98,15 @@ describe("daemon stats", () => {
 		expect(body.uptime).toBeGreaterThanOrEqual(0);
 		expect(typeof body.requestCount).toBe("number");
 		expect(body.requestCount).toBeGreaterThan(0);
+		expect(body.projectCount).toBe(0);
+		expect(body.taskCounts).toEqual({
+			pending: 0,
+			in_progress: 0,
+			testing: 0,
+			passed: 0,
+			failed: 0,
+			stuck: 0,
+		});
 
 		await rm(dataDir, { recursive: true });
 	});
@@ -132,6 +141,75 @@ describe("daemon stats", () => {
 		// A test run shouldn't take more than 60 seconds
 		expect(body.uptime).toBeLessThan(60);
 
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("GET /stats reflects projects and task counts", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-stats4-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-stats4d-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		// Create a project with tasks in different statuses
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "stats-proj") }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		// Create root task (pending)
+		const rootRes = await app.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Root", description: "" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		// Create child tasks
+		const child1Res = await app.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Child1",
+				description: "",
+				parentId: root.id,
+			}),
+		});
+		const child1 = (await child1Res.json()) as TaskNode;
+
+		await app.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Child2",
+				description: "",
+				parentId: root.id,
+			}),
+		});
+
+		// Mark root as in_progress, child1 as passed
+		await app.request(`/projects/${project.id}/tasks/${root.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "in_progress" }),
+		});
+		await app.request(`/projects/${project.id}/tasks/${child1.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "passed" }),
+		});
+
+		const statsRes = await app.request("/stats");
+		const stats = (await statsRes.json()) as StatsResponse;
+		expect(stats.projectCount).toBe(1);
+		expect(stats.taskCounts.pending).toBe(1); // Child2
+		expect(stats.taskCounts.in_progress).toBe(1); // Root
+		expect(stats.taskCounts.passed).toBe(1); // Child1
+		expect(stats.taskCounts.failed).toBe(0);
+		expect(stats.taskCounts.stuck).toBe(0);
+
+		await rm(tempDir, { recursive: true });
 		await rm(dataDir, { recursive: true });
 	});
 });

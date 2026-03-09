@@ -5,7 +5,12 @@ import { Hono } from "hono";
 import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
 import type { WSContext } from "hono/ws";
 import type { AgentProvider, AgentSession } from "./agent-provider.ts";
-import { CostAccumulator, createOrchestratorTools } from "./agent-tools.ts";
+import {
+	CostAccumulator,
+	createOrchestratorTools,
+	ORCHESTRATION_KNOWLEDGE,
+	TASK_SYSTEM_PROMPT,
+} from "./agent-tools.ts";
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { DirectProvider } from "./direct-provider.ts";
 import { ProjectManager } from "./project-manager.ts";
@@ -93,6 +98,14 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const wsClients = new Set<WSClient>();
 	/** Active agent sessions by project ID, for message injection. */
 	const activeSessions = new Map<string, AgentSession>();
+	/** Event history per project (capped at 500 entries). */
+	const eventHistory = new Map<string, Record<string, unknown>[]>();
+	const MAX_EVENT_HISTORY = 500;
+
+	function getEventHistory(projectId: string): Record<string, unknown>[] {
+		if (!eventHistory.has(projectId)) eventHistory.set(projectId, []);
+		return eventHistory.get(projectId) as Record<string, unknown>[];
+	}
 
 	/** Broadcast a tree update to all subscribers of a project. */
 	function broadcastTreeUpdate(projectId: string, tracker: TaskTracker) {
@@ -102,8 +115,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		});
 	}
 
-	/** Broadcast an agent event to subscribers. */
+	/** Broadcast an agent event to subscribers and store in history. */
 	function broadcastEvent(projectId: string, event: Record<string, unknown>) {
+		// Store in history (skip tree_updated — sent on WS connect separately)
+		if (event.type !== "tree_updated") {
+			const history = getEventHistory(projectId);
+			history.push({ ...event, timestamp: Date.now() });
+			if (history.length > MAX_EVENT_HISTORY) {
+				history.splice(0, history.length - MAX_EVENT_HISTORY);
+			}
+		}
 		broadcast(wsClients, projectId, event);
 	}
 
@@ -175,10 +196,29 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	});
 
 	// Stats
-	app.get("/stats", (c) => {
+	app.get("/stats", async (c) => {
+		const projects = pm.list();
+		const taskCounts = {
+			pending: 0,
+			in_progress: 0,
+			testing: 0,
+			passed: 0,
+			failed: 0,
+			stuck: 0,
+		};
+
+		for (const project of projects) {
+			const tracker = await getTracker(project.id);
+			for (const node of tracker.allNodes()) {
+				taskCounts[node.status]++;
+			}
+		}
+
 		const response: StatsResponse = {
 			uptime: Math.floor((Date.now() - startTime) / 1000),
 			requestCount,
+			projectCount: projects.length,
+			taskCounts,
 		};
 		return c.json(response);
 	});
@@ -346,7 +386,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					const gen = config.agentProvider.stream({
 						prompt: continuePrompt,
 						cwd: node.worktreePath as string,
-						systemPrompt: CHILD_SYSTEM_PROMPT,
+						systemPrompt: TASK_SYSTEM_PROMPT,
 						resumeSessionId: node.sessionId ?? undefined,
 						model: body.model,
 					});
@@ -778,6 +818,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 									}),
 								);
 							}
+							// Send event history so client has full context
+							const history = getEventHistory(msg.projectId);
+							if (history.length > 0) {
+								ws.send(
+									JSON.stringify({
+										type: "event_history",
+										events: history,
+									}),
+								);
+							}
 						}
 
 						if (msg.type === "orchestrate" && msg.projectId && msg.prompt) {
@@ -835,70 +885,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	return { app, pm, wsClients };
 }
 
-const CHILD_SYSTEM_PROMPT = `You are an autonomous programming agent working on a subtask.
+const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft top-level orchestrator. You ONLY manage tasks — you NEVER write code yourself.
+All implementation is done by child agents in isolated worktrees.
+Even for "simple" tasks, create a child task and spawn it.
 
-## Available Tools
-- bash: Run shell commands (tests, git, build tools)
-- read_file: Read file contents
-- write_file: Create or overwrite files (creates directories automatically)
-- edit_file: Replace a unique string in a file (for surgical edits)
-- list_files: Glob pattern matching to find files
-- search: Regex search across files (with optional context lines)
-
-## Workflow
-1. Read the task description and project memory carefully
-2. Explore the codebase to understand relevant modules
-3. Implement: types → tests → implementation
-4. Validate: run tests, typecheck, and lint — all must pass
-5. Commit your work via bash (git add + git commit)
-
-## Rules
-- Work only on the files/modules described in your task
-- Run \`bun test\`, \`bun run typecheck\`, and \`bun run check\` before considering done
-- Commit when all checks pass`;
-
-const ORCHESTRATOR_SYSTEM_PROMPT = `You are the OpenGraft orchestrator agent. You break goals into tasks and execute them.
-
-## Available Tools (via MCP server "opengraft")
-- get_tree: View the current task tree
-- create_task: Add tasks to the tree (root or children)
-- update_task_status: Update a task's status
-- spawn_task: Execute a single task on an isolated git worktree (blocks until done).
-- spawn_children: Execute ALL pending children of a parent in PARALLEL (recommended).
-- continue_task: Resume a failed/stuck task with optional instructions.
-- delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
-
-## Workflow
-1. Analyze the goal and the codebase
-2. Create a root task, then decompose into child tasks using create_task
-3. CRITICAL: Sibling tasks run in PARALLEL — each must work on DIFFERENT files/modules
-4. Call spawn_children(parentId) to execute all children in parallel
-5. When a child passes, YOU merge its branch yourself:
-   a. Check the child's work (review files on the branch)
-   b. Merge via bash: git merge --no-ff <child-branch> -m "Merge task: <title>"
-      (run this from the parent's worktree directory, or the main repo if no parent worktree)
-   c. Call delete_task(taskId) to clean up the child's worktree, branch, and task node
-6. After all children are merged, mark the root task as "passed"
-
-## Task Lifecycle
-pending → in_progress (agent working) → passed/failed/stuck
-After a child passes: parent reviews → parent merges branch → parent calls delete_task
-If a child fails or gets stuck: use continue_task to resume with additional instructions
-
-## Merge Details
-- You have bash access. Use \`git merge --no-ff <branch> -m "..."\` to merge.
-- Merge from the directory that has the target branch checked out.
-- If merge conflicts occur, resolve them or mark the child as "stuck".
-- After successful merge, call delete_task to clean up.
-
-## Rules
-- Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
-- Never have two siblings modify the same file
-- Keep the tree shallow: 2-3 levels max
-- Each leaf task should be independently executable by a single agent session
-- Use spawn_children for parallel execution — calling spawn_task multiple times runs sequentially
-- ALWAYS merge and delete_task each passed child before moving on
-- ALWAYS mark the root task as "passed" when everything succeeds, or "failed" if something went wrong`;
+${ORCHESTRATION_KNOWLEDGE}`;
 
 const DECOMPOSE_PROMPT = `You are a task decomposition system. Given a high-level goal, break it into a hierarchical task tree.
 

@@ -338,6 +338,15 @@ export function App() {
 				case "error":
 					addLog("error", msg.message as string);
 					break;
+				case "event_history": {
+					// Clear and replay historical events on connect
+					setLogs([]);
+					const events = msg.events as Record<string, unknown>[];
+					for (const evt of events) {
+						handleWS(evt);
+					}
+					break;
+				}
 			}
 		},
 		[addLog, updateFromWS, setRunning],

@@ -78,4 +78,13 @@ export interface VersionResponse {
 export interface StatsResponse {
 	uptime: number;
 	requestCount: number;
+	projectCount: number;
+	taskCounts: {
+		pending: number;
+		in_progress: number;
+		testing: number;
+		passed: number;
+		failed: number;
+		stuck: number;
+	};
 }
