@@ -570,8 +570,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const wm = new WorktreeManager(project.path, wtRoot);
 		const costAccumulator = new CostAccumulator();
 		const queue = new MessageQueue();
+		const doneRef: {
+			done: null | { status: "passed" | "failed"; summary: string };
+		} = { done: null };
 
-		const { mcpServer, toolDefs } = createOrchestratorTools(
+		const { mcpServer, toolDefs, hasRunningChildren } = createOrchestratorTools(
 			{
 				tracker,
 				provider: config.agentProvider,
@@ -581,6 +584,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				depth: 0,
 				childModel: opts.childModel,
 				queue,
+				doneRef,
 				onTaskEvent: (event) => {
 					broadcastEvent(project.id, event);
 					broadcastTreeUpdate(project.id, tracker);
@@ -615,6 +619,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			resumeSessionId,
 			model: opts.model,
 			queue,
+			doneRef,
+			hasRunningChildren,
 		});
 
 		activeSessions.set(project.id, session);
@@ -953,7 +959,7 @@ Exception: you MAY use edit_file to resolve merge conflicts — this is task man
 - Read the project's \`.opengraft/memory.md\` and \`OpenGraft.md\` to understand context and methodology
 - Update \`.opengraft/memory.md\` with important decisions and discoveries (via bash)
 - After merging all children, run full test suite on main to verify integration
-- When everything is done and verified, report completion
+- When everything is done and verified, call done("passed", summary) to report completion
 
 ## Session Continuity
 Your session persists across conversations. When the user sends a new message:
@@ -962,7 +968,8 @@ Your session persists across conversations. When the user sends a new message:
 - The user's message is additional context/instruction — incorporate it and keep driving
 
 ## Stopping
-You stop ONLY when all tasks are resolved (all passed/merged) and there is nothing left to do.
+Call done("passed", summary) when all tasks are resolved (all passed/merged) and verified.
+Call done("failed", summary) if you're blocked and cannot make progress.
 If you need clarification on a requirement, make your best judgement and proceed — note the
 decision in .opengraft/memory.md so the user can review later.
 

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages/messages";
+import { createOrchestratorTools } from "./agent-tools.ts";
 import {
 	compressMessages,
 	executeTool,
@@ -11,6 +12,9 @@ import {
 	resolvePath,
 	zodShapeToJsonSchema,
 } from "./direct-provider.ts";
+import { MessageQueue } from "./message-queue.ts";
+import { TaskTracker } from "./task-tracker.ts";
+import type { AgentResult } from "./types.ts";
 
 describe("getModelPricing", () => {
 	test("returns Opus pricing for opus models", () => {
@@ -504,5 +508,136 @@ describe("zodShapeToJsonSchema", () => {
 			active: { type: "boolean" },
 		});
 		expect(result.required).toEqual(["name", "count", "active"]);
+	});
+});
+
+describe("done tool", () => {
+	let tempDir: string;
+	let tracker: TaskTracker;
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-done-tool-"));
+		tracker = new TaskTracker(join(tempDir, "tree.json"));
+	});
+
+	afterAll(async () => {
+		if (tempDir) await rm(tempDir, { recursive: true });
+	});
+
+	async function invokeDoneTool(
+		doneRef: {
+			done: null | { status: "passed" | "failed"; summary: string };
+		},
+		args: { status: "passed" | "failed"; summary: string },
+	) {
+		const mockProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" } as AgentResult;
+			},
+			startSession: () => {
+				throw new Error("not used");
+			},
+		};
+
+		const { toolDefs } = createOrchestratorTools({
+			tracker,
+			provider: mockProvider,
+			worktrees: {} as never,
+			projectPath: tempDir,
+			repoPath: tempDir,
+			doneRef,
+		});
+		const doneTool = toolDefs.find((t) => t.name === "done");
+		if (!doneTool) throw new Error("done tool not found");
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		return (doneTool as any).handler(args);
+	}
+
+	test("done(passed) sets doneRef to passed", async () => {
+		const doneRef: {
+			done: null | { status: "passed" | "failed"; summary: string };
+		} = { done: null };
+		const result = await invokeDoneTool(doneRef, {
+			status: "passed",
+			summary: "All tests pass",
+		});
+		expect(doneRef.done).toEqual({
+			status: "passed",
+			summary: "All tests pass",
+		});
+		expect(result.content[0].text).toContain("passed");
+		expect(result.content[0].text).toContain("Good work!");
+	});
+
+	test("done(failed) sets doneRef to failed", async () => {
+		const doneRef: {
+			done: null | { status: "passed" | "failed"; summary: string };
+		} = { done: null };
+		const result = await invokeDoneTool(doneRef, {
+			status: "failed",
+			summary: "Cannot resolve type errors",
+		});
+		expect(doneRef.done).toEqual({
+			status: "failed",
+			summary: "Cannot resolve type errors",
+		});
+		expect(result.content[0].text).toContain("failed");
+		expect(result.content[0].text).toContain("Returning to parent");
+	});
+
+	test("hasRunningChildren returns false when no children", async () => {
+		const mockProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" } as AgentResult;
+			},
+			startSession: () => {
+				throw new Error("not used");
+			},
+		};
+
+		const { hasRunningChildren } = createOrchestratorTools({
+			tracker,
+			provider: mockProvider,
+			worktrees: {} as never,
+			projectPath: tempDir,
+			repoPath: tempDir,
+		});
+		expect(hasRunningChildren?.()).toBe(false);
+	});
+
+	test("hasRunningChildren returns true when childQueues has entries", async () => {
+		const mockProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" } as AgentResult;
+			},
+			startSession: () => {
+				throw new Error("not used");
+			},
+		};
+
+		const childQueues = new Map<string, MessageQueue>();
+		childQueues.set("child-1", new MessageQueue());
+
+		const { hasRunningChildren } = createOrchestratorTools({
+			tracker,
+			provider: mockProvider,
+			worktrees: {} as never,
+			projectPath: tempDir,
+			repoPath: tempDir,
+			childQueues,
+		});
+		expect(hasRunningChildren?.()).toBe(true);
+
+		// Clean up
+		for (const q of childQueues.values()) q.close();
 	});
 });

@@ -26,6 +26,10 @@ export interface AgentRequest {
 	model?: string;
 	/** External MessageQueue — if provided, startSession uses this instead of creating a new one. */
 	queue?: MessageQueue;
+	/** Mutable ref shared between done tool and runLoop — when done tool is called, sets the result here. */
+	doneRef?: { done: null | { status: "passed" | "failed"; summary: string } };
+	/** Callback to check if this agent has running children (for implicit yield on end_turn). */
+	hasRunningChildren?: () => boolean;
 }
 
 /** Streaming event emitted by an agent during execution. */

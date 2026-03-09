@@ -85,6 +85,8 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 - clarify: Send a clarification question to the user or parent orchestrator. Returns immediately —
   you can continue doing other work that doesn't need the answer, then call yield() when ready
   to wait for the clarify_response.
+- done: Signal that you have finished your task. Call done(status, summary) with status "passed" or "failed".
+  This is the proper way to exit — always call done() when you're finished.
 
 ## Event-Driven Workflow Pattern
 1. Analyze the goal and the codebase (read files to understand structure)
@@ -106,18 +108,20 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 pending → in_progress (agent working) → passed / failed
 
 ### Child Agent Exit Conditions
-When you finish working on a task, you exit with one of two results:
-1. **passed** — You completed the task. Tests pass, code is committed, work is done.
+When you finish working on a task, call \`done(status, summary)\`:
+1. **done("passed", summary)** — You completed the task. Tests pass, code is committed, work is done.
    → Parent merges your branch.
-2. **failed** — You can't solve it or you're in difficulty. You've tried your approaches and hit a wall.
-   Return to parent with a clear explanation of what you tried and where you got blocked.
+2. **done("failed", summary)** — You can't solve it or you're in difficulty. You've tried your approaches and hit a wall.
+   Include a clear explanation of what you tried and where you got blocked.
    → Parent decides: resume (with new instructions) or reset (wipe branch, try differently).
+
+Always call done() when finished — do NOT just stop responding.
 
 If you're unsure about a requirement, use the \`clarify\` tool to ask — it sends a question
 to the user and returns immediately. You can continue doing other work that doesn't depend on
 the answer, then call \`yield()\` when you're ready to wait for the response.
 
-If you encounter problems you can't overcome, don't spin — just fail and return to parent.
+If you encounter problems you can't overcome, don't spin — call done("failed", ...) and return to parent.
 The parent has more context and can help. Failing early is better than wasting turns.
 
 ### Parent Handling of Child Results
@@ -213,6 +217,7 @@ When acting as sub-orchestrator: do NOT write code yourself — only manage chil
 - Run \`bun test\`, \`bun run typecheck\`, and \`bun run check\` before considering done.
 - Prefer edit_file for small changes, write_file for new files or complete rewrites.
 - Use search to understand existing code before modifying it.
+- When finished, call \`done("passed", summary)\` or \`done("failed", summary)\`. Always call done().
 
 ## Methodology (from OpenGraft.md)
 - Don't guess APIs — read docs or run --help first
@@ -244,6 +249,8 @@ export interface OrchestratorToolsDeps {
 	queue?: MessageQueue;
 	/** Registry of child agent queues for send_message_to_child. Managed internally. */
 	childQueues?: Map<string, MessageQueue>;
+	/** Mutable ref shared between done tool and runLoop — when done tool is called, sets the result here. */
+	doneRef?: { done: null | { status: "passed" | "failed"; summary: string } };
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -276,6 +283,8 @@ export interface OrchestratorToolsResult {
 	/** Raw tool definitions for DirectProvider forwarding. */
 	// biome-ignore lint/suspicious/noExplicitAny: SdkMcpToolDefinition generic is not narrowable here
 	toolDefs: SdkMcpToolDefinition<any>[];
+	/** Returns true if this agent has running children (childQueues is non-empty). */
+	hasRunningChildren?: () => boolean;
 }
 
 /**
@@ -302,6 +311,7 @@ export function createOrchestratorTools(
 	const costs = costAccumulator ?? new CostAccumulator();
 	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
 	const childQueues = deps.childQueues ?? new Map<string, MessageQueue>();
+	const doneRef = deps.doneRef ?? null;
 
 	/**
 	 * Execute a child agent with streaming, forwarding events tagged with taskId.
@@ -327,24 +337,33 @@ export function createOrchestratorTools(
 		// Give children MCP tools if we haven't hit max depth
 		if (depth < maxDepth && !request.mcpToolDefs) {
 			const childCosts = new CostAccumulator();
-			const { toolDefs: childToolDefs, mcpServer: childMcpServer } =
-				createOrchestratorTools(
-					{
-						tracker,
-						provider,
-						worktrees,
-						projectPath: childCwd,
-						repoPath,
-						currentTaskId: taskId,
-						depth: depth + 1,
-						onTaskEvent,
-						childModel,
-						queue: childQueue,
-					},
-					childCosts,
-				);
+			const childDoneRef: {
+				done: null | { status: "passed" | "failed"; summary: string };
+			} = { done: null };
+			const {
+				toolDefs: childToolDefs,
+				mcpServer: childMcpServer,
+				hasRunningChildren: childHasRunningChildren,
+			} = createOrchestratorTools(
+				{
+					tracker,
+					provider,
+					worktrees,
+					projectPath: childCwd,
+					repoPath,
+					currentTaskId: taskId,
+					depth: depth + 1,
+					onTaskEvent,
+					childModel,
+					queue: childQueue,
+					doneRef: childDoneRef,
+				},
+				childCosts,
+			);
 			request.mcpToolDefs = { opengraft: childToolDefs };
 			request.mcpServers = { opengraft: childMcpServer };
+			request.doneRef = childDoneRef;
+			request.hasRunningChildren = childHasRunningChildren;
 		}
 
 		try {
@@ -948,6 +967,36 @@ export function createOrchestratorTools(
 				};
 			},
 		),
+
+		tool(
+			"done",
+			"Signal that you have finished working on your task. " +
+				"Call this when you are done — either passed (task completed successfully) or failed (you cannot continue). " +
+				"This is the proper way to exit. Do NOT just stop responding — always call done().",
+			{
+				status: z
+					.enum(["passed", "failed"])
+					.describe("Whether the task passed or failed"),
+				summary: z
+					.string()
+					.describe(
+						"Brief summary of what was accomplished (if passed) or what went wrong (if failed)",
+					),
+			},
+			async (args) => {
+				if (doneRef) {
+					doneRef.done = { status: args.status, summary: args.summary };
+				}
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Task marked as ${args.status}. ${args.status === "passed" ? "Good work!" : "Returning to parent for guidance."}`,
+						},
+					],
+				};
+			},
+		),
 	];
 
 	const mcpServer = createSdkMcpServer({
@@ -956,7 +1005,11 @@ export function createOrchestratorTools(
 		tools: toolDefs,
 	});
 
-	return { mcpServer, toolDefs };
+	return {
+		mcpServer,
+		toolDefs,
+		hasRunningChildren: () => childQueues.size > 0,
+	};
 }
 
 function readMemory(projectPath: string): string {
