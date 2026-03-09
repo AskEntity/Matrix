@@ -261,7 +261,7 @@ const TOOLS: Tool[] = [
 	{
 		name: "edit_file",
 		description:
-			"Replace a specific string in a file. The old_string must be unique in the file.",
+			"Replace a specific string in a file. By default old_string must be unique; use replace_all=true to replace all occurrences.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -276,6 +276,11 @@ const TOOLS: Tool[] = [
 				new_string: {
 					type: "string",
 					description: "The replacement string",
+				},
+				replace_all: {
+					type: "boolean",
+					description:
+						"If true, replace all occurrences of old_string (default: false, requires uniqueness)",
 				},
 			},
 			required: ["path", "old_string", "new_string"],
@@ -423,6 +428,7 @@ export async function executeTool(
 			const path = resolvePath(input.path as string, cwd);
 			const oldStr = input.old_string as string;
 			const newStr = input.new_string as string;
+			const replaceAll = (input.replace_all as boolean) ?? false;
 			try {
 				if (!existsSync(path)) {
 					return { content: `File not found: ${path}`, isError: true };
@@ -430,19 +436,23 @@ export async function executeTool(
 				const content = readFileSync(path, "utf-8");
 				const occurrences = content.split(oldStr).length - 1;
 				if (occurrences === 0) {
+					return { content: "old_string not found in file", isError: true };
+				}
+				if (!replaceAll && occurrences > 1) {
 					return {
-						content: "old_string not found in file",
+						content: `old_string found ${occurrences} times — must be unique. Use replace_all=true to replace all.`,
 						isError: true,
 					};
 				}
-				if (occurrences > 1) {
-					return {
-						content: `old_string found ${occurrences} times — must be unique`,
-						isError: true,
-					};
-				}
-				writeFileSync(path, content.replace(oldStr, newStr), "utf-8");
-				return { content: `File edited: ${path}`, isError: false };
+				const updated = replaceAll
+					? content.replaceAll(oldStr, newStr)
+					: content.replace(oldStr, newStr);
+				writeFileSync(path, updated, "utf-8");
+				const msg =
+					replaceAll && occurrences > 1
+						? `File edited: ${path} (${occurrences} replacements)`
+						: `File edited: ${path}`;
+				return { content: msg, isError: false };
 			} catch (e) {
 				return {
 					content: `Error editing file: ${e instanceof Error ? e.message : String(e)}`,

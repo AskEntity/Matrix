@@ -145,6 +145,53 @@ describe("executeTool", () => {
 		);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("2 times");
+		expect(result.content).toContain("replace_all=true");
+	});
+
+	test("edit_file: replace_all replaces all occurrences", async () => {
+		const path = join(tempDir, "replace_all.txt");
+		await writeFile(path, "aaa bbb aaa ccc aaa");
+
+		const result = await executeTool(
+			"edit_file",
+			{ path, old_string: "aaa", new_string: "zzz", replace_all: true },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("3 replacements");
+
+		const readResult = await executeTool("read_file", { path }, tempDir);
+		expect(readResult.content).toBe("zzz bbb zzz ccc zzz");
+	});
+
+	test("edit_file: replace_all with single occurrence reports no count suffix", async () => {
+		const path = join(tempDir, "replace_all_single.txt");
+		await writeFile(path, "hello world");
+
+		const result = await executeTool(
+			"edit_file",
+			{ path, old_string: "world", new_string: "earth", replace_all: true },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		// Single occurrence: no "(N replacements)" suffix
+		expect(result.content).toBe(`File edited: ${path}`);
+
+		const readResult = await executeTool("read_file", { path }, tempDir);
+		expect(readResult.content).toBe("hello earth");
+	});
+
+	test("edit_file: replace_all=false is the same as default uniqueness enforcement", async () => {
+		const path = join(tempDir, "replace_all_false.txt");
+		await writeFile(path, "foo foo foo");
+
+		const result = await executeTool(
+			"edit_file",
+			{ path, old_string: "foo", new_string: "bar", replace_all: false },
+			tempDir,
+		);
+		expect(result.isError).toBe(true);
+		expect(result.content).toContain("3 times");
 	});
 
 	test("list_files: lists files in directory", async () => {
