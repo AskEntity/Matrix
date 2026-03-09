@@ -14,6 +14,32 @@ const PROJECT_NODE_ID = "__project__";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+/** Format a date as relative time: "5m ago", "2h 10m ago", "3d ago" */
+function formatRelativeTime(dateStr: string | null | undefined): string {
+	if (!dateStr) return "";
+	const diff = Date.now() - new Date(dateStr).getTime();
+	const secs = Math.floor(diff / 1000);
+	if (secs < 60) return `${secs}s ago`;
+	const mins = Math.floor(secs / 60);
+	if (mins < 60) return `${mins}m ago`;
+	const hours = Math.floor(mins / 60);
+	if (hours < 24) return `${hours}h ${mins % 60}m ago`;
+	const days = Math.floor(hours / 24);
+	return `${days}d ago`;
+}
+
+/** Format duration since a start date: "5m", "2h 10m" */
+function formatRunningDuration(dateStr: string | null | undefined): string {
+	if (!dateStr) return "";
+	const diff = Date.now() - new Date(dateStr).getTime();
+	const secs = Math.floor(diff / 1000);
+	if (secs < 60) return `${secs}s`;
+	const mins = Math.floor(secs / 60);
+	if (mins < 60) return `${mins}m`;
+	const hours = Math.floor(mins / 60);
+	return `${hours}h ${mins % 60}m`;
+}
+
 /** Format a token count compactly: 1234 → "1.2k", 1234567 → "1.2M" */
 function formatTokenCount(n: number): string {
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -760,6 +786,24 @@ function TaskDetail({
 						<div className="og-detail-label">Updated</div>
 						<div className="og-detail-value">
 							{new Date(node.updatedAt).toLocaleString()}
+						</div>
+					</div>
+				)}
+				{(node.createdAt || node.updatedAt) && (
+					<div className="og-detail-field">
+						<div className="og-detail-label">
+							{node.status === "in_progress"
+								? "Running"
+								: node.status === "pending"
+									? "Waiting"
+									: "Age"}
+						</div>
+						<div className="og-detail-value">
+							{node.status === "in_progress"
+								? formatRunningDuration(node.createdAt ?? node.updatedAt)
+								: node.status === "pending"
+									? formatRelativeTime(node.createdAt ?? node.updatedAt)
+									: formatRelativeTime(node.updatedAt)}
 						</div>
 					</div>
 				)}
