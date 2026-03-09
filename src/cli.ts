@@ -807,6 +807,47 @@ async function handleSend(args: string[]): Promise<void> {
 	console.log("Message sent to running agent.");
 }
 
+async function handleConfig(args: string[]): Promise<void> {
+	const projectId = await resolveCurrentProject();
+	if (!projectId) {
+		console.error("No project found for current directory.");
+		process.exit(1);
+	}
+
+	const sub = args[0];
+
+	if (sub === "set" && args.length >= 3) {
+		const key = args[1];
+		let value: string | number = args[2] as string;
+		if (!Number.isNaN(Number(value))) value = Number(value);
+		const res = await api(`/projects/${projectId}/config`, {
+			method: "PATCH",
+			body: JSON.stringify({ [key as string]: value }),
+		});
+		const cfg = await res.json();
+		console.log(JSON.stringify(cfg, null, 2));
+	} else if (sub === "unset" && args.length >= 2) {
+		const key = args[1];
+		const res = await api(`/projects/${projectId}/config`, {
+			method: "PATCH",
+			body: JSON.stringify({ [key as string]: null }),
+		});
+		const cfg = await res.json();
+		console.log(JSON.stringify(cfg, null, 2));
+	} else if (!sub) {
+		const res = await api(`/projects/${projectId}/config`);
+		const cfg = await res.json();
+		if (Object.keys(cfg as Record<string, unknown>).length === 0) {
+			console.log("No project config set. Use: og config set <key> <value>");
+		} else {
+			console.log(JSON.stringify(cfg, null, 2));
+		}
+	} else {
+		console.error("Usage: og config [set <key> <value> | unset <key>]");
+		process.exit(1);
+	}
+}
+
 async function handleHealth(): Promise<void> {
 	try {
 		const res = await api("/health");
@@ -1146,6 +1187,10 @@ switch (command) {
 		break;
 	case "cost":
 		await handleCost(args);
+		break;
+	case "config":
+	case "cfg":
+		await handleConfig(args);
 		break;
 	case "daemon":
 		await handleDaemon(args);
