@@ -1102,6 +1102,44 @@ select {
 	font-style: italic;
 }
 
+/* User prompt bubble */
+.og-event-user_prompt {
+	border-left-color: var(--accent);
+	padding-top: 6px;
+	padding-bottom: 6px;
+	margin: 4px 0;
+}
+
+.og-user-prompt-bubble {
+	flex: 1;
+	min-width: 0;
+	background: rgba(56, 139, 253, 0.08);
+	border: 1px solid rgba(56, 139, 253, 0.2);
+	border-radius: var(--radius-md);
+	padding: 8px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.og-user-prompt-label {
+	font-family: var(--font-mono);
+	font-size: 10px;
+	font-weight: 700;
+	color: var(--accent);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+.og-user-prompt-text {
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 1.6;
+	white-space: pre-wrap;
+	word-break: break-word;
+	color: var(--text-primary);
+}
+
 /* Tool call inline badge */
 .og-tool-call {
 	display: inline-flex;
