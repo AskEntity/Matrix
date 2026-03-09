@@ -126,19 +126,30 @@ function ActivityLog({
 	entries,
 	filterTaskId,
 	nodeMap,
+	autoScroll,
+	onAutoScrollChange,
 }: {
 	entries: LogEntry[];
 	filterTaskId: string | null;
 	nodeMap: Map<string, TaskNode>;
+	autoScroll: boolean;
+	onAutoScrollChange: (locked: boolean) => void;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new entries
 	useEffect(() => {
-		if (logRef.current) {
+		if (autoScroll && logRef.current) {
 			logRef.current.scrollTop = logRef.current.scrollHeight;
 		}
-	}, [entries.length]);
+	}, [entries.length, autoScroll]);
+
+	const handleScroll = useCallback(() => {
+		const el = logRef.current;
+		if (!el) return;
+		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+		onAutoScrollChange(atBottom);
+	}, [onAutoScrollChange]);
 
 	const visible = useMemo(() => {
 		if (!filterTaskId) return entries;
@@ -165,7 +176,7 @@ function ActivityLog({
 	}, [entries, filterTaskId, nodeMap]);
 
 	return (
-		<div className="activity-log" ref={logRef}>
+		<div className="activity-log" ref={logRef} onScroll={handleScroll}>
 			{visible.map((entry) => (
 				<LogEntryView key={entry.id} entry={entry} nodeMap={nodeMap} />
 			))}
@@ -318,6 +329,7 @@ export function App() {
 	const [childModel, setChildModel] = useState("");
 	const [splitRatio, setSplitRatio] = useState(0.5);
 	const [isDragging, setIsDragging] = useState(false);
+	const [autoScroll, setAutoScroll] = useState(true);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
 	const { nodes, refresh: refreshTasks, updateFromWS } = useTasks(projectId);
@@ -688,11 +700,25 @@ export function App() {
 										? ` — ${selectedNode.title}`
 										: ""}
 							</span>
+							<div className="section-actions">
+								{!autoScroll && (
+									<button
+										type="button"
+										className="btn-scroll-lock"
+										onClick={() => setAutoScroll(true)}
+										title="Resume auto-scroll"
+									>
+										↓ Follow
+									</button>
+								)}
+							</div>
 						</div>
 						<ActivityLog
 							entries={logs}
 							filterTaskId={selectedTaskId}
 							nodeMap={nodeMap}
+							autoScroll={autoScroll}
+							onAutoScrollChange={setAutoScroll}
 						/>
 					</div>
 				</section>
