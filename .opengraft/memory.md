@@ -192,10 +192,12 @@ All task mutations broadcast `tree_update` via WebSocket:
 
 ## Known Bugs / TODO
 
-- **Continue handler lacks MCP tools**: `POST /projects/:id/tasks/:nodeId/continue` in daemon.ts
-  uses `provider.stream()` without passing `mcpToolDefs`, `doneRef`, `queue`, `hasRunningChildren`.
-  Continued child agents have no orchestration tools. Fix: mirror the tool setup from
-  `executeChildStreaming` in agent-tools.ts (create orchestrator tools set, pass to request).
+(none — continue handler bug fixed)
+
+## Patterns
+
+- **`createApp` returns `getTracker`**: to test daemon internals that depend on the in-memory `TaskTracker` (e.g., the continue handler's worktreePath branch), use `const { getTracker } = createApp(...)` to get the daemon's own tracker instance. Writing to the tracker file externally won't affect an already-loaded in-memory tracker.
+- **Continue handler pattern**: uses `provider.startSession()` (not `stream()`), creates a `MessageQueue` registered in `globalAgentQueues`, and calls `createOrchestratorTools()` with `depth: 1`, `currentTaskId: nodeId`. Queue is cleaned up in `finally` block. Status determined by `doneRef.done` first, with `agentResult.success` as fallback.
 
 ## Known Pitfalls
 
