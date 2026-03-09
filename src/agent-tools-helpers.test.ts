@@ -169,6 +169,23 @@ describe("buildTaskPrompt", () => {
 		);
 		expect(result).not.toContain("Already completed siblings");
 	});
+
+	test("includes budget info when budgetUsd is set", () => {
+		const tracker = makeTracker([]);
+		const result = buildTaskPrompt(
+			makeNode({ id: "task-1", budgetUsd: 0.5 }),
+			tracker,
+			"",
+		);
+		expect(result).toContain("**Budget: $0.50**");
+		expect(result).toContain("warned at 80%");
+	});
+
+	test("omits budget info when budgetUsd is not set", () => {
+		const tracker = makeTracker([]);
+		const result = buildTaskPrompt(makeNode({ id: "task-1" }), tracker, "");
+		expect(result).not.toContain("Budget:");
+	});
 });
 
 describe("isDescendantOf", () => {

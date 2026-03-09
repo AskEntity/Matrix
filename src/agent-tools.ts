@@ -518,6 +518,13 @@ export function createOrchestratorTools(
 					.string()
 					.optional()
 					.describe("Parent task ID. Omit to create a top-level task."),
+				budgetUsd: z
+					.number()
+					.optional()
+					.describe(
+						"Maximum cost in USD this task is allowed to spend. " +
+							"The child agent will be warned at 80% and told to wrap up at 100%.",
+					),
 			},
 			async (args) => {
 				try {
@@ -539,9 +546,18 @@ export function createOrchestratorTools(
 						};
 					}
 
+					const opts =
+						args.budgetUsd !== undefined
+							? { budgetUsd: args.budgetUsd }
+							: undefined;
 					const node = args.parentId
-						? tracker.addChild(args.parentId, args.title, args.description)
-						: tracker.addTask(args.title, args.description);
+						? tracker.addChild(
+								args.parentId,
+								args.title,
+								args.description,
+								opts,
+							)
+						: tracker.addTask(args.title, args.description, opts);
 					await tracker.save();
 					broadcastTreeUpdate?.();
 					return {
@@ -775,6 +791,7 @@ export function createOrchestratorTools(
 							resumeSessionId:
 								mode === "resume" ? (node.sessionId ?? undefined) : undefined,
 							model: childModel,
+							budgetUsd: node.budgetUsd,
 						};
 
 						// Fire-and-forget: spawn child agent in background
@@ -793,6 +810,22 @@ export function createOrchestratorTools(
 								costs.add(result.costUsd, result.turns);
 								if (result.costUsd) {
 									tracker.updateCost(nodeRef.id, result.costUsd);
+								}
+
+								// Check if task exceeded its budget
+								const updatedNode = tracker.get(nodeRef.id);
+								if (
+									updatedNode?.budgetUsd &&
+									updatedNode.costUsd &&
+									updatedNode.costUsd > updatedNode.budgetUsd
+								) {
+									emit({
+										type: "budget_exceeded",
+										taskId: nodeRef.id,
+										title: nodeRef.title,
+										costUsd: updatedNode.costUsd,
+										budgetUsd: updatedNode.budgetUsd,
+									});
 								}
 
 								let newStatus: "passed" | "failed" | "stuck";
@@ -1262,6 +1295,7 @@ export function buildTaskPrompt(
 		parentId: string | null;
 		branch?: string | null;
 		worktreePath?: string | null;
+		budgetUsd?: number;
 	},
 	tracker: TaskTracker,
 	memory: string,
@@ -1274,6 +1308,11 @@ export function buildTaskPrompt(
 
 	parts.push(`# Task: ${node.title}`);
 	parts.push(`Task ID: \`${node.id}\``);
+	if (node.budgetUsd) {
+		parts.push(
+			`**Budget: ${"$"}${node.budgetUsd.toFixed(2)}** — you will be warned at 80% and must wrap up at 100%.`,
+		);
+	}
 	if (node.description) {
 		parts.push(node.description);
 	}

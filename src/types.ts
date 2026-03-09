@@ -26,6 +26,8 @@ export interface TaskNode {
 	failCount: number;
 	/** Accumulated cost in USD for this task's agent execution. */
 	costUsd?: number;
+	/** Maximum cost in USD this task is allowed to spend. */
+	budgetUsd?: number;
 	createdAt: string;
 	updatedAt: string;
 }

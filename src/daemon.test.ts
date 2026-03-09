@@ -430,6 +430,36 @@ describe("daemon tasks API", () => {
 		expect(node.parentId).toBeNull();
 	});
 
+	test("POST /tasks creates task with budgetUsd", async () => {
+		const res = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Budgeted Task",
+				description: "Has a budget",
+				budgetUsd: 0.5,
+			}),
+		});
+		expect(res.status).toBe(201);
+		const node = (await res.json()) as TaskNode;
+		expect(node.title).toBe("Budgeted Task");
+		expect(node.budgetUsd).toBe(0.5);
+	});
+
+	test("POST /tasks creates task without budgetUsd", async () => {
+		const res = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "No Budget",
+				description: "No budget set",
+			}),
+		});
+		expect(res.status).toBe(201);
+		const node = (await res.json()) as TaskNode;
+		expect(node.budgetUsd).toBeUndefined();
+	});
+
 	test("POST /tasks creates child task", async () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",

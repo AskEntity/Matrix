@@ -68,17 +68,26 @@ export class TaskTracker {
 	}
 
 	/** Create a top-level task (direct child of the project). */
-	addTask(title: string, description: string): TaskNode {
-		return this.createNode(title, description, null);
+	addTask(
+		title: string,
+		description: string,
+		opts?: { budgetUsd?: number },
+	): TaskNode {
+		return this.createNode(title, description, null, opts);
 	}
 
 	/** Add a child task under a parent node. */
-	addChild(parentId: string, title: string, description: string): TaskNode {
+	addChild(
+		parentId: string,
+		title: string,
+		description: string,
+		opts?: { budgetUsd?: number },
+	): TaskNode {
 		const parent = this.nodes.get(parentId);
 		if (!parent) {
 			throw new Error(`Parent node not found: ${parentId}`);
 		}
-		const child = this.createNode(title, description, parentId);
+		const child = this.createNode(title, description, parentId, opts);
 		parent.children.push(child.id);
 		parent.updatedAt = new Date().toISOString();
 		return child;
@@ -207,6 +216,7 @@ export class TaskTracker {
 		title: string,
 		description: string,
 		parentId: string | null,
+		opts?: { budgetUsd?: number },
 	): TaskNode {
 		const now = new Date().toISOString();
 		const node: TaskNode = {
@@ -221,6 +231,7 @@ export class TaskTracker {
 			worktreePath: null,
 			message: null,
 			failCount: 0,
+			...(opts?.budgetUsd !== undefined ? { budgetUsd: opts.budgetUsd } : {}),
 			createdAt: now,
 			updatedAt: now,
 		};

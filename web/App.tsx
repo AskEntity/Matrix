@@ -905,14 +905,15 @@ function TaskDetail({
 						</div>
 					</div>
 				)}
-				{node.costUsd != null && node.costUsd > 0 && (
+				{(node.costUsd != null && node.costUsd > 0) || node.budgetUsd ? (
 					<div className="og-detail-field">
 						<div className="og-detail-label">Cost</div>
 						<div className="og-detail-value mono">
-							${node.costUsd.toFixed(4)}
+							${(node.costUsd ?? 0).toFixed(4)}
+							{node.budgetUsd ? ` / ${node.budgetUsd.toFixed(2)} budget` : ""}
 						</div>
 					</div>
-				)}
+				) : null}
 				{node.message && (
 					<div className="og-detail-field" style={{ width: "100%" }}>
 						<div className="og-detail-label">Message</div>

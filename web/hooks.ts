@@ -20,6 +20,7 @@ export interface TaskNode {
 	sessionId: string | null;
 	message: string | null;
 	costUsd?: number;
+	budgetUsd?: number;
 	createdAt?: string | null;
 	updatedAt: string | null;
 }

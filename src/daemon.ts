@@ -486,16 +486,24 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			title: string;
 			description: string;
 			parentId?: string;
+			budgetUsd?: number;
 		}>();
 		if (!body.title) {
 			return c.json({ error: "title is required" }, 400);
 		}
 
 		const tracker = await getTracker(project.id);
+		const opts =
+			body.budgetUsd !== undefined ? { budgetUsd: body.budgetUsd } : undefined;
 		try {
 			const node = body.parentId
-				? tracker.addChild(body.parentId, body.title, body.description ?? "")
-				: tracker.addTask(body.title, body.description ?? "");
+				? tracker.addChild(
+						body.parentId,
+						body.title,
+						body.description ?? "",
+						opts,
+					)
+				: tracker.addTask(body.title, body.description ?? "", opts);
 			await tracker.save();
 			broadcastTreeUpdate(project.id, tracker);
 			return c.json(node, 201);
