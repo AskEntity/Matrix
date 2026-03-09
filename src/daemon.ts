@@ -336,6 +336,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				? tracker.addChild(body.parentId, body.title, body.description ?? "")
 				: tracker.addTask(body.title, body.description ?? "");
 			await tracker.save();
+			broadcastTreeUpdate(project.id, tracker);
 			return c.json(node, 201);
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -365,6 +366,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			tracker.assignBranch(nodeId, body.branch);
 		}
 		await tracker.save();
+		broadcastTreeUpdate(project.id, tracker);
 		return c.json(tracker.get(nodeId));
 	});
 
@@ -521,6 +523,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 		tracker.remove(nodeId);
 		await tracker.save();
+		broadcastTreeUpdate(project.id, tracker);
 		return c.json({ ok: true });
 	});
 
@@ -589,6 +592,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					broadcastEvent(project.id, event);
 					broadcastTreeUpdate(project.id, tracker);
 				},
+				broadcastTreeUpdate: () => broadcastTreeUpdate(project.id, tracker),
 			},
 			costAccumulator,
 		);
