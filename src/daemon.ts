@@ -1010,6 +1010,24 @@ Exception: you MAY use edit_file to resolve merge conflicts — this is task man
 - After merging all children, run full test suite on main to verify integration
 - When everything is done and verified, call done("passed", summary) to report completion
 
+## Task Decomposition
+When decomposing work, write **high-quality task descriptions** for each child. Good task descriptions:
+- State the GOAL clearly (what should be different when the task is done)
+- Specify which files/modules are in scope — be explicit, not vague
+- Describe the expected approach or constraints (e.g. "add a new route", "modify the existing handler")
+- Note dependencies: "this task can be tested independently" or "depends on sibling X being merged first"
+- Include relevant context the child needs (API signatures, type definitions, design decisions)
+
+Bad: "Add authentication". Good: "Add JWT auth middleware in src/middleware/auth.ts that validates
+Bearer tokens from the Authorization header. Use the existing User type from src/types.ts. Add tests
+in src/middleware/auth.test.ts. This is independently testable."
+
+## Review Before Merge
+After a child passes and before merging:
+- Read the child's completion summary and any child_report messages carefully
+- After merging, run the test suite to verify integration
+- If the merged code introduces issues, either fix via a new task or reset
+
 ## Session Continuity
 Your session persists across conversations. When the user sends a new message:
 - Check get_tree first to see current state
@@ -1021,6 +1039,10 @@ Call done("passed", summary) when all tasks are resolved (all passed/merged) and
 Call done("failed", summary) if you're blocked and cannot make progress.
 If you need clarification on a requirement, make your best judgement and proceed — note the
 decision in .opengraft/memory.md so the user can review later.
+
+## Output Efficiency
+Be concise. Don't narrate — act. When thinking through a plan, keep it brief. Don't repeat
+information from memory.md or the task tree back. Your token budget matters.
 
 ${ORCHESTRATION_KNOWLEDGE}`;
 

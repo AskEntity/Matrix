@@ -473,8 +473,246 @@ async function handleHealth(): Promise<void> {
 			`Daemon: ${body.status} v${body.version} (uptime: ${Math.round(body.uptime / 1000)}s)`,
 		);
 	} catch {
-		console.error("Daemon not reachable. Start it with: bun run dev");
+		console.error("Daemon not reachable. Start it with: og daemon start");
 		process.exit(1);
+	}
+}
+
+// ── Daemon management via launchctl ──
+
+const PLIST_LABEL = "com.opengraft.daemon";
+const PLIST_DIR = `${process.env.HOME}/Library/LaunchAgents`;
+const PLIST_PATH = `${PLIST_DIR}/${PLIST_LABEL}.plist`;
+const OG_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const LOG_DIR = `${process.env.HOME}/.opengraft/logs`;
+
+function daemonPlist(): string {
+	const bunPath = process.argv[0]; // bun binary that's running this CLI
+
+	// Collect env vars to forward
+	const envEntries: string[] = [];
+	const forwardVars = [
+		"PATH",
+		"HOME",
+		"ANTHROPIC_API_KEY",
+		"CLAUDE_CODE_OAUTH_TOKEN",
+		"OG_PROVIDER",
+		"OG_MODEL",
+		"ANTHROPIC_MODEL",
+		"PORT",
+	];
+	for (const key of forwardVars) {
+		const val = process.env[key];
+		if (val) {
+			// XML-escape ampersands and angle brackets
+			const escaped = val
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;");
+			envEntries.push(
+				`\t\t\t<key>${key}</key>\n\t\t\t<string>${escaped}</string>`,
+			);
+		}
+	}
+
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>Label</key>
+\t<string>${PLIST_LABEL}</string>
+\t<key>ProgramArguments</key>
+\t<array>
+\t\t<string>${bunPath}</string>
+\t\t<string>run</string>
+\t\t<string>${OG_ROOT}/src/daemon.ts</string>
+\t</array>
+\t<key>WorkingDirectory</key>
+\t<string>${OG_ROOT}</string>
+\t<key>EnvironmentVariables</key>
+\t<dict>
+${envEntries.join("\n")}
+\t</dict>
+\t<key>RunAtLoad</key>
+\t<true/>
+\t<key>KeepAlive</key>
+\t<true/>
+\t<key>StandardOutPath</key>
+\t<string>${LOG_DIR}/daemon.log</string>
+\t<key>StandardErrorPath</key>
+\t<string>${LOG_DIR}/daemon.err</string>
+\t<key>ProcessType</key>
+\t<string>Background</string>
+</dict>
+</plist>`;
+}
+
+async function daemonIsLoaded(): Promise<boolean> {
+	const proc = Bun.spawn(["launchctl", "list", PLIST_LABEL], {
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	return (await proc.exited) === 0;
+}
+
+async function handleDaemon(args: string[]): Promise<void> {
+	const sub = args[0];
+
+	switch (sub) {
+		case "install": {
+			const { mkdirSync, writeFileSync } = await import("node:fs");
+			mkdirSync(PLIST_DIR, { recursive: true });
+			mkdirSync(LOG_DIR, { recursive: true });
+
+			// Unload existing if loaded
+			if (await daemonIsLoaded()) {
+				Bun.spawnSync(["launchctl", "unload", PLIST_PATH]);
+			}
+
+			writeFileSync(PLIST_PATH, daemonPlist());
+			const load = Bun.spawnSync(["launchctl", "load", PLIST_PATH]);
+			if (load.exitCode !== 0) {
+				console.error(
+					"Failed to load plist:",
+					new TextDecoder().decode(load.stderr),
+				);
+				process.exit(1);
+			}
+			console.log("Daemon installed and started.");
+			console.log(`  Plist: ${PLIST_PATH}`);
+			console.log(`  Logs:  ${LOG_DIR}/daemon.log`);
+			console.log(`  URL:   http://localhost:${process.env.PORT ?? "7433"}`);
+			break;
+		}
+
+		case "uninstall": {
+			const { existsSync, unlinkSync } = await import("node:fs");
+			if (await daemonIsLoaded()) {
+				Bun.spawnSync(["launchctl", "unload", PLIST_PATH]);
+				console.log("Daemon unloaded.");
+			}
+			if (existsSync(PLIST_PATH)) {
+				unlinkSync(PLIST_PATH);
+				console.log(`Removed ${PLIST_PATH}`);
+			} else {
+				console.log("Plist not found — nothing to remove.");
+			}
+			break;
+		}
+
+		case "start": {
+			if (!(await daemonIsLoaded())) {
+				const { existsSync } = await import("node:fs");
+				if (!existsSync(PLIST_PATH)) {
+					console.log("Daemon not installed. Running: og daemon install");
+					await handleDaemon(["install"]);
+					return;
+				}
+				const load = Bun.spawnSync(["launchctl", "load", PLIST_PATH]);
+				if (load.exitCode !== 0) {
+					console.error(
+						"Failed to start:",
+						new TextDecoder().decode(load.stderr),
+					);
+					process.exit(1);
+				}
+			} else {
+				// Already loaded, just kick it
+				Bun.spawnSync([
+					"launchctl",
+					"kickstart",
+					"-k",
+					`gui/${process.getuid?.() ?? 501}/${PLIST_LABEL}`,
+				]);
+			}
+			console.log("Daemon started.");
+			break;
+		}
+
+		case "stop": {
+			if (await daemonIsLoaded()) {
+				Bun.spawnSync(["launchctl", "unload", PLIST_PATH]);
+				console.log("Daemon stopped.");
+			} else {
+				console.log("Daemon is not running.");
+			}
+			break;
+		}
+
+		case "restart": {
+			if (await daemonIsLoaded()) {
+				Bun.spawnSync(["launchctl", "unload", PLIST_PATH]);
+			}
+			const load = Bun.spawnSync(["launchctl", "load", PLIST_PATH]);
+			if (load.exitCode !== 0) {
+				const { existsSync } = await import("node:fs");
+				if (!existsSync(PLIST_PATH)) {
+					console.log("Daemon not installed. Running: og daemon install");
+					await handleDaemon(["install"]);
+					return;
+				}
+				console.error(
+					"Failed to restart:",
+					new TextDecoder().decode(load.stderr),
+				);
+				process.exit(1);
+			}
+			console.log("Daemon restarted.");
+			break;
+		}
+
+		case "status": {
+			const loaded = await daemonIsLoaded();
+			if (!loaded) {
+				console.log("Daemon: not running (launchctl not loaded)");
+				return;
+			}
+			// Try health check
+			try {
+				const res = await api("/health");
+				const body = (await res.json()) as {
+					status: string;
+					version: string;
+					uptime: number;
+				};
+				console.log(
+					`Daemon: ${body.status} v${body.version} (uptime: ${Math.round(body.uptime / 1000)}s)`,
+				);
+			} catch {
+				console.log(
+					"Daemon: loaded in launchctl but not responding (starting up?)",
+				);
+			}
+			break;
+		}
+
+		case "logs": {
+			const follow = args.includes("-f") || args.includes("--follow");
+			const logFile = args.includes("--err")
+				? `${LOG_DIR}/daemon.err`
+				: `${LOG_DIR}/daemon.log`;
+			const cmd = follow ? ["tail", "-f", logFile] : ["tail", "-100", logFile];
+			const proc = Bun.spawn(cmd, { stdout: "inherit", stderr: "inherit" });
+			await proc.exited;
+			break;
+		}
+
+		default:
+			console.log("Usage: og daemon <command>");
+			console.log("");
+			console.log("Commands:");
+			console.log(
+				"  install     Install and start as launchctl service (auto-start on login)",
+			);
+			console.log("  uninstall   Stop and remove launchctl service");
+			console.log("  start       Start the daemon");
+			console.log("  stop        Stop the daemon");
+			console.log("  restart     Restart the daemon");
+			console.log("  status      Check daemon status");
+			console.log(
+				"  logs [-f]   View daemon logs (--err for stderr, -f to follow)",
+			);
+			break;
 	}
 }
 
@@ -528,16 +766,21 @@ switch (command) {
 	case "health":
 		await handleHealth();
 		break;
+	case "daemon":
+		await handleDaemon(args);
+		break;
 	default:
 		console.log("OpenGraft CLI");
 		console.log("");
 		console.log("Usage: og <command> [args]");
 		console.log("");
 		console.log("Commands:");
+		console.log(
+			"  daemon <cmd>    Manage daemon (install/start/stop/restart/status/logs)",
+		);
 		console.log("  init [path]     Initialize a project");
 		console.log("  list            List all projects");
 		console.log("  status [id]     Show task tree status");
-		console.log("  run <prompt>    Run agent task (one-shot)");
 		console.log(
 			"  orchestrate <goal>  Start agent orchestration (fire-and-forget)",
 		);
@@ -551,11 +794,15 @@ switch (command) {
 		console.log(
 			"  sessions clear  Wipe session history (start fresh on next run)",
 		);
-		console.log("  health          Check daemon status");
+		console.log("  health          Check daemon health");
 		console.log("");
-		console.log("Daemon restart workflow:");
-		console.log("  1. og stop               # Stop the agent (saves session)");
-		console.log("  2. Kill and restart daemon (session survives on disk)");
-		console.log("  3. og orchestrate --resume  # Resumes from saved history");
+		console.log("Quick start:");
+		console.log(
+			"  og daemon install    # Install as background service (auto-starts on login)",
+		);
+		console.log(
+			"  og init .            # Register current directory as project",
+		);
+		console.log("  og orchestrate 'build feature X'");
 		break;
 }

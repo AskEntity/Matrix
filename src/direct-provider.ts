@@ -209,7 +209,7 @@ const TOOLS: Tool[] = [
 	{
 		name: "bash",
 		description:
-			"Execute a bash command. Returns stdout and stderr. Use this for running tests, git operations, installing packages, etc.",
+			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search).",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -219,7 +219,7 @@ const TOOLS: Tool[] = [
 				},
 				timeout: {
 					type: "number",
-					description: "Timeout in milliseconds (default: 120000)",
+					description: "Timeout in milliseconds (default: 120000, max: 600000)",
 				},
 			},
 			required: ["command"],
@@ -228,7 +228,7 @@ const TOOLS: Tool[] = [
 	{
 		name: "read_file",
 		description:
-			"Read the contents of a file. Returns the file content as text.",
+			"Read the contents of a file with line numbers. You MUST read a file before editing it to understand existing code. For large files, use offset and limit to read in chunks.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -243,7 +243,8 @@ const TOOLS: Tool[] = [
 				},
 				limit: {
 					type: "number",
-					description: "Maximum number of lines to return (default: all)",
+					description:
+						"Maximum number of lines to return (default: all). Use with offset for paginating large files.",
 				},
 			},
 			required: ["path"],
@@ -252,7 +253,7 @@ const TOOLS: Tool[] = [
 	{
 		name: "write_file",
 		description:
-			"Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
+			"Write content to a file. Creates parent directories automatically. Use for new files or complete rewrites. For modifying existing files, prefer edit_file.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -271,7 +272,7 @@ const TOOLS: Tool[] = [
 	{
 		name: "edit_file",
 		description:
-			"Replace a specific string in a file. By default old_string must be unique; use replace_all=true to replace all occurrences.",
+			"Replace a specific string in a file. The old_string must be an EXACT match (including whitespace and indentation). If old_string is not unique, provide more surrounding context lines to make it unique, or use replace_all=true for bulk renames. You must read_file first to see the exact content.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -281,7 +282,8 @@ const TOOLS: Tool[] = [
 				},
 				old_string: {
 					type: "string",
-					description: "The exact string to find and replace",
+					description:
+						"The exact string to find and replace. Must match file content exactly, including whitespace.",
 				},
 				new_string: {
 					type: "string",
@@ -290,7 +292,7 @@ const TOOLS: Tool[] = [
 				replace_all: {
 					type: "boolean",
 					description:
-						"If true, replace all occurrences of old_string (default: false, requires uniqueness)",
+						"If true, replace all occurrences (default: false, which requires old_string to be unique in file)",
 				},
 			},
 			required: ["path", "old_string", "new_string"],
@@ -298,7 +300,8 @@ const TOOLS: Tool[] = [
 	},
 	{
 		name: "list_files",
-		description: "List files matching a glob pattern in the working directory.",
+		description:
+			'List files matching a glob pattern. Use to discover project structure and find relevant files before reading them. Examples: "src/**/*.ts", "**/*.test.ts", "*.json".',
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -314,13 +317,13 @@ const TOOLS: Tool[] = [
 	{
 		name: "search",
 		description:
-			"Search for a pattern in files using ripgrep (rg). Returns matching lines with file paths and line numbers.",
+			'Search for a regex pattern across files using ripgrep. Use output_mode="files_with_matches" to find which files contain a pattern, then read_file those files. Use output_mode="content" with context lines when you need to see surrounding code.',
 		input_schema: {
 			type: "object" as const,
 			properties: {
 				pattern: {
 					type: "string",
-					description: "Regex pattern to search for",
+					description: "Regex pattern to search for (ripgrep syntax, not grep)",
 				},
 				path: {
 					type: "string",
@@ -328,7 +331,7 @@ const TOOLS: Tool[] = [
 				},
 				glob: {
 					type: "string",
-					description: 'File glob filter (e.g. "*.ts")',
+					description: 'File glob filter (e.g. "*.ts", "*.{ts,tsx}")',
 				},
 				context: {
 					type: "number",
@@ -339,12 +342,11 @@ const TOOLS: Tool[] = [
 					type: "string",
 					enum: ["content", "files_with_matches", "count"],
 					description:
-						"Output mode: 'content' returns matching lines (default), 'files_with_matches' returns only file paths, 'count' returns match count per file",
+						"'content' (default): matching lines with line numbers. 'files_with_matches': file paths only (fast discovery). 'count': match counts per file.",
 				},
 				head_limit: {
 					type: "number",
-					description:
-						"Max number of matching lines to return (default: 50, max: 200)",
+					description: "Max number of output entries (default: 50, max: 200)",
 				},
 				case_insensitive: {
 					type: "boolean",
