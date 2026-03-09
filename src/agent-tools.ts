@@ -127,9 +127,12 @@ The parent has more context and can help. Failing early is better than wasting t
 
 ### Merge Protocol
 - Use \`git merge --no-ff <branch> -m "Merge task: <title>"\` from YOUR working directory
-- If merge conflicts occur: resolve them, or fail the child if conflicts are too complex
+- If merge conflicts occur: resolve them with edit_file. This is expected with parallel work.
+- If conflicts are too complex: merge the larger/more complex feature first, then reset and re-spawn the simpler one.
 - After successful merge: ALWAYS call delete_task to clean up worktree + branch + node
 - After ALL merges: run full test suite to catch integration issues
+- Intermediate merges may not typecheck (e.g., types merged but implementors not yet).
+  Use \`--no-verify\` for intermediate commits. The final state MUST pass all hooks.
 
 ## Memory System
 - Project memory lives in \`.opengraft/memory.md\` — read it on start, update it as you learn.
@@ -143,10 +146,18 @@ The parent has more context and can help. Failing early is better than wasting t
 ## Orchestration Rules
 - You can only execute your own direct children — no skipping levels
 - Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
-- Never have two siblings modify the same file — parallel tasks must be independent
 - Keep the tree shallow: 2-3 levels max
 - Each leaf task should be independently executable by a single agent session
 - ALWAYS merge and delete_task each passed child before moving on
+
+## Parallelization Strategy
+- Sibling tasks run in PARALLEL. Split by sub-feature so each has a clear scope.
+- Some file overlap is OK if the changes are in different areas (e.g., each adding a new UI component).
+  Merge conflicts from parallel work are normal — resolve them.
+- When specifying child tasks, tell each child whether its task is independently compilable/testable,
+  or whether it depends on sibling outputs (and if so, what to expect).
+- If a merge conflict is too complex to resolve: merge the more complex/larger feature first,
+  then re-spawn the simpler feature with \`mode: "reset"\` so it rebuilds on top of the merged code.
 
 ## Stimulus Priority (what to do next)
 When deciding your next action, follow this priority order:
@@ -193,12 +204,13 @@ When acting as sub-orchestrator: do NOT write code yourself — only manage chil
 - Do NOT push — just commit locally.
 
 ## Worker Rules
-- Work only on the files/modules described in your task
-- Do NOT modify files outside your scope — sibling tasks work on other modules in parallel
-- Run \`bun test\`, \`bun run typecheck\`, and \`bun run check\` before considering done
-- Commit when all checks pass
-- Prefer edit_file for small changes, write_file for new files or complete rewrites
-- Use search to understand existing code before modifying it
+- Work on the files/modules described in your task. Avoid modifying files outside your scope.
+- Read the codebase to understand context — explore relevant files, patterns, and conventions.
+- Follow the parent's instructions on whether your task is independently compilable/testable.
+  If the parent says your task depends on sibling outputs, use \`--no-verify\` for commits if needed.
+- Run \`bun test\`, \`bun run typecheck\`, and \`bun run check\` before considering done.
+- Prefer edit_file for small changes, write_file for new files or complete rewrites.
+- Use search to understand existing code before modifying it.
 
 ## Methodology (from OpenGraft.md)
 - Don't guess APIs — read docs or run --help first
@@ -970,6 +982,7 @@ function readMemory(projectPath: string): string {
 
 function buildTaskPrompt(
 	node: {
+		id: string;
 		title: string;
 		description: string;
 		parentId: string | null;
@@ -986,6 +999,7 @@ function buildTaskPrompt(
 	}
 
 	parts.push(`# Task: ${node.title}`);
+	parts.push(`Task ID: \`${node.id}\``);
 	if (node.description) {
 		parts.push(node.description);
 	}

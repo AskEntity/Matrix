@@ -121,9 +121,24 @@ export class TaskTracker {
 		node.updatedAt = new Date().toISOString();
 	}
 
-	/** Get a node by ID. */
+	/** Get a node by ID (supports short prefix matching, min 8 chars). */
 	get(nodeId: string): TaskNode | undefined {
-		return this.nodes.get(nodeId);
+		// Exact match first
+		const exact = this.nodes.get(nodeId);
+		if (exact) return exact;
+
+		// Short prefix match (at least 8 chars to avoid ambiguity)
+		if (nodeId.length >= 8) {
+			let match: TaskNode | undefined;
+			for (const [id, node] of this.nodes) {
+				if (id.startsWith(nodeId)) {
+					if (match) return undefined; // Ambiguous — multiple matches
+					match = node;
+				}
+			}
+			return match;
+		}
+		return undefined;
 	}
 
 	/** Get all children of a node. */

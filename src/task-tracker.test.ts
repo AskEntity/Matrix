@@ -134,4 +134,24 @@ describe("TaskTracker", () => {
 	test("orchestratorSessionId defaults to null", () => {
 		expect(tracker.orchestratorSessionId).toBeNull();
 	});
+
+	test("get() supports short prefix matching (8+ chars)", () => {
+		const task = tracker.addTask("Prefix test", "Test prefix matching");
+		const shortId = task.id.slice(0, 8);
+		expect(tracker.get(shortId)).toBe(task);
+		// Too short (7 chars) should not match
+		expect(tracker.get(task.id.slice(0, 7))).toBeUndefined();
+		// Full ID still works
+		expect(tracker.get(task.id)).toBe(task);
+	});
+
+	test("get() returns undefined for ambiguous prefix", () => {
+		const task1 = tracker.addTask("Task A", "First");
+		const task2 = tracker.addTask("Task B", "Second");
+		// Using a 1-char prefix (too short) returns undefined
+		expect(tracker.get(task1.id.slice(0, 1))).toBeUndefined();
+		// Full IDs still work
+		expect(tracker.get(task1.id)).toBe(task1);
+		expect(tracker.get(task2.id)).toBe(task2);
+	});
 });
