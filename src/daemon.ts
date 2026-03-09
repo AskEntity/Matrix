@@ -629,6 +629,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				provider: config.agentProvider,
 				worktrees: wm,
 				projectPath: project.path,
+				repoPath: project.path,
+				depth: 0,
 				childModel: body.childModel,
 				onTaskEvent: (event) => {
 					broadcastEvent(project.id, event);
@@ -827,6 +829,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				provider: config.agentProvider,
 				worktrees: wm,
 				projectPath: project.path,
+				repoPath: project.path,
+				depth: 0,
 				childModel,
 				onTaskEvent: (event) => {
 					broadcastEvent(projectId, event);

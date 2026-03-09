@@ -64,7 +64,12 @@ export interface OrchestratorToolsDeps {
 	tracker: TaskTracker;
 	provider: AgentProvider;
 	worktrees: WorktreeManager;
+	/** Working directory for this agent (main repo or worktree). */
 	projectPath: string;
+	/** Main repo root — always the same, used for git operations. */
+	repoPath: string;
+	/** Recursion depth (0 = top-level orchestrator). Max depth limits MCP tool injection. */
+	depth?: number;
 	/** Optional callback for broadcasting task events (e.g., to WebSocket clients). */
 	onTaskEvent?: (event: Record<string, unknown>) => void;
 	/** Model for child agent execution (defaults to provider's default). */
@@ -112,15 +117,28 @@ export function createOrchestratorTools(
 	deps: OrchestratorToolsDeps,
 	costAccumulator?: CostAccumulator,
 ): OrchestratorToolsResult {
-	const { tracker, provider, worktrees, projectPath, onTaskEvent, childModel } =
-		deps;
+	const {
+		tracker,
+		provider,
+		worktrees,
+		projectPath,
+		repoPath,
+		onTaskEvent,
+		childModel,
+	} = deps;
+	const depth = deps.depth ?? 0;
+	const maxDepth = 3;
 	const costs = costAccumulator ?? new CostAccumulator();
 	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
 
-	/** Execute a child agent with streaming, forwarding events tagged with taskId. */
+	/**
+	 * Execute a child agent with streaming, forwarding events tagged with taskId.
+	 * If depth < maxDepth, the child also receives MCP tools for recursive spawning.
+	 */
 	async function executeChildStreaming(
 		request: AgentRequest,
 		taskId: string,
+		childCwd: string,
 	): Promise<{
 		success: boolean;
 		output: string;
@@ -128,6 +146,27 @@ export function createOrchestratorTools(
 		turns?: number;
 		sessionId?: string;
 	}> {
+		// Give children MCP tools if we haven't hit max depth
+		if (depth < maxDepth && !request.mcpToolDefs) {
+			const childCosts = new CostAccumulator();
+			const { toolDefs: childToolDefs, mcpServer: childMcpServer } =
+				createOrchestratorTools(
+					{
+						tracker,
+						provider,
+						worktrees,
+						projectPath: childCwd,
+						repoPath,
+						depth: depth + 1,
+						onTaskEvent,
+						childModel,
+					},
+					childCosts,
+				);
+			request.mcpToolDefs = { opengraft: childToolDefs };
+			request.mcpServers = { opengraft: childMcpServer };
+		}
+
 		const stream = provider.stream(request);
 		let result = await stream.next();
 		while (!result.done) {
@@ -313,7 +352,7 @@ export function createOrchestratorTools(
 					};
 
 					// Execute agent with streaming (forwards events to UI)
-					const result = await executeChildStreaming(request, node.id);
+					const result = await executeChildStreaming(request, node.id, wt.path);
 
 					// Store session ID and accumulate cost
 					if (result.sessionId) {
@@ -464,6 +503,7 @@ export function createOrchestratorTools(
 									model: childModel,
 								},
 								child.id,
+								wt.path,
 							);
 
 							if (result.sessionId) {
@@ -609,6 +649,7 @@ export function createOrchestratorTools(
 							model: childModel,
 						},
 						node.id,
+						node.worktreePath,
 					);
 
 					if (result.sessionId) {
