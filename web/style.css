@@ -1560,3 +1560,57 @@ select {
 .og-btn-targeted:hover {
 	background: rgba(56, 139, 253, 0.2);
 }
+
+/* Pending message chips in footer */
+.og-pending-messages {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 5px 12px;
+	margin-bottom: 6px;
+	border-radius: var(--radius-md);
+	border: 1px solid rgba(227, 179, 65, 0.35);
+	background: rgba(227, 179, 65, 0.08);
+}
+
+.og-pending-label {
+	font-size: 11px;
+	color: var(--text-muted);
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	flex-shrink: 0;
+}
+
+.og-pending-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 2px 6px 2px 8px;
+	border-radius: var(--radius-full);
+	background: rgba(227, 179, 65, 0.15);
+	border: 1px solid rgba(227, 179, 65, 0.4);
+	color: #e3b341;
+	font-size: 11px;
+	max-width: 240px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.og-pending-chip-dismiss {
+	background: none;
+	border: none;
+	cursor: pointer;
+	color: rgba(227, 179, 65, 0.7);
+	font-size: 14px;
+	line-height: 1;
+	padding: 0;
+	flex-shrink: 0;
+	transition: color var(--t-fast);
+}
+
+.og-pending-chip-dismiss:hover {
+	color: #e3b341;
+}
