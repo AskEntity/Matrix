@@ -190,6 +190,21 @@ User requested: When a task/agent is selected in the web UI, messages should be 
 2. API changes to route messages to specific agent queues (may already be possible via existing queue infrastructure)
 3. Will be addressed after the done() tool lifecycle feature is complete.
 
+## Child-to-Parent Messaging (report_to_parent tool)
+
+Added in Phase 4 alongside the MessageQueue feature:
+
+- **New QueueMessage type**: `{ source: "child_report"; taskId: string; title: string; content: string }` in `src/message-queue.ts`
+- **New MCP tool**: `report_to_parent` in `src/agent-tools.ts`
+  - Parameter: `message` (string)
+  - Behavior: enqueues to `deps.queue` (parent's queue) with source `"child_report"`
+  - Non-blocking: returns immediately like `clarify`
+  - If `deps.queue` is absent (top-level orchestrator), silently no-ops with an informational message
+  - Gets current task's `taskId` and `title` from `currentTaskId` + `tracker.get()`
+- **formatQueueMessage** handles `child_report`: `[child_report] From child "${title}" (${taskId}): ${content}`
+- **ORCHESTRATION_KNOWLEDGE** updated: `report_to_parent` listed in tools, `child_report` added to yield() message types
+- **TASK_SYSTEM_PROMPT** updated: `report_to_parent` listed in Worker Tools section
+
 ## Pending Feature Request: Enhanced yield() Status Summary
 
 User requested: When yield() returns, it should show not just the messages that woke the agent, but also a summary of what's still pending:

@@ -64,6 +64,8 @@ export function formatQueueMessage(msg: QueueMessage): string {
 			return `[parent_update] ${msg.content}`;
 		case "clarify_response":
 			return `[clarify_response] ${msg.answer}`;
+		case "child_report":
+			return `[child_report] From child "${msg.title}" (${msg.taskId}): ${msg.content}`;
 	}
 }
 
@@ -87,6 +89,9 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   to wait for the clarify_response.
 - done: Signal that you have finished your task. Call done(status, summary) with status "passed" or "failed".
   This is the proper way to exit — always call done() when you're finished.
+- report_to_parent: Send a progress update or status message to your parent agent. Non-blocking.
+  The parent receives this as a child_report message when it calls yield().
+  Use this to keep the parent informed about important intermediate progress or issues.
 
 ## Event-Driven Workflow Pattern
 1. Analyze the goal and the codebase (read files to understand structure)
@@ -96,6 +101,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 5. Call yield() to wait for results — this suspends your execution with zero token burn
 6. When yield() returns, process the messages:
    - child_complete: check if passed/failed, merge passed branches, retry failed ones
+   - child_report: progress update from a running child — read it and continue waiting if needed
    - user: incorporate new instructions
    - clarify_response: use the answer to proceed
 7. When a child passes, merge its branch:
@@ -193,6 +199,8 @@ When acting as sub-orchestrator: do NOT write code yourself — only manage chil
 - edit_file: Replace a unique string in a file (for surgical edits)
 - list_files: Glob pattern matching to find files
 - search: Regex search across files (with optional context lines)
+- report_to_parent: Send a progress update to your parent agent (non-blocking). Use this to report
+  important intermediate results, blockers, or status without waiting for parent acknowledgement.
 
 ## Worker Workflow
 1. Read \`.opengraft/memory.md\` and the task description carefully
@@ -965,6 +973,64 @@ export function createOrchestratorTools(
 						},
 					],
 				};
+			},
+		),
+
+		tool(
+			"report_to_parent",
+			"Send a progress update or status message to your parent agent. " +
+				"Non-blocking: returns immediately. " +
+				"The parent receives this as a child_report message when it calls yield(). " +
+				"Use this to keep the parent informed about important intermediate progress, " +
+				"blockers, or results without waiting for acknowledgement.",
+			{
+				message: z
+					.string()
+					.describe("The message content to send to the parent agent"),
+			},
+			async (args) => {
+				if (!deps.queue) {
+					// No parent queue — silently no-op (top-level orchestrator has no parent)
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "No parent agent to report to (you are the top-level orchestrator). Message dropped.",
+							},
+						],
+					};
+				}
+
+				const node = currentTaskId ? tracker.get(currentTaskId) : null;
+				const taskTitle = node?.title ?? "unknown";
+
+				try {
+					deps.queue.enqueue({
+						source: "child_report",
+						taskId: currentTaskId ?? "unknown",
+						title: taskTitle,
+						content: args.message,
+					});
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "Message reported to parent agent.",
+							},
+						],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error reporting to parent: ${message}`,
+							},
+						],
+						isError: true,
+					};
+				}
 			},
 		),
 
