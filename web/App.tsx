@@ -999,6 +999,8 @@ function OrchestratorDetail({
 	cacheCreationTokens,
 	cacheReadTokens,
 	outputTokens,
+	provider,
+	model,
 	onClearSessions,
 }: {
 	running: boolean;
@@ -1011,6 +1013,8 @@ function OrchestratorDetail({
 	cacheCreationTokens?: number | null;
 	cacheReadTokens?: number | null;
 	outputTokens?: number | null;
+	provider?: string | null;
+	model?: string | null;
 	onClearSessions?: () => void;
 }) {
 	const passed = nodes.filter((n) => n.status === "passed").length;
@@ -1046,6 +1050,22 @@ function OrchestratorDetail({
 						)}
 					</span>
 				</div>
+				{provider && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">Provider</span>
+						<span className="og-stat-value" style={{ fontSize: "12px" }}>
+							{provider}
+						</span>
+					</div>
+				)}
+				{model && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">Model</span>
+						<span className="og-stat-value" style={{ fontSize: "12px" }}>
+							{model}
+						</span>
+					</div>
+				)}
 				<div className="og-stat-card">
 					<span className="og-stat-label">Tasks</span>
 					<span className="og-stat-value">{nodeCount}</span>
@@ -1211,6 +1231,10 @@ export function App() {
 	const {
 		running,
 		setRunning,
+		provider: agentProvider,
+		setProvider: setAgentProvider,
+		model: agentModel,
+		setModel: setAgentModel,
 		start,
 		stop,
 		checkStatus,
@@ -1342,6 +1366,8 @@ export function App() {
 						text = (msg.content as string) || "";
 					} else if (et === "error") {
 						text = (msg.message as string) || "";
+					} else if (et === "usage") {
+						break;
 					} else if (et === "compact") {
 						text = `Context compacted (saved ~${msg.savedTokens} tokens)`;
 						addLog(
@@ -1395,6 +1421,8 @@ export function App() {
 					}
 					addLog("lifecycle", "Orchestration started");
 					setRunning(true);
+					if (msg.provider) setAgentProvider(msg.provider as string);
+					if (msg.model) setAgentModel(msg.model as string);
 					break;
 				case "orchestration_completed": {
 					const costStr = msg.costUsd
@@ -1474,7 +1502,7 @@ export function App() {
 				}
 			}
 		},
-		[addLog, updateFromWS, setRunning],
+		[addLog, updateFromWS, setRunning, setAgentProvider, setAgentModel],
 	);
 
 	const { connected } = useWebSocket(projectId, handleWS);
@@ -1909,6 +1937,8 @@ export function App() {
 								cacheCreationTokens={lastCacheCreationTokens}
 								cacheReadTokens={lastCacheReadTokens}
 								outputTokens={lastOutputTokens}
+								provider={agentProvider}
+								model={agentModel}
 								onClearSessions={handleClearSessions}
 							/>
 						) : selectedNode ? (
