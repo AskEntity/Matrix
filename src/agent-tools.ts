@@ -81,7 +81,8 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   Results arrive via yield() as child_complete messages.
   Modes: "new" (fresh start), "resume" (continue failed task's session), "reset" (wipe branch, restart)
 - yield: Suspend execution and wait for messages (child completions, user messages, clarify responses).
-  Call this after spawning tasks. Returns all accumulated messages. Zero token burn while suspended.
+  Call this after spawning tasks. Returns all accumulated messages plus a "## Pending" summary section
+  showing running children and pending clarifications. Zero token burn while suspended.
 - send_message_to_child: Send a requirement update or instruction to a running child agent.
 - delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
 - clarify: Send a clarification question to the user or parent orchestrator. Returns immediately —
@@ -99,11 +100,18 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 3. CRITICAL: Sibling tasks run in PARALLEL — each must work on DIFFERENT files/modules
 4. Call execute_tasks to spawn children (returns immediately)
 5. Call yield() to wait for results — this suspends your execution with zero token burn
-6. When yield() returns, process the messages:
+6. When yield() returns, process the messages and the ## Pending summary:
    - child_complete: check if passed/failed, merge passed branches, retry failed ones
    - child_report: progress update from a running child — read it and continue waiting if needed
    - user: incorporate new instructions
    - clarify_response: use the answer to proceed
+   - ## Pending section: shows which children are still running and how many clarifications are outstanding
+     Example yield() output:
+       [child_complete] Task "Auth module" (abc123) passed: All tests passing
+
+       ## Pending
+       - Running children: "Payment module" (def456), "UI components" (ghi789)
+       - Pending clarifications: none
 7. When a child passes, merge its branch:
    a. Merge via bash: \`git merge --no-ff <child-branch> -m "Merge task: <title>"\`
    b. Call delete_task(taskId) to clean up the child's worktree, branch, and task node
@@ -320,6 +328,8 @@ export function createOrchestratorTools(
 	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
 	const childQueues = deps.childQueues ?? new Map<string, MessageQueue>();
 	const doneRef = deps.doneRef ?? null;
+	/** Count of outstanding clarify() calls that have not yet received a clarify_response. */
+	let pendingClarifications = 0;
 
 	/**
 	 * Execute a child agent with streaming, forwarding events tagged with taskId.
@@ -789,7 +799,8 @@ export function createOrchestratorTools(
 			"yield",
 			"Suspend execution and wait for messages (child completions, user messages, etc.). " +
 				"Call this when you have spawned tasks and are waiting for results. " +
-				"Returns all accumulated messages. Zero token burn while waiting.",
+				"Returns all accumulated messages plus a ## Pending summary section. " +
+				"Zero token burn while waiting.",
 			{},
 			async () => {
 				if (!deps.queue) {
@@ -809,10 +820,46 @@ export function createOrchestratorTools(
 					// Drain any additional messages that accumulated
 					const rest = deps.queue.drain();
 					const all = [first, ...rest];
+
+					// Track clarify_response messages — each one resolves a pending clarification
+					for (const msg of all) {
+						if (msg.source === "clarify_response") {
+							pendingClarifications = Math.max(0, pendingClarifications - 1);
+						}
+					}
+
 					// Format messages for the agent
 					const formatted = all.map(formatQueueMessage).join("\n");
+
+					// Build ## Pending summary
+					const runningChildren = Array.from(childQueues.keys());
+					const runningChildrenText =
+						runningChildren.length > 0
+							? runningChildren
+									.map((id) => {
+										const title = tracker.get(id)?.title ?? id;
+										return `"${title}" (${id})`;
+									})
+									.join(", ")
+							: "none";
+					const clarifyText =
+						pendingClarifications > 0 ? String(pendingClarifications) : "none";
+					const pendingSection = [
+						"",
+						"## Pending",
+						`- Running children: ${runningChildrenText}`,
+						`- Pending clarifications: ${clarifyText}`,
+					].join("\n");
+
 					return {
-						content: [{ type: "text" as const, text: formatted }],
+						content: [
+							{
+								type: "text" as const,
+								text: formatted
+									? formatted + pendingSection
+									: pendingSection.trimStart(),
+							},
+						],
 					};
 				} catch (e) {
 					const message = e instanceof Error ? e.message : "Unknown error";
@@ -958,6 +1005,9 @@ export function createOrchestratorTools(
 			},
 			async (args) => {
 				const taskId = currentTaskId ?? "orchestrator";
+
+				// Track this as a pending clarification — decremented in yield() when clarify_response arrives
+				pendingClarifications++;
 
 				emit({
 					type: "clarification_requested",

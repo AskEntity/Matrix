@@ -237,9 +237,22 @@ Completed modern UI redesign with:
 - **Biome lint**: `noSvgWithoutTitle` rule requires `aria-hidden="true"` on decorative SVGs
 - **CSS naming**: Using `og-` prefix for all CSS classes to avoid collisions
 
-## Pending Feature Request: Enhanced yield() Status Summary
+## Enhanced yield() Status Summary (Implemented)
 
-User requested: When yield() returns, it should show not just the messages that woke the agent, but also a summary of what's still pending:
-- Which children are still running (from childQueues map)
-- Which clarifications are still unanswered
-This gives the agent better situational awareness after being woken up.
+yield() now appends a `## Pending` section to every response:
+
+```
+[child_complete] Task "Auth module" (abc123) passed: All tests passing
+
+## Pending
+- Running children: "Payment module" (def456), "UI components" (ghi789)
+- Pending clarifications: none
+```
+
+**Implementation details** (in `src/agent-tools.ts`):
+- `pendingClarifications` counter (closure var) tracks outstanding clarify calls
+- `clarify()` tool increments `pendingClarifications` on each call
+- `yield()` decrements `pendingClarifications` for each `clarify_response` message drained
+- Running children are read from `childQueues` map (keys = taskIds of in-flight children)
+- `## Pending` section always appears, even if no messages and nothing pending ("none")
+- When no messages exist (empty string), `pendingSection.trimStart()` avoids leading newline
