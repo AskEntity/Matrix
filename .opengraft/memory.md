@@ -202,7 +202,7 @@ All task mutations broadcast `tree_update` via WebSocket:
 
 ## Known Bugs / TODO
 
-(none — continue handler bug fixed, UI targeting improved, prompt caching bug fixed)
+(none — continue handler bug fixed, UI targeting improved, prompt caching bug fixed, startup race condition fixed)
 
 ## Known Pitfalls
 
@@ -216,6 +216,7 @@ All task mutations broadcast `tree_update` via WebSocket:
 - **TaskTracker.get()**: supports short ID prefix matching (8+ chars), returns undefined on ambiguity.
 - **`createApp` returns `getTracker`**: to test daemon internals that depend on the in-memory `TaskTracker` (e.g., the continue handler's worktreePath branch), use `const { getTracker } = createApp(...)` to get the daemon's own tracker instance. Writing to the tracker file externally won't affect an already-loaded in-memory tracker.
 - **Continue handler pattern**: uses `provider.startSession()` (not `stream()`), creates a `MessageQueue` registered in `globalAgentQueues`, and calls `createOrchestratorTools()` with `depth: 1`, `currentTaskId: nodeId`. Queue is cleaned up in `finally` block. Status determined by `doneRef.done` first, with `agentResult.success` as fallback.
+- **Startup ready guard**: `createApp` has a `startupReady` flag (default false). All orchestration endpoints (WS orchestrate, POST /orchestrate/agent, /run, /agents/start) return 503 until `markReady()` is called. Tests must call `markReady()` after `createApp()` to use these endpoints.
 
 ## Methodology
 
