@@ -174,6 +174,25 @@ describe("executeTool", () => {
 		expect(result.content).toContain("exit code: 1");
 	});
 
+	test("bash: falls back to fallbackCwd when cwd is deleted", async () => {
+		// Create and then delete a temp dir to simulate a stale CWD
+		const deletedDir = await mkdtemp(join(tmpdir(), "og-deleted-"));
+		await rm(deletedDir, { recursive: true });
+
+		const result = await executeTool(
+			"bash",
+			{ command: "echo hello" },
+			deletedDir,
+			tempDir, // fallbackCwd
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("Warning: working directory");
+		expect(result.content).toContain("no longer exists");
+		expect(result.content).toContain("hello");
+		// Should report the fallback as the new cwd
+		expect(result.cwd).toBe(tempDir);
+	});
+
 	test("write_file: creates file with directories", async () => {
 		const path = join(tempDir, "sub", "dir", "file.txt");
 		const result = await executeTool(
