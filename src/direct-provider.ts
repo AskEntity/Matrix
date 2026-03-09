@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import Anthropic from "@anthropic-ai/sdk";
@@ -904,6 +904,22 @@ export class DirectProvider implements AgentProvider {
 	): AsyncGenerator<AgentEvent, AgentResult> {
 		const model = request.model ?? this.model;
 		const cwd = request.cwd;
+		const projectPath = request.projectPath ?? cwd;
+
+		// Load session history from disk if not already in memory (survives daemon restart)
+		if (sessionId && !this.sessionHistory.has(sessionId)) {
+			try {
+				const sessionsDir = join(projectPath, ".opengraft", "sessions");
+				const data = await readFile(
+					join(sessionsDir, `${sessionId}.json`),
+					"utf-8",
+				);
+				const history = JSON.parse(data) as MessageParam[];
+				this.sessionHistory.set(sessionId, history);
+			} catch {
+				// File missing or corrupt — start fresh (expected for new sessions)
+			}
+		}
 
 		// Restore conversation history if resuming, otherwise start fresh
 		const existingHistory = this.sessionHistory.get(sessionId);
@@ -1187,8 +1203,21 @@ export class DirectProvider implements AgentProvider {
 			}
 		}
 
-		// Persist conversation history for future resume
-		this.sessionHistory.set(sessionId, [...messages]);
+		// Persist conversation history for future resume (in memory + on disk)
+		const finalMessages = [...messages];
+		this.sessionHistory.set(sessionId, finalMessages);
+		// Also write to disk so the history survives daemon restarts
+		try {
+			const sessionsDir = join(projectPath, ".opengraft", "sessions");
+			await mkdir(sessionsDir, { recursive: true });
+			await writeFile(
+				join(sessionsDir, `${sessionId}.json`),
+				JSON.stringify(finalMessages),
+				"utf-8",
+			);
+		} catch {
+			// Non-fatal: if we can't persist to disk, in-memory history still works
+		}
 
 		const { inputPer1M, outputPer1M } = getModelPricing(model);
 		// Anthropic API: input_tokens = non-cached tokens only (excludes cache_creation

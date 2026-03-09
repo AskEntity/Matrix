@@ -242,6 +242,24 @@ async function handleStop(): Promise<void> {
 		process.exit(1);
 	}
 	console.log("Agent stopped.");
+	console.log(
+		"Tip: Session history is preserved on disk. Restart the daemon and resume with: og orchestrate --resume",
+	);
+}
+
+async function handleSessionsClear(): Promise<void> {
+	const projectId = await resolveCurrentProject();
+	if (!projectId) return;
+
+	const res = await api(`/projects/${projectId}/sessions/clear`, {
+		method: "POST",
+	});
+	if (!res.ok) {
+		const err = (await res.json()) as { error: string };
+		console.error(`Error: ${err.error}`);
+		process.exit(1);
+	}
+	console.log("Session history cleared. Next orchestration will start fresh.");
 }
 
 async function resolveProject(idOrPath?: string): Promise<string | null> {
@@ -497,6 +515,16 @@ switch (command) {
 	case "stop":
 		await handleStop();
 		break;
+	case "sessions": {
+		const sub = args[0];
+		if (sub === "clear") {
+			await handleSessionsClear();
+		} else {
+			console.error("Usage: og sessions clear");
+			process.exit(1);
+		}
+		break;
+	}
 	case "health":
 		await handleHealth();
 		break;
@@ -513,10 +541,21 @@ switch (command) {
 		console.log(
 			"  orchestrate <goal>  Start agent orchestration (fire-and-forget)",
 		);
+		console.log(
+			"  orchestrate --resume [prompt]  Resume from saved session history",
+		);
 		console.log("  continue <taskId> [msg]  Continue a failed/stuck task");
 		console.log("  watch           Watch agent activity in real-time");
 		console.log("  send <msg>      Send instruction to running agent");
-		console.log("  stop            Stop running agent");
+		console.log("  stop            Stop running agent (session saved to disk)");
+		console.log(
+			"  sessions clear  Wipe session history (start fresh on next run)",
+		);
 		console.log("  health          Check daemon status");
+		console.log("");
+		console.log("Daemon restart workflow:");
+		console.log("  1. og stop               # Stop the agent (saves session)");
+		console.log("  2. Kill and restart daemon (session survives on disk)");
+		console.log("  3. og orchestrate --resume  # Resumes from saved history");
 		break;
 }

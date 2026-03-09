@@ -11,6 +11,8 @@ export interface AgentRequest {
 	prompt: string;
 	/** Working directory for the agent to operate in. */
 	cwd: string;
+	/** Absolute path to the project root (for session persistence). Defaults to cwd if omitted. */
+	projectPath?: string;
 	/** System prompt injected into the agent session. */
 	systemPrompt?: string;
 	/** Abort signal for cancellation. */

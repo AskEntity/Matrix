@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -617,6 +618,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const session = config.agentProvider.startSession({
 			prompt,
 			cwd: project.path,
+			projectPath: project.path,
 			systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
 			mcpServers: { opengraft: mcpServer },
 			mcpToolDefs: { opengraft: toolDefs },
@@ -764,6 +766,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		activeOrchestrations.delete(project.id);
 		broadcastEvent(project.id, { type: "agent_stopped" });
 		return c.json({ ok: true });
+	});
+
+	// Clear session history for a project (useful when starting fresh after restart)
+	app.post("/projects/:id/sessions/clear", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const sessionsDir = join(project.path, ".opengraft", "sessions");
+		await rm(sessionsDir, { recursive: true, force: true });
+		await mkdir(sessionsDir, { recursive: true });
+		return c.json({ cleared: true });
 	});
 
 	// Inject a message into a running agent

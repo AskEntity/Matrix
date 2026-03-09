@@ -245,6 +245,34 @@ Completed modern UI redesign with:
 - **Biome lint**: `noSvgWithoutTitle` rule requires `aria-hidden="true"` on decorative SVGs
 - **CSS naming**: Using `og-` prefix for all CSS classes to avoid collisions
 
+## Session Persistence (Daemon Restart Feature)
+
+Implemented in Phase 4. Orchestrator session history now survives daemon restarts.
+
+### How It Works
+- **DirectProvider**: After each `runLoop` completes, session messages are written to `{projectPath}/.opengraft/sessions/{sessionId}.json`
+- **Load on resume**: At the start of `runLoop`, if `sessionId` is provided but not in memory, the file is read from disk and loaded into `sessionHistory`
+- **`projectPath`**: Added to `AgentRequest` interface (optional, defaults to `cwd`). Passed from `daemon.ts` `launchAgent` → `startSession`.
+- **Sessions dir**: Created by `ProjectManager.init()` (both `createNew` and `convertExisting`). `.opengraft/.gitignore` excludes `sessions/` from git.
+
+### API
+- `POST /projects/:id/sessions/clear` — wipes sessions dir and recreates it (fresh start)
+
+### CLI
+- `og stop` — now prints tip about session persistence
+- `og sessions clear` — clears session history
+- `og orchestrate --resume` — resumes from saved history
+
+### Restart Workflow
+1. `og stop` — stops agent (session saved to disk)
+2. Kill and restart daemon (session data persists in `.opengraft/sessions/`)
+3. `og orchestrate --resume` — resumes with full history
+
+### Key Implementation Details
+- Disk write is non-fatal (wrapped in try/catch) — in-memory still works if disk fails
+- `.opengraft/.gitignore` contains `sessions/` so session files don't pollute git
+- `ProjectManager.convertExisting` also creates sessions dir + gitignore (idempotent)
+
 ## Real-time Task Tree Updates via WebSocket (Fixed)
 
 Root cause: Three HTTP routes and three MCP tools modified the task tracker but did not call `broadcastTreeUpdate()`.
