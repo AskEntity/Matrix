@@ -320,6 +320,21 @@ const TOOLS: Tool[] = [
 					description:
 						"Number of context lines before and after each match (default: 0)",
 				},
+				output_mode: {
+					type: "string",
+					enum: ["content", "files_with_matches", "count"],
+					description:
+						"Output mode: 'content' returns matching lines (default), 'files_with_matches' returns only file paths, 'count' returns match count per file",
+				},
+				head_limit: {
+					type: "number",
+					description:
+						"Max number of matching lines to return (default: 50, max: 200)",
+				},
+				case_insensitive: {
+					type: "boolean",
+					description: "Case-insensitive search (default: false)",
+				},
 			},
 			required: ["pattern"],
 		},
@@ -474,24 +489,37 @@ export async function executeTool(
 			const searchPath = (input.path as string) ?? ".";
 			const glob = input.glob as string | undefined;
 			const contextLines = input.context as number | undefined;
+			const outputMode = (input.output_mode as string) ?? "content";
+			const headLimit = Math.min((input.head_limit as number) ?? 50, 200);
+			const caseInsensitive = (input.case_insensitive as boolean) ?? false;
 
 			// Try rg first, fall back to grep if rg is not available
 			const useRg = await isCommandAvailable("rg");
 			const args: string[] = useRg
-				? ["rg", "--no-heading", "-n", pattern, searchPath]
-				: ["grep", "-rn", pattern, searchPath];
+				? ["rg", "--no-heading", "-n"]
+				: ["grep", "-rn"];
+
+			if (caseInsensitive) args.push("-i");
 
 			if (useRg) {
+				if (outputMode === "files_with_matches") {
+					args.push("-l");
+				} else if (outputMode === "count") {
+					args.push("-c");
+				}
 				if (glob) args.push("--glob", glob);
-				if (contextLines && contextLines > 0) {
+				if (contextLines && contextLines > 0 && outputMode === "content") {
 					args.push("-C", String(Math.min(contextLines, 10)));
 				}
-				args.push("--max-count", "50");
+				args.push("--max-count", String(headLimit));
+				args.push(pattern, searchPath);
 			} else {
+				if (outputMode === "files_with_matches") args.push("-l");
+				if (outputMode === "count") args.push("-c");
 				if (glob) args.push("--include", glob);
-				if (contextLines && contextLines > 0) {
+				if (contextLines && contextLines > 0)
 					args.push(`-C${Math.min(contextLines, 10)}`);
-				}
+				args.push(pattern, searchPath);
 			}
 
 			try {
@@ -503,7 +531,7 @@ export async function executeTool(
 				await proc.exited;
 				const stdout = await new Response(proc.stdout).text();
 				return {
-					content: stdout.slice(0, 10000) || "(no matches)",
+					content: stdout.slice(0, 20000) || "(no matches)",
 					isError: false,
 				};
 			} catch (e) {

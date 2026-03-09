@@ -188,6 +188,72 @@ describe("executeTool", () => {
 		expect(result.content).toContain("line4");
 	});
 
+	test("search: files_with_matches returns only file paths", async () => {
+		await writeFile(join(tempDir, "match1.ts"), "const hello = 1;\n");
+		await writeFile(join(tempDir, "match2.ts"), "const hello = 2;\n");
+		await writeFile(join(tempDir, "nomatch.ts"), "const world = 3;\n");
+		const result = await executeTool(
+			"search",
+			{ pattern: "hello", path: tempDir, output_mode: "files_with_matches" },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("match1.ts");
+		expect(result.content).toContain("match2.ts");
+		expect(result.content).not.toContain("nomatch.ts");
+	});
+
+	test("search: count mode returns match counts", async () => {
+		await writeFile(
+			join(tempDir, "count_test.ts"),
+			"hello world\nhello again\nno match\n",
+		);
+		const result = await executeTool(
+			"search",
+			{ pattern: "hello", path: tempDir, output_mode: "count" },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("count_test.ts");
+		expect(result.content).toContain("2");
+	});
+
+	test("search: case_insensitive matches upper and lower case", async () => {
+		await writeFile(
+			join(tempDir, "case_test.ts"),
+			"const HELLO = 1;\nconst hello = 2;\nconst world = 3;\n",
+		);
+		const result = await executeTool(
+			"search",
+			{ pattern: "HELLO", path: tempDir, case_insensitive: true },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		// Both lines with HELLO and hello should be found
+		const lines = result.content
+			.split("\n")
+			.filter((l) => l.includes("case_test.ts"));
+		expect(lines.length).toBeGreaterThanOrEqual(2);
+	});
+
+	test("search: head_limit parameter is accepted without error", async () => {
+		// Write a file with many matching lines
+		const lines = Array.from(
+			{ length: 20 },
+			(_, i) => `const x${i} = ${i};`,
+		).join("\n");
+		await writeFile(join(tempDir, "many.ts"), `${lines}\n`);
+		const result = await executeTool(
+			"search",
+			{ pattern: "const", path: tempDir, head_limit: 5 },
+			tempDir,
+		);
+		// head_limit is supported by rg (--max-count); grep fallback does not limit.
+		// Either way the call must succeed and return matches.
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("const");
+	});
+
 	test("unknown tool: returns error", async () => {
 		const result = await executeTool("unknown_tool", {}, tempDir);
 		expect(result.isError).toBe(true);
