@@ -776,6 +776,7 @@ function OrchestratorDetail({
 	nodeCount,
 	nodes,
 	costUsd,
+	totalCost,
 	turns,
 	onClearSessions,
 }: {
@@ -783,6 +784,7 @@ function OrchestratorDetail({
 	nodeCount: number;
 	nodes: import("./hooks.ts").TaskNode[];
 	costUsd?: number | null;
+	totalCost?: number | null;
 	turns?: number | null;
 	onClearSessions?: () => void;
 }) {
@@ -870,8 +872,14 @@ function OrchestratorDetail({
 				)}
 				{costUsd != null && (
 					<div className="og-stat-card">
-						<span className="og-stat-label">Cost</span>
+						<span className="og-stat-label">Session</span>
 						<span className="og-stat-value">${costUsd.toFixed(3)}</span>
+					</div>
+				)}
+				{totalCost != null && totalCost > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">Total Cost</span>
+						<span className="og-stat-value">${totalCost.toFixed(3)}</span>
 					</div>
 				)}
 				{turns != null && turns > 0 && (
@@ -943,6 +951,11 @@ export function App() {
 		const map = new Map<string, TaskNode>();
 		for (const n of nodes) map.set(n.id, n);
 		return map;
+	}, [nodes]);
+
+	const totalCost = useMemo(() => {
+		const sum = nodes.reduce((acc, n) => acc + (n.costUsd ?? 0), 0);
+		return sum > 0 ? sum : null;
 	}, [nodes]);
 
 	const isOrchestratorNode = selectedTaskId === PROJECT_NODE_ID;
@@ -1474,6 +1487,7 @@ export function App() {
 								nodeCount={nodes.length}
 								nodes={nodes}
 								costUsd={lastCostUsd}
+								totalCost={totalCost}
 								turns={lastTurns}
 								onClearSessions={handleClearSessions}
 							/>
