@@ -678,6 +678,47 @@ describe("daemon tasks API", () => {
 	});
 });
 
+describe("GET /projects/:id/events", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-events-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-evdata-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await res.json()) as { id: string };
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns empty events for new project", async () => {
+		const res = await app.request(`/projects/${projectId}/events`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { events: unknown[] };
+		expect(body.events).toBeInstanceOf(Array);
+		expect(body.events.length).toBe(0);
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request("/projects/unknown-project-id/events");
+		expect(res.status).toBe(404);
+	});
+});
+
 describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	let tempDir: string;
 	let dataDir: string;
