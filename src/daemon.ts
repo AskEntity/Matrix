@@ -268,7 +268,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 		const tracker = await getTracker(project.id);
 		return c.json({
-			root: tracker.getRoot() ?? null,
 			nodes: tracker.allNodes(),
 		});
 	});
@@ -291,7 +290,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		try {
 			const node = body.parentId
 				? tracker.addChild(body.parentId, body.title, body.description ?? "")
-				: tracker.createRoot(body.title, body.description ?? "");
+				: tracker.addTask(body.title, body.description ?? "");
 			await tracker.save();
 			return c.json(node, 201);
 		} catch (e) {

@@ -398,11 +398,10 @@ describe("daemon tasks API", () => {
 		const res = await app.request(`/projects/${projectId}/tasks`);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
-			root: TaskNode;
 			nodes: TaskNode[];
 		};
-		expect(body.root.title).toBe("App");
 		expect(body.nodes).toHaveLength(1);
+		expect(body.nodes[0]?.title).toBe("App");
 	});
 
 	test("PATCH /tasks/:nodeId updates status and branch", async () => {
@@ -446,10 +445,8 @@ describe("daemon tasks API", () => {
 
 		const getRes = await app.request(`/projects/${projectId}/tasks`);
 		const body = (await getRes.json()) as {
-			root: null;
 			nodes: TaskNode[];
 		};
-		expect(body.root).toBeNull();
 		expect(body.nodes).toHaveLength(0);
 	});
 

@@ -6,11 +6,11 @@ import type { TaskNode, TaskStatus } from "./types.ts";
 /**
  * Manages the task tree for a project.
  * Each project has one task tree stored as tree.json in the daemon data dir.
- * The tree represents the hierarchical decomposition of the project goal.
+ * Tasks with parentId === null are top-level (direct children of the project).
+ * The project itself (main branch) is the implicit root.
  */
 export class TaskTracker {
 	private nodes: Map<string, TaskNode> = new Map();
-	private rootId: string | null = null;
 	private _orchestratorSessionId: string | null = null;
 
 	constructor(private readonly treePath: string) {}
@@ -20,11 +20,10 @@ export class TaskTracker {
 		if (existsSync(this.treePath)) {
 			const raw = await readFile(this.treePath, "utf-8");
 			const data = JSON.parse(raw) as {
-				rootId: string | null;
+				rootId?: string | null;
 				nodes: TaskNode[];
 				orchestratorSessionId?: string | null;
 			};
-			this.rootId = data.rootId;
 			this._orchestratorSessionId = data.orchestratorSessionId ?? null;
 			for (const node of data.nodes) {
 				this.nodes.set(node.id, node);
@@ -37,7 +36,6 @@ export class TaskTracker {
 		const dir = dirname(this.treePath);
 		await mkdir(dir, { recursive: true });
 		const data = {
-			rootId: this.rootId,
 			orchestratorSessionId: this._orchestratorSessionId,
 			nodes: Array.from(this.nodes.values()),
 		};
@@ -54,14 +52,9 @@ export class TaskTracker {
 		this._orchestratorSessionId = id;
 	}
 
-	/** Create the root task node for the project. */
-	createRoot(title: string, description: string): TaskNode {
-		if (this.rootId !== null) {
-			throw new Error("Root task already exists");
-		}
-		const node = this.createNode(title, description, null);
-		this.rootId = node.id;
-		return node;
+	/** Create a top-level task (direct child of the project). */
+	addTask(title: string, description: string): TaskNode {
+		return this.createNode(title, description, null);
 	}
 
 	/** Add a child task under a parent node. */
@@ -74,6 +67,11 @@ export class TaskTracker {
 		parent.children.push(child.id);
 		parent.updatedAt = new Date().toISOString();
 		return child;
+	}
+
+	/** Get all top-level tasks (parentId === null). */
+	getTopLevel(): TaskNode[] {
+		return Array.from(this.nodes.values()).filter((n) => n.parentId === null);
 	}
 
 	/** Update the status of a task node. */
@@ -126,12 +124,6 @@ export class TaskTracker {
 		return this.nodes.get(nodeId);
 	}
 
-	/** Get the root node. */
-	getRoot(): TaskNode | undefined {
-		if (this.rootId === null) return undefined;
-		return this.nodes.get(this.rootId);
-	}
-
 	/** Get all children of a node. */
 	getChildren(nodeId: string): TaskNode[] {
 		const node = this.nodes.get(nodeId);
@@ -166,10 +158,6 @@ export class TaskTracker {
 		}
 
 		this.nodes.delete(nodeId);
-
-		if (this.rootId === nodeId) {
-			this.rootId = null;
-		}
 	}
 
 	/** Get nodes filtered by status. */

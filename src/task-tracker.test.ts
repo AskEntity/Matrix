@@ -18,30 +18,29 @@ describe("TaskTracker", () => {
 		await rm(tempDir, { recursive: true });
 	});
 
-	test("createRoot creates a root task", () => {
-		const root = tracker.createRoot("Chat App", "Build a multi-user chat");
-		expect(root.title).toBe("Chat App");
-		expect(root.status).toBe("pending");
-		expect(root.parentId).toBeNull();
-		expect(tracker.getRoot()).toBeDefined();
-		expect(tracker.getRoot()?.id).toBe(root.id);
+	test("addTask creates a top-level task", () => {
+		const task = tracker.addTask("Chat App", "Build a multi-user chat");
+		expect(task.title).toBe("Chat App");
+		expect(task.status).toBe("pending");
+		expect(task.parentId).toBeNull();
+		expect(tracker.getTopLevel()).toHaveLength(1);
+		expect(tracker.getTopLevel()[0]?.id).toBe(task.id);
 	});
 
-	test("createRoot fails if root already exists", () => {
-		tracker.createRoot("App", "desc");
-		expect(() => tracker.createRoot("App2", "desc2")).toThrow(
-			"Root task already exists",
-		);
+	test("multiple top-level tasks allowed", () => {
+		tracker.addTask("App1", "desc1");
+		tracker.addTask("App2", "desc2");
+		expect(tracker.getTopLevel()).toHaveLength(2);
 	});
 
 	test("addChild creates child under parent", () => {
-		const root = tracker.createRoot("App", "desc");
-		const child = tracker.addChild(root.id, "Auth", "User authentication");
+		const parent = tracker.addTask("App", "desc");
+		const child = tracker.addChild(parent.id, "Auth", "User authentication");
 
-		expect(child.parentId).toBe(root.id);
+		expect(child.parentId).toBe(parent.id);
 		expect(child.status).toBe("pending");
 
-		const children = tracker.getChildren(root.id);
+		const children = tracker.getChildren(parent.id);
 		expect(children).toHaveLength(1);
 		expect(children[0]?.id).toBe(child.id);
 	});
@@ -53,77 +52,76 @@ describe("TaskTracker", () => {
 	});
 
 	test("updateStatus changes node status", () => {
-		const root = tracker.createRoot("App", "desc");
-		tracker.updateStatus(root.id, "in_progress");
-		expect(tracker.get(root.id)?.status).toBe("in_progress");
+		const task = tracker.addTask("App", "desc");
+		tracker.updateStatus(task.id, "in_progress");
+		expect(tracker.get(task.id)?.status).toBe("in_progress");
 	});
 
 	test("assignBranch sets branch name", () => {
-		const root = tracker.createRoot("App", "desc");
-		const child = tracker.addChild(root.id, "Auth", "desc");
+		const parent = tracker.addTask("App", "desc");
+		const child = tracker.addChild(parent.id, "Auth", "desc");
 		tracker.assignBranch(child.id, "feat/auth");
 		expect(tracker.get(child.id)?.branch).toBe("feat/auth");
 	});
 
 	test("byStatus filters nodes", () => {
-		const root = tracker.createRoot("App", "desc");
-		const c1 = tracker.addChild(root.id, "A", "a");
-		const c2 = tracker.addChild(root.id, "B", "b");
+		const parent = tracker.addTask("App", "desc");
+		const c1 = tracker.addChild(parent.id, "A", "a");
+		const c2 = tracker.addChild(parent.id, "B", "b");
 		tracker.updateStatus(c1.id, "passed");
 		tracker.updateStatus(c2.id, "in_progress");
 
 		expect(tracker.byStatus("passed")).toHaveLength(1);
 		expect(tracker.byStatus("in_progress")).toHaveLength(1);
-		expect(tracker.byStatus("pending")).toHaveLength(1); // root
+		expect(tracker.byStatus("pending")).toHaveLength(1); // parent
 	});
 
 	test("remove deletes node and descendants", () => {
-		const root = tracker.createRoot("App", "desc");
-		const c1 = tracker.addChild(root.id, "A", "a");
+		const parent = tracker.addTask("App", "desc");
+		const c1 = tracker.addChild(parent.id, "A", "a");
 		const c1a = tracker.addChild(c1.id, "A1", "a1");
 
 		tracker.remove(c1.id);
 
 		expect(tracker.get(c1.id)).toBeUndefined();
 		expect(tracker.get(c1a.id)).toBeUndefined();
-		expect(tracker.getChildren(root.id)).toHaveLength(0);
-		expect(tracker.allNodes()).toHaveLength(1); // only root
+		expect(tracker.getChildren(parent.id)).toHaveLength(0);
+		expect(tracker.allNodes()).toHaveLength(1); // only parent
 	});
 
-	test("remove root clears everything", () => {
-		const root = tracker.createRoot("App", "desc");
-		tracker.addChild(root.id, "A", "a");
+	test("remove top-level task works", () => {
+		const task = tracker.addTask("App", "desc");
+		tracker.addChild(task.id, "A", "a");
 
-		tracker.remove(root.id);
+		tracker.remove(task.id);
 
-		expect(tracker.getRoot()).toBeUndefined();
 		expect(tracker.allNodes()).toHaveLength(0);
 	});
 
 	test("persists and reloads", async () => {
-		const root = tracker.createRoot("App", "desc");
-		tracker.addChild(root.id, "Auth", "auth desc");
-		tracker.updateStatus(root.id, "in_progress");
+		const parent = tracker.addTask("App", "desc");
+		tracker.addChild(parent.id, "Auth", "auth desc");
+		tracker.updateStatus(parent.id, "in_progress");
 		await tracker.save();
 
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
 
-		expect(tracker2.getRoot()?.title).toBe("App");
-		expect(tracker2.getRoot()?.status).toBe("in_progress");
-		expect(tracker2.getChildren(root.id)).toHaveLength(1);
+		expect(tracker2.getTopLevel()).toHaveLength(1);
+		expect(tracker2.getTopLevel()[0]?.status).toBe("in_progress");
+		expect(tracker2.getChildren(parent.id)).toHaveLength(1);
 	});
 
 	test("allNodes returns flat list", () => {
-		const root = tracker.createRoot("App", "desc");
-		tracker.addChild(root.id, "A", "a");
-		tracker.addChild(root.id, "B", "b");
+		const parent = tracker.addTask("App", "desc");
+		tracker.addChild(parent.id, "A", "a");
+		tracker.addChild(parent.id, "B", "b");
 
 		expect(tracker.allNodes()).toHaveLength(3);
 	});
 
 	test("orchestratorSessionId persists across save/load", async () => {
-		tracker.createRoot("App", "desc");
+		tracker.addTask("App", "desc");
 		tracker.orchestratorSessionId = "session-abc-123";
 		await tracker.save();
 

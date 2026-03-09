@@ -142,7 +142,6 @@ export class ProjectManager {
 			id,
 			name: basename(projectPath),
 			path: projectPath,
-			rootTaskId: null,
 			createdAt: now,
 		};
 

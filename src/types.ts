@@ -49,7 +49,6 @@ export interface Project {
 	id: string;
 	name: string;
 	path: string;
-	rootTaskId: string | null;
 	createdAt: string;
 }
 
