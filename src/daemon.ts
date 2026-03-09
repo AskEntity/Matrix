@@ -847,6 +847,59 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	});
 
+	// Conversation history for a task (from session file)
+	app.get("/projects/:id/tasks/:nodeId/conversation", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const tracker = await getTracker(project.id);
+		const node = tracker.get(c.req.param("nodeId"));
+		if (!node) return c.json({ error: "Task not found" }, 404);
+		if (!node.sessionId) return c.json({ messages: [] });
+		const sessionPath = join(
+			config.dataDir,
+			"sessions",
+			project.id,
+			`${node.sessionId}.json`,
+		);
+		try {
+			const raw = await readFile(sessionPath, "utf-8");
+			const params = JSON.parse(raw) as Array<{
+				role: string;
+				content: unknown;
+			}>;
+			const messages = params.slice(-100).map((msg) => {
+				let content = "";
+				let hasToolUse = false;
+				const toolNames: string[] = [];
+				if (typeof msg.content === "string") {
+					content = msg.content;
+				} else if (Array.isArray(msg.content)) {
+					for (const block of msg.content as Array<{
+						type: string;
+						text?: string;
+						name?: string;
+					}>) {
+						if (block.type === "text" && block.text)
+							content += (content ? "\n" : "") + block.text;
+						else if (block.type === "tool_use" && block.name) {
+							hasToolUse = true;
+							toolNames.push(block.name);
+						}
+					}
+				}
+				return {
+					role: msg.role,
+					content,
+					hasToolUse,
+					...(toolNames.length ? { toolNames } : {}),
+				};
+			});
+			return c.json({ messages });
+		} catch {
+			return c.json({ messages: [] });
+		}
+	});
+
 	// Agent execution (fire-and-forget, same as orchestrate)
 	app.post("/projects/:id/run", async (c) => {
 		if (!startupReady) {
@@ -877,7 +930,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	 * The agent runs in the background; observe via WebSocket.
 	 * Uses startSession() for message injection support.
 	 */
-	function launchAgent(
+	async function launchAgent(
 		project: { id: string; path: string },
 		opts: {
 			prompt: string;
@@ -891,6 +944,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 		activeOrchestrations.add(project.id);
 
+		// Load project config for model defaults
+		const projectCfg = await loadProjectConfig(config.dataDir, project.id);
+		const effectiveModel = opts.model ?? projectCfg.model ?? undefined;
+		const effectiveChildModel =
+			opts.childModel ?? projectCfg.childModel ?? undefined;
+
 		// Mark project for auto-resume on daemon restart
 		tracker.autoResume = true;
 		tracker.save().catch(() => {});
@@ -899,7 +958,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			type: "orchestration_started",
 			prompt: opts.prompt,
 			provider: config.agentProvider.name,
-			model: opts.model ?? process.env.OG_MODEL ?? "claude-sonnet-4-6",
+			model: effectiveModel ?? process.env.OG_MODEL ?? "claude-sonnet-4-6",
 		});
 
 		const wtRoot = join(project.path, ".worktrees");
@@ -918,7 +977,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				projectPath: project.path,
 				repoPath: project.path,
 				depth: 0,
-				childModel: opts.childModel,
+				childModel: effectiveChildModel,
 				queue,
 				doneRef,
 				onTaskEvent: (event) => {
@@ -956,7 +1015,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			mcpServers: { opengraft: mcpServer },
 			mcpToolDefs: { opengraft: toolDefs },
 			resumeSessionId,
-			model: opts.model,
+			model: effectiveModel,
 			queue,
 			doneRef,
 			hasRunningChildren,
