@@ -14,6 +14,7 @@ import type {
 	DecomposedTask,
 	HealthResponse,
 	StatsResponse,
+	TaskNode,
 	TaskStatus,
 	VersionResponse,
 } from "./types.ts";
@@ -51,7 +52,7 @@ function broadcast(
 			try {
 				client.ws.send(msg);
 			} catch {
-				/* client disconnected */
+				clients.delete(client);
 			}
 		}
 	}
@@ -70,6 +71,17 @@ function defaultProvider(): AgentProvider {
 		return new DirectProvider(process.env.OG_MODEL);
 	}
 	return new ClaudeCodeProvider();
+}
+
+/** Collect a node and all its descendants. */
+function collectDescendants(tracker: TaskTracker, nodeId: string): TaskNode[] {
+	const node = tracker.get(nodeId);
+	if (!node) return [];
+	const result: TaskNode[] = [node];
+	for (const childId of node.children) {
+		result.push(...collectDescendants(tracker, childId));
+	}
+	return result;
 }
 
 const defaultConfig: DaemonConfig = {
@@ -396,9 +408,39 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 		const tracker = await getTracker(project.id);
 		const nodeId = c.req.param("nodeId");
-		if (!tracker.get(nodeId)) {
+		const node = tracker.get(nodeId);
+		if (!node) {
 			return c.json({ error: "Task not found" }, 404);
 		}
+
+		// Clean up worktrees for this node and all descendants
+		const nodesToRemove = collectDescendants(tracker, nodeId);
+		for (const n of nodesToRemove) {
+			if (n.worktreePath) {
+				try {
+					const proc = Bun.spawn(
+						["git", "worktree", "remove", "--force", n.worktreePath],
+						{ cwd: project.path, stdout: "pipe", stderr: "pipe" },
+					);
+					await proc.exited;
+				} catch {
+					/* worktree may already be gone */
+				}
+				if (n.branch) {
+					try {
+						const proc = Bun.spawn(["git", "branch", "-D", n.branch], {
+							cwd: project.path,
+							stdout: "pipe",
+							stderr: "pipe",
+						});
+						await proc.exited;
+					} catch {
+						/* branch may already be gone */
+					}
+				}
+			}
+		}
+
 		tracker.remove(nodeId);
 		await tracker.save();
 		return c.json({ ok: true });

@@ -39,6 +39,8 @@ const childModelSelect = document.getElementById("child-model-select");
 
 // --- WebSocket ---
 
+let wsReconnectDelay = 1000;
+
 function connectWS() {
 	const protocol = location.protocol === "https:" ? "wss:" : "ws:";
 	ws = new WebSocket(`${protocol}//${location.host}/ws`);
@@ -46,6 +48,7 @@ function connectWS() {
 	ws.onopen = () => {
 		connectionStatus.className = "status-dot connected";
 		connectionStatus.title = "Connected";
+		wsReconnectDelay = 1000; // Reset backoff on success
 		if (selectedProjectId) {
 			ws.send(
 				JSON.stringify({ type: "subscribe", projectId: selectedProjectId }),
@@ -56,7 +59,8 @@ function connectWS() {
 	ws.onclose = () => {
 		connectionStatus.className = "status-dot disconnected";
 		connectionStatus.title = "Disconnected";
-		setTimeout(connectWS, 2000);
+		setTimeout(connectWS, wsReconnectDelay);
+		wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
 	};
 
 	ws.onerror = () => {
