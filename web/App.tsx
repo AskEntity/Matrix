@@ -508,6 +508,7 @@ function ActivityLog({
 	onAutoScrollChange: (locked: boolean) => void;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
+	const [searchText, setSearchText] = useState("");
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new entries
 	useEffect(() => {
@@ -523,42 +524,68 @@ function ActivityLog({
 		onAutoScrollChange(atBottom);
 	}, [onAutoScrollChange]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset search when filter task changes
+	useEffect(() => {
+		setSearchText("");
+	}, [filterTaskId]);
+
 	const visible = useMemo(() => {
-		if (!filterTaskId) return entries;
-		if (filterTaskId === PROJECT_NODE_ID) {
-			return entries.filter((e) => !e.taskId);
+		let items: LogEntry[];
+		if (!filterTaskId) {
+			items = entries;
+		} else if (filterTaskId === PROJECT_NODE_ID) {
+			items = entries.filter((e) => !e.taskId);
+		} else {
+			const descendantIds = new Set<string>();
+			const collect = (id: string) => {
+				descendantIds.add(id);
+				const node = nodeMap.get(id);
+				if (node?.children) {
+					for (const childId of node.children) collect(childId);
+				}
+			};
+			collect(filterTaskId);
+			items = entries.filter((e) => e.taskId && descendantIds.has(e.taskId));
 		}
-		const descendantIds = new Set<string>();
-		const collect = (id: string) => {
-			descendantIds.add(id);
-			const node = nodeMap.get(id);
-			if (node?.children) {
-				for (const childId of node.children) collect(childId);
-			}
-		};
-		collect(filterTaskId);
-		return entries.filter((e) => e.taskId && descendantIds.has(e.taskId));
-	}, [entries, filterTaskId, nodeMap]);
+
+		if (searchText.trim()) {
+			const lower = searchText.toLowerCase();
+			items = items.filter((e) => e.text.toLowerCase().includes(lower));
+		}
+
+		return items;
+	}, [entries, filterTaskId, nodeMap, searchText]);
 
 	return (
-		<div className="og-activity-log" ref={logRef} onScroll={handleScroll}>
-			{visible.map((entry) => (
-				<LogEntryView key={entry.id} entry={entry} nodeMap={nodeMap} />
-			))}
-			{visible.length === 0 && (
-				<div
-					style={{
-						padding: "32px 20px",
-						textAlign: "center",
-						color: "var(--text-faint)",
-						fontSize: "12px",
-						fontFamily: "var(--font-mono)",
-					}}
-				>
-					No events yet
-				</div>
-			)}
-		</div>
+		<>
+			<div className="og-log-search-bar">
+				<input
+					type="text"
+					className="og-log-search"
+					placeholder="Search logs…"
+					value={searchText}
+					onChange={(e) => setSearchText(e.target.value)}
+				/>
+			</div>
+			<div className="og-activity-log" ref={logRef} onScroll={handleScroll}>
+				{visible.map((entry) => (
+					<LogEntryView key={entry.id} entry={entry} nodeMap={nodeMap} />
+				))}
+				{visible.length === 0 && (
+					<div
+						style={{
+							padding: "32px 20px",
+							textAlign: "center",
+							color: "var(--text-faint)",
+							fontSize: "12px",
+							fontFamily: "var(--font-mono)",
+						}}
+					>
+						{searchText.trim() ? "No matching entries" : "No events yet"}
+					</div>
+				)}
+			</div>
+		</>
 	);
 }
 
