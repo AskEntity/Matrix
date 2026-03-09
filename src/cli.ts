@@ -558,32 +558,62 @@ async function handleContinue(args: string[]): Promise<void> {
 /** Watch a project's agent activity via WebSocket. Resolves never (runs until Ctrl+C). */
 async function watchProject(projectId: string): Promise<void> {
 	const wsUrl = `${DAEMON_URL.replace(/^http/, "ws")}/ws`;
-	const ws = new WebSocket(wsUrl);
+	let retryCount = 0;
+	let userCancelled = false;
 
-	ws.onopen = () => {
-		ws.send(JSON.stringify({ type: "subscribe", projectId }));
-	};
-
-	ws.onclose = () => {
-		console.log("\nDisconnected.");
+	// Handle Ctrl+C gracefully — add only once here
+	process.on("SIGINT", () => {
+		userCancelled = true;
+		console.log("\nDetached.");
 		process.exit(0);
-	};
+	});
 
-	ws.onerror = () => {
-		console.error("WebSocket error. Is the daemon running?");
-		process.exit(1);
-	};
+	function connect(): void {
+		const ws = new WebSocket(wsUrl);
 
-	ws.onmessage = (evt) => {
-		try {
-			const msg = JSON.parse(
-				typeof evt.data === "string" ? evt.data : "",
-			) as Record<string, unknown>;
-			formatWatchEvent(msg);
-		} catch {
-			/* ignore parse errors */
-		}
-	};
+		ws.onopen = () => {
+			if (retryCount > 0) {
+				console.log("Reconnected.");
+			}
+			retryCount = 0;
+			ws.send(JSON.stringify({ type: "subscribe", projectId }));
+		};
+
+		ws.onclose = () => {
+			if (userCancelled) return;
+			retryCount++;
+			if (retryCount > 5) {
+				console.error("Failed to reconnect after 5 attempts. Exiting.");
+				process.exit(1);
+			}
+			const delay = Math.min(1000 * 2 ** (retryCount - 1), 10000);
+			console.log(
+				`\nDisconnected. Reconnecting in ${delay / 1000}s... (attempt ${retryCount}/5)`,
+			);
+			setTimeout(connect, delay);
+		};
+
+		ws.onerror = () => {
+			// Error handling is done in onclose (which fires after onerror)
+			if (retryCount === 0) {
+				// First connection failure
+				console.error("WebSocket error. Is the daemon running?");
+			}
+		};
+
+		ws.onmessage = (evt) => {
+			try {
+				const msg = JSON.parse(
+					typeof evt.data === "string" ? evt.data : "",
+				) as Record<string, unknown>;
+				formatWatchEvent(msg);
+			} catch {
+				/* ignore parse errors */
+			}
+		};
+	}
+
+	connect();
 
 	// Keep process alive
 	await new Promise(() => {});
