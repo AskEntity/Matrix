@@ -116,14 +116,6 @@ export class TaskTracker {
 		node.updatedAt = new Date().toISOString();
 	}
 
-	/** Set the cost in USD for a task's agent execution. */
-	setCost(nodeId: string, costUsd: number): void {
-		const node = this.nodes.get(nodeId);
-		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		node.costUsd = costUsd;
-		node.updatedAt = new Date().toISOString();
-	}
-
 	/** Set a message on a task (e.g. instructions when continuing a failed task). */
 	setMessage(nodeId: string, message: string): void {
 		const node = this.nodes.get(nodeId);
