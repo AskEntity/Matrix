@@ -475,12 +475,36 @@ export class DirectProvider implements AgentProvider {
 	readonly name = "direct-api";
 	private client: Anthropic;
 	private model: string;
+	private useOAuth: boolean;
 	/** Persisted conversation histories keyed by session ID. */
 	private sessionHistory = new Map<string, MessageParam[]>();
 
 	constructor(model?: string) {
-		this.client = new Anthropic();
+		const apiKey = process.env.ANTHROPIC_API_KEY;
+		const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+		this.useOAuth = Boolean(oauthToken && !apiKey);
+		if (this.useOAuth) {
+			this.client = new Anthropic({
+				authToken: oauthToken,
+				defaultHeaders: {
+					"anthropic-beta": "oauth-2025-04-20",
+				},
+			});
+		} else {
+			this.client = new Anthropic();
+		}
 		this.model = model ?? DEFAULT_MODEL;
+	}
+
+	/** Create a message, using beta endpoint for OAuth auth. */
+	private createMessage(
+		params: Anthropic.Messages.MessageCreateParamsNonStreaming,
+	): Promise<Anthropic.Messages.Message> {
+		if (this.useOAuth) {
+			// biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
+			return this.client.beta.messages.create(params as any) as any;
+		}
+		return this.client.messages.create(params);
 	}
 
 	async execute(request: AgentRequest): Promise<AgentResult> {
@@ -623,7 +647,7 @@ export class DirectProvider implements AgentProvider {
 
 			let response: Anthropic.Messages.Message;
 			try {
-				response = await this.client.messages.create({
+				response = await this.createMessage({
 					model,
 					max_tokens: DEFAULT_MAX_TOKENS,
 					system: systemParts.join("\n\n"),
@@ -641,7 +665,7 @@ export class DirectProvider implements AgentProvider {
 						message: `API error (retrying): ${e.message}`,
 					};
 					await new Promise((r) => setTimeout(r, 5000));
-					response = await this.client.messages.create({
+					response = await this.createMessage({
 						model,
 						max_tokens: DEFAULT_MAX_TOKENS,
 						system: systemParts.join("\n\n"),
