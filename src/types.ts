@@ -44,6 +44,15 @@ export interface AgentResult {
 		failed: string[];
 		errors: string[];
 	};
+	// Token breakdown (DirectProvider only; undefined for ClaudeCodeProvider)
+	/** Non-cached input tokens consumed. */
+	inputTokens?: number;
+	/** Cache-creation (write) tokens consumed. */
+	cacheCreationTokens?: number;
+	/** Cache-read tokens consumed. */
+	cacheReadTokens?: number;
+	/** Output tokens produced. */
+	outputTokens?: number;
 }
 
 /** Project-level state managed by the daemon. */

@@ -14,6 +14,13 @@ const PROJECT_NODE_ID = "__project__";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+/** Format a token count compactly: 1234 → "1.2k", 1234567 → "1.2M" */
+function formatTokenCount(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+	return String(n);
+}
+
 function statusDotClass(status: string): string {
 	const map: Record<string, string> = {
 		pending: "status-dot-pending",
@@ -830,13 +837,25 @@ export function App() {
 					addLog("lifecycle", "Orchestration started");
 					setRunning(true);
 					break;
-				case "orchestration_completed":
+				case "orchestration_completed": {
+					const costStr = msg.costUsd
+						? ` · ${(msg.costUsd as number).toFixed(3)}`
+						: "";
+					const hasTokens =
+						msg.inputTokens !== undefined ||
+						msg.cacheCreationTokens !== undefined ||
+						msg.cacheReadTokens !== undefined ||
+						msg.outputTokens !== undefined;
+					const tokenStr = hasTokens
+						? ` · ${formatTokenCount((msg.inputTokens as number) ?? 0)} in · ${formatTokenCount((msg.cacheCreationTokens as number) ?? 0)} write · ${formatTokenCount((msg.cacheReadTokens as number) ?? 0)} read · ${formatTokenCount((msg.outputTokens as number) ?? 0)} out`
+						: "";
 					addLog(
 						"lifecycle",
-						`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${msg.costUsd ? ` · $${(msg.costUsd as number).toFixed(3)}` : ""}`,
+						`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${costStr}${tokenStr}`,
 					);
 					setRunning(false);
 					break;
+				}
 				case "agent_stopped":
 					addLog("lifecycle", "Agent stopped");
 					setRunning(false);

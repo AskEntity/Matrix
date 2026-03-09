@@ -1207,6 +1207,10 @@ export class DirectProvider implements AgentProvider {
 			costUsd,
 			turns,
 			sessionId,
+			inputTokens: totalInputTokens,
+			cacheCreationTokens: totalCacheCreationTokens,
+			cacheReadTokens: totalCacheReadTokens,
+			outputTokens: totalOutputTokens,
 		};
 	}
 }
