@@ -628,8 +628,21 @@ async function handleWatch(): Promise<void> {
 	await watchProject(projectId);
 }
 
+// ANSI color helpers — no-op when stdout is not a TTY (e.g. piped to file)
+const isTTY = process.stdout.isTTY === true;
+const c = {
+	dim: (s: string) => (isTTY ? `\x1b[2m${s}\x1b[0m` : s),
+	green: (s: string) => (isTTY ? `\x1b[32m${s}\x1b[0m` : s),
+	brightGreen: (s: string) => (isTTY ? `\x1b[92m${s}\x1b[0m` : s),
+	red: (s: string) => (isTTY ? `\x1b[31m${s}\x1b[0m` : s),
+	brightRed: (s: string) => (isTTY ? `\x1b[91m${s}\x1b[0m` : s),
+	cyan: (s: string) => (isTTY ? `\x1b[36m${s}\x1b[0m` : s),
+	yellow: (s: string) => (isTTY ? `\x1b[33m${s}\x1b[0m` : s),
+	blue: (s: string) => (isTTY ? `\x1b[34m${s}\x1b[0m` : s),
+};
+
 function formatWatchEvent(msg: Record<string, unknown>): void {
-	const time = new Date().toLocaleTimeString();
+	const time = c.dim(new Date().toLocaleTimeString());
 	const type = msg.type as string;
 
 	switch (type) {
@@ -640,9 +653,11 @@ function formatWatchEvent(msg: Record<string, unknown>): void {
 				counts[n.status] = (counts[n.status] ?? 0) + 1;
 			}
 			const summary = Object.entries(counts)
-				.map(([s, c]) => `${s}:${c}`)
+				.map(([s, count]) => `${s}:${count}`)
 				.join(" ");
-			console.log(`${time} [tree] ${nodes.length} nodes (${summary})`);
+			console.log(
+				`${time} ${c.cyan("[tree]")} ${nodes.length} nodes (${summary})`,
+			);
 			break;
 		}
 		case "agent_event": {
@@ -650,10 +665,11 @@ function formatWatchEvent(msg: Record<string, unknown>): void {
 			if (eventType === "tool_use") {
 				const tool = msg.tool as string;
 				const input = JSON.stringify(msg.input ?? {}).slice(0, 120);
-				console.log(`${time} [tool] ${tool} ${input}`);
+				console.log(`${time} ${c.blue("[tool]")} ${tool} ${input}`);
 			} else if (eventType === "tool_result") {
 				const tool = msg.tool as string;
-				const ok = msg.isError ? "ERR" : "OK";
+				const isError = msg.isError;
+				const ok = isError ? c.red("ERR") : c.green("OK");
 				const content =
 					((msg.content as string) ?? "").split("\n")[0]?.slice(0, 100) ?? "";
 				console.log(`${time} [result] ${tool} ${ok} ${content}`);
@@ -663,27 +679,29 @@ function formatWatchEvent(msg: Record<string, unknown>): void {
 				const firstLine = content.split("\n")[0]?.slice(0, 120) ?? "";
 				if (firstLine) console.log(`${time} [text] ${firstLine}`);
 			} else if (eventType === "status") {
-				console.log(`${time} [status] ${msg.message}`);
+				console.log(`${time} ${c.yellow("[status]")} ${msg.message}`);
 			}
 			break;
 		}
 		case "task_started":
-			console.log(`${time} [task] > ${msg.title}`);
+			console.log(`${time} [task] ${c.green(">")} ${msg.title}`);
 			break;
 		case "task_completed":
-			console.log(`${time} [task] ${msg.success ? "+" : "x"} ${msg.title}`);
+			console.log(
+				`${time} [task] ${msg.success ? c.brightGreen("+") : c.red("x")} ${msg.title}`,
+			);
 			break;
 		case "orchestration_started":
-			console.log(`${time} [orch] Started`);
+			console.log(`${time} ${c.cyan("[orch]")} Started`);
 			break;
 		case "orchestration_completed":
 			console.log(
-				`${time} [orch] ${msg.success ? "Success" : "Failed"}` +
-					(msg.costUsd ? ` ($${(msg.costUsd as number).toFixed(2)})` : ""),
+				`${time} ${msg.success ? c.green("[orch]") : c.red("[orch]")} ${msg.success ? "Success" : "Failed"}` +
+					(msg.costUsd ? ` (${"$"}${(msg.costUsd as number).toFixed(2)})` : ""),
 			);
 			break;
 		case "error":
-			console.error(`${time} [error] ${msg.message}`);
+			console.error(`${time} ${c.brightRed("[error]")} ${msg.message}`);
 			break;
 		default:
 			console.log(`${time} [${type}] ${JSON.stringify(msg).slice(0, 200)}`);
