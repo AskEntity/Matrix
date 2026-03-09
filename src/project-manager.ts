@@ -77,11 +77,21 @@ export class ProjectManager {
 	private async createNew(projectPath: string): Promise<Project> {
 		await mkdir(projectPath, { recursive: true });
 		await mkdir(join(projectPath, ".opengraft"), { recursive: true });
+		await mkdir(join(projectPath, ".opengraft", "sessions"), {
+			recursive: true,
+		});
 		await mkdir(join(projectPath, "src"), { recursive: true });
 
 		await writeFile(
 			join(projectPath, ".opengraft", "memory.md"),
 			NEW_PROJECT_MEMORY,
+			"utf-8",
+		);
+
+		// Exclude session data from git (sessions can be large and are ephemeral)
+		await writeFile(
+			join(projectPath, ".opengraft", ".gitignore"),
+			"sessions/\n",
 			"utf-8",
 		);
 
@@ -105,8 +115,17 @@ export class ProjectManager {
 
 	/** Convert an existing directory into an OpenGraft project. */
 	private async convertExisting(projectPath: string): Promise<Project> {
-		// Create .opengraft/ if it doesn't exist
+		// Create .opengraft/ and sessions/ if they don't exist
 		await mkdir(join(projectPath, ".opengraft"), { recursive: true });
+		await mkdir(join(projectPath, ".opengraft", "sessions"), {
+			recursive: true,
+		});
+
+		// Ensure sessions/ is excluded from git
+		const opengraftGitignore = join(projectPath, ".opengraft", ".gitignore");
+		if (!existsSync(opengraftGitignore)) {
+			await writeFile(opengraftGitignore, "sessions/\n", "utf-8");
+		}
 
 		// Only write memory.md if it doesn't already exist
 		const memoryPath = join(projectPath, ".opengraft", "memory.md");
