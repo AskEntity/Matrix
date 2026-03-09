@@ -7,6 +7,7 @@ import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
 import type { WSContext } from "hono/ws";
 import type { AgentProvider, AgentSession } from "./agent-provider.ts";
 import {
+	type ClarificationMap,
 	CostAccumulator,
 	createOrchestratorTools,
 	ORCHESTRATION_KNOWLEDGE,
@@ -98,6 +99,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const wsClients = new Set<WSClient>();
 	/** Active agent sessions by project ID, for message injection. */
 	const activeSessions = new Map<string, AgentSession>();
+	/** Active clarification maps by project ID, for clarify tool responses. */
+	const activeClarifications = new Map<string, ClarificationMap>();
 	/** Event history per project (capped at 500 entries). */
 	const eventHistory = new Map<string, Record<string, unknown>[]>();
 	const MAX_EVENT_HISTORY = 500;
@@ -568,6 +571,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const wtRoot = join(project.path, ".worktrees");
 		const wm = new WorktreeManager(project.path, wtRoot);
 		const costAccumulator = new CostAccumulator();
+		const clarifications: ClarificationMap = new Map();
+		activeClarifications.set(project.id, clarifications);
 
 		const { mcpServer, toolDefs } = createOrchestratorTools(
 			{
@@ -578,6 +583,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				repoPath: project.path,
 				depth: 0,
 				childModel: opts.childModel,
+				clarifications,
 				onTaskEvent: (event) => {
 					broadcastEvent(project.id, event);
 					broadcastTreeUpdate(project.id, tracker);
@@ -659,6 +665,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				session.stop();
 				activeSessions.delete(project.id);
 				activeOrchestrations.delete(project.id);
+				activeClarifications.delete(project.id);
 			}
 		})();
 	}
@@ -765,6 +772,29 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ ok: true, sessionId: session.sessionId });
 	});
 
+	// Respond to a pending clarification request
+	app.post("/projects/:id/clarify", async (c) => {
+		const projectId = c.req.param("id");
+		const body = await c.req.json<{ taskId: string; answer: string }>();
+		if (!body.taskId || !body.answer) {
+			return c.json({ error: "taskId and answer are required" }, 400);
+		}
+
+		const clarifications = activeClarifications.get(projectId);
+		const pending = clarifications?.get(body.taskId);
+		if (!pending) {
+			return c.json({ error: "No pending clarification for this task" }, 404);
+		}
+
+		pending.resolve(body.answer);
+		broadcastEvent(projectId, {
+			type: "clarification_answered",
+			taskId: body.taskId,
+			answer: body.answer,
+		});
+		return c.json({ ok: true });
+	});
+
 	// WebSocket endpoint for real-time updates
 	app.get(
 		"/ws",
@@ -789,6 +819,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							prompt?: string;
 							model?: string;
 							childModel?: string;
+							taskId?: string;
+							answer?: string;
 						};
 
 						if (msg.type === "subscribe" && msg.projectId) {
@@ -833,6 +865,26 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 										message: "Orchestration already running",
 									}),
 								);
+							}
+						}
+
+						if (
+							msg.type === "clarify_response" &&
+							msg.projectId &&
+							msg.taskId &&
+							msg.answer
+						) {
+							const clarifications = activeClarifications.get(
+								msg.projectId as string,
+							);
+							const pending = clarifications?.get(msg.taskId as string);
+							if (pending) {
+								pending.resolve(msg.answer as string);
+								broadcastEvent(msg.projectId as string, {
+									type: "clarification_answered",
+									taskId: msg.taskId,
+									answer: msg.answer,
+								});
 							}
 						}
 

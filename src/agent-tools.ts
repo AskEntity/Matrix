@@ -63,6 +63,8 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 - execute_tasks: Execute 1+ of your direct children in parallel. Each task gets an isolated worktree.
   Modes: "new" (fresh start), "resume" (continue failed task's session), "reset" (wipe branch, restart)
 - delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
+- clarify: Ask a question and BLOCK until answered or timeout. Use sparingly — only for
+  genuine ambiguities. On timeout, make your own decision and note it in memory.
 
 ## Orchestration Workflow
 1. Analyze the goal and the codebase (read files to understand structure)
@@ -188,6 +190,12 @@ When acting as sub-orchestrator: do NOT write code yourself — only manage chil
 
 ${ORCHESTRATION_KNOWLEDGE}`;
 
+/** Shared map for pending clarification requests. Resolvers are called when a response arrives. */
+export type ClarificationMap = Map<
+	string,
+	{ resolve: (answer: string) => void; question: string }
+>;
+
 export interface OrchestratorToolsDeps {
 	tracker: TaskTracker;
 	provider: AgentProvider;
@@ -204,6 +212,10 @@ export interface OrchestratorToolsDeps {
 	onTaskEvent?: (event: Record<string, unknown>) => void;
 	/** Model for child agent execution (defaults to provider's default). */
 	childModel?: string;
+	/** Shared map for pending clarifications — agents block waiting for responses. */
+	clarifications?: ClarificationMap;
+	/** Timeout in ms for clarification requests (default: 300000 = 5 min). */
+	clarifyTimeout?: number;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -292,6 +304,8 @@ export function createOrchestratorTools(
 						depth: depth + 1,
 						onTaskEvent,
 						childModel,
+						clarifications: deps.clarifications,
+						clarifyTimeout: deps.clarifyTimeout,
 					},
 					childCosts,
 				);
@@ -739,6 +753,66 @@ export function createOrchestratorTools(
 						isError: true,
 					};
 				}
+			},
+		),
+
+		tool(
+			"clarify",
+			"Ask a clarification question and wait for a response. " +
+				"This BLOCKS your execution until the user responds or a timeout occurs. " +
+				"If no response within the timeout, you receive a timeout message — " +
+				"make your best judgement, note the decision in .opengraft/memory.md, and proceed. " +
+				"Only use this for genuine ambiguities that could lead to wasted work.",
+			{
+				question: z
+					.string()
+					.describe(
+						"The clarification question to ask the user or parent orchestrator",
+					),
+			},
+			async (args) => {
+				const taskId = currentTaskId ?? "orchestrator";
+				const clarifyTimeout = deps.clarifyTimeout ?? 300_000;
+				const clarifications = deps.clarifications;
+
+				emit({
+					type: "clarification_requested",
+					taskId,
+					question: args.question,
+				});
+
+				if (!clarifications) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "No clarification channel available. Make your best judgement and proceed. Note the decision in .opengraft/memory.md.",
+							},
+						],
+					};
+				}
+
+				const answer = await new Promise<string>((resolve) => {
+					const timer = setTimeout(() => {
+						clarifications.delete(taskId);
+						resolve(
+							`[Timeout after ${Math.round(clarifyTimeout / 1000)}s] No response received. Make your best judgement and proceed. Note the decision in .opengraft/memory.md.`,
+						);
+					}, clarifyTimeout);
+
+					clarifications.set(taskId, {
+						question: args.question,
+						resolve: (ans: string) => {
+							clearTimeout(timer);
+							clarifications.delete(taskId);
+							resolve(ans);
+						},
+					});
+				});
+
+				return {
+					content: [{ type: "text" as const, text: answer }],
+				};
 			},
 		),
 	];
