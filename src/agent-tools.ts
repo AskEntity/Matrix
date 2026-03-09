@@ -372,6 +372,8 @@ export interface OrchestratorToolsDeps {
 	doneRef?: { done: null | { status: "passed" | "failed"; summary: string } };
 	/** Parent's queue — used by report_to_parent to send messages UP. Null for top-level orchestrator. */
 	parentQueue?: MessageQueue;
+	/** Default budget per task from project config. undefined = unlimited. */
+	defaultBudgetUsd?: number;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -484,6 +486,7 @@ export function createOrchestratorTools(
 					parentQueue: deps.queue,
 					doneRef: childDoneRef,
 					broadcastTreeUpdate,
+					defaultBudgetUsd: deps.defaultBudgetUsd,
 				},
 				childCosts,
 			);
@@ -542,13 +545,6 @@ export function createOrchestratorTools(
 					.string()
 					.optional()
 					.describe("Parent task ID. Omit to create a top-level task."),
-				budgetUsd: z
-					.number()
-					.optional()
-					.describe(
-						"Maximum cost in USD this task is allowed to spend. " +
-							"The child agent will be warned at 80% and told to wrap up at 100%.",
-					),
 			},
 			async (args) => {
 				try {
@@ -570,10 +566,9 @@ export function createOrchestratorTools(
 						};
 					}
 
-					const opts =
-						args.budgetUsd !== undefined
-							? { budgetUsd: args.budgetUsd }
-							: undefined;
+					const opts = deps.defaultBudgetUsd
+						? { budgetUsd: deps.defaultBudgetUsd }
+						: undefined;
 					const node = args.parentId
 						? tracker.addChild(
 								args.parentId,
