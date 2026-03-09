@@ -156,7 +156,7 @@ Daemon (Hono: HTTP + SSE + WS on :7433)
 - **execute_tasks**: Fire-and-forget — spawns children in background, returns immediately. Results arrive as `child_complete` messages via queue.
 - **yield()**: New MCP tool — suspends agent loop (zero token burn), waits for any queue message, returns all accumulated messages.
 - **send_message_to_child**: New MCP tool — sends `parent_update` to a running child via `childQueues` registry.
-- **clarify**: Now non-blocking — emits event, returns immediately. Response arrives as `clarify_response` via yield().
+- **clarify**: Now non-blocking — emits event, returns immediately. After calling clarify(), the agent can continue doing other work that doesn't need the answer, then call yield() when ready to wait for the `clarify_response`.
 - **Cancellation points**: After each tool batch execution, queue is drained and messages appended to tool results.
 
 ### Key Design Decisions
