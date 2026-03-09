@@ -342,10 +342,22 @@ main {
 
 .content-panel {
 	flex: 1;
-	overflow-y: auto;
+	overflow: hidden;
 	min-width: 0;
 	display: flex;
 	flex-direction: column;
+}
+.content-panel.dragging {
+	cursor: row-resize;
+	user-select: none;
+}
+
+/* Top: STATUS panel */
+.content-status-panel {
+	display: flex;
+	flex-direction: column;
+	overflow-y: auto;
+	min-height: 0;
 }
 
 .content-empty {
@@ -357,11 +369,36 @@ main {
 	font-size: 13px;
 }
 
+/* Draggable resize divider */
+.resize-divider {
+	flex-shrink: 0;
+	height: 1px;
+	background: var(--border);
+	cursor: row-resize;
+	position: relative;
+	z-index: 2;
+}
+.resize-divider::after {
+	content: "";
+	position: absolute;
+	top: -5px;
+	left: 0;
+	right: 0;
+	height: 11px;
+	z-index: 3;
+}
+.resize-divider:hover {
+	background: var(--accent);
+	height: 2px;
+}
+.content-panel.dragging .resize-divider {
+	background: var(--accent);
+	height: 2px;
+}
+
 /* Task detail inline (top of content panel) */
 .content-detail {
 	padding: 16px 20px;
-	border-bottom: 1px solid var(--border);
-	flex-shrink: 0;
 	background: var(--bg-secondary);
 }
 .content-detail h2 {
@@ -381,16 +418,12 @@ main {
 	align-items: center;
 }
 
-/* Activity panel (below detail in content area) */
+/* Activity panel (below divider in content area) */
 .activity-panel {
-	flex: 1;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
 	min-height: 0;
-}
-.activity-panel .section-bar {
-	border-top: none;
 }
 
 .activity-log {
@@ -577,8 +610,6 @@ footer {
 
 .content-detail {
 	padding: 16px 20px;
-	border-bottom: 1px solid var(--border);
-	flex-shrink: 0;
 	background: var(--bg-secondary);
 }
 .content-detail h2 {

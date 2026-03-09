@@ -281,6 +281,9 @@ export function App() {
 	const [prompt, setPrompt] = useState("");
 	const [model, setModel] = useState("");
 	const [childModel, setChildModel] = useState("");
+	const [splitRatio, setSplitRatio] = useState(0.5);
+	const [isDragging, setIsDragging] = useState(false);
+	const contentPanelRef = useRef<HTMLElement>(null);
 
 	const { nodes, refresh: refreshTasks, updateFromWS } = useTasks(projectId);
 	const {
@@ -306,6 +309,33 @@ export function App() {
 	const addLog = useCallback((type: string, text: string, taskId?: string) => {
 		setLogs((prev) => [...prev, createLogEntry(type, text, taskId)]);
 	}, []);
+
+	// Draggable divider handlers
+	const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+		e.preventDefault();
+		setIsDragging(true);
+	}, []);
+
+	useEffect(() => {
+		if (!isDragging) return;
+		const handleMouseMove = (e: MouseEvent) => {
+			const panel = contentPanelRef.current;
+			if (!panel) return;
+			const rect = panel.getBoundingClientRect();
+			const y = e.clientY - rect.top;
+			const ratio = Math.min(0.85, Math.max(0.15, y / rect.height));
+			setSplitRatio(ratio);
+		};
+		const handleMouseUp = () => {
+			setIsDragging(false);
+		};
+		document.addEventListener("mousemove", handleMouseMove);
+		document.addEventListener("mouseup", handleMouseUp);
+		return () => {
+			document.removeEventListener("mousemove", handleMouseMove);
+			document.removeEventListener("mouseup", handleMouseUp);
+		};
+	}, [isDragging]);
 
 	// WebSocket message handler
 	const handleWS = useCallback(
@@ -541,34 +571,47 @@ export function App() {
 					/>
 				</section>
 
-				{/* Right: Content Area (task detail + activity log) */}
-				<section className="content-panel">
-					{selectedNode && (
-						<ContentDetail
-							node={selectedNode}
-							onContinue={handleContinueTask}
-							onDelete={handleDeleteTask}
-						/>
-					)}
-					{logs.length > 0 ? (
-						<div className="activity-panel">
-							<div className="section-bar">
-								<span className="section-title">
-									Activity
-									{selectedNode ? ` — ${selectedNode.title}` : ""}
-								</span>
-							</div>
-							<ActivityLog
-								entries={logs}
-								filterTaskId={selectedTaskId}
-								nodeMap={nodeMap}
+				{/* Right: Content Area (status + activity, split vertically) */}
+				<section
+					className={`content-panel${isDragging ? " dragging" : ""}`}
+					ref={contentPanelRef}
+				>
+					{/* Top: STATUS */}
+					<div className="content-status-panel" style={{ flex: splitRatio }}>
+						<div className="section-bar">
+							<span className="section-title">Status</span>
+						</div>
+						{selectedNode ? (
+							<ContentDetail
+								node={selectedNode}
+								onContinue={handleContinueTask}
+								onDelete={handleDeleteTask}
 							/>
+						) : (
+							<div className="content-empty">Select a task to view details</div>
+						)}
+					</div>
+
+					{/* biome-ignore lint/a11y/noStaticElementInteractions: drag-only resize divider */}
+					<div
+						className="resize-divider"
+						onMouseDown={handleDividerMouseDown}
+					/>
+
+					{/* Bottom: ACTIVITY */}
+					<div className="activity-panel" style={{ flex: 1 - splitRatio }}>
+						<div className="section-bar">
+							<span className="section-title">
+								Activity
+								{selectedNode ? ` — ${selectedNode.title}` : ""}
+							</span>
 						</div>
-					) : !selectedNode ? (
-						<div className="content-empty">
-							Select a task or start an agent to see activity
-						</div>
-					) : null}
+						<ActivityLog
+							entries={logs}
+							filterTaskId={selectedTaskId}
+							nodeMap={nodeMap}
+						/>
+					</div>
 				</section>
 			</main>
 
