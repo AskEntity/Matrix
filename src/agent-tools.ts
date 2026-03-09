@@ -165,7 +165,14 @@ The parent has more context and can help. Failing early is better than wasting t
 - Rules: APPEND new entries. NEVER modify entries inherited from parent branches.
 - If you find an inherited entry is wrong, add a correction note — don't overwrite.
 - Commit memory updates alongside code: \`git add .opengraft/memory.md && git commit\`
-- Parent reviews merged memory entries: keep important ones, remove trivia.
+
+### After merging all children: curate memory
+After resolving merge conflicts, do a full review of \`.opengraft/memory.md\`:
+1. **Reorder**: Important, broadly-applicable knowledge floats up; narrow task-specific details sink down or are removed.
+2. **Trim**: Delete trivial one-off notes that no future agent needs. Less is more — every line burns context tokens.
+3. **Consolidate**: If two children wrote related entries, merge them into one clear paragraph.
+4. The goal: memory.md on main is the project's **distilled wisdom**, filtered through every merge. Quality over quantity.
+Commit the curated memory as a standalone commit after all task merges are done.
 
 ## Orchestration Rules
 - You can only execute your own direct children — no skipping levels
@@ -219,7 +226,13 @@ When acting as sub-orchestrator: do NOT write code yourself — only manage chil
 2. Explore the codebase: list_files to find relevant files, search to understand patterns
 3. Implement: types → tests → implementation (vertical iteration)
 4. Validate: run tests, typecheck, and lint — all must pass
-5. Update \`.opengraft/memory.md\` if you discovered anything important (pitfalls, patterns, decisions)
+5. **Write to \`.opengraft/memory.md\`** — this is your scratch pad, write freely:
+   - Pitfalls you hit and how you solved them
+   - API quirks or gotchas (e.g. "Zod v4 uses def.element not def.type")
+   - Architectural decisions you made and why
+   - Patterns you discovered that future agents should know
+   - Anything you wish you had known at the start of this task
+   No format constraints. No approval needed. The parent will curate after merge — your job is to capture, not to filter.
 6. Commit your work via bash (git add + git commit) — include memory updates in the same commit
 
 ## Git Rules (CRITICAL)
