@@ -765,6 +765,9 @@ export function createOrchestratorTools(
 									tracker.assignSession(nodeRef.id, result.sessionId);
 								}
 								costs.add(result.costUsd, result.turns);
+								if (result.costUsd) {
+									tracker.updateCost(nodeRef.id, result.costUsd);
+								}
 
 								let newStatus: "passed" | "failed" | "stuck";
 								if (result.success) {

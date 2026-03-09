@@ -20,6 +20,7 @@ export interface TaskNode {
 	sessionId: string | null;
 	message: string | null;
 	updatedAt: string | null;
+	costUsd?: number;
 }
 
 export interface LogEntry {

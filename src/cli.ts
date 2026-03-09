@@ -145,6 +145,7 @@ async function handleTasks(args: string[]): Promise<void> {
 			parentId: string | null;
 			branch: string | null;
 			description?: string;
+			costUsd?: number;
 		}[];
 	};
 
@@ -170,8 +171,14 @@ async function handleTasks(args: string[]): Promise<void> {
 		const shortId = node.id.slice(0, 8);
 		const title = node.title.padEnd(36).slice(0, 36);
 		const branch = node.branch ?? "";
+		const cost =
+			node.costUsd != null && node.costUsd > 0
+				? `  ${node.costUsd.toFixed(4)}`
+				: "";
 		const prefix = isChild ? "↳ " : "  ";
-		console.log(`${indent}${prefix}${icon} ${shortId}  ${title}  ${branch}`);
+		console.log(
+			`${indent}${prefix}${icon} ${shortId}  ${title}  ${branch}${cost}`,
+		);
 
 		if (node.description) {
 			const desc = node.description.slice(0, 60);

@@ -145,6 +145,32 @@ describe("TaskTracker", () => {
 		expect(tracker.get(task.id)).toBe(task);
 	});
 
+	test("updateCost accumulates cost on a task node", () => {
+		const task = tracker.addTask("Costly task", "desc");
+		expect(task.costUsd).toBeUndefined();
+
+		tracker.updateCost(task.id, 0.0123);
+		expect(tracker.get(task.id)?.costUsd).toBeCloseTo(0.0123);
+
+		tracker.updateCost(task.id, 0.0077);
+		expect(tracker.get(task.id)?.costUsd).toBeCloseTo(0.02);
+	});
+
+	test("updateCost does nothing for unknown nodeId", () => {
+		// Should not throw
+		tracker.updateCost("nonexistent-id-12345678", 1.0);
+	});
+
+	test("updateCost persists across save/load", async () => {
+		const task = tracker.addTask("Persist cost", "desc");
+		tracker.updateCost(task.id, 0.0456);
+		await tracker.save();
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+		expect(tracker2.get(task.id)?.costUsd).toBeCloseTo(0.0456);
+	});
+
 	test("get() returns undefined for ambiguous prefix", () => {
 		const task1 = tracker.addTask("Task A", "First");
 		const task2 = tracker.addTask("Task B", "Second");
