@@ -94,6 +94,46 @@
 	}
 }
 
+/* Manual light mode (via toggle) */
+:root.light-mode {
+	--bg-base: #ffffff;
+	--bg-surface: #f6f8fa;
+	--bg-raised: #f0f2f5;
+	--bg-overlay: #e9ecef;
+	--bg-subtle: #dfe3e8;
+
+	--border: #d0d7de;
+	--border-subtle: #e6e8eb;
+	--border-muted: #eaeef2;
+
+	--text-primary: #1f2328;
+	--text-secondary: #656d76;
+	--text-muted: #848d97;
+	--text-faint: #afb8c1;
+
+	--color-pending: #848d97;
+	--color-in-progress: #0969da;
+	--color-testing: #8250df;
+	--color-passed: #1a7f37;
+	--color-failed: #cf222e;
+	--color-stuck: #9a6700;
+
+	--accent: #0969da;
+	--accent-hover: #0550ae;
+	--accent-muted: rgba(9, 105, 218, 0.1);
+
+	--bg-pending: rgba(132, 141, 151, 0.1);
+	--bg-in-progress: rgba(9, 105, 218, 0.1);
+	--bg-testing: rgba(130, 80, 223, 0.1);
+	--bg-passed: rgba(26, 127, 55, 0.1);
+	--bg-failed: rgba(207, 34, 46, 0.1);
+	--bg-stuck: rgba(154, 103, 0, 0.1);
+
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+	--shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
 /* ---- Reset ---- */
 *,
 *::before,
@@ -1637,4 +1677,29 @@ select {
 
 .og-pending-chip-dismiss:hover {
 	color: #e3b341;
+}
+
+/* =========================================================
+   Light mode overrides for hardcoded rgba values
+   ========================================================= */
+
+:root.light-mode .og-task-node:hover {
+	background: rgba(0, 0, 0, 0.04);
+}
+
+:root.light-mode .og-orch-node:hover {
+	background: rgba(0, 0, 0, 0.04);
+}
+
+:root.light-mode .og-log-entry:hover {
+	background: rgba(0, 0, 0, 0.02);
+}
+
+:root.light-mode .og-compact-bar {
+	background: linear-gradient(
+		90deg,
+		transparent,
+		rgba(130, 80, 223, 0.06),
+		transparent
+	);
 }
