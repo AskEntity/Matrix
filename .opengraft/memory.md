@@ -146,3 +146,27 @@ Daemon (Hono: HTTP + SSE + WS on :7433)
 - Flaky test = Bug. Never "fix" with retries.
 - Identify layer → add logs → trust logs → isolate → minimize
 - No old-system fallbacks when replacing
+
+## MessageQueue + yield() Scheduler (Phase 4 Feature)
+
+**Architecture change**: Replaced blocking execute_tasks + clarify with event-driven model.
+
+### New Model
+- **MessageQueue** (`src/message-queue.ts`): Single async channel per agent session for all events
+- **execute_tasks**: Fire-and-forget — spawns children in background, returns immediately. Results arrive as `child_complete` messages via queue.
+- **yield()**: New MCP tool — suspends agent loop (zero token burn), waits for any queue message, returns all accumulated messages.
+- **send_message_to_child**: New MCP tool — sends `parent_update` to a running child via `childQueues` registry.
+- **clarify**: Now non-blocking — emits event, returns immediately. Response arrives as `clarify_response` via yield().
+- **Cancellation points**: After each tool batch execution, queue is drained and messages appended to tool results.
+
+### Key Design Decisions
+- Queue created in daemon.ts `launchAgent`, shared between tools and session via `AgentRequest.queue`
+- `childQueues: Map<string, MessageQueue>` tracks running children for send_message_to_child
+- Old mechanisms removed: `ClarificationMap`, `activeClarifications`, `checkInjectedMessage`, `injectedMessages`
+- `sendMessage()` on AgentSession is deprecated — use `queue.enqueue()` directly
+
+### QueueMessage Types
+- `{ source: "user", content }` — user/parent message
+- `{ source: "child_complete", taskId, title, success, output }` — child finished
+- `{ source: "parent_update", content }` — parent sent update to child
+- `{ source: "clarify_response", answer }` — user answered clarification
