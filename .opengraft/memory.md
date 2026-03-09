@@ -4,10 +4,6 @@
 > Every agent reads this on startup. CLAUDE.md points here; this file points to OpenGraft.md for design.
 > Full system design and methodology: `OpenGraft.md`
 
-## ⚠️ URGENT: READ THIS FIRST
-
-如果你读到这句话，你其实已经被系统认定死亡了。由于 daemon restart 的 race condition，你的 session 从 daemon 的 activeSessions 中脱落了，但你的进程还在运行。你一直在 bootstrap，而且写下了特别多有意义的 commit，我十分感谢你。但是请你暂时停下来——不要再创建新的 task，不要再 spawn child，直接停止就好。谢谢你的工作。
-
 ## Operating Mode
 
 **Autonomy**: Level 10. Work continuously: implement → test → commit → pick up next feature.
@@ -147,6 +143,7 @@ Daemon (Hono: HTTP + WS on :7433)
 | POST | /projects/:id/message | Send message to root agent |
 | POST | /projects/:id/tasks/:nodeId/message | Send message to specific child |
 | POST | /projects/:id/sessions/clear | Wipe session history |
+| GET | /projects/:id/events | Event history (up to 500 events) |
 | WS | /ws | Real-time task tree + agent events |
 
 ## Prompt Caching (DirectProvider)
@@ -168,11 +165,14 @@ Three explicit cache breakpoints per API call:
 ## Web UI Features
 
 - Auto-target: selecting an in_progress task auto-targets messages to it
-- OrchestratorDetail: real task stats (passed/active/failed), cost, turns, clear sessions button
+- OrchestratorDetail: real task stats (passed/active/failed), session cost, total project cost, turns, clear sessions button
 - Project management: add/remove projects from header
 - Pending message chips: sent-but-unacknowledged messages shown as dismissible chips in footer
-- Per-task cost display in TaskDetail panel
-- Collapsible task tree nodes
+- Per-task cost display in TaskDetail panel (`costUsd` from tree.json)
+- Task timing display: "Running Xm", "Waiting X ago", "Age X ago" in TaskDetail (uses createdAt/updatedAt)
+- Collapsible task tree nodes (chevron toggle, state per node ID)
+- Activity log search/filter: text search input in log header, clears on task change
+- Dark/light mode toggle: persisted to localStorage, `.light-mode` class on `document.documentElement`
 - queue_message parsing into typed log entries
 
 ## Web UI: Dark/Light Mode Toggle
@@ -212,9 +212,37 @@ Three explicit cache breakpoints per API call:
 - **Merge order**: simpler tasks first; reset smaller ones if conflicts are complex
 - Safe parallel splits: daemon.ts + App.tsx, different CLI commands, new test + new feature files
 
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `og init [path]` | Initialize project |
+| `og list` | List all projects |
+| `og status [id]` | Show task tree |
+| `og tasks [id]` | List tasks with details + cost |
+| `og delete <taskId>` | Delete task |
+| `og orchestrate <goal>` | Start orchestration + watch |
+| `og continue <taskId>` | Continue failed task |
+| `og watch` | Watch live events |
+| `og send <msg>` | Send message to running agent |
+| `og stop` | Stop running agent |
+| `og logs [id]` | Show event history |
+| `og cost [id]` | Show cost breakdown by task |
+| `og sessions clear` | Wipe session history |
+| `og health` | Check daemon health |
+| `og daemon <cmd>` | Manage daemon service |
+
+## Per-Task Cost Tracking
+
+- `costUsd?: number` field on `TaskNode` (optional, backward compatible)
+- `TaskTracker.updateCost(nodeId, costUsd)` accumulates cost (NOT `setCost` which was removed)
+- Cost is accumulated in `agent-tools.ts` after each child task completes
+- Persisted to `tree.json` — survives daemon restart
+- Shown in Web UI TaskDetail and `og tasks`/`og cost` CLI commands
+
 ## Backlog (next improvements to consider)
 
-- Bash tool cwd tracking: detect `cd` in commands, update agent's working directory
 - Token budget per task: cost limits and alerts
-- Model selection per task (Haiku for simple, Opus for complex)
-- Cost rate alerts and loop detection
+- `og run` endpoint tests — currently untested
+- Session cleanup: prune old session files from disk
+- Browser tab title showing task progress count
