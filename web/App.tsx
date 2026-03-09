@@ -603,44 +603,17 @@ function LogEntryView({
 
 // ── Task Detail ────────────────────────────────────────────────────────────
 
-function IconTarget({ size = 13 }: { size?: number }) {
-	return (
-		<svg
-			aria-hidden="true"
-			width={size}
-			height={size}
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="2"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-		>
-			<circle cx="12" cy="12" r="10" />
-			<circle cx="12" cy="12" r="6" />
-			<circle cx="12" cy="12" r="2" />
-		</svg>
-	);
-}
-
 function TaskDetail({
 	node,
 	onContinue,
 	onDelete,
-	running,
-	isTargeted,
-	onSetTarget,
 }: {
 	node: TaskNode;
 	onContinue: (msg?: string) => void;
 	onDelete: () => void;
-	running: boolean;
-	isTargeted: boolean;
-	onSetTarget: () => void;
 }) {
 	const [continueMsg, setContinueMsg] = useState("");
 	const canContinue = node.status === "failed" || node.status === "stuck";
-	const canTarget = running && node.status === "in_progress";
 
 	return (
 		<div className="og-detail-content">
@@ -692,21 +665,6 @@ function TaskDetail({
 			</div>
 
 			<div className="og-detail-actions">
-				{canTarget && (
-					<button
-						type="button"
-						className={`og-btn og-btn-sm${isTargeted ? " og-btn-targeted" : " og-btn-ghost"}`}
-						onClick={onSetTarget}
-						title={
-							isTargeted
-								? "Messages targeting this agent (click to cancel)"
-								: "Send messages to this agent"
-						}
-					>
-						<IconTarget size={12} />
-						{isTargeted ? "Targeting this agent" : "Send messages here"}
-					</button>
-				)}
 				{canContinue && (
 					<form
 						className="og-continue-form"
@@ -942,7 +900,35 @@ export function App() {
 						);
 						break;
 					} else if (et === "queue_message") {
-						text = (msg.messages as string) || "";
+						// Parse structured queue messages and add typed log entries
+						const raw = (msg.messages as string) || "";
+						const taskId = msg.taskId as string | undefined;
+						const lines = raw
+							.split("\n")
+							.filter((l) => l.trim() && !l.startsWith("## "));
+						let parsed = false;
+						for (const line of lines) {
+							const m = /^\[([^\]]+)\] (.*)$/s.exec(line);
+							if (m) {
+								parsed = true;
+								const msgType = m[1];
+								const msgText = m[2] ?? "";
+								let logType: string;
+								if (msgType === "child_complete") {
+									logType = "task_completed";
+								} else if (msgType === "user") {
+									logType = "user_prompt";
+								} else {
+									logType = "queue_message";
+								}
+								addLog(logType, msgText, taskId);
+							}
+						}
+						if (!parsed) {
+							// Fallback: show raw text as single queue_message entry
+							addLog("queue_message", raw, taskId);
+						}
+						break;
 					} else if (et === "status") {
 						text = (msg.message as string) || "";
 					} else {
@@ -1022,6 +1008,20 @@ export function App() {
 	useEffect(() => {
 		if (projectId) checkStatus();
 	}, [projectId, checkStatus]);
+
+	// Auto-target selected in_progress tasks for messages
+	useEffect(() => {
+		if (!selectedTaskId || selectedTaskId === PROJECT_NODE_ID) {
+			setTargetNodeId(null);
+			return;
+		}
+		const node = nodeMap.get(selectedTaskId);
+		if (node?.status === "in_progress") {
+			setTargetNodeId(selectedTaskId);
+		} else {
+			setTargetNodeId(null);
+		}
+	}, [selectedTaskId, nodeMap]);
 
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
@@ -1244,13 +1244,6 @@ export function App() {
 								node={selectedNode}
 								onContinue={handleContinueTask}
 								onDelete={handleDeleteTask}
-								running={running}
-								isTargeted={targetNodeId === selectedNode.id}
-								onSetTarget={() =>
-									setTargetNodeId(
-										targetNodeId === selectedNode.id ? null : selectedNode.id,
-									)
-								}
 							/>
 						) : (
 							<div className="og-detail-empty">
