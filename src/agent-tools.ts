@@ -908,6 +908,16 @@ export function createOrchestratorTools(
 					// Format messages for the agent
 					const formatted = all.map(formatQueueMessage).join("\n");
 
+					// Emit queue_message event so the UI can acknowledge pending messages
+					if (formatted) {
+						emit({
+							type: "agent_event",
+							taskId: currentTaskId ?? undefined,
+							eventType: "queue_message",
+							messages: formatted,
+						});
+					}
+
 					// Build ## Pending summary
 					const runningChildren = Array.from(childQueues.keys());
 					const runningChildrenText =
