@@ -8,6 +8,10 @@ let selectedTaskId = null;
 const taskNodes = new Map();
 /** @type {Map<string, Array<{eventType: string, text: string}>>} */
 const taskEvents = new Map();
+
+/** @type {boolean} */
+let showToolCalls = false;
+
 // DOM refs
 const projectSelect = document.getElementById("project-select");
 const taskTree = document.getElementById("task-tree");
@@ -36,6 +40,37 @@ const continueInput = document.getElementById("continue-input");
 const detailLog = document.getElementById("detail-log");
 const modelSelect = document.getElementById("model-select");
 const childModelSelect = document.getElementById("child-model-select");
+
+// --- "Show tool calls" toggle in activity panel header ---
+
+(function injectToolCallsToggle() {
+	const activitySection = document.getElementById("activity-section");
+	if (!activitySection) return;
+	const panelActions = activitySection.querySelector(".panel-actions");
+	if (!panelActions) return;
+
+	const label = document.createElement("label");
+	label.title = "Toggle tool call visibility";
+	label.style.cssText =
+		"font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:4px;";
+
+	const checkbox = document.createElement("input");
+	checkbox.type = "checkbox";
+	checkbox.id = "show-tool-calls";
+	checkbox.checked = showToolCalls;
+
+	label.appendChild(checkbox);
+	label.appendChild(document.createTextNode("Tools"));
+	panelActions.insertBefore(label, panelActions.firstChild);
+
+	checkbox.addEventListener("change", () => {
+		showToolCalls = checkbox.checked;
+		activityLog.classList.toggle("hide-tool-calls", !showToolCalls);
+	});
+
+	// Apply initial state
+	activityLog.classList.toggle("hide-tool-calls", !showToolCalls);
+})();
 
 // --- WebSocket ---
 
@@ -86,11 +121,11 @@ function handleWSMessage(msg) {
 			logAgentEvent(msg);
 			break;
 		case "orchestration_started":
-			logEntry("orchestration_started", "Orchestration started");
+			logLifecycleEntry("orchestration_started", "Orchestration started");
 			setOrchestrationRunning(true);
 			break;
 		case "orchestration_completed":
-			logEntry(
+			logLifecycleEntry(
 				"orchestration_completed",
 				`Orchestration completed: ${msg.success ? "SUCCESS" : "FAILED"}` +
 					(msg.costUsd ? ` ($${msg.costUsd.toFixed(2)})` : ""),
@@ -273,7 +308,8 @@ function selectTask(taskId) {
 }
 
 function showDetail(node) {
-	taskDetail.classList.remove("hidden");
+	// Use 'open' class to trigger CSS slide-in transition
+	taskDetail.classList.add("open");
 
 	document.getElementById("detail-title").textContent = node.title;
 
@@ -334,16 +370,36 @@ function renderDetailLog(taskId) {
 	}
 }
 
+/**
+ * Append a log entry to the per-task detail panel with improved rendering.
+ * @param {string} eventType
+ * @param {string} text
+ */
 function appendDetailLogEntry(eventType, text) {
 	const div = document.createElement("div");
 	div.className = `detail-log-entry event-${eventType}`;
-	div.textContent = text;
+
+	if (eventType === "tool_use") {
+		// Compact, de-emphasized display
+		div.textContent = `⚙ ${text}`;
+	} else if (eventType === "tool_result") {
+		// Even more compact
+		div.textContent = text;
+	} else if (eventType === "error") {
+		// Prominent error prefix
+		div.textContent = `✗ ${text}`;
+	} else {
+		// text / status / default: readable wrap
+		div.textContent = text;
+	}
+
 	detailLog.appendChild(div);
 	detailLog.scrollTop = detailLog.scrollHeight;
 }
 
 function closeDetail() {
-	taskDetail.classList.add("hidden");
+	// Use 'open' class removal to trigger CSS slide-out transition
+	taskDetail.classList.remove("open");
 	selectedTaskId = null;
 	for (const el of taskTree.querySelectorAll(".task-node.selected")) {
 		el.classList.remove("selected");
@@ -416,7 +472,36 @@ btnDeleteTask.addEventListener("click", async () => {
 
 // --- Activity Log ---
 
-function logEntry(eventType, text) {
+/**
+ * Build a task-badge element from a taskId, if present.
+ * @param {string | undefined} taskId
+ * @returns {HTMLElement | null}
+ */
+function buildTaskBadge(taskId) {
+	if (!taskId) return null;
+	const node = taskNodes.get(taskId);
+	const label = node?.title
+		? node.title.slice(0, 20) + (node.title.length > 20 ? "…" : "")
+		: taskId.slice(0, 8);
+
+	const badge = document.createElement("span");
+	badge.className = "log-task-badge";
+	badge.textContent = label;
+	badge.title = taskId;
+	badge.style.cssText =
+		"display:inline-block;font-size:10px;padding:1px 6px;border-radius:8px;" +
+		"background:var(--bg-tertiary);color:var(--text-muted);margin-right:6px;" +
+		"font-family:var(--font-mono);vertical-align:middle;border:1px solid var(--border);";
+	return badge;
+}
+
+/**
+ * Append a generic entry to the activity log.
+ * @param {string} eventType
+ * @param {string} text
+ * @param {string | undefined} [taskId]
+ */
+function logEntry(eventType, text, taskId) {
 	const div = document.createElement("div");
 	div.className = `log-entry event-${eventType}`;
 
@@ -424,11 +509,16 @@ function logEntry(eventType, text) {
 	time.className = "log-time";
 	time.textContent = new Date().toLocaleTimeString();
 
+	div.appendChild(time);
+
+	// Task badge (if taskId provided)
+	const badge = buildTaskBadge(taskId);
+	if (badge) div.appendChild(badge);
+
 	const content = document.createElement("span");
 	content.className = "log-text";
 	content.textContent = text;
 
-	div.appendChild(time);
 	div.appendChild(content);
 	activityLog.appendChild(div);
 
@@ -437,22 +527,89 @@ function logEntry(eventType, text) {
 	}
 }
 
+/**
+ * Log a major lifecycle event with a visual separator before it.
+ * @param {string} eventType
+ * @param {string} text
+ */
+function logLifecycleEntry(eventType, text) {
+	const hr = document.createElement("hr");
+	hr.className = "log-separator";
+	hr.style.cssText =
+		"border:none;border-top:1px solid var(--border);margin:6px 0;opacity:0.5;";
+	activityLog.appendChild(hr);
+	logEntry(eventType, text);
+}
+
+/**
+ * Format tool_use args into a compact human-readable string.
+ * @param {object} input
+ * @returns {string}
+ */
+function formatToolArgs(input) {
+	if (!input || typeof input !== "object") return "";
+	const parts = Object.entries(input).map(([k, v]) => {
+		const val = typeof v === "string" ? v : JSON.stringify(v);
+		const truncated = val.length > 40 ? `${val.slice(0, 40)}…` : val;
+		return `${k}=${truncated}`;
+	});
+	const joined = parts.join(", ");
+	return joined.length > 120 ? `${joined.slice(0, 120)}…` : joined;
+}
+
+/**
+ * Log an agent_event WebSocket message with improved rendering.
+ * @param {object} msg
+ */
 function logAgentEvent(msg) {
 	let text;
+	let entryEventType = "agent_event";
+
 	if (msg.eventType === "tool_use") {
-		text = `Tool: ${msg.tool} ${JSON.stringify(msg.input || {}).slice(0, 200)}`;
+		const args = formatToolArgs(msg.input);
+		text = args ? `⚙ ${msg.tool}(${args})` : `⚙ ${msg.tool}`;
+		entryEventType = "tool_use";
 	} else if (msg.eventType === "tool_result") {
-		const prefix = msg.isError ? "\u2717" : "\u2713";
-		text = `${prefix} ${msg.tool}: ${(msg.content || "").slice(0, 300)}`;
+		const prefix = msg.isError ? "✗" : "✓";
+		const content = (msg.content || "").slice(0, 200);
+		text = `${prefix} ${msg.tool}: ${content}`;
+		entryEventType = "tool_result";
 	} else if (msg.eventType === "text") {
 		text = msg.content || "";
+		entryEventType = "text";
 	} else if (msg.eventType === "status") {
-		text = `Status: ${msg.message}`;
+		text = msg.message || msg.content || JSON.stringify(msg).slice(0, 200);
+		entryEventType = "status";
+	} else if (msg.eventType === "error") {
+		text = msg.message || msg.content || JSON.stringify(msg).slice(0, 200);
+		entryEventType = "error";
 	} else {
 		text = JSON.stringify(msg).slice(0, 300);
 	}
 
-	logEntry("agent_event", text);
+	// Build the log entry div directly (to support per-event CSS classes for filtering)
+	const div = document.createElement("div");
+	div.className = `log-entry event-agent_event event-${entryEventType}`;
+
+	const time = document.createElement("span");
+	time.className = "log-time";
+	time.textContent = new Date().toLocaleTimeString();
+	div.appendChild(time);
+
+	// Task badge
+	const badge = buildTaskBadge(msg.taskId);
+	if (badge) div.appendChild(badge);
+
+	const content = document.createElement("span");
+	content.className = "log-text";
+	content.textContent = text;
+	div.appendChild(content);
+
+	activityLog.appendChild(div);
+
+	if (autoScroll.checked) {
+		activityLog.scrollTop = activityLog.scrollHeight;
+	}
 
 	// Store per-task events for the detail panel
 	if (msg.taskId) {
@@ -489,7 +646,7 @@ orchestrateForm.addEventListener("submit", async (e) => {
 			ws.send(JSON.stringify(msg));
 		} else {
 			setOrchestrationRunning(true);
-			logEntry(
+			logLifecycleEntry(
 				"orchestration_started",
 				"Orchestration started (HTTP fallback)",
 			);
@@ -502,7 +659,7 @@ orchestrateForm.addEventListener("submit", async (e) => {
 				},
 			);
 			const result = await res.json();
-			logEntry(
+			logLifecycleEntry(
 				"orchestration_completed",
 				`Completed: ${result.success ? "SUCCESS" : "FAILED"} ($${(result.costUsd || 0).toFixed(2)})`,
 			);
