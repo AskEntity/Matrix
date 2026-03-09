@@ -11,6 +11,23 @@ import type { TaskTracker } from "./task-tracker.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
 
 /**
+ * Check if nodeId is a descendant of ancestorId by walking up the parent chain.
+ */
+export function isDescendantOf(
+	tracker: TaskTracker,
+	nodeId: string,
+	ancestorId: string,
+): boolean {
+	let current = tracker.get(nodeId);
+	while (current) {
+		if (current.parentId === ancestorId) return true;
+		if (!current.parentId) return false;
+		current = tracker.get(current.parentId);
+	}
+	return false;
+}
+
+/**
  * Check if the git working tree is clean (no uncommitted changes).
  * Worktrees branch from the current HEAD, so dirty state would be lost.
  */
@@ -271,6 +288,24 @@ export function createOrchestratorTools(
 			},
 			async (args) => {
 				try {
+					// Scope validation: agents can only create tasks under themselves or their descendants
+					if (
+						args.parentId &&
+						currentTaskId !== null &&
+						args.parentId !== currentTaskId &&
+						!isDescendantOf(tracker, args.parentId, currentTaskId)
+					) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Cannot create task under ${args.parentId}: not your task or descendant`,
+								},
+							],
+							isError: true,
+						};
+					}
+
 					const node = args.parentId
 						? tracker.addChild(args.parentId, args.title, args.description)
 						: tracker.addTask(args.title, args.description);
