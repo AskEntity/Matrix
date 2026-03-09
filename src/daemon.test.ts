@@ -676,6 +676,85 @@ describe("daemon tasks API", () => {
 
 		await rm(localDataDir, { recursive: true });
 	});
+
+	test("GET /tasks/:nodeId/gitlog returns empty commits when no branch", async () => {
+		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "NoLog", description: "" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${root.id}/gitlog`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { commits: unknown[] };
+		expect(body.commits).toBeInstanceOf(Array);
+		expect(body.commits.length).toBe(0);
+	});
+
+	test("GET /tasks/:nodeId/gitlog returns 404 for unknown task", async () => {
+		const res = await app.request(
+			`/projects/${projectId}/tasks/nonexistent-task-id/gitlog`,
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("GET /tasks/:nodeId/gitlog returns commits when branch exists", async () => {
+		// Use a local app instance to access getTracker
+		const localDataDir = await mkdtemp(join(tmpdir(), "og-gitlog-wt-"));
+		const {
+			app: localApp,
+			pm: localPm,
+			getTracker: localGetTracker,
+		} = createApp({ dataDir: localDataDir, agentProvider: mockProvider });
+		await localPm.load();
+
+		const projPath = join(tempDir, "gitlog-app");
+		const projRes = await localApp.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projPath }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		const taskRes = await localApp.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "LoggedTask", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		// Find out the default branch name (could be "main" or "master" depending on git config)
+		const branchProc = Bun.spawn(["git", "branch", "--show-current"], {
+			cwd: projPath,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		await branchProc.exited;
+		const defaultBranch = (await new Response(branchProc.stdout).text()).trim();
+
+		// Use assignWorktree to set both branch and worktreePath (PATCH only sets branch)
+		const daemonTracker = await localGetTracker(project.id);
+		daemonTracker.assignWorktree(task.id, defaultBranch, projPath);
+		await daemonTracker.save();
+
+		const res = await localApp.request(
+			`/projects/${project.id}/tasks/${task.id}/gitlog`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			commits: { hash: string; message: string }[];
+		};
+		expect(body.commits).toBeInstanceOf(Array);
+		// The project was initialized with a git commit, so there should be at least one
+		expect(body.commits.length).toBeGreaterThan(0);
+		expect(body.commits[0]).toHaveProperty("hash");
+		expect(body.commits[0]).toHaveProperty("message");
+
+		await rm(localDataDir, { recursive: true });
+	});
 });
 
 describe("GET /projects/:id/events", () => {

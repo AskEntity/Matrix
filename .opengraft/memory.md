@@ -234,6 +234,13 @@ Three explicit cache breakpoints per API call:
 - Activity log search/filter, dark/light mode toggle
 - queue_message parsing into typed log entries
 - "Message queued" no longer shown in activity log (pending chips provide this feedback)
+- TaskDetail git log: shows commits for a task's branch via GET /projects/:id/tasks/:nodeId/gitlog; refetched when node.id or node.status changes
+
+## API Notes
+
+- **GET /projects/:id/tasks/:nodeId/gitlog**: returns `{ commits: [{hash, message}] }`. Runs `git log --oneline -20 <branch>` from project root. Returns empty array if no worktreePath/branch set, or if git fails (e.g., branch not yet pushed).
+- **PATCH /projects/:id/tasks/:nodeId**: only handles `status` and `branch` — does NOT handle `worktreePath`. Use `tracker.assignWorktree()` directly to set both branch + worktreePath.
+- **Git default branch**: `git init` uses "master" by default (git < 3.0 without config). Tests must use `git branch --show-current` via `Bun.spawn` to detect actual branch name, not hardcode "main".
 
 ## Backlog (next improvements to consider)
 
