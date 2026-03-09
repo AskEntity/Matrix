@@ -65,6 +65,7 @@ export type AgentEvent =
 			inputTokens: number;
 			compressThreshold: number;
 			contextWindow: number;
+			estimated?: boolean;
 	  };
 
 /** Handle to a running agent session that supports message injection. */
