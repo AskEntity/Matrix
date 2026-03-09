@@ -202,5 +202,9 @@ Identify layer → add logs → trust logs → isolate → minimize
 - [x] Parallel tool execution in DirectProvider (Promise.all)
 - [x] continue_task MCP tool for resuming failed/stuck child agents
 - [x] Configurable maxTurns per spawn_task/spawn_children
-- [ ] Self-bootstrap: run OpenGraft development sessions on OpenGraft itself
+- [x] OAuth authentication support (CLAUDE_CODE_OAUTH_TOKEN via beta endpoint)
+- [x] Self-bootstrap validated: orchestrator built /stats endpoint end-to-end ($1.65)
+- [x] Resource leak fixes: dead WS client cleanup, worktree cleanup on task delete
+- [x] API retry with exponential backoff (up to 4 retries, handles 529/500/rate limit)
+- [x] WS reconnection with exponential backoff in web UI
 - [ ] Dual-track verification: compare external toolchain vs self-hosted results
