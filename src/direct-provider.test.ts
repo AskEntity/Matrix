@@ -46,6 +46,51 @@ describe("getModelPricing", () => {
 	});
 });
 
+describe("cost calculation", () => {
+	test("input_tokens are NOT double-counted with cache tokens (negative cost bug)", () => {
+		// Anthropic API: input_tokens = non-cached tokens ONLY.
+		// cache_creation_input_tokens and cache_read_input_tokens are separate.
+		// Cost = input * 1x + cache_creation * 1.25x + cache_read * 0.1x + output * outputRate
+		// BUG: old code subtracted cache tokens from input_tokens, causing negative costs
+		// when cache_creation + cache_read > input_tokens.
+		const { inputPer1M, outputPer1M } = getModelPricing("claude-sonnet-4-6");
+		// inputPer1M = 3, outputPer1M = 15
+
+		const totalInputTokens = 500; // non-cached tokens (small, e.g. just new content)
+		const totalCacheCreationTokens = 10_000; // large cache write
+		const totalCacheReadTokens = 5_000; // cache hits
+		const totalOutputTokens = 200;
+
+		// Correct formula: input_tokens is already net of cache — no subtraction needed
+		const costUsd =
+			(totalInputTokens * inputPer1M) / 1_000_000 +
+			(totalCacheCreationTokens * inputPer1M * 1.25) / 1_000_000 +
+			(totalCacheReadTokens * inputPer1M * 0.1) / 1_000_000 +
+			(totalOutputTokens * outputPer1M) / 1_000_000;
+
+		// Should be positive: 500*3/1M + 10000*3*1.25/1M + 5000*3*0.1/1M + 200*15/1M
+		// = 0.0015 + 0.0375 + 0.0015 + 0.003 = 0.0435
+		expect(costUsd).toBeGreaterThan(0);
+		expect(costUsd).toBeCloseTo(0.0435, 6);
+	});
+
+	test("cost is non-negative even with very large cache hits", () => {
+		const { inputPer1M } = getModelPricing("claude-sonnet-4-6");
+		// Extreme case: almost all tokens come from cache, input_tokens is tiny
+		const totalInputTokens = 10;
+		const totalCacheCreationTokens = 0;
+		const totalCacheReadTokens = 100_000;
+
+		const costUsd =
+			(totalInputTokens * inputPer1M) / 1_000_000 +
+			(totalCacheCreationTokens * inputPer1M * 1.25) / 1_000_000 +
+			(totalCacheReadTokens * inputPer1M * 0.1) / 1_000_000 +
+			(50 * 15) / 1_000_000;
+
+		expect(costUsd).toBeGreaterThan(0);
+	});
+});
+
 describe("resolvePath", () => {
 	test("returns absolute paths unchanged", () => {
 		expect(resolvePath("/tmp/file.ts", "/home/user")).toBe("/tmp/file.ts");

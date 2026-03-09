@@ -1191,10 +1191,10 @@ export class DirectProvider implements AgentProvider {
 		this.sessionHistory.set(sessionId, [...messages]);
 
 		const { inputPer1M, outputPer1M } = getModelPricing(model);
-		const baseInputTokens =
-			totalInputTokens - totalCacheCreationTokens - totalCacheReadTokens;
+		// Anthropic API: input_tokens = non-cached tokens only (excludes cache_creation
+		// and cache_read tokens — those are reported separately). Do NOT subtract them.
 		const costUsd =
-			(baseInputTokens * inputPer1M) / 1_000_000 +
+			(totalInputTokens * inputPer1M) / 1_000_000 +
 			(totalCacheCreationTokens * inputPer1M * 1.25) / 1_000_000 +
 			(totalCacheReadTokens * inputPer1M * 0.1) / 1_000_000 +
 			(totalOutputTokens * outputPer1M) / 1_000_000;
