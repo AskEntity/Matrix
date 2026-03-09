@@ -1839,3 +1839,71 @@ select {
 		transparent
 	);
 }
+
+/* =========================================================
+   Settings Panel
+   ========================================================= */
+
+.og-settings-panel {
+	position: absolute;
+	top: var(--header-h);
+	right: 0;
+	width: 280px;
+	background: var(--bg-secondary);
+	border-left: 1px solid var(--border);
+	border-bottom: 1px solid var(--border);
+	border-radius: 0 0 0 var(--radius-md);
+	padding: 12px 14px;
+	z-index: 100;
+	box-shadow: -2px 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.og-settings-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 12px;
+}
+
+.og-settings-title {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.og-settings-field {
+	display: block;
+	margin-bottom: 10px;
+	cursor: default;
+}
+
+.og-settings-label {
+	display: block;
+	font-size: 11px;
+	color: var(--text-secondary);
+	margin-bottom: 4px;
+}
+
+.og-settings-input {
+	width: 100%;
+	padding: 5px 8px;
+	font-size: 12px;
+	background: var(--bg-primary);
+	color: var(--text-primary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	outline: none;
+	box-sizing: border-box;
+}
+
+.og-settings-input:focus {
+	border-color: var(--accent);
+}
+
+.og-settings-field .og-select {
+	width: 100%;
+}
+
+.og-btn-icon.active {
+	color: var(--accent);
+}
