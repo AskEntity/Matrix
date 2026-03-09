@@ -250,6 +250,12 @@ Three explicit cache breakpoints per API call:
 - Token budget per task: cost limits and alerts
 - Compact checkpoint should include "Rejected Approaches" more aggressively — agents often retry failed paths after compaction
 
+## Bug Fix: report_to_parent queue routing
+
+**Bug**: `report_to_parent` tool was enqueuing to `deps.queue` which, for a child agent, is the child's OWN queue (childQueue). Messages went back to the child, never reaching the parent.
+
+**Fix**: Added `parentQueue` field to `OrchestratorToolsDeps`. In `executeChildStreaming`, `deps.queue` (the parent's queue) is passed as `parentQueue` to child tools. `report_to_parent` now uses `deps.parentQueue` to enqueue messages upward. Top-level orchestrators have `parentQueue: undefined` → no-op.
+
 ## Queue Message Delivery — Confirmed Behavior (tested 2025-03)
 
 **Queue drain works correctly for both yield() and bash tool calls:**
