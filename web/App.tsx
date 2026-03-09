@@ -10,6 +10,8 @@ import {
 	useWebSocket,
 } from "./hooks.ts";
 
+const PROJECT_NODE_ID = "__project__";
+
 // --- Task Tree Component ---
 
 function TaskTree({
@@ -33,22 +35,34 @@ function TaskTree({
 		return map;
 	}, [nodes]);
 
-	if (nodes.length === 0) {
-		return <div className="empty-state">No tasks yet.</div>;
-	}
+	const isProjectSelected = selectedTaskId === PROJECT_NODE_ID;
 
 	return (
 		<div className="task-tree">
+			<button
+				type="button"
+				className={`task-node project-node${isProjectSelected ? " selected" : ""}`}
+				onClick={(e) => {
+					e.stopPropagation();
+					onSelect(isProjectSelected ? null : PROJECT_NODE_ID);
+				}}
+			>
+				<div className="task-row" style={{ paddingLeft: "14px" }}>
+					<span className="project-icon">⬡</span>
+					<span className="task-title">Orchestrator</span>
+				</div>
+			</button>
 			{roots.map((root) => (
 				<TaskNodeView
 					key={root.id}
 					node={root}
 					childMap={childMap}
-					depth={0}
+					depth={1}
 					selectedTaskId={selectedTaskId}
 					onSelect={onSelect}
 				/>
 			))}
+			{nodes.length === 0 && <div className="empty-state">No tasks yet.</div>}
 		</div>
 	);
 }
@@ -129,7 +143,12 @@ function ActivityLog({
 	const visible = useMemo(() => {
 		if (!filterTaskId) return entries;
 
-		// Build set of descendant IDs (includes the selected task itself)
+		// Project node: show only orchestrator-level events (no taskId)
+		if (filterTaskId === PROJECT_NODE_ID) {
+			return entries.filter((e) => !e.taskId);
+		}
+
+		// Real task: show events for this task and all its descendants
 		const descendantIds = new Set<string>();
 		const collect = (id: string) => {
 			descendantIds.add(id);
@@ -142,15 +161,7 @@ function ActivityLog({
 		};
 		collect(filterTaskId);
 
-		const selectedNode = nodeMap.get(filterTaskId);
-		const isRoot = !selectedNode?.parentId;
-
-		return entries.filter((e) => {
-			if (e.taskId && descendantIds.has(e.taskId)) return true;
-			// Show untagged events (orchestrator-level) when viewing root task
-			if (!e.taskId && isRoot) return true;
-			return false;
-		});
+		return entries.filter((e) => e.taskId && descendantIds.has(e.taskId));
 	}, [entries, filterTaskId, nodeMap]);
 
 	return (
@@ -326,9 +337,11 @@ export function App() {
 		return map;
 	}, [nodes]);
 
-	const selectedNode = selectedTaskId
-		? (nodeMap.get(selectedTaskId) ?? null)
-		: null;
+	const isProjectNode = selectedTaskId === PROJECT_NODE_ID;
+	const selectedNode =
+		selectedTaskId && !isProjectNode
+			? (nodeMap.get(selectedTaskId) ?? null)
+			: null;
 
 	const addLog = useCallback(
 		(type: string, text: string, taskId?: string, checkpoint?: string) => {
@@ -568,8 +581,10 @@ export function App() {
 							{selectedTaskId && (
 								<>
 									<span className="filter-badge">
-										{selectedNode?.title?.slice(0, 20)}
-										{(selectedNode?.title?.length ?? 0) > 20 ? "..." : ""}
+										{isProjectNode
+											? "Orchestrator"
+											: (selectedNode?.title?.slice(0, 20) ?? "") +
+												((selectedNode?.title?.length ?? 0) > 20 ? "..." : "")}
 									</span>
 									<button
 										type="button"
@@ -619,7 +634,27 @@ export function App() {
 						<div className="section-bar">
 							<span className="section-title">Status</span>
 						</div>
-						{selectedNode ? (
+						{isProjectNode ? (
+							<div className="content-detail">
+								<h2>
+									<span className="project-icon">⬡</span> Orchestrator
+								</h2>
+								<div className="content-detail-fields">
+									<div className="detail-field">
+										<div className="detail-label">Status</div>
+										<span
+											className={`status-badge ${running ? "in_progress" : "idle"}`}
+										>
+											{running ? "running" : "idle"}
+										</span>
+									</div>
+									<div className="detail-field">
+										<div className="detail-label">Tasks</div>
+										<div className="detail-value">{nodes.length}</div>
+									</div>
+								</div>
+							</div>
+						) : selectedNode ? (
 							<ContentDetail
 								node={selectedNode}
 								onContinue={handleContinueTask}
@@ -641,7 +676,11 @@ export function App() {
 						<div className="section-bar">
 							<span className="section-title">
 								Activity
-								{selectedNode ? ` — ${selectedNode.title}` : ""}
+								{isProjectNode
+									? " — Orchestrator"
+									: selectedNode
+										? ` — ${selectedNode.title}`
+										: ""}
 							</span>
 						</div>
 						<ActivityLog
