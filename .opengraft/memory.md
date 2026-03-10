@@ -107,3 +107,11 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Orphan reset: in_progress tasks → failed before resume
 - startupReady guard prevents requests during auto-resume
 - Session auto-prune on startup (OG_SESSION_KEEP env, default: 5)
+
+## Token Usage Badge
+
+- Usage events arrive as `agent_event` with `eventType: "usage"`, containing `inputTokens`, `contextWindow`, `compressThreshold`, and optionally `estimated`.
+- The App.tsx WS handler previously had a `break` for usage events (ignored them). Now we track them per-taskId in state.
+- Badge shows in footer form, picks active task by priority: targetNodeId > selected task > first in_progress root task.
+- Color thresholds: green (<50%), yellow (50-80%), red (>80%) based on inputTokens/contextWindow ratio.
+- Light mode has separate color overrides for the badge.

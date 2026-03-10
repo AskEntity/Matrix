@@ -130,6 +130,8 @@ const en: Translations = {
 	"footer.messageToTask": 'Message to "{task}"…',
 	"footer.send": "Send",
 	"footer.run": "Run",
+	"footer.contextWindow": "Context",
+	"footer.estimated": "estimated",
 
 	// Clarifications
 	"clarify.needed": "Clarification needed",
@@ -323,6 +325,8 @@ const zh: Translations = {
 	"footer.messageToTask": '发送消息给 "{task}"…',
 	"footer.send": "发送",
 	"footer.run": "运行",
+	"footer.contextWindow": "上下文",
+	"footer.estimated": "估算",
 
 	// Clarifications
 	"clarify.needed": "需要澄清",

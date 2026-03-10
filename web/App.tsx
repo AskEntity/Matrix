@@ -1447,6 +1447,29 @@ function OrchestratorDetail({
 	);
 }
 
+// ── Token Usage Badge ──────────────────────────────────────────────────────
+
+function TokenUsageBadge({
+	inputTokens,
+	contextWindow,
+	estimated,
+}: {
+	inputTokens: number;
+	contextWindow: number;
+	estimated?: boolean;
+}) {
+	const { t } = useLocale();
+	const ratio = contextWindow > 0 ? inputTokens / contextWindow : 0;
+	const level = ratio >= 0.8 ? "red" : ratio >= 0.5 ? "yellow" : "green";
+	const tooltip = `${t("footer.contextWindow")}: ${formatTokenCount(inputTokens)} / ${formatTokenCount(contextWindow)}${estimated ? ` (${t("footer.estimated")})` : ""}`;
+	return (
+		<span className={`og-token-badge og-token-${level}`} title={tooltip}>
+			{formatTokenCount(inputTokens)} / {formatTokenCount(contextWindow)}
+			{estimated && <span className="og-token-estimated">~</span>}
+		</span>
+	);
+}
+
 // ── Main App ───────────────────────────────────────────────────────────────
 
 export function App() {
@@ -1498,6 +1521,16 @@ function AppInner() {
 		if (stored === "dark") return "dark";
 		return "dark";
 	});
+	const [tokenUsage, setTokenUsage] = useState<
+		Record<
+			string,
+			{
+				inputTokens: number;
+				contextWindow: number;
+				estimated?: boolean;
+			}
+		>
+	>({});
 	const [pendingMessages, setPendingMessages] = useState<
 		{ id: string; taskId: string | null; text: string; timestamp: number }[]
 	>([]);
@@ -1660,6 +1693,17 @@ function AppInner() {
 					} else if (et === "error") {
 						text = (msg.message as string) || "";
 					} else if (et === "usage") {
+						const taskId = msg.taskId as string | undefined;
+						if (taskId) {
+							setTokenUsage((prev) => ({
+								...prev,
+								[taskId]: {
+									inputTokens: msg.inputTokens as number,
+									contextWindow: msg.contextWindow as number,
+									estimated: (msg.estimated as boolean) || false,
+								},
+							}));
+						}
 						break;
 					} else if (et === "compact") {
 						text = `Context compacted (saved ~${msg.savedTokens} tokens)`;
@@ -2563,6 +2607,26 @@ function AppInner() {
 					</div>
 				)}
 				<form className="og-footer-form" onSubmit={handleSubmit}>
+					{/* Token usage badge — show for the active agent */}
+					{(() => {
+						// Determine which task's usage to display
+						const taskId =
+							targetNodeId ??
+							(selectedTaskId && selectedTaskId !== PROJECT_NODE_ID
+								? selectedTaskId
+								: null) ??
+							nodes.find((n) => !n.parentId && n.status === "in_progress")
+								?.id ??
+							null;
+						const usage = taskId ? tokenUsage[taskId] : undefined;
+						return usage ? (
+							<TokenUsageBadge
+								inputTokens={usage.inputTokens}
+								contextWindow={usage.contextWindow}
+								estimated={usage.estimated}
+							/>
+						) : null;
+					})()}
 					<input
 						type="text"
 						className="og-prompt-input"
