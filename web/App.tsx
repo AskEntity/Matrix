@@ -1145,6 +1145,21 @@ function getToolCardTitle(
 				return "tree";
 			case "update_task_status": {
 				const status = extractArg(argsStr, "status");
+				let title = "";
+				if (resultContent) {
+					try {
+						const json = JSON.parse(resultContent);
+						if (typeof json.title === "string") {
+							title =
+								json.title.length > 40
+									? `${json.title.slice(0, 40)}…`
+									: json.title;
+						}
+					} catch {
+						/* ignore */
+					}
+				}
+				if (status && title) return `${status} → ${title}`;
 				const taskId = extractArg(argsStr, "taskId");
 				if (status && taskId) return `${status} → ${taskId.slice(0, 8)}`;
 				return "update_task_status";
