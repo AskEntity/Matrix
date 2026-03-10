@@ -302,50 +302,6 @@ function IconChevron({
 	);
 }
 
-function IconSun({ size = 14 }: { size?: number }) {
-	return (
-		<svg
-			aria-hidden="true"
-			width={size}
-			height={size}
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="2"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-		>
-			<circle cx="12" cy="12" r="5" />
-			<line x1="12" y1="1" x2="12" y2="3" />
-			<line x1="12" y1="21" x2="12" y2="23" />
-			<line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-			<line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-			<line x1="1" y1="12" x2="3" y2="12" />
-			<line x1="21" y1="12" x2="23" y2="12" />
-			<line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-			<line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-		</svg>
-	);
-}
-
-function IconMoon({ size = 14 }: { size?: number }) {
-	return (
-		<svg
-			aria-hidden="true"
-			width={size}
-			height={size}
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="2"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-		>
-			<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-		</svg>
-	);
-}
-
 function IconGear({ size = 14 }: { size?: number }) {
 	return (
 		<svg
@@ -1382,11 +1338,14 @@ function AppInner() {
 	const [splitRatio, setSplitRatio] = useState(0.35);
 	const [isDragging, setIsDragging] = useState(false);
 	const [autoScroll, setAutoScroll] = useState(true);
-	const [isDark, setIsDark] = useState(() => {
-		return localStorage.getItem("og-theme") !== "light";
-	});
-	const [isCute, setIsCute] = useState(() => {
-		return localStorage.getItem("og-theme-style") === "cute";
+	const [theme, setThemeState] = useState<
+		"dark" | "light" | "cute-light" | "cute-dark"
+	>(() => {
+		const stored = localStorage.getItem("og-theme");
+		if (stored === "light" || stored === "cute-light" || stored === "cute-dark")
+			return stored;
+		if (stored === "dark") return "dark";
+		return "dark";
 	});
 	const [pendingMessages, setPendingMessages] = useState<
 		{ id: string; taskId: string | null; text: string; timestamp: number }[]
@@ -1446,19 +1405,18 @@ function AppInner() {
 
 	// Theme persistence
 	useEffect(() => {
-		document.documentElement.classList.toggle("light-mode", !isDark && !isCute);
-		localStorage.setItem("og-theme", isDark ? "dark" : "light");
-	}, [isDark, isCute]);
-
-	// Cute mode persistence
-	useEffect(() => {
-		document.documentElement.classList.toggle("cute-mode", isCute);
-		// Cute mode forces light base, so remove light-mode class when cute is on
-		if (isCute) {
-			document.documentElement.classList.remove("light-mode");
+		const root = document.documentElement;
+		root.classList.remove("light-mode", "cute-mode", "cute-dark");
+		if (theme === "light") {
+			root.classList.add("light-mode");
+		} else if (theme === "cute-light") {
+			root.classList.add("cute-mode");
+		} else if (theme === "cute-dark") {
+			root.classList.add("cute-mode", "cute-dark");
 		}
-		localStorage.setItem("og-theme-style", isCute ? "cute" : "default");
-	}, [isCute]);
+		// "dark" = no extra classes (default)
+		localStorage.setItem("og-theme", theme);
+	}, [theme]);
 
 	// Browser tab title progress
 	useEffect(() => {
@@ -2066,24 +2024,18 @@ function AppInner() {
 					>
 						{locale === "en" ? "中" : "EN"}
 					</button>
-					<button
-						type="button"
-						className={`og-btn-icon og-cute-toggle${isCute ? " active" : ""}`}
-						title={t("theme.cuteMode")}
-						aria-label={t("theme.cuteMode")}
-						onClick={() => setIsCute((c) => !c)}
+					<select
+						className="og-theme-select"
+						value={theme}
+						onChange={(e) => setThemeState(e.target.value as typeof theme)}
+						title={t("theme.selector")}
+						aria-label={t("theme.selector")}
 					>
-						{isCute ? "🐱" : "🐾"}
-					</button>
-					<button
-						type="button"
-						className="og-btn-icon"
-						title={isDark ? t("theme.lightMode") : t("theme.darkMode")}
-						aria-label={isDark ? t("theme.lightMode") : t("theme.darkMode")}
-						onClick={() => setIsDark((d) => !d)}
-					>
-						{isDark ? <IconSun size={14} /> : <IconMoon size={14} />}
-					</button>
+						<option value="dark">{t("theme.dark")}</option>
+						<option value="light">{t("theme.light")}</option>
+						<option value="cute-light">{t("theme.cuteLight")}</option>
+						<option value="cute-dark">{t("theme.cuteDark")}</option>
+					</select>
 				</div>
 			</header>
 
@@ -2509,7 +2461,7 @@ function AppInner() {
 			</footer>
 
 			{/* Cute mode cat */}
-			{isCute && <CuteCat />}
+			{theme.startsWith("cute-") && <CuteCat />}
 		</>
 	);
 }

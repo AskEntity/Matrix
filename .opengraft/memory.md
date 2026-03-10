@@ -450,4 +450,10 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - **Note**: MCP tools only available within daemon orchestration; HTTP API PATCH doesn't support worktreePath
 
 ## Workflow Principle
-- Always create tasks first, then refine details later — dont spend too long planning before spawning.
+- Always create tasks first, then refine details later — don't spend too long planning before spawning.
+
+## Unified Theme Selector (replaces separate toggles)
+
+- 4 themes: dark, light, cute-light, cute-dark — stored in localStorage `og-theme`
+- CSS classes: dark=none, light=`.light-mode`, cute-light=`.cute-mode`, cute-dark=`.cute-mode.cute-dark`
+- CuteCat renders when `theme.startsWith("cute-")`
