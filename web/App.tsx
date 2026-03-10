@@ -2610,27 +2610,25 @@ function AppInner() {
 							}
 						/>
 					</label>
-					{running && (
-						<div className="og-settings-field">
-							<span className="og-settings-label">
-								{t("settings.restartHint")}
-							</span>
-							<button
-								type="button"
-								className="og-btn og-btn-warning og-btn-sm"
-								onClick={async () => {
-									try {
-										await restartAgent();
-										addLog("lifecycle", "Agent restarting…");
-									} catch (err) {
-										addLog("error", (err as Error).message);
-									}
-								}}
-							>
-								<IconRefresh size={12} /> {t("settings.restartAgent")}
-							</button>
-						</div>
-					)}
+					<div className="og-settings-field">
+						<span className="og-settings-label">
+							{t("settings.restartHint")}
+						</span>
+						<button
+							type="button"
+							className="og-btn og-btn-warning og-btn-sm"
+							onClick={async () => {
+								try {
+									await restartAgent();
+									addLog("lifecycle", "Agent restarting…");
+								} catch (err) {
+									addLog("error", (err as Error).message);
+								}
+							}}
+						>
+							<IconRefresh size={12} /> {t("settings.restartAgent")}
+						</button>
+					</div>
 				</div>
 			)}
 
