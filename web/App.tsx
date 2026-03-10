@@ -95,11 +95,6 @@ function formatMcpToolResult(
 				const names = tasks.map((tk) => tk.title ?? "?").join(", ");
 				return `${t("log.executingTasks")} ${tasks.length} ${t("log.tasks")}: ${names}`;
 			}
-			// Truncated JSON — try to extract spawned count
-			const spawnedMatch = /"spawned":\s*(\d+)/.exec(content);
-			if (spawnedMatch?.[1]) {
-				return `${t("log.executingTasks")} ${spawnedMatch[1]} ${t("log.tasks")}`;
-			}
 			return null;
 		}
 		case "done": {
@@ -116,11 +111,6 @@ function formatMcpToolResult(
 				return count === 0
 					? t("log.treeEmpty")
 					: t("log.treeCount", { count: String(count) });
-			}
-			// Truncated JSON — estimate count from "id" occurrences
-			const idMatches = content.match(/"id":/g);
-			if (idMatches) {
-				return `${idMatches.length}+ ${t("log.tasks")}`;
 			}
 			return null;
 		}
@@ -1027,7 +1017,7 @@ function LogEntryView({
 						{!mcpFormatted && rest && (
 							<span className="og-tool-result-content">
 								{" "}
-								{rest.length > 120 ? `${rest.slice(0, 120)}…` : rest}
+								{rest.length > 500 ? `${rest.slice(0, 500)}…` : rest}
 							</span>
 						)}
 					</span>
@@ -1929,7 +1919,7 @@ function AppInner() {
 					if (et === "tool_use") {
 						text = `${msg.tool}(${formatArgs(msg.input as Record<string, unknown>)})`;
 					} else if (et === "tool_result") {
-						text = `${msg.isError ? "ERR" : "OK"} ${msg.tool}: ${((msg.content as string) || "").slice(0, 200)}`;
+						text = `${msg.isError ? "ERR" : "OK"} ${msg.tool}: ${(msg.content as string) || ""}`;
 					} else if (et === "text") {
 						text = (msg.content as string) || "";
 					} else if (et === "error") {
