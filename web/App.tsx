@@ -1015,28 +1015,28 @@ function getToolCardTitle(
 	// File tools
 	if (toolName === "read_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? `📄 ${basename(path)}` : "📄 read_file";
+		return path ? basename(path) : "read_file";
 	}
 	if (toolName === "write_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? `✏️ ${basename(path)}` : "✏️ write_file";
+		return path ? basename(path) : "write_file";
 	}
 	if (toolName === "edit_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? `✏️ ${basename(path)}` : "✏️ edit_file";
+		return path ? basename(path) : "edit_file";
 	}
 	if (toolName === "search") {
 		const pattern = extractArg(argsStr, "pattern");
 		if (pattern) {
 			const display =
 				pattern.length > 40 ? `${pattern.slice(0, 40)}…` : pattern;
-			return `🔍 ${display}`;
+			return `⌕ ${display}`;
 		}
-		return "🔍 search";
+		return "⌕ search";
 	}
 	if (toolName === "list_files") {
 		const pattern = extractArg(argsStr, "pattern");
-		return pattern ? `📁 ${pattern}` : "📁 list_files";
+		return pattern ? `ls ${pattern}` : "ls";
 	}
 	if (toolName === "bash") {
 		const command = extractArg(argsStr, "command");
@@ -1054,20 +1054,20 @@ function getToolCardTitle(
 		switch (mcpTool) {
 			case "create_task": {
 				const title = extractArg(argsStr, "title");
-				return title ? `➕ ${title}` : "➕ create_task";
+				return title ? `+ ${title}` : "+ create_task";
 			}
 			case "delete_task": {
 				// Try to get title from result
 				if (resultContent) {
 					try {
 						const json = JSON.parse(resultContent) as Record<string, unknown>;
-						if (typeof json.title === "string") return `🗑️ ${json.title}`;
+						if (typeof json.title === "string") return `✂ ${json.title}`;
 					} catch {
 						/* ignore */
 					}
 				}
 				const taskId = extractArg(argsStr, "taskId");
-				return taskId ? `🗑️ ${taskId.slice(0, 8)}` : "🗑️ delete_task";
+				return taskId ? `✂ ${taskId.slice(0, 8)}` : "✂ delete_task";
 			}
 			case "execute_tasks": {
 				const tasksArg = extractArg(argsStr, "tasks");
@@ -1107,7 +1107,7 @@ function getToolCardTitle(
 				const status = extractArg(argsStr, "status");
 				const summary = extractArg(argsStr, "summary");
 				const isPassed = status === "passed";
-				const icon = isPassed ? "✅" : "❌";
+				const icon = isPassed ? "✓" : "✗";
 				const label = isPassed ? "Passed" : "Failed";
 				if (summary) {
 					const display =
@@ -1119,34 +1119,34 @@ function getToolCardTitle(
 			case "yield": {
 				// If we have result content, yield has returned with messages
 				if (resultContent) {
-					return "⏸ resume from yield";
+					return "▶ resume from yield";
 				}
 				return "⏸ yield";
 			}
 			case "get_tree":
-				return "🌳 Task tree";
+				return "tree";
 			case "update_task_status": {
 				const status = extractArg(argsStr, "status");
 				const taskId = extractArg(argsStr, "taskId");
-				if (status && taskId) return `📋 ${status} → ${taskId.slice(0, 8)}`;
-				return "📋 update_task_status";
+				if (status && taskId) return `${status} → ${taskId.slice(0, 8)}`;
+				return "update_task_status";
 			}
 			case "send_message_to_child": {
 				const taskId = extractArg(argsStr, "taskId");
 				return taskId
-					? `💬 → ${taskId.slice(0, 8)}`
-					: "💬 send_message_to_child";
+					? `→ ${taskId.slice(0, 8)}`
+					: "→ send_message_to_child";
 			}
 			case "report_to_parent":
-				return "📤 Report to parent";
+				return "← report";
 			case "clarify": {
 				const question = extractArg(argsStr, "question");
 				if (question) {
 					const display =
 						question.length > 40 ? `${question.slice(0, 40)}…` : question;
-					return `❓ ${display}`;
+					return `? ${display}`;
 				}
-				return "❓ clarify";
+				return "? clarify";
 			}
 		}
 	}
@@ -1585,8 +1585,9 @@ function LogEntryView({
 
 	// task_started / task_completed — card-like rendering
 	if (entry.type === "task_started" || entry.type === "task_completed") {
-		const isPassed = entry.text.startsWith("✓");
-		const icon = entry.type === "task_started" ? "▶" : isPassed ? "✅" : "❌";
+		const isPassed =
+			entry.text.startsWith("✓") || entry.text.includes(" passed");
+		const icon = entry.type === "task_started" ? "▶" : isPassed ? "✓" : "✗";
 		const statusClass =
 			entry.type === "task_started"
 				? "og-tool-card-pending"
