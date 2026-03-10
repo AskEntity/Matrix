@@ -4,10 +4,11 @@ import {
 	mkdirSync,
 	readFileSync,
 	realpathSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
@@ -437,13 +438,24 @@ export async function jsSearch(opts: {
 	} = opts;
 
 	const regex = new RegExp(pattern, caseInsensitive ? "i" : "");
-	const absSearchPath = isAbsolute(searchPath)
+	let absSearchPath = isAbsolute(searchPath)
 		? searchPath
 		: join(baseCwd, searchPath);
 
-	// Discover files
+	// Discover files — handle path pointing to a file vs directory
+	let adjustedSearchPath = searchPath;
+	const pathStat = statSync(absSearchPath, { throwIfNoEntry: false });
 	let files: string[];
-	if (glob) {
+	if (pathStat?.isFile()) {
+		// Single file mode — path points to a file, not a directory
+		files = [basename(absSearchPath)];
+		absSearchPath = dirname(absSearchPath);
+		adjustedSearchPath = isAbsolute(searchPath)
+			? dirname(searchPath)
+			: dirname(searchPath) === "."
+				? ""
+				: dirname(searchPath);
+	} else if (glob) {
 		// Use Bun.Glob to match files within searchPath
 		const g = new Bun.Glob(glob);
 		files = Array.from(g.scanSync({ cwd: absSearchPath, onlyFiles: true }));
@@ -469,7 +481,11 @@ export async function jsSearch(opts: {
 		const filePath = join(absSearchPath, relFile);
 		// Compute display path relative to baseCwd
 		const displayPath =
-			absSearchPath === baseCwd ? relFile : join(searchPath, relFile);
+			absSearchPath === baseCwd
+				? relFile
+				: adjustedSearchPath
+					? join(adjustedSearchPath, relFile)
+					: relFile;
 
 		let content: string;
 		try {

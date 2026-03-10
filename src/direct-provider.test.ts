@@ -13,6 +13,7 @@ import {
 	compressMessages,
 	executeTool,
 	getModelPricing,
+	jsSearch,
 	resolvePath,
 	truncateSearchOutput,
 	zodShapeToJsonSchema,
@@ -938,5 +939,77 @@ describe("done tool", () => {
 
 		// Clean up
 		for (const q of childQueues.values()) q.close();
+	});
+});
+
+describe("jsSearch", () => {
+	let tempDir: string;
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-search-test-"));
+		await mkdir(join(tempDir, "sub"), { recursive: true });
+		await writeFile(join(tempDir, "hello.ts"), "const x = 1;\nconst y = 2;\n");
+		await writeFile(
+			join(tempDir, "sub", "world.ts"),
+			"export const hello = 'world';\n",
+		);
+	});
+
+	afterAll(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+	});
+
+	test("single file path does not throw ENOTDIR", async () => {
+		const result = await jsSearch({
+			pattern: "const",
+			searchPath: join(tempDir, "hello.ts"),
+			outputMode: "content",
+			headLimit: 50,
+			caseInsensitive: false,
+			cwd: tempDir,
+		});
+		expect(result).toContain("const x = 1");
+		expect(result).toContain("const y = 2");
+		// Should NOT contain files from other directories
+		expect(result).not.toContain("world");
+	});
+
+	test("single file path with files_with_matches mode", async () => {
+		const result = await jsSearch({
+			pattern: "const",
+			searchPath: join(tempDir, "hello.ts"),
+			outputMode: "files_with_matches",
+			headLimit: 50,
+			caseInsensitive: false,
+			cwd: tempDir,
+		});
+		expect(result).toContain("hello.ts");
+		expect(result).not.toContain("world.ts");
+	});
+
+	test("single file path with relative path", async () => {
+		const result = await jsSearch({
+			pattern: "hello",
+			searchPath: "sub/world.ts",
+			outputMode: "content",
+			headLimit: 50,
+			caseInsensitive: false,
+			cwd: tempDir,
+		});
+		expect(result).toContain("hello");
+		expect(result).toContain("sub/world.ts");
+	});
+
+	test("directory path still works normally", async () => {
+		const result = await jsSearch({
+			pattern: "const",
+			searchPath: tempDir,
+			outputMode: "files_with_matches",
+			headLimit: 50,
+			caseInsensitive: false,
+			cwd: tempDir,
+		});
+		expect(result).toContain("hello.ts");
+		expect(result).toContain("world.ts");
 	});
 });
