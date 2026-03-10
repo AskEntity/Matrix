@@ -157,3 +157,9 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 - `send_message_to_child` and `report_to_parent` added to McpToolCardBody switch for expanded body rendering.
 - `task_started`, `task_completed`, `queue_message` now render as card-like structures instead of plain text.
 - yield tool i18n key changed from "Yield (Wait)"/"等待消息" to just "yield" in both en/zh.
+
+
+## Icon Simplification (activity log)
+- Replaced all emoji icons (📄✏️🔍📁➕🗑️💬📤❓🌳📋✅❌) with simple unicode/text symbols.
+- File tools (read_file, write_file, edit_file): just filename, no icon.
+- `isPassed` check for task_completed entries: now checks both `startsWith("✓")` and `includes(" passed")` to handle child_complete queue messages.
