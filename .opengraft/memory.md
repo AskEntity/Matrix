@@ -160,3 +160,8 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Fix: `statSync` check before glob scan. If file, set `files = [basename]` and `absSearchPath = dirname`.
 - Also need `adjustedSearchPath` for correct `displayPath` computation — the original `searchPath` string would produce bad joins like `"src/daemon.ts/daemon.ts"`.
 - When `dirname(searchPath) === "."` (file in cwd root), set `adjustedSearchPath = ""` to avoid `"./filename"` display paths.
+
+## Tool Result Truncation Removal
+- Removed 200-char `.slice(0, 200)` from WS handler tool_result creation — full content now stored in activity log state.
+- Display truncation in LogEntryView increased from 120 to 500 chars for raw (non-MCP-formatted) results.
+- Regex fallbacks in `formatMcpToolResult` for `execute_tasks` (spawnedMatch) and `get_tree` (idMatches) removed — no longer needed since full JSON is available for parsing.
