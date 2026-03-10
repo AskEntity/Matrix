@@ -435,16 +435,16 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 
 ## Restart Endpoint Race Condition Fix
 
-**Bug found**: After restart, the old session's `launchAgent` IIFE `finally` block would run `activeSessions.delete(project.id)` and `activeOrchestrations.delete(project.id)`, clobbering the NEW session that the restart just launched. This left the daemon unaware of the running agent — no way to stop/message it, and new orchestrations could start duplicates.
-
-**Fix**: `launchAgent` finally block now checks `activeSessions.get(project.id) === session` before cleaning up. Only cleans up if this session is still the active one.
-
-**Double-restart guard**: Added `restartingProjects` Set. Restart handler checks it before proceeding and returns 409 if a restart is already in progress. Uses `try/finally` to ensure the guard is always cleared.
-
-**session.stop() error handling**: Wrapped in `try/catch` in restart handler since it may throw if already stopped.
+- `launchAgent` finally block checks `activeSessions.get(project.id) === session` before cleanup — prevents old session from clobbering new one after restart.
+- Double-restart guard via `restartingProjects` Set; session.stop() wrapped in try/catch.
 
 ## Auto-parent create_task + maxDepth Propagation
 
-- `create_task` without `parentId` now auto-parents under `currentTaskId` (the calling agent's task). Root orchestrator (`currentTaskId=null`) still creates top-level tasks.
-- `maxDepth` and `clarifyTimeoutMs` are now propagated through `createOrchestratorTools` in `executeChildStreaming`. Previously children beyond depth 2 used default maxDepth=3 and lost MCP tools at depth 3.
-- Test updated: "agent can create top-level task" → "agent auto-parents under itself when no parentId provided"
+- `create_task` without `parentId` auto-parents under `currentTaskId`. Root orchestrator still creates top-level.
+- `maxDepth` and `clarifyTimeoutMs` propagated through nested `createOrchestratorTools` calls.
+
+## 5-Level Nested Child Spawning (tested & confirmed)
+
+- Successfully tested recursive child spawning down to 5 levels (0→1→2→3→4→5)
+- maxDepth=7 config was sufficient; all branches created/merged/cleaned up properly
+- **Note**: MCP tools only available within daemon orchestration; HTTP API PATCH doesn't support worktreePath
