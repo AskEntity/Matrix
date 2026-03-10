@@ -499,6 +499,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	});
 
 	app.delete("/projects/:id", async (c) => {
+		const session = activeSessions.get(c.req.param("id"));
+		if (session) {
+			session.stop();
+			activeSessions.delete(c.req.param("id"));
+		}
 		try {
 			await pm.delete(c.req.param("id"));
 			trackers.delete(c.req.param("id"));
@@ -1141,7 +1146,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ status: "running", projectId: project.id });
 	});
 
-	// Check if an agent is running for a project
 	// Project config CRUD
 	app.get("/projects/:id/config", async (c) => {
 		const project = pm.get(c.req.param("id"));
@@ -1197,6 +1201,18 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 		session.stop();
 		activeSessions.delete(project.id);
+		pendingMessages.delete(project.id);
+		pendingClarifications.delete(project.id);
+		broadcast(wsClients, project.id, {
+			type: "pending_messages",
+			projectId: project.id,
+			messages: [],
+		});
+		broadcast(wsClients, project.id, {
+			type: "pending_clarifications",
+			projectId: project.id,
+			clarifications: [],
+		});
 		broadcastEvent(project.id, { type: "agent_stopped" });
 		return c.json({ ok: true });
 	});
@@ -1230,6 +1246,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			}
 			activeSessions.delete(project.id);
 			broadcastEvent(project.id, { type: "agent_stopped" });
+			pendingClarifications.delete(project.id);
+			broadcast(wsClients, project.id, {
+				type: "pending_clarifications",
+				projectId: project.id,
+				clarifications: [],
+			});
 
 			// Relaunch with resume to pick up new config
 			await launchAgent(project, {
@@ -1247,6 +1269,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	app.post("/projects/:id/sessions/clear", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) return c.json({ error: "Project not found" }, 404);
+		if (activeSessions.has(project.id)) {
+			return c.json(
+				{
+					error:
+						"Cannot clear sessions while agent is running. Stop the agent first.",
+				},
+				409,
+			);
+		}
 		const sessionsDir = join(config.dataDir, "sessions", project.id);
 		await rm(sessionsDir, { recursive: true, force: true });
 		await mkdir(sessionsDir, { recursive: true });

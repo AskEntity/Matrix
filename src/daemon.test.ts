@@ -3174,3 +3174,235 @@ describe("POST /projects/:id/restart", () => {
 		expect(startRes.status).toBe(503);
 	});
 });
+
+describe("lifecycle edge cases", () => {
+	let dataDir: string;
+	let projectDir: string;
+
+	beforeEach(async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "og-lifecycle-"));
+		projectDir = await mkdtemp(join(tmpdir(), "og-lifecycle-proj-"));
+		await mkdir(join(projectDir, ".git"), { recursive: true });
+	});
+
+	afterEach(async () => {
+		await rm(dataDir, { recursive: true, force: true });
+		await rm(projectDir, { recursive: true, force: true });
+	});
+
+	function createLongRunningProvider(): AgentProvider {
+		return {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					// Keep the session alive
+					await new Promise((resolve) => setTimeout(resolve, 10000));
+					return { success: true, output: "" };
+				}
+				return {
+					sessionId: "mock-session",
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+	}
+
+	test("stopping agent clears pending messages and clarifications", async () => {
+		const provider = createLongRunningProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+
+		// Create project
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		// Start agent
+		await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "test" }),
+		});
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Send a message (creates a pending message)
+		await app.request(`/projects/${project.id}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "hello" }),
+		});
+
+		// Verify pending message exists
+		const msgRes = await app.request(
+			`/projects/${project.id}/pending-messages`,
+		);
+		const msgs = (await msgRes.json()) as { messages: unknown[] };
+		expect(msgs.messages.length).toBeGreaterThan(0);
+
+		// Stop the agent
+		await app.request(`/projects/${project.id}/stop`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+
+		// Pending messages should be cleared
+		const msgRes2 = await app.request(
+			`/projects/${project.id}/pending-messages`,
+		);
+		const msgs2 = (await msgRes2.json()) as { messages: unknown[] };
+		expect(msgs2.messages).toEqual([]);
+
+		// Pending clarifications should also be cleared
+		const clarRes = await app.request(`/projects/${project.id}/clarifications`);
+		const clars = (await clarRes.json()) as { clarifications: unknown[] };
+		expect(clars.clarifications).toEqual([]);
+	});
+
+	test("clearing sessions while agent is running returns 409", async () => {
+		const provider = createLongRunningProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+
+		// Create project
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		// Start agent
+		await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "test" }),
+		});
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Try to clear sessions while running — should be rejected
+		const clearRes = await app.request(
+			`/projects/${project.id}/sessions/clear`,
+			{ method: "POST" },
+		);
+		expect(clearRes.status).toBe(409);
+		const body = (await clearRes.json()) as { error: string };
+		expect(body.error).toContain(
+			"Cannot clear sessions while agent is running",
+		);
+
+		// Stop agent for cleanup
+		await app.request(`/projects/${project.id}/stop`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+	});
+
+	test("deleting project stops running agent", async () => {
+		let stopCalled = false;
+		const provider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					await new Promise((resolve) => setTimeout(resolve, 10000));
+					return { success: true, output: "" };
+				}
+				return {
+					sessionId: "mock-session",
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						stopCalled = true;
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+
+		// Create project
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		// Start agent
+		await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "test" }),
+		});
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Delete the project — should stop the agent first
+		const delRes = await app.request(`/projects/${project.id}`, {
+			method: "DELETE",
+		});
+		expect(delRes.status).toBe(200);
+		expect(stopCalled).toBe(true);
+	});
+
+	test("clearing sessions works when no agent is running", async () => {
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+		});
+		await pm.load();
+		markReady();
+
+		// Create project
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		// Clear sessions without running agent — should succeed
+		const clearRes = await app.request(
+			`/projects/${project.id}/sessions/clear`,
+			{ method: "POST" },
+		);
+		expect(clearRes.status).toBe(200);
+		const body = (await clearRes.json()) as { cleared: boolean };
+		expect(body.cleared).toBe(true);
+	});
+});

@@ -117,3 +117,10 @@ Supports directory and single-file paths, all output modes, context lines, case 
 - Usage events emitted after every API response using `response.usage.input_tokens`.
 - Tracked per-taskId in frontend state; root orchestrator under PROJECT_NODE_ID key.
 - Badge lookup: targetNodeId > selected task > first in_progress root task > PROJECT_NODE_ID.
+
+## Lifecycle Edge Cases (daemon.ts)
+- `/stop` must clear `pendingMessages` and `pendingClarifications` Maps + broadcast empty arrays so UI clears.
+- `/restart` must clear `pendingClarifications` (stale after context change).
+- `sessions/clear` must reject 409 if `activeSessions.has(project.id)`.
+- `DELETE /projects/:id` must stop running agent before `pm.delete()`.
+- Test pattern: use `createLongRunningProvider()` with 10s timeout in `events()` to keep agent alive during test.
