@@ -115,3 +115,8 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 ## Compaction Fix (2026-03-10)
 - **Bug**: `compressMessages()` returned `[user(checkpoint), assistant(ack)]`. The assistant ack caused the API call to fail because the Anthropic API rejects messages ending with assistant role.
 - **Fix**: Removed the assistant ack. Compressed messages now return only `[user(checkpoint)]`. The model generates a fresh response from the checkpoint context.
+
+## Task Execution Efficiency
+- Avoid running full test suites in every child task — too expensive. Use `bun run typecheck` for quick validation.
+- Skip biome/lint checks in child tasks unless the task specifically touches formatting.
+- Pre-commit hooks run typecheck + lint + tests automatically, so explicit runs are often redundant.
