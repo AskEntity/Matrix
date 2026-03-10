@@ -389,20 +389,20 @@ function CuteCat() {
 				{/* Body */}
 				<ellipse cx="50" cy="100" rx="24" ry="18" fill="#ffb6c1" />
 				{/* Left ear outer */}
-				<polygon points="22,42 14,18 38,36" fill="#ffb6c1" />
+				<polygon points="22,52 14,28 38,46" fill="#ffb6c1" />
 				{/* Right ear outer */}
-				<polygon points="78,42 86,18 62,36" fill="#ffb6c1" />
+				<polygon points="78,52 86,28 62,46" fill="#ffb6c1" />
 				{/* Left ear inner */}
-				<polygon points="24,40 18,24 35,37" fill="#ff8fab" />
+				<polygon points="24,50 18,34 35,47" fill="#ff8fab" />
 				{/* Right ear inner */}
-				<polygon points="76,40 82,24 65,37" fill="#ff8fab" />
+				<polygon points="76,50 82,34 65,47" fill="#ff8fab" />
 				{/* Head */}
-				<ellipse cx="50" cy="50" rx="28" ry="24" fill="#ffb6c1" />
+				<ellipse cx="50" cy="60" rx="28" ry="24" fill="#ffb6c1" />
 				{/* Eyes */}
 				<ellipse
 					className="og-cat-eye og-cat-eye-l"
 					cx="39"
-					cy="48"
+					cy="58"
 					rx="3"
 					ry="3.5"
 					fill="#4a2030"
@@ -410,23 +410,23 @@ function CuteCat() {
 				<ellipse
 					className="og-cat-eye og-cat-eye-r"
 					cx="61"
-					cy="48"
+					cy="58"
 					rx="3"
 					ry="3.5"
 					fill="#4a2030"
 				/>
 				{/* Nose */}
-				<polygon points="50,55 47.5,52 52.5,52" fill="#ff6b9d" />
+				<polygon points="50,65 47.5,62 52.5,62" fill="#ff6b9d" />
 				{/* Mouth */}
 				<path
-					d="M50 55 Q46 60 43 58"
+					d="M50 65 Q46 70 43 68"
 					stroke="#ff6b9d"
 					strokeWidth="1.2"
 					strokeLinecap="round"
 					fill="none"
 				/>
 				<path
-					d="M50 55 Q54 60 57 58"
+					d="M50 65 Q54 70 57 68"
 					stroke="#ff6b9d"
 					strokeWidth="1.2"
 					strokeLinecap="round"
@@ -436,9 +436,9 @@ function CuteCat() {
 				<line
 					className="og-cat-whisker"
 					x1="35"
-					y1="53"
+					y1="63"
 					x2="8"
-					y2="48"
+					y2="58"
 					stroke="#d48a9e"
 					strokeWidth="1"
 					strokeLinecap="round"
@@ -446,9 +446,9 @@ function CuteCat() {
 				<line
 					className="og-cat-whisker"
 					x1="35"
-					y1="55"
+					y1="65"
 					x2="7"
-					y2="55"
+					y2="65"
 					stroke="#d48a9e"
 					strokeWidth="1"
 					strokeLinecap="round"
@@ -456,9 +456,9 @@ function CuteCat() {
 				<line
 					className="og-cat-whisker"
 					x1="35"
-					y1="57"
+					y1="67"
 					x2="8"
-					y2="62"
+					y2="72"
 					stroke="#d48a9e"
 					strokeWidth="1"
 					strokeLinecap="round"
@@ -467,9 +467,9 @@ function CuteCat() {
 				<line
 					className="og-cat-whisker"
 					x1="65"
-					y1="53"
+					y1="63"
 					x2="92"
-					y2="48"
+					y2="58"
 					stroke="#d48a9e"
 					strokeWidth="1"
 					strokeLinecap="round"
@@ -477,9 +477,9 @@ function CuteCat() {
 				<line
 					className="og-cat-whisker"
 					x1="65"
-					y1="55"
+					y1="65"
 					x2="93"
-					y2="55"
+					y2="65"
 					stroke="#d48a9e"
 					strokeWidth="1"
 					strokeLinecap="round"
@@ -487,9 +487,9 @@ function CuteCat() {
 				<line
 					className="og-cat-whisker"
 					x1="65"
-					y1="57"
+					y1="67"
 					x2="92"
-					y2="62"
+					y2="72"
 					stroke="#d48a9e"
 					strokeWidth="1"
 					strokeLinecap="round"
