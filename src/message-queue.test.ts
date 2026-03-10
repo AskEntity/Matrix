@@ -222,7 +222,10 @@ describe("MessageQueue", () => {
 		const q = new MessageQueue();
 		q.enqueue({ source: "clarify_response", answer: "already here" });
 		const result = await q.waitForMessage(20);
-		expect(result).toEqual({ source: "clarify_response", answer: "already here" });
+		expect(result).toEqual({
+			source: "clarify_response",
+			answer: "already here",
+		});
 	});
 
 	test("waitForMessage() rejects when queue is closed while waiting", async () => {
