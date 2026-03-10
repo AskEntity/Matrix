@@ -1480,7 +1480,9 @@ function ToolCard({
 						</span>
 					</button>
 				)}
-				{expanded && mcpBody && <div className="og-tool-card-body">{mcpBody}</div>}
+				{expanded && mcpBody && (
+					<div className="og-tool-card-body">{mcpBody}</div>
+				)}
 				{expanded && !mcpBody && (
 					<div className="og-tool-card-body">
 						{argsStr && <div className="og-tool-card-args">{argsStr}</div>}
@@ -1622,9 +1624,7 @@ function LogEntryView({
 					? "og-tool-card-ok"
 					: "og-tool-card-err";
 		const isLong = entry.text.length > 80;
-		const headerText = isLong
-			? `${entry.text.slice(0, 80)}…`
-			: entry.text;
+		const headerText = isLong ? `${entry.text.slice(0, 80)}…` : entry.text;
 		return (
 			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{entry.time}</span>
