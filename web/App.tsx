@@ -1033,7 +1033,7 @@ function getToolCardTitle(
 	// File tools
 	if (toolName === "read_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? `▤ ${basename(path)}` : "▤ read_file";
+		return path ? `⌕ ${basename(path)}` : "⌕ read_file";
 	}
 	if (toolName === "write_file") {
 		const path = extractArg(argsStr, "path");
@@ -1692,7 +1692,6 @@ function LogEntryView({
 			<div className="og-log-entry og-event-user_prompt">
 				<span className="og-log-time">{entry.time}</span>
 				<div className="og-user-prompt-bubble">
-					<span className="og-user-prompt-label">{t("log.youArrow")}</span>
 					<span className="og-user-prompt-text">{entry.text}</span>
 				</div>
 			</div>
