@@ -102,6 +102,19 @@ const defaultConfig: DaemonConfig = {
 };
 
 export function createApp(config: DaemonConfig = defaultConfig) {
+	/*
+	 * Agent Lifecycle:
+	 *   IDLE → STARTING → RUNNING → STOPPING → IDLE
+	 *
+	 *   IDLE:     No active session. Can start via /orchestrate/agent or WS orchestrate.
+	 *   STARTING: launchAgent() called, session being created. Guard: startupReady check.
+	 *   RUNNING:  Session in activeSessions map. Can inject messages, clarify, restart.
+	 *   STOPPING: stopAgent() called. Cleanup in progress. Guard: restartingProjects set.
+	 *
+	 *   State is determined by activeSessions.has(projectId).
+	 *   The restartingProjects set prevents concurrent stop+start during restart.
+	 *   All stop/cleanup goes through stopAgent() — single path for lifecycle transitions.
+	 */
 	const app = new Hono();
 	let requestCount = 0;
 	let startupReady = false;
@@ -332,6 +345,88 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	}
 
+	/**
+	 * Stop a running agent and clean up all associated state.
+	 * Single path for all stop operations (explicit stop, restart, project delete).
+	 *
+	 * @param opts.clearAutoResume - Set true for explicit stops (user stop, project delete).
+	 *   Leave false for restart (autoResume should persist).
+	 * @param opts.keepPendingMessages - Set true during restart so pending user messages
+	 *   survive for the new session to consume.
+	 */
+	async function stopAgent(
+		projectId: string,
+		opts?: { clearAutoResume?: boolean; keepPendingMessages?: boolean },
+	): Promise<void> {
+		const session = activeSessions.get(projectId);
+		if (!session) return;
+
+		// Save session for future resume
+		const tracker = trackers.get(projectId);
+		if (tracker && session.sessionId) {
+			tracker.orchestratorSessionId = session.sessionId;
+			if (opts?.clearAutoResume) {
+				tracker.autoResume = false;
+			}
+			await tracker.save();
+		}
+
+		session.stop();
+		activeSessions.delete(projectId);
+
+		// Clear pending state
+		if (!opts?.keepPendingMessages) {
+			pendingMessages.delete(projectId);
+			broadcast(wsClients, projectId, {
+				type: "pending_messages",
+				projectId,
+				messages: [],
+			});
+		}
+		pendingClarifications.delete(projectId);
+		broadcast(wsClients, projectId, {
+			type: "pending_clarifications",
+			projectId,
+			clarifications: [],
+		});
+
+		broadcastEvent(projectId, { type: "agent_stopped" });
+	}
+
+	/**
+	 * Prune old session files, keeping only the most recent N.
+	 * Used by autoResumeProjects (startup) and POST /sessions/prune.
+	 */
+	async function pruneSessionFiles(
+		projectId: string,
+		keepCount: number,
+	): Promise<{ pruned: number; remaining: number }> {
+		const sessionsDir = join(config.dataDir, "sessions", projectId);
+		try {
+			const files = await readdir(sessionsDir).catch(() => []);
+			const jsonFiles = files.filter((f) => f.endsWith(".json"));
+
+			if (jsonFiles.length <= keepCount) {
+				return { pruned: 0, remaining: jsonFiles.length };
+			}
+
+			const withMtime = await Promise.all(
+				jsonFiles.map(async (f) => ({
+					name: f,
+					mtime: (await stat(join(sessionsDir, f))).mtimeMs,
+				})),
+			);
+			withMtime.sort((a, b) => b.mtime - a.mtime);
+
+			const toDelete = withMtime.slice(keepCount);
+			await Promise.all(toDelete.map((f) => unlink(join(sessionsDir, f.name))));
+
+			return { pruned: toDelete.length, remaining: keepCount };
+		} catch {
+			return { pruned: 0, remaining: 0 };
+		}
+	}
+
 	/** Read project files and format as pre-read context for the agent. */
 	function readProjectMemory(projectPath: string): string {
 		const parts: string[] = [];
@@ -372,6 +467,87 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			trackers.set(projectId, tracker);
 		}
 		return tracker;
+	}
+
+	// --- Shared handlers (used by both REST routes and WS messages) ---
+
+	/** Start orchestration for a project. Used by POST /orchestrate/agent and WS orchestrate. */
+	async function handleOrchestrate(
+		projectId: string,
+		prompt: string,
+		opts: { resume?: boolean; model?: string; childModel?: string },
+	): Promise<{ ok: boolean; error?: string; status?: number }> {
+		if (!startupReady) {
+			return {
+				ok: false,
+				error: "Server starting up, please wait...",
+				status: 503,
+			};
+		}
+		const project = pm.get(projectId);
+		if (!project) {
+			return { ok: false, error: "Project not found", status: 404 };
+		}
+		if (activeSessions.has(projectId) || restartingProjects.has(projectId)) {
+			return {
+				ok: false,
+				error: "Agent already running for this project",
+				status: 409,
+			};
+		}
+		await getTracker(projectId);
+		await launchAgent(project, { prompt, ...opts });
+		return { ok: true };
+	}
+
+	/** Inject a user message into a running agent. Used by POST /message and WS inject_message. */
+	function handleInjectMessage(
+		projectId: string,
+		message: string,
+	): { ok: boolean; error?: string; status?: number; sessionId?: string } {
+		const session = activeSessions.get(projectId);
+		if (!session) {
+			return {
+				ok: false,
+				error: "No active session for this project",
+				status: 404,
+			};
+		}
+		try {
+			session.queue.enqueue({ source: "user", content: message });
+		} catch {
+			return { ok: false, error: "Queue closed", status: 409 };
+		}
+		addPendingMessage(projectId, null, message);
+		return { ok: true, sessionId: session.sessionId };
+	}
+
+	/** Answer a pending clarification. Used by POST /clarify and WS clarify_response. */
+	function handleClarifyResponse(
+		projectId: string,
+		taskId: string,
+		answer: string,
+	): { ok: boolean; error?: string; status?: number } {
+		const session = activeSessions.get(projectId);
+		if (!session) {
+			return {
+				ok: false,
+				error: "No active session for this project",
+				status: 404,
+			};
+		}
+		try {
+			session.queue.enqueue({ source: "clarify_response", answer });
+		} catch {
+			return { ok: false, error: "Queue closed", status: 409 };
+		}
+		removePendingClarification(projectId, taskId);
+		broadcastEvent(projectId, {
+			type: "clarification_answered",
+			taskId,
+			answer,
+		});
+		return { ok: true };
 	}
 
 	// Health
@@ -518,14 +694,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	});
 
 	app.delete("/projects/:id", async (c) => {
-		const session = activeSessions.get(c.req.param("id"));
-		if (session) {
-			session.stop();
-			activeSessions.delete(c.req.param("id"));
-		}
+		const projectId = c.req.param("id");
+		await stopAgent(projectId, { clearAutoResume: true });
 		try {
-			await pm.delete(c.req.param("id"));
-			trackers.delete(c.req.param("id"));
+			await pm.delete(projectId);
+			// Clean up all in-memory state for this project
+			trackers.delete(projectId);
+			pendingMessages.delete(projectId);
+			pendingClarifications.delete(projectId);
+			eventHistory.delete(projectId);
 			return c.json({ ok: true });
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -1121,13 +1298,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Agent-driven orchestration: fire-and-forget, observe via WebSocket
 	app.post("/projects/:id/orchestrate/agent", async (c) => {
-		if (!startupReady) {
-			return c.json({ error: "Server starting up, please wait..." }, 503);
-		}
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
 		const body = await c.req.json<{
 			prompt: string;
 			resume?: boolean;
@@ -1138,14 +1308,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "prompt is required" }, 400);
 		}
 
-		if (activeSessions.has(project.id)) {
-			return c.json({ error: "Agent already running for this project" }, 409);
+		const result = await handleOrchestrate(
+			c.req.param("id"),
+			body.prompt,
+			body,
+		);
+		if (!result.ok) {
+			return c.json({ error: result.error }, result.status as 404);
 		}
-
-		await getTracker(project.id);
-		await launchAgent(project, body);
-
-		return c.json({ status: "running", projectId: project.id });
+		return c.json({ status: "running", projectId: c.req.param("id") });
 	});
 
 	// Start agent by project path (auto-creates project if needed)
@@ -1168,7 +1339,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 		const project = await pm.ensureProject(body.path);
 
-		if (activeSessions.has(project.id)) {
+		if (activeSessions.has(project.id) || restartingProjects.has(project.id)) {
 			return c.json({ error: "Agent already running for this project" }, 409);
 		}
 
@@ -1220,31 +1391,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		const session = activeSessions.get(project.id);
-		if (!session) {
+		if (!activeSessions.has(project.id)) {
 			return c.json({ error: "No active agent for this project" }, 404);
 		}
-		// Save session ID for future resume before stopping
-		const tracker = trackers.get(project.id);
-		if (tracker && session.sessionId) {
-			tracker.orchestratorSessionId = session.sessionId;
-			await tracker.save();
-		}
-		session.stop();
-		activeSessions.delete(project.id);
-		pendingMessages.delete(project.id);
-		pendingClarifications.delete(project.id);
-		broadcast(wsClients, project.id, {
-			type: "pending_messages",
-			projectId: project.id,
-			messages: [],
-		});
-		broadcast(wsClients, project.id, {
-			type: "pending_clarifications",
-			projectId: project.id,
-			clarifications: [],
-		});
-		broadcastEvent(project.id, { type: "agent_stopped" });
+		await stopAgent(project.id, { clearAutoResume: true });
 		return c.json({ ok: true });
 	});
 
@@ -1257,32 +1407,14 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		if (restartingProjects.has(project.id)) {
 			return c.json({ error: "Restart already in progress" }, 409);
 		}
-		const session = activeSessions.get(project.id);
-		if (!session) {
+		if (!activeSessions.has(project.id)) {
 			return c.json({ error: "No active agent to restart" }, 404);
 		}
 
 		restartingProjects.add(project.id);
 		try {
-			// Save session ID before stopping
-			const tracker = trackers.get(project.id);
-			if (tracker && session.sessionId) {
-				tracker.orchestratorSessionId = session.sessionId;
-				await tracker.save();
-			}
-			try {
-				session.stop();
-			} catch {
-				// session.stop() may throw if already stopped — safe to ignore
-			}
-			activeSessions.delete(project.id);
-			broadcastEvent(project.id, { type: "agent_stopped" });
-			pendingClarifications.delete(project.id);
-			broadcast(wsClients, project.id, {
-				type: "pending_clarifications",
-				projectId: project.id,
-				clarifications: [],
-			});
+			// Keep pending messages so the restarted agent can consume them
+			await stopAgent(project.id, { keepPendingMessages: true });
 
 			// Relaunch with resume to pick up new config
 			await launchAgent(project, {
@@ -1338,31 +1470,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			.catch(() => ({}) as { keepCount?: number });
 		const keepCount = body?.keepCount ?? 10;
 
-		const sessionsDir = join(config.dataDir, "sessions", project.id);
-		try {
-			const files = await readdir(sessionsDir);
-			const jsonFiles = files.filter((f) => f.endsWith(".json"));
-
-			if (jsonFiles.length <= keepCount) {
-				return c.json({ pruned: 0, remaining: jsonFiles.length });
-			}
-
-			// Sort by modification time, oldest first
-			const withStats = await Promise.all(
-				jsonFiles.map(async (f) => ({
-					name: f,
-					mtime: (await stat(join(sessionsDir, f))).mtimeMs,
-				})),
-			);
-			withStats.sort((a, b) => a.mtime - b.mtime);
-
-			const toDelete = withStats.slice(0, withStats.length - keepCount);
-			await Promise.all(toDelete.map((f) => unlink(join(sessionsDir, f.name))));
-
-			return c.json({ pruned: toDelete.length, remaining: keepCount });
-		} catch {
-			return c.json({ pruned: 0, remaining: 0 });
-		}
+		const result = await pruneSessionFiles(project.id, keepCount);
+		return c.json(result);
 	});
 
 	// Inject a message into a running agent
@@ -1376,18 +1485,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "message is required" }, 400);
 		}
 
-		const session = activeSessions.get(project.id);
-		if (!session) {
-			return c.json({ error: "No active session for this project" }, 404);
+		const result = handleInjectMessage(project.id, body.message);
+		if (!result.ok) {
+			return c.json({ error: result.error }, result.status as 404);
 		}
-
-		try {
-			session.queue.enqueue({ source: "user", content: body.message });
-		} catch {
-			return c.json({ error: "Queue closed" }, 409);
-		}
-		addPendingMessage(project.id, null, body.message);
-		return c.json({ ok: true, sessionId: session.sessionId });
+		return c.json({ ok: true, sessionId: result.sessionId });
 	});
 
 	// Inject a message into a specific running child agent's queue
@@ -1424,26 +1526,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "taskId and answer are required" }, 400);
 		}
 
-		const session = activeSessions.get(projectId);
-		if (!session) {
-			return c.json({ error: "No active session for this project" }, 404);
+		const result = handleClarifyResponse(projectId, body.taskId, body.answer);
+		if (!result.ok) {
+			return c.json({ error: result.error }, result.status as 404);
 		}
-
-		try {
-			session.queue.enqueue({
-				source: "clarify_response",
-				answer: body.answer,
-			});
-		} catch {
-			return c.json({ error: "Queue closed" }, 409);
-		}
-		// Remove from pending clarifications so UI dismisses the card
-		removePendingClarification(projectId, body.taskId);
-		broadcastEvent(projectId, {
-			type: "clarification_answered",
-			taskId: body.taskId,
-			answer: body.answer,
-		});
 		return c.json({ ok: true });
 	});
 
@@ -1533,31 +1619,14 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						}
 
 						if (msg.type === "orchestrate" && msg.projectId && msg.prompt) {
-							if (!startupReady) {
+							const result = await handleOrchestrate(
+								msg.projectId,
+								msg.prompt,
+								{ model: msg.model, childModel: msg.childModel },
+							);
+							if (!result.ok) {
 								ws.send(
-									JSON.stringify({
-										type: "error",
-										message: "Server starting up, please wait...",
-									}),
-								);
-								return;
-							}
-							// Trigger orchestration via launchAgent (fire-and-forget)
-							const proj = pm.get(msg.projectId);
-							if (proj && !activeSessions.has(msg.projectId)) {
-								getTracker(msg.projectId).then(async () => {
-									await launchAgent(proj, {
-										prompt: msg.prompt as string,
-										model: msg.model,
-										childModel: msg.childModel,
-									});
-								});
-							} else if (activeSessions.has(msg.projectId)) {
-								ws.send(
-									JSON.stringify({
-										type: "error",
-										message: "Orchestration already running",
-									}),
+									JSON.stringify({ type: "error", message: result.error }),
 								);
 							}
 						}
@@ -1568,51 +1637,20 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							msg.taskId &&
 							msg.answer
 						) {
-							const session = activeSessions.get(msg.projectId as string);
-							if (session) {
-								try {
-									session.queue.enqueue({
-										source: "clarify_response",
-										answer: msg.answer as string,
-									});
-								} catch {
-									// Queue may be closed
-								}
-								// Remove from pending clarifications so UI dismisses the card
-								removePendingClarification(
-									msg.projectId as string,
-									msg.taskId as string,
-								);
-								broadcastEvent(msg.projectId as string, {
-									type: "clarification_answered",
-									taskId: msg.taskId,
-									answer: msg.answer,
-								});
-							}
+							// Errors silently ignored for WS clarify (matches previous behavior)
+							handleClarifyResponse(msg.projectId, msg.taskId, msg.answer);
 						}
 
 						if (msg.type === "inject_message" && msg.projectId && msg.prompt) {
-							const session = activeSessions.get(msg.projectId);
-							if (session) {
-								try {
-									session.queue.enqueue({
-										source: "user",
-										content: msg.prompt,
-									});
-								} catch {
-									// Queue may be closed
-								}
-								addPendingMessage(msg.projectId, null, msg.prompt as string);
+							const result = handleInjectMessage(msg.projectId, msg.prompt);
+							if (result.ok) {
 								broadcastEvent(msg.projectId, {
 									type: "message_injected",
 									message: msg.prompt,
 								});
 							} else {
 								ws.send(
-									JSON.stringify({
-										type: "error",
-										message: "No active session for this project",
-									}),
+									JSON.stringify({ type: "error", message: result.error }),
 								);
 							}
 						}
@@ -1636,30 +1674,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const projects = pm.list();
 		for (const project of projects) {
 			// Auto-prune old session files to prevent unbounded disk growth
-			const sessionsDir = join(config.dataDir, "sessions", project.id);
-			try {
-				const files = await readdir(sessionsDir).catch(() => []);
-				const jsonFiles = files.filter((f) => f.endsWith(".json"));
-				if (jsonFiles.length > sessionKeep) {
-					const withMtime = await Promise.all(
-						jsonFiles.map(async (f) => ({
-							name: f,
-							mtime: (await stat(join(sessionsDir, f))).mtimeMs,
-						})),
-					);
-					withMtime.sort((a, b) => b.mtime - a.mtime);
-					const toDelete = withMtime.slice(sessionKeep);
-					await Promise.all(
-						toDelete.map((f) => unlink(join(sessionsDir, f.name))),
-					);
-					if (toDelete.length > 0) {
-						console.log(
-							`Auto-pruned ${toDelete.length} old session(s) for ${project.name}`,
-						);
-					}
-				}
-			} catch {
-				// Non-critical — ignore prune failures
+			const result = await pruneSessionFiles(project.id, sessionKeep);
+			if (result.pruned > 0) {
+				console.log(
+					`Auto-pruned ${result.pruned} old session(s) for ${project.name}`,
+				);
 			}
 
 			const tracker = await getTracker(project.id);
@@ -1690,15 +1709,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	/** Graceful shutdown: save all active session IDs and flush events. */
 	async function shutdown(): Promise<void> {
-		for (const [projectId, session] of activeSessions) {
-			const tracker = trackers.get(projectId);
-			if (tracker && session.sessionId) {
-				tracker.orchestratorSessionId = session.sessionId;
-				await tracker.save();
-			}
-			session.stop();
+		// Stop all agents — don't clear autoResume so they resume on next start
+		const projectIds = [...activeSessions.keys()];
+		for (const projectId of projectIds) {
+			await stopAgent(projectId);
 		}
-		activeSessions.clear();
 		await flushEvents();
 	}
 
