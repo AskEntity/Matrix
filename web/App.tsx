@@ -1777,7 +1777,6 @@ function AppInner() {
 		setModel: setAgentModel,
 		start,
 		stop,
-		restartAgent,
 		checkStatus,
 		continueTask,
 		deleteTask,
@@ -2613,21 +2612,21 @@ function AppInner() {
 					</label>
 					<div className="og-settings-field">
 						<span className="og-settings-label">
-							{t("settings.restartHint")}
+							{t("settings.restartDaemonHint")}
 						</span>
 						<button
 							type="button"
 							className="og-btn og-btn-warning og-btn-sm"
 							onClick={async () => {
 								try {
-									await restartAgent();
-									addLog("lifecycle", "Agent restarting…");
-								} catch (err) {
-									addLog("error", (err as Error).message);
+									await fetch("/restart-daemon", { method: "POST" });
+									addLog("lifecycle", "Daemon restarting…");
+								} catch {
+									addLog("lifecycle", "Daemon restarting…");
 								}
 							}}
 						>
-							<IconRefresh size={12} /> {t("settings.restartAgent")}
+							<IconRefresh size={12} /> {t("settings.restartDaemon")}
 						</button>
 					</div>
 				</div>
