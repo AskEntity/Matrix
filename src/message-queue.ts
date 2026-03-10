@@ -69,6 +69,46 @@ export class MessageQueue {
 		});
 	}
 
+	/**
+	 * Block until at least one message arrives or the timeout fires.
+	 * Returns "timeout" sentinel if no message arrives within timeoutMs.
+	 * If timeoutMs is undefined, behaves like wait() (waits forever).
+	 */
+	waitForMessage(timeoutMs?: number): Promise<QueueMessage | "timeout"> {
+		if (timeoutMs === undefined) {
+			return this.wait();
+		}
+
+		if (this.closed) {
+			return Promise.reject(new Error("Queue closed"));
+		}
+
+		if (this.messages.length > 0) {
+			const msg = this.messages.shift() as QueueMessage;
+			return Promise.resolve(msg);
+		}
+
+		return new Promise<QueueMessage | "timeout">((resolve, reject) => {
+			const timer = setTimeout(() => {
+				if (this.waiter) {
+					this.waiter = null;
+					resolve("timeout");
+				}
+			}, timeoutMs);
+
+			this.waiter = {
+				resolve: (msg: QueueMessage) => {
+					clearTimeout(timer);
+					resolve(msg);
+				},
+				reject: (err: Error) => {
+					clearTimeout(timer);
+					reject(err);
+				},
+			};
+		});
+	}
+
 	/** Check if there are pending messages without consuming them. */
 	get pending(): number {
 		return this.messages.length;

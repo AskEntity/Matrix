@@ -344,3 +344,10 @@ DirectProvider estimates token counts from `usage.input_tokens + usage.output_to
 ## Conversation History API
 
 `GET /projects/:id/tasks/:nodeId/conversation` — reads session file, transforms Anthropic MessageParam[] into `{ role, content, hasToolUse, toolNames? }[]`. Last 100 messages. Returns `{ messages: [] }` on error/missing.
+
+## Clarify Timeout Implementation
+
+- `MessageQueue.waitForMessage(timeoutMs?: number)`: new method that wraps `wait()` with an optional timeout. Returns `"timeout"` sentinel (not an error) when timeout fires. Uses `Promise.race` via `setTimeout` — clears the timer on message arrival or queue close.
+- **Yield tool timeout logic**: When `pendingClarifications > 0` and `deps.clarifyTimeoutMs` is set, the yield tool uses `waitForMessage(timeoutMs)` instead of `wait()`. On `"timeout"`, synthesizes one `clarify_response` per pending clarification with a standard message, emits `clarification_timeout` event, and resets `pendingClarifications = 0`.
+- **Daemon wiring**: `createOrchestratorTools` now accepts `clarifyTimeoutMs` in deps. Both call sites (launchAgent and continue handler) pass `projectCfg.clarifyTimeoutMs` / `continueCfg.clarifyTimeoutMs`.
+- **Key design**: Timeout only activates when `pendingClarifications > 0`. Without pending clarifications, yield uses plain `wait()` (no timeout). This avoids spurious timeouts on normal message waits.
