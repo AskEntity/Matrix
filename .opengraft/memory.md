@@ -51,10 +51,10 @@ Daemon (Hono: HTTP + WS on :7433)
 |--------|------|-------------|
 | POST | /projects/:id/orchestrate/agent | Start orchestration |
 | POST | /projects/:id/restart | Restart agent (applies config changes) |
-| POST | /projects/:id/stop | Stop agent |
+| POST | /projects/:id/stop | Stop agent (clears pending messages/clarifications) |
 | POST | /projects/:id/message | Message root agent |
 | POST | /projects/:id/tasks/:nodeId/message | Message specific agent |
-| POST | /projects/:id/tasks/:nodeId/continue | Continue failed task |
+| POST | /projects/:id/tasks/:nodeId/continue | Continue failed task (uses runChildAgentInBackground) |
 | PATCH | /projects/:id/tasks/:nodeId | Update task (status, branch, title, description) |
 | GET/PATCH | /projects/:id/config | Project config CRUD |
 | POST | /projects/:id/clarify | Answer clarification |
@@ -64,31 +64,24 @@ Daemon (Hono: HTTP + WS on :7433)
 
 get_tree, create_task, update_task_status, execute_tasks, yield, send_message_to_child, report_to_parent, delete_task, clarify, done
 
-**create_task**: Without parentId, auto-parents under currentTaskId. Root orchestrator creates top-level.
-**execute_tasks**: Fire-and-forget. task_started event now includes `message` (instructions).
-**yield**: Blocks for queue messages. Timeout applies when pendingClarifications > 0.
-
 ## Project Config
 
 Fields: `model`, `childModel`, `provider`, `budgetUsd`, `clarifyTimeoutMs`, `maxDepth` (default: 3)
 Priority: API param > project config > env var > hardcoded default
-`maxDepth` and `clarifyTimeoutMs` are propagated through nested createOrchestratorTools calls.
 
 ## Web UI Features
 
 - **i18n**: en/zh localization via React Context. All strings use t().
-- **Themes**: 4 themes (dark, light, cute-light, cute-dark) via JS variable overrides in themes.ts.
-- **Task editing**: Title/description editable when pending (click-to-edit). Read-only with hint when running.
-- **Activity log**: Full tool results stored (no pre-truncation). Display truncation at 500 chars for raw results. MCP tool results formatted as human-readable summaries via `formatMcpToolResult()`.
-- **Tool labels**: `white-space: nowrap` on `.og-tool-name`, `.og-tool-result-ok`, `.og-tool-result-err` to prevent wrapping.
-- **Token badge**: In activity panel header. Color thresholds: green (<50%), yellow (50-80%), red (>80%).
-- **Pause/Resume**: UI-only convenience — send pre-formatted messages via existing API.
+- **Themes**: 4 themes via JS variable overrides in themes.ts.
+- **Prompt input**: `<textarea>` with Shift+Enter for newlines, Enter to submit. `isComposing` check for CJK IME compatibility. Auto-resize up to 4 lines.
+- **Activity log**: Full tool results stored (no pre-truncation). Display truncation at 500 chars for raw results. MCP results formatted via `formatMcpToolResult()`. Tool_use and tool_result use block layout with word-wrap.
+- **Task actions**: Pause/Resume + Delete for child tasks. Stop only on OrchestratorDetail.
+- **Token badge**: In activity panel header. green (<50%), yellow (50-80%), red (>80%).
 
 ## Search Tool (Pure JS)
 
-`jsSearch()` in direct-provider.ts uses `Bun.Glob.scanSync()` + `RegExp`. No rg/grep dependency.
-Supports directory and single-file paths, all output modes, context lines, case insensitivity.
-`multiline` parameter exists in schema but not yet implemented (TODO).
+`jsSearch()` in direct-provider.ts: `Bun.Glob.scanSync()` + `RegExp`. No rg/grep dependency.
+Supports directory and single-file paths. `multiline` parameter in schema but not implemented (TODO).
 
 ## Known Pitfalls
 
@@ -96,37 +89,25 @@ Supports directory and single-file paths, all output modes, context lines, case 
 - **Git worktrees**: `extensions.worktreeConfig` required. `core.hooksPath` must be absolute. `bun install` in new worktrees.
 - **Prompt caching**: Don't put per-agent variables in system prompt — breaks cache sharing.
 - **macOS CWD**: `/var` → `/private/var` symlink. Fixed with `realpathSync()`.
-- **Biome**: `<div role="button">` → use `<button>`. Always typecheck BEFORE `bun run check` (--write can be destructive on broken JSX).
+- **Biome**: Always typecheck BEFORE `bun run check` (--write can be destructive on broken JSX).
 - **Template literals**: Use `${"$"}` for literal `$` in backtick strings in agent-tools.ts.
-- **Budget**: Don't set on child tasks. Project-level safety limits only.
-- **Restart race**: launchAgent finally block checks session identity before cleanup. restartingProjects guard prevents double-restart.
-- **report_to_parent**: Uses `deps.parentQueue` (not `deps.queue`) to route upward.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`. Use `?? ""` or `!`.
+- **Multiline queue messages**: Pending message acknowledgement splits on `\n(?=\[)` not `\n` to handle multiline user messages.
 
 ## Daemon Lifecycle
 
-- `activeSessions` Map is single source of truth for running state (no separate Set).
-- `launchAgent()` is async — callers `await` it to ensure session registration completes.
+- `activeSessions` Map is single source of truth for running state.
+- `launchAgent()` is async — callers `await` it for session registration.
 - `autoResume` cleared on normal completion; persists only during restart or crash.
-- Orphan reset: in_progress tasks → failed before resume.
-- startupReady guard prevents requests during auto-resume.
+- `/stop` clears pendingMessages + pendingClarifications Maps + broadcasts empties.
+- `/restart` clears pendingClarifications (stale after context change).
+- `sessions/clear` rejects 409 if agent running.
+- `DELETE /projects/:id` stops running agent before deletion.
+- `runChildAgentInBackground()` extracted from `/continue` handler — reusable child agent runner.
+- Orphan reset: in_progress tasks → failed before auto-resume.
 - Session auto-prune on startup (OG_SESSION_KEEP env, default: 5).
 
 ## Token Usage Tracking
 
 - Usage events emitted after every API response using `response.usage.input_tokens`.
-- Tracked per-taskId in frontend state; root orchestrator under PROJECT_NODE_ID key.
-- Badge lookup: targetNodeId > selected task > first in_progress root task > PROJECT_NODE_ID.
-
-## Lifecycle Edge Cases (daemon.ts)
-- `/stop` must clear `pendingMessages` and `pendingClarifications` Maps + broadcast empty arrays so UI clears.
-- `/restart` must clear `pendingClarifications` (stale after context change).
-- `sessions/clear` must reject 409 if `activeSessions.has(project.id)`.
-- `DELETE /projects/:id` must stop running agent before `pm.delete()`.
-- Test pattern: use `createLongRunningProvider()` with 10s timeout in `events()` to keep agent alive during test.
-
-## Refactoring: runChildAgentInBackground (daemon.ts)
-- Extracted from `/continue` handler async IIFE into `runChildAgentInBackground(project, tracker, nodeId, prompt, model?)`.
-- Lives inside `createApp()` closure so it has access to `config`, `broadcastEvent`, `broadcastTreeUpdate`, `loadProjectConfig`.
-- Re-reads the task node internally (`tracker.get(nodeId)`) to get fresh `worktreePath`, `sessionId`, etc.
-- Fire-and-forget: caller does NOT await it.
+- Tracked per-taskId in frontend; root orchestrator under PROJECT_NODE_ID key.
