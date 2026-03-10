@@ -26,8 +26,11 @@ const en: Translations = {
 	"project.settings": "Project settings",
 
 	// Theme
-	"theme.lightMode": "Switch to light mode",
-	"theme.darkMode": "Switch to dark mode",
+	"theme.selector": "Theme",
+	"theme.dark": "Dark",
+	"theme.light": "Light",
+	"theme.cuteLight": "Cute Light",
+	"theme.cuteDark": "Cute Dark",
 
 	// Language
 	"lang.toggle": "Switch language",
@@ -172,11 +175,6 @@ const en: Translations = {
 	"model.sonnet": "Sonnet",
 	"model.opus": "Opus",
 	"model.haiku": "Haiku",
-
-	// Cute theme
-	"theme.cuteMode": "Toggle cute mode",
-	"theme.cuteOn": "Cute mode on",
-	"theme.cuteOff": "Cute mode off",
 };
 
 const zh: Translations = {
@@ -195,8 +193,11 @@ const zh: Translations = {
 	"project.settings": "项目设置",
 
 	// Theme
-	"theme.lightMode": "切换到亮色模式",
-	"theme.darkMode": "切换到暗色模式",
+	"theme.selector": "主题",
+	"theme.dark": "深色",
+	"theme.light": "浅色",
+	"theme.cuteLight": "可爱浅色",
+	"theme.cuteDark": "可爱深色",
 
 	// Language
 	"lang.toggle": "切换语言",
@@ -340,11 +341,6 @@ const zh: Translations = {
 	"model.sonnet": "Sonnet",
 	"model.opus": "Opus",
 	"model.haiku": "Haiku",
-
-	// Cute theme
-	"theme.cuteMode": "切换可爱模式",
-	"theme.cuteOn": "可爱模式已开启",
-	"theme.cuteOff": "可爱模式已关闭",
 };
 
 const translations: Record<Locale, Translations> = { en, zh };
