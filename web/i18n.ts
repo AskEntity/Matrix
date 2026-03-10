@@ -33,7 +33,9 @@ const en: Translations = {
 	"theme.cuteDark": "Cute Dark",
 
 	// Language
-	"lang.toggle": "Switch language",
+	"lang.selector": "Language",
+	"lang.en": "English",
+	"lang.zh": "中文",
 
 	// Sidebar / Tasks
 	"tasks.title": "Tasks",
@@ -230,7 +232,9 @@ const zh: Translations = {
 	"theme.cuteDark": "可爱深色",
 
 	// Language
-	"lang.toggle": "切换语言",
+	"lang.selector": "语言",
+	"lang.en": "English",
+	"lang.zh": "中文",
 
 	// Sidebar / Tasks
 	"tasks.title": "任务",
