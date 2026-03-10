@@ -1311,6 +1311,8 @@ select {
 	gap: 4px;
 	font-family: var(--font-mono);
 	font-size: 11px;
+	white-space: nowrap;
+	flex-shrink: 0;
 	font-weight: 600;
 	color: var(--accent-hover);
 	background: var(--accent-muted);
@@ -1337,11 +1339,15 @@ select {
 .og-tool-result-ok {
 	color: var(--color-passed);
 	font-weight: 600;
+	white-space: nowrap;
+	flex-shrink: 0;
 }
 
 .og-tool-result-err {
 	color: var(--color-failed);
 	font-weight: 600;
+	white-space: nowrap;
+	flex-shrink: 0;
 }
 
 .og-tool-result-content {
