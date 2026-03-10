@@ -1301,9 +1301,9 @@ select {
 
 /* Tool call inline badge */
 .og-tool-call {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
+	display: inline;
+	word-wrap: break-word;
+	overflow-wrap: break-word;
 }
 
 .og-tool-name {
@@ -1326,6 +1326,8 @@ select {
 	font-family: var(--font-mono);
 	font-size: 11px;
 	color: var(--text-muted);
+	word-wrap: break-word;
+	overflow-wrap: break-word;
 }
 
 /* Tool result pill */

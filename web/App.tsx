@@ -977,11 +977,7 @@ function LogEntryView({
 							<IconTerminal size={10} />
 							{localizeToolName(toolName, t)}
 						</span>
-						{args && (
-							<span className="og-tool-args">
-								({args.length > 80 ? `${args.slice(0, 80)}…` : args})
-							</span>
-						)}
+						{args && <span className="og-tool-args">({args})</span>}
 					</span>
 				</div>
 			</div>
@@ -2960,8 +2956,8 @@ function formatArgs(input: Record<string, unknown> | undefined): string {
 	if (!input) return "";
 	const parts = Object.entries(input).map(([k, v]) => {
 		const val = typeof v === "string" ? v : JSON.stringify(v);
-		return `${k}=${val.length > 40 ? `${val.slice(0, 40)}…` : val}`;
+		return `${k}=${val}`;
 	});
 	const joined = parts.join(", ");
-	return joined.length > 100 ? `${joined.slice(0, 100)}…` : joined;
+	return joined;
 }
