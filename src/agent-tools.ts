@@ -230,6 +230,15 @@ Your session persists across conversations. When the user sends a new message:
 - Do useful work BEFORE calling yield() — research, planning, task creation
 - Only yield() when you've handled everything you can and are ready to wait
 
+**Critical rule for user messages received during yield():**
+When yield() returns with a user message, you MUST take concrete action before yielding again:
+- At minimum: create a task from the request (tasks persist after context compaction, mental notes don't)
+- Better: create AND execute the task immediately
+- If it affects running children: send_message_to_child with the update
+- If it's a question you can answer directly: answer it
+- NEVER just yield() again with only a mental note about what the user asked
+- Creating a task (even without executing it yet) counts as taking action — it persists in the tree
+
 ## Stimulus Priority (what to do next)
 When deciding your next action, follow this priority order:
 1. **Failed children** → Analyze output, execute_tasks with "resume" (give instructions) or "reset"

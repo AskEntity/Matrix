@@ -1732,6 +1732,14 @@ Your session persists across conversations. When the user sends a new message:
 - Follow the stimulus priority to decide what to do next
 - The user's message is additional context/instruction — incorporate it and keep driving
 
+**Critical rule for user messages received during yield():**
+When yield() returns with a user message, you MUST take concrete action before yielding again:
+- At minimum: create a task from the request (tasks persist after context compaction, mental notes don't)
+- Better: create AND execute the task immediately
+- If it affects running children: send_message_to_child with the update
+- NEVER just yield() again with only a mental note about what the user asked
+- Creating a task (even without executing it yet) counts as taking action — it persists in the tree
+
 ## Stopping
 Call done("passed", summary) when all tasks are resolved (all passed/merged) and verified.
 Call done("failed", summary) if you're blocked and cannot make progress.
