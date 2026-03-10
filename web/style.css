@@ -1997,3 +1997,352 @@ select {
 	border-color: var(--accent-hover);
 	color: var(--accent-hover);
 }
+
+/* =========================================================
+   Cute / Kawaii Mode
+   ========================================================= */
+
+:root.cute-mode {
+	--bg-base: #fff5f7;
+	--bg-surface: #fff0f3;
+	--bg-raised: #ffe8ed;
+	--bg-overlay: #ffd6e0;
+	--bg-subtle: #ffc8d6;
+
+	--border: #fbb1c4;
+	--border-subtle: #fcc8d6;
+	--border-muted: #fddce5;
+
+	--text-primary: #4a2030;
+	--text-secondary: #8b5068;
+	--text-muted: #b07088;
+	--text-faint: #d4a0b4;
+
+	--color-pending: #d4a0b4;
+	--color-in-progress: #ff6b9d;
+	--color-testing: #c77dba;
+	--color-passed: #4caf50;
+	--color-failed: #ff5252;
+	--color-stuck: #e3b341;
+
+	--accent: #ff6b9d;
+	--accent-hover: #ff4785;
+	--accent-muted: rgba(255, 107, 157, 0.15);
+
+	--bg-pending: rgba(212, 160, 180, 0.12);
+	--bg-in-progress: rgba(255, 107, 157, 0.12);
+	--bg-testing: rgba(199, 125, 186, 0.12);
+	--bg-passed: rgba(76, 175, 80, 0.12);
+	--bg-failed: rgba(255, 82, 82, 0.12);
+	--bg-stuck: rgba(227, 179, 65, 0.12);
+
+	--radius-md: 10px;
+	--radius-lg: 14px;
+	--radius-xl: 18px;
+
+	--shadow-sm: 0 1px 3px rgba(255, 107, 157, 0.1);
+	--shadow-md: 0 4px 14px rgba(255, 107, 157, 0.12);
+	--shadow-lg: 0 8px 28px rgba(255, 107, 157, 0.15);
+}
+
+.cute-mode .og-logo {
+	background: rgba(255, 107, 157, 0.15);
+	border-color: rgba(255, 107, 157, 0.3);
+	color: #ff4785;
+}
+
+/* ── Cute mode toggle ── */
+
+.og-cute-toggle {
+	font-size: 15px;
+	line-height: 1;
+	padding: 2px;
+	transition: transform var(--t-fast);
+}
+
+.og-cute-toggle:hover {
+	transform: scale(1.15);
+}
+
+.og-cute-toggle.active {
+	animation: og-cute-bounce 0.4s ease;
+}
+
+@keyframes og-cute-bounce {
+	0%,
+	100% {
+		transform: scale(1);
+	}
+	40% {
+		transform: scale(1.3);
+	}
+	60% {
+		transform: scale(0.9);
+	}
+}
+
+/* =========================================================
+   Animated Cat — Bottom-Right Corner
+   ========================================================= */
+
+.og-cute-cat {
+	position: fixed;
+	bottom: var(--footer-height);
+	right: 16px;
+	width: 80px;
+	height: 80px;
+	z-index: 9;
+	pointer-events: none;
+	animation: og-cat-appear 0.5s ease-out;
+}
+
+@keyframes og-cat-appear {
+	from {
+		transform: translateY(20px);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+
+/* Cat body */
+.og-cat-body {
+	position: absolute;
+	bottom: 0;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 44px;
+	height: 36px;
+	background: #ffb6c1;
+	border-radius: 22px 22px 16px 16px;
+}
+
+/* Cat head */
+.og-cat-head {
+	position: absolute;
+	bottom: 28px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 38px;
+	height: 32px;
+	background: #ffb6c1;
+	border-radius: 50% 50% 45% 45%;
+}
+
+/* Cat ears */
+.og-cat-ear-left,
+.og-cat-ear-right {
+	position: absolute;
+	width: 0;
+	height: 0;
+	border-left: 8px solid transparent;
+	border-right: 8px solid transparent;
+	border-bottom: 14px solid #ffb6c1;
+}
+
+.og-cat-ear-left {
+	bottom: 54px;
+	left: 14px;
+	transform: rotate(-8deg);
+}
+
+.og-cat-ear-right {
+	bottom: 54px;
+	right: 14px;
+	transform: rotate(8deg);
+}
+
+.og-cat-ear-inner-left,
+.og-cat-ear-inner-right {
+	position: absolute;
+	width: 0;
+	height: 0;
+	border-left: 5px solid transparent;
+	border-right: 5px solid transparent;
+	border-bottom: 9px solid #ff8fab;
+}
+
+.og-cat-ear-inner-left {
+	bottom: 55px;
+	left: 17px;
+	transform: rotate(-8deg);
+}
+
+.og-cat-ear-inner-right {
+	bottom: 55px;
+	right: 17px;
+	transform: rotate(8deg);
+}
+
+/* Cat eyes */
+.og-cat-eyes {
+	position: absolute;
+	bottom: 38px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 24px;
+	display: flex;
+	justify-content: space-between;
+}
+
+.og-cat-eye {
+	width: 5px;
+	height: 6px;
+	background: #4a2030;
+	border-radius: 50%;
+	animation: og-cat-blink 4s ease-in-out infinite;
+}
+
+.og-cat-eye:first-child {
+	animation-delay: 0.1s;
+}
+
+@keyframes og-cat-blink {
+	0%,
+	90%,
+	100% {
+		transform: scaleY(1);
+	}
+	95% {
+		transform: scaleY(0.05);
+	}
+}
+
+/* Cat nose */
+.og-cat-nose {
+	position: absolute;
+	bottom: 35px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 0;
+	height: 0;
+	border-left: 3px solid transparent;
+	border-right: 3px solid transparent;
+	border-top: 4px solid #ff6b9d;
+}
+
+/* Cat mouth */
+.og-cat-mouth {
+	position: absolute;
+	bottom: 31px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 10px;
+	height: 4px;
+	border-bottom: 1.5px solid #ff6b9d;
+	border-radius: 0 0 50% 50%;
+}
+
+/* Cat tail */
+.og-cat-tail {
+	position: absolute;
+	bottom: 4px;
+	right: 4px;
+	width: 24px;
+	height: 24px;
+	border: 3px solid #ffb6c1;
+	border-color: #ffb6c1 #ffb6c1 transparent transparent;
+	border-radius: 0 50% 0 0;
+	transform-origin: bottom left;
+	animation: og-cat-tail-wag 2s ease-in-out infinite;
+}
+
+@keyframes og-cat-tail-wag {
+	0%,
+	100% {
+		transform: rotate(-10deg);
+	}
+	50% {
+		transform: rotate(15deg);
+	}
+}
+
+/* Cat paws */
+.og-cat-paw-left,
+.og-cat-paw-right {
+	position: absolute;
+	bottom: 0;
+	width: 10px;
+	height: 10px;
+	background: #ffc0cb;
+	border-radius: 50% 50% 40% 40%;
+	transition: transform 0.1s ease;
+}
+
+.og-cat-paw-left {
+	left: 20px;
+}
+
+.og-cat-paw-right {
+	right: 20px;
+}
+
+/* Typing animation — paws move when user types */
+.og-cat-typing .og-cat-paw-left {
+	animation: og-cat-type-left 0.15s ease alternate infinite;
+}
+
+.og-cat-typing .og-cat-paw-right {
+	animation: og-cat-type-right 0.15s ease 0.075s alternate infinite;
+}
+
+@keyframes og-cat-type-left {
+	from {
+		transform: translateY(0);
+	}
+	to {
+		transform: translateY(-4px);
+	}
+}
+
+@keyframes og-cat-type-right {
+	from {
+		transform: translateY(0);
+	}
+	to {
+		transform: translateY(-4px);
+	}
+}
+
+/* Whiskers */
+.og-cat-whiskers {
+	position: absolute;
+	bottom: 34px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 38px;
+	height: 8px;
+}
+
+.og-cat-whisker {
+	position: absolute;
+	width: 12px;
+	height: 1px;
+	background: #d48a9e;
+}
+
+.og-cat-whisker:nth-child(1) {
+	left: 0;
+	top: 1px;
+	transform: rotate(-8deg);
+}
+
+.og-cat-whisker:nth-child(2) {
+	left: 0;
+	top: 5px;
+	transform: rotate(5deg);
+}
+
+.og-cat-whisker:nth-child(3) {
+	right: 0;
+	top: 1px;
+	transform: rotate(8deg);
+}
+
+.og-cat-whisker:nth-child(4) {
+	right: 0;
+	top: 5px;
+	transform: rotate(-5deg);
+}

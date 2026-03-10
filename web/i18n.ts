@@ -172,6 +172,11 @@ const en: Translations = {
 	"model.sonnet": "Sonnet",
 	"model.opus": "Opus",
 	"model.haiku": "Haiku",
+
+	// Cute theme
+	"theme.cuteMode": "Toggle cute mode",
+	"theme.cuteOn": "Cute mode on",
+	"theme.cuteOff": "Cute mode off",
 };
 
 const zh: Translations = {
@@ -335,6 +340,11 @@ const zh: Translations = {
 	"model.sonnet": "Sonnet",
 	"model.opus": "Opus",
 	"model.haiku": "Haiku",
+
+	// Cute theme
+	"theme.cuteMode": "切换可爱模式",
+	"theme.cuteOn": "可爱模式已开启",
+	"theme.cuteOff": "可爱模式已关闭",
 };
 
 const translations: Record<Locale, Translations> = { en, zh };

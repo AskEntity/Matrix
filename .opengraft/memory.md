@@ -410,3 +410,14 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - Child components (StatusBadge, TaskTree, ActivityLog, etc.) each call `useLocale()` directly via context
 - Pre-commit i18n check: `scripts/check-i18n.sh` scans for bare English text between JSX tags
 - **Pitfall**: useLocale() must be called inside LocaleProvider — App wraps AppInner for this reason
+
+
+## Cute/Kawaii Theme
+
+- `cute-mode` CSS class on `:root` — pink color scheme, softer shadows, larger radii
+- `CuteCat` component: pure CSS cat in bottom-right corner with idle animations (tail wag, eye blink)
+- Cat reacts to keyboard input: paws animate when typing (keydown events with 500ms debounce)
+- Theme toggle: cat/paw icon button in header, stores in `localStorage("og-theme-style")`
+- Cute mode forces light-based colors (removes `light-mode` class, adds `cute-mode`)
+- i18n keys: `theme.cuteMode`, `theme.cuteOn`, `theme.cuteOff`
+- Cat only renders when `isCute` state is true
