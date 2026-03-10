@@ -124,3 +124,9 @@ Supports directory and single-file paths, all output modes, context lines, case 
 - `sessions/clear` must reject 409 if `activeSessions.has(project.id)`.
 - `DELETE /projects/:id` must stop running agent before `pm.delete()`.
 - Test pattern: use `createLongRunningProvider()` with 10s timeout in `events()` to keep agent alive during test.
+
+## Refactoring: runChildAgentInBackground (daemon.ts)
+- Extracted from `/continue` handler async IIFE into `runChildAgentInBackground(project, tracker, nodeId, prompt, model?)`.
+- Lives inside `createApp()` closure so it has access to `config`, `broadcastEvent`, `broadcastTreeUpdate`, `loadProjectConfig`.
+- Re-reads the task node internally (`tracker.get(nodeId)`) to get fresh `worktreePath`, `sessionId`, etc.
+- Fire-and-forget: caller does NOT await it.
