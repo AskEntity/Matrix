@@ -429,3 +429,12 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - The `continue` endpoint requires `worktreePath` to be set; without it, it just resets status to `pending`
 - Workaround: manually create worktrees via git, do the work directly, and merge branches — bypassing the daemon's agent system entirely
 - Proper fix: add `worktreePath` to the PATCH endpoint, or expose `assignWorktree` via API
+
+## 5-Level Nested Child Spawning (tested & confirmed)
+
+- Successfully tested recursive child spawning down to 5 levels (0→1→2→3→4→5)
+- maxDepth=7 config was sufficient for 5 levels of nesting
+- Each level created its file, spawned the next level, waited, merged, deleted, and called done()
+- All branches created/merged/cleaned up properly at each level
+- Key: use parentId when creating child tasks — omitting it creates top-level tasks which cannot be executed
+- The recursive pattern works: pass full instructions in both task description AND execute message
