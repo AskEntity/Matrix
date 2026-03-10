@@ -122,3 +122,11 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Themes are data-driven JS objects in `web/themes.ts`. `applyTheme()` sets CSS variables on root element.
 - `ThemeConfig`: `{ name, variables, hasCat? }`. Dark theme uses `:root` defaults (empty variables).
 - CSS classes `.light-mode`, `.cute-mode` removed — everything via JS variable overrides.
+
+## Pause/Resume Buttons
+
+- Pause/Resume are UI-only convenience buttons — no backend endpoints needed.
+- They send pre-formatted messages via the existing `sendMessageToTask` API.
+- Pause message tells agent to call `yield()` and wait; Resume tells it to continue.
+- Both buttons show for `in_progress` and `testing` tasks in TaskDetail.
+- IconPause added as inline SVG (two vertical bars pattern).

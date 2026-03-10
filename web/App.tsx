@@ -223,6 +223,21 @@ function IconPlay({ size = 14 }: { size?: number }) {
 	);
 }
 
+function IconPause({ size = 14 }: { size?: number }) {
+	return (
+		<svg
+			aria-hidden="true"
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			fill="currentColor"
+		>
+			<rect x="5" y="3" width="5" height="18" rx="1" />
+			<rect x="14" y="3" width="5" height="18" rx="1" />
+		</svg>
+	);
+}
+
 function IconTrash({ size = 13 }: { size?: number }) {
 	return (
 		<svg
@@ -1048,12 +1063,16 @@ function TaskDetail({
 	onContinue,
 	onDelete,
 	onStop,
+	onPause,
+	onResume,
 }: {
 	node: TaskNode;
 	projectId: string;
 	onContinue: (msg?: string) => void;
 	onDelete: () => void;
 	onStop?: () => void;
+	onPause?: () => void;
+	onResume?: () => void;
 }) {
 	const { t } = useLocale();
 	const [continueMsg, setContinueMsg] = useState("");
@@ -1319,6 +1338,27 @@ function TaskDetail({
 							{t("detail.continue")}
 						</button>
 					</form>
+				)}
+				{isRunning && onPause && (
+					<button
+						type="button"
+						className="og-btn og-btn-warning og-btn-sm"
+						onClick={onPause}
+					>
+						<IconPause size={12} />
+						{t("detail.pause")}
+					</button>
+				)}
+				{isRunning && onResume && (
+					<button
+						type="button"
+						className="og-btn og-btn-sm"
+						onClick={onResume}
+						style={{ color: "var(--accent)" }}
+					>
+						<IconPlay size={12} />
+						{t("detail.resume")}
+					</button>
 				)}
 				{isRunning && onStop && (
 					<button
@@ -2155,6 +2195,30 @@ function AppInner() {
 		}
 	}
 
+	async function handlePauseTask() {
+		if (!selectedTaskId) return;
+		try {
+			await sendMessageToTask(
+				selectedTaskId,
+				"⏸ PAUSED by user. Please call yield() and wait for further instructions before continuing.",
+			);
+		} catch (err) {
+			addLog("error", (err as Error).message);
+		}
+	}
+
+	async function handleResumeTask() {
+		if (!selectedTaskId) return;
+		try {
+			await sendMessageToTask(
+				selectedTaskId,
+				"▶ RESUMED by user. Continue where you left off.",
+			);
+		} catch (err) {
+			addLog("error", (err as Error).message);
+		}
+	}
+
 	async function handleAddProject(e: React.FormEvent) {
 		e.preventDefault();
 		const path = newProjectPath.trim();
@@ -2575,6 +2639,8 @@ function AppInner() {
 								onContinue={handleContinueTask}
 								onDelete={handleDeleteTask}
 								onStop={handleStop}
+								onPause={handlePauseTask}
+								onResume={handleResumeTask}
 							/>
 						) : (
 							<div className="og-detail-empty">
