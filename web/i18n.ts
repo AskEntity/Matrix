@@ -188,6 +188,20 @@ const en: Translations = {
 	"model.opus": "Opus",
 	"model.haiku": "Haiku",
 
+	// MCP tool result labels
+	"log.createdTask": "Created task:",
+	"log.deletedTask": "Deleted task:",
+	"log.executingTasks": "Executing",
+	"log.taskDone": "Done:",
+	"log.treeCount": "{count} tasks",
+	"log.treeEmpty": "Empty tree",
+	"log.statusUpdate": "Status → {status}:",
+	"log.messageSent": "Message sent",
+	"log.reportSent": "Reported to parent",
+	"log.clarifyAsked": "Question sent",
+	"log.yieldWaiting": "Waiting for messages",
+	"log.tasks": "tasks",
+
 	// Tool names (MCP)
 	"tools.mcp__opengraft__get_tree": "Get Tree",
 	"tools.mcp__opengraft__create_task": "Create Task",
@@ -385,6 +399,20 @@ const zh: Translations = {
 	"model.sonnet": "Sonnet",
 	"model.opus": "Opus",
 	"model.haiku": "Haiku",
+
+	// MCP tool result labels
+	"log.createdTask": "创建了任务：",
+	"log.deletedTask": "删除了任务：",
+	"log.executingTasks": "正在执行",
+	"log.taskDone": "完成：",
+	"log.treeCount": "{count} 个任务",
+	"log.treeEmpty": "空任务树",
+	"log.statusUpdate": "状态 → {status}：",
+	"log.messageSent": "消息已发送",
+	"log.reportSent": "已上报父任务",
+	"log.clarifyAsked": "问题已发送",
+	"log.yieldWaiting": "等待消息中",
+	"log.tasks": "个任务",
 
 	// Tool names (MCP)
 	"tools.mcp__opengraft__get_tree": "查看任务树",

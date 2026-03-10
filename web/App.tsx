@@ -59,6 +59,91 @@ function localizeToolName(rawName: string, t: (key: string) => string): string {
 	return translated;
 }
 
+/** Format MCP tool results as human-readable summaries instead of raw JSON. */
+function formatMcpToolResult(
+	toolName: string,
+	content: string,
+	t: (key: string, params?: Record<string, string>) => string,
+): string | null {
+	const mcpTool = toolName.replace("mcp__opengraft__", "");
+	if (!toolName.startsWith("mcp__opengraft__")) return null;
+
+	// Try to parse JSON content
+	let json: Record<string, unknown> | null = null;
+	try {
+		json = JSON.parse(content) as Record<string, unknown>;
+	} catch {
+		// Not valid JSON — use text-based formatting below
+	}
+
+	switch (mcpTool) {
+		case "create_task": {
+			if (json && typeof json.title === "string") {
+				return `${t("log.createdTask")} "${json.title}"`;
+			}
+			return null;
+		}
+		case "delete_task": {
+			if (json && typeof json.title === "string") {
+				return `${t("log.deletedTask")} ✂ "${json.title}"`;
+			}
+			return null;
+		}
+		case "execute_tasks": {
+			if (json && Array.isArray(json.tasks)) {
+				const tasks = json.tasks as Array<{ title?: string }>;
+				const names = tasks.map((tk) => tk.title ?? "?").join(", ");
+				return `${t("log.executingTasks")} ${tasks.length} ${t("log.tasks")}: ${names}`;
+			}
+			// Truncated JSON — try to extract spawned count
+			const spawnedMatch = /"spawned":\s*(\d+)/.exec(content);
+			if (spawnedMatch?.[1]) {
+				return `${t("log.executingTasks")} ${spawnedMatch[1]} ${t("log.tasks")}`;
+			}
+			return null;
+		}
+		case "done": {
+			// done returns plain text like "Task marked as passed. Good work!"
+			const match = /Task marked as (passed|failed)/.exec(content);
+			if (match?.[1]) {
+				return `${t("log.taskDone")} ${match[1] === "passed" ? "✓" : "✗"} ${match[1]}`;
+			}
+			return null;
+		}
+		case "get_tree": {
+			if (json && Array.isArray(json.nodes)) {
+				const count = json.nodes.length;
+				return count === 0
+					? t("log.treeEmpty")
+					: t("log.treeCount", { count: String(count) });
+			}
+			// Truncated JSON — estimate count from "id" occurrences
+			const idMatches = content.match(/"id":/g);
+			if (idMatches) {
+				return `${idMatches.length}+ ${t("log.tasks")}`;
+			}
+			return null;
+		}
+		case "update_task_status": {
+			if (json && typeof json.status === "string") {
+				const title = typeof json.title === "string" ? ` "${json.title}"` : "";
+				return `${t("log.statusUpdate", { status: json.status as string })}${title}`;
+			}
+			return null;
+		}
+		case "send_message_to_child":
+			return t("log.messageSent");
+		case "report_to_parent":
+			return t("log.reportSent");
+		case "clarify":
+			return t("log.clarifyAsked");
+		case "yield":
+			return t("log.yieldWaiting");
+		default:
+			return null;
+	}
+}
+
 function statusDotClass(status: string): string {
 	const map: Record<string, string> = {
 		pending: "status-dot-pending",
@@ -913,6 +998,7 @@ function LogEntryView({
 		const rest = entry.text.replace(/^(OK|ERR) [^:]+: /, "");
 		const toolMatch = /^(OK|ERR) ([^:]+):/.exec(entry.text);
 		const toolName = toolMatch?.[2] ?? "";
+		const mcpFormatted = isOk ? formatMcpToolResult(toolName, rest, t) : null;
 		return (
 			<div className={`og-log-entry og-event-${entry.type}`}>
 				<span className="og-log-time">{entry.time}</span>
@@ -929,9 +1015,10 @@ function LogEntryView({
 							}
 							title={toolName}
 						>
-							{isOk ? "✓" : isErr ? "✗" : "→"} {localizeToolName(toolName, t)}
+							{isOk ? "✓" : isErr ? "✗" : "→"}{" "}
+							{mcpFormatted ?? localizeToolName(toolName, t)}
 						</span>
-						{rest && (
+						{!mcpFormatted && rest && (
 							<span className="og-tool-result-content">
 								{" "}
 								{rest.length > 120 ? `${rest.slice(0, 120)}…` : rest}

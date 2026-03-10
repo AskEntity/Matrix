@@ -135,3 +135,11 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Badge moved from footer form (caused input resize) to activity panel header (og-panel-actions div).
 - Root orchestrator usage stored under PROJECT_NODE_ID key when taskId is falsy.
 - Badge lookup falls back to PROJECT_NODE_ID when no specific task is selected.
+
+## MCP Tool Result Formatting
+
+- `formatMcpToolResult()` in App.tsx parses tool result content and returns human-readable strings.
+- Only applied for successful (`isOk`) MCP tool results — errors still show raw content.
+- JSON content is pre-truncated to 200 chars at creation (in WS handler). For truncated JSON (e.g., large get_tree), regex fallbacks estimate counts.
+- All labels use i18n `t()` with keys prefixed `log.` (e.g., `log.createdTask`, `log.deletedTask`).
+- Returns `null` on parse failure → falls back to default rendering (tool name + raw content).
