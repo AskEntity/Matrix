@@ -42,9 +42,7 @@ export function ActivityLog({
 
 	const visible = useMemo(() => {
 		let items: LogEntry[];
-		if (!filterTaskId) {
-			items = entries;
-		} else if (filterTaskId === PROJECT_NODE_ID) {
+		if (!filterTaskId || filterTaskId === PROJECT_NODE_ID) {
 			items = entries.filter((e) => !e.taskId);
 		} else {
 			const descendantIds = new Set<string>();

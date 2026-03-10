@@ -215,3 +215,9 @@ Key changes to address agent behavioral issues:
 - **Key insight**: Raw API messages as tail caused tool_use/tool_result orphaning and user/user alternation issues. Including recent conversation as a text dump inside the single user message avoids all of this.
 - **recentTranscript**: Uses the same `fullTranscript` serialization (already built for the summarizer), sliced to last 80k chars.
 - **savedTokens calculation**: Now includes freshMemory.length. Memory is read before savedTokens computed.
+
+## Remove All Activity View (default to root)
+- `selectedTaskId` defaults to `PROJECT_NODE_ID` — there is no "nothing selected" state.
+- Clicking a selected task deselects it back to root, not null.
+- Orchestrator node click always selects (no toggle off).
+- Sidebar filter chip and activity subtitle only shown for child tasks (root is the implicit default).

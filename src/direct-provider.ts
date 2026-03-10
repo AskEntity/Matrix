@@ -188,7 +188,7 @@ export async function compressMessages(
 		`## Recent Conversation (last ~${Math.round(recentTranscript.length / 1000)}k chars)\nThe following is a text transcript of the most recent conversation before compaction.\nThis gives you detailed context for what was happening right before the compaction.\n\n${recentTranscript}`,
 	);
 	parts.push(
-		"Resume from this checkpoint. Your task is NOT done unless the checkpoint says \"Current Phase: done\". Continue working — check get_tree, follow the stimulus priority, and drive to completion.",
+		'Resume from this checkpoint. Your task is NOT done unless the checkpoint says "Current Phase: done". Continue working — check get_tree, follow the stimulus priority, and drive to completion.',
 	);
 
 	const compressed: MessageParam[] = [

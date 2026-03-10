@@ -55,7 +55,9 @@ function AppInner() {
 	const [projectId, setProjectId] = useState("");
 	const [showAddProject, setShowAddProject] = useState(false);
 	const [newProjectPath, setNewProjectPath] = useState("");
-	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
+		PROJECT_NODE_ID,
+	);
 	const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
 	const [lastCostUsd, setLastCostUsd] = useState<number | null>(null);
 	const [lastTurns, setLastTurns] = useState<number | null>(null);
@@ -201,7 +203,7 @@ function AppInner() {
 				target.tagName === "TEXTAREA" ||
 				target.isContentEditable;
 			if (e.key === "Escape" && !isInput) {
-				setSelectedTaskId(null);
+				setSelectedTaskId(PROJECT_NODE_ID);
 				setTargetNodeId(null);
 			}
 			if (e.key === "/" && !isInput) {
@@ -532,7 +534,7 @@ function AppInner() {
 		try {
 			await deleteTask(selectedTaskId);
 			addLog("lifecycle", `Deleted: ${selectedNode.title}`);
-			setSelectedTaskId(null);
+			setSelectedTaskId(PROJECT_NODE_ID);
 			await refreshTasks();
 		} catch (err) {
 			addLog("error", (err as Error).message);
@@ -575,7 +577,7 @@ function AppInner() {
 		try {
 			await deleteProject(projectId);
 			setProjectId("");
-			setSelectedTaskId(null);
+			setSelectedTaskId(PROJECT_NODE_ID);
 			setLogs([]);
 		} catch (err) {
 			addLog("error", (err as Error).message);
@@ -623,7 +625,7 @@ function AppInner() {
 				theme={theme}
 				onProjectChange={(id) => {
 					setProjectId(id);
-					setSelectedTaskId(null);
+					setSelectedTaskId(PROJECT_NODE_ID);
 					setLogs([]);
 				}}
 				onDeleteProject={handleDeleteProject}
@@ -659,7 +661,7 @@ function AppInner() {
 					<div className="og-panel-header">
 						<span className="og-panel-title">{t("tasks.title")}</span>
 						<div className="og-panel-actions">
-							{selectedTaskId && (
+							{selectedTaskId && selectedTaskId !== PROJECT_NODE_ID && (
 								<>
 									<span className="og-filter-chip" title={filterLabel ?? ""}>
 										{filterLabel}
@@ -667,7 +669,7 @@ function AppInner() {
 									<button
 										type="button"
 										className="og-btn-icon"
-										onClick={() => setSelectedTaskId(null)}
+										onClick={() => setSelectedTaskId(PROJECT_NODE_ID)}
 										data-tip={t("tasks.clearFilter")}
 									>
 										<IconClose size={11} />
@@ -763,7 +765,7 @@ function AppInner() {
 						<div className="og-panel-header">
 							<span className="og-panel-title">
 								{t("activity.title")}
-								{filterLabel && (
+								{filterLabel && selectedTaskId !== PROJECT_NODE_ID && (
 									<span
 										style={{
 											color: "var(--text-faint)",
