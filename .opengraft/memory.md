@@ -120,3 +120,11 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 - Avoid running full test suites in every child task — too expensive. Use `bun run typecheck` for quick validation.
 - Skip biome/lint checks in child tasks unless the task specifically touches formatting.
 - Pre-commit hooks run typecheck + lint + tests automatically, so explicit runs are often redundant.
+
+## Compaction System Overhaul (2026-03-10)
+- **No truncation**: `compressMessages()` no longer truncates tool_use inputs, tool_result content, or per-message content. Full transcript sent to summarizer.
+- **Transcript limit**: 640k chars (~160k tokens) to leave room for 32k output tokens. Truncates from HEAD (keeps tail/newest), prepends "[Earlier conversation truncated]".
+- **max_tokens**: Increased from 8192 to 32768 for richer checkpoint summaries.
+- **Tail preservation**: After generating checkpoint, keeps ~80k chars of most recent messages. Tail must start with user role. Bridge assistant message inserted between checkpoint(user) and tail(user) to maintain valid alternation.
+- **CHECKPOINT_SYSTEM_PROMPT**: Added "Agent Tree State" and "Communication State" sections for multi-agent awareness.
+

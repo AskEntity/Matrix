@@ -88,7 +88,7 @@ export async function compressMessages(
 		return { compressed: messages, savedTokens: 0, checkpoint: "" };
 	}
 
-	// Serialize ALL messages into text for the checkpoint generator
+	// Serialize ALL messages into text for the checkpoint generator — no truncation
 	const fullTranscript = messages
 		.map((m, i) => {
 			const content =
@@ -101,24 +101,31 @@ export async function compressMessages(
 									if ("text" in b && typeof b.text === "string") return b.text;
 									if ("type" in b && b.type === "tool_use") {
 										const tu = b as ToolUseBlock;
-										const inputStr = JSON.stringify(tu.input).slice(0, 500);
+										const inputStr = JSON.stringify(tu.input);
 										return `[tool_use: ${tu.name}(${inputStr})]`;
 									}
 									if ("type" in b && b.type === "tool_result") {
 										const tr = b as ToolResultBlockParam;
 										const text =
-											typeof tr.content === "string"
-												? tr.content.slice(0, 500)
-												: "[result]";
+											typeof tr.content === "string" ? tr.content : "[result]";
 										return `[tool_result: ${text}]`;
 									}
 									return "[block]";
 								})
 								.join("\n")
 						: String(m.content);
-			return `[${i}] ${m.role}: ${content.slice(0, 2000)}`;
+			return `[${i}] ${m.role}: ${content}`;
 		})
 		.join("\n---\n");
+
+	// Context window is ~200k tokens. Reserve max_tokens for output, send the rest as input.
+	// ~160k tokens input ≈ ~640k chars. Keep tail (newest) if transcript exceeds this.
+	const SUMMARY_MAX_TOKENS = 32768;
+	const TRANSCRIPT_CHAR_LIMIT = 640_000;
+	const transcriptForApi =
+		fullTranscript.length > TRANSCRIPT_CHAR_LIMIT
+			? `[Earlier conversation truncated]\n\n${fullTranscript.slice(-TRANSCRIPT_CHAR_LIMIT)}`
+			: fullTranscript;
 
 	// Use sonnet for high-quality checkpoint (haiku loses too much nuance)
 	const summaryModel = model.includes("haiku")
@@ -129,9 +136,9 @@ export async function compressMessages(
 
 	const summaryResponse = await client.messages.create({
 		model: summaryModel,
-		max_tokens: 8192,
+		max_tokens: SUMMARY_MAX_TOKENS,
 		system: CHECKPOINT_SYSTEM_PROMPT,
-		messages: [{ role: "user", content: fullTranscript.slice(0, 100000) }],
+		messages: [{ role: "user", content: transcriptForApi }],
 	});
 
 	const checkpoint =
@@ -139,9 +146,40 @@ export async function compressMessages(
 			? summaryResponse.content[0].text
 			: "Failed to generate checkpoint";
 
+	// Keep tail messages (~80k chars / ~20k tokens) for recent context preservation
+	const TAIL_CHARS = 80_000;
+	let tailCharCount = 0;
+	let tailStartIdx = messages.length;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i];
+		if (!msg) continue;
+		const msgContent =
+			typeof msg.content === "string"
+				? msg.content
+				: JSON.stringify(msg.content);
+		tailCharCount += msgContent.length;
+		if (tailCharCount > TAIL_CHARS) break;
+		tailStartIdx = i;
+	}
+
+	// Ensure tail starts with a 'user' role message (for valid API alternation)
+	while (
+		tailStartIdx < messages.length &&
+		messages[tailStartIdx]?.role !== "user"
+	) {
+		tailStartIdx++;
+	}
+
+	const tailMessages = messages.slice(tailStartIdx);
+
 	// Estimate saved tokens (~4 chars per token)
 	const oldChars = fullTranscript.length;
-	const newChars = checkpoint.length;
+	const tailChars = tailMessages.reduce((sum, m) => {
+		const c =
+			typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+		return sum + c.length;
+	}, 0);
+	const newChars = checkpoint.length + tailChars;
 	const savedTokens = Math.max(0, Math.floor((oldChars - newChars) / 4));
 
 	// Re-read fresh memory from disk (agent may have updated it during session)
@@ -170,6 +208,18 @@ export async function compressMessages(
 	const compressed: MessageParam[] = [
 		{ role: "user" as const, content: parts.join("\n\n---\n\n") },
 	];
+
+	// Append tail messages, inserting bridge if needed for valid alternation
+	if (tailMessages.length > 0) {
+		if (tailMessages[0]?.role === "user") {
+			// Insert assistant bridge to avoid user-user adjacency
+			compressed.push({
+				role: "assistant" as const,
+				content: "Continuing from checkpoint with preserved recent context.",
+			});
+		}
+		compressed.push(...tailMessages);
+	}
 
 	return { compressed, savedTokens, checkpoint };
 }
@@ -219,6 +269,20 @@ Analyze the conversation and output a checkpoint in EXACTLY this format (all sec
 [Single, specific, concrete action to take immediately — start with a verb]
 [e.g. "Run \`bun test src/foo.test.ts\` to verify the fix" not "continue testing"]
 [e.g. "Edit src/bar.ts line 42 to change X to Y" not "fix the bug"]
+
+## Agent Tree State
+[Is this agent an orchestrator (has children) or a leaf worker?]
+[List all child tasks with their IDs, titles, branches, and current statuses (pending/in_progress/passed/failed)]
+[Which children have been merged? Which are still running? Which failed and need retry?]
+[If orchestrator: what's the merge/integration plan?]
+[If leaf worker: who is the parent, and what was the parent's instruction?]
+
+## Communication State
+[Any pending messages from parent that haven't been fully addressed?]
+[Any pending clarifications awaiting user response?]
+[Recent report_to_parent messages sent — what was communicated?]
+[Recent send_message_to_child instructions — what was told to which child?]
+[Has done() been called? If so, with what status and summary?]
 
 Rules:
 - Be precise: file paths, line numbers, function names, exact error messages
