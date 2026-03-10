@@ -128,3 +128,13 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 - **Tail preservation**: After generating checkpoint, keeps ~80k chars of most recent messages. Tail must start with user role. Bridge assistant message inserted between checkpoint(user) and tail(user) to maintain valid alternation.
 - **CHECKPOINT_SYSTEM_PROMPT**: Added "Agent Tree State" and "Communication State" sections for multi-agent awareness.
 
+
+## Tool Card Redesign (activity log)
+- Tool entries (tool_use + tool_result) now render as cards instead of inline entries.
+- Merging logic is in the rendering layer: `ActivityLog` uses `useMemo` to pair adjacent tool_use → tool_result with matching tool names into `tool_card` entries.
+- `ToolCard` component: collapsible card with header (tool name, status icon, chevron toggle) and body (args + result).
+- MCP tools (mcp__opengraft__*) get purple accent and special card body rendering via `McpToolCardBody`.
+- Default collapsed if total content > 200 chars, expanded if short.
+- Standalone tool_use (pending result) shows as card with "⋯" pending indicator.
+- Standalone tool_result (orphaned) shows as card with result only.
+- Resume button removed from TaskDetail — only Pause shown for running tasks.
