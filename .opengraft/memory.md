@@ -442,3 +442,9 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 **Double-restart guard**: Added `restartingProjects` Set. Restart handler checks it before proceeding and returns 409 if a restart is already in progress. Uses `try/finally` to ensure the guard is always cleared.
 
 **session.stop() error handling**: Wrapped in `try/catch` in restart handler since it may throw if already stopped.
+
+## Auto-parent create_task + maxDepth Propagation
+
+- `create_task` without `parentId` now auto-parents under `currentTaskId` (the calling agent's task). Root orchestrator (`currentTaskId=null`) still creates top-level tasks.
+- `maxDepth` and `clarifyTimeoutMs` are now propagated through `createOrchestratorTools` in `executeChildStreaming`. Previously children beyond depth 2 used default maxDepth=3 and lost MCP tools at depth 3.
+- Test updated: "agent can create top-level task" → "agent auto-parents under itself when no parentId provided"

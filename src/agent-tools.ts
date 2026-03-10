@@ -79,7 +79,7 @@ export function formatQueueMessage(msg: QueueMessage): string {
  */
 export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "opengraft")
 - get_tree: View the current task tree (always check this first)
-- create_task: Create tasks (omit parentId for top-level, or provide parentId for children)
+- create_task: Create tasks (omit parentId to create under your own task, or provide parentId for a specific parent)
 - update_task_status: Update a task's status
 - execute_tasks: Fire-and-forget. Spawns children in background, returns immediately with task IDs.
   Results arrive via yield() as child_complete messages.
@@ -102,7 +102,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 
 ## Event-Driven Workflow Pattern
 1. Analyze the goal and the codebase (read files to understand structure and scope)
-2. Create tasks using create_task (top-level or as children of a parent)
+2. Create tasks using create_task (omit parentId to create under your own task)
    - Write detailed task descriptions (see "Task Decomposition" in orchestrator system prompt)
    - Sibling tasks run in PARALLEL — plan their scope to minimize merge conflicts
 3. Call execute_tasks to spawn children (returns immediately)
@@ -491,6 +491,8 @@ export function createOrchestratorTools(
 					doneRef: childDoneRef,
 					broadcastTreeUpdate,
 					defaultBudgetUsd: deps.defaultBudgetUsd,
+					maxDepth: deps.maxDepth,
+					clarifyTimeoutMs: deps.clarifyTimeoutMs,
 				},
 				childCosts,
 			);
@@ -536,8 +538,8 @@ export function createOrchestratorTools(
 
 		tool(
 			"create_task",
-			"Create a new task. If parentId is provided, creates a child task under that parent. " +
-				"If omitted, creates a top-level task (direct child of the project). " +
+			"Create a new task. If parentId is provided, creates a child under that parent. " +
+				"If omitted, creates a child of YOUR current task (or top-level if you are the root orchestrator). " +
 				"IMPORTANT: Sibling tasks will run in PARALLEL on separate branches. " +
 				"Each sibling must work on DIFFERENT files/modules to avoid merge conflicts.",
 			{
@@ -548,22 +550,27 @@ export function createOrchestratorTools(
 				parentId: z
 					.string()
 					.optional()
-					.describe("Parent task ID. Omit to create a top-level task."),
+					.describe(
+						"Parent task ID. Omit to create a child of your current task.",
+					),
 			},
 			async (args) => {
 				try {
+					// Auto-parent: if no parentId provided, default to current agent's task
+					const effectiveParentId = args.parentId ?? currentTaskId ?? undefined;
+
 					// Scope validation: agents can only create tasks under themselves or their descendants
 					if (
-						args.parentId &&
+						effectiveParentId &&
 						currentTaskId !== null &&
-						args.parentId !== currentTaskId &&
-						!isDescendantOf(tracker, args.parentId, currentTaskId)
+						effectiveParentId !== currentTaskId &&
+						!isDescendantOf(tracker, effectiveParentId, currentTaskId)
 					) {
 						return {
 							content: [
 								{
 									type: "text" as const,
-									text: `Cannot create task under ${args.parentId}: not your task or descendant`,
+									text: `Cannot create task under ${effectiveParentId}: not your task or descendant`,
 								},
 							],
 							isError: true,
@@ -573,9 +580,9 @@ export function createOrchestratorTools(
 					const opts = deps.defaultBudgetUsd
 						? { budgetUsd: deps.defaultBudgetUsd }
 						: undefined;
-					const node = args.parentId
+					const node = effectiveParentId
 						? tracker.addChild(
-								args.parentId,
+								effectiveParentId,
 								args.title,
 								args.description,
 								opts,
