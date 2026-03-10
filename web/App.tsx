@@ -11,6 +11,7 @@ import {
 	useWebSocket,
 } from "./hooks.ts";
 import { LocaleProvider, useLocale } from "./i18n.ts";
+import { applyTheme, themes } from "./themes.ts";
 
 const PROJECT_NODE_ID = "__project__";
 
@@ -1587,18 +1588,10 @@ function AppInner() {
 		[],
 	);
 
-	// Theme persistence
+	// Theme persistence — apply CSS variable overrides via themes.ts
 	useEffect(() => {
-		const root = document.documentElement;
-		root.classList.remove("light-mode", "cute-mode", "cute-dark");
-		if (theme === "light") {
-			root.classList.add("light-mode");
-		} else if (theme === "cute-light") {
-			root.classList.add("cute-mode");
-		} else if (theme === "cute-dark") {
-			root.classList.add("cute-mode", "cute-dark");
-		}
-		// "dark" = no extra classes (default)
+		const config = themes[theme];
+		if (config) applyTheme(config);
 		localStorage.setItem("og-theme", theme);
 	}, [theme]);
 
@@ -2668,7 +2661,7 @@ function AppInner() {
 			</footer>
 
 			{/* Cute mode cat */}
-			{theme.startsWith("cute-") && <CuteCat />}
+			{themes[theme]?.hasCat && <CuteCat />}
 		</>
 	);
 }

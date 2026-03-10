@@ -115,3 +115,13 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Badge shows in footer form, picks active task by priority: targetNodeId > selected task > first in_progress root task.
 - Color thresholds: green (<50%), yellow (50-80%), red (>80%) based on inputTokens/contextWindow ratio.
 - Light mode has separate color overrides for the badge.
+
+## Theme System Refactor
+
+- Themes are now data-driven JS objects in `web/themes.ts`, not CSS classes.
+- `ThemeConfig` type: `{ name: string; variables: Record<string, string>; hasCat?: boolean }`.
+- `applyTheme()` sets CSS variables on `document.documentElement.style`, resets all theme variables first.
+- Dark theme has empty variables (uses `:root` defaults). Other themes override specific variables.
+- CSS classes `.light-mode`, `.cute-mode`, `.cute-dark` removed from style.css entirely.
+- The `@media (prefers-color-scheme: light)` auto block was also removed (it used `.light-auto` class).
+- Light-mode-specific hardcoded overrides (hover colors, token badge colors) were removed — they relied on the `.light-mode` class selector.
