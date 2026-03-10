@@ -2350,14 +2350,6 @@ function AppInner() {
 								{nodeMap.get(targetNodeId)?.title ?? targetNodeId.slice(0, 8)}
 							</strong>
 						</span>
-						<button
-							type="button"
-							className="og-btn-icon"
-							onClick={() => setTargetNodeId(null)}
-							title={t("target.sendToOrch")}
-						>
-							<IconClose size={11} />
-						</button>
 					</div>
 				)}
 				<form className="og-footer-form" onSubmit={handleSubmit}>
