@@ -19,7 +19,6 @@ export function ActivityLog({
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 	const [searchText, setSearchText] = useState("");
-	const [hideBash, setHideBash] = useState(false);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new entries
 	useEffect(() => {
@@ -104,17 +103,8 @@ export function ActivityLog({
 			result.push({ kind: "single", entry: cur });
 			i += 1;
 		}
-		if (hideBash) {
-			return result.filter(
-				(item) =>
-					!(
-						item.kind === "tool_card" &&
-						(item.useEntry.text.split("(")[0] ?? "") === "bash"
-					),
-			);
-		}
 		return result;
-	}, [visible, hideBash]);
+	}, [visible]);
 
 	return (
 		<>
@@ -126,14 +116,6 @@ export function ActivityLog({
 					value={searchText}
 					onChange={(e) => setSearchText(e.target.value)}
 				/>
-				<button
-					type="button"
-					className={`og-bash-toggle ${hideBash ? "active" : ""}`}
-					onClick={() => setHideBash(!hideBash)}
-					title={hideBash ? t("log.showBash") : t("log.hideBash")}
-				>
-					{hideBash ? t("log.showBash") : t("log.hideBash")}
-				</button>
 			</div>
 			<div className="og-activity-log" ref={logRef} onScroll={handleScroll}>
 				{mergedVisible.map((item) =>

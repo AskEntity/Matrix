@@ -1127,32 +1127,6 @@ select {
 	color: var(--text-faint);
 }
 
-.og-bash-toggle {
-	flex-shrink: 0;
-	margin-left: 6px;
-	padding: 2px 8px;
-	border: 1px solid var(--border);
-	border-radius: var(--radius);
-	background: var(--bg-surface);
-	color: var(--text-secondary);
-	font-size: 11px;
-	font-family: var(--font-mono);
-	cursor: pointer;
-	white-space: nowrap;
-	transition: all 0.15s;
-}
-
-.og-bash-toggle:hover {
-	border-color: var(--accent);
-	color: var(--text-primary);
-}
-
-.og-bash-toggle.active {
-	background: var(--accent);
-	color: var(--bg-primary);
-	border-color: var(--accent);
-}
-
 .og-activity-log {
 	flex: 1;
 	overflow-y: auto;
