@@ -344,3 +344,4 @@ DirectProvider estimates token counts from `usage.input_tokens + usage.output_to
 ## Conversation History API
 
 `GET /projects/:id/tasks/:nodeId/conversation` — reads session file, transforms Anthropic MessageParam[] into `{ role, content, hasToolUse, toolNames? }[]`. Last 100 messages. Returns `{ messages: [] }` on error/missing.
+\n## Conversation History Feature (Web UI)\n\n- Added `ConversationHistory` component to TaskDetail panel\n- Shows when node.sessionId is set; toggled via 'History' button\n- Button uses `og-btn-ghost` when off, `og-btn-active` when on (new class)\n- Fetches `GET /projects/:id/tasks/:nodeId/conversation` on toggle\n- CSS classes: `.og-conv-history`, `.og-conv-msg`, `.og-conv-role-badge`, `.og-conv-tools`\n- biome-ignore on array index key is needed for static message lists (no stable ID from API)\n

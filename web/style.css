@@ -1907,3 +1907,93 @@ select {
 .og-btn-icon.active {
 	color: var(--accent);
 }
+
+/* =========================================================
+   Conversation History
+   ========================================================= */
+
+.og-conv-history {
+	margin-top: 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	background: var(--bg-surface);
+	max-height: 400px;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 0;
+}
+
+.og-conv-loading,
+.og-conv-empty {
+	padding: 16px;
+	font-size: 12px;
+	color: var(--text-faint);
+	text-align: center;
+}
+
+.og-conv-msg {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 10px 12px;
+	border-bottom: 1px solid var(--border-subtle);
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+.og-conv-msg:last-child {
+	border-bottom: none;
+}
+
+.og-conv-msg-user {
+	background: var(--bg-raised);
+}
+
+.og-conv-msg-assistant {
+	background: var(--bg-surface);
+}
+
+.og-conv-role-badge {
+	display: inline-block;
+	padding: 1px 6px;
+	border-radius: var(--radius-sm);
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: 0.05em;
+	align-self: flex-start;
+}
+
+.og-conv-role-user {
+	background: var(--accent-muted);
+	color: var(--accent-hover);
+}
+
+.og-conv-role-assistant {
+	background: rgba(163, 113, 247, 0.15);
+	color: #a371f7;
+}
+
+.og-conv-content {
+	color: var(--text-secondary);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.og-conv-tools {
+	font-size: 11px;
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+.og-btn-active {
+	background: var(--accent-muted);
+	border-color: var(--accent);
+	color: var(--accent-hover);
+}
+
+.og-btn-active:hover {
+	background: var(--accent-muted);
+	border-color: var(--accent-hover);
+	color: var(--accent-hover);
+}
