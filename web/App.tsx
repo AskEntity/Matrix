@@ -128,7 +128,7 @@ function formatMcpToolResult(
 		case "clarify":
 			return t("log.clarifyAsked");
 		case "yield":
-			return t("log.yieldWaiting");
+			return t("log.yieldReceived");
 		default:
 			return null;
 	}
