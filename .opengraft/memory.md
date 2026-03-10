@@ -194,3 +194,11 @@ Key changes to address agent behavioral issues:
 - **Parallelism guidance**: Added "Maximize Parallelism" section to orchestrator prompt and parallelism note to TASK_SYSTEM_PROMPT opener.
 - **Stimulus Priority**: Added step 0 for post-compaction recovery. Changed step 5 from "Report final status, stop" → "Call done('passed', summary)".
 - **Never-Stop Principle**: Added "(CRITICAL — especially after context compaction)" to header, added post-compaction bullet.
+
+## App.tsx Modularization
+- Split web/App.tsx from 3546 lines to 843 lines (after biome formatting).
+- 14 component files in web/components/: icons.tsx, StatusBadge.tsx, TokenUsageBadge.tsx, CuteCat.tsx, ConversationHistory.tsx, ToolCard.tsx, ActivityLog.tsx, TaskTree.tsx, TaskDetail.tsx, OrchestratorDetail.tsx, SettingsPanel.tsx, AppHeader.tsx, AppFooter.tsx.
+- Shared constant `PROJECT_NODE_ID` lives in web/types.ts. Types (LogEntry, TaskNode) stay in hooks.ts.
+- App.tsx retains: AppInner state management, effects, WebSocket handler, event handlers, layout composition.
+- Biome auto-sorts imports alphabetically and expands compact statements — expect line count to increase after `bun run check`.
+
