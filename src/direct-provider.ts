@@ -1367,6 +1367,25 @@ export class DirectProvider implements AgentProvider {
 								};
 							}
 						}
+						// Emit usage update so UI badge refreshes after compaction
+						const postCompactChars = compressed.reduce((sum, m) => {
+							const c =
+								typeof m.content === "string"
+									? m.content
+									: JSON.stringify(m.content);
+							return sum + c.length;
+						}, 0);
+						const estimatedPostCompactTokens = Math.floor(
+							postCompactChars / 4,
+						);
+						estimatedInputTokens = estimatedPostCompactTokens;
+						yield {
+							type: "usage",
+							inputTokens: estimatedPostCompactTokens,
+							compressThreshold: COMPRESS_THRESHOLD,
+							contextWindow: CONTEXT_WINDOW,
+							estimated: true,
+						};
 						yield { type: "compact", checkpoint, savedTokens };
 					} catch (e) {
 						yield {
