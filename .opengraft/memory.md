@@ -257,7 +257,7 @@ Three explicit cache breakpoints per API call:
 
 - `TaskNode.budgetUsd` — optional field for maximum cost a task is allowed to spend
 - `TaskTracker.addTask()` and `addChild()` accept `opts?: { budgetUsd?: number }` parameter
-- `create_task` MCP tool accepts optional `budgetUsd` param, passed through to tracker
+- `create_task` MCP tool does NOT accept `budgetUsd` — agents cannot set budgets (use project config `budgetUsd` instead)
 - `POST /projects/:id/tasks` API route accepts optional `budgetUsd` in body
 - `AgentRequest.budgetUsd` — passed to DirectProvider; triggers mid-execution warnings
 - DirectProvider checks running cost after each tool-result turn: warns at 80%, demands done() at 100%

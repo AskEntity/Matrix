@@ -2019,6 +2019,28 @@ export function App() {
 							}
 						/>
 					</label>
+					<label className="og-settings-field">
+						<span className="og-settings-label">Clarify Timeout (ms)</span>
+						<input
+							type="number"
+							className="og-settings-input"
+							placeholder="No timeout"
+							min="0"
+							step="1000"
+							value={
+								projectConfig.clarifyTimeoutMs != null
+									? String(projectConfig.clarifyTimeoutMs)
+									: ""
+							}
+							onChange={(e) =>
+								updateConfig({
+									clarifyTimeoutMs: e.target.value
+										? Number(e.target.value)
+										: null,
+								})
+							}
+						/>
+					</label>
 				</div>
 			)}
 
