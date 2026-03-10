@@ -1007,12 +1007,14 @@ function McpToolCardBody({
 	resultContent,
 	isOk,
 	t,
+	expanded,
 }: {
 	toolName: string;
 	argsStr: string;
 	resultContent: string | null;
 	isOk: boolean;
 	t: (key: string, params?: Record<string, string>) => string;
+	expanded: boolean;
 }) {
 	const mcpTool = toolName.replace("mcp__opengraft__", "");
 
@@ -1102,11 +1104,7 @@ function McpToolCardBody({
 			return (
 				<div className="og-mcp-body">
 					{title && <div className="og-mcp-task-title">{title}</div>}
-					{desc && (
-						<div className="og-mcp-task-desc">
-							{desc.length > 200 ? `${desc.slice(0, 200)}…` : desc}
-						</div>
-					)}
+					{expanded && desc && <div className="og-mcp-task-desc">{desc}</div>}
 				</div>
 			);
 		}
@@ -1211,6 +1209,7 @@ function ToolCard({
 			resultContent={resultContent}
 			isOk={isOk}
 			t={t}
+			expanded={expanded}
 		/>
 	) : null;
 
@@ -1247,20 +1246,17 @@ function ToolCard({
 						<IconChevron size={10} expanded={expanded} />
 					</span>
 				</button>
-				{expanded && (
+				{mcpBody && <div className="og-tool-card-body">{mcpBody}</div>}
+				{expanded && !mcpBody && (
 					<div className="og-tool-card-body">
-						{mcpBody || (
-							<>
-								{argsStr && <div className="og-tool-card-args">{argsStr}</div>}
-								{resultContent && (
-									<div className="og-tool-card-result">
-										{mcpFormatted ??
-											(resultContent.length > 500
-												? `${resultContent.slice(0, 500)}…`
-												: resultContent)}
-									</div>
-								)}
-							</>
+						{argsStr && <div className="og-tool-card-args">{argsStr}</div>}
+						{resultContent && (
+							<div className="og-tool-card-result">
+								{mcpFormatted ??
+									(resultContent.length > 500
+										? `${resultContent.slice(0, 500)}…`
+										: resultContent)}
+							</div>
 						)}
 					</div>
 				)}
