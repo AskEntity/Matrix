@@ -134,12 +134,14 @@ export async function compressMessages(
 			? model.replace("opus", "sonnet")
 			: model;
 
-	const summaryResponse = await client.messages.create({
+	// Use streaming to avoid 10-minute timeout for long summary generation
+	const stream = client.messages.stream({
 		model: summaryModel,
 		max_tokens: SUMMARY_MAX_TOKENS,
 		system: CHECKPOINT_SYSTEM_PROMPT,
 		messages: [{ role: "user", content: transcriptForApi }],
 	});
+	const summaryResponse = await stream.finalMessage();
 
 	const checkpoint =
 		summaryResponse.content[0]?.type === "text"
