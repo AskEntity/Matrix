@@ -76,7 +76,7 @@ function formatMcpToolResult(
 		}
 		case "delete_task": {
 			if (json && typeof json.title === "string") {
-				return `${t("log.deletedTask")} – "${json.title}"`;
+				return `${t("log.deletedTask")} – Task: "${json.title}"`;
 			}
 			return null;
 		}
@@ -1033,28 +1033,28 @@ function getToolCardTitle(
 	// File tools
 	if (toolName === "read_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? `⌕ Read ${basename(path)}` : "⌕ Read";
+		return path ? `⌕ Read: ${basename(path)}` : "⌕ Read";
 	}
 	if (toolName === "write_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? `← Write ${basename(path)}` : "← Write";
+		return path ? `← Write: ${basename(path)}` : "← Write";
 	}
 	if (toolName === "edit_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? `✎ Edit ${basename(path)}` : "✎ Edit";
+		return path ? `✎ Edit: ${basename(path)}` : "✎ Edit";
 	}
 	if (toolName === "search") {
 		const pattern = extractArg(argsStr, "pattern");
 		if (pattern) {
 			const display =
 				pattern.length > 40 ? `${pattern.slice(0, 40)}…` : pattern;
-			return `⌕ Search ${display}`;
+			return `⌕ Search: ${display}`;
 		}
 		return "⌕ Search";
 	}
 	if (toolName === "list_files") {
 		const pattern = extractArg(argsStr, "pattern");
-		return pattern ? `ls ${pattern}` : "ls";
+		return pattern ? `ls: ${pattern}` : "ls";
 	}
 	if (toolName === "bash") {
 		const command = extractArg(argsStr, "command");
@@ -1072,20 +1072,20 @@ function getToolCardTitle(
 		switch (mcpTool) {
 			case "create_task": {
 				const title = extractArg(argsStr, "title");
-				return title ? `+ Task ${title}` : "+ Task";
+				return title ? `+ Task: ${title}` : "+ Task";
 			}
 			case "delete_task": {
 				// Try to get title from result
 				if (resultContent) {
 					try {
 						const json = JSON.parse(resultContent) as Record<string, unknown>;
-						if (typeof json.title === "string") return `– Task ${json.title}`;
+						if (typeof json.title === "string") return `– Task: ${json.title}`;
 					} catch {
 						/* ignore */
 					}
 				}
 				const taskId = extractArg(argsStr, "taskId");
-				return taskId ? `– Task ${taskId.slice(0, 8)}` : "– Task";
+				return taskId ? `– Task: ${taskId.slice(0, 8)}` : "– Task";
 			}
 			case "execute_tasks": {
 				const tasksArg = extractArg(argsStr, "tasks");
@@ -1126,7 +1126,7 @@ function getToolCardTitle(
 				const summary = extractArg(argsStr, "summary");
 				const isPassed = status === "passed";
 				const icon = isPassed ? "✓" : "✗";
-				const label = isPassed ? "Passed" : "Failed";
+				const label = isPassed ? "Task Passed" : "Task Failed";
 				if (summary) {
 					const display =
 						summary.length > 60 ? `${summary.slice(0, 60)}…` : summary;
@@ -1167,19 +1167,19 @@ function getToolCardTitle(
 			case "send_message_to_child": {
 				const taskId = extractArg(argsStr, "taskId");
 				return taskId
-					? `→ ${taskId.slice(0, 8)}`
-					: "→ send_message_to_child";
+					? `→ Message Child: ${taskId.slice(0, 8)}`
+					: "→ Message Child";
 			}
 			case "report_to_parent":
-				return "← Report";
+				return "← Report to Parent";
 			case "clarify": {
 				const question = extractArg(argsStr, "question");
 				if (question) {
 					const display =
 						question.length > 40 ? `${question.slice(0, 40)}…` : question;
-					return `? ${display}`;
+					return `? Clarify: ${display}`;
 				}
-				return "? clarify";
+				return "? Clarify";
 			}
 		}
 	}
@@ -1676,7 +1676,6 @@ function LogEntryView({
 				<div className="og-tool-card og-tool-card-mcp">
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">
-							📨{" "}
 							{entry.text.length > 100
 								? `${entry.text.slice(0, 100)}…`
 								: entry.text}
