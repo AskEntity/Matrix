@@ -836,6 +836,70 @@ function LogEntryView({
 	);
 }
 
+// ── Conversation History ───────────────────────────────────────────────────
+
+interface ConversationMessage {
+	role: "user" | "assistant";
+	content: string;
+	hasToolUse: boolean;
+	toolNames?: string[];
+}
+
+function ConversationHistory({
+	projectId,
+	nodeId,
+}: {
+	projectId: string;
+	nodeId: string;
+}) {
+	const [messages, setMessages] = useState<ConversationMessage[]>([]);
+	const [loading, setLoading] = useState(false);
+
+	useEffect(() => {
+		setLoading(true);
+		fetch(`/projects/${projectId}/tasks/${nodeId}/conversation`)
+			.then((r) => r.json())
+			.then((data: { messages: ConversationMessage[] }) => {
+				setMessages(data.messages ?? []);
+			})
+			.catch(() => setMessages([]))
+			.finally(() => setLoading(false));
+	}, [projectId, nodeId]);
+
+	if (loading) {
+		return (
+			<div className="og-conv-history">
+				<div className="og-conv-loading">Loading history…</div>
+			</div>
+		);
+	}
+
+	if (messages.length === 0) {
+		return (
+			<div className="og-conv-history">
+				<div className="og-conv-empty">No conversation history found.</div>
+			</div>
+		);
+	}
+
+	return (
+		<div className="og-conv-history">
+			{messages.map((msg, i) => (
+				// biome-ignore lint/suspicious/noArrayIndexKey: stable index for static list
+				<div key={i} className={`og-conv-msg og-conv-msg-${msg.role}`}>
+					<span className={`og-conv-role-badge og-conv-role-${msg.role}`}>
+						{msg.role === "user" ? "USER" : "ASSISTANT"}
+					</span>
+					<div className="og-conv-content">{msg.content}</div>
+					{msg.hasToolUse && msg.toolNames && msg.toolNames.length > 0 && (
+						<div className="og-conv-tools">🔧 {msg.toolNames.join(", ")}</div>
+					)}
+				</div>
+			))}
+		</div>
+	);
+}
+
 // ── Task Detail ────────────────────────────────────────────────────────────
 
 function TaskDetail({
@@ -853,6 +917,7 @@ function TaskDetail({
 	const [commits, setCommits] = useState<{ hash: string; message: string }[]>(
 		[],
 	);
+	const [showHistory, setShowHistory] = useState(false);
 	const canContinue = node.status === "failed" || node.status === "stuck";
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: refetch when status changes so new commits appear after task completes
@@ -995,6 +1060,15 @@ function TaskDetail({
 						</button>
 					</form>
 				)}
+				{node.sessionId && (
+					<button
+						type="button"
+						className={`og-btn og-btn-sm ${showHistory ? "og-btn-active" : "og-btn-ghost"}`}
+						onClick={() => setShowHistory((v) => !v)}
+					>
+						History
+					</button>
+				)}
 				<button
 					type="button"
 					className="og-btn og-btn-danger og-btn-sm"
@@ -1004,6 +1078,10 @@ function TaskDetail({
 					Delete
 				</button>
 			</div>
+
+			{showHistory && node.sessionId && (
+				<ConversationHistory projectId={projectId} nodeId={node.id} />
+			)}
 		</div>
 	);
 }
