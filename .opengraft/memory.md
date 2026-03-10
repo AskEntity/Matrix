@@ -344,3 +344,11 @@ DirectProvider estimates token counts from `usage.input_tokens + usage.output_to
 ## Conversation History API
 
 `GET /projects/:id/tasks/:nodeId/conversation` — reads session file, transforms Anthropic MessageParam[] into `{ role, content, hasToolUse, toolNames? }[]`. Last 100 messages. Returns `{ messages: [] }` on error/missing.
+
+## Daemon Test Patterns for Config + Conversation Endpoints
+
+- **`getTracker` is exported from `createApp`**: `const { app, pm, getTracker } = createApp(...)`. Use it in tests to directly call `tracker.assignSession(taskId, sessionId)` + `tracker.save()` without going through the HTTP layer.
+- **Writing mock session files**: `join(dataDir, "sessions", projectId, sessionId + ".json")` — create the dir with `mkdir(..., { recursive: true })` before writing.
+- **Session file format**: plain JSON array of `{ role, content }` objects matching Anthropic `MessageParam`. Content can be a string or an array of blocks (`{ type, text?, name?, id? }`).
+- **Biome auto-fix**: running `bun run check` with `--write` flag auto-formatted one file (no manual changes needed for new tests).
+- **Test filtering**: `bun test src/daemon.test.ts --test-name-pattern "pattern"` is useful for running only new describe blocks during development.

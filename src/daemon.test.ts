@@ -2309,3 +2309,341 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 		}
 	});
 });
+
+describe("GET /projects/:id/config", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-cfg-get-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-cfg-get-data-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await res.json()) as Project;
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns empty object for project with no config", async () => {
+		const res = await app.request(`/projects/${projectId}/config`);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body).toEqual({});
+	});
+
+	test("returns config after PATCH sets values", async () => {
+		await app.request(`/projects/${projectId}/config`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: "claude-opus-4-5" }),
+		});
+
+		const res = await app.request(`/projects/${projectId}/config`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { model?: string };
+		expect(body.model).toBe("claude-opus-4-5");
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request("/projects/nonexistent-id/config");
+		expect(res.status).toBe(404);
+	});
+});
+
+describe("PATCH /projects/:id/config", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-cfg-patch-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-cfg-patch-data-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await res.json()) as Project;
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("sets model and returns merged config", async () => {
+		const res = await app.request(`/projects/${projectId}/config`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: "claude-sonnet-4-6" }),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { model?: string };
+		expect(body.model).toBe("claude-sonnet-4-6");
+	});
+
+	test("merging partial config does not erase unrelated fields", async () => {
+		// Set two fields
+		await app.request(`/projects/${projectId}/config`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: "claude-opus-4-5", budgetUsd: 2.0 }),
+		});
+
+		// Update only model
+		const res = await app.request(`/projects/${projectId}/config`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: "claude-haiku-4-5" }),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { model?: string; budgetUsd?: number };
+		expect(body.model).toBe("claude-haiku-4-5");
+		expect(body.budgetUsd).toBe(2.0);
+	});
+
+	test("setting a field to null removes it", async () => {
+		// First set it
+		await app.request(`/projects/${projectId}/config`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: "claude-opus-4-5" }),
+		});
+
+		// Then null it out
+		const res = await app.request(`/projects/${projectId}/config`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: null }),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { model?: string };
+		expect(body.model).toBeUndefined();
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request("/projects/nonexistent-id/config", {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: "claude-sonnet-4-6" }),
+		});
+		expect(res.status).toBe(404);
+	});
+});
+
+describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+	let getTracker: ReturnType<typeof createApp>["getTracker"];
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-conv-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-conv-data-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		getTracker = result.getTracker;
+		await result.pm.load();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await res.json()) as Project;
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns { messages: [] } for task with no sessionId", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "No Session", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/conversation`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { messages: unknown[] };
+		expect(body.messages).toEqual([]);
+	});
+
+	test("returns 404 for unknown task", async () => {
+		const res = await app.request(
+			`/projects/${projectId}/tasks/nonexistent-task-id/conversation`,
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request(
+			"/projects/nonexistent-project/tasks/any-task/conversation",
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("returns { messages: [] } for task with sessionId but missing session file", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Missing Session", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		// Assign a sessionId that doesn't correspond to any file
+		const tracker = await getTracker(projectId);
+		tracker.assignSession(task.id, "nonexistent-session-id");
+		await tracker.save();
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/conversation`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { messages: unknown[] };
+		expect(body.messages).toEqual([]);
+	});
+
+	test("returns transformed messages from session file (happy path)", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Has Session", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		const sessionId = "test-session-abc123";
+
+		// Write mock session file
+		const sessionsDir = join(dataDir, "sessions", projectId);
+		await mkdir(sessionsDir, { recursive: true });
+		const sessionData = [
+			{ role: "user", content: "Help me build a feature" },
+			{
+				role: "assistant",
+				content: [
+					{ type: "text", text: "I'll help you" },
+					{ type: "tool_use", id: "tool-1", name: "bash", input: {} },
+				],
+			},
+			{
+				role: "user",
+				content: [
+					{ type: "tool_result", tool_use_id: "tool-1", content: "ok" },
+				],
+			},
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "Done!" }],
+			},
+		];
+		await writeFile(
+			join(sessionsDir, `${sessionId}.json`),
+			JSON.stringify(sessionData),
+		);
+
+		// Assign sessionId to task
+		const tracker = await getTracker(projectId);
+		tracker.assignSession(task.id, sessionId);
+		await tracker.save();
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/conversation`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			messages: {
+				role: string;
+				content: string;
+				hasToolUse: boolean;
+				toolNames?: string[];
+			}[];
+		};
+
+		expect(body.messages).toHaveLength(4);
+
+		// First message: plain string content
+		expect(body.messages[0]?.role).toBe("user");
+		expect(body.messages[0]?.content).toBe("Help me build a feature");
+		expect(body.messages[0]?.hasToolUse).toBe(false);
+
+		// Second message: assistant with text + tool_use
+		expect(body.messages[1]?.role).toBe("assistant");
+		expect(body.messages[1]?.content).toBe("I'll help you");
+		expect(body.messages[1]?.hasToolUse).toBe(true);
+		expect(body.messages[1]?.toolNames).toEqual(["bash"]);
+
+		// Third message: user tool_result (no text blocks)
+		expect(body.messages[2]?.role).toBe("user");
+		expect(body.messages[2]?.content).toBe("");
+		expect(body.messages[2]?.hasToolUse).toBe(false);
+
+		// Fourth message: assistant text only
+		expect(body.messages[3]?.role).toBe("assistant");
+		expect(body.messages[3]?.content).toBe("Done!");
+		expect(body.messages[3]?.hasToolUse).toBe(false);
+	});
+
+	test("returns last 100 messages when session has more than 100", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Big Session", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		const sessionId = "big-session-id";
+
+		// Write 110 messages
+		const sessionsDir = join(dataDir, "sessions", projectId);
+		await mkdir(sessionsDir, { recursive: true });
+		const sessionData = Array.from({ length: 110 }, (_, i) => ({
+			role: i % 2 === 0 ? "user" : "assistant",
+			content: `Message ${i}`,
+		}));
+		await writeFile(
+			join(sessionsDir, `${sessionId}.json`),
+			JSON.stringify(sessionData),
+		);
+
+		const tracker = await getTracker(projectId);
+		tracker.assignSession(task.id, sessionId);
+		await tracker.save();
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/conversation`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { messages: { content: string }[] };
+		expect(body.messages).toHaveLength(100);
+		// Should be the last 100: messages 10..109
+		expect(body.messages[0]?.content).toBe("Message 10");
+		expect(body.messages[99]?.content).toBe("Message 109");
+	});
+});
