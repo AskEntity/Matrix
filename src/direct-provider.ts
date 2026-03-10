@@ -67,7 +67,7 @@ export function getModelPricing(model: string): {
  * Compact conversation by summarizing ALL messages into a structured checkpoint,
  * then rebuilding context from scratch (like Claude Code's compaction model).
  *
- * After compaction, messages = [task context + fresh memory + checkpoint, assistant ack].
+ * After compaction, messages = [task context + fresh memory + checkpoint].
  * System prompt is re-sent every API call so it's always fresh.
  */
 /** @internal Exported for testing */
@@ -169,11 +169,6 @@ export async function compressMessages(
 
 	const compressed: MessageParam[] = [
 		{ role: "user" as const, content: parts.join("\n\n---\n\n") },
-		{
-			role: "assistant" as const,
-			content:
-				"I have the full checkpoint context and fresh memory. Continuing where I left off.",
-		},
 	];
 
 	return { compressed, savedTokens, checkpoint };
