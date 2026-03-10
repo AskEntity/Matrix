@@ -148,3 +148,9 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Theme selector was using `og-theme-select` (custom class) while language/project selectors used `og-select`. Unified to all use `og-select`.
 - Removed the now-unused `.og-theme-select` CSS rules from style.css.
 - Language name i18n: each locale should show language names in its own language (en: "English"/"Chinese", zh: "英语"/"中文").
+
+## Token Usage Tracking Fix
+- Usage events were only emitted inside `if (messages.length > 4)` block, missing first few turns.
+- The reported inputTokens was `estimatedInputTokens` from the previous turn (starts at 0), not actual.
+- Fix: emit usage event after API response using `response.usage.input_tokens` (always, unconditionally).
+- Compression check remains pre-call gated on `messages.length > 4` — these are separate concerns.

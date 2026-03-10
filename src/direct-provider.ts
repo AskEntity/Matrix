@@ -1236,14 +1236,6 @@ export class DirectProvider implements AgentProvider {
 					isEstimated = false;
 				}
 
-				yield {
-					type: "usage",
-					inputTokens: tokenCount,
-					compressThreshold: COMPRESS_THRESHOLD,
-					contextWindow: CONTEXT_WINDOW,
-					...(isEstimated ? { estimated: true } : {}),
-				};
-
 				if (!isEstimated && tokenCount > COMPRESS_THRESHOLD) {
 					yield {
 						type: "status",
@@ -1351,6 +1343,14 @@ export class DirectProvider implements AgentProvider {
 			// Update estimated token count for next turn's lazy threshold check
 			estimatedInputTokens =
 				response.usage.input_tokens + response.usage.output_tokens;
+
+			// Report actual token usage from the API response
+			yield {
+				type: "usage",
+				inputTokens: response.usage.input_tokens,
+				compressThreshold: COMPRESS_THRESHOLD,
+				contextWindow: CONTEXT_WINDOW,
+			};
 
 			// Process response content
 			const toolUses: ToolUseBlock[] = [];
