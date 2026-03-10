@@ -1509,7 +1509,7 @@ describe("POST /projects/:id/stop", () => {
 	});
 });
 
-describe("POST /projects/:id/run", () => {
+describe("POST /projects/:id/orchestrate/agent", () => {
 	let tempDir: string;
 	let dataDir: string;
 	let app: ReturnType<typeof createApp>["app"];
@@ -1538,7 +1538,7 @@ describe("POST /projects/:id/run", () => {
 	});
 
 	test("returns 404 for unknown project", async () => {
-		const res = await app.request("/projects/unknown/run", {
+		const res = await app.request("/projects/unknown/orchestrate/agent", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ prompt: "test" }),
@@ -1547,7 +1547,7 @@ describe("POST /projects/:id/run", () => {
 	});
 
 	test("returns 400 when prompt is missing", async () => {
-		const res = await app.request(`/projects/${projectId}/run`, {
+		const res = await app.request(`/projects/${projectId}/orchestrate/agent`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({}),
@@ -1556,7 +1556,7 @@ describe("POST /projects/:id/run", () => {
 	});
 
 	test("returns running status for valid request", async () => {
-		const res = await app.request(`/projects/${projectId}/run`, {
+		const res = await app.request(`/projects/${projectId}/orchestrate/agent`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ prompt: "do something" }),
@@ -1569,13 +1569,13 @@ describe("POST /projects/:id/run", () => {
 
 	test("returns 409 when agent already running", async () => {
 		// Start once
-		await app.request(`/projects/${projectId}/run`, {
+		await app.request(`/projects/${projectId}/orchestrate/agent`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ prompt: "first run" }),
 		});
 		// Try again immediately — agent is still considered active
-		const res = await app.request(`/projects/${projectId}/run`, {
+		const res = await app.request(`/projects/${projectId}/orchestrate/agent`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ prompt: "second run" }),

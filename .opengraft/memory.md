@@ -165,3 +165,9 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Removed 200-char `.slice(0, 200)` from WS handler tool_result creation — full content now stored in activity log state.
 - Display truncation in LogEntryView increased from 120 to 500 chars for raw (non-MCP-formatted) results.
 - Regex fallbacks in `formatMcpToolResult` for `execute_tasks` (spawnedMatch) and `get_tree` (idMatches) removed — no longer needed since full JSON is available for parsing.
+
+## Root Orchestrator Lifecycle Simplification
+- Removed `activeOrchestrations` Set — `activeSessions` Map is the single source of truth for running state.
+- All `launchAgent()` callers now `await` it so `activeSessions.set()` completes before the caller returns, closing the race condition window that `activeOrchestrations.add()` previously covered.
+- `autoResume` is now cleared on normal completion (try block) when the session is still the active one, preventing unnecessary auto-resume after successful orchestration.
+- Removed duplicate `/run` endpoint — use `/orchestrate/agent` exclusively.
