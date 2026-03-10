@@ -201,6 +201,7 @@ const en: Translations = {
 	"log.reportSent": "Reported to parent",
 	"log.clarifyAsked": "Question sent",
 	"log.yieldWaiting": "Waiting for messages",
+	"log.yieldReceived": "Received messages",
 	"log.tasks": "tasks",
 
 	// Tool names (MCP)
@@ -414,6 +415,7 @@ const zh: Translations = {
 	"log.reportSent": "已上报父任务",
 	"log.clarifyAsked": "问题已发送",
 	"log.yieldWaiting": "等待消息中",
+	"log.yieldReceived": "收到消息",
 	"log.tasks": "个任务",
 
 	// Tool names (MCP)
