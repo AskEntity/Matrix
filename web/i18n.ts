@@ -126,8 +126,8 @@ const en: Translations = {
 	"settings.unlimited": "Unlimited",
 	"settings.noTimeout": "No timeout",
 	"settings.maxDepthDefault": "3 (default)",
-	"settings.restartHint": "Restart to apply config changes",
-	"settings.restartAgent": "Restart Agent",
+	"settings.restartDaemonHint": "Restart the daemon process",
+	"settings.restartDaemon": "Restart Daemon",
 
 	// Footer
 	"footer.describeBuild": "Describe what to build…",
@@ -341,8 +341,8 @@ const zh: Translations = {
 	"settings.unlimited": "无限制",
 	"settings.noTimeout": "无超时",
 	"settings.maxDepthDefault": "3（默认）",
-	"settings.restartHint": "重启以应用配置更改",
-	"settings.restartAgent": "重启代理",
+	"settings.restartDaemonHint": "重启守护进程",
+	"settings.restartDaemon": "重启守护进程",
 
 	// Footer
 	"footer.describeBuild": "描述你要构建的内容…",
