@@ -116,9 +116,9 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Color thresholds: green (<50%), yellow (50-80%), red (>80%) based on inputTokens/contextWindow ratio.
 - Light mode has separate color overrides for the badge.
 
-## SVG Cat Component
+## SVG Cat + Theme System
 
-- CuteCat uses inline SVG (viewBox 0 0 100 120) instead of CSS border tricks.
-- SVG needs `<title>` + `role="img"` + `aria-label` to pass biome a11y lint.
-- Animations use CSS on SVG class names: `.og-cat-eye` (blink), `.og-cat-tail` (wag), `.og-cat-paw-l`/`.og-cat-paw-r` (typing).
-- `.og-cat-typing` class on wrapper div triggers paw animations on keydown.
+- CuteCat uses inline SVG (viewBox 0 0 100 120). Needs `<title>` + `role="img"` + `aria-label` for biome a11y.
+- Themes are data-driven JS objects in `web/themes.ts`. `applyTheme()` sets CSS variables on root element.
+- `ThemeConfig`: `{ name, variables, hasCat? }`. Dark theme uses `:root` defaults (empty variables).
+- CSS classes `.light-mode`, `.cute-mode` removed — everything via JS variable overrides.
