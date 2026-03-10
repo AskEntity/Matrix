@@ -183,6 +183,11 @@ const CHECKPOINT_SYSTEM_PROMPT = `You are generating a structured checkpoint for
 The agent will resume from this checkpoint after context compression — it must be able to
 continue working as if it never stopped.
 
+CRITICAL: The agent resuming from this checkpoint cannot see any previous conversation.
+Whatever you omit, the agent will not know. Whatever you write, the agent will remember.
+Err on the side of more detail in Rejected Approaches — the cost of repeating failed work far
+exceeds the cost of a slightly longer checkpoint.
+
 Analyze the conversation and output a checkpoint in EXACTLY this format (all sections required):
 
 ## Current Phase
@@ -201,10 +206,12 @@ Analyze the conversation and output a checkpoint in EXACTLY this format (all sec
 [If implementing: what's done, what remains in progress]
 
 ## Rejected Approaches
-[Approaches that were tried and FAILED — this is the MOST VALUABLE section]
-[Each entry: what was tried, why it failed, why it should NOT be retried]
-[If nothing was rejected, write "None so far"]
-[Example: "Tried X approach — failed because Y. Do not retry because Z."]
+[THE MOST IMPORTANT SECTION — read every past message carefully for failures]
+[For EVERY failed attempt, test failure, or dead end: describe it here]
+[Format: "- Tried: <what was attempted> | Failed: <exact error/reason> | Do not retry: <why>"]
+[Search for: test failures, compile errors, "doesn't work", "failed", wrong approaches]
+[If truly nothing failed: "None so far" — but re-read carefully first]
+[This section prevents the agent from wasting turns re-trying the same failed approaches]
 
 ## Open Questions
 [Unresolved uncertainties that may affect next steps]
