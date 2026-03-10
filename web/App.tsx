@@ -930,11 +930,13 @@ function TaskDetail({
 	projectId,
 	onContinue,
 	onDelete,
+	onStop,
 }: {
 	node: TaskNode;
 	projectId: string;
 	onContinue: (msg?: string) => void;
 	onDelete: () => void;
+	onStop?: () => void;
 }) {
 	const { t } = useLocale();
 	const [continueMsg, setContinueMsg] = useState("");
@@ -1201,6 +1203,16 @@ function TaskDetail({
 						</button>
 					</form>
 				)}
+				{isRunning && onStop && (
+					<button
+						type="button"
+						className="og-btn og-btn-danger og-btn-sm"
+						onClick={onStop}
+					>
+						<IconStop size={12} />
+						{t("detail.stop")}
+					</button>
+				)}
 				{node.sessionId && (
 					<button
 						type="button"
@@ -1241,6 +1253,7 @@ function OrchestratorDetail({
 	provider,
 	model,
 	onClearSessions,
+	onStop,
 }: {
 	running: boolean;
 	nodeCount: number;
@@ -1255,6 +1268,7 @@ function OrchestratorDetail({
 	provider?: string | null;
 	model?: string | null;
 	onClearSessions?: () => void;
+	onStop?: () => void;
 }) {
 	const { t } = useLocale();
 	const passed = nodes.filter((n) => n.status === "passed").length;
@@ -1403,6 +1417,18 @@ function OrchestratorDetail({
 							{(outputTokens ?? 0).toLocaleString()}
 						</span>
 					</div>
+				</div>
+			)}
+			{running && onStop && (
+				<div style={{ marginTop: "12px" }}>
+					<button
+						type="button"
+						className="og-btn og-btn-sm og-btn-danger"
+						onClick={onStop}
+					>
+						<IconStop size={12} />
+						{t("orch.stop")}
+					</button>
 				</div>
 			)}
 			{!running && onClearSessions && (
@@ -2387,6 +2413,7 @@ function AppInner() {
 								provider={agentProvider}
 								model={agentModel}
 								onClearSessions={handleClearSessions}
+								onStop={handleStop}
 							/>
 						) : selectedNode ? (
 							<TaskDetail
@@ -2394,6 +2421,7 @@ function AppInner() {
 								projectId={projectId}
 								onContinue={handleContinueTask}
 								onDelete={handleDeleteTask}
+								onStop={handleStop}
 							/>
 						) : (
 							<div className="og-detail-empty">
@@ -2553,24 +2581,14 @@ function AppInner() {
 					/>
 					<div className="og-footer-controls">
 						{running ? (
-							<>
-								<button
-									type="submit"
-									className="og-btn-run"
-									disabled={!projectId || !prompt.trim()}
-								>
-									<IconSend size={13} />
-									{t("footer.send")}
-								</button>
-								<button
-									type="button"
-									className="og-btn-stop-lg"
-									onClick={handleStop}
-								>
-									<IconStop size={13} />
-									{t("footer.stop")}
-								</button>
-							</>
+							<button
+								type="submit"
+								className="og-btn-run"
+								disabled={!projectId || !prompt.trim()}
+							>
+								<IconSend size={13} />
+								{t("footer.send")}
+							</button>
 						) : (
 							<button
 								type="submit"
