@@ -523,6 +523,53 @@ describe("daemon tasks API", () => {
 		expect(updated.branch).toBe("feat/main");
 	});
 
+	test("PATCH /tasks/:nodeId updates title and description", async () => {
+		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Original", description: "Old desc" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		const patchRes = await app.request(
+			`/projects/${projectId}/tasks/${root.id}`,
+			{
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: "Updated Title",
+					description: "New description",
+				}),
+			},
+		);
+		expect(patchRes.status).toBe(200);
+		const updated = (await patchRes.json()) as TaskNode;
+		expect(updated.title).toBe("Updated Title");
+		expect(updated.description).toBe("New description");
+	});
+
+	test("PATCH /tasks/:nodeId can clear description with empty string", async () => {
+		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Task", description: "Has desc" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		const patchRes = await app.request(
+			`/projects/${projectId}/tasks/${root.id}`,
+			{
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ description: "" }),
+			},
+		);
+		expect(patchRes.status).toBe(200);
+		const updated = (await patchRes.json()) as TaskNode;
+		expect(updated.description).toBe("");
+		expect(updated.title).toBe("Task"); // title unchanged
+	});
+
 	test("DELETE /tasks/:nodeId removes task", async () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
