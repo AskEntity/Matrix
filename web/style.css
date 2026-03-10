@@ -1476,7 +1476,7 @@ select {
 
 .og-footer-form {
 	display: flex;
-	align-items: center;
+	align-items: flex-end;
 	gap: 8px;
 }
 
@@ -1488,7 +1488,13 @@ select {
 	padding: 8px 12px;
 	border-radius: var(--radius-lg);
 	font-size: 13px;
+	font-family: inherit;
+	line-height: 1.4;
 	outline: none;
+	resize: none;
+	overflow-y: auto;
+	min-height: 36px;
+	max-height: 120px;
 	transition:
 		border-color var(--t-fast),
 		box-shadow var(--t-fast),
