@@ -3,6 +3,15 @@ import type { LogEntry, TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron } from "./icons.tsx";
 
+/** Tools whose expanded content can stay truncated (code content). */
+function isFileContentTool(toolName: string): boolean {
+	return (
+		toolName === "read_file" ||
+		toolName === "write_file" ||
+		toolName === "edit_file"
+	);
+}
+
 /** Format MCP tool results as human-readable summaries instead of raw JSON. */
 export function formatMcpToolResult(
 	toolName: string,
@@ -398,11 +407,7 @@ function McpToolCardBody({
 									<span className="og-mcp-task-mode">{taskInput.mode}</span>
 								)}
 								{taskInput?.message && (
-									<div className="og-mcp-task-msg">
-										{taskInput.message.length > 200
-											? `${taskInput.message.slice(0, 200)}…`
-											: taskInput.message}
-									</div>
+									<div className="og-mcp-task-msg">{taskInput.message}</div>
 								)}
 							</div>
 						);
@@ -439,11 +444,7 @@ function McpToolCardBody({
 					>
 						{isPassed ? `✓ ${t("tool.passed")}` : `✗ ${t("tool.failed")}`}
 					</div>
-					{summary && (
-						<div className="og-mcp-task-desc">
-							{summary.length > 300 ? `${summary.slice(0, 300)}…` : summary}
-						</div>
-					)}
+					{summary && <div className="og-mcp-task-desc">{summary}</div>}
 				</div>
 			);
 		}
@@ -492,11 +493,7 @@ function McpToolCardBody({
 			const msg = parsedArgs?.message ?? "";
 			return (
 				<div className="og-mcp-body">
-					{msg && (
-						<div className="og-mcp-task-desc">
-							{msg.length > 500 ? `${msg.slice(0, 500)}…` : msg}
-						</div>
-					)}
+					{msg && <div className="og-mcp-task-desc">{msg}</div>}
 				</div>
 			);
 		}
@@ -504,9 +501,7 @@ function McpToolCardBody({
 			const msg = parsedArgs?.message ?? "";
 			return msg.length > 80 ? (
 				<div className="og-mcp-body">
-					<div className="og-mcp-task-desc">
-						{msg.length > 500 ? `${msg.slice(0, 500)}…` : msg}
-					</div>
+					<div className="og-mcp-task-desc">{msg}</div>
 				</div>
 			) : null;
 		}
@@ -604,7 +599,7 @@ export function ToolCard({
 						{resultContent && (
 							<div className="og-tool-card-result">
 								{mcpFormatted ??
-									(resultContent.length > 500
+									(isFileContentTool(toolName) && resultContent.length > 500
 										? `${resultContent.slice(0, 500)}…`
 										: resultContent)}
 							</div>
@@ -675,9 +670,7 @@ export function LogEntryView({
 					</div>
 					{argsStr && (
 						<div className="og-tool-card-body">
-							<div className="og-tool-card-args">
-								{argsStr.length > 200 ? `${argsStr.slice(0, 200)}…` : argsStr}
-							</div>
+							<div className="og-tool-card-args">{argsStr}</div>
 						</div>
 					)}
 				</div>
@@ -716,7 +709,7 @@ export function LogEntryView({
 						<div className="og-tool-card-body">
 							<div className="og-tool-card-result">
 								{mcpFormatted ??
-									(content.length > 500
+									(isFileContentTool(toolName) && content.length > 500
 										? `${content.slice(0, 500)}…`
 										: content)}
 							</div>
@@ -780,6 +773,8 @@ export function LogEntryView({
 	}
 
 	if (entry.type === "queue_message") {
+		const isLong = entry.text.length > 100;
+		const headerText = isLong ? `${entry.text.slice(0, 100)}…` : entry.text;
 		return (
 			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{entry.time}</span>
@@ -789,13 +784,24 @@ export function LogEntryView({
 					</span>
 				)}
 				<div className="og-tool-card og-tool-card-mcp">
-					<div className="og-tool-card-header">
-						<span className="og-tool-card-name">
-							{entry.text.length > 100
-								? `${entry.text.slice(0, 100)}…`
-								: entry.text}
-						</span>
-					</div>
+					{isLong ? (
+						<button
+							type="button"
+							className="og-tool-card-header"
+							onClick={() => setExpanded(!expanded)}
+						>
+							<span className="og-tool-card-name">
+								{expanded ? entry.text : headerText}
+							</span>
+							<span className="og-tool-card-toggle">
+								<IconChevron size={10} expanded={expanded} />
+							</span>
+						</button>
+					) : (
+						<div className="og-tool-card-header">
+							<span className="og-tool-card-name">{entry.text}</span>
+						</div>
+					)}
 				</div>
 			</div>
 		);
