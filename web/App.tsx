@@ -76,7 +76,7 @@ function formatMcpToolResult(
 		}
 		case "delete_task": {
 			if (json && typeof json.title === "string") {
-				return `${t("log.deletedTask")} ✕ "${json.title}"`;
+				return `${t("log.deletedTask")} – "${json.title}"`;
 			}
 			return null;
 		}
@@ -1079,13 +1079,13 @@ function getToolCardTitle(
 				if (resultContent) {
 					try {
 						const json = JSON.parse(resultContent) as Record<string, unknown>;
-						if (typeof json.title === "string") return `✕ ${json.title}`;
+						if (typeof json.title === "string") return `– ${json.title}`;
 					} catch {
 						/* ignore */
 					}
 				}
 				const taskId = extractArg(argsStr, "taskId");
-				return taskId ? `✕ ${taskId.slice(0, 8)}` : "✕ delete_task";
+				return taskId ? `– ${taskId.slice(0, 8)}` : "– delete_task";
 			}
 			case "execute_tasks": {
 				const tasksArg = extractArg(argsStr, "tasks");
@@ -1335,7 +1335,7 @@ function McpToolCardBody({
 				<div className="og-mcp-body">
 					{title ? (
 						<div className="og-mcp-task-title">
-							{t("log.deletedTask")} ✕ "{title}"
+							{t("log.deletedTask")} – "{title}"
 						</div>
 					) : (
 						<div className="og-mcp-task-title">
@@ -1580,7 +1580,7 @@ function LogEntryView({
 							{isErr ? "✗" : "✓"}
 						</span>
 					</div>
-					{content && (
+					{content && !isTitleOnlyCard(toolName, "") && (
 						<div className="og-tool-card-body">
 							<div className="og-tool-card-result">
 								{mcpFormatted ??
