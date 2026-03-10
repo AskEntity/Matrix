@@ -584,10 +584,9 @@ describe("compressMessages", () => {
 			messages,
 			"claude-sonnet-4-6",
 		);
-		// Should be exactly 2 messages: user (context+checkpoint) + assistant ack
-		expect(compressed.length).toBe(2);
+		// Should be exactly 1 message: user (context+checkpoint), no assistant ack
+		expect(compressed.length).toBe(1);
 		expect(compressed[0]?.role).toBe("user");
-		expect(compressed[1]?.role).toBe("assistant");
 		// First message should contain the checkpoint
 		expect(
 			typeof compressed[0]?.content === "string" && compressed[0].content,
