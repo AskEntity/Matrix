@@ -421,3 +421,11 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - Cute mode forces light-based colors (removes `light-mode` class, adds `cute-mode`)
 - i18n keys: `theme.cuteMode`, `theme.cuteOn`, `theme.cuteOff`
 - Cat only renders when `isCute` state is true
+
+## Nested Agent Spawning Limitation (discovered during 5-level test)
+
+- MCP tools (create_task, execute_tasks, yield, done) are only available to agents running WITHIN the daemon's orchestration system
+- The HTTP API (`PATCH /tasks/:nodeId`) can set `status` and `branch` but NOT `worktreePath` — this means you can't fully prepare a task for the `continue` endpoint via API alone
+- The `continue` endpoint requires `worktreePath` to be set; without it, it just resets status to `pending`
+- Workaround: manually create worktrees via git, do the work directly, and merge branches — bypassing the daemon's agent system entirely
+- Proper fix: add `worktreePath` to the PATCH endpoint, or expose `assignWorktree` via API
