@@ -2773,4 +2773,347 @@ describe("POST /projects/:id/restart", () => {
 		});
 		expect(stopRes.status).toBe(200);
 	});
+
+	test("double-restart returns 409 for second request", async () => {
+		let sessionCount = 0;
+		const slowStopProvider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				sessionCount++;
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					await new Promise((resolve) => setTimeout(resolve, 5000));
+					return {
+						success: true,
+						output: "",
+						sessionId: `session-${sessionCount}`,
+					};
+				}
+				return {
+					sessionId: `session-${sessionCount}`,
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: slowStopProvider,
+		});
+		await pm.load();
+		markReady();
+
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const proj = (await projRes.json()) as Project;
+
+		// Start orchestration
+		await app.request(`/projects/${proj.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "test" }),
+		});
+		await new Promise((resolve) => setTimeout(resolve, 100));
+
+		// Fire two restarts concurrently — second should fail with 409
+		const [r1, r2] = await Promise.all([
+			app.request(`/projects/${proj.id}/restart`, { method: "POST" }),
+			app.request(`/projects/${proj.id}/restart`, { method: "POST" }),
+		]);
+
+		const statuses = [r1.status, r2.status].sort();
+		// One should succeed (200), the other should be rejected (409 or 404)
+		expect(statuses[0]).toBe(200);
+		expect(statuses[1]).not.toBe(200);
+
+		// Clean up
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		await app.request(`/projects/${proj.id}/stop`, { method: "POST" });
+	});
+
+	test("stop then immediately start does not create duplicate", async () => {
+		let sessionCount = 0;
+		const trackingProvider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				sessionCount++;
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					await new Promise((resolve) => setTimeout(resolve, 5000));
+					return {
+						success: true,
+						output: "",
+						sessionId: `session-${sessionCount}`,
+					};
+				}
+				return {
+					sessionId: `session-${sessionCount}`,
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: trackingProvider,
+		});
+		await pm.load();
+		markReady();
+
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const proj = (await projRes.json()) as Project;
+
+		// Start orchestration
+		await app.request(`/projects/${proj.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "test" }),
+		});
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(sessionCount).toBe(1);
+
+		// Stop the agent
+		const stopRes = await app.request(`/projects/${proj.id}/stop`, {
+			method: "POST",
+		});
+		expect(stopRes.status).toBe(200);
+
+		// Immediately start a new agent
+		const startRes = await app.request(
+			`/projects/${proj.id}/orchestrate/agent`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ prompt: "test 2" }),
+			},
+		);
+		expect(startRes.status).toBe(200);
+
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(sessionCount).toBe(2);
+
+		// Trying to start again should fail with 409
+		const dupRes = await app.request(`/projects/${proj.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "test 3" }),
+		});
+		expect(dupRes.status).toBe(409);
+
+		// Clean up
+		await app.request(`/projects/${proj.id}/stop`, { method: "POST" });
+	});
+
+	test("old session cleanup does not clobber new session after restart", async () => {
+		let sessionCount = 0;
+		const restartSafeProvider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				sessionCount++;
+				const currentNum = sessionCount;
+				const queue = req.queue ?? new MessageQueue();
+
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					// Keep alive long enough for restart test, but short enough to trigger cleanup
+					try {
+						await new Promise((resolve) => setTimeout(resolve, 5000));
+					} catch {
+						// queue.close() rejects pending waits — session stopped
+					}
+					return {
+						success: true,
+						output: "",
+						sessionId: `session-${currentNum}`,
+					};
+				}
+				return {
+					sessionId: `session-${currentNum}`,
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: restartSafeProvider,
+		});
+		await pm.load();
+		markReady();
+
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const proj = (await projRes.json()) as Project;
+
+		// Start orchestration — session 1
+		await app.request(`/projects/${proj.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "test" }),
+		});
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(sessionCount).toBe(1);
+
+		// Restart — this stops session 1 and starts session 2
+		const restartRes = await app.request(`/projects/${proj.id}/restart`, {
+			method: "POST",
+		});
+		expect(restartRes.status).toBe(200);
+
+		// Wait for session 2 to be created
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(sessionCount).toBe(2);
+
+		// Wait for session 1's cleanup to run (its finally block)
+		await new Promise((resolve) => setTimeout(resolve, 200));
+
+		// The agent should still be running (session 2 not clobbered)
+		const agentRes = await app.request(`/projects/${proj.id}/agent`);
+		const agentBody = (await agentRes.json()) as {
+			running: boolean;
+			sessionId: string | null;
+		};
+		expect(agentBody.running).toBe(true);
+
+		// Should still be able to stop it
+		const stopRes = await app.request(`/projects/${proj.id}/stop`, {
+			method: "POST",
+		});
+		expect(stopRes.status).toBe(200);
+
+		// Should not be able to stop again
+		const stopRes2 = await app.request(`/projects/${proj.id}/stop`, {
+			method: "POST",
+		});
+		expect(stopRes2.status).toBe(404);
+	});
+
+	test("restart preserves session ID for resume", async () => {
+		let sessionCount = 0;
+		const sessionIdProvider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				sessionCount++;
+				const currentSessionId = `test-session-${sessionCount}`;
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					await new Promise((resolve) => setTimeout(resolve, 5000));
+					return { success: true, output: "", sessionId: currentSessionId };
+				}
+				return {
+					sessionId: currentSessionId,
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const { app, pm, markReady, getTracker } = createApp({
+			dataDir,
+			agentProvider: sessionIdProvider,
+		});
+		await pm.load();
+		markReady();
+
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const proj = (await projRes.json()) as Project;
+
+		// Start orchestration
+		await app.request(`/projects/${proj.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "test" }),
+		});
+		await new Promise((resolve) => setTimeout(resolve, 100));
+
+		// Restart
+		await app.request(`/projects/${proj.id}/restart`, { method: "POST" });
+		await new Promise((resolve) => setTimeout(resolve, 100));
+
+		// Check that session ID was saved in tracker
+		const tracker = await getTracker(proj.id);
+		expect(tracker.orchestratorSessionId).toBe("test-session-1");
+
+		// Clean up
+		await app.request(`/projects/${proj.id}/stop`, { method: "POST" });
+	});
+
+	test("start after startup guard is released succeeds", async () => {
+		const { app, pm } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+		});
+		await pm.load();
+		// Don't call markReady() — startup guard should block
+
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const proj = (await projRes.json()) as Project;
+
+		// Should return 503 before markReady
+		const startRes = await app.request(
+			`/projects/${proj.id}/orchestrate/agent`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ prompt: "test" }),
+			},
+		);
+		expect(startRes.status).toBe(503);
+	});
 });

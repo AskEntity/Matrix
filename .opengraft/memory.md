@@ -432,3 +432,13 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - `isCommandAvailable()` and `commandCache` removed (no longer needed)
 - `truncateSearchOutput()` still exists but is no longer used by search tool (jsSearch handles truncation internally)
 - **Pitfall**: `noUncheckedIndexedAccess` in tsconfig means array index access returns `T | undefined` — use `?? ""` or `!` with biome-ignore comment
+
+## Restart Endpoint Race Condition Fix
+
+**Bug found**: After restart, the old session's `launchAgent` IIFE `finally` block would run `activeSessions.delete(project.id)` and `activeOrchestrations.delete(project.id)`, clobbering the NEW session that the restart just launched. This left the daemon unaware of the running agent — no way to stop/message it, and new orchestrations could start duplicates.
+
+**Fix**: `launchAgent` finally block now checks `activeSessions.get(project.id) === session` before cleaning up. Only cleans up if this session is still the active one.
+
+**Double-restart guard**: Added `restartingProjects` Set. Restart handler checks it before proceeding and returns 409 if a restart is already in progress. Uses `try/finally` to ensure the guard is always cleared.
+
+**session.stop() error handling**: Wrapped in `try/catch` in restart handler since it may throw if already stopped.

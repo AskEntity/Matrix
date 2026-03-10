@@ -112,6 +112,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const pm = new ProjectManager(config.dataDir);
 	const trackers = new Map<string, TaskTracker>();
 	const activeOrchestrations = new Set<string>();
+	/** Guard against concurrent restart requests for the same project. */
+	const restartingProjects = new Set<string>();
 	const wsClients = new Set<WSClient>();
 	/** Active agent sessions by project ID, for message injection. */
 	const activeSessions = new Map<string, AgentSession>();
@@ -1087,8 +1089,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				// regardless of how it exited (success, failure, or crash).
 				await tracker.save();
 				session.stop();
-				activeSessions.delete(project.id);
-				activeOrchestrations.delete(project.id);
+				// Only clean up if this session is still the active one.
+				// During restart, a new session replaces us — don't clobber it.
+				if (activeSessions.get(project.id) === session) {
+					activeSessions.delete(project.id);
+					activeOrchestrations.delete(project.id);
+				}
 			}
 		})();
 	}
@@ -1218,28 +1224,41 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
+		if (restartingProjects.has(project.id)) {
+			return c.json({ error: "Restart already in progress" }, 409);
+		}
 		const session = activeSessions.get(project.id);
 		if (!session) {
 			return c.json({ error: "No active agent to restart" }, 404);
 		}
-		// Save session ID before stopping
-		const tracker = trackers.get(project.id);
-		if (tracker && session.sessionId) {
-			tracker.orchestratorSessionId = session.sessionId;
-			await tracker.save();
-		}
-		session.stop();
-		activeSessions.delete(project.id);
-		activeOrchestrations.delete(project.id);
-		broadcastEvent(project.id, { type: "agent_stopped" });
 
-		// Relaunch with resume to pick up new config
-		launchAgent(project, {
-			prompt:
-				"Orchestrator restarted to pick up new config. Continue where you left off.",
-			resume: true,
-		});
-		return c.json({ ok: true });
+		restartingProjects.add(project.id);
+		try {
+			// Save session ID before stopping
+			const tracker = trackers.get(project.id);
+			if (tracker && session.sessionId) {
+				tracker.orchestratorSessionId = session.sessionId;
+				await tracker.save();
+			}
+			try {
+				session.stop();
+			} catch {
+				// session.stop() may throw if already stopped — safe to ignore
+			}
+			activeSessions.delete(project.id);
+			activeOrchestrations.delete(project.id);
+			broadcastEvent(project.id, { type: "agent_stopped" });
+
+			// Relaunch with resume to pick up new config
+			launchAgent(project, {
+				prompt:
+					"Orchestrator restarted to pick up new config. Continue where you left off.",
+				resume: true,
+			});
+			return c.json({ ok: true });
+		} finally {
+			restartingProjects.delete(project.id);
+		}
 	});
 
 	// Clear session history for a project (useful when starting fresh after restart)
