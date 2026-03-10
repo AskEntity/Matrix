@@ -1004,7 +1004,7 @@ function LogEntryView({
 					</span>
 				)}
 				<div className="og-log-body">
-					<span className="og-tool-result">
+					<div className="og-tool-result">
 						<span
 							className={
 								isOk ? "og-tool-result-ok" : isErr ? "og-tool-result-err" : ""
@@ -1016,11 +1016,10 @@ function LogEntryView({
 						</span>
 						{!mcpFormatted && rest && (
 							<span className="og-tool-result-content">
-								{" "}
 								{rest.length > 500 ? `${rest.slice(0, 500)}…` : rest}
 							</span>
 						)}
-					</span>
+					</div>
 				</div>
 			</div>
 		);
