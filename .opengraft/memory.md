@@ -130,3 +130,8 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Pause message tells agent to call `yield()` and wait; Resume tells it to continue.
 - Both buttons show for `in_progress` and `testing` tasks in TaskDetail.
 - IconPause added as inline SVG (two vertical bars pattern).
+
+## Token Usage Badge Location
+- Badge moved from footer form (caused input resize) to activity panel header (og-panel-actions div).
+- Root orchestrator usage stored under PROJECT_NODE_ID key when taskId is falsy.
+- Badge lookup falls back to PROJECT_NODE_ID when no specific task is selected.
