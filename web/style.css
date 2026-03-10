@@ -2022,29 +2022,6 @@ select {
 	color: var(--accent-hover);
 }
 
-/* ── Theme selector ── */
-
-.og-theme-select {
-	font-size: 11px;
-	padding: 3px 6px;
-	border-radius: var(--radius-sm);
-	border: 1px solid var(--border-subtle);
-	background: var(--bg-raised);
-	color: var(--text-secondary);
-	cursor: pointer;
-	outline: none;
-	transition: border-color var(--t-fast);
-}
-
-.og-theme-select:hover {
-	border-color: var(--accent);
-}
-
-.og-theme-select:focus {
-	border-color: var(--accent);
-	box-shadow: 0 0 0 1px var(--accent-muted);
-}
-
 /* =========================================================
    Animated SVG Cat — Bottom-Right Corner
    ========================================================= */

@@ -143,3 +143,8 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - JSON content is pre-truncated to 200 chars at creation (in WS handler). For truncated JSON (e.g., large get_tree), regex fallbacks estimate counts.
 - All labels use i18n `t()` with keys prefixed `log.` (e.g., `log.createdTask`, `log.deletedTask`).
 - Returns `null` on parse failure → falls back to default rendering (tool name + raw content).
+
+## Selector Styling Unification
+- Theme selector was using `og-theme-select` (custom class) while language/project selectors used `og-select`. Unified to all use `og-select`.
+- Removed the now-unused `.og-theme-select` CSS rules from style.css.
+- Language name i18n: each locale should show language names in its own language (en: "English"/"Chinese", zh: "英语"/"中文").
