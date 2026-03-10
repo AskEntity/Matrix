@@ -609,7 +609,7 @@ describe("compressMessages", () => {
 		expect(compressed).toEqual(messages);
 	});
 
-	test("compacts messages into checkpoint + tail", async () => {
+	test("compacts messages into single user message", async () => {
 		const messages: MessageParam[] = [];
 		for (let i = 0; i < 20; i++) {
 			messages.push({ role: "user", content: `message ${i}` });
@@ -621,14 +621,17 @@ describe("compressMessages", () => {
 			messages,
 			"claude-sonnet-4-6",
 		);
-		// First message is the checkpoint user message
+		// Output is exactly ONE user message
+		expect(compressed.length).toBe(1);
 		expect(compressed[0]?.role).toBe("user");
-		expect(
-			typeof compressed[0]?.content === "string" && compressed[0].content,
-		).toContain("Checkpoint");
-		// With small messages, all tail fits within 80k budget so we get:
-		// checkpoint(user) + bridge(assistant) + all tail messages
-		expect(compressed.length).toBeGreaterThanOrEqual(1);
+		const content = compressed[0]?.content as string;
+		// Contains checkpoint summary
+		expect(content).toContain("Checkpoint Summary");
+		expect(content).toContain("This is the conversation summary.");
+		// Contains recent conversation transcript as text
+		expect(content).toContain("Recent Conversation");
+		expect(content).toContain("message 19");
+		expect(content).toContain("reply 19");
 		// Should return checkpoint text
 		expect(checkpoint).toBe("This is the conversation summary.");
 		// Should report saved tokens
@@ -678,8 +681,7 @@ describe("compressMessages", () => {
 		expect(calledModel).toBe("claude-sonnet-4-6");
 	});
 
-	test("preserves tail messages after compaction", async () => {
-		// Create 40 message pairs — small enough to all fit in 80k tail budget
+	test("includes recent transcript as text in single message", async () => {
 		const messages: MessageParam[] = [];
 		for (let i = 0; i < 40; i++) {
 			messages.push({ role: "user", content: `user-msg-${i}` });
@@ -691,42 +693,18 @@ describe("compressMessages", () => {
 			messages,
 			"claude-sonnet-4-6",
 		);
-		// First message is checkpoint user message
+		// Exactly one user message
+		expect(compressed.length).toBe(1);
 		expect(compressed[0]?.role).toBe("user");
-		const checkpointContent = compressed[0]?.content as string;
-		expect(checkpointContent).toContain("checkpoint summary");
-
-		// Tail messages should be preserved — recent messages should appear in compressed
-		const allContent = compressed
-			.map((m) => (typeof m.content === "string" ? m.content : ""))
-			.join(" ");
-		// The most recent messages should be in the tail
-		expect(allContent).toContain("user-msg-39");
-		expect(allContent).toContain("assistant-reply-39");
-		expect(allContent).toContain("user-msg-38");
-	});
-
-	test("inserts assistant bridge when tail starts with user", async () => {
-		const messages: MessageParam[] = [];
-		for (let i = 0; i < 10; i++) {
-			messages.push({ role: "user", content: `msg ${i}` });
-			messages.push({ role: "assistant", content: `reply ${i}` });
-		}
-		const client = makeMockClient("summary");
-		const { compressed } = await compressMessages(
-			client,
-			messages,
-			"claude-sonnet-4-6",
-		);
-		// First is checkpoint user, tail starts with user, so bridge assistant inserted
-		expect(compressed[0]?.role).toBe("user");
-		// If tail messages are present and start with user, second should be assistant bridge
-		if (compressed.length > 1) {
-			expect(compressed[1]?.role).toBe("assistant");
-			expect(
-				typeof compressed[1]?.content === "string" && compressed[1].content,
-			).toContain("Resuming from checkpoint");
-		}
+		const content = compressed[0]?.content as string;
+		expect(content).toContain("checkpoint summary");
+		// Recent conversation included as text transcript, not raw API messages
+		expect(content).toContain("Recent Conversation");
+		expect(content).toContain("user-msg-39");
+		expect(content).toContain("assistant-reply-39");
+		expect(content).toContain("user-msg-38");
+		// No bridge message, no separate tail messages
+		expect(content).not.toContain("Resuming from checkpoint");
 	});
 
 	test("sends full transcript without truncation to summarizer", async () => {
@@ -787,26 +765,14 @@ describe("compressMessages", () => {
 		expect(capturedMaxTokens).toBe(32768);
 	});
 
-	test("includes preceding assistant tool_use when tail starts with user tool_result", async () => {
-		// Create messages where the tail window boundary falls right before a
-		// user message with tool_result blocks. We need enough content so that
-		// the 80k char tail budget doesn't include the entire conversation.
+	test("tool_use/tool_result serialized as text in transcript, no raw API blocks", async () => {
 		const messages: MessageParam[] = [];
-
-		// Fill with large messages that exceed the 80k tail budget
-		// Each pair ~20k chars, so 5 pairs = ~100k chars total; tail keeps ~80k
+		// Add some normal messages
 		for (let i = 0; i < 5; i++) {
-			messages.push({
-				role: "user",
-				content: `early msg ${i} ${"x".repeat(10000)}`,
-			});
-			messages.push({
-				role: "assistant",
-				content: `early reply ${i} ${"y".repeat(10000)}`,
-			});
+			messages.push({ role: "user", content: `msg ${i}` });
+			messages.push({ role: "assistant", content: `reply ${i}` });
 		}
-
-		// Now add the critical sequence: assistant with tool_use, then user with tool_result
+		// Add tool_use / tool_result sequence
 		messages.push({
 			role: "assistant",
 			content: [
@@ -830,7 +796,6 @@ describe("compressMessages", () => {
 		});
 		messages.push({ role: "assistant", content: "here are the files" });
 		messages.push({ role: "user", content: "thanks" });
-		messages.push({ role: "assistant", content: "you're welcome" });
 
 		const client = makeMockClient("checkpoint summary");
 		const { compressed } = await compressMessages(
@@ -839,41 +804,14 @@ describe("compressMessages", () => {
 			"claude-sonnet-4-6",
 		);
 
-		// First message is checkpoint user message
+		// Exactly one user message — no raw API message blocks
+		expect(compressed.length).toBe(1);
 		expect(compressed[0]?.role).toBe("user");
-		const checkpointContent = compressed[0]?.content as string;
-		expect(checkpointContent).toContain("checkpoint summary");
-
-		// Verify no orphaned tool_results: every tool_result must have a
-		// preceding assistant message with the corresponding tool_use
-		for (let i = 1; i < compressed.length; i++) {
-			const msg = compressed[i];
-			if (!msg || !Array.isArray(msg.content)) continue;
-			const hasToolResult = msg.content.some(
-				(b) => typeof b === "object" && "type" in b && b.type === "tool_result",
-			);
-			if (hasToolResult) {
-				// The preceding message must be an assistant with tool_use
-				const prev = compressed[i - 1];
-				expect(prev?.role).toBe("assistant");
-				expect(Array.isArray(prev?.content)).toBe(true);
-				if (Array.isArray(prev?.content)) {
-					const hasToolUse = prev.content.some(
-						(b) =>
-							typeof b === "object" && "type" in b && b.type === "tool_use",
-					);
-					expect(hasToolUse).toBe(true);
-				}
-			}
-		}
-
-		// Also verify the tail contains the tool_result message
-		const allContent = compressed
-			.map((m) =>
-				typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-			)
-			.join(" ");
-		expect(allContent).toContain("toolu_test123");
+		const content = compressed[0]?.content as string;
+		// Tool interactions appear as text in the transcript
+		expect(content).toContain("[tool_use: bash(");
+		expect(content).toContain("[tool_result: file1.txt]");
+		expect(content).toContain("here are the files");
 	});
 });
 

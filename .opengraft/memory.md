@@ -207,3 +207,11 @@ Key changes to address agent behavioral issues:
 - `isFileContentTool(toolName)` helper gates file-tool truncation in ToolCard result rendering.
 - Title/header truncation preserved — only expanded body content affected.
 - queue_message entries now expandable (button+chevron) when text > 100 chars.
+
+
+## Compaction Simplification (no tail messages)
+- **Before**: compressMessages() returned checkpoint(user) + bridge(assistant) + raw tail messages (with tool_use/tool_result blocks causing orphaning and alternation issues).
+- **After**: Returns exactly ONE user message containing: task context + fresh memory + checkpoint summary + recent transcript as TEXT (~80k chars). No bridge messages, no tail message preservation, no orphan detection, no role alignment scanning.
+- **Key insight**: Raw API messages as tail caused tool_use/tool_result orphaning and user/user alternation issues. Including recent conversation as a text dump inside the single user message avoids all of this.
+- **recentTranscript**: Uses the same `fullTranscript` serialization (already built for the summarizer), sliced to last 80k chars.
+- **savedTokens calculation**: Now includes freshMemory.length. Memory is read before savedTokens computed.
