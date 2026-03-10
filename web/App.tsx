@@ -1033,24 +1033,24 @@ function getToolCardTitle(
 	// File tools
 	if (toolName === "read_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? `⌕ ${basename(path)}` : "⌕ read_file";
+		return path ? `⌕ Read ${basename(path)}` : "⌕ Read";
 	}
 	if (toolName === "write_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? `← ${basename(path)}` : "← write_file";
+		return path ? `← Write ${basename(path)}` : "← Write";
 	}
 	if (toolName === "edit_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? `✎ ${basename(path)}` : "✎ edit_file";
+		return path ? `✎ Edit ${basename(path)}` : "✎ Edit";
 	}
 	if (toolName === "search") {
 		const pattern = extractArg(argsStr, "pattern");
 		if (pattern) {
 			const display =
 				pattern.length > 40 ? `${pattern.slice(0, 40)}…` : pattern;
-			return `⌕ ${display}`;
+			return `⌕ Search ${display}`;
 		}
-		return "⌕ search";
+		return "⌕ Search";
 	}
 	if (toolName === "list_files") {
 		const pattern = extractArg(argsStr, "pattern");
@@ -1072,20 +1072,20 @@ function getToolCardTitle(
 		switch (mcpTool) {
 			case "create_task": {
 				const title = extractArg(argsStr, "title");
-				return title ? `+ ${title}` : "+ create_task";
+				return title ? `+ Task ${title}` : "+ Task";
 			}
 			case "delete_task": {
 				// Try to get title from result
 				if (resultContent) {
 					try {
 						const json = JSON.parse(resultContent) as Record<string, unknown>;
-						if (typeof json.title === "string") return `– ${json.title}`;
+						if (typeof json.title === "string") return `– Task ${json.title}`;
 					} catch {
 						/* ignore */
 					}
 				}
 				const taskId = extractArg(argsStr, "taskId");
-				return taskId ? `– ${taskId.slice(0, 8)}` : "– delete_task";
+				return taskId ? `– Task ${taskId.slice(0, 8)}` : "– Task";
 			}
 			case "execute_tasks": {
 				const tasksArg = extractArg(argsStr, "tasks");
@@ -1112,14 +1112,14 @@ function getToolCardTitle(
 							}
 						}
 						if (titles.length > 0) {
-							return `⚡ ${titles.length} tasks: ${titles.join(", ")}`;
+							return `⚡ Run ${titles.length}: ${titles.join(", ")}`;
 						}
-						return `⚡ ${tasks.length} task${tasks.length === 1 ? "" : "s"}`;
+						return `⚡ Run ${tasks.length}`;
 					} catch {
 						/* ignore */
 					}
 				}
-				return "⚡ execute_tasks";
+				return "⚡ Run";
 			}
 			case "done": {
 				const status = extractArg(argsStr, "status");
@@ -1137,12 +1137,12 @@ function getToolCardTitle(
 			case "yield": {
 				// If we have result content, yield has returned with messages
 				if (resultContent) {
-					return "▶ resume from yield";
+					return "▶ Resume from yield";
 				}
-				return "⏸ yield";
+				return "⏸ Yield";
 			}
 			case "get_tree":
-				return "tree";
+				return "Tree";
 			case "update_task_status": {
 				const status = extractArg(argsStr, "status");
 				let title = "";
@@ -1171,7 +1171,7 @@ function getToolCardTitle(
 					: "→ send_message_to_child";
 			}
 			case "report_to_parent":
-				return "← report";
+				return "← Report";
 			case "clarify": {
 				const question = extractArg(argsStr, "question");
 				if (question) {
