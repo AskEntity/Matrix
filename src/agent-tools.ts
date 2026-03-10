@@ -273,6 +273,9 @@ Only implement directly if the task is small enough for a single agent session.
   Reserve bash for: running tests, git commands, package install, build commands, system operations.
   Good: \`bun test\`, \`git commit\`, \`bun install\`, \`bun run typecheck\`
   Bad: \`cat src/foo.ts\` (use read_file), \`grep -r pattern .\` (use search), \`find . -name "*.ts"\` (use list_files)
+  Your working directory persists across bash calls. Do NOT start every command with \`cd /path &&\` — it's wasteful.
+  If you cd once, all subsequent commands run from that directory. Your CWD is sandboxed to your worktree
+  and resets automatically if you navigate outside it.
 - read_file: Read file contents with optional offset/limit for large files.
   You MUST read a file before editing it — understand existing code before modifying.
 - write_file: Create or overwrite files (creates directories automatically).

@@ -1744,6 +1744,8 @@ You have these tools for exploring the codebase and managing merges:
 - list_files: Glob pattern matching (use this instead of bash find/ls)
 - edit_file: Edit files (for merge conflict resolution only)
 - bash: Shell commands (for git, tests, og daemon restart — NOT for reading files)
+  Working directory is automatically tracked across calls — if you \`cd\` in one command,
+  subsequent commands run from the new directory. Do NOT prefix every command with \`cd /path &&\`.
 
 Do NOT use bash to read files (cat, head, tail) or search (grep, rg). Use the dedicated tools.
 

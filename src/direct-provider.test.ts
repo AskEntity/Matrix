@@ -175,6 +175,41 @@ describe("executeTool", () => {
 		expect(result.content).toContain("exit code: 1");
 	});
 
+	test("bash: warns when CWD leaves worktree", async () => {
+		const result = await executeTool(
+			"bash",
+			{ command: "cd /tmp" },
+			tempDir,
+			tempDir, // fallbackCwd = worktree root
+		);
+		expect(result.isError).toBe(false);
+		expect(result.cwd).toBeDefined();
+		expect(result.content).toContain("CWD is outside your worktree");
+		expect(result.content).toContain("Remember to cd back");
+	});
+
+	test("bash: no warning when CWD stays within worktree", async () => {
+		// Create a subdirectory within the worktree
+		const subDir = join(tempDir, "subdir");
+		await mkdir(subDir, { recursive: true });
+
+		const result = await executeTool(
+			"bash",
+			{ command: "cd subdir" },
+			tempDir,
+			tempDir, // fallbackCwd = worktree root
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).not.toContain("CWD is outside your worktree");
+	});
+
+	test("bash: no warning when no fallbackCwd provided", async () => {
+		// Without fallbackCwd, no worktree validation happens (root orchestrator case)
+		const result = await executeTool("bash", { command: "cd /tmp" }, tempDir);
+		expect(result.isError).toBe(false);
+		expect(result.content).not.toContain("CWD is outside your worktree");
+	});
+
 	test("bash: falls back to fallbackCwd when cwd is deleted", async () => {
 		// Create and then delete a temp dir to simulate a stale CWD
 		const deletedDir = await mkdtemp(join(tmpdir(), "og-deleted-"));

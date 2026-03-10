@@ -194,3 +194,9 @@ Key changes to address agent behavioral issues:
 - **Parallelism guidance**: Added "Maximize Parallelism" section to orchestrator prompt and parallelism note to TASK_SYSTEM_PROMPT opener.
 - **Stimulus Priority**: Added step 0 for post-compaction recovery. Changed step 5 from "Report final status, stop" → "Call done('passed', summary)".
 - **Never-Stop Principle**: Added "(CRITICAL — especially after context compaction)" to header, added post-compaction bullet.
+
+## CWD Sandboxing (2026-03-12)
+- **Approach**: Warn-only, not hard-block. After bash command, if CWD leaves the agent worktree, a `[Note: CWD is outside your worktree...]` message is appended to output. No auto-reset — prompt guidance handles behavioral change.
+- **Detection**: Uses `fallbackCwd` (= `request.cwd`, the agent worktree root) to detect when CWD leaves the worktree. `realpathSync` resolves symlinks (macOS `/var` → `/private/var`). Both paths wrapped in try/catch for robustness.
+- **Root agent**: No `fallbackCwd` is passed for root agent, so no warning is emitted (root agent has no worktree boundary).
+- **Prompt updates**: CWD persistence + sandboxing note added to bash tool description (direct-provider.ts), TASK_SYSTEM_PROMPT (agent-tools.ts), and ORCHESTRATOR_SYSTEM_PROMPT (daemon.ts).

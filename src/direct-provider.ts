@@ -325,7 +325,7 @@ const TOOLS: Tool[] = [
 	{
 		name: "bash",
 		description:
-			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). Working directory is automatically tracked across calls — if you `cd` in one command, subsequent commands run from the new directory. No need to prefix every command with `cd /path &&`. Exception: after a daemon restart, your workdir resets to the project root.",
+			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). Working directory is automatically tracked across calls — if you `cd` in one command, subsequent commands run from the new directory. No need to prefix every command with `cd /path &&`. Exception: after a daemon restart, your workdir resets to the project root. Your CWD is sandboxed to your worktree and resets automatically if you navigate outside it.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -785,6 +785,30 @@ export async function executeTool(
 
 				if (newCwd) {
 					parts.push(`\nworkdir set to ${newCwd} from now on`);
+
+					// Warn if CWD left the agent's worktree
+					if (fallbackCwd) {
+						let resolvedWorktree: string;
+						let resolvedNew: string;
+						try {
+							resolvedWorktree = realpathSync(fallbackCwd);
+						} catch {
+							resolvedWorktree = fallbackCwd;
+						}
+						try {
+							resolvedNew = realpathSync(newCwd);
+						} catch {
+							resolvedNew = newCwd;
+						}
+						const isOutside =
+							resolvedNew !== resolvedWorktree &&
+							!resolvedNew.startsWith(`${resolvedWorktree}/`);
+						if (isOutside) {
+							parts.push(
+								`[Note: CWD is outside your worktree. Your worktree root is ${resolvedWorktree}. Remember to cd back when done.]`,
+							);
+						}
+					}
 				}
 
 				const result = parts.join("\n");
