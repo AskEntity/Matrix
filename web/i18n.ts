@@ -216,6 +216,15 @@ const en: Translations = {
 	"tools.mcp__opengraft__clarify": "Ask Clarification",
 	"tools.mcp__opengraft__done": "Done",
 
+	// Tool card labels
+	"tool.showMore": "Show more",
+	"tool.showLess": "Show less",
+	"tool.args": "Args",
+	"tool.result": "Result",
+	"tool.waiting": "Waiting for messages…",
+	"tool.passed": "Passed",
+	"tool.failed": "Failed",
+
 	// Tool names (built-in)
 	"tools.bash": "Shell",
 	"tools.read_file": "Read File",
@@ -429,6 +438,15 @@ const zh: Translations = {
 	"tools.mcp__opengraft__delete_task": "删除任务",
 	"tools.mcp__opengraft__clarify": "请求澄清",
 	"tools.mcp__opengraft__done": "完成",
+
+	// Tool card labels
+	"tool.showMore": "展开",
+	"tool.showLess": "收起",
+	"tool.args": "参数",
+	"tool.result": "结果",
+	"tool.waiting": "等待消息中…",
+	"tool.passed": "通过",
+	"tool.failed": "失败",
 
 	// Tool names (built-in)
 	"tools.bash": "命令行",

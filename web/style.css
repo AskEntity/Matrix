@@ -1299,70 +1299,213 @@ select {
 	color: var(--text-primary);
 }
 
-/* Tool call inline badge */
-.og-tool-call {
-	display: inline;
-	word-wrap: break-word;
-	overflow-wrap: break-word;
+/* =========================================================
+   Tool Cards
+   ========================================================= */
+
+.og-event-tool_card {
+	padding-top: 3px;
+	padding-bottom: 3px;
+	margin: 1px 0;
+	border-left-color: transparent;
 }
 
-.og-tool-name {
-	display: inline-flex;
+.og-tool-card {
+	flex: 1;
+	min-width: 0;
+	border-radius: var(--radius-md);
+	border: 1px solid var(--border-subtle);
+	overflow: hidden;
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
+/* Status variants */
+.og-tool-card-ok {
+	border-color: rgba(63, 185, 80, 0.25);
+	background: rgba(63, 185, 80, 0.04);
+}
+
+.og-tool-card-err {
+	border-color: rgba(248, 81, 73, 0.25);
+	background: rgba(248, 81, 73, 0.04);
+}
+
+.og-tool-card-pending {
+	border-color: rgba(56, 139, 253, 0.25);
+	background: rgba(56, 139, 253, 0.04);
+}
+
+.og-tool-card-mcp {
+	border-color: rgba(137, 87, 229, 0.3);
+	background: rgba(137, 87, 229, 0.05);
+}
+
+.og-tool-card-mcp.og-tool-card-err {
+	border-color: rgba(248, 81, 73, 0.25);
+	background: rgba(248, 81, 73, 0.04);
+}
+
+/* Card header (clickable) */
+.og-tool-card-header {
+	display: flex;
 	align-items: center;
-	gap: 4px;
+	gap: 6px;
+	padding: 4px 10px;
+	cursor: pointer;
+	background: none;
+	border: none;
+	width: 100%;
+	text-align: left;
 	font-family: var(--font-mono);
 	font-size: 11px;
-	white-space: nowrap;
+	color: var(--text-secondary);
+	line-height: 1.5;
+}
+
+button.og-tool-card-header:hover {
+	background: rgba(255, 255, 255, 0.03);
+}
+
+.og-tool-card-icon {
 	flex-shrink: 0;
+	color: var(--text-faint);
+	display: flex;
+	align-items: center;
+}
+
+.og-tool-card-name {
 	font-weight: 600;
-	color: var(--accent-hover);
-	background: var(--accent-muted);
-	border: 1px solid rgba(56, 139, 253, 0.25);
-	padding: 0px 6px;
-	border-radius: var(--radius-sm);
-	margin-right: 6px;
+	color: var(--text-secondary);
+	white-space: nowrap;
 }
 
-.og-tool-args {
-	font-family: var(--font-mono);
-	font-size: 11px;
+.og-tool-card-mcp .og-tool-card-name {
+	color: rgba(137, 87, 229, 0.9);
+}
+
+.og-tool-card-status {
+	margin-left: auto;
+	font-weight: 600;
+	flex-shrink: 0;
+}
+
+.og-tool-card-status.ok {
+	color: var(--color-passed);
+}
+
+.og-tool-card-status.err {
+	color: var(--color-failed);
+}
+
+.og-tool-card-status.pending {
+	color: var(--text-faint);
+}
+
+.og-tool-card-toggle {
+	flex-shrink: 0;
+	color: var(--text-faint);
+	display: flex;
+	align-items: center;
+}
+
+/* Card body (collapsible) */
+.og-tool-card-body {
+	padding: 0 10px 6px;
+	border-top: 1px solid var(--border-subtle);
+}
+
+.og-tool-card-args {
 	color: var(--text-muted);
-	word-wrap: break-word;
-	overflow-wrap: break-word;
+	white-space: pre-wrap;
+	word-break: break-word;
+	padding-top: 4px;
+	line-height: 1.5;
 }
 
-/* Tool result pill */
-.og-tool-result {
+.og-tool-card-result {
+	color: var(--text-secondary);
+	white-space: pre-wrap;
+	word-break: break-word;
+	padding-top: 4px;
+	line-height: 1.5;
+}
+
+.og-tool-card-err .og-tool-card-result {
+	color: var(--color-failed);
+}
+
+/* MCP tool card body styles */
+.og-mcp-body {
+	padding-top: 4px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.og-mcp-task-item {
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
-	font-size: 11px;
-	font-family: var(--font-mono);
-	word-wrap: break-word;
-	overflow-wrap: break-word;
-	min-width: 0;
+	padding: 3px 0;
 }
 
-.og-tool-result-ok {
-	color: var(--color-passed);
+.og-mcp-task-item + .og-mcp-task-item {
+	border-top: 1px solid var(--border-subtle);
+	padding-top: 4px;
+}
+
+.og-mcp-task-title {
 	font-weight: 600;
-	white-space: nowrap;
-	flex-shrink: 0;
+	color: var(--text-secondary);
 }
 
-.og-tool-result-err {
-	color: var(--color-failed);
-	font-weight: 600;
-	white-space: nowrap;
-	flex-shrink: 0;
+.og-mcp-task-mode {
+	font-size: 10px;
+	color: var(--text-faint);
+	background: var(--bg-overlay);
+	padding: 0 4px;
+	border-radius: var(--radius-sm);
+	display: inline-block;
+	width: fit-content;
 }
 
-.og-tool-result-content {
+.og-mcp-task-msg {
 	color: var(--text-muted);
-	font-size: 11px;
-	word-wrap: break-word;
-	overflow-wrap: break-word;
-	min-width: 0;
+	font-size: 10px;
+	line-height: 1.4;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.og-mcp-task-desc {
+	color: var(--text-muted);
+	font-size: 10px;
+	line-height: 1.4;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.og-mcp-done-status {
+	font-weight: 700;
+	font-size: 12px;
+}
+
+.og-mcp-done-passed {
+	color: var(--color-passed);
+}
+
+.og-mcp-done-failed {
+	color: var(--color-failed);
+}
+
+.og-mcp-yield {
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+.og-mcp-tree-summary {
+	color: var(--text-muted);
 }
 
 /* =========================================================
