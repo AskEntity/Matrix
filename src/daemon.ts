@@ -72,10 +72,15 @@ export interface DaemonConfig {
 	agentProvider: AgentProvider;
 }
 
+/** Resolve the effective model: OG_MODEL > ANTHROPIC_MODEL > undefined (provider uses its default) */
+function resolveDefaultModel(): string | undefined {
+	return process.env.OG_MODEL ?? process.env.ANTHROPIC_MODEL ?? undefined;
+}
+
 function defaultProvider(): AgentProvider {
 	const provider = process.env.OG_PROVIDER ?? "claude-code";
 	if (provider === "direct") {
-		return new DirectProvider(process.env.OG_MODEL);
+		return new DirectProvider(resolveDefaultModel());
 	}
 	return new ClaudeCodeProvider();
 }
@@ -375,7 +380,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		};
 
 		if (c.req.query("check_model") === "true") {
-			const modelName = process.env.OG_MODEL ?? "claude-sonnet-4-6";
+			const modelName = resolveDefaultModel() ?? "claude-sonnet-4-6";
 			const apiKey = process.env.ANTHROPIC_API_KEY;
 			const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 			const useOAuth = Boolean(oauthToken && !apiKey);
@@ -965,7 +970,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			type: "orchestration_started",
 			prompt: opts.prompt,
 			provider: config.agentProvider.name,
-			model: effectiveModel ?? process.env.OG_MODEL ?? "claude-sonnet-4-6",
+			model: effectiveModel ?? resolveDefaultModel() ?? "claude-sonnet-4-6",
 		});
 
 		const wtRoot = join(project.path, ".worktrees");
@@ -1175,7 +1180,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const session = activeSessions.get(project.id);
 		const projectCfg = await loadProjectConfig(config.dataDir, project.id);
 		const model =
-			projectCfg.model ?? process.env.OG_MODEL ?? "claude-sonnet-4-6";
+			projectCfg.model ?? resolveDefaultModel() ?? "claude-sonnet-4-6";
 		return c.json({
 			running: !!session,
 			sessionId: session?.sessionId ?? null,
