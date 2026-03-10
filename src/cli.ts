@@ -807,6 +807,57 @@ async function handleSend(args: string[]): Promise<void> {
 	console.log("Message sent to running agent.");
 }
 
+const KNOWN_CONFIG_KEYS = [
+	"model",
+	"childModel",
+	"provider",
+	"budgetUsd",
+	"clarifyTimeoutMs",
+	"maxDepth",
+] as const;
+
+type KnownConfigKey = (typeof KNOWN_CONFIG_KEYS)[number];
+
+interface ProjectConfig {
+	model?: string;
+	childModel?: string;
+	provider?: string;
+	budgetUsd?: number;
+	clarifyTimeoutMs?: number;
+	maxDepth?: number;
+}
+
+function printConfig(cfg: ProjectConfig): void {
+	const defaultModel =
+		process.env.OG_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
+	const defaultChildModel = process.env.OG_CHILD_MODEL ?? defaultModel;
+
+	const rows: [string, string][] = [
+		["model", cfg.model ?? `${defaultModel} (default)`],
+		["childModel", cfg.childModel ?? `${defaultChildModel} (default)`],
+		["provider", cfg.provider ?? "direct (default)"],
+		[
+			"budgetUsd",
+			cfg.budgetUsd != null ? `${cfg.budgetUsd}` : "unlimited (default)",
+		],
+		[
+			"clarifyTimeoutMs",
+			cfg.clarifyTimeoutMs != null
+				? `${cfg.clarifyTimeoutMs}ms`
+				: "none (default)",
+		],
+		[
+			"maxDepth",
+			cfg.maxDepth != null ? String(cfg.maxDepth) : "none (default)",
+		],
+	];
+
+	const keyWidth = Math.max(...rows.map(([k]) => k.length));
+	for (const [key, value] of rows) {
+		console.log(`  ${key.padEnd(keyWidth)}  ${value}`);
+	}
+}
+
 async function handleConfig(args: string[]): Promise<void> {
 	const projectId = await resolveCurrentProject();
 	if (!projectId) {
@@ -817,33 +868,48 @@ async function handleConfig(args: string[]): Promise<void> {
 	const sub = args[0];
 
 	if (sub === "set" && args.length >= 3) {
-		const key = args[1];
+		const key = args[1] as string;
+		if (!KNOWN_CONFIG_KEYS.includes(key as KnownConfigKey)) {
+			console.warn(
+				`Warning: "${key}" is not a known config key. Known keys: ${KNOWN_CONFIG_KEYS.join(", ")}`,
+			);
+		}
 		let value: string | number = args[2] as string;
 		if (!Number.isNaN(Number(value))) value = Number(value);
 		const res = await api(`/projects/${projectId}/config`, {
 			method: "PATCH",
-			body: JSON.stringify({ [key as string]: value }),
+			body: JSON.stringify({ [key]: value }),
 		});
-		const cfg = await res.json();
-		console.log(JSON.stringify(cfg, null, 2));
+		const cfg = (await res.json()) as ProjectConfig;
+		console.log(`Set ${key} =`, value);
+		console.log("");
+		printConfig(cfg);
 	} else if (sub === "unset" && args.length >= 2) {
-		const key = args[1];
+		const key = args[1] as string;
 		const res = await api(`/projects/${projectId}/config`, {
 			method: "PATCH",
-			body: JSON.stringify({ [key as string]: null }),
+			body: JSON.stringify({ [key]: null }),
 		});
-		const cfg = await res.json();
-		console.log(JSON.stringify(cfg, null, 2));
+		const cfg = (await res.json()) as ProjectConfig;
+		console.log(`Unset ${key}`);
+		console.log("");
+		printConfig(cfg);
 	} else if (!sub) {
 		const res = await api(`/projects/${projectId}/config`);
-		const cfg = await res.json();
-		if (Object.keys(cfg as Record<string, unknown>).length === 0) {
-			console.log("No project config set. Use: og config set <key> <value>");
+		const cfg = (await res.json()) as ProjectConfig;
+		const hasAny = Object.keys(cfg).length > 0;
+		if (hasAny) {
+			console.log("Project config:");
 		} else {
-			console.log(JSON.stringify(cfg, null, 2));
+			console.log("Project config (all defaults):");
 		}
+		console.log("");
+		printConfig(cfg);
+		console.log("");
+		console.log(`  Use: og config set <key> <value>  |  og config unset <key>`);
 	} else {
 		console.error("Usage: og config [set <key> <value> | unset <key>]");
+		console.error(`Known keys: ${KNOWN_CONFIG_KEYS.join(", ")}`);
 		process.exit(1);
 	}
 }
@@ -1239,6 +1305,17 @@ switch (command) {
 		console.log("    daemon start/stop/restart  Manage daemon");
 		console.log("    daemon status            Check daemon status");
 		console.log("    daemon logs              View daemon logs");
+		console.log("");
+		console.log("  Config");
+		console.log(
+			"    config                   Show project config (all fields)",
+		);
+		console.log("    config set <key> <value> Set a config value");
+		console.log(
+			"    config unset <key>       Remove a config value (reset to default)",
+		);
+		console.log("");
+		console.log(`  Known config keys: ${KNOWN_CONFIG_KEYS.join(", ")}`);
 		console.log("");
 		console.log("  Other");
 		console.log("    health                   Check daemon health");

@@ -365,3 +365,12 @@ DirectProvider estimates token counts from `usage.input_tokens + usage.output_to
 - **Yield tool timeout logic**: When `pendingClarifications > 0` and `deps.clarifyTimeoutMs` is set, uses timeout. On `"timeout"`, synthesizes clarify_response, emits `clarification_timeout` event, resets `pendingClarifications = 0`.
 - **Daemon wiring**: Both `launchAgent` and continue handler pass `projectCfg.clarifyTimeoutMs` to `createOrchestratorTools`.
 - **Key design**: Timeout only activates when `pendingClarifications > 0`. Normal message waits use plain `wait()` (no spurious timeouts).
+
+## CLI Config UX (improved)
+
+- `og config` now shows ALL known fields with effective values (defaults shown when not set)
+- `og config set <key>` warns if key is not in `KNOWN_CONFIG_KEYS` (but still allows it for forward-compat)
+- `KNOWN_CONFIG_KEYS` list in cli.ts: model, childModel, provider, budgetUsd, clarifyTimeoutMs, maxDepth
+- Help text now includes a "Config" section with all three subcommands and known keys list
+- `printConfig()` helper in cli.ts reads env vars OG_MODEL / ANTHROPIC_MODEL for default model display
+- `maxDepth` is in KNOWN_CONFIG_KEYS even though `ProjectConfig` interface doesn't have it yet (forward-compat)
