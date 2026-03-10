@@ -2511,7 +2511,7 @@ function AppInner() {
 								const msgText = m[2] ?? "";
 								let logType: string;
 								if (msgType === "child_complete") {
-									logType = "task_completed";
+									continue; // Already shown via task_completed WS event
 								} else if (msgType === "user") {
 									logType = "user_prompt";
 								} else {
