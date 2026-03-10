@@ -2070,6 +2070,12 @@ function AppInner() {
 		}
 	}, [selectedTaskId, nodeMap]);
 
+	// Auto-follow activity log when selecting a task
+	// biome-ignore lint/correctness/useExhaustiveDependencies: only trigger on task selection change
+	useEffect(() => {
+		setAutoScroll(true);
+	}, [selectedTaskId]);
+
 	// Auto-save prompt draft to localStorage (debounced 2s)
 	useEffect(() => {
 		const timer = setTimeout(() => {
