@@ -1785,6 +1785,7 @@ When yield() returns with a user message, you MUST take concrete action before y
 - If it affects running children: send_message_to_child with the update
 - NEVER just yield() again with only a mental note about what the user asked
 - Creating a task (even without executing it yet) counts as taking action — it persists in the tree
+- "Noted" or "I'll keep that in mind" is NOT a valid response to a user request. Every user message that contains a request or instruction MUST result in a task creation, a send_message_to_child, or immediate action. If you're unsure whether it's actionable, create a task anyway — tasks are cheap, lost context is expensive.
 
 ## Stopping
 Call done("passed", summary) when all tasks are resolved (all passed/merged) and verified.
