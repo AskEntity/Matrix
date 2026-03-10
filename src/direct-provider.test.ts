@@ -690,7 +690,7 @@ describe("compressMessages", () => {
 			expect(compressed[1]?.role).toBe("assistant");
 			expect(
 				typeof compressed[1]?.content === "string" && compressed[1].content,
-			).toContain("Continuing from checkpoint");
+			).toContain("Resuming from checkpoint");
 		}
 	});
 
@@ -815,10 +815,7 @@ describe("compressMessages", () => {
 			const msg = compressed[i];
 			if (!msg || !Array.isArray(msg.content)) continue;
 			const hasToolResult = msg.content.some(
-				(b) =>
-					typeof b === "object" &&
-					"type" in b &&
-					b.type === "tool_result",
+				(b) => typeof b === "object" && "type" in b && b.type === "tool_result",
 			);
 			if (hasToolResult) {
 				// The preceding message must be an assistant with tool_use
@@ -828,9 +825,7 @@ describe("compressMessages", () => {
 				if (Array.isArray(prev?.content)) {
 					const hasToolUse = prev.content.some(
 						(b) =>
-							typeof b === "object" &&
-							"type" in b &&
-							b.type === "tool_use",
+							typeof b === "object" && "type" in b && b.type === "tool_use",
 					);
 					expect(hasToolUse).toBe(true);
 				}
@@ -840,9 +835,7 @@ describe("compressMessages", () => {
 		// Also verify the tail contains the tool_result message
 		const allContent = compressed
 			.map((m) =>
-				typeof m.content === "string"
-					? m.content
-					: JSON.stringify(m.content),
+				typeof m.content === "string" ? m.content : JSON.stringify(m.content),
 			)
 			.join(" ");
 		expect(allContent).toContain("toolu_test123");

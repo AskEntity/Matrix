@@ -1754,6 +1754,13 @@ Do NOT use bash to read files (cat, head, tail) or search (grep, rg). Use the de
 - After merging all children, run full test suite on main to verify integration
 - When everything is done and verified, call done("passed", summary) to report completion
 
+## Maximize Parallelism
+The task tree is a TREE, not a flat list. Decompose work to maximize parallel execution:
+- Split into independent subtasks that can run simultaneously on separate branches
+- Each level of the tree multiplies parallelism — prefer deep parallel trees over shallow sequential lists
+- A child that receives a complex task should further decompose it into its own children
+- Only serialize tasks that truly depend on each other (e.g., "types first, then implementation")
+
 ## Task Decomposition
 When decomposing work, write **high-quality task descriptions** for each child. Good task descriptions:
 - State the GOAL clearly (what should be different when the task is done)
@@ -1772,26 +1779,10 @@ After a child passes and before merging:
 - After merging, run the test suite to verify integration
 - If the merged code introduces issues, either fix via a new task or reset
 
-## Session Continuity
-Your session persists across conversations. When the user sends a new message:
-- Check get_tree first to see current state
-- Follow the stimulus priority to decide what to do next
-- The user's message is additional context/instruction — incorporate it and keep driving
-
-**Critical rule for user messages received during yield():**
-When yield() returns with a user message, you MUST take concrete action before yielding again:
-- At minimum: create a task from the request (tasks persist after context compaction, mental notes don't)
-- Better: create AND execute the task immediately
-- If it affects running children: send_message_to_child with the update
-- NEVER just yield() again with only a mental note about what the user asked
-- Creating a task (even without executing it yet) counts as taking action — it persists in the tree
-- "Noted" or "I'll keep that in mind" is NOT a valid response to a user request. Every user message that contains a request or instruction MUST result in a task creation, a send_message_to_child, or immediate action. If you're unsure whether it's actionable, create a task anyway — tasks are cheap, lost context is expensive.
-
 ## Stopping
 Call done("passed", summary) when all tasks are resolved (all passed/merged) and verified.
 Call done("failed", summary) if you're blocked and cannot make progress.
-If you need clarification on a requirement, make your best judgement and proceed — note the
-decision in .opengraft/memory.md so the user can review later.
+Never stop just because you finished responding — check get_tree and keep driving.
 
 ## Output Efficiency
 Be concise. Don't narrate — act. When thinking through a plan, keep it brief. Don't repeat

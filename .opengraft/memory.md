@@ -185,3 +185,12 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 
 ## Token Badge Desync Fix
 - After compaction, emit a `usage` event with `estimated: true` containing post-compaction token estimate (compressed chars / 4). Reset `estimatedInputTokens` to this value.
+
+## System Prompt Improvements (2026-03-11)
+Key changes to address agent behavioral issues:
+- **Post-compaction drive loss**: Added "Remaining Work" section to CHECKPOINT_SYSTEM_PROMPT (between Open Questions and Next Action). Strengthened resume instruction to say "Your task is NOT done unless checkpoint says 'Current Phase: done'". Bridge message now says "Resuming from checkpoint — checking task state and continuing work."
+- **done() not called**: Added MANDATORY done() call notice at top of TASK_SYSTEM_PROMPT. Renamed "Child Agent Exit Conditions" → "Calling done() — REQUIRED" with stronger language about parent hanging.
+- **Redundancy removed**: Deleted duplicate "Session Continuity" section from ORCHESTRATOR_SYSTEM_PROMPT (was already in ORCHESTRATION_KNOWLEDGE which gets appended).
+- **Parallelism guidance**: Added "Maximize Parallelism" section to orchestrator prompt and parallelism note to TASK_SYSTEM_PROMPT opener.
+- **Stimulus Priority**: Added step 0 for post-compaction recovery. Changed step 5 from "Report final status, stop" → "Call done('passed', summary)".
+- **Never-Stop Principle**: Added "(CRITICAL — especially after context compaction)" to header, added post-compaction bullet.

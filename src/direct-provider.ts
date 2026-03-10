@@ -179,7 +179,9 @@ export async function compressMessages(
 		if (firstUser && Array.isArray(firstUser.content)) {
 			const hasToolResult = firstUser.content.some(
 				(block) =>
-					typeof block === "object" && "type" in block && block.type === "tool_result",
+					typeof block === "object" &&
+					"type" in block &&
+					block.type === "tool_result",
 			);
 			if (hasToolResult) {
 				tailStartIdx--;
@@ -219,7 +221,7 @@ export async function compressMessages(
 		parts.push(`## Project Memory (fresh)\n${freshMemory}`);
 	}
 	parts.push(
-		`## Checkpoint (conversation compacted)\n\n${checkpoint}\n\nResume from this checkpoint. Continue working — do not repeat completed steps.`,
+		`## Checkpoint (conversation compacted)\n\n${checkpoint}\n\nResume from this checkpoint. Your task is NOT done unless the checkpoint says "Current Phase: done". Continue working — check get_tree, follow the stimulus priority, and drive to completion. Do not repeat completed steps.`,
 	);
 
 	const compressed: MessageParam[] = [
@@ -232,7 +234,8 @@ export async function compressMessages(
 			// Insert assistant bridge to avoid user-user adjacency
 			compressed.push({
 				role: "assistant" as const,
-				content: "Continuing from checkpoint with preserved recent context.",
+				content:
+					"Understood. Resuming from checkpoint — checking task state and continuing work.",
 			});
 		}
 		// If tail starts with assistant (backed up for tool_use), no bridge needed —
@@ -284,8 +287,14 @@ Analyze the conversation and output a checkpoint in EXACTLY this format (all sec
 [If none, write "None"]
 [Example: "Need to verify whether X API is available in this environment"]
 
+## Remaining Work
+[List ALL tasks/steps still needed to complete the goal — not just the next one]
+[Be specific: "implement X in file Y", "add test for Z", "merge child branch A"]
+[If orchestrator: list unmerged children and integration steps remaining]
+[If task is nearly done: "Run final checks and call done('passed')"]
+
 ## Next Action
-[Single, specific, concrete action to take immediately — start with a verb]
+[Single, specific, concrete action to take IMMEDIATELY — start with a verb]
 [e.g. "Run \`bun test src/foo.test.ts\` to verify the fix" not "continue testing"]
 [e.g. "Edit src/bar.ts line 42 to change X to Y" not "fix the bug"]
 
@@ -1375,9 +1384,7 @@ export class DirectProvider implements AgentProvider {
 									: JSON.stringify(m.content);
 							return sum + c.length;
 						}, 0);
-						const estimatedPostCompactTokens = Math.floor(
-							postCompactChars / 4,
-						);
+						const estimatedPostCompactTokens = Math.floor(postCompactChars / 4);
 						estimatedInputTokens = estimatedPostCompactTokens;
 						yield {
 							type: "usage",
