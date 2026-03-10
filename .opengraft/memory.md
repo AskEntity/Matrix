@@ -128,3 +128,11 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 - **Tail preservation**: After generating checkpoint, keeps ~80k chars of most recent messages. Tail must start with user role. Bridge assistant message inserted between checkpoint(user) and tail(user) to maintain valid alternation.
 - **CHECKPOINT_SYSTEM_PROMPT**: Added "Agent Tree State" and "Communication State" sections for multi-agent awareness.
 
+
+## Daemon Refactoring (stopAgent + shared handlers)
+- **`stopAgent()`**: Single function for all stop operations. Options: `clearAutoResume` (true for explicit user stop/delete), `keepPendingMessages` (true for restart so messages survive for new session).
+- **Shared handlers**: `handleOrchestrate()`, `handleInjectMessage()`, `handleClarifyResponse()` used by both REST routes and WS message handlers. Return `{ ok, error?, status? }`.
+- **`pruneSessionFiles()`**: Shared between autoResumeProjects and POST /sessions/prune.
+- **restartingProjects guard**: Both REST /orchestrate/agent and /agents/start now check `restartingProjects.has()` to prevent starting during restart.
+- **DELETE /projects/:id cleanup**: Now clears pendingMessages, pendingClarifications, eventHistory in addition to stopping agent and removing tracker.
+- Biome auto-formats web/App.tsx on every `bun run check --write .` — revert it if you only changed daemon files.
