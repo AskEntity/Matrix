@@ -1781,6 +1781,7 @@ function AppInner() {
 		{},
 	);
 	const contentPanelRef = useRef<HTMLElement>(null);
+	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	const { nodes, refresh: refreshTasks, updateFromWS } = useTasks(projectId);
 	const {
@@ -2186,6 +2187,14 @@ function AppInner() {
 		return () => window.removeEventListener("beforeunload", handler);
 	}, [prompt]);
 
+	function adjustTextareaHeight() {
+		const el = textareaRef.current;
+		if (el) {
+			el.style.height = "auto";
+			el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+		}
+	}
+
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!prompt.trim() || !projectId) return;
@@ -2202,6 +2211,9 @@ function AppInner() {
 			}
 			setPrompt("");
 			localStorage.removeItem("og-prompt-draft");
+			if (textareaRef.current) {
+				textareaRef.current.style.height = "auto";
+			}
 		} catch (err) {
 			addLog("error", (err as Error).message);
 		}
@@ -2896,11 +2908,21 @@ function AppInner() {
 					</div>
 				)}
 				<form className="og-footer-form" onSubmit={handleSubmit}>
-					<input
-						type="text"
+					<textarea
+						ref={textareaRef}
 						className="og-prompt-input"
+						rows={1}
 						value={prompt}
-						onChange={(e) => setPrompt(e.target.value)}
+						onChange={(e) => {
+							setPrompt(e.target.value);
+							adjustTextareaHeight();
+						}}
+						onKeyDown={(e) => {
+							if (e.key === "Enter" && !e.shiftKey) {
+								e.preventDefault();
+								handleSubmit(e);
+							}
+						}}
 						placeholder={
 							running && targetNodeId
 								? t("footer.messageToTask", {
