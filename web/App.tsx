@@ -725,10 +725,16 @@ function TaskTree({
 					<span className="og-empty-icon">
 						<IconHexagon size={24} />
 					</span>
-					<span>{t("tasks.noTasks")}</span>
-					<span style={{ color: "var(--text-faint)", fontSize: "11px" }}>
-						{t("tasks.startAgent")}
-					</span>
+					{running ? (
+						<span>{t("tasks.agentWorking")}</span>
+					) : (
+						<>
+							<span>{t("tasks.noTasks")}</span>
+							<span style={{ color: "var(--text-faint)", fontSize: "11px" }}>
+								{t("tasks.startAgent")}
+							</span>
+						</>
+					)}
 				</div>
 			)}
 
