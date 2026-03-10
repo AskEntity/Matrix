@@ -130,3 +130,11 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Pause message tells agent to call `yield()` and wait; Resume tells it to continue.
 - Both buttons show for `in_progress` and `testing` tasks in TaskDetail.
 - IconPause added as inline SVG (two vertical bars pattern).
+
+## MCP Tool Result Formatting
+
+- `formatMcpToolResult()` in App.tsx parses tool result content and returns human-readable strings.
+- Only applied for successful (`isOk`) MCP tool results — errors still show raw content.
+- JSON content is pre-truncated to 200 chars at creation (in WS handler). For truncated JSON (e.g., large get_tree), regex fallbacks estimate counts.
+- All labels use i18n `t()` with keys prefixed `log.` (e.g., `log.createdTask`, `log.deletedTask`).
+- Returns `null` on parse failure → falls back to default rendering (tool name + raw content).
