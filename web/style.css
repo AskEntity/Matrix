@@ -2243,21 +2243,21 @@ select {
 	position: absolute;
 	width: 0;
 	height: 0;
-	border-left: 8px solid transparent;
-	border-right: 8px solid transparent;
-	border-bottom: 14px solid #ffb6c1;
+	border-left: 10px solid transparent;
+	border-right: 10px solid transparent;
+	border-bottom: 18px solid #ffb6c1;
 }
 
 .og-cat-ear-left {
-	bottom: 54px;
-	left: 14px;
-	transform: rotate(-8deg);
+	bottom: 55px;
+	left: 10px;
+	transform: rotate(-15deg);
 }
 
 .og-cat-ear-right {
-	bottom: 54px;
-	right: 14px;
-	transform: rotate(8deg);
+	bottom: 55px;
+	right: 10px;
+	transform: rotate(15deg);
 }
 
 .og-cat-ear-inner-left,
@@ -2265,21 +2265,21 @@ select {
 	position: absolute;
 	width: 0;
 	height: 0;
-	border-left: 5px solid transparent;
-	border-right: 5px solid transparent;
-	border-bottom: 9px solid #ff8fab;
+	border-left: 6px solid transparent;
+	border-right: 6px solid transparent;
+	border-bottom: 12px solid #ff8fab;
 }
 
 .og-cat-ear-inner-left {
-	bottom: 55px;
-	left: 17px;
-	transform: rotate(-8deg);
+	bottom: 56px;
+	left: 14px;
+	transform: rotate(-15deg);
 }
 
 .og-cat-ear-inner-right {
-	bottom: 55px;
-	right: 17px;
-	transform: rotate(8deg);
+	bottom: 56px;
+	right: 14px;
+	transform: rotate(15deg);
 }
 
 /* Cat eyes */
@@ -2424,31 +2424,37 @@ select {
 
 .og-cat-whisker {
 	position: absolute;
-	width: 12px;
+	width: 16px;
 	height: 1px;
 	background: #d48a9e;
 }
 
+/* Left whiskers: origin on right (face side), splay outward to the left */
 .og-cat-whisker:nth-child(1) {
-	left: 0;
-	top: 1px;
-	transform: rotate(-8deg);
+	right: 50%;
+	top: 0;
+	transform-origin: right center;
+	transform: rotate(15deg);
 }
 
 .og-cat-whisker:nth-child(2) {
-	left: 0;
+	right: 50%;
 	top: 5px;
-	transform: rotate(5deg);
+	transform-origin: right center;
+	transform: rotate(-10deg);
 }
 
+/* Right whiskers: origin on left (face side), splay outward to the right */
 .og-cat-whisker:nth-child(3) {
-	right: 0;
-	top: 1px;
-	transform: rotate(8deg);
+	left: 50%;
+	top: 0;
+	transform-origin: left center;
+	transform: rotate(-15deg);
 }
 
 .og-cat-whisker:nth-child(4) {
-	right: 0;
+	left: 50%;
 	top: 5px;
-	transform: rotate(-5deg);
+	transform-origin: left center;
+	transform: rotate(10deg);
 }
