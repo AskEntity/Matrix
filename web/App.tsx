@@ -2073,6 +2073,13 @@ function AppInner() {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only trigger on task selection change
 	useEffect(() => {
 		setAutoScroll(true);
+		// Force immediate scroll to bottom after DOM updates with filtered entries
+		requestAnimationFrame(() => {
+			const logEl = document.querySelector(".og-activity-log");
+			if (logEl) {
+				logEl.scrollTop = logEl.scrollHeight;
+			}
+		});
 	}, [selectedTaskId]);
 
 	// Auto-save prompt draft to localStorage (debounced 2s)
