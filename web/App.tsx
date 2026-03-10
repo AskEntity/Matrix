@@ -2901,7 +2901,9 @@ function AppInner() {
 							composingRef.current = true;
 						}}
 						onCompositionEnd={() => {
-							composingRef.current = false;
+							setTimeout(() => {
+								composingRef.current = false;
+							}, 0);
 						}}
 						onKeyDown={(e) => {
 							if (
