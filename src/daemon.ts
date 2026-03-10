@@ -311,8 +311,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		) {
 			const raw = event.messages as string;
 			const acknowledgedTexts: string[] = [];
-			for (const line of raw.split("\n")) {
-				const m = /^\[user\] (.*)$/s.exec(line);
+			// Split on newlines followed by [ to handle multiline message content
+			const blocks = raw.split(/\n(?=\[)/);
+			for (const block of blocks) {
+				const m = /^\[user\] ([\s\S]*)$/.exec(block);
 				if (m?.[1]) acknowledgedTexts.push(m[1]);
 			}
 			if (acknowledgedTexts.length > 0) {
