@@ -351,36 +351,152 @@ function CuteCat() {
 
 	return (
 		<div className={`og-cute-cat${isTyping ? " og-cat-typing" : ""}`}>
-			{/* Ears */}
-			<div className="og-cat-ear-left" />
-			<div className="og-cat-ear-right" />
-			<div className="og-cat-ear-inner-left" />
-			<div className="og-cat-ear-inner-right" />
-			{/* Head */}
-			<div className="og-cat-head" />
-			{/* Eyes */}
-			<div className="og-cat-eyes">
-				<div className="og-cat-eye" />
-				<div className="og-cat-eye" />
-			</div>
-			{/* Nose */}
-			<div className="og-cat-nose" />
-			{/* Mouth */}
-			<div className="og-cat-mouth" />
-			{/* Whiskers */}
-			<div className="og-cat-whiskers">
-				<div className="og-cat-whisker" />
-				<div className="og-cat-whisker" />
-				<div className="og-cat-whisker" />
-				<div className="og-cat-whisker" />
-			</div>
-			{/* Body */}
-			<div className="og-cat-body" />
-			{/* Tail */}
-			<div className="og-cat-tail" />
-			{/* Paws */}
-			<div className="og-cat-paw-left" />
-			<div className="og-cat-paw-right" />
+			<svg
+				viewBox="0 0 100 120"
+				width="90"
+				height="108"
+				fill="none"
+				xmlns="http://www.w3.org/2000/svg"
+				role="img"
+				aria-label="Cute cat"
+			>
+				<title>Cute cat</title>
+				{/* Tail */}
+				<path
+					className="og-cat-tail"
+					d="M78 95 C88 85, 95 70, 88 58"
+					stroke="#ffb6c1"
+					strokeWidth="3.5"
+					strokeLinecap="round"
+					fill="none"
+				/>
+				{/* Body */}
+				<ellipse cx="50" cy="100" rx="24" ry="18" fill="#ffb6c1" />
+				{/* Left ear outer */}
+				<polygon points="22,42 14,18 38,36" fill="#ffb6c1" />
+				{/* Right ear outer */}
+				<polygon points="78,42 86,18 62,36" fill="#ffb6c1" />
+				{/* Left ear inner */}
+				<polygon points="24,40 18,24 35,37" fill="#ff8fab" />
+				{/* Right ear inner */}
+				<polygon points="76,40 82,24 65,37" fill="#ff8fab" />
+				{/* Head */}
+				<ellipse cx="50" cy="50" rx="28" ry="24" fill="#ffb6c1" />
+				{/* Eyes */}
+				<ellipse
+					className="og-cat-eye og-cat-eye-l"
+					cx="39"
+					cy="48"
+					rx="3"
+					ry="3.5"
+					fill="#4a2030"
+				/>
+				<ellipse
+					className="og-cat-eye og-cat-eye-r"
+					cx="61"
+					cy="48"
+					rx="3"
+					ry="3.5"
+					fill="#4a2030"
+				/>
+				{/* Nose */}
+				<polygon points="50,55 47.5,52 52.5,52" fill="#ff6b9d" />
+				{/* Mouth */}
+				<path
+					d="M50 55 Q46 60 43 58"
+					stroke="#ff6b9d"
+					strokeWidth="1.2"
+					strokeLinecap="round"
+					fill="none"
+				/>
+				<path
+					d="M50 55 Q54 60 57 58"
+					stroke="#ff6b9d"
+					strokeWidth="1.2"
+					strokeLinecap="round"
+					fill="none"
+				/>
+				{/* Whiskers — left side */}
+				<line
+					className="og-cat-whisker"
+					x1="35"
+					y1="53"
+					x2="8"
+					y2="48"
+					stroke="#d48a9e"
+					strokeWidth="1"
+					strokeLinecap="round"
+				/>
+				<line
+					className="og-cat-whisker"
+					x1="35"
+					y1="55"
+					x2="7"
+					y2="55"
+					stroke="#d48a9e"
+					strokeWidth="1"
+					strokeLinecap="round"
+				/>
+				<line
+					className="og-cat-whisker"
+					x1="35"
+					y1="57"
+					x2="8"
+					y2="62"
+					stroke="#d48a9e"
+					strokeWidth="1"
+					strokeLinecap="round"
+				/>
+				{/* Whiskers — right side */}
+				<line
+					className="og-cat-whisker"
+					x1="65"
+					y1="53"
+					x2="92"
+					y2="48"
+					stroke="#d48a9e"
+					strokeWidth="1"
+					strokeLinecap="round"
+				/>
+				<line
+					className="og-cat-whisker"
+					x1="65"
+					y1="55"
+					x2="93"
+					y2="55"
+					stroke="#d48a9e"
+					strokeWidth="1"
+					strokeLinecap="round"
+				/>
+				<line
+					className="og-cat-whisker"
+					x1="65"
+					y1="57"
+					x2="92"
+					y2="62"
+					stroke="#d48a9e"
+					strokeWidth="1"
+					strokeLinecap="round"
+				/>
+				{/* Left paw */}
+				<ellipse
+					className="og-cat-paw og-cat-paw-l"
+					cx="36"
+					cy="114"
+					rx="7"
+					ry="5"
+					fill="#ffc0cb"
+				/>
+				{/* Right paw */}
+				<ellipse
+					className="og-cat-paw og-cat-paw-r"
+					cx="64"
+					cy="114"
+					rx="7"
+					ry="5"
+					fill="#ffc0cb"
+				/>
+			</svg>
 		</div>
 	);
 }
