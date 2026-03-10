@@ -1842,17 +1842,16 @@ function AppInner() {
 					} else if (et === "error") {
 						text = (msg.message as string) || "";
 					} else if (et === "usage") {
-						const taskId = msg.taskId as string | undefined;
-						if (taskId) {
-							setTokenUsage((prev) => ({
-								...prev,
-								[taskId]: {
-									inputTokens: msg.inputTokens as number,
-									contextWindow: msg.contextWindow as number,
-									estimated: (msg.estimated as boolean) || false,
-								},
-							}));
-						}
+						const usageKey =
+							(msg.taskId as string | undefined) || PROJECT_NODE_ID;
+						setTokenUsage((prev) => ({
+							...prev,
+							[usageKey]: {
+								inputTokens: msg.inputTokens as number,
+								contextWindow: msg.contextWindow as number,
+								estimated: (msg.estimated as boolean) || false,
+							},
+						}));
 						break;
 					} else if (et === "compact") {
 						text = `Context compacted (saved ~${msg.savedTokens} tokens)`;
@@ -2684,6 +2683,24 @@ function AppInner() {
 								)}
 							</span>
 							<div className="og-panel-actions">
+								{(() => {
+									const usageTaskId =
+										targetNodeId ??
+										(selectedTaskId === PROJECT_NODE_ID
+											? PROJECT_NODE_ID
+											: (selectedTaskId ?? null)) ??
+										nodes.find((n) => !n.parentId && n.status === "in_progress")
+											?.id ??
+										PROJECT_NODE_ID;
+									const usage = tokenUsage[usageTaskId];
+									return usage ? (
+										<TokenUsageBadge
+											inputTokens={usage.inputTokens}
+											contextWindow={usage.contextWindow}
+											estimated={usage.estimated}
+										/>
+									) : null;
+								})()}
 								{!autoScroll && (
 									<button
 										type="button"
@@ -2788,26 +2805,6 @@ function AppInner() {
 					</div>
 				)}
 				<form className="og-footer-form" onSubmit={handleSubmit}>
-					{/* Token usage badge — show for the active agent */}
-					{(() => {
-						// Determine which task's usage to display
-						const taskId =
-							targetNodeId ??
-							(selectedTaskId && selectedTaskId !== PROJECT_NODE_ID
-								? selectedTaskId
-								: null) ??
-							nodes.find((n) => !n.parentId && n.status === "in_progress")
-								?.id ??
-							null;
-						const usage = taskId ? tokenUsage[taskId] : undefined;
-						return usage ? (
-							<TokenUsageBadge
-								inputTokens={usage.inputTokens}
-								contextWindow={usage.contextWindow}
-								estimated={usage.estimated}
-							/>
-						) : null;
-					})()}
 					<input
 						type="text"
 						className="og-prompt-input"
