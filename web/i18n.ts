@@ -102,6 +102,8 @@ const en: Translations = {
 	"detail.runningHint": "Task is running — send a message to update it",
 	"detail.noDescription": "No description",
 	"detail.stop": "Stop",
+	"detail.pause": "Pause",
+	"detail.resume": "Resume",
 
 	// Activity
 	"activity.title": "Activity",
@@ -297,6 +299,8 @@ const zh: Translations = {
 	"detail.runningHint": "任务正在运行 — 发送消息来更新",
 	"detail.noDescription": "暂无描述",
 	"detail.stop": "停止",
+	"detail.pause": "暂停",
+	"detail.resume": "继续运行",
 
 	// Activity
 	"activity.title": "活动",
