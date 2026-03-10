@@ -1765,6 +1765,7 @@ function AppInner() {
 	);
 	const contentPanelRef = useRef<HTMLElement>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const composingRef = useRef(false);
 
 	const { nodes, refresh: refreshTasks, updateFromWS } = useTasks(projectId);
 	const {
@@ -1934,7 +1935,7 @@ function AppInner() {
 						const raw = (msg.messages as string) || "";
 						const taskId = msg.taskId as string | undefined;
 						const lines = raw
-							.split("\n")
+							.split(/\n(?=\[)/)
 							.filter((l) => l.trim() && !l.startsWith("## "));
 						let parsed = false;
 						for (const line of lines) {
@@ -2897,11 +2898,17 @@ function AppInner() {
 							setPrompt(e.target.value);
 							adjustTextareaHeight();
 						}}
+						onCompositionStart={() => {
+							composingRef.current = true;
+						}}
+						onCompositionEnd={() => {
+							composingRef.current = false;
+						}}
 						onKeyDown={(e) => {
 							if (
 								e.key === "Enter" &&
 								!e.shiftKey &&
-								!e.nativeEvent.isComposing
+								!composingRef.current
 							) {
 								e.preventDefault();
 								handleSubmit(e);
