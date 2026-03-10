@@ -1621,6 +1621,10 @@ function LogEntryView({
 				: isPassed
 					? "og-tool-card-ok"
 					: "og-tool-card-err";
+		const isLong = entry.text.length > 80;
+		const headerText = isLong
+			? `${entry.text.slice(0, 80)}…`
+			: entry.text;
 		return (
 			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{entry.time}</span>
@@ -1630,11 +1634,31 @@ function LogEntryView({
 					</span>
 				)}
 				<div className={`og-tool-card ${statusClass}`}>
-					<div className="og-tool-card-header">
-						<span className="og-tool-card-name">
-							{icon} {entry.text}
-						</span>
-					</div>
+					{isLong ? (
+						<button
+							type="button"
+							className="og-tool-card-header"
+							onClick={() => setExpanded(!expanded)}
+						>
+							<span className="og-tool-card-name">
+								{icon} {headerText}
+							</span>
+							<span className="og-tool-card-toggle">
+								<IconChevron size={10} expanded={expanded} />
+							</span>
+						</button>
+					) : (
+						<div className="og-tool-card-header">
+							<span className="og-tool-card-name">
+								{icon} {entry.text}
+							</span>
+						</div>
+					)}
+					{expanded && isLong && (
+						<div className="og-tool-card-body">
+							<div className="og-tool-card-result">{entry.text}</div>
+						</div>
+					)}
 				</div>
 			</div>
 		);
