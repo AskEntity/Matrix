@@ -160,9 +160,8 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 
 
 ## Icon Simplification (activity log)
-- Replaced all emoji icons with simple unicode/text symbols.
-- File tools (read_file, write_file, edit_file): just filename, no icon.
-- `isPassed` check for task_completed entries: now checks both `startsWith("✓")` and `includes(" passed")` to handle child_complete queue messages.
+- Simple unicode/text symbols instead of emoji. File tools: `→ file`, `← file`, `✎ file`. Execute: `⚡`. Delete: `✕`.
+- `isPassed` check for task_completed entries: checks both `startsWith("✓")` and `includes(" passed")`.
 
 ## Compaction Streaming Fix (timeout)
 - **Problem**: `client.messages.create()` times out after 10 minutes for large compaction summaries (32k max_tokens, ~160k token input).
