@@ -779,8 +779,11 @@ export function LogEntryView({
 	}
 
 	if (entry.type === "queue_message") {
-		const isLong = entry.text.length > 100;
-		const headerText = isLong ? `${entry.text.slice(0, 100)}…` : entry.text;
+		const isLong = entry.text.length > 100 || entry.text.includes("\n");
+		const headerText =
+			entry.text.length > 100
+				? `${entry.text.slice(0, 100)}…`
+				: (entry.text.split("\n")[0] ?? entry.text);
 		return (
 			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{entry.time}</span>
@@ -791,18 +794,23 @@ export function LogEntryView({
 				)}
 				<div className="og-tool-card og-tool-card-mcp">
 					{isLong ? (
-						<button
-							type="button"
-							className="og-tool-card-header"
-							onClick={() => setExpanded(!expanded)}
-						>
-							<span className="og-tool-card-name">
-								{expanded ? entry.text : headerText}
-							</span>
-							<span className="og-tool-card-toggle">
-								<IconChevron size={10} expanded={expanded} />
-							</span>
-						</button>
+						<>
+							<button
+								type="button"
+								className="og-tool-card-header"
+								onClick={() => setExpanded(!expanded)}
+							>
+								<span className="og-tool-card-name">{headerText}</span>
+								<span className="og-tool-card-toggle">
+									<IconChevron size={10} expanded={expanded} />
+								</span>
+							</button>
+							{expanded && (
+								<div className="og-mcp-body">
+									<div className="og-mcp-task-desc">{entry.text}</div>
+								</div>
+							)}
+						</>
 					) : (
 						<div className="og-tool-card-header">
 							<span className="og-tool-card-name">{entry.text}</span>
