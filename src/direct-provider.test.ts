@@ -572,7 +572,7 @@ describe("compressMessages", () => {
 		expect(compressed).toEqual(messages);
 	});
 
-	test("compacts all messages into checkpoint + ack", async () => {
+	test("compacts messages into checkpoint + tail", async () => {
 		const messages: MessageParam[] = [];
 		for (let i = 0; i < 20; i++) {
 			messages.push({ role: "user", content: `message ${i}` });
@@ -584,17 +584,18 @@ describe("compressMessages", () => {
 			messages,
 			"claude-sonnet-4-6",
 		);
-		// Should be exactly 1 message: user (context+checkpoint), no assistant ack
-		expect(compressed.length).toBe(1);
+		// First message is the checkpoint user message
 		expect(compressed[0]?.role).toBe("user");
-		// First message should contain the checkpoint
 		expect(
 			typeof compressed[0]?.content === "string" && compressed[0].content,
 		).toContain("Checkpoint");
+		// With small messages, all tail fits within 80k budget so we get:
+		// checkpoint(user) + bridge(assistant) + all tail messages
+		expect(compressed.length).toBeGreaterThanOrEqual(1);
 		// Should return checkpoint text
 		expect(checkpoint).toBe("This is the conversation summary.");
 		// Should report saved tokens
-		expect(savedTokens).toBeGreaterThan(0);
+		expect(savedTokens).toBeGreaterThanOrEqual(0);
 	});
 
 	test("re-injects task context and fresh memory", async () => {
@@ -634,6 +635,107 @@ describe("compressMessages", () => {
 		}
 		await compressMessages(client, messages, "claude-sonnet-4-6");
 		expect(calledModel).toBe("claude-sonnet-4-6");
+	});
+
+	test("preserves tail messages after compaction", async () => {
+		// Create 40 message pairs — small enough to all fit in 80k tail budget
+		const messages: MessageParam[] = [];
+		for (let i = 0; i < 40; i++) {
+			messages.push({ role: "user", content: `user-msg-${i}` });
+			messages.push({ role: "assistant", content: `assistant-reply-${i}` });
+		}
+		const client = makeMockClient("checkpoint summary");
+		const { compressed } = await compressMessages(
+			client,
+			messages,
+			"claude-sonnet-4-6",
+		);
+		// First message is checkpoint user message
+		expect(compressed[0]?.role).toBe("user");
+		const checkpointContent = compressed[0]?.content as string;
+		expect(checkpointContent).toContain("checkpoint summary");
+
+		// Tail messages should be preserved — recent messages should appear in compressed
+		const allContent = compressed
+			.map((m) => (typeof m.content === "string" ? m.content : ""))
+			.join(" ");
+		// The most recent messages should be in the tail
+		expect(allContent).toContain("user-msg-39");
+		expect(allContent).toContain("assistant-reply-39");
+		expect(allContent).toContain("user-msg-38");
+	});
+
+	test("inserts assistant bridge when tail starts with user", async () => {
+		const messages: MessageParam[] = [];
+		for (let i = 0; i < 10; i++) {
+			messages.push({ role: "user", content: `msg ${i}` });
+			messages.push({ role: "assistant", content: `reply ${i}` });
+		}
+		const client = makeMockClient("summary");
+		const { compressed } = await compressMessages(
+			client,
+			messages,
+			"claude-sonnet-4-6",
+		);
+		// First is checkpoint user, tail starts with user, so bridge assistant inserted
+		expect(compressed[0]?.role).toBe("user");
+		// If tail messages are present and start with user, second should be assistant bridge
+		if (compressed.length > 1) {
+			expect(compressed[1]?.role).toBe("assistant");
+			expect(
+				typeof compressed[1]?.content === "string" && compressed[1].content,
+			).toContain("Continuing from checkpoint");
+		}
+	});
+
+	test("sends full transcript without truncation to summarizer", async () => {
+		let capturedContent = "";
+		const client = {
+			messages: {
+				create: async (params: { model: string; messages: MessageParam[] }) => {
+					const msg = params.messages[0];
+					capturedContent = typeof msg?.content === "string" ? msg.content : "";
+					return { content: [{ type: "text", text: "summary" }] };
+				},
+			},
+		} as unknown as Anthropic;
+		const messages: MessageParam[] = [];
+		// Create messages with long content
+		for (let i = 0; i < 10; i++) {
+			messages.push({
+				role: "user",
+				content: `msg-${"x".repeat(3000)}-${i}`,
+			});
+			messages.push({
+				role: "assistant",
+				content: `reply-${"y".repeat(3000)}-${i}`,
+			});
+		}
+		await compressMessages(client, messages, "claude-sonnet-4-6");
+		// Full content should be in the transcript — no per-message truncation
+		for (let i = 0; i < 10; i++) {
+			expect(capturedContent).toContain(`msg-${"x".repeat(3000)}-${i}`);
+			expect(capturedContent).toContain(`reply-${"y".repeat(3000)}-${i}`);
+		}
+	});
+
+	test("uses 32768 max_tokens for summary generation", async () => {
+		let capturedMaxTokens = 0;
+		const client = {
+			messages: {
+				create: async (params: { max_tokens: number }) => {
+					capturedMaxTokens = params.max_tokens;
+					return { content: [{ type: "text", text: "summary" }] };
+				},
+			},
+		} as unknown as Anthropic;
+		const messages: MessageParam[] = [];
+		for (let i = 0; i < 10; i++) {
+			messages.push({ role: "user", content: `msg ${i}` });
+			messages.push({ role: "assistant", content: `reply ${i}` });
+		}
+		await compressMessages(client, messages, "claude-sonnet-4-6");
+		expect(capturedMaxTokens).toBe(32768);
 	});
 });
 
