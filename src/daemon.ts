@@ -1212,6 +1212,36 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ ok: true });
 	});
 
+	// Restart orchestrator: stop current session, relaunch with resume:true
+	app.post("/projects/:id/restart", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const session = activeSessions.get(project.id);
+		if (!session) {
+			return c.json({ error: "No active agent to restart" }, 404);
+		}
+		// Save session ID before stopping
+		const tracker = trackers.get(project.id);
+		if (tracker && session.sessionId) {
+			tracker.orchestratorSessionId = session.sessionId;
+			await tracker.save();
+		}
+		session.stop();
+		activeSessions.delete(project.id);
+		activeOrchestrations.delete(project.id);
+		broadcastEvent(project.id, { type: "agent_stopped" });
+
+		// Relaunch with resume to pick up new config
+		launchAgent(project, {
+			prompt:
+				"Orchestrator restarted to pick up new config. Continue where you left off.",
+			resume: true,
+		});
+		return c.json({ ok: true });
+	});
+
 	// Clear session history for a project (useful when starting fresh after restart)
 	app.post("/projects/:id/sessions/clear", async (c) => {
 		const project = pm.get(c.req.param("id"));

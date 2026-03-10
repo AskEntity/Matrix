@@ -389,3 +389,11 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - Explicitly tells the summarizing AI that the resuming agent has no access to prior conversation
 - Strengthened Rejected Approaches section with explicit format: `"- Tried: X | Failed: Y | Do not retry: Z"`
 - Added search hints for finding failures: test failures, compile errors, "doesn't work", "failed", wrong approaches
+
+## Restart Orchestrator Endpoint
+
+- `POST /projects/:id/restart` — stops current agent, relaunches with `resume: true` so config changes take effect
+- Returns 404 if no active agent; returns `{ ok: true }` on success
+- `restartAgent()` available in `useAgent` hook
+- Restart button shown in settings panel only when agent is running
+- Test pattern: use a mock provider with `setTimeout(5000)` in events generator to keep session alive during test; call `markReady()` before orchestration requests

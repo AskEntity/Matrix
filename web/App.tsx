@@ -1334,6 +1334,7 @@ export function App() {
 		setModel: setAgentModel,
 		start,
 		stop,
+		restartAgent,
 		checkStatus,
 		continueTask,
 		deleteTask,
@@ -2062,6 +2063,27 @@ export function App() {
 							}
 						/>
 					</label>
+					{running && (
+						<div className="og-settings-field">
+							<span className="og-settings-label">
+								Restart to apply config changes
+							</span>
+							<button
+								type="button"
+								className="og-btn og-btn-warning og-btn-sm"
+								onClick={async () => {
+									try {
+										await restartAgent();
+										addLog("lifecycle", "Agent restarting…");
+									} catch (err) {
+										addLog("error", (err as Error).message);
+									}
+								}}
+							>
+								<IconRefresh size={12} /> Restart Agent
+							</button>
+						</div>
+					)}
 				</div>
 			)}
 
