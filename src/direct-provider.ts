@@ -119,7 +119,7 @@ export async function compressMessages(
 		.join("\n---\n");
 
 	// Context window is ~200k tokens. Reserve max_tokens for output, send the rest as input.
-	// ~160k tokens input ≈ ~640k chars. Keep tail (newest) if transcript exceeds this.
+	// ~160k tokens input ≈ ~640k chars. Truncate from head (keep newest) if transcript exceeds this.
 	const SUMMARY_MAX_TOKENS = 32768;
 	const TRANSCRIPT_CHAR_LIMIT = 640_000;
 	const transcriptForApi =
@@ -148,58 +148,12 @@ export async function compressMessages(
 			? summaryResponse.content[0].text
 			: "Failed to generate checkpoint";
 
-	// Keep tail messages (~80k chars / ~20k tokens) for recent context preservation
-	const TAIL_CHARS = 80_000;
-	let tailCharCount = 0;
-	let tailStartIdx = messages.length;
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const msg = messages[i];
-		if (!msg) continue;
-		const msgContent =
-			typeof msg.content === "string"
-				? msg.content
-				: JSON.stringify(msg.content);
-		tailCharCount += msgContent.length;
-		if (tailCharCount > TAIL_CHARS) break;
-		tailStartIdx = i;
-	}
-
-	// Ensure tail starts with a 'user' role message (for valid API alternation)
-	while (
-		tailStartIdx < messages.length &&
-		messages[tailStartIdx]?.role !== "user"
-	) {
-		tailStartIdx++;
-	}
-
-	// If the first user message has tool_result blocks, include the preceding assistant
-	// message (which has the corresponding tool_use blocks) to avoid orphaned tool_results
-	if (tailStartIdx > 0) {
-		const firstUser = messages[tailStartIdx];
-		if (firstUser && Array.isArray(firstUser.content)) {
-			const hasToolResult = firstUser.content.some(
-				(block) =>
-					typeof block === "object" &&
-					"type" in block &&
-					block.type === "tool_result",
-			);
-			if (hasToolResult) {
-				tailStartIdx--;
-			}
-		}
-	}
-
-	const tailMessages = messages.slice(tailStartIdx);
-
-	// Estimate saved tokens (~4 chars per token)
-	const oldChars = fullTranscript.length;
-	const tailChars = tailMessages.reduce((sum, m) => {
-		const c =
-			typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-		return sum + c.length;
-	}, 0);
-	const newChars = checkpoint.length + tailChars;
-	const savedTokens = Math.max(0, Math.floor((oldChars - newChars) / 4));
+	// Include recent conversation as text dump (~80k chars) for detailed context
+	const RECENT_CHARS = 80_000;
+	const recentTranscript =
+		fullTranscript.length > RECENT_CHARS
+			? fullTranscript.slice(-RECENT_CHARS)
+			: fullTranscript;
 
 	// Re-read fresh memory from disk (agent may have updated it during session)
 	let freshMemory = "";
@@ -212,7 +166,16 @@ export async function compressMessages(
 		}
 	}
 
-	// Rebuild from scratch: task context + fresh memory + checkpoint
+	// Estimate saved tokens (~4 chars per token)
+	const oldChars = fullTranscript.length;
+	const newChars =
+		checkpoint.length +
+		recentTranscript.length +
+		(taskContext?.length ?? 0) +
+		freshMemory.length;
+	const savedTokens = Math.max(0, Math.floor((oldChars - newChars) / 4));
+
+	// Build single user message: task context + memory + checkpoint + recent transcript
 	const parts: string[] = [];
 	if (taskContext) {
 		parts.push(`## Original Task\n${taskContext}`);
@@ -220,28 +183,17 @@ export async function compressMessages(
 	if (freshMemory) {
 		parts.push(`## Project Memory (fresh)\n${freshMemory}`);
 	}
+	parts.push(`## Checkpoint Summary\n\n${checkpoint}`);
 	parts.push(
-		`## Checkpoint (conversation compacted)\n\n${checkpoint}\n\nResume from this checkpoint. Your task is NOT done unless the checkpoint says "Current Phase: done". Continue working — check get_tree, follow the stimulus priority, and drive to completion. Do not repeat completed steps.`,
+		`## Recent Conversation (last ~${Math.round(recentTranscript.length / 1000)}k chars)\nThe following is a text transcript of the most recent conversation before compaction.\nThis gives you detailed context for what was happening right before the compaction.\n\n${recentTranscript}`,
+	);
+	parts.push(
+		"Resume from this checkpoint. Your task is NOT done unless the checkpoint says \"Current Phase: done\". Continue working — check get_tree, follow the stimulus priority, and drive to completion.",
 	);
 
 	const compressed: MessageParam[] = [
 		{ role: "user" as const, content: parts.join("\n\n---\n\n") },
 	];
-
-	// Append tail messages, inserting bridge if needed for valid alternation
-	if (tailMessages.length > 0) {
-		if (tailMessages[0]?.role === "user") {
-			// Insert assistant bridge to avoid user-user adjacency
-			compressed.push({
-				role: "assistant" as const,
-				content:
-					"Understood. Resuming from checkpoint — checking task state and continuing work.",
-			});
-		}
-		// If tail starts with assistant (backed up for tool_use), no bridge needed —
-		// checkpoint(user) → assistant → user alternation is already valid
-		compressed.push(...tailMessages);
-	}
 
 	return { compressed, savedTokens, checkpoint };
 }
