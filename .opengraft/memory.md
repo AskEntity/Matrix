@@ -148,3 +148,12 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 - `composingRef` alone is insufficient — some IME candidate selections (e.g., English words in Chinese IME) bypass composition events entirely.
 - `e.keyCode === 229` is the most reliable IME detection: browsers set it for ALL IME-related key events. Despite being deprecated, it is universally supported and the only reliable method.
 - Belt-and-suspenders: check `composingRef.current`, `e.nativeEvent.isComposing`, AND `e.keyCode !== 229`.
+
+## Card Title Overhaul (activity log)
+- `getToolCardTitle(toolName, argsStr, resultContent)` generates descriptive titles with emoji icons for all tools.
+- `extractArg(argsStr, key)` parses the `key=value, key=value` format, handles JSON arrays/objects with bracket balancing.
+- `isTitleOnlyCard(toolName, argsStr)` determines which MCP tools show title-only (no expand/collapse): get_tree, yield, delete_task, update_task_status, report_to_parent (if msg ≤80 chars).
+- `localizeToolName()` and `IconTerminal` removed (replaced by `getToolCardTitle` and emoji-based titles).
+- `send_message_to_child` and `report_to_parent` added to McpToolCardBody switch for expanded body rendering.
+- `task_started`, `task_completed`, `queue_message` now render as card-like structures instead of plain text.
+- yield tool i18n key changed from "Yield (Wait)"/"等待消息" to just "yield" in both en/zh.
