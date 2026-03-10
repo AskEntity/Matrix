@@ -111,3 +111,7 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 
 - Usage events emitted after every API response using `response.usage.input_tokens`.
 - Tracked per-taskId in frontend; root orchestrator under PROJECT_NODE_ID key.
+
+## Compaction Fix (2026-03-10)
+- **Bug**: `compressMessages()` returned `[user(checkpoint), assistant(ack)]`. The assistant ack caused the API call to fail because the Anthropic API rejects messages ending with assistant role.
+- **Fix**: Removed the assistant ack. Compressed messages now return only `[user(checkpoint)]`. The model generates a fresh response from the checkpoint context.
