@@ -1320,6 +1320,7 @@ select {
 	border: 1px solid rgba(56, 139, 253, 0.25);
 	padding: 0px 6px;
 	border-radius: var(--radius-sm);
+	margin-right: 6px;
 }
 
 .og-tool-args {
