@@ -160,6 +160,11 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 
 
 ## Icon Simplification (activity log)
-- Replaced all emoji icons (📄✏️🔍📁➕🗑️💬📤❓🌳📋✅❌) with simple unicode/text symbols.
+- Replaced all emoji icons with simple unicode/text symbols.
 - File tools (read_file, write_file, edit_file): just filename, no icon.
 - `isPassed` check for task_completed entries: now checks both `startsWith("✓")` and `includes(" passed")` to handle child_complete queue messages.
+
+## Compaction Streaming Fix (timeout)
+- **Problem**: `client.messages.create()` times out after 10 minutes for large compaction summaries (32k max_tokens, ~160k token input).
+- **Fix**: Use `client.messages.stream({...}).finalMessage()` — streams internally but returns the complete `Message` object, same shape as `create()`.
+- **Test mocks**: `messages.stream` is a synchronous function (not async) that returns `{ finalMessage: async () => response }`. Three inline mock clients in the test needed updating alongside `makeMockClient`.

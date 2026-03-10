@@ -551,8 +551,10 @@ describe("compressMessages", () => {
 	function makeMockClient(summaryText: string) {
 		return {
 			messages: {
-				create: async () => ({
-					content: [{ type: "text", text: summaryText }],
+				stream: () => ({
+					finalMessage: async () => ({
+						content: [{ type: "text", text: summaryText }],
+					}),
 				}),
 			},
 		} as unknown as Anthropic;
@@ -622,9 +624,13 @@ describe("compressMessages", () => {
 		let calledModel = "";
 		const client = {
 			messages: {
-				create: async (params: { model: string }) => {
+				stream: (params: { model: string }) => {
 					calledModel = params.model;
-					return { content: [{ type: "text", text: "summary" }] };
+					return {
+						finalMessage: async () => ({
+							content: [{ type: "text", text: "summary" }],
+						}),
+					};
 				},
 			},
 		} as unknown as Anthropic;
@@ -692,10 +698,14 @@ describe("compressMessages", () => {
 		let capturedContent = "";
 		const client = {
 			messages: {
-				create: async (params: { model: string; messages: MessageParam[] }) => {
+				stream: (params: { model: string; messages: MessageParam[] }) => {
 					const msg = params.messages[0];
 					capturedContent = typeof msg?.content === "string" ? msg.content : "";
-					return { content: [{ type: "text", text: "summary" }] };
+					return {
+						finalMessage: async () => ({
+							content: [{ type: "text", text: "summary" }],
+						}),
+					};
 				},
 			},
 		} as unknown as Anthropic;
@@ -723,9 +733,13 @@ describe("compressMessages", () => {
 		let capturedMaxTokens = 0;
 		const client = {
 			messages: {
-				create: async (params: { max_tokens: number }) => {
+				stream: (params: { max_tokens: number }) => {
 					capturedMaxTokens = params.max_tokens;
-					return { content: [{ type: "text", text: "summary" }] };
+					return {
+						finalMessage: async () => ({
+							content: [{ type: "text", text: "summary" }],
+						}),
+					};
 				},
 			},
 		} as unknown as Anthropic;
