@@ -375,3 +375,17 @@ DirectProvider estimates token counts from `usage.input_tokens + usage.output_to
 - Help text now includes a "Config" section with all three subcommands and known keys list
 - `printConfig()` helper in cli.ts reads env vars OG_MODEL / ANTHROPIC_MODEL for default model display
 - `maxDepth` is now in ProjectConfig and wired through OrchestratorToolsDeps → agent-tools.ts (default: 3)
+
+## ANTHROPIC_MODEL env var support
+
+`daemon.ts` now respects `ANTHROPIC_MODEL` as a fallback when `OG_MODEL` is not set. Priority:
+- `OG_MODEL` env var > `ANTHROPIC_MODEL` env var > "claude-sonnet-4-6" hardcoded default
+- `resolveDefaultModel()` helper function in daemon.ts handles this logic
+- Applies to: DirectProvider creation, orchestration_started event, GET /agent response, launchAgent model resolution
+
+## Checkpoint Prompt Improvement
+
+Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider.ts`:
+- Explicitly tells the summarizing AI that the resuming agent has no access to prior conversation
+- Strengthened Rejected Approaches section with explicit format: `"- Tried: X | Failed: Y | Do not retry: Z"`
+- Added search hints for finding failures: test failures, compile errors, "doesn't work", "failed", wrong approaches
