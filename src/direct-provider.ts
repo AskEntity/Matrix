@@ -4,10 +4,11 @@ import {
 	mkdirSync,
 	readFileSync,
 	realpathSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
@@ -344,7 +345,7 @@ const TOOLS: Tool[] = [
 	{
 		name: "search",
 		description:
-			'Search for a regex pattern across files using ripgrep. Use output_mode="files_with_matches" to find which files contain a pattern, then read_file those files. Use output_mode="content" with context lines when you need to see surrounding code.',
+			'A powerful regex search tool. ALWAYS use this for search tasks — NEVER invoke grep or rg via bash. Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+"). The path parameter accepts a directory or a single file. Filter files with glob parameter (e.g., "*.ts", "*.{ts,tsx}"). Output modes: "content" (default) shows matching lines with line numbers, "files_with_matches" shows only file paths (fast discovery), "count" shows match counts per file.',
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -378,6 +379,11 @@ const TOOLS: Tool[] = [
 				case_insensitive: {
 					type: "boolean",
 					description: "Case-insensitive search (default: false)",
+				},
+				multiline: {
+					type: "boolean",
+					description:
+						"Enable multiline matching with RegExp 's' flag, allowing '.' to match newlines (default: false). NOTE: not yet implemented — reserved for future use.",
 				},
 			},
 			required: ["pattern"],
@@ -437,13 +443,24 @@ export async function jsSearch(opts: {
 	} = opts;
 
 	const regex = new RegExp(pattern, caseInsensitive ? "i" : "");
-	const absSearchPath = isAbsolute(searchPath)
+	let absSearchPath = isAbsolute(searchPath)
 		? searchPath
 		: join(baseCwd, searchPath);
 
-	// Discover files
+	// Discover files — handle path pointing to a file vs directory
+	let adjustedSearchPath = searchPath;
+	const pathStat = statSync(absSearchPath, { throwIfNoEntry: false });
 	let files: string[];
-	if (glob) {
+	if (pathStat?.isFile()) {
+		// Single file mode — path points to a file, not a directory
+		files = [basename(absSearchPath)];
+		absSearchPath = dirname(absSearchPath);
+		adjustedSearchPath = isAbsolute(searchPath)
+			? dirname(searchPath)
+			: dirname(searchPath) === "."
+				? ""
+				: dirname(searchPath);
+	} else if (glob) {
 		// Use Bun.Glob to match files within searchPath
 		const g = new Bun.Glob(glob);
 		files = Array.from(g.scanSync({ cwd: absSearchPath, onlyFiles: true }));
@@ -469,7 +486,11 @@ export async function jsSearch(opts: {
 		const filePath = join(absSearchPath, relFile);
 		// Compute display path relative to baseCwd
 		const displayPath =
-			absSearchPath === baseCwd ? relFile : join(searchPath, relFile);
+			absSearchPath === baseCwd
+				? relFile
+				: adjustedSearchPath
+					? join(adjustedSearchPath, relFile)
+					: relFile;
 
 		let content: string;
 		try {
@@ -796,6 +817,8 @@ export async function executeTool(
 			const outputMode = (input.output_mode as string) ?? "content";
 			const headLimit = Math.min((input.head_limit as number) ?? 50, 200);
 			const caseInsensitive = (input.case_insensitive as boolean) ?? false;
+			// TODO: implement multiline search — currently jsSearch uses line-by-line matching,
+			// so the 'multiline' param (input.multiline) is accepted in the schema but ignored here.
 
 			try {
 				const result = await jsSearch({

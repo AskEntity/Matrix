@@ -155,6 +155,17 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Fix: emit usage event after API response using `response.usage.input_tokens` (always, unconditionally).
 - Compression check remains pre-call gated on `messages.length > 4` — these are separate concerns.
 
+## jsSearch Single-File Path Fix
+- `jsSearch()` crashed with ENOTDIR when `path` pointed to a file instead of a directory (e.g. `path: "src/daemon.ts"`).
+- Fix: `statSync` check before glob scan. If file, set `files = [basename]` and `absSearchPath = dirname`.
+- Also need `adjustedSearchPath` for correct `displayPath` computation — the original `searchPath` string would produce bad joins like `"src/daemon.ts/daemon.ts"`.
+- When `dirname(searchPath) === "."` (file in cwd root), set `adjustedSearchPath = ""` to avoid `"./filename"` display paths.
+
+## Tool Result Truncation Removal
+- Removed 200-char `.slice(0, 200)` from WS handler tool_result creation — full content now stored in activity log state.
+- Display truncation in LogEntryView increased from 120 to 500 chars for raw (non-MCP-formatted) results.
+- Regex fallbacks in `formatMcpToolResult` for `execute_tasks` (spawnedMatch) and `get_tree` (idMatches) removed — no longer needed since full JSON is available for parsing.
+
 ## Root Orchestrator Lifecycle Simplification
 - Removed `activeOrchestrations` Set — `activeSessions` Map is the single source of truth for running state.
 - All `launchAgent()` callers now `await` it so `activeSessions.set()` completes before the caller returns, closing the race condition window that `activeOrchestrations.add()` previously covered.
