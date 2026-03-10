@@ -168,3 +168,9 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 - **Problem**: `client.messages.create()` times out after 10 minutes for large compaction summaries (32k max_tokens, ~160k token input).
 - **Fix**: Use `client.messages.stream({...}).finalMessage()` — streams internally but returns the complete `Message` object, same shape as `create()`.
 - **Test mocks**: `messages.stream` is a synchronous function (not async) that returns `{ finalMessage: async () => response }`. Three inline mock clients in the test needed updating alongside `makeMockClient`.
+
+
+## Compaction: Orphaned tool_result Fix
+- **Bug**: Tail preservation could start at a user message containing `tool_result` blocks without the preceding assistant `tool_use` blocks, causing API error "unexpected tool_use_id found in tool_result blocks".
+- **Fix**: After finding the first user message in the tail, check if it has `tool_result` blocks. If so, back up `tailStartIdx` by 1 to include the preceding assistant message with corresponding `tool_use` blocks. The bridge assistant message is only inserted when tail starts with `user` role — when tail starts with `assistant` (backed up), alternation is already valid.
+- **Test tip**: To test tail boundary behavior, create messages large enough (~100k chars total) to exceed the 80k tail budget, forcing the tail to start mid-conversation.
