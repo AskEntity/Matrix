@@ -154,3 +154,9 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - The reported inputTokens was `estimatedInputTokens` from the previous turn (starts at 0), not actual.
 - Fix: emit usage event after API response using `response.usage.input_tokens` (always, unconditionally).
 - Compression check remains pre-call gated on `messages.length > 4` — these are separate concerns.
+
+## Root Orchestrator Lifecycle Simplification
+- Removed `activeOrchestrations` Set — `activeSessions` Map is the single source of truth for running state.
+- All `launchAgent()` callers now `await` it so `activeSessions.set()` completes before the caller returns, closing the race condition window that `activeOrchestrations.add()` previously covered.
+- `autoResume` is now cleared on normal completion (try block) when the session is still the active one, preventing unnecessary auto-resume after successful orchestration.
+- Removed duplicate `/run` endpoint — use `/orchestrate/agent` exclusively.

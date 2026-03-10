@@ -111,7 +111,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	});
 	const pm = new ProjectManager(config.dataDir);
 	const trackers = new Map<string, TaskTracker>();
-	const activeOrchestrations = new Set<string>();
 	/** Guard against concurrent restart requests for the same project. */
 	const restartingProjects = new Set<string>();
 	const wsClients = new Set<WSClient>();
@@ -922,31 +921,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	});
 
-	// Agent execution (fire-and-forget, same as orchestrate)
-	app.post("/projects/:id/run", async (c) => {
-		if (!startupReady) {
-			return c.json({ error: "Server starting up, please wait..." }, 503);
-		}
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const body = await c.req.json<{
-			prompt: string;
-			model?: string;
-			childModel?: string;
-		}>();
-		if (!body.prompt) {
-			return c.json({ error: "prompt is required" }, 400);
-		}
-		if (activeOrchestrations.has(project.id)) {
-			return c.json({ error: "Agent already running for this project" }, 409);
-		}
-		await getTracker(project.id);
-		launchAgent(project, body);
-		return c.json({ status: "running", projectId: project.id });
-	});
-
 	/**
 	 * Launch an agent for a project. Returns immediately.
 	 * The agent runs in the background; observe via WebSocket.
@@ -963,8 +937,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	) {
 		const tracker = trackers.get(project.id);
 		if (!tracker) return;
-
-		activeOrchestrations.add(project.id);
 
 		// Load project config for model defaults
 		const projectCfg = await loadProjectConfig(config.dataDir, project.id);
@@ -1086,6 +1058,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					},
 				});
 				broadcastTreeUpdate(project.id, tracker);
+
+				// Clear auto-resume on normal completion (not during restart)
+				if (activeSessions.get(project.id) === session) {
+					tracker.autoResume = false;
+				}
 			} catch (e) {
 				const message = e instanceof Error ? e.message : "Unknown error";
 				broadcastEvent(project.id, {
@@ -1101,7 +1078,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				// During restart, a new session replaces us — don't clobber it.
 				if (activeSessions.get(project.id) === session) {
 					activeSessions.delete(project.id);
-					activeOrchestrations.delete(project.id);
 				}
 			}
 		})();
@@ -1126,12 +1102,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "prompt is required" }, 400);
 		}
 
-		if (activeOrchestrations.has(project.id)) {
+		if (activeSessions.has(project.id)) {
 			return c.json({ error: "Agent already running for this project" }, 409);
 		}
 
 		await getTracker(project.id);
-		launchAgent(project, body);
+		await launchAgent(project, body);
 
 		return c.json({ status: "running", projectId: project.id });
 	});
@@ -1156,12 +1132,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 		const project = await pm.ensureProject(body.path);
 
-		if (activeOrchestrations.has(project.id)) {
+		if (activeSessions.has(project.id)) {
 			return c.json({ error: "Agent already running for this project" }, 409);
 		}
 
 		await getTracker(project.id);
-		launchAgent(project, body);
+		await launchAgent(project, body);
 		return c.json({ status: "running", projectId: project.id });
 	});
 
@@ -1221,7 +1197,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 		session.stop();
 		activeSessions.delete(project.id);
-		activeOrchestrations.delete(project.id);
 		broadcastEvent(project.id, { type: "agent_stopped" });
 		return c.json({ ok: true });
 	});
@@ -1254,11 +1229,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				// session.stop() may throw if already stopped — safe to ignore
 			}
 			activeSessions.delete(project.id);
-			activeOrchestrations.delete(project.id);
 			broadcastEvent(project.id, { type: "agent_stopped" });
 
 			// Relaunch with resume to pick up new config
-			launchAgent(project, {
+			await launchAgent(project, {
 				prompt:
 					"Orchestrator restarted to pick up new config. Continue where you left off.",
 				resume: true,
@@ -1508,15 +1482,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							}
 							// Trigger orchestration via launchAgent (fire-and-forget)
 							const proj = pm.get(msg.projectId);
-							if (proj && !activeOrchestrations.has(msg.projectId)) {
-								getTracker(msg.projectId).then(() => {
-									launchAgent(proj, {
+							if (proj && !activeSessions.has(msg.projectId)) {
+								getTracker(msg.projectId).then(async () => {
+									await launchAgent(proj, {
 										prompt: msg.prompt as string,
 										model: msg.model,
 										childModel: msg.childModel,
 									});
 								});
-							} else if (activeOrchestrations.has(msg.projectId)) {
+							} else if (activeSessions.has(msg.projectId)) {
 								ws.send(
 									JSON.stringify({
 										type: "error",
@@ -1648,7 +1622,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						? ` Note: ${orphanCount} in_progress task(s) were reset to failed because their agent sessions were lost during the restart — check the task tree.`
 						: " Check the task tree and proceed."
 				}`;
-				launchAgent(project, {
+				await launchAgent(project, {
 					prompt: resumePrompt,
 					resume: true,
 				});
@@ -1667,7 +1641,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			session.stop();
 		}
 		activeSessions.clear();
-		activeOrchestrations.clear();
 		await flushEvents();
 	}
 
