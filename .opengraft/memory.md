@@ -174,3 +174,11 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 - **Bug**: Tail preservation could start at a user message containing `tool_result` blocks without the preceding assistant `tool_use` blocks, causing API error "unexpected tool_use_id found in tool_result blocks".
 - **Fix**: After finding the first user message in the tail, check if it has `tool_result` blocks. If so, back up `tailStartIdx` by 1 to include the preceding assistant message with corresponding `tool_use` blocks. The bridge assistant message is only inserted when tail starts with `user` role — when tail starts with `assistant` (backed up), alternation is already valid.
 - **Test tip**: To test tail boundary behavior, create messages large enough (~100k chars total) to exceed the 80k tail budget, forcing the tail to start mid-conversation.
+
+## Activity Log Card Fixes (batch)
+- **Title-only ✓ duplicate**: Removed separate status span from title-only card headers since `getToolCardTitle()` already includes ✓/✗ for done cards.
+- **create_task expansion**: Gate `mcpBody` behind `expanded &&` in ToolCard render. Removed `expanded` prop from McpToolCardBody.
+- **File tool prefixes**: read_file → `→ file`, write_file → `← file`, edit_file → `✎ file`.
+- **execute_tasks icon**: `⚡` instead of `▶`. **delete_task icon**: `✕` instead of `✂`.
+- **Bash filter toggle**: `hideBash` state in ActivityLog, toggle button. i18n keys: `log.hideBash`/`log.showBash`.
+- **Compact shimmer opacity**: Boosted from `0.15` to `0.3`.

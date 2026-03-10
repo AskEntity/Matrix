@@ -203,6 +203,8 @@ const en: Translations = {
 	"log.yieldWaiting": "Waiting for messages",
 	"log.yieldReceived": "Received messages",
 	"log.tasks": "tasks",
+	"log.hideBash": "Hide $",
+	"log.showBash": "Show $",
 
 	// Tool names (MCP)
 	"tools.mcp__opengraft__get_tree": "Get Tree",
@@ -426,6 +428,8 @@ const zh: Translations = {
 	"log.yieldWaiting": "等待消息中",
 	"log.yieldReceived": "收到消息",
 	"log.tasks": "个任务",
+	"log.hideBash": "隐藏 $",
+	"log.showBash": "显示 $",
 
 	// Tool names (MCP)
 	"tools.mcp__opengraft__get_tree": "查看任务树",
