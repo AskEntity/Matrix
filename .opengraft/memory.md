@@ -115,3 +115,10 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Badge shows in footer form, picks active task by priority: targetNodeId > selected task > first in_progress root task.
 - Color thresholds: green (<50%), yellow (50-80%), red (>80%) based on inputTokens/contextWindow ratio.
 - Light mode has separate color overrides for the badge.
+
+## SVG Cat Component
+
+- CuteCat uses inline SVG (viewBox 0 0 100 120) instead of CSS border tricks.
+- SVG needs `<title>` + `role="img"` + `aria-label` to pass biome a11y lint.
+- Animations use CSS on SVG class names: `.og-cat-eye` (blink), `.og-cat-tail` (wag), `.og-cat-paw-l`/`.og-cat-paw-r` (typing).
+- `.og-cat-typing` class on wrapper div triggers paw animations on keydown.
