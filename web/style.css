@@ -1845,16 +1845,16 @@ select {
    ========================================================= */
 
 .og-settings-panel {
-	position: absolute;
-	top: var(--header-h);
+	position: fixed;
+	top: var(--header-height);
 	right: 0;
 	width: 280px;
-	background: var(--bg-secondary);
+	background: var(--bg-surface);
 	border-left: 1px solid var(--border);
 	border-bottom: 1px solid var(--border);
 	border-radius: 0 0 0 var(--radius-md);
 	padding: 12px 14px;
-	z-index: 100;
+	z-index: 200;
 	box-shadow: -2px 4px 12px rgba(0, 0, 0, 0.2);
 }
 
