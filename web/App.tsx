@@ -3201,7 +3201,13 @@ function AppInner() {
 							}, 0);
 						}}
 						onKeyDown={(e) => {
-							if (e.key === "Enter" && !e.shiftKey && !composingRef.current) {
+							if (
+								e.key === "Enter" &&
+								!e.shiftKey &&
+								!composingRef.current &&
+								!e.nativeEvent.isComposing &&
+								e.keyCode !== 229
+							) {
 								e.preventDefault();
 								handleSubmit(e);
 							}
