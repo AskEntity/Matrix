@@ -751,6 +751,102 @@ describe("compressMessages", () => {
 		await compressMessages(client, messages, "claude-sonnet-4-6");
 		expect(capturedMaxTokens).toBe(32768);
 	});
+
+	test("includes preceding assistant tool_use when tail starts with user tool_result", async () => {
+		// Create messages where the tail window boundary falls right before a
+		// user message with tool_result blocks. We need enough content so that
+		// the 80k char tail budget doesn't include the entire conversation.
+		const messages: MessageParam[] = [];
+
+		// Fill with large messages that exceed the 80k tail budget
+		// Each pair ~20k chars, so 5 pairs = ~100k chars total; tail keeps ~80k
+		for (let i = 0; i < 5; i++) {
+			messages.push({
+				role: "user",
+				content: `early msg ${i} ${"x".repeat(10000)}`,
+			});
+			messages.push({
+				role: "assistant",
+				content: `early reply ${i} ${"y".repeat(10000)}`,
+			});
+		}
+
+		// Now add the critical sequence: assistant with tool_use, then user with tool_result
+		messages.push({
+			role: "assistant",
+			content: [
+				{
+					type: "tool_use",
+					id: "toolu_test123",
+					name: "bash",
+					input: { command: "ls" },
+				},
+			],
+		});
+		messages.push({
+			role: "user",
+			content: [
+				{
+					type: "tool_result",
+					tool_use_id: "toolu_test123",
+					content: "file1.txt",
+				},
+			],
+		});
+		messages.push({ role: "assistant", content: "here are the files" });
+		messages.push({ role: "user", content: "thanks" });
+		messages.push({ role: "assistant", content: "you're welcome" });
+
+		const client = makeMockClient("checkpoint summary");
+		const { compressed } = await compressMessages(
+			client,
+			messages,
+			"claude-sonnet-4-6",
+		);
+
+		// First message is checkpoint user message
+		expect(compressed[0]?.role).toBe("user");
+		const checkpointContent = compressed[0]?.content as string;
+		expect(checkpointContent).toContain("checkpoint summary");
+
+		// Verify no orphaned tool_results: every tool_result must have a
+		// preceding assistant message with the corresponding tool_use
+		for (let i = 1; i < compressed.length; i++) {
+			const msg = compressed[i];
+			if (!msg || !Array.isArray(msg.content)) continue;
+			const hasToolResult = msg.content.some(
+				(b) =>
+					typeof b === "object" &&
+					"type" in b &&
+					b.type === "tool_result",
+			);
+			if (hasToolResult) {
+				// The preceding message must be an assistant with tool_use
+				const prev = compressed[i - 1];
+				expect(prev?.role).toBe("assistant");
+				expect(Array.isArray(prev?.content)).toBe(true);
+				if (Array.isArray(prev?.content)) {
+					const hasToolUse = prev.content.some(
+						(b) =>
+							typeof b === "object" &&
+							"type" in b &&
+							b.type === "tool_use",
+					);
+					expect(hasToolUse).toBe(true);
+				}
+			}
+		}
+
+		// Also verify the tail contains the tool_result message
+		const allContent = compressed
+			.map((m) =>
+				typeof m.content === "string"
+					? m.content
+					: JSON.stringify(m.content),
+			)
+			.join(" ");
+		expect(allContent).toContain("toolu_test123");
+	});
 });
 
 describe("zodShapeToJsonSchema", () => {

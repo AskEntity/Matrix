@@ -172,6 +172,21 @@ export async function compressMessages(
 		tailStartIdx++;
 	}
 
+	// If the first user message has tool_result blocks, include the preceding assistant
+	// message (which has the corresponding tool_use blocks) to avoid orphaned tool_results
+	if (tailStartIdx > 0) {
+		const firstUser = messages[tailStartIdx];
+		if (firstUser && Array.isArray(firstUser.content)) {
+			const hasToolResult = firstUser.content.some(
+				(block) =>
+					typeof block === "object" && "type" in block && block.type === "tool_result",
+			);
+			if (hasToolResult) {
+				tailStartIdx--;
+			}
+		}
+	}
+
 	const tailMessages = messages.slice(tailStartIdx);
 
 	// Estimate saved tokens (~4 chars per token)
@@ -220,6 +235,8 @@ export async function compressMessages(
 				content: "Continuing from checkpoint with preserved recent context.",
 			});
 		}
+		// If tail starts with assistant (backed up for tool_use), no bridge needed —
+		// checkpoint(user) → assistant → user alternation is already valid
 		compressed.push(...tailMessages);
 	}
 
