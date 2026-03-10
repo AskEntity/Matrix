@@ -221,3 +221,9 @@ Key changes to address agent behavioral issues:
 - Clicking a selected task deselects it back to root, not null.
 - Orchestrator node click always selects (no toggle off).
 - Sidebar filter chip and activity subtitle only shown for child tasks (root is the implicit default).
+
+## Queue Message Multiline Fix
+- `queue_message` entries in activity log now properly display multiline content.
+- Previously, expanded long messages replaced header text inside `og-tool-card-name` (which has `white-space: nowrap`), collapsing newlines.
+- Fix: header always shows single-line preview; expanded content uses `og-mcp-task-desc` (has `white-space: pre-wrap`) in a body div below the header.
+- Messages with `\n` are now treated as expandable regardless of length.
