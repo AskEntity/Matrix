@@ -154,3 +154,9 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - The reported inputTokens was `estimatedInputTokens` from the previous turn (starts at 0), not actual.
 - Fix: emit usage event after API response using `response.usage.input_tokens` (always, unconditionally).
 - Compression check remains pre-call gated on `messages.length > 4` — these are separate concerns.
+
+## jsSearch Single-File Path Fix
+- `jsSearch()` crashed with ENOTDIR when `path` pointed to a file instead of a directory (e.g. `path: "src/daemon.ts"`).
+- Fix: `statSync` check before glob scan. If file, set `files = [basename]` and `absSearchPath = dirname`.
+- Also need `adjustedSearchPath` for correct `displayPath` computation — the original `searchPath` string would produce bad joins like `"src/daemon.ts/daemon.ts"`.
+- When `dirname(searchPath) === "."` (file in cwd root), set `adjustedSearchPath = ""` to avoid `"./filename"` display paths.
