@@ -269,6 +269,13 @@ export function useAgent(projectId: string) {
 		[projectId],
 	);
 
+	const restartAgent = useCallback(async () => {
+		const res = await fetch(`/projects/${projectId}/restart`, {
+			method: "POST",
+		});
+		if (!res.ok) throw new Error((await res.json()).error);
+	}, [projectId]);
+
 	const sendMessageToTask = useCallback(
 		async (taskId: string, content: string) => {
 			const res = await fetch(
@@ -293,6 +300,7 @@ export function useAgent(projectId: string) {
 		setModel,
 		start,
 		stop,
+		restartAgent,
 		checkStatus,
 		continueTask,
 		deleteTask,

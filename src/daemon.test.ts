@@ -2647,3 +2647,130 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 		expect(body.messages[99]?.content).toBe("Message 109");
 	});
 });
+
+describe("POST /projects/:id/restart", () => {
+	let dataDir: string;
+	let projectDir: string;
+
+	beforeEach(async () => {
+		dataDir = await mkdtemp(join(tmpdir(), "og-restart-"));
+		projectDir = await mkdtemp(join(tmpdir(), "og-restart-proj-"));
+		await mkdir(join(projectDir, ".git"), { recursive: true });
+	});
+
+	afterEach(async () => {
+		await rm(dataDir, { recursive: true, force: true });
+		await rm(projectDir, { recursive: true, force: true });
+	});
+
+	test("returns 404 when project not found", async () => {
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+		const res = await app.request("/projects/nonexistent/restart", {
+			method: "POST",
+		});
+		expect(res.status).toBe(404);
+		const body = await res.json();
+		expect(body.error).toBe("Project not found");
+	});
+
+	test("returns 404 when no active agent", async () => {
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const proj = (await projRes.json()) as Project;
+
+		const res = await app.request(`/projects/${proj.id}/restart`, {
+			method: "POST",
+		});
+		expect(res.status).toBe(404);
+		const body = await res.json();
+		expect(body.error).toBe("No active agent to restart");
+	});
+
+	test("restarts a running agent and returns ok", async () => {
+		let sessionCount = 0;
+		const restartProvider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				sessionCount++;
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					// Keep the session alive long enough for the restart test
+					await new Promise((resolve) => setTimeout(resolve, 5000));
+					return {
+						success: true,
+						output: "",
+						sessionId: `session-${sessionCount}`,
+					};
+				}
+				return {
+					sessionId: `session-${sessionCount}`,
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: restartProvider,
+		});
+		await pm.load();
+		markReady();
+
+		// Create project
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const proj = (await projRes.json()) as Project;
+
+		// Start orchestration
+		const startRes = await app.request(
+			`/projects/${proj.id}/orchestrate/agent`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ prompt: "test" }),
+			},
+		);
+		expect(startRes.status).toBe(200);
+
+		// Wait briefly for agent to start
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(sessionCount).toBe(1);
+
+		// Restart
+		const restartRes = await app.request(`/projects/${proj.id}/restart`, {
+			method: "POST",
+		});
+		expect(restartRes.status).toBe(200);
+		const body = await restartRes.json();
+		expect(body.ok).toBe(true);
+
+		// Wait for new session to start
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect(sessionCount).toBe(2);
+
+		// Stop the agent to clean up
+		const stopRes = await app.request(`/projects/${proj.id}/stop`, {
+			method: "POST",
+		});
+		expect(stopRes.status).toBe(200);
+	});
+});
