@@ -582,9 +582,11 @@ export function ToolCard({
 						<span className="og-tool-card-name">
 							{getToolCardTitle(toolName, argsStr, resultContent)}
 						</span>
-						<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
-							{isErr ? "✗" : "✓"}
-						</span>
+						{toolName !== "mcp__opengraft__done" && (
+							<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
+								{isErr ? "✗" : "✓"}
+							</span>
+						)}
 						<span className="og-tool-card-toggle">
 							<IconChevron size={10} expanded={expanded} />
 						</span>
@@ -701,9 +703,11 @@ export function LogEntryView({
 						<span className="og-tool-card-name">
 							{getToolCardTitle(toolName, "", content)}
 						</span>
-						<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
-							{isErr ? "✗" : "✓"}
-						</span>
+						{toolName !== "mcp__opengraft__done" && (
+							<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
+								{isErr ? "✗" : "✓"}
+							</span>
+						)}
 					</div>
 					{content && !isTitleOnlyCard(toolName, "") && (
 						<div className="og-tool-card-body">
