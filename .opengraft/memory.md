@@ -227,3 +227,8 @@ Key changes to address agent behavioral issues:
 - Previously, expanded long messages replaced header text inside `og-tool-card-name` (which has `white-space: nowrap`), collapsing newlines.
 - Fix: header always shows single-line preview; expanded content uses `og-mcp-task-desc` (has `white-space: pre-wrap`) in a body div below the header.
 - Messages with `\n` are now treated as expandable regardless of length.
+
+## Autonomous Mode (2026-03-12)
+- Running in autonomous improvement mode. Focus: stability, code quality, remove bad patterns, careful new features.
+- Self-restart daemon after changes. Run full tests before merging.
+- User preferences: clean UI, no clutter, consistent card styling, readable at a glance.
