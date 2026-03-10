@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -466,6 +466,44 @@ describe("executeTool", () => {
 			.filter((l) => l.includes("const"));
 		expect(matchLines.length).toBe(5);
 		expect(result.content).toContain("[... truncated at 5 entries]");
+	});
+
+	test("search: glob with path separator finds matches", async () => {
+		// Create a nested file structure
+		const subDir = join(tempDir, "sub");
+		await mkdir(subDir, { recursive: true });
+		await writeFile(join(subDir, "target.ts"), "const found = true;\n");
+		await writeFile(join(tempDir, "other.ts"), "const found = false;\n");
+
+		// Glob with path separator: "sub/target.ts"
+		const result = await executeTool(
+			"search",
+			{ pattern: "found", path: tempDir, glob: "sub/target.ts" },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("found");
+		// Should only match the file in sub/, not other.ts
+		expect(result.content).not.toContain("other.ts");
+	});
+
+	test("search: glob with path wildcard narrows to subdirectory", async () => {
+		const subDir = join(tempDir, "src");
+		await mkdir(subDir, { recursive: true });
+		await writeFile(join(subDir, "a.ts"), "hello world\n");
+		await writeFile(join(subDir, "b.js"), "hello world\n");
+		await writeFile(join(tempDir, "c.ts"), "hello world\n");
+
+		// Glob "src/*.ts" should match only src/a.ts
+		const result = await executeTool(
+			"search",
+			{ pattern: "hello", path: tempDir, glob: "src/*.ts" },
+			tempDir,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("a.ts");
+		expect(result.content).not.toContain("b.js");
+		expect(result.content).not.toContain("c.ts");
 	});
 
 	test("unknown tool: returns error", async () => {
