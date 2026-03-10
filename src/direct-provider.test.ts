@@ -24,8 +24,8 @@ import type { AgentResult } from "./types.ts";
 describe("getModelPricing", () => {
 	test("returns Opus pricing for opus models", () => {
 		const pricing = getModelPricing("claude-opus-4-6");
-		expect(pricing.inputPer1M).toBe(15);
-		expect(pricing.outputPer1M).toBe(75);
+		expect(pricing.inputPer1M).toBe(5);
+		expect(pricing.outputPer1M).toBe(25);
 	});
 
 	test("returns Sonnet pricing for sonnet models", () => {
@@ -36,8 +36,8 @@ describe("getModelPricing", () => {
 
 	test("returns Haiku pricing for haiku models", () => {
 		const pricing = getModelPricing("claude-haiku-4-5-20251001");
-		expect(pricing.inputPer1M).toBe(0.8);
-		expect(pricing.outputPer1M).toBe(4);
+		expect(pricing.inputPer1M).toBe(1);
+		expect(pricing.outputPer1M).toBe(5);
 	});
 
 	test("defaults to Sonnet for unknown models", () => {

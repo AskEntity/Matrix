@@ -45,9 +45,9 @@ const MODEL_PRICING: Record<
 	string,
 	{ inputPer1M: number; outputPer1M: number }
 > = {
-	opus: { inputPer1M: 15, outputPer1M: 75 },
+	opus: { inputPer1M: 5, outputPer1M: 25 },
 	sonnet: { inputPer1M: 3, outputPer1M: 15 },
-	haiku: { inputPer1M: 0.8, outputPer1M: 4 },
+	haiku: { inputPer1M: 1, outputPer1M: 5 },
 };
 
 /** @internal Exported for testing */
