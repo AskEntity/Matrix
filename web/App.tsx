@@ -1375,7 +1375,9 @@ function AppInner() {
 	);
 	const [lastOutputTokens, setLastOutputTokens] = useState<number | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
-	const [prompt, setPrompt] = useState("");
+	const [prompt, setPrompt] = useState(
+		() => localStorage.getItem("og-prompt-draft") ?? "",
+	);
 	const [showSettings, setShowSettings] = useState(false);
 	const [splitRatio, setSplitRatio] = useState(0.35);
 	const [isDragging, setIsDragging] = useState(false);
@@ -1766,6 +1768,27 @@ function AppInner() {
 		}
 	}, [selectedTaskId, nodeMap]);
 
+	// Auto-save prompt draft to localStorage (debounced 2s)
+	useEffect(() => {
+		const timer = setTimeout(() => {
+			if (prompt) {
+				localStorage.setItem("og-prompt-draft", prompt);
+			} else {
+				localStorage.removeItem("og-prompt-draft");
+			}
+		}, 2000);
+		return () => clearTimeout(timer);
+	}, [prompt]);
+
+	// Save prompt draft immediately on beforeunload
+	useEffect(() => {
+		const handler = () => {
+			if (prompt) localStorage.setItem("og-prompt-draft", prompt);
+		};
+		window.addEventListener("beforeunload", handler);
+		return () => window.removeEventListener("beforeunload", handler);
+	}, [prompt]);
+
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!prompt.trim() || !projectId) return;
@@ -1781,6 +1804,7 @@ function AppInner() {
 				await start({ prompt: prompt.trim() });
 			}
 			setPrompt("");
+			localStorage.removeItem("og-prompt-draft");
 		} catch (err) {
 			addLog("error", (err as Error).message);
 		}
