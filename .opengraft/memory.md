@@ -177,7 +177,11 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 ## Activity Log Card Fixes (batch)
 - **Title-only ✓ duplicate**: Removed separate status span from title-only card headers since `getToolCardTitle()` already includes ✓/✗ for done cards.
 - **create_task expansion**: Gate `mcpBody` behind `expanded &&` in ToolCard render. Removed `expanded` prop from McpToolCardBody.
-- **File tool prefixes**: read_file → `→ file`, write_file → `← file`, edit_file → `✎ file`.
-- **execute_tasks icon**: `⚡` instead of `▶`. **delete_task icon**: `✕` instead of `✂`.
+- **File tool prefixes**: read_file → `▤ file`, write_file → `← file`, edit_file → `✎ file`.
+- **execute_tasks icon**: `⚡`. **delete_task icon**: `–` (en-dash, pairs with `+` for create).
+- **Standalone tool_result**: title-only tools (yield, get_tree, etc.) skip body rendering via `isTitleOnlyCard` check.
 - **Bash filter toggle**: `hideBash` state in ActivityLog, toggle button. i18n keys: `log.hideBash`/`log.showBash`.
 - **Compact shimmer opacity**: Boosted from `0.15` to `0.3`.
+
+## Token Badge Desync Fix
+- After compaction, emit a `usage` event with `estimated: true` containing post-compaction token estimate (compressed chars / 4). Reset `estimatedInputTokens` to this value.
