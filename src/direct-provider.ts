@@ -345,7 +345,7 @@ const TOOLS: Tool[] = [
 	{
 		name: "search",
 		description:
-			'Search for a regex pattern across files using ripgrep. Use output_mode="files_with_matches" to find which files contain a pattern, then read_file those files. Use output_mode="content" with context lines when you need to see surrounding code.',
+			'A powerful regex search tool. ALWAYS use this for search tasks — NEVER invoke grep or rg via bash. Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+"). The path parameter accepts a directory or a single file. Filter files with glob parameter (e.g., "*.ts", "*.{ts,tsx}"). Output modes: "content" (default) shows matching lines with line numbers, "files_with_matches" shows only file paths (fast discovery), "count" shows match counts per file.',
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -379,6 +379,11 @@ const TOOLS: Tool[] = [
 				case_insensitive: {
 					type: "boolean",
 					description: "Case-insensitive search (default: false)",
+				},
+				multiline: {
+					type: "boolean",
+					description:
+						"Enable multiline matching with RegExp 's' flag, allowing '.' to match newlines (default: false). NOTE: not yet implemented — reserved for future use.",
 				},
 			},
 			required: ["pattern"],
@@ -812,6 +817,8 @@ export async function executeTool(
 			const outputMode = (input.output_mode as string) ?? "content";
 			const headLimit = Math.min((input.head_limit as number) ?? 50, 200);
 			const caseInsensitive = (input.case_insensitive as boolean) ?? false;
+			// TODO: implement multiline search — currently jsSearch uses line-by-line matching,
+			// so the 'multiline' param (input.multiline) is accepted in the schema but ignored here.
 
 			try {
 				const result = await jsSearch({
