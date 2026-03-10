@@ -1367,13 +1367,6 @@ button.og-tool-card-header:hover {
 	background: rgba(255, 255, 255, 0.03);
 }
 
-.og-tool-card-icon {
-	flex-shrink: 0;
-	color: var(--text-faint);
-	display: flex;
-	align-items: center;
-}
-
 .og-tool-card-name {
 	font-weight: 600;
 	color: var(--text-secondary);

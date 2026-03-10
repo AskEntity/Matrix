@@ -50,15 +50,6 @@ function formatTokenCount(n: number): string {
 	return String(n);
 }
 
-function localizeToolName(rawName: string, t: (key: string) => string): string {
-	const key = `tools.${rawName}`;
-	const translated = t(key);
-	if (translated === key) {
-		return rawName.replace("mcp__opengraft__", "");
-	}
-	return translated;
-}
-
 /** Format MCP tool results as human-readable summaries instead of raw JSON. */
 function formatMcpToolResult(
 	toolName: string,
@@ -351,25 +342,6 @@ function IconRepeat({ size = 13 }: { size?: number }) {
 			<path d="M3 11V9a4 4 0 0 1 4-4h14" />
 			<polyline points="7 23 3 19 7 15" />
 			<path d="M21 13v2a4 4 0 0 1-4 4H3" />
-		</svg>
-	);
-}
-
-function IconTerminal({ size = 12 }: { size?: number }) {
-	return (
-		<svg
-			aria-hidden="true"
-			width={size}
-			height={size}
-			viewBox="0 0 24 24"
-			fill="none"
-			stroke="currentColor"
-			strokeWidth="2"
-			strokeLinecap="round"
-			strokeLinejoin="round"
-		>
-			<polyline points="4 17 10 11 4 5" />
-			<line x1="12" y1="19" x2="20" y2="19" />
 		</svg>
 	);
 }
@@ -1000,6 +972,207 @@ function parseToolResult(text: string): {
 	return { isOk, isErr, toolName: match?.[1] ?? "", content };
 }
 
+/** Extract a value from the key=value args string */
+function extractArg(argsStr: string, key: string): string | null {
+	// Handle JSON values (arrays/objects) by finding key= and then matching balanced brackets
+	const prefix = `${key}=`;
+	const idx = argsStr.indexOf(prefix);
+	if (idx === -1) return null;
+	const start = idx + prefix.length;
+	const firstChar = argsStr[start];
+	if (firstChar === "[" || firstChar === "{") {
+		// Find matching bracket
+		const open = firstChar;
+		const close = open === "[" ? "]" : "}";
+		let depth = 0;
+		for (let i = start; i < argsStr.length; i++) {
+			if (argsStr[i] === open) depth++;
+			else if (argsStr[i] === close) {
+				depth--;
+				if (depth === 0) return argsStr.slice(start, i + 1);
+			}
+		}
+		return argsStr.slice(start);
+	}
+	// Simple value: read until ", key=" or end
+	const rest = argsStr.slice(start);
+	const endMatch = /, [a-zA-Z_]+=/.exec(rest);
+	return endMatch ? rest.slice(0, endMatch.index) : rest;
+}
+
+/** Get a basename from a file path */
+function basename(path: string): string {
+	const parts = path.split("/");
+	return parts[parts.length - 1] ?? path;
+}
+
+/** Generate a descriptive card title from tool name, args, and result */
+function getToolCardTitle(
+	toolName: string,
+	argsStr: string,
+	resultContent: string | null,
+): string {
+	// File tools
+	if (toolName === "read_file") {
+		const path = extractArg(argsStr, "path");
+		return path ? `📄 ${basename(path)}` : "📄 read_file";
+	}
+	if (toolName === "write_file") {
+		const path = extractArg(argsStr, "path");
+		return path ? `✏️ ${basename(path)}` : "✏️ write_file";
+	}
+	if (toolName === "edit_file") {
+		const path = extractArg(argsStr, "path");
+		return path ? `✏️ ${basename(path)}` : "✏️ edit_file";
+	}
+	if (toolName === "search") {
+		const pattern = extractArg(argsStr, "pattern");
+		if (pattern) {
+			const display =
+				pattern.length > 40 ? `${pattern.slice(0, 40)}…` : pattern;
+			return `🔍 ${display}`;
+		}
+		return "🔍 search";
+	}
+	if (toolName === "list_files") {
+		const pattern = extractArg(argsStr, "pattern");
+		return pattern ? `📁 ${pattern}` : "📁 list_files";
+	}
+	if (toolName === "bash") {
+		const command = extractArg(argsStr, "command");
+		if (command) {
+			const display =
+				command.length > 50 ? `${command.slice(0, 50)}…` : command;
+			return `$ ${display}`;
+		}
+		return "$ bash";
+	}
+
+	// MCP tools
+	const mcpTool = toolName.replace("mcp__opengraft__", "");
+	if (toolName.startsWith("mcp__opengraft__")) {
+		switch (mcpTool) {
+			case "create_task": {
+				const title = extractArg(argsStr, "title");
+				return title ? `➕ ${title}` : "➕ create_task";
+			}
+			case "delete_task": {
+				// Try to get title from result
+				if (resultContent) {
+					try {
+						const json = JSON.parse(resultContent) as Record<string, unknown>;
+						if (typeof json.title === "string") return `🗑️ ${json.title}`;
+					} catch {
+						/* ignore */
+					}
+				}
+				const taskId = extractArg(argsStr, "taskId");
+				return taskId ? `🗑️ ${taskId.slice(0, 8)}` : "🗑️ delete_task";
+			}
+			case "execute_tasks": {
+				const tasksArg = extractArg(argsStr, "tasks");
+				if (tasksArg) {
+					try {
+						const tasks = JSON.parse(tasksArg) as Array<{
+							taskId?: string;
+							title?: string;
+						}>;
+						// Try to get titles from result
+						let titles: string[] = [];
+						if (resultContent) {
+							try {
+								const json = JSON.parse(resultContent) as {
+									tasks?: Array<{ title?: string }>;
+								};
+								if (Array.isArray(json.tasks)) {
+									titles = json.tasks
+										.map((t) => t.title ?? "?")
+										.filter(Boolean);
+								}
+							} catch {
+								/* ignore */
+							}
+						}
+						if (titles.length > 0) {
+							return `▶ ${titles.length} tasks: ${titles.join(", ")}`;
+						}
+						return `▶ ${tasks.length} task${tasks.length === 1 ? "" : "s"}`;
+					} catch {
+						/* ignore */
+					}
+				}
+				return "▶ execute_tasks";
+			}
+			case "done": {
+				const status = extractArg(argsStr, "status");
+				const summary = extractArg(argsStr, "summary");
+				const isPassed = status === "passed";
+				const icon = isPassed ? "✅" : "❌";
+				const label = isPassed ? "Passed" : "Failed";
+				if (summary) {
+					const display =
+						summary.length > 60 ? `${summary.slice(0, 60)}…` : summary;
+					return `${icon} ${label}: ${display}`;
+				}
+				return `${icon} ${label}`;
+			}
+			case "yield": {
+				// If we have result content, yield has returned with messages
+				if (resultContent) {
+					return "⏸ resume from yield";
+				}
+				return "⏸ yield";
+			}
+			case "get_tree":
+				return "🌳 Task tree";
+			case "update_task_status": {
+				const status = extractArg(argsStr, "status");
+				const taskId = extractArg(argsStr, "taskId");
+				if (status && taskId) return `📋 ${status} → ${taskId.slice(0, 8)}`;
+				return "📋 update_task_status";
+			}
+			case "send_message_to_child": {
+				const taskId = extractArg(argsStr, "taskId");
+				return taskId
+					? `💬 → ${taskId.slice(0, 8)}`
+					: "💬 send_message_to_child";
+			}
+			case "report_to_parent":
+				return "📤 Report to parent";
+			case "clarify": {
+				const question = extractArg(argsStr, "question");
+				if (question) {
+					const display =
+						question.length > 40 ? `${question.slice(0, 40)}…` : question;
+					return `❓ ${display}`;
+				}
+				return "❓ clarify";
+			}
+		}
+	}
+
+	return toolName;
+}
+
+/** Determine if a tool card should be title-only (no expandable body) */
+function isTitleOnlyCard(toolName: string, argsStr: string): boolean {
+	const mcpTool = toolName.replace("mcp__opengraft__", "");
+	if (!toolName.startsWith("mcp__opengraft__")) return false;
+	switch (mcpTool) {
+		case "get_tree":
+		case "yield":
+		case "delete_task":
+		case "update_task_status":
+			return true;
+		case "report_to_parent": {
+			const msg = extractArg(argsStr, "message");
+			return !msg || msg.length <= 80;
+		}
+		default:
+			return false;
+	}
+}
+
 /** Render structured body for special MCP tools */
 function McpToolCardBody({
 	toolName,
@@ -1169,6 +1342,28 @@ function McpToolCardBody({
 				</div>
 			);
 		}
+		case "send_message_to_child": {
+			const msg = parsedArgs?.message ?? "";
+			return (
+				<div className="og-mcp-body">
+					{msg && (
+						<div className="og-mcp-task-desc">
+							{msg.length > 500 ? `${msg.slice(0, 500)}…` : msg}
+						</div>
+					)}
+				</div>
+			);
+		}
+		case "report_to_parent": {
+			const msg = parsedArgs?.message ?? "";
+			return msg.length > 80 ? (
+				<div className="og-mcp-body">
+					<div className="og-mcp-task-desc">
+						{msg.length > 500 ? `${msg.slice(0, 500)}…` : msg}
+					</div>
+				</div>
+			) : null;
+		}
 		default:
 			return null;
 	}
@@ -1193,25 +1388,29 @@ function ToolCard({
 	} = parseToolResult(resultEntry.text);
 
 	const isMcp = toolName.startsWith("mcp__opengraft__");
+	const titleOnly = isTitleOnlyCard(toolName, argsStr);
 	const totalContent = argsStr + (resultContent ?? "");
-	const [expanded, setExpanded] = useState(() => totalContent.length <= 200);
+	const [expanded, setExpanded] = useState(() =>
+		titleOnly ? false : totalContent.length <= 200,
+	);
 
 	const taskLabel = useEntry.taskId
 		? (nodeMap.get(useEntry.taskId)?.title?.slice(0, 18) ??
 			useEntry.taskId.slice(0, 8))
 		: null;
 
-	// Try structured MCP rendering
-	const mcpBody = isMcp ? (
-		<McpToolCardBody
-			toolName={toolName}
-			argsStr={argsStr}
-			resultContent={resultContent}
-			isOk={isOk}
-			t={t}
-			expanded={expanded}
-		/>
-	) : null;
+	// Try structured MCP rendering (skip for title-only cards)
+	const mcpBody =
+		isMcp && !titleOnly ? (
+			<McpToolCardBody
+				toolName={toolName}
+				argsStr={argsStr}
+				resultContent={resultContent}
+				isOk={isOk}
+				t={t}
+				expanded={expanded}
+			/>
+		) : null;
 
 	const mcpFormatted =
 		isOk && !mcpBody ? formatMcpToolResult(toolName, resultContent, t) : null;
@@ -1228,24 +1427,32 @@ function ToolCard({
 				</span>
 			)}
 			<div className={`og-tool-card ${statusClass} ${accentClass}`}>
-				<button
-					type="button"
-					className="og-tool-card-header"
-					onClick={() => setExpanded(!expanded)}
-				>
-					<span className="og-tool-card-icon">
-						<IconTerminal size={10} />
-					</span>
-					<span className="og-tool-card-name">
-						{localizeToolName(toolName, t)}
-					</span>
-					<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
-						{isErr ? "✗" : "✓"}
-					</span>
-					<span className="og-tool-card-toggle">
-						<IconChevron size={10} expanded={expanded} />
-					</span>
-				</button>
+				{titleOnly ? (
+					<div className="og-tool-card-header">
+						<span className="og-tool-card-name">
+							{getToolCardTitle(toolName, argsStr, resultContent)}
+						</span>
+						<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
+							{isErr ? "✗" : "✓"}
+						</span>
+					</div>
+				) : (
+					<button
+						type="button"
+						className="og-tool-card-header"
+						onClick={() => setExpanded(!expanded)}
+					>
+						<span className="og-tool-card-name">
+							{getToolCardTitle(toolName, argsStr, resultContent)}
+						</span>
+						<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
+							{isErr ? "✗" : "✓"}
+						</span>
+						<span className="og-tool-card-toggle">
+							<IconChevron size={10} expanded={expanded} />
+						</span>
+					</button>
+				)}
 				{mcpBody && <div className="og-tool-card-body">{mcpBody}</div>}
 				{expanded && !mcpBody && (
 					<div className="og-tool-card-body">
@@ -1317,11 +1524,8 @@ function LogEntryView({
 					className={`og-tool-card og-tool-card-pending ${isMcp ? "og-tool-card-mcp" : ""}`}
 				>
 					<div className="og-tool-card-header">
-						<span className="og-tool-card-icon">
-							<IconTerminal size={10} />
-						</span>
 						<span className="og-tool-card-name">
-							{localizeToolName(toolName, t)}
+							{getToolCardTitle(toolName, argsStr, null)}
 						</span>
 						<span className="og-tool-card-status pending">⋯</span>
 					</div>
@@ -1357,11 +1561,8 @@ function LogEntryView({
 					className={`og-tool-card ${statusClass} ${isMcp ? "og-tool-card-mcp" : ""}`}
 				>
 					<div className="og-tool-card-header">
-						<span className="og-tool-card-icon">
-							<IconTerminal size={10} />
-						</span>
 						<span className="og-tool-card-name">
-							{localizeToolName(toolName, t)}
+							{getToolCardTitle(toolName, "", content)}
 						</span>
 						<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
 							{isErr ? "✗" : "✓"}
@@ -1382,20 +1583,53 @@ function LogEntryView({
 		);
 	}
 
-	if (entry.type === "queue_message") {
+	// task_started / task_completed — card-like rendering
+	if (entry.type === "task_started" || entry.type === "task_completed") {
+		const isPassed = entry.text.startsWith("✓");
+		const icon = entry.type === "task_started" ? "▶" : isPassed ? "✅" : "❌";
+		const statusClass =
+			entry.type === "task_started"
+				? "og-tool-card-pending"
+				: isPassed
+					? "og-tool-card-ok"
+					: "og-tool-card-err";
 		return (
-			<div className={`og-log-entry og-event-${entry.type}`}>
+			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{entry.time}</span>
 				{taskLabel && (
 					<span className="og-log-badge" title={entry.taskId}>
 						{taskLabel}
 					</span>
 				)}
-				<div className="og-log-body">
-					<span className="og-queue-message">
-						<IconSend size={10} />
-						<span className="og-queue-message-text">{entry.text}</span>
+				<div className={`og-tool-card ${statusClass}`}>
+					<div className="og-tool-card-header">
+						<span className="og-tool-card-name">
+							{icon} {entry.text}
+						</span>
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	if (entry.type === "queue_message") {
+		return (
+			<div className="og-log-entry og-event-tool_card">
+				<span className="og-log-time">{entry.time}</span>
+				{taskLabel && (
+					<span className="og-log-badge" title={entry.taskId}>
+						{taskLabel}
 					</span>
+				)}
+				<div className="og-tool-card og-tool-card-mcp">
+					<div className="og-tool-card-header">
+						<span className="og-tool-card-name">
+							📨{" "}
+							{entry.text.length > 100
+								? `${entry.text.slice(0, 100)}…`
+								: entry.text}
+						</span>
+					</div>
 				</div>
 			</div>
 		);
