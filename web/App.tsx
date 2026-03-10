@@ -365,6 +365,61 @@ function IconGear({ size = 14 }: { size?: number }) {
 	);
 }
 
+// ── Cute Cat ──────────────────────────────────────────────────────────────
+
+function CuteCat() {
+	const [isTyping, setIsTyping] = useState(false);
+	const typingTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	useEffect(() => {
+		const handleKeyDown = () => {
+			setIsTyping(true);
+			if (typingTimeout.current) clearTimeout(typingTimeout.current);
+			typingTimeout.current = setTimeout(() => setIsTyping(false), 500);
+		};
+		document.addEventListener("keydown", handleKeyDown);
+		return () => {
+			document.removeEventListener("keydown", handleKeyDown);
+			if (typingTimeout.current) clearTimeout(typingTimeout.current);
+		};
+	}, []);
+
+	return (
+		<div className={`og-cute-cat${isTyping ? " og-cat-typing" : ""}`}>
+			{/* Ears */}
+			<div className="og-cat-ear-left" />
+			<div className="og-cat-ear-right" />
+			<div className="og-cat-ear-inner-left" />
+			<div className="og-cat-ear-inner-right" />
+			{/* Head */}
+			<div className="og-cat-head" />
+			{/* Eyes */}
+			<div className="og-cat-eyes">
+				<div className="og-cat-eye" />
+				<div className="og-cat-eye" />
+			</div>
+			{/* Nose */}
+			<div className="og-cat-nose" />
+			{/* Mouth */}
+			<div className="og-cat-mouth" />
+			{/* Whiskers */}
+			<div className="og-cat-whiskers">
+				<div className="og-cat-whisker" />
+				<div className="og-cat-whisker" />
+				<div className="og-cat-whisker" />
+				<div className="og-cat-whisker" />
+			</div>
+			{/* Body */}
+			<div className="og-cat-body" />
+			{/* Tail */}
+			<div className="og-cat-tail" />
+			{/* Paws */}
+			<div className="og-cat-paw-left" />
+			<div className="og-cat-paw-right" />
+		</div>
+	);
+}
+
 // ── Task Tree ──────────────────────────────────────────────────────────────
 
 function TaskTree({
@@ -1328,6 +1383,9 @@ function AppInner() {
 	const [isDark, setIsDark] = useState(() => {
 		return localStorage.getItem("og-theme") !== "light";
 	});
+	const [isCute, setIsCute] = useState(() => {
+		return localStorage.getItem("og-theme-style") === "cute";
+	});
 	const [pendingMessages, setPendingMessages] = useState<
 		{ id: string; taskId: string | null; text: string; timestamp: number }[]
 	>([]);
@@ -1386,9 +1444,19 @@ function AppInner() {
 
 	// Theme persistence
 	useEffect(() => {
-		document.documentElement.classList.toggle("light-mode", !isDark);
+		document.documentElement.classList.toggle("light-mode", !isDark && !isCute);
 		localStorage.setItem("og-theme", isDark ? "dark" : "light");
-	}, [isDark]);
+	}, [isDark, isCute]);
+
+	// Cute mode persistence
+	useEffect(() => {
+		document.documentElement.classList.toggle("cute-mode", isCute);
+		// Cute mode forces light base, so remove light-mode class when cute is on
+		if (isCute) {
+			document.documentElement.classList.remove("light-mode");
+		}
+		localStorage.setItem("og-theme-style", isCute ? "cute" : "default");
+	}, [isCute]);
 
 	// Browser tab title progress
 	useEffect(() => {
@@ -1972,6 +2040,15 @@ function AppInner() {
 					</button>
 					<button
 						type="button"
+						className={`og-btn-icon og-cute-toggle${isCute ? " active" : ""}`}
+						title={t("theme.cuteMode")}
+						aria-label={t("theme.cuteMode")}
+						onClick={() => setIsCute((c) => !c)}
+					>
+						{isCute ? "🐱" : "🐾"}
+					</button>
+					<button
+						type="button"
 						className="og-btn-icon"
 						title={isDark ? t("theme.lightMode") : t("theme.darkMode")}
 						aria-label={isDark ? t("theme.lightMode") : t("theme.darkMode")}
@@ -2410,6 +2487,9 @@ function AppInner() {
 					</div>
 				</form>
 			</footer>
+
+			{/* Cute mode cat */}
+			{isCute && <CuteCat />}
 		</>
 	);
 }
