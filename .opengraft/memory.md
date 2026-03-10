@@ -326,6 +326,7 @@ Two config levels:
 - `provider` — "direct" | "claude-code"
 - `budgetUsd` — default budget per task (safety limit, undefined = unlimited)
 - `clarifyTimeoutMs` — timeout for clarify tool responses
+- `maxDepth` — max task hierarchy depth (default: 3, hardcoded was removed)
 
 **Priority**: explicit API/CLI param > project config > env var > hardcoded default
 
@@ -373,4 +374,4 @@ DirectProvider estimates token counts from `usage.input_tokens + usage.output_to
 - `KNOWN_CONFIG_KEYS` list in cli.ts: model, childModel, provider, budgetUsd, clarifyTimeoutMs, maxDepth
 - Help text now includes a "Config" section with all three subcommands and known keys list
 - `printConfig()` helper in cli.ts reads env vars OG_MODEL / ANTHROPIC_MODEL for default model display
-- `maxDepth` is in KNOWN_CONFIG_KEYS even though `ProjectConfig` interface doesn't have it yet (forward-compat)
+- `maxDepth` is now in ProjectConfig and wired through OrchestratorToolsDeps → agent-tools.ts (default: 3)
