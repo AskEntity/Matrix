@@ -1348,9 +1348,19 @@ describe("create_task validation", () => {
 		expect(parsed.parentId).toBe(existing.id);
 	});
 
-	test("agent can create top-level task (no parentId)", async () => {
+	test("agent auto-parents under itself when no parentId provided", async () => {
 		const agent = tracker.addTask("agent", "");
 		const result = await invokeCreateTask(agent.id, {
+			title: "child",
+			description: "desc",
+		});
+		expect(result.isError).toBeUndefined();
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.parentId).toBe(agent.id);
+	});
+
+	test("root orchestrator creates top-level task when no parentId", async () => {
+		const result = await invokeCreateTask(null, {
 			title: "toplevel",
 			description: "desc",
 		});
