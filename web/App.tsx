@@ -2399,7 +2399,7 @@ function AppInner() {
 						<option value="zh">{t("lang.zh")}</option>
 					</select>
 					<select
-						className="og-theme-select"
+						className="og-select"
 						value={theme}
 						onChange={(e) => setThemeState(e.target.value as typeof theme)}
 						title={t("theme.selector")}

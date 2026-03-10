@@ -35,7 +35,7 @@ const en: Translations = {
 	// Language
 	"lang.selector": "Language",
 	"lang.en": "English",
-	"lang.zh": "中文",
+	"lang.zh": "Chinese",
 
 	// Sidebar / Tasks
 	"tasks.title": "Tasks",
@@ -233,7 +233,7 @@ const zh: Translations = {
 
 	// Language
 	"lang.selector": "语言",
-	"lang.en": "English",
+	"lang.en": "英语",
 	"lang.zh": "中文",
 
 	// Sidebar / Tasks
