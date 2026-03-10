@@ -292,7 +292,8 @@ Rules:
 - Do NOT repeat information from the system prompt (task description, methodology, instructions)
 - Do NOT include file contents that can be re-read — only state/context hard to reconstruct
 - Rejected Approaches is the highest-value section — fill it thoroughly even if it seems obvious
-- Output ONLY the checkpoint, no preamble or commentary`;
+- Output ONLY the checkpoint, no preamble or commentary
+- Length: aim for under 10,000 tokens. Use more if the conversation was complex and detail is critical — better to be thorough than to lose important context. Never truncate mid-sentence.`;
 
 const TOOLS: Tool[] = [
 	{
