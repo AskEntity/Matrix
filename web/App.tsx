@@ -890,6 +890,46 @@ function ActivityLog({
 
 	const { t } = useLocale();
 
+	// Merge adjacent tool_use + tool_result into combined entries for rendering
+	const mergedVisible = useMemo(() => {
+		const result: Array<
+			| { kind: "single"; entry: LogEntry }
+			| {
+					kind: "tool_card";
+					useEntry: LogEntry;
+					resultEntry: LogEntry;
+			  }
+		> = [];
+		let i = 0;
+		while (i < visible.length) {
+			const cur = visible[i];
+			if (!cur) {
+				i += 1;
+				continue;
+			}
+			const next = visible[i + 1];
+			if (
+				cur.type === "tool_use" &&
+				next?.type === "tool_result" &&
+				next.taskId === cur.taskId
+			) {
+				// Extract tool name from tool_use text: "toolName(args...)"
+				const useToolName = cur.text.split("(")[0] ?? "";
+				// Extract tool name from tool_result text: "OK toolName: ..." or "ERR toolName: ..."
+				const resultToolMatch = /^(?:OK|ERR) ([^:]+):/.exec(next.text);
+				const resultToolName = resultToolMatch?.[1] ?? "";
+				if (useToolName === resultToolName) {
+					result.push({ kind: "tool_card", useEntry: cur, resultEntry: next });
+					i += 2;
+					continue;
+				}
+			}
+			result.push({ kind: "single", entry: cur });
+			i += 1;
+		}
+		return result;
+	}, [visible]);
+
 	return (
 		<>
 			<div className="og-log-search-bar">
@@ -902,10 +942,23 @@ function ActivityLog({
 				/>
 			</div>
 			<div className="og-activity-log" ref={logRef} onScroll={handleScroll}>
-				{visible.map((entry) => (
-					<LogEntryView key={entry.id} entry={entry} nodeMap={nodeMap} />
-				))}
-				{visible.length === 0 && (
+				{mergedVisible.map((item) =>
+					item.kind === "tool_card" ? (
+						<ToolCard
+							key={item.useEntry.id}
+							useEntry={item.useEntry}
+							resultEntry={item.resultEntry}
+							nodeMap={nodeMap}
+						/>
+					) : (
+						<LogEntryView
+							key={item.entry.id}
+							entry={item.entry}
+							nodeMap={nodeMap}
+						/>
+					),
+				)}
+				{mergedVisible.length === 0 && (
 					<div
 						style={{
 							padding: "32px 20px",
@@ -920,6 +973,282 @@ function ActivityLog({
 				)}
 			</div>
 		</>
+	);
+}
+
+/** Parse tool_use text "toolName(args...)" into {toolName, argsStr} */
+function parseToolUse(text: string): { toolName: string; argsStr: string } {
+	const idx = text.indexOf("(");
+	if (idx === -1) return { toolName: text, argsStr: "" };
+	return {
+		toolName: text.slice(0, idx),
+		argsStr: text.slice(idx + 1).replace(/\)$/, ""),
+	};
+}
+
+/** Parse tool_result text "OK toolName: content" into parts */
+function parseToolResult(text: string): {
+	isOk: boolean;
+	isErr: boolean;
+	toolName: string;
+	content: string;
+} {
+	const isOk = text.startsWith("OK ");
+	const isErr = text.startsWith("ERR ");
+	const content = text.replace(/^(?:OK|ERR) [^:]+: /, "");
+	const match = /^(?:OK|ERR) ([^:]+):/.exec(text);
+	return { isOk, isErr, toolName: match?.[1] ?? "", content };
+}
+
+/** Render structured body for special MCP tools */
+function McpToolCardBody({
+	toolName,
+	argsStr,
+	resultContent,
+	isOk,
+	t,
+}: {
+	toolName: string;
+	argsStr: string;
+	resultContent: string | null;
+	isOk: boolean;
+	t: (key: string, params?: Record<string, string>) => string;
+}) {
+	const mcpTool = toolName.replace("mcp__opengraft__", "");
+
+	// Try to parse args as JSON-like key=value pairs
+	let parsedArgs: Record<string, string> | null = null;
+	try {
+		// argsStr format: key=value, key=value or key={"json"}, ...
+		// Try simple extraction
+		const obj: Record<string, string> = {};
+		// Handle JSON objects in args by parsing the raw format
+		const rawParts = argsStr.split(/, (?=[a-zA-Z_]+=)/);
+		for (const part of rawParts) {
+			const eqIdx = part.indexOf("=");
+			if (eqIdx > 0) {
+				obj[part.slice(0, eqIdx)] = part.slice(eqIdx + 1);
+			}
+		}
+		if (Object.keys(obj).length > 0) parsedArgs = obj;
+	} catch {
+		// ignore
+	}
+
+	// Try to parse result as JSON for structured display
+	let resultJson: Record<string, unknown> | null = null;
+	if (resultContent) {
+		try {
+			resultJson = JSON.parse(resultContent) as Record<string, unknown>;
+		} catch {
+			// not JSON
+		}
+	}
+
+	switch (mcpTool) {
+		case "execute_tasks": {
+			// Parse tasks from args
+			const tasksArg = parsedArgs?.tasks;
+			let tasks: Array<{ taskId?: string; message?: string; mode?: string }> =
+				[];
+			if (tasksArg) {
+				try {
+					tasks = JSON.parse(tasksArg) as typeof tasks;
+				} catch {
+					// ignore
+				}
+			}
+			// Parse result tasks info
+			let resultTasks: Array<{ title?: string; taskId?: string }> = [];
+			if (resultJson && Array.isArray(resultJson.tasks)) {
+				resultTasks = resultJson.tasks as typeof resultTasks;
+			}
+			return (
+				<div className="og-mcp-body">
+					{resultTasks.map((rt, i) => {
+						const taskInput = tasks[i];
+						return (
+							// biome-ignore lint/suspicious/noArrayIndexKey: stable index
+							<div key={i} className="og-mcp-task-item">
+								<span className="og-mcp-task-title">
+									{rt.title ?? rt.taskId?.slice(0, 8) ?? "?"}
+								</span>
+								{taskInput?.mode && taskInput.mode !== "new" && (
+									<span className="og-mcp-task-mode">{taskInput.mode}</span>
+								)}
+								{taskInput?.message && (
+									<div className="og-mcp-task-msg">
+										{taskInput.message.length > 200
+											? `${taskInput.message.slice(0, 200)}…`
+											: taskInput.message}
+									</div>
+								)}
+							</div>
+						);
+					})}
+					{resultTasks.length === 0 && tasks.length > 0 && (
+						<div className="og-mcp-task-item">
+							<span className="og-mcp-task-title">
+								{tasks.length} {t("log.tasks")}
+							</span>
+						</div>
+					)}
+				</div>
+			);
+		}
+		case "create_task": {
+			const title = String(parsedArgs?.title ?? resultJson?.title ?? "");
+			const desc = parsedArgs?.description;
+			return (
+				<div className="og-mcp-body">
+					{title && <div className="og-mcp-task-title">{title}</div>}
+					{desc && (
+						<div className="og-mcp-task-desc">
+							{desc.length > 200 ? `${desc.slice(0, 200)}…` : desc}
+						</div>
+					)}
+				</div>
+			);
+		}
+		case "done": {
+			const status = parsedArgs?.status;
+			const summary = parsedArgs?.summary;
+			const isPassed =
+				status === "passed" || (isOk && resultContent?.includes("passed"));
+			return (
+				<div className="og-mcp-body">
+					<div
+						className={`og-mcp-done-status ${isPassed ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
+					>
+						{isPassed ? `✓ ${t("tool.passed")}` : `✗ ${t("tool.failed")}`}
+					</div>
+					{summary && (
+						<div className="og-mcp-task-desc">
+							{summary.length > 300 ? `${summary.slice(0, 300)}…` : summary}
+						</div>
+					)}
+				</div>
+			);
+		}
+		case "yield": {
+			const formatted =
+				isOk && resultContent
+					? formatMcpToolResult(toolName, resultContent, t)
+					: null;
+			return (
+				<div className="og-mcp-body">
+					<div className="og-mcp-yield">{formatted ?? t("tool.waiting")}</div>
+				</div>
+			);
+		}
+		case "get_tree": {
+			const formatted =
+				isOk && resultContent
+					? formatMcpToolResult(toolName, resultContent, t)
+					: null;
+			return (
+				<div className="og-mcp-body">
+					<div className="og-mcp-tree-summary">
+						{formatted ?? resultContent ?? ""}
+					</div>
+				</div>
+			);
+		}
+		default:
+			return null;
+	}
+}
+
+/** Merged tool_use + tool_result card */
+function ToolCard({
+	useEntry,
+	resultEntry,
+	nodeMap,
+}: {
+	useEntry: LogEntry;
+	resultEntry: LogEntry;
+	nodeMap: Map<string, TaskNode>;
+}) {
+	const { t } = useLocale();
+	const { toolName, argsStr } = parseToolUse(useEntry.text);
+	const {
+		isOk,
+		isErr,
+		content: resultContent,
+	} = parseToolResult(resultEntry.text);
+
+	const isMcp = toolName.startsWith("mcp__opengraft__");
+	const totalContent = argsStr + (resultContent ?? "");
+	const [expanded, setExpanded] = useState(() => totalContent.length <= 200);
+
+	const taskLabel = useEntry.taskId
+		? (nodeMap.get(useEntry.taskId)?.title?.slice(0, 18) ??
+			useEntry.taskId.slice(0, 8))
+		: null;
+
+	// Try structured MCP rendering
+	const mcpBody = isMcp ? (
+		<McpToolCardBody
+			toolName={toolName}
+			argsStr={argsStr}
+			resultContent={resultContent}
+			isOk={isOk}
+			t={t}
+		/>
+	) : null;
+
+	const mcpFormatted =
+		isOk && !mcpBody ? formatMcpToolResult(toolName, resultContent, t) : null;
+
+	const statusClass = isErr ? "og-tool-card-err" : "og-tool-card-ok";
+	const accentClass = isMcp ? "og-tool-card-mcp" : "";
+
+	return (
+		<div className="og-log-entry og-event-tool_card">
+			<span className="og-log-time">{useEntry.time}</span>
+			{taskLabel && (
+				<span className="og-log-badge" title={useEntry.taskId}>
+					{taskLabel}
+				</span>
+			)}
+			<div className={`og-tool-card ${statusClass} ${accentClass}`}>
+				<button
+					type="button"
+					className="og-tool-card-header"
+					onClick={() => setExpanded(!expanded)}
+				>
+					<span className="og-tool-card-icon">
+						<IconTerminal size={10} />
+					</span>
+					<span className="og-tool-card-name">
+						{localizeToolName(toolName, t)}
+					</span>
+					<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
+						{isErr ? "✗" : "✓"}
+					</span>
+					<span className="og-tool-card-toggle">
+						<IconChevron size={10} expanded={expanded} />
+					</span>
+				</button>
+				{expanded && (
+					<div className="og-tool-card-body">
+						{mcpBody || (
+							<>
+								{argsStr && <div className="og-tool-card-args">{argsStr}</div>}
+								{resultContent && (
+									<div className="og-tool-card-result">
+										{mcpFormatted ??
+											(resultContent.length > 500
+												? `${resultContent.slice(0, 500)}…`
+												: resultContent)}
+									</div>
+								)}
+							</>
+						)}
+					</div>
+				)}
+			</div>
+		</div>
 	);
 }
 
@@ -959,63 +1288,82 @@ function LogEntryView({
 		);
 	}
 
+	// Standalone tool_use (not merged with result) — show as a card too
 	if (entry.type === "tool_use") {
-		const parts = entry.text.split("(");
-		const toolName = parts[0] ?? entry.text;
-		const args = parts.slice(1).join("(").replace(/\)$/, "");
+		const { toolName, argsStr } = parseToolUse(entry.text);
+		const isMcp = toolName.startsWith("mcp__opengraft__");
 		return (
-			<div className={`og-log-entry og-event-${entry.type}`}>
+			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{entry.time}</span>
 				{taskLabel && (
 					<span className="og-log-badge" title={entry.taskId}>
 						{taskLabel}
 					</span>
 				)}
-				<div className="og-log-body">
-					<span className="og-tool-call">
-						<span className="og-tool-name" title={toolName}>
+				<div
+					className={`og-tool-card og-tool-card-pending ${isMcp ? "og-tool-card-mcp" : ""}`}
+				>
+					<div className="og-tool-card-header">
+						<span className="og-tool-card-icon">
 							<IconTerminal size={10} />
+						</span>
+						<span className="og-tool-card-name">
 							{localizeToolName(toolName, t)}
 						</span>
-						{args && <span className="og-tool-args">({args})</span>}
-					</span>
+						<span className="og-tool-card-status pending">⋯</span>
+					</div>
+					{argsStr && (
+						<div className="og-tool-card-body">
+							<div className="og-tool-card-args">
+								{argsStr.length > 200 ? `${argsStr.slice(0, 200)}…` : argsStr}
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 		);
 	}
 
+	// Standalone tool_result (not merged) — show as a card
 	if (entry.type === "tool_result") {
-		const isOk = entry.text.startsWith("OK ");
-		const isErr = entry.text.startsWith("ERR ");
-		const rest = entry.text.replace(/^(OK|ERR) [^:]+: /, "");
-		const toolMatch = /^(OK|ERR) ([^:]+):/.exec(entry.text);
-		const toolName = toolMatch?.[2] ?? "";
-		const mcpFormatted = isOk ? formatMcpToolResult(toolName, rest, t) : null;
+		const { isOk, isErr, toolName, content } = parseToolResult(entry.text);
+		const mcpFormatted = isOk
+			? formatMcpToolResult(toolName, content, t)
+			: null;
+		const isMcp = toolName.startsWith("mcp__opengraft__");
+		const statusClass = isErr ? "og-tool-card-err" : "og-tool-card-ok";
 		return (
-			<div className={`og-log-entry og-event-${entry.type}`}>
+			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{entry.time}</span>
 				{taskLabel && (
 					<span className="og-log-badge" title={entry.taskId}>
 						{taskLabel}
 					</span>
 				)}
-				<div className="og-log-body">
-					<div className="og-tool-result">
-						<span
-							className={
-								isOk ? "og-tool-result-ok" : isErr ? "og-tool-result-err" : ""
-							}
-							title={toolName}
-						>
-							{isOk ? "✓" : isErr ? "✗" : "→"}{" "}
-							{mcpFormatted ?? localizeToolName(toolName, t)}
+				<div
+					className={`og-tool-card ${statusClass} ${isMcp ? "og-tool-card-mcp" : ""}`}
+				>
+					<div className="og-tool-card-header">
+						<span className="og-tool-card-icon">
+							<IconTerminal size={10} />
 						</span>
-						{!mcpFormatted && rest && (
-							<span className="og-tool-result-content">
-								{rest.length > 500 ? `${rest.slice(0, 500)}…` : rest}
-							</span>
-						)}
+						<span className="og-tool-card-name">
+							{localizeToolName(toolName, t)}
+						</span>
+						<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
+							{isErr ? "✗" : "✓"}
+						</span>
 					</div>
+					{content && (
+						<div className="og-tool-card-body">
+							<div className="og-tool-card-result">
+								{mcpFormatted ??
+									(content.length > 500
+										? `${content.slice(0, 500)}…`
+										: content)}
+							</div>
+						</div>
+					)}
 				</div>
 			</div>
 		);
@@ -1141,14 +1489,12 @@ function TaskDetail({
 	onContinue,
 	onDelete,
 	onPause,
-	onResume,
 }: {
 	node: TaskNode;
 	projectId: string;
 	onContinue: (msg?: string) => void;
 	onDelete: () => void;
 	onPause?: () => void;
-	onResume?: () => void;
 }) {
 	const { t } = useLocale();
 	const [continueMsg, setContinueMsg] = useState("");
@@ -1423,17 +1769,6 @@ function TaskDetail({
 					>
 						<IconPause size={12} />
 						{t("detail.pause")}
-					</button>
-				)}
-				{isRunning && onResume && (
-					<button
-						type="button"
-						className="og-btn og-btn-sm"
-						onClick={onResume}
-						style={{ color: "var(--accent)" }}
-					>
-						<IconPlay size={12} />
-						{t("detail.resume")}
 					</button>
 				)}
 				{node.sessionId && (
@@ -2297,18 +2632,6 @@ function AppInner() {
 		}
 	}
 
-	async function handleResumeTask() {
-		if (!selectedTaskId) return;
-		try {
-			await sendMessageToTask(
-				selectedTaskId,
-				"▶ RESUMED by user. Continue where you left off.",
-			);
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
 	async function handleAddProject(e: React.FormEvent) {
 		e.preventDefault();
 		const path = newProjectPath.trim();
@@ -2728,7 +3051,6 @@ function AppInner() {
 								onContinue={handleContinueTask}
 								onDelete={handleDeleteTask}
 								onPause={handlePauseTask}
-								onResume={handleResumeTask}
 							/>
 						) : (
 							<div className="og-detail-empty">
@@ -2906,11 +3228,7 @@ function AppInner() {
 							}, 0);
 						}}
 						onKeyDown={(e) => {
-							if (
-								e.key === "Enter" &&
-								!e.shiftKey &&
-								!composingRef.current
-							) {
+							if (e.key === "Enter" && !e.shiftKey && !composingRef.current) {
 								e.preventDefault();
 								handleSubmit(e);
 							}

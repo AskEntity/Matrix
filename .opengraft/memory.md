@@ -135,4 +135,11 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 - **`pruneSessionFiles()`**: Shared between autoResumeProjects and POST /sessions/prune.
 - **restartingProjects guard**: Both REST /orchestrate/agent and /agents/start now check `restartingProjects.has()` to prevent starting during restart.
 - **DELETE /projects/:id cleanup**: Now clears pendingMessages, pendingClarifications, eventHistory in addition to stopping agent and removing tracker.
-- Biome auto-formats web/App.tsx on every `bun run check --write .` — revert it if you only changed daemon files.
+
+## Tool Card Redesign (activity log)
+- Tool entries (tool_use + tool_result) now render as cards instead of inline entries.
+- Merging logic is in the rendering layer: `ActivityLog` uses `useMemo` to pair adjacent tool_use → tool_result with matching tool names into `tool_card` entries.
+- `ToolCard` component: collapsible card with header (tool name, status icon, chevron toggle) and body (args + result).
+- MCP tools (mcp__opengraft__*) get purple accent and special card body rendering via `McpToolCardBody`.
+- Default collapsed if total content > 200 chars, expanded if short.
+- Resume button removed from TaskDetail — only Pause shown for running tasks.
