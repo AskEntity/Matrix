@@ -448,3 +448,13 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - Successfully tested recursive child spawning down to 5 levels (0→1→2→3→4→5)
 - maxDepth=7 config was sufficient; all branches created/merged/cleaned up properly
 - **Note**: MCP tools only available within daemon orchestration; HTTP API PATCH doesn't support worktreePath
+
+
+## Unified Theme Selector (replaces separate toggles)
+
+- 4 themes: dark, light, cute-light, cute-dark — stored in localStorage `og-theme`
+- Old keys `og-theme-style` no longer used; migration: any unrecognized value defaults to "dark"
+- CSS classes: dark=none, light=`.light-mode`, cute-light=`.cute-mode`, cute-dark=`.cute-mode.cute-dark`
+- CuteCat renders when `theme.startsWith("cute-")`
+- i18n keys: `theme.selector`, `theme.dark`, `theme.light`, `theme.cuteLight`, `theme.cuteDark`
+- Old keys removed: `theme.cuteMode`, `theme.cuteOn`, `theme.cuteOff`, `theme.lightMode`, `theme.darkMode`
