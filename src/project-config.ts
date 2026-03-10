@@ -7,6 +7,7 @@ export interface ProjectConfig {
 	provider?: string;
 	budgetUsd?: number;
 	clarifyTimeoutMs?: number;
+	maxDepth?: number;
 }
 
 export async function loadProjectConfig(

@@ -2041,6 +2041,27 @@ export function App() {
 							}
 						/>
 					</label>
+					<label className="og-settings-field">
+						<span className="og-settings-label">Max Depth</span>
+						<input
+							type="number"
+							className="og-settings-input"
+							placeholder="3 (default)"
+							min="1"
+							max="10"
+							step="1"
+							value={
+								projectConfig.maxDepth != null
+									? String(projectConfig.maxDepth)
+									: ""
+							}
+							onChange={(e) =>
+								updateConfig({
+									maxDepth: e.target.value ? Number(e.target.value) : null,
+								})
+							}
+						/>
+					</label>
 				</div>
 			)}
 

@@ -69,4 +69,11 @@ describe("project-config", () => {
 		});
 		expect(result).toEqual({ model: "claude-sonnet-4-6", provider: "direct" });
 	});
+
+	test("maxDepth round-trips through save and load", async () => {
+		const config = { maxDepth: 5 };
+		await saveProjectConfig(dataDir, projectId, config);
+		const loaded = await loadProjectConfig(dataDir, projectId);
+		expect(loaded.maxDepth).toBe(5);
+	});
 });
