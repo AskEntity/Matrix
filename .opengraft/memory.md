@@ -432,3 +432,9 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - `isCommandAvailable()` and `commandCache` removed (no longer needed)
 - `truncateSearchOutput()` still exists but is no longer used by search tool (jsSearch handles truncation internally)
 - **Pitfall**: `noUncheckedIndexedAccess` in tsconfig means array index access returns `T | undefined` — use `?? ""` or `!` with biome-ignore comment
+
+## Auto-parent create_task + maxDepth Propagation
+
+- `create_task` without `parentId` now auto-parents under `currentTaskId` (the calling agent's task). Root orchestrator (`currentTaskId=null`) still creates top-level tasks.
+- `maxDepth` and `clarifyTimeoutMs` are now propagated through `createOrchestratorTools` in `executeChildStreaming`. Previously children beyond depth 2 used default maxDepth=3 and lost MCP tools at depth 3.
+- Test updated: "agent can create top-level task" → "agent auto-parents under itself when no parentId provided"
