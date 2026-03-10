@@ -91,7 +91,7 @@ export function TaskTree({
 				className={`og-orch-node${isOrchestratorSelected ? " selected" : ""}`}
 				onClick={(e) => {
 					e.stopPropagation();
-					onSelect(isOrchestratorSelected ? null : PROJECT_NODE_ID);
+					onSelect(PROJECT_NODE_ID);
 				}}
 			>
 				<span className="og-orch-icon">
@@ -184,7 +184,7 @@ function TaskNodeView({
 				className={`og-task-node${isSelected ? " selected" : ""}`}
 				onClick={(e) => {
 					e.stopPropagation();
-					onSelect(isSelected ? null : node.id);
+					onSelect(isSelected ? PROJECT_NODE_ID : node.id);
 				}}
 			>
 				<div

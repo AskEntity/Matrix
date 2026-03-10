@@ -753,7 +753,8 @@ export function LogEntryView({
 							onClick={() => setExpanded(!expanded)}
 						>
 							<span className="og-tool-card-name">
-								{icon}{headerText}
+								{icon}
+								{headerText}
 							</span>
 							<span className="og-tool-card-toggle">
 								<IconChevron size={10} expanded={expanded} />
@@ -762,7 +763,8 @@ export function LogEntryView({
 					) : (
 						<div className="og-tool-card-header">
 							<span className="og-tool-card-name">
-								{icon}{entry.text}
+								{icon}
+								{entry.text}
 							</span>
 						</div>
 					)}
