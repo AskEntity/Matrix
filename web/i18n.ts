@@ -63,6 +63,7 @@ const en: Translations = {
 	"orch.cacheWrite": "Cache Write",
 	"orch.cacheRead": "Cache Read",
 	"orch.output": "Output",
+	"orch.stop": "Stop",
 	"orch.clearSessions": "Clear Sessions",
 
 	// Status
@@ -100,6 +101,7 @@ const en: Translations = {
 	"detail.clickToEdit": "Click to edit",
 	"detail.runningHint": "Task is running — send a message to update it",
 	"detail.noDescription": "No description",
+	"detail.stop": "Stop",
 
 	// Activity
 	"activity.title": "Activity",
@@ -127,7 +129,6 @@ const en: Translations = {
 	"footer.sendMessage": "Send a message to the agent…",
 	"footer.messageToTask": 'Message to "{task}"…',
 	"footer.send": "Send",
-	"footer.stop": "Stop",
 	"footer.run": "Run",
 
 	// Clarifications
@@ -255,6 +256,7 @@ const zh: Translations = {
 	"orch.cacheWrite": "缓存写入",
 	"orch.cacheRead": "缓存读取",
 	"orch.output": "输出",
+	"orch.stop": "停止",
 	"orch.clearSessions": "清除会话",
 
 	// Status
@@ -292,6 +294,7 @@ const zh: Translations = {
 	"detail.clickToEdit": "点击编辑",
 	"detail.runningHint": "任务正在运行 — 发送消息来更新",
 	"detail.noDescription": "暂无描述",
+	"detail.stop": "停止",
 
 	// Activity
 	"activity.title": "活动",
@@ -319,7 +322,6 @@ const zh: Translations = {
 	"footer.sendMessage": "向代理发送消息…",
 	"footer.messageToTask": '发送消息给 "{task}"…',
 	"footer.send": "发送",
-	"footer.stop": "停止",
 	"footer.run": "运行",
 
 	// Clarifications
