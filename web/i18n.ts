@@ -161,6 +161,7 @@ const en: Translations = {
 	"lifecycle.deleted": "Deleted:",
 	"lifecycle.continued": "↳ Continued:",
 	"lifecycle.taskStarted": "↳ Started:",
+	"lifecycle.instructions": "Instructions:",
 	"lifecycle.taskPassed": "✓ Passed:",
 	"lifecycle.taskFailed": "✗ Failed:",
 
@@ -329,6 +330,7 @@ const zh: Translations = {
 	"lifecycle.deleted": "已删除：",
 	"lifecycle.continued": "↳ 已继续：",
 	"lifecycle.taskStarted": "↳ 已启动：",
+	"lifecycle.instructions": "指令：",
 	"lifecycle.taskPassed": "✓ 通过：",
 	"lifecycle.taskFailed": "✗ 失败：",
 

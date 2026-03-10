@@ -1639,13 +1639,17 @@ function AppInner() {
 					addLog("lifecycle", "Agent stopped");
 					setRunning(false);
 					break;
-				case "task_started":
+				case "task_started": {
+					const instruction = msg.message
+						? `\n${t("lifecycle.instructions")} ${(msg.message as string).length > 200 ? `${(msg.message as string).slice(0, 200)}…` : msg.message}`
+						: "";
 					addLog(
 						"task_started",
-						`↳ Started: ${msg.title}`,
+						`${t("lifecycle.taskStarted")} ${msg.title}${instruction}`,
 						msg.taskId as string,
 					);
 					break;
+				}
 				case "task_completed":
 					addLog(
 						"task_completed",
@@ -1684,7 +1688,7 @@ function AppInner() {
 				}
 			}
 		},
-		[addLog, updateFromWS, setRunning, setAgentProvider, setAgentModel],
+		[addLog, updateFromWS, setRunning, setAgentProvider, setAgentModel, t],
 	);
 
 	const { connected } = useWebSocket(projectId, handleWS);
