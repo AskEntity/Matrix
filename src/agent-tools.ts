@@ -787,6 +787,7 @@ export function createOrchestratorTools(
 							type: "task_started",
 							taskId: node.id,
 							title: node.title,
+							message: taskSpec.message,
 						});
 
 						spawnedTasks.push({
