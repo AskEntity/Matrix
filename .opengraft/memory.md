@@ -448,3 +448,6 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - Successfully tested recursive child spawning down to 5 levels (0→1→2→3→4→5)
 - maxDepth=7 config was sufficient; all branches created/merged/cleaned up properly
 - **Note**: MCP tools only available within daemon orchestration; HTTP API PATCH doesn't support worktreePath
+
+## Workflow Principle
+- Always create tasks first, then refine details later — dont spend too long planning before spawning.
