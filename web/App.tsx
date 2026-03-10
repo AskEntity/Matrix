@@ -49,6 +49,15 @@ function formatTokenCount(n: number): string {
 	return String(n);
 }
 
+function localizeToolName(rawName: string, t: (key: string) => string): string {
+	const key = `tools.${rawName}`;
+	const translated = t(key);
+	if (translated === key) {
+		return rawName.replace("mcp__opengraft__", "");
+	}
+	return translated;
+}
+
 function statusDotClass(status: string): string {
 	const map: Record<string, string> = {
 		pending: "status-dot-pending",
@@ -751,9 +760,9 @@ function LogEntryView({
 				)}
 				<div className="og-log-body">
 					<span className="og-tool-call">
-						<span className="og-tool-name">
+						<span className="og-tool-name" title={toolName}>
 							<IconTerminal size={10} />
-							{toolName}
+							{localizeToolName(toolName, t)}
 						</span>
 						{args && (
 							<span className="og-tool-args">
@@ -786,8 +795,9 @@ function LogEntryView({
 							className={
 								isOk ? "og-tool-result-ok" : isErr ? "og-tool-result-err" : ""
 							}
+							title={toolName}
 						>
-							{isOk ? "✓" : isErr ? "✗" : "→"} {toolName}
+							{isOk ? "✓" : isErr ? "✗" : "→"} {localizeToolName(toolName, t)}
 						</span>
 						{rest && (
 							<span className="og-tool-result-content">

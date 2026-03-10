@@ -176,6 +176,26 @@ const en: Translations = {
 	"model.sonnet": "Sonnet",
 	"model.opus": "Opus",
 	"model.haiku": "Haiku",
+
+	// Tool names (MCP)
+	"tools.mcp__opengraft__get_tree": "Get Tree",
+	"tools.mcp__opengraft__create_task": "Create Task",
+	"tools.mcp__opengraft__update_task_status": "Update Status",
+	"tools.mcp__opengraft__execute_tasks": "Execute Tasks",
+	"tools.mcp__opengraft__yield": "Yield (Wait)",
+	"tools.mcp__opengraft__send_message_to_child": "Message Child",
+	"tools.mcp__opengraft__report_to_parent": "Report to Parent",
+	"tools.mcp__opengraft__delete_task": "Delete Task",
+	"tools.mcp__opengraft__clarify": "Ask Clarification",
+	"tools.mcp__opengraft__done": "Done",
+
+	// Tool names (built-in)
+	"tools.bash": "Shell",
+	"tools.read_file": "Read File",
+	"tools.write_file": "Write File",
+	"tools.edit_file": "Edit File",
+	"tools.list_files": "List Files",
+	"tools.search": "Search",
 };
 
 const zh: Translations = {
@@ -343,6 +363,26 @@ const zh: Translations = {
 	"model.sonnet": "Sonnet",
 	"model.opus": "Opus",
 	"model.haiku": "Haiku",
+
+	// Tool names (MCP)
+	"tools.mcp__opengraft__get_tree": "查看任务树",
+	"tools.mcp__opengraft__create_task": "创建任务",
+	"tools.mcp__opengraft__update_task_status": "更新状态",
+	"tools.mcp__opengraft__execute_tasks": "执行任务",
+	"tools.mcp__opengraft__yield": "等待消息",
+	"tools.mcp__opengraft__send_message_to_child": "发送给子任务",
+	"tools.mcp__opengraft__report_to_parent": "上报父任务",
+	"tools.mcp__opengraft__delete_task": "删除任务",
+	"tools.mcp__opengraft__clarify": "请求澄清",
+	"tools.mcp__opengraft__done": "完成",
+
+	// Tool names (built-in)
+	"tools.bash": "命令行",
+	"tools.read_file": "读取文件",
+	"tools.write_file": "写入文件",
+	"tools.edit_file": "编辑文件",
+	"tools.list_files": "列出文件",
+	"tools.search": "搜索",
 };
 
 const translations: Record<Locale, Translations> = { en, zh };
