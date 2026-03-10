@@ -385,24 +385,6 @@ const TOOLS: Tool[] = [
 	},
 ];
 
-/** Check if a command is available in PATH. Caches results. */
-const commandCache = new Map<string, boolean>();
-async function isCommandAvailable(cmd: string): Promise<boolean> {
-	if (commandCache.has(cmd)) return commandCache.get(cmd) as boolean;
-	try {
-		const proc = Bun.spawn(["which", cmd], {
-			stdout: "pipe",
-			stderr: "pipe",
-		});
-		const available = (await proc.exited) === 0;
-		commandCache.set(cmd, available);
-		return available;
-	} catch {
-		commandCache.set(cmd, false);
-		return false;
-	}
-}
-
 /**
  * Truncate search output to a maximum number of entries.
  * For context mode (rg -C), entries are separated by "--" lines.
@@ -427,6 +409,183 @@ export function truncateSearchOutput(
 	if (contentLines.length <= limit) return output;
 	const result = contentLines.slice(0, limit).join("\n");
 	return `${result}\n[... truncated at ${limit} entries]`;
+}
+
+/**
+ * Pure JS search implementation using Bun.Glob + RegExp.
+ * Replaces external rg/grep dependency for cross-platform reliability.
+ */
+export async function jsSearch(opts: {
+	pattern: string;
+	searchPath: string;
+	glob?: string;
+	contextLines?: number;
+	outputMode: string;
+	headLimit: number;
+	caseInsensitive: boolean;
+	cwd: string;
+}): Promise<string> {
+	const {
+		pattern,
+		searchPath,
+		glob,
+		contextLines,
+		outputMode,
+		headLimit,
+		caseInsensitive,
+		cwd: baseCwd,
+	} = opts;
+
+	const regex = new RegExp(pattern, caseInsensitive ? "i" : "");
+	const absSearchPath = isAbsolute(searchPath)
+		? searchPath
+		: join(baseCwd, searchPath);
+
+	// Discover files
+	let files: string[];
+	if (glob) {
+		// Use Bun.Glob to match files within searchPath
+		const g = new Bun.Glob(glob);
+		files = Array.from(g.scanSync({ cwd: absSearchPath, onlyFiles: true }));
+	} else {
+		// No glob — scan all files recursively
+		const g = new Bun.Glob("**/*");
+		files = Array.from(g.scanSync({ cwd: absSearchPath, onlyFiles: true }));
+	}
+
+	// Sort for deterministic output
+	files.sort();
+
+	const ctxRange =
+		contextLines && contextLines > 0 ? Math.min(contextLines, 10) : 0;
+	const useContext = ctxRange > 0 && outputMode === "content";
+
+	const outputLines: string[] = [];
+	let entryCount = 0;
+
+	for (const relFile of files) {
+		if (entryCount >= headLimit) break;
+
+		const filePath = join(absSearchPath, relFile);
+		// Compute display path relative to baseCwd
+		const displayPath =
+			absSearchPath === baseCwd ? relFile : join(searchPath, relFile);
+
+		let content: string;
+		try {
+			content = await readFile(filePath, "utf-8");
+		} catch {
+			continue; // skip unreadable files (binary, permissions, etc.)
+		}
+
+		// Skip likely binary files (contains null bytes in first 8KB)
+		if (content.slice(0, 8192).includes("\0")) continue;
+
+		const lines = content.split("\n");
+
+		if (outputMode === "files_with_matches") {
+			for (const line of lines) {
+				if (regex.test(line)) {
+					outputLines.push(displayPath);
+					entryCount++;
+					break;
+				}
+			}
+		} else if (outputMode === "count") {
+			let count = 0;
+			for (const line of lines) {
+				if (regex.test(line)) count++;
+			}
+			if (count > 0) {
+				outputLines.push(`${displayPath}:${count}`);
+				entryCount++;
+			}
+		} else {
+			// content mode — with optional context lines
+			const matchIndices: number[] = [];
+			for (let i = 0; i < lines.length; i++) {
+				if (regex.test(lines[i] ?? "")) matchIndices.push(i);
+			}
+			if (matchIndices.length === 0) continue;
+
+			if (useContext) {
+				// Group matches into context blocks
+				const blocks: string[] = [];
+				// biome-ignore lint/style/noNonNullAssertion: length checked above
+				let blockStart = Math.max(0, matchIndices[0]! - ctxRange);
+				// biome-ignore lint/style/noNonNullAssertion: length checked above
+				let blockEnd = Math.min(lines.length - 1, matchIndices[0]! + ctxRange);
+
+				for (let m = 1; m < matchIndices.length; m++) {
+					const mi = matchIndices[m] as number;
+					const newStart = Math.max(0, mi - ctxRange);
+					const newEnd = Math.min(lines.length - 1, mi + ctxRange);
+					if (newStart <= blockEnd + 1) {
+						// Merge with current block
+						blockEnd = newEnd;
+					} else {
+						// Emit current block
+						blocks.push(
+							formatContextBlock(
+								lines,
+								blockStart,
+								blockEnd,
+								matchIndices,
+								displayPath,
+							),
+						);
+						blockStart = newStart;
+						blockEnd = newEnd;
+					}
+				}
+				blocks.push(
+					formatContextBlock(
+						lines,
+						blockStart,
+						blockEnd,
+						matchIndices,
+						displayPath,
+					),
+				);
+
+				for (const block of blocks) {
+					if (entryCount >= headLimit) break;
+					if (outputLines.length > 0) outputLines.push("--");
+					outputLines.push(block);
+					entryCount++;
+				}
+			} else {
+				// No context — just matching lines
+				for (const idx of matchIndices) {
+					if (entryCount >= headLimit) break;
+					outputLines.push(`${displayPath}:${idx + 1}:${lines[idx]}`);
+					entryCount++;
+				}
+			}
+		}
+	}
+
+	let result = outputLines.join("\n");
+	if (entryCount >= headLimit) {
+		result += `\n[... truncated at ${headLimit} entries]`;
+	}
+	return result.slice(0, 20000);
+}
+
+function formatContextBlock(
+	lines: string[],
+	start: number,
+	end: number,
+	matchIndices: number[],
+	filePath: string,
+): string {
+	const matchSet = new Set(matchIndices);
+	const blockLines: string[] = [];
+	for (let i = start; i <= end; i++) {
+		const sep = matchSet.has(i) ? ":" : "-";
+		blockLines.push(`${filePath}${sep}${i + 1}${sep}${lines[i]}`);
+	}
+	return blockLines.join("\n");
 }
 
 /** @internal Exported for testing */
@@ -638,52 +797,18 @@ export async function executeTool(
 			const headLimit = Math.min((input.head_limit as number) ?? 50, 200);
 			const caseInsensitive = (input.case_insensitive as boolean) ?? false;
 
-			// Try rg first, fall back to grep if rg is not available
-			const useRg = await isCommandAvailable("rg");
-			const args: string[] = useRg
-				? ["rg", "--no-heading", "-n"]
-				: ["grep", "-rn"];
-
-			if (caseInsensitive) args.push("-i");
-
-			const useContext =
-				contextLines && contextLines > 0 && outputMode === "content";
-
-			if (useRg) {
-				if (outputMode === "files_with_matches") {
-					args.push("-l");
-				} else if (outputMode === "count") {
-					args.push("-c");
-				}
-				if (glob) args.push("--glob", glob);
-				if (useContext) {
-					args.push("-C", String(Math.min(contextLines, 10)));
-				}
-				args.push(pattern, searchPath);
-			} else {
-				if (outputMode === "files_with_matches") args.push("-l");
-				if (outputMode === "count") args.push("-c");
-				if (glob) args.push("--include", glob);
-				if (useContext) args.push(`-C${Math.min(contextLines, 10)}`);
-				args.push(pattern, searchPath);
-			}
-
 			try {
-				const proc = Bun.spawn(args, {
+				const result = await jsSearch({
+					pattern,
+					searchPath,
+					glob,
+					contextLines,
+					outputMode,
+					headLimit,
+					caseInsensitive,
 					cwd,
-					stdout: "pipe",
-					stderr: "pipe",
 				});
-				await proc.exited;
-				const stdout = await new Response(proc.stdout).text();
-				if (!stdout) return { content: "(no matches)", isError: false };
-
-				// Truncate to headLimit entries
-				const truncated = truncateSearchOutput(stdout, headLimit, !!useContext);
-				return {
-					content: truncated.slice(0, 20000),
-					isError: false,
-				};
+				return { content: result || "(no matches)", isError: false };
 			} catch (e) {
 				return {
 					content: `Error: ${e instanceof Error ? e.message : String(e)}`,

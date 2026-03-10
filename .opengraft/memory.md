@@ -410,3 +410,15 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - Child components (StatusBadge, TaskTree, ActivityLog, etc.) each call `useLocale()` directly via context
 - Pre-commit i18n check: `scripts/check-i18n.sh` scans for bare English text between JSX tags
 - **Pitfall**: useLocale() must be called inside LocaleProvider — App wraps AppInner for this reason
+
+
+## Search Tool — Pure JS Implementation
+
+- Replaced rg/grep external dependency with pure JS using `Bun.Glob` + `RegExp`
+- `jsSearch()` function in `direct-provider.ts`: discovers files via `Bun.Glob.scanSync()`, reads each file, matches lines with RegExp
+- Supports all output modes: content (with context lines), files_with_matches, count
+- Glob with path separators (e.g., `"web/App.tsx"`) now works correctly — `Bun.Glob` handles full path patterns natively
+- Binary file detection: skips files with null bytes in first 8KB
+- `isCommandAvailable()` and `commandCache` removed (no longer needed)
+- `truncateSearchOutput()` still exists but is no longer used by search tool (jsSearch handles truncation internally)
+- **Pitfall**: `noUncheckedIndexedAccess` in tsconfig means array index access returns `T | undefined` — use `?? ""` or `!` with biome-ignore comment
