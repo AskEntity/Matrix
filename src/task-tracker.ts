@@ -133,6 +133,22 @@ export class TaskTracker {
 		node.updatedAt = new Date().toISOString();
 	}
 
+	/** Update the title of a task node. */
+	updateTitle(nodeId: string, title: string): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		node.title = title;
+		node.updatedAt = new Date().toISOString();
+	}
+
+	/** Update the description of a task node. */
+	updateDescription(nodeId: string, description: string): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		node.description = description;
+		node.updatedAt = new Date().toISOString();
+	}
+
 	/** Assign a branch to a task node (1:1 agent-branch binding). */
 	assignBranch(nodeId: string, branch: string): void {
 		const node = this.nodes.get(nodeId);

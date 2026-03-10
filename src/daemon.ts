@@ -602,12 +602,20 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const body = await c.req.json<{
 			status?: TaskStatus;
 			branch?: string;
+			title?: string;
+			description?: string;
 		}>();
 		if (body.status) {
 			tracker.updateStatus(nodeId, body.status);
 		}
 		if (body.branch) {
 			tracker.assignBranch(nodeId, body.branch);
+		}
+		if (body.title) {
+			tracker.updateTitle(node.id, body.title);
+		}
+		if (body.description !== undefined) {
+			tracker.updateDescription(node.id, body.description);
 		}
 		await tracker.save();
 		broadcastTreeUpdate(project.id, tracker);

@@ -943,6 +943,52 @@ function TaskDetail({
 	);
 	const [showHistory, setShowHistory] = useState(false);
 	const canContinue = node.status === "failed" || node.status === "stuck";
+	const isPending = node.status === "pending";
+	const isRunning = node.status === "in_progress" || node.status === "testing";
+	const [editingTitle, setEditingTitle] = useState(false);
+	const [editTitle, setEditTitle] = useState(node.title);
+	const [editingDesc, setEditingDesc] = useState(false);
+	const [editDesc, setEditDesc] = useState(node.description);
+	const titleInputRef = useRef<HTMLInputElement>(null);
+	const descTextareaRef = useRef<HTMLTextAreaElement>(null);
+
+	// Sync local state when node changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset edit state when node identity changes
+	useEffect(() => {
+		setEditTitle(node.title);
+		setEditDesc(node.description);
+		setEditingTitle(false);
+		setEditingDesc(false);
+	}, [node.id]);
+
+	const saveTitle = useCallback(
+		(value: string) => {
+			const trimmed = value.trim();
+			if (trimmed && trimmed !== node.title) {
+				fetch(`/projects/${projectId}/tasks/${node.id}`, {
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ title: trimmed }),
+				});
+			}
+			setEditingTitle(false);
+		},
+		[projectId, node.id, node.title],
+	);
+
+	const saveDescription = useCallback(
+		(value: string) => {
+			if (value !== node.description) {
+				fetch(`/projects/${projectId}/tasks/${node.id}`, {
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ description: value }),
+				});
+			}
+			setEditingDesc(false);
+		},
+		[projectId, node.id, node.description],
+	);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: refetch when status changes so new commits appear after task completes
 	useEffect(() => {
@@ -962,11 +1008,80 @@ function TaskDetail({
 					className={`og-task-status-dot ${statusDotClass(node.status)}`}
 					style={{ width: "10px", height: "10px", flexShrink: 0 }}
 				/>
-				{node.title}
+				{editingTitle ? (
+					<input
+						ref={titleInputRef}
+						className="og-editable-title-input"
+						value={editTitle}
+						onChange={(e) => setEditTitle(e.target.value)}
+						onBlur={() => saveTitle(editTitle)}
+						onKeyDown={(e) => {
+							if (e.key === "Enter") saveTitle(editTitle);
+							if (e.key === "Escape") {
+								setEditTitle(node.title);
+								setEditingTitle(false);
+							}
+						}}
+					/>
+				) : isPending ? (
+					<button
+						type="button"
+						className="og-editable-title"
+						onClick={() => {
+							setEditingTitle(true);
+							setTimeout(() => titleInputRef.current?.focus(), 0);
+						}}
+						title={t("detail.clickToEdit")}
+					>
+						{node.title}
+					</button>
+				) : (
+					<span>{node.title}</span>
+				)}
 			</div>
 
-			{node.description && (
-				<div className="og-detail-description">{node.description}</div>
+			{editingDesc ? (
+				<textarea
+					ref={descTextareaRef}
+					className="og-editable-desc-textarea"
+					value={editDesc}
+					onChange={(e) => setEditDesc(e.target.value)}
+					onBlur={() => saveDescription(editDesc)}
+					onKeyDown={(e) => {
+						if (e.key === "Escape") {
+							setEditDesc(node.description);
+							setEditingDesc(false);
+						}
+					}}
+					rows={4}
+				/>
+			) : isRunning ? (
+				<div className="og-detail-description">
+					{node.description || (
+						<span className="og-text-faint">{t("detail.noDescription")}</span>
+					)}
+					<div className="og-running-hint">{t("detail.runningHint")}</div>
+				</div>
+			) : isPending ? (
+				<button
+					type="button"
+					className="og-detail-description og-editable-desc"
+					onClick={() => {
+						setEditingDesc(true);
+						setTimeout(() => descTextareaRef.current?.focus(), 0);
+					}}
+					title={t("detail.clickToEdit")}
+				>
+					{node.description || (
+						<span className="og-text-faint">{t("detail.editDescription")}</span>
+					)}
+				</button>
+			) : (
+				<div className="og-detail-description">
+					{node.description || (
+						<span className="og-text-faint">{t("detail.noDescription")}</span>
+					)}
+				</div>
 			)}
 
 			<div className="og-detail-grid">

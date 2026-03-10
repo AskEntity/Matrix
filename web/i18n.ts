@@ -96,6 +96,10 @@ const en: Translations = {
 	"detail.selectTask": "Select a task to view details",
 	"detail.loadingHistory": "Loading history…",
 	"detail.noHistory": "No conversation history found.",
+	"detail.editDescription": "Edit description",
+	"detail.clickToEdit": "Click to edit",
+	"detail.runningHint": "Task is running — send a message to update it",
+	"detail.noDescription": "No description",
 
 	// Activity
 	"activity.title": "Activity",
@@ -284,6 +288,10 @@ const zh: Translations = {
 	"detail.selectTask": "选择一个任务查看详情",
 	"detail.loadingHistory": "加载历史…",
 	"detail.noHistory": "未找到对话历史。",
+	"detail.editDescription": "编辑描述",
+	"detail.clickToEdit": "点击编辑",
+	"detail.runningHint": "任务正在运行 — 发送消息来更新",
+	"detail.noDescription": "暂无描述",
 
 	// Activity
 	"activity.title": "活动",

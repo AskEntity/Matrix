@@ -735,6 +735,75 @@ select {
 	border-radius: var(--radius-md);
 }
 
+.og-editable-title {
+	cursor: pointer;
+	border: none;
+	border-bottom: 1px dashed var(--border-subtle);
+	background: none;
+	font-size: inherit;
+	font-weight: inherit;
+	font-family: inherit;
+	color: inherit;
+	padding: 0;
+	text-align: left;
+}
+.og-editable-title:hover {
+	color: var(--accent);
+}
+
+.og-editable-title-input {
+	flex: 1;
+	font-size: 15px;
+	font-weight: 600;
+	color: var(--text-primary);
+	background: var(--bg-raised);
+	border: 1px solid var(--accent);
+	border-radius: var(--radius-sm);
+	padding: 2px 6px;
+	outline: none;
+	font-family: inherit;
+}
+
+.og-editable-desc {
+	cursor: pointer;
+	border-style: dashed;
+	text-align: left;
+	width: 100%;
+	font-family: inherit;
+	box-sizing: border-box;
+}
+.og-editable-desc:hover {
+	border-color: var(--accent);
+}
+
+.og-editable-desc-textarea {
+	width: 100%;
+	font-size: 13px;
+	color: var(--text-secondary);
+	line-height: 1.6;
+	margin-bottom: 12px;
+	padding: 10px 12px;
+	background: var(--bg-raised);
+	border: 1px solid var(--accent);
+	border-radius: var(--radius-md);
+	resize: vertical;
+	outline: none;
+	font-family: inherit;
+	box-sizing: border-box;
+}
+
+.og-running-hint {
+	font-size: 11px;
+	color: var(--text-faint);
+	font-style: italic;
+	margin-top: 6px;
+}
+
+.og-text-faint {
+	color: var(--text-faint);
+	font-style: italic;
+}
+
 .og-detail-grid {
 	display: flex;
 	flex-wrap: wrap;

@@ -457,3 +457,13 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - 4 themes: dark, light, cute-light, cute-dark — stored in localStorage `og-theme`
 - CSS classes: dark=none, light=`.light-mode`, cute-light=`.cute-mode`, cute-dark=`.cute-mode.cute-dark`
 - CuteCat renders when `theme.startsWith("cute-")`
+
+## Task Description/Title Editing
+
+- `PATCH /projects/:id/tasks/:nodeId` now accepts `title` and `description` in body
+- `TaskTracker.updateTitle()` and `TaskTracker.updateDescription()` added
+- Frontend: TaskDetail shows editable title/description when status is `pending` (click-to-edit via `<button>` elements)
+- When `in_progress`/`testing`, shows read-only description with "send a message" hint
+- **Biome pitfall**: `<div role="button">` triggers `useSemanticElements` — use native `<button>` instead and reset its styling via CSS
+- **Biome pitfall**: `{/* biome-ignore */}` JSX comments inside ternary branches cause parse errors — they get treated as expression children. Use `// biome-ignore` only when the comment is directly before the JSX element in a valid position (inside the ternary parens is fine for `//` comments but not `{/* */}`)
+- **Biome `--write` danger**: running `bun run check` (biome check --write) on broken JSX can auto-reformat the code destructively, collapsing indentation and breaking JSX structure. Always check `typecheck` BEFORE running biome check --write.
