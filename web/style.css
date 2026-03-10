@@ -1102,6 +1102,7 @@ select {
 	flex-shrink: 0;
 	display: flex;
 	align-items: center;
+	gap: 4px;
 	padding: 4px 12px;
 	border-bottom: 1px solid var(--border-subtle);
 }
@@ -1124,6 +1125,32 @@ select {
 
 .og-log-search::placeholder {
 	color: var(--text-faint);
+}
+
+.og-bash-toggle {
+	flex-shrink: 0;
+	margin-left: 6px;
+	padding: 2px 8px;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	background: var(--bg-surface);
+	color: var(--text-secondary);
+	font-size: 11px;
+	font-family: var(--font-mono);
+	cursor: pointer;
+	white-space: nowrap;
+	transition: all 0.15s;
+}
+
+.og-bash-toggle:hover {
+	border-color: var(--accent);
+	color: var(--text-primary);
+}
+
+.og-bash-toggle.active {
+	background: var(--accent);
+	color: var(--bg-primary);
+	border-color: var(--accent);
 }
 
 .og-activity-log {
@@ -1544,7 +1571,7 @@ button.og-tool-card-header:hover {
 	background: linear-gradient(
 		90deg,
 		transparent,
-		rgba(163, 113, 247, 0.15),
+		rgba(163, 113, 247, 0.3),
 		transparent
 	);
 	animation: compact-shimmer 3s ease-in-out infinite;

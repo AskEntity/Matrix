@@ -168,3 +168,14 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 - **Problem**: `client.messages.create()` times out after 10 minutes for large compaction summaries (32k max_tokens, ~160k token input).
 - **Fix**: Use `client.messages.stream({...}).finalMessage()` — streams internally but returns the complete `Message` object, same shape as `create()`.
 - **Test mocks**: `messages.stream` is a synchronous function (not async) that returns `{ finalMessage: async () => response }`. Three inline mock clients in the test needed updating alongside `makeMockClient`.
+
+
+## Activity Log Card Fixes (batch)
+- **Title-only ✓ duplicate**: Removed separate status span from title-only card headers since `getToolCardTitle()` already includes ✓/✗ for done cards.
+- **create_task expansion**: Gate `mcpBody` behind `expanded &&` in ToolCard render. Removed inner `expanded &&` from McpToolCardBody create_task case (and removed `expanded` prop from McpToolCardBody entirely).
+- **File tool prefixes**: read_file → `→ file`, write_file → `← file`, edit_file → `✎ file` for visual distinctiveness.
+- **execute_tasks icon**: Changed from `▶` to `⚡` for bolder visual.
+- **delete_task icon**: Changed from `✂` to `✕` (more visible).
+- **Bash filter toggle**: `hideBash` state in ActivityLog, toggle button with `og-bash-toggle` CSS class. i18n keys: `log.hideBash`/`log.showBash`.
+- **Compact shimmer opacity**: Boosted from `0.15` to `0.3` for visibility.
+- **yield resume**: Already title-only via `isTitleOnlyCard` returning true for yield. No code change needed.

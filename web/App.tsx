@@ -76,7 +76,7 @@ function formatMcpToolResult(
 		}
 		case "delete_task": {
 			if (json && typeof json.title === "string") {
-				return `${t("log.deletedTask")} ✂ "${json.title}"`;
+				return `${t("log.deletedTask")} ✕ "${json.title}"`;
 			}
 			return null;
 		}
@@ -813,6 +813,7 @@ function ActivityLog({
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 	const [searchText, setSearchText] = useState("");
+	const [hideBash, setHideBash] = useState(false);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new entries
 	useEffect(() => {
@@ -899,8 +900,17 @@ function ActivityLog({
 			result.push({ kind: "single", entry: cur });
 			i += 1;
 		}
+		if (hideBash) {
+			return result.filter(
+				(item) =>
+					!(
+						item.kind === "tool_card" &&
+						(item.useEntry.text.split("(")[0] ?? "") === "bash"
+					),
+			);
+		}
 		return result;
-	}, [visible]);
+	}, [visible, hideBash]);
 
 	return (
 		<>
@@ -912,6 +922,14 @@ function ActivityLog({
 					value={searchText}
 					onChange={(e) => setSearchText(e.target.value)}
 				/>
+				<button
+					type="button"
+					className={`og-bash-toggle ${hideBash ? "active" : ""}`}
+					onClick={() => setHideBash(!hideBash)}
+					title={hideBash ? t("log.showBash") : t("log.hideBash")}
+				>
+					{hideBash ? t("log.showBash") : t("log.hideBash")}
+				</button>
 			</div>
 			<div className="og-activity-log" ref={logRef} onScroll={handleScroll}>
 				{mergedVisible.map((item) =>
@@ -1015,15 +1033,15 @@ function getToolCardTitle(
 	// File tools
 	if (toolName === "read_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? basename(path) : "read_file";
+		return path ? `→ ${basename(path)}` : "→ read_file";
 	}
 	if (toolName === "write_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? basename(path) : "write_file";
+		return path ? `← ${basename(path)}` : "← write_file";
 	}
 	if (toolName === "edit_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? basename(path) : "edit_file";
+		return path ? `✎ ${basename(path)}` : "✎ edit_file";
 	}
 	if (toolName === "search") {
 		const pattern = extractArg(argsStr, "pattern");
@@ -1061,13 +1079,13 @@ function getToolCardTitle(
 				if (resultContent) {
 					try {
 						const json = JSON.parse(resultContent) as Record<string, unknown>;
-						if (typeof json.title === "string") return `✂ ${json.title}`;
+						if (typeof json.title === "string") return `✕ ${json.title}`;
 					} catch {
 						/* ignore */
 					}
 				}
 				const taskId = extractArg(argsStr, "taskId");
-				return taskId ? `✂ ${taskId.slice(0, 8)}` : "✂ delete_task";
+				return taskId ? `✕ ${taskId.slice(0, 8)}` : "✕ delete_task";
 			}
 			case "execute_tasks": {
 				const tasksArg = extractArg(argsStr, "tasks");
@@ -1094,14 +1112,14 @@ function getToolCardTitle(
 							}
 						}
 						if (titles.length > 0) {
-							return `▶ ${titles.length} tasks: ${titles.join(", ")}`;
+							return `⚡ ${titles.length} tasks: ${titles.join(", ")}`;
 						}
-						return `▶ ${tasks.length} task${tasks.length === 1 ? "" : "s"}`;
+						return `⚡ ${tasks.length} task${tasks.length === 1 ? "" : "s"}`;
 					} catch {
 						/* ignore */
 					}
 				}
-				return "▶ execute_tasks";
+				return "⚡ execute_tasks";
 			}
 			case "done": {
 				const status = extractArg(argsStr, "status");
@@ -1180,14 +1198,12 @@ function McpToolCardBody({
 	resultContent,
 	isOk,
 	t,
-	expanded,
 }: {
 	toolName: string;
 	argsStr: string;
 	resultContent: string | null;
 	isOk: boolean;
 	t: (key: string, params?: Record<string, string>) => string;
-	expanded: boolean;
 }) {
 	const mcpTool = toolName.replace("mcp__opengraft__", "");
 
@@ -1277,7 +1293,7 @@ function McpToolCardBody({
 			return (
 				<div className="og-mcp-body">
 					{title && <div className="og-mcp-task-title">{title}</div>}
-					{expanded && desc && <div className="og-mcp-task-desc">{desc}</div>}
+					{desc && <div className="og-mcp-task-desc">{desc}</div>}
 				</div>
 			);
 		}
@@ -1319,7 +1335,7 @@ function McpToolCardBody({
 				<div className="og-mcp-body">
 					{title ? (
 						<div className="og-mcp-task-title">
-							{t("log.deletedTask")} ✂ "{title}"
+							{t("log.deletedTask")} ✕ "{title}"
 						</div>
 					) : (
 						<div className="og-mcp-task-title">
@@ -1408,7 +1424,6 @@ function ToolCard({
 				resultContent={resultContent}
 				isOk={isOk}
 				t={t}
-				expanded={expanded}
 			/>
 		) : null;
 
@@ -1432,9 +1447,6 @@ function ToolCard({
 						<span className="og-tool-card-name">
 							{getToolCardTitle(toolName, argsStr, resultContent)}
 						</span>
-						<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
-							{isErr ? "✗" : "✓"}
-						</span>
 					</div>
 				) : (
 					<button
@@ -1453,7 +1465,7 @@ function ToolCard({
 						</span>
 					</button>
 				)}
-				{mcpBody && <div className="og-tool-card-body">{mcpBody}</div>}
+				{expanded && mcpBody && <div className="og-tool-card-body">{mcpBody}</div>}
 				{expanded && !mcpBody && (
 					<div className="og-tool-card-body">
 						{argsStr && <div className="og-tool-card-args">{argsStr}</div>}
