@@ -13,6 +13,9 @@ bun run typecheck
 echo "Running lint..."
 bun run check
 
+echo "Running i18n check..."
+bash scripts/check-i18n.sh
+
 echo "Running tests..."
 bun test --bail src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/direct-provider.test.ts
 

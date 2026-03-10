@@ -10,6 +10,7 @@ import {
 	useTasks,
 	useWebSocket,
 } from "./hooks.ts";
+import { LocaleProvider, useLocale } from "./i18n.ts";
 
 const PROJECT_NODE_ID = "__project__";
 
@@ -61,20 +62,12 @@ function statusDotClass(status: string): string {
 }
 
 function StatusBadge({ status }: { status: string }) {
-	const labels: Record<string, string> = {
-		pending: "Pending",
-		in_progress: "In Progress",
-		testing: "Testing",
-		passed: "Passed",
-		failed: "Failed",
-		stuck: "Stuck",
-		idle: "Idle",
-		running: "Running",
-	};
+	const { t } = useLocale();
+	const key = `status.${status}`;
 	return (
 		<span className={`og-status-badge ${status}`}>
 			<span className="badge-dot" />
-			{labels[status] ?? status}
+			{t(key)}
 		</span>
 	);
 }
@@ -435,6 +428,7 @@ function TaskTree({
 		return matched;
 	}, [nodes, taskFilter, nodeMap]);
 
+	const { t } = useLocale();
 	const isOrchestratorSelected = selectedTaskId === PROJECT_NODE_ID;
 	const filteredRoots = matchingIds
 		? roots.filter((r) => matchingIds.has(r.id))
@@ -447,7 +441,7 @@ function TaskTree({
 				<input
 					type="text"
 					className="og-tree-search"
-					placeholder="Filter tasks…"
+					placeholder={t("tasks.filter")}
 					value={taskFilter}
 					onChange={(e) => setTaskFilter(e.target.value)}
 				/>
@@ -465,9 +459,11 @@ function TaskTree({
 				<span className="og-orch-icon">
 					<IconHexagon size={14} />
 				</span>
-				<span className="og-orch-label">Orchestrator</span>
+				<span className="og-orch-label">{t("orch.label")}</span>
 				<span className={`og-orch-badge ${running ? "running" : "idle"}`}>
-					{running ? "running" : "idle"}
+					{running
+						? t("status.running").toLowerCase()
+						: t("status.idle").toLowerCase()}
 				</span>
 			</button>
 
@@ -492,15 +488,17 @@ function TaskTree({
 					<span className="og-empty-icon">
 						<IconHexagon size={24} />
 					</span>
-					<span>No tasks yet</span>
+					<span>{t("tasks.noTasks")}</span>
 					<span style={{ color: "var(--text-faint)", fontSize: "11px" }}>
-						Start an agent to create tasks
+						{t("tasks.startAgent")}
 					</span>
 				</div>
 			)}
 
 			{nodes.length > 0 && filteredRoots.length === 0 && taskFilter && (
-				<div className="og-tree-empty">No tasks match "{taskFilter}"</div>
+				<div className="og-tree-empty">
+					{t("tasks.noMatch")} "{taskFilter}"
+				</div>
 			)}
 		</div>
 	);
@@ -657,13 +655,15 @@ function ActivityLog({
 		return items;
 	}, [entries, filterTaskId, nodeMap, searchText]);
 
+	const { t } = useLocale();
+
 	return (
 		<>
 			<div className="og-log-search-bar">
 				<input
 					type="text"
 					className="og-log-search"
-					placeholder="Search logs…"
+					placeholder={t("activity.searchLogs")}
 					value={searchText}
 					onChange={(e) => setSearchText(e.target.value)}
 				/>
@@ -682,7 +682,7 @@ function ActivityLog({
 							fontFamily: "var(--font-mono)",
 						}}
 					>
-						{searchText.trim() ? "No matching entries" : "No events yet"}
+						{searchText.trim() ? t("activity.noMatch") : t("activity.noEvents")}
 					</div>
 				)}
 			</div>
@@ -703,12 +703,12 @@ function LogEntryView({
 			entry.taskId.slice(0, 8))
 		: null;
 
+	const { t } = useLocale();
+
 	if (entry.type === "compact" && entry.checkpoint) {
 		return (
 			<div className="og-compact-boundary">
-				<div className="og-compact-hint">
-					↑ Content above is not visible to the agent
-				</div>
+				<div className="og-compact-hint">{t("compact.notVisible")}</div>
 				<div className="og-compact-bar">
 					<span className="og-compact-label">◈ {entry.text}</span>
 					<button
@@ -716,7 +716,7 @@ function LogEntryView({
 						className="og-compact-toggle"
 						onClick={() => setExpanded(!expanded)}
 					>
-						{expanded ? "▼ Collapse" : "▶ Checkpoint"}
+						{expanded ? t("compact.collapse") : t("compact.checkpoint")}
 					</button>
 				</div>
 				{expanded && (
@@ -814,7 +814,7 @@ function LogEntryView({
 			<div className="og-log-entry og-event-user_prompt">
 				<span className="og-log-time">{entry.time}</span>
 				<div className="og-user-prompt-bubble">
-					<span className="og-user-prompt-label">You →</span>
+					<span className="og-user-prompt-label">{t("log.youArrow")}</span>
 					<span className="og-user-prompt-text">{entry.text}</span>
 				</div>
 			</div>
@@ -866,10 +866,12 @@ function ConversationHistory({
 			.finally(() => setLoading(false));
 	}, [projectId, nodeId]);
 
+	const { t } = useLocale();
+
 	if (loading) {
 		return (
 			<div className="og-conv-history">
-				<div className="og-conv-loading">Loading history…</div>
+				<div className="og-conv-loading">{t("detail.loadingHistory")}</div>
 			</div>
 		);
 	}
@@ -877,7 +879,7 @@ function ConversationHistory({
 	if (messages.length === 0) {
 		return (
 			<div className="og-conv-history">
-				<div className="og-conv-empty">No conversation history found.</div>
+				<div className="og-conv-empty">{t("detail.noHistory")}</div>
 			</div>
 		);
 	}
@@ -888,7 +890,7 @@ function ConversationHistory({
 				// biome-ignore lint/suspicious/noArrayIndexKey: stable index for static list
 				<div key={i} className={`og-conv-msg og-conv-msg-${msg.role}`}>
 					<span className={`og-conv-role-badge og-conv-role-${msg.role}`}>
-						{msg.role === "user" ? "USER" : "ASSISTANT"}
+						{msg.role === "user" ? t("conv.user") : t("conv.assistant")}
 					</span>
 					<div className="og-conv-content">{msg.content}</div>
 					{msg.hasToolUse && msg.toolNames && msg.toolNames.length > 0 && (
@@ -913,6 +915,7 @@ function TaskDetail({
 	onContinue: (msg?: string) => void;
 	onDelete: () => void;
 }) {
+	const { t } = useLocale();
 	const [continueMsg, setContinueMsg] = useState("");
 	const [commits, setCommits] = useState<{ hash: string; message: string }[]>(
 		[],
@@ -947,18 +950,18 @@ function TaskDetail({
 
 			<div className="og-detail-grid">
 				<div className="og-detail-field">
-					<div className="og-detail-label">Status</div>
+					<div className="og-detail-label">{t("detail.status")}</div>
 					<StatusBadge status={node.status} />
 				</div>
 				{node.branch && (
 					<div className="og-detail-field">
-						<div className="og-detail-label">Branch</div>
+						<div className="og-detail-label">{t("detail.branch")}</div>
 						<div className="og-detail-value mono">{node.branch}</div>
 					</div>
 				)}
 				{node.worktreePath && (
 					<div className="og-detail-field">
-						<div className="og-detail-label">Worktree</div>
+						<div className="og-detail-label">{t("detail.worktree")}</div>
 						<div className="og-detail-value mono" style={{ fontSize: "10px" }}>
 							{node.worktreePath}
 						</div>
@@ -966,7 +969,7 @@ function TaskDetail({
 				)}
 				{node.updatedAt && (
 					<div className="og-detail-field">
-						<div className="og-detail-label">Updated</div>
+						<div className="og-detail-label">{t("detail.updated")}</div>
 						<div className="og-detail-value">
 							{new Date(node.updatedAt).toLocaleString()}
 						</div>
@@ -976,10 +979,10 @@ function TaskDetail({
 					<div className="og-detail-field">
 						<div className="og-detail-label">
 							{node.status === "in_progress"
-								? "Running"
+								? t("detail.running")
 								: node.status === "pending"
-									? "Waiting"
-									: "Age"}
+									? t("detail.waiting")
+									: t("detail.age")}
 						</div>
 						<div className="og-detail-value">
 							{node.status === "in_progress"
@@ -992,16 +995,18 @@ function TaskDetail({
 				)}
 				{(node.costUsd != null && node.costUsd > 0) || node.budgetUsd ? (
 					<div className="og-detail-field">
-						<div className="og-detail-label">Cost</div>
+						<div className="og-detail-label">{t("detail.cost")}</div>
 						<div className="og-detail-value mono">
 							${(node.costUsd ?? 0).toFixed(4)}
-							{node.budgetUsd ? ` / ${node.budgetUsd.toFixed(2)} budget` : ""}
+							{node.budgetUsd
+								? ` / ${node.budgetUsd.toFixed(2)} ${t("detail.budget")}`
+								: ""}
 						</div>
 					</div>
 				) : null}
 				{node.message && (
 					<div className="og-detail-field" style={{ width: "100%" }}>
-						<div className="og-detail-label">Message</div>
+						<div className="og-detail-label">{t("detail.message")}</div>
 						<div className="og-detail-value">{node.message}</div>
 					</div>
 				)}
@@ -1010,7 +1015,7 @@ function TaskDetail({
 			{commits.length > 0 && (
 				<div className="og-detail-section">
 					<div className="og-detail-label" style={{ marginBottom: "6px" }}>
-						Commits
+						{t("detail.commits")}
 					</div>
 					{commits.slice(0, 10).map((commit) => (
 						<div
@@ -1052,11 +1057,11 @@ function TaskDetail({
 							className="og-continue-input"
 							value={continueMsg}
 							onChange={(e) => setContinueMsg(e.target.value)}
-							placeholder="Instructions for retry…"
+							placeholder={t("detail.retryPlaceholder")}
 						/>
 						<button type="submit" className="og-btn og-btn-warning og-btn-sm">
 							<IconRepeat size={12} />
-							Continue
+							{t("detail.continue")}
 						</button>
 					</form>
 				)}
@@ -1066,7 +1071,7 @@ function TaskDetail({
 						className={`og-btn og-btn-sm ${showHistory ? "og-btn-active" : "og-btn-ghost"}`}
 						onClick={() => setShowHistory((v) => !v)}
 					>
-						History
+						{t("detail.history")}
 					</button>
 				)}
 				<button
@@ -1075,7 +1080,7 @@ function TaskDetail({
 					onClick={onDelete}
 				>
 					<IconTrash size={12} />
-					Delete
+					{t("detail.delete")}
 				</button>
 			</div>
 
@@ -1115,6 +1120,7 @@ function OrchestratorDetail({
 	model?: string | null;
 	onClearSessions?: () => void;
 }) {
+	const { t } = useLocale();
 	const passed = nodes.filter((n) => n.status === "passed").length;
 	const failed = nodes.filter(
 		(n) => n.status === "failed" || n.status === "stuck",
@@ -1127,13 +1133,13 @@ function OrchestratorDetail({
 					<IconHexagon size={18} />
 				</div>
 				<div>
-					<div className="og-orch-name">Orchestrator</div>
-					<div className="og-orch-sub">Root agent session</div>
+					<div className="og-orch-name">{t("orch.label")}</div>
+					<div className="og-orch-sub">{t("orch.rootSession")}</div>
 				</div>
 			</div>
 			<div className="og-stats-row">
 				<div className="og-stat-card">
-					<span className="og-stat-label">State</span>
+					<span className="og-stat-label">{t("orch.state")}</span>
 					<span
 						className={`og-stat-value ${running ? "running" : ""}`}
 						style={{ fontSize: "14px" }}
@@ -1141,16 +1147,16 @@ function OrchestratorDetail({
 						{running ? (
 							<span className="og-running-indicator">
 								<span className="og-spinner" />
-								Running
+								{t("status.running")}
 							</span>
 						) : (
-							"Idle"
+							t("status.idle")
 						)}
 					</span>
 				</div>
 				{provider && (
 					<div className="og-stat-card">
-						<span className="og-stat-label">Provider</span>
+						<span className="og-stat-label">{t("orch.provider")}</span>
 						<span className="og-stat-value" style={{ fontSize: "12px" }}>
 							{provider}
 						</span>
@@ -1158,19 +1164,19 @@ function OrchestratorDetail({
 				)}
 				{model && (
 					<div className="og-stat-card">
-						<span className="og-stat-label">Model</span>
+						<span className="og-stat-label">{t("orch.model")}</span>
 						<span className="og-stat-value" style={{ fontSize: "12px" }}>
 							{model}
 						</span>
 					</div>
 				)}
 				<div className="og-stat-card">
-					<span className="og-stat-label">Tasks</span>
+					<span className="og-stat-label">{t("orch.tasks")}</span>
 					<span className="og-stat-value">{nodeCount}</span>
 				</div>
 				{nodeCount > 0 && (
 					<div className="og-stat-card">
-						<span className="og-stat-label">Done</span>
+						<span className="og-stat-label">{t("orch.done")}</span>
 						<span className="og-stat-value" style={{ fontSize: "14px" }}>
 							<span style={{ color: "var(--color-passed)" }}>{passed}</span>
 							<span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
@@ -1182,7 +1188,7 @@ function OrchestratorDetail({
 				)}
 				{passed > 0 && (
 					<div className="og-stat-card">
-						<span className="og-stat-label">Passed</span>
+						<span className="og-stat-label">{t("orch.passed")}</span>
 						<span
 							className="og-stat-value"
 							style={{ color: "var(--color-passed)" }}
@@ -1193,7 +1199,7 @@ function OrchestratorDetail({
 				)}
 				{inProgress > 0 && (
 					<div className="og-stat-card">
-						<span className="og-stat-label">Active</span>
+						<span className="og-stat-label">{t("orch.active")}</span>
 						<span
 							className="og-stat-value"
 							style={{ color: "var(--color-in-progress)" }}
@@ -1204,7 +1210,7 @@ function OrchestratorDetail({
 				)}
 				{failed > 0 && (
 					<div className="og-stat-card">
-						<span className="og-stat-label">Failed</span>
+						<span className="og-stat-label">{t("orch.failed")}</span>
 						<span
 							className="og-stat-value"
 							style={{ color: "var(--color-failed)" }}
@@ -1215,19 +1221,19 @@ function OrchestratorDetail({
 				)}
 				{costUsd != null && (
 					<div className="og-stat-card">
-						<span className="og-stat-label">Session</span>
+						<span className="og-stat-label">{t("orch.session")}</span>
 						<span className="og-stat-value">${costUsd.toFixed(3)}</span>
 					</div>
 				)}
 				{totalCost != null && totalCost > 0 && (
 					<div className="og-stat-card">
-						<span className="og-stat-label">Total Cost</span>
+						<span className="og-stat-label">{t("orch.totalCost")}</span>
 						<span className="og-stat-value">${totalCost.toFixed(3)}</span>
 					</div>
 				)}
 				{turns != null && turns > 0 && (
 					<div className="og-stat-card">
-						<span className="og-stat-label">Turns</span>
+						<span className="og-stat-label">{t("orch.turns")}</span>
 						<span className="og-stat-value">{turns}</span>
 					</div>
 				)}
@@ -1238,25 +1244,25 @@ function OrchestratorDetail({
 				outputTokens != null) && (
 				<div className="og-stats-row" style={{ marginTop: "8px" }}>
 					<div className="og-stat-card">
-						<span className="og-stat-label">Input</span>
+						<span className="og-stat-label">{t("orch.input")}</span>
 						<span className="og-stat-value" style={{ fontSize: "13px" }}>
 							{(inputTokens ?? 0).toLocaleString()}
 						</span>
 					</div>
 					<div className="og-stat-card">
-						<span className="og-stat-label">Cache Write</span>
+						<span className="og-stat-label">{t("orch.cacheWrite")}</span>
 						<span className="og-stat-value" style={{ fontSize: "13px" }}>
 							{(cacheCreationTokens ?? 0).toLocaleString()}
 						</span>
 					</div>
 					<div className="og-stat-card">
-						<span className="og-stat-label">Cache Read</span>
+						<span className="og-stat-label">{t("orch.cacheRead")}</span>
 						<span className="og-stat-value" style={{ fontSize: "13px" }}>
 							{(cacheReadTokens ?? 0).toLocaleString()}
 						</span>
 					</div>
 					<div className="og-stat-card">
-						<span className="og-stat-label">Output</span>
+						<span className="og-stat-label">{t("orch.output")}</span>
 						<span className="og-stat-value" style={{ fontSize: "13px" }}>
 							{(outputTokens ?? 0).toLocaleString()}
 						</span>
@@ -1271,7 +1277,7 @@ function OrchestratorDetail({
 						onClick={onClearSessions}
 					>
 						<IconTrash size={12} />
-						Clear Sessions
+						{t("orch.clearSessions")}
 					</button>
 				</div>
 			)}
@@ -1282,6 +1288,15 @@ function OrchestratorDetail({
 // ── Main App ───────────────────────────────────────────────────────────────
 
 export function App() {
+	return (
+		<LocaleProvider>
+			<AppInner />
+		</LocaleProvider>
+	);
+}
+
+function AppInner() {
+	const { locale, setLocale, t } = useLocale();
 	const {
 		projects,
 		refresh: refreshProjects,
@@ -1734,12 +1749,7 @@ export function App() {
 	}
 
 	async function handleClearSessions() {
-		if (
-			!confirm(
-				"Clear session history? The orchestrator will start fresh next time.",
-			)
-		)
-			return;
+		if (!confirm(t("confirm.clearSessions"))) return;
 		try {
 			const res = await fetch(`/projects/${projectId}/sessions/clear`, {
 				method: "POST",
@@ -1775,7 +1785,8 @@ export function App() {
 
 	async function handleDeleteTask() {
 		if (!selectedTaskId || !selectedNode) return;
-		if (!confirm(`Delete task "${selectedNode.title}"?`)) return;
+		if (!confirm(t("confirm.deleteTask", { title: selectedNode.title })))
+			return;
 		try {
 			await deleteTask(selectedTaskId);
 			addLog("lifecycle", `Deleted: ${selectedNode.title}`);
@@ -1803,7 +1814,10 @@ export function App() {
 	async function handleDeleteProject() {
 		if (!projectId) return;
 		const project = projects.find((p) => p.id === projectId);
-		if (!confirm(`Remove project "${project?.name ?? projectId}"?`)) return;
+		if (
+			!confirm(t("confirm.removeProject", { name: project?.name ?? projectId }))
+		)
+			return;
 		try {
 			await deleteProject(projectId);
 			setProjectId("");
@@ -1816,9 +1830,9 @@ export function App() {
 
 	async function handleAddTask() {
 		if (!projectId) return;
-		const title = window.prompt("Task title:");
+		const title = window.prompt(t("prompt.taskTitle"));
 		if (!title) return;
-		const description = window.prompt("Description:") ?? "";
+		const description = window.prompt(t("prompt.taskDescription")) ?? "";
 		const body: Record<string, string> = { title, description };
 		if (selectedTaskId && !isOrchestratorNode) body.parentId = selectedTaskId;
 		try {
@@ -1837,7 +1851,7 @@ export function App() {
 
 	// Compute activity filter label
 	const filterLabel = isOrchestratorNode
-		? "Orchestrator"
+		? t("orch.label")
 		: selectedNode
 			? selectedNode.title
 			: null;
@@ -1850,12 +1864,12 @@ export function App() {
 					<div className="og-logo">
 						<IconHexagon size={14} />
 					</div>
-					<span className="og-header-title">OpenGraft</span>
+					<span className="og-header-title">{t("header.title")}</span>
 					<div
 						className={`og-connection-badge${connected ? " connected" : ""}`}
 					>
 						<span className="og-connection-dot" />
-						{connected ? "Connected" : "Disconnected"}
+						{connected ? t("header.connected") : t("header.disconnected")}
 					</div>
 				</div>
 
@@ -1868,7 +1882,7 @@ export function App() {
 							<input
 								className="og-continue-input"
 								type="text"
-								placeholder="Project path…"
+								placeholder={t("project.pathPlaceholder")}
 								value={newProjectPath}
 								onChange={(e) => setNewProjectPath(e.target.value)}
 								style={{ width: "220px" }}
@@ -1878,12 +1892,12 @@ export function App() {
 								className="og-btn og-btn-primary"
 								style={{ fontSize: "12px", padding: "4px 10px" }}
 							>
-								Add
+								{t("project.add")}
 							</button>
 							<button
 								type="button"
 								className="og-btn-icon"
-								title="Cancel"
+								title={t("project.cancel")}
 								onClick={() => {
 									setShowAddProject(false);
 									setNewProjectPath("");
@@ -1913,14 +1927,14 @@ export function App() {
 							)}
 							{projects.length === 0 && (
 								<span style={{ fontSize: "12px", color: "var(--text-faint)" }}>
-									No projects
+									{t("project.noProjects")}
 								</span>
 							)}
 							{projectId && (
 								<button
 									type="button"
 									className="og-btn-icon"
-									title="Remove project"
+									title={t("project.remove")}
 									onClick={handleDeleteProject}
 								>
 									<IconTrash size={13} />
@@ -1929,7 +1943,7 @@ export function App() {
 							<button
 								type="button"
 								className="og-btn-icon"
-								title="Add project"
+								title={t("project.addProject")}
 								onClick={() => setShowAddProject(true)}
 							>
 								<IconPlus size={14} />
@@ -1940,8 +1954,8 @@ export function App() {
 						<button
 							type="button"
 							className={`og-btn-icon${showSettings ? " active" : ""}`}
-							title="Project settings"
-							aria-label="Project settings"
+							title={t("project.settings")}
+							aria-label={t("project.settings")}
 							onClick={() => setShowSettings((s) => !s)}
 						>
 							<IconGear size={14} />
@@ -1949,9 +1963,18 @@ export function App() {
 					)}
 					<button
 						type="button"
+						className="og-btn-icon og-lang-toggle"
+						title={t("lang.toggle")}
+						aria-label={t("lang.toggle")}
+						onClick={() => setLocale(locale === "en" ? "zh" : "en")}
+					>
+						{locale === "en" ? "中" : "EN"}
+					</button>
+					<button
+						type="button"
 						className="og-btn-icon"
-						title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-						aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+						title={isDark ? t("theme.lightMode") : t("theme.darkMode")}
+						aria-label={isDark ? t("theme.lightMode") : t("theme.darkMode")}
 						onClick={() => setIsDark((d) => !d)}
 					>
 						{isDark ? <IconSun size={14} /> : <IconMoon size={14} />}
@@ -1963,7 +1986,7 @@ export function App() {
 			{showSettings && projectId && (
 				<div className="og-settings-panel">
 					<div className="og-settings-header">
-						<span className="og-settings-title">Project Settings</span>
+						<span className="og-settings-title">{t("settings.title")}</span>
 						<button
 							type="button"
 							className="og-btn-icon"
@@ -1973,20 +1996,24 @@ export function App() {
 						</button>
 					</div>
 					<label className="og-settings-field">
-						<span className="og-settings-label">Model</span>
+						<span className="og-settings-label">{t("settings.model")}</span>
 						<select
 							className="og-select"
 							value={(projectConfig.model as string) || ""}
 							onChange={(e) => updateConfig({ model: e.target.value || null })}
 						>
-							<option value="">Default</option>
-							<option value="claude-sonnet-4-6">Sonnet</option>
-							<option value="claude-opus-4-6">Opus</option>
-							<option value="claude-haiku-4-5-20251001">Haiku</option>
+							<option value="">{t("settings.default")}</option>
+							<option value="claude-sonnet-4-6">{t("model.sonnet")}</option>
+							<option value="claude-opus-4-6">{t("model.opus")}</option>
+							<option value="claude-haiku-4-5-20251001">
+								{t("model.haiku")}
+							</option>
 						</select>
 					</label>
 					<label className="og-settings-field">
-						<span className="og-settings-label">Child Model</span>
+						<span className="og-settings-label">
+							{t("settings.childModel")}
+						</span>
 						<select
 							className="og-select"
 							value={(projectConfig.childModel as string) || ""}
@@ -1994,18 +2021,20 @@ export function App() {
 								updateConfig({ childModel: e.target.value || null })
 							}
 						>
-							<option value="">Default</option>
-							<option value="claude-sonnet-4-6">Sonnet</option>
-							<option value="claude-opus-4-6">Opus</option>
-							<option value="claude-haiku-4-5-20251001">Haiku</option>
+							<option value="">{t("settings.default")}</option>
+							<option value="claude-sonnet-4-6">{t("model.sonnet")}</option>
+							<option value="claude-opus-4-6">{t("model.opus")}</option>
+							<option value="claude-haiku-4-5-20251001">
+								{t("model.haiku")}
+							</option>
 						</select>
 					</label>
 					<label className="og-settings-field">
-						<span className="og-settings-label">Default Budget (USD)</span>
+						<span className="og-settings-label">{t("settings.budget")}</span>
 						<input
 							type="number"
 							className="og-settings-input"
-							placeholder="Unlimited"
+							placeholder={t("settings.unlimited")}
 							min="0"
 							step="0.01"
 							value={
@@ -2021,11 +2050,13 @@ export function App() {
 						/>
 					</label>
 					<label className="og-settings-field">
-						<span className="og-settings-label">Clarify Timeout (ms)</span>
+						<span className="og-settings-label">
+							{t("settings.clarifyTimeout")}
+						</span>
 						<input
 							type="number"
 							className="og-settings-input"
-							placeholder="No timeout"
+							placeholder={t("settings.noTimeout")}
 							min="0"
 							step="1000"
 							value={
@@ -2043,11 +2074,11 @@ export function App() {
 						/>
 					</label>
 					<label className="og-settings-field">
-						<span className="og-settings-label">Max Depth</span>
+						<span className="og-settings-label">{t("settings.maxDepth")}</span>
 						<input
 							type="number"
 							className="og-settings-input"
-							placeholder="3 (default)"
+							placeholder={t("settings.maxDepthDefault")}
 							min="1"
 							max="10"
 							step="1"
@@ -2066,7 +2097,7 @@ export function App() {
 					{running && (
 						<div className="og-settings-field">
 							<span className="og-settings-label">
-								Restart to apply config changes
+								{t("settings.restartHint")}
 							</span>
 							<button
 								type="button"
@@ -2080,7 +2111,7 @@ export function App() {
 									}
 								}}
 							>
-								<IconRefresh size={12} /> Restart Agent
+								<IconRefresh size={12} /> {t("settings.restartAgent")}
 							</button>
 						</div>
 					)}
@@ -2092,7 +2123,7 @@ export function App() {
 				{/* Left Sidebar */}
 				<aside className="og-sidebar">
 					<div className="og-panel-header">
-						<span className="og-panel-title">Tasks</span>
+						<span className="og-panel-title">{t("tasks.title")}</span>
 						<div className="og-panel-actions">
 							{selectedTaskId && (
 								<>
@@ -2103,7 +2134,7 @@ export function App() {
 										type="button"
 										className="og-btn-icon"
 										onClick={() => setSelectedTaskId(null)}
-										data-tip="Clear filter"
+										data-tip={t("tasks.clearFilter")}
 									>
 										<IconClose size={11} />
 									</button>
@@ -2113,7 +2144,7 @@ export function App() {
 								type="button"
 								className="og-btn-icon"
 								onClick={handleAddTask}
-								data-tip="Add task"
+								data-tip={t("tasks.addTask")}
 							>
 								<IconPlus size={13} />
 							</button>
@@ -2124,7 +2155,7 @@ export function App() {
 									refreshTasks();
 									refreshProjects();
 								}}
-								data-tip="Refresh"
+								data-tip={t("tasks.refresh")}
 							>
 								<IconRefresh size={13} />
 							</button>
@@ -2152,10 +2183,10 @@ export function App() {
 						<div className="og-panel-header">
 							<span className="og-panel-title">
 								{isOrchestratorNode
-									? "Orchestrator"
+									? t("orch.label")
 									: selectedNode
-										? "Task Details"
-										: "Details"}
+										? t("detail.title")
+										: t("detail.details")}
 							</span>
 						</div>
 
@@ -2185,7 +2216,7 @@ export function App() {
 						) : (
 							<div className="og-detail-empty">
 								<IconHexagon size={28} />
-								<span>Select a task to view details</span>
+								<span>{t("detail.selectTask")}</span>
 							</div>
 						)}
 					</div>
@@ -2201,7 +2232,7 @@ export function App() {
 					<div className="og-activity-panel" style={{ flex: 1 - splitRatio }}>
 						<div className="og-panel-header">
 							<span className="og-panel-title">
-								Activity
+								{t("activity.title")}
 								{filterLabel && (
 									<span
 										style={{
@@ -2225,7 +2256,7 @@ export function App() {
 										onClick={() => setAutoScroll(true)}
 									>
 										<IconArrowDown size={10} />
-										Follow
+										{t("activity.follow")}
 									</button>
 								)}
 							</div>
@@ -2253,10 +2284,10 @@ export function App() {
 								<div key={c.id} className="og-clarification-card">
 									<div className="og-clarification-header">
 										<span className="og-clarification-badge">
-											❓ Clarification needed
+											❓ {t("clarify.needed")}
 										</span>
 										<span className="og-clarification-task">
-											from: {taskTitle}
+											{t("clarify.from")} {taskTitle}
 										</span>
 									</div>
 									<p className="og-clarification-question">{c.question}</p>
@@ -2270,7 +2301,7 @@ export function App() {
 										<input
 											type="text"
 											className="og-clarification-input"
-											placeholder="Type your answer…"
+											placeholder={t("clarify.placeholder")}
 											value={clarifyAnswers[c.taskId] ?? ""}
 											onChange={(e) =>
 												setClarifyAnswers((prev) => ({
@@ -2286,7 +2317,7 @@ export function App() {
 											className="og-btn-run"
 											disabled={!clarifyAnswers[c.taskId]?.trim()}
 										>
-											Answer
+											{t("clarify.answer")}
 										</button>
 									</form>
 								</div>
@@ -2301,7 +2332,7 @@ export function App() {
 					return (
 						filtered.length > 0 && (
 							<div className="og-pending-messages">
-								<span className="og-pending-label">Pending:</span>
+								<span className="og-pending-label">{t("pending.label")}</span>
 								{filtered.map((m) => (
 									<span key={m.id} className="og-pending-chip">
 										{m.text.length > 30 ? `${m.text.slice(0, 30)}…` : m.text}
@@ -2314,7 +2345,7 @@ export function App() {
 				{running && targetNodeId && (
 					<div className="og-message-target">
 						<span className="og-message-target-label">
-							→ Sending to:{" "}
+							→ {t("target.sendingTo")}{" "}
 							<strong>
 								{nodeMap.get(targetNodeId)?.title ?? targetNodeId.slice(0, 8)}
 							</strong>
@@ -2323,7 +2354,7 @@ export function App() {
 							type="button"
 							className="og-btn-icon"
 							onClick={() => setTargetNodeId(null)}
-							title="Send to orchestrator instead"
+							title={t("target.sendToOrch")}
 						>
 							<IconClose size={11} />
 						</button>
@@ -2337,10 +2368,12 @@ export function App() {
 						onChange={(e) => setPrompt(e.target.value)}
 						placeholder={
 							running && targetNodeId
-								? `Message to "${nodeMap.get(targetNodeId)?.title ?? "task"}"…`
+								? t("footer.messageToTask", {
+										task: nodeMap.get(targetNodeId)?.title ?? "task",
+									})
 								: running
-									? "Send a message to the agent…"
-									: "Describe what to build…"
+									? t("footer.sendMessage")
+									: t("footer.describeBuild")
 						}
 						disabled={!projectId}
 					/>
@@ -2353,7 +2386,7 @@ export function App() {
 									disabled={!projectId || !prompt.trim()}
 								>
 									<IconSend size={13} />
-									Send
+									{t("footer.send")}
 								</button>
 								<button
 									type="button"
@@ -2361,7 +2394,7 @@ export function App() {
 									onClick={handleStop}
 								>
 									<IconStop size={13} />
-									Stop
+									{t("footer.stop")}
 								</button>
 							</>
 						) : (
@@ -2371,7 +2404,7 @@ export function App() {
 								disabled={!projectId || !prompt.trim()}
 							>
 								<IconPlay size={13} />
-								Run
+								{t("footer.run")}
 							</button>
 						)}
 					</div>
