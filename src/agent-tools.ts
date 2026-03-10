@@ -376,6 +376,8 @@ export interface OrchestratorToolsDeps {
 	defaultBudgetUsd?: number;
 	/** Timeout for clarify() responses in ms. undefined = wait forever. */
 	clarifyTimeoutMs?: number;
+	/** Maximum recursive depth for spawning child agents. Defaults to 3. */
+	maxDepth?: number;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -433,7 +435,7 @@ export function createOrchestratorTools(
 	} = deps;
 	const currentTaskId = deps.currentTaskId ?? null;
 	const depth = deps.depth ?? 0;
-	const maxDepth = 3;
+	const maxDepth = deps.maxDepth ?? 3;
 	const costs = costAccumulator ?? new CostAccumulator();
 	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
 	const childQueues = deps.childQueues ?? new Map<string, MessageQueue>();

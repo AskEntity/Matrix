@@ -691,6 +691,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								doneRef,
 								defaultBudgetUsd: continueCfg.budgetUsd,
 								clarifyTimeoutMs: continueCfg.clarifyTimeoutMs,
+								maxDepth: continueCfg.maxDepth,
 								onTaskEvent: (event) => {
 									broadcastEvent(project.id, event);
 									broadcastTreeUpdate(project.id, tracker);
@@ -988,6 +989,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				doneRef,
 				defaultBudgetUsd: projectCfg.budgetUsd,
 				clarifyTimeoutMs: projectCfg.clarifyTimeoutMs,
+				maxDepth: projectCfg.maxDepth,
 				onTaskEvent: (event) => {
 					broadcastEvent(project.id, event);
 					broadcastTreeUpdate(project.id, tracker);
