@@ -626,6 +626,107 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json(tracker.get(nodeId));
 	});
 
+	async function runChildAgentInBackground(
+		project: { id: string; path: string },
+		tracker: TaskTracker,
+		nodeId: string,
+		prompt: string,
+		model?: string,
+	): Promise<void> {
+		const node = tracker.get(nodeId);
+		if (!node?.worktreePath) return;
+		const childQueue = new MessageQueue();
+		globalAgentQueues.set(nodeId, childQueue);
+		try {
+			const wtRoot = join(project.path, ".worktrees");
+			const wm = new WorktreeManager(project.path, wtRoot);
+			const costAccumulator = new CostAccumulator();
+			const doneRef: {
+				done: null | { status: "passed" | "failed"; summary: string };
+			} = { done: null };
+			const continueCfg = await loadProjectConfig(config.dataDir, project.id);
+
+			const { mcpServer, toolDefs, hasRunningChildren } =
+				createOrchestratorTools(
+					{
+						tracker,
+						provider: config.agentProvider,
+						worktrees: wm,
+						projectPath: node.worktreePath as string,
+						repoPath: project.path,
+						currentTaskId: nodeId,
+						depth: 1,
+						queue: childQueue,
+						doneRef,
+						defaultBudgetUsd: continueCfg.budgetUsd,
+						clarifyTimeoutMs: continueCfg.clarifyTimeoutMs,
+						maxDepth: continueCfg.maxDepth,
+						onTaskEvent: (event) => {
+							broadcastEvent(project.id, event);
+							broadcastTreeUpdate(project.id, tracker);
+						},
+						broadcastTreeUpdate: () => broadcastTreeUpdate(project.id, tracker),
+					},
+					costAccumulator,
+				);
+
+			const session = config.agentProvider.startSession({
+				prompt,
+				cwd: node.worktreePath as string,
+				systemPrompt: TASK_SYSTEM_PROMPT,
+				resumeSessionId: node.sessionId ?? undefined,
+				model: model ?? continueCfg.model ?? undefined,
+				mcpServers: { opengraft: mcpServer },
+				mcpToolDefs: { opengraft: toolDefs },
+				queue: childQueue,
+				doneRef,
+				hasRunningChildren,
+			});
+
+			let result = await session.events.next();
+			while (!result.done) {
+				const { type: eventType, ...eventData } = result.value;
+				broadcastEvent(project.id, {
+					type: "agent_event",
+					taskId: nodeId,
+					eventType,
+					...eventData,
+				});
+				result = await session.events.next();
+			}
+			const agentResult = result.value;
+
+			if (agentResult.sessionId) {
+				tracker.assignSession(nodeId, agentResult.sessionId);
+			}
+			// Use doneRef if available; fall back to agentResult.success
+			const didPass = doneRef.done
+				? doneRef.done.status === "passed"
+				: agentResult.success;
+			const newStatus = didPass ? "passed" : "failed";
+			tracker.updateStatus(nodeId, newStatus);
+			await tracker.save();
+			broadcastEvent(project.id, {
+				type: "task_completed",
+				taskId: nodeId,
+				title: node.title,
+				success: didPass,
+			});
+			broadcastTreeUpdate(project.id, tracker);
+		} catch (e) {
+			tracker.updateStatus(nodeId, "stuck");
+			await tracker.save();
+			broadcastEvent(project.id, {
+				type: "error",
+				message: `Continue failed: ${e instanceof Error ? e.message : String(e)}`,
+			});
+			broadcastTreeUpdate(project.id, tracker);
+		} finally {
+			globalAgentQueues.delete(nodeId);
+			childQueue.close();
+		}
+	}
+
 	app.post("/projects/:id/tasks/:nodeId/continue", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) {
@@ -681,102 +782,13 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			}
 
 			// Run async — return immediately so UI updates
-			(async () => {
-				const childQueue = new MessageQueue();
-				globalAgentQueues.set(nodeId, childQueue);
-				try {
-					const wtRoot = join(project.path, ".worktrees");
-					const wm = new WorktreeManager(project.path, wtRoot);
-					const costAccumulator = new CostAccumulator();
-					const doneRef: {
-						done: null | { status: "passed" | "failed"; summary: string };
-					} = { done: null };
-					const continueCfg = await loadProjectConfig(
-						config.dataDir,
-						project.id,
-					);
-
-					const { mcpServer, toolDefs, hasRunningChildren } =
-						createOrchestratorTools(
-							{
-								tracker,
-								provider: config.agentProvider,
-								worktrees: wm,
-								projectPath: node.worktreePath as string,
-								repoPath: project.path,
-								currentTaskId: nodeId,
-								depth: 1,
-								queue: childQueue,
-								doneRef,
-								defaultBudgetUsd: continueCfg.budgetUsd,
-								clarifyTimeoutMs: continueCfg.clarifyTimeoutMs,
-								maxDepth: continueCfg.maxDepth,
-								onTaskEvent: (event) => {
-									broadcastEvent(project.id, event);
-									broadcastTreeUpdate(project.id, tracker);
-								},
-								broadcastTreeUpdate: () =>
-									broadcastTreeUpdate(project.id, tracker),
-							},
-							costAccumulator,
-						);
-
-					const session = config.agentProvider.startSession({
-						prompt: continuePrompt,
-						cwd: node.worktreePath as string,
-						systemPrompt: TASK_SYSTEM_PROMPT,
-						resumeSessionId: node.sessionId ?? undefined,
-						model: body.model ?? continueCfg.model ?? undefined,
-						mcpServers: { opengraft: mcpServer },
-						mcpToolDefs: { opengraft: toolDefs },
-						queue: childQueue,
-						doneRef,
-						hasRunningChildren,
-					});
-
-					let result = await session.events.next();
-					while (!result.done) {
-						const { type: eventType, ...eventData } = result.value;
-						broadcastEvent(project.id, {
-							type: "agent_event",
-							taskId: nodeId,
-							eventType,
-							...eventData,
-						});
-						result = await session.events.next();
-					}
-					const agentResult = result.value;
-
-					if (agentResult.sessionId) {
-						tracker.assignSession(nodeId, agentResult.sessionId);
-					}
-					// Use doneRef if available; fall back to agentResult.success
-					const didPass = doneRef.done
-						? doneRef.done.status === "passed"
-						: agentResult.success;
-					const newStatus = didPass ? "passed" : "failed";
-					tracker.updateStatus(nodeId, newStatus);
-					await tracker.save();
-					broadcastEvent(project.id, {
-						type: "task_completed",
-						taskId: nodeId,
-						title: node.title,
-						success: didPass,
-					});
-					broadcastTreeUpdate(project.id, tracker);
-				} catch (e) {
-					tracker.updateStatus(nodeId, "stuck");
-					await tracker.save();
-					broadcastEvent(project.id, {
-						type: "error",
-						message: `Continue failed: ${e instanceof Error ? e.message : String(e)}`,
-					});
-					broadcastTreeUpdate(project.id, tracker);
-				} finally {
-					globalAgentQueues.delete(nodeId);
-					childQueue.close();
-				}
-			})();
+			runChildAgentInBackground(
+				project,
+				tracker,
+				nodeId,
+				continuePrompt,
+				body.model,
+			);
 
 			return c.json(tracker.get(nodeId));
 		}
