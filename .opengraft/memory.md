@@ -157,3 +157,8 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 - `send_message_to_child` and `report_to_parent` added to McpToolCardBody switch for expanded body rendering.
 - `task_started`, `task_completed`, `queue_message` now render as card-like structures instead of plain text.
 - yield tool i18n key changed from "Yield (Wait)"/"等待消息" to just "yield" in both en/zh.
+
+## Compaction Streaming Fix (timeout)
+- **Problem**: `client.messages.create()` times out after 10 minutes for large compaction summaries (32k max_tokens, ~160k token input).
+- **Fix**: Use `client.messages.stream({...}).finalMessage()` — streams internally but returns the complete `Message` object, same shape as `create()`.
+- **Test mocks**: `messages.stream` is a synchronous function (not async) that returns `{ finalMessage: async () => response }`. Three inline mock clients in the test needed updating alongside `makeMockClient`.
