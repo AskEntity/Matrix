@@ -1144,7 +1144,6 @@ function TaskDetail({
 	projectId,
 	onContinue,
 	onDelete,
-	onStop,
 	onPause,
 	onResume,
 }: {
@@ -1152,7 +1151,6 @@ function TaskDetail({
 	projectId: string;
 	onContinue: (msg?: string) => void;
 	onDelete: () => void;
-	onStop?: () => void;
 	onPause?: () => void;
 	onResume?: () => void;
 }) {
@@ -1440,16 +1438,6 @@ function TaskDetail({
 					>
 						<IconPlay size={12} />
 						{t("detail.resume")}
-					</button>
-				)}
-				{isRunning && onStop && (
-					<button
-						type="button"
-						className="og-btn og-btn-danger og-btn-sm"
-						onClick={onStop}
-					>
-						<IconStop size={12} />
-						{t("detail.stop")}
 					</button>
 				)}
 				{node.sessionId && (
@@ -2745,7 +2733,6 @@ function AppInner() {
 								projectId={projectId}
 								onContinue={handleContinueTask}
 								onDelete={handleDeleteTask}
-								onStop={handleStop}
 								onPause={handlePauseTask}
 								onResume={handleResumeTask}
 							/>
