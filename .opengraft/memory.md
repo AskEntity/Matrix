@@ -397,3 +397,16 @@ Added CRITICAL amnesia warning to `CHECKPOINT_SYSTEM_PROMPT` in `direct-provider
 - `restartAgent()` available in `useAgent` hook
 - Restart button shown in settings panel only when agent is running
 - Test pattern: use a mock provider with `setTimeout(5000)` in events generator to keep session alive during test; call `markReady()` before orchestration requests
+
+## Web UI i18n (Chinese Localization)
+
+- `web/i18n.ts`: LocaleProvider + useLocale hook + t() function with React Context
+- Translations: `en` and `zh` (Simplified Chinese), flat key-value maps
+- Key pattern: `"section.label"` (e.g., `"header.title"`, `"status.running"`, `"orch.label"`)
+- Template params: `t("confirm.deleteTask", { title: "foo" })` replaces `{title}` in translation string
+- Locale stored in `localStorage("og-locale")`, defaults from `navigator.language.startsWith("zh")`
+- Language toggle button: `.og-lang-toggle` class in header, shows "中" or "EN"
+- App component split: `App()` wraps `LocaleProvider` around `AppInner()` which uses `useLocale()`
+- Child components (StatusBadge, TaskTree, ActivityLog, etc.) each call `useLocale()` directly via context
+- Pre-commit i18n check: `scripts/check-i18n.sh` scans for bare English text between JSX tags
+- **Pitfall**: useLocale() must be called inside LocaleProvider — App wraps AppInner for this reason
