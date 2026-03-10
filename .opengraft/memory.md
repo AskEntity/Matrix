@@ -143,3 +143,8 @@ Supports directory and single-file paths. `multiline` parameter in schema but no
 - MCP tools (mcp__opengraft__*) get purple accent and special card body rendering via `McpToolCardBody`.
 - Default collapsed if total content > 200 chars, expanded if short.
 - Resume button removed from TaskDetail — only Pause shown for running tasks.
+
+## IME Enter Key Fix (keyCode 229)
+- `composingRef` alone is insufficient — some IME candidate selections (e.g., English words in Chinese IME) bypass composition events entirely.
+- `e.keyCode === 229` is the most reliable IME detection: browsers set it for ALL IME-related key events. Despite being deprecated, it is universally supported and the only reliable method.
+- Belt-and-suspenders: check `composingRef.current`, `e.nativeEvent.isComposing`, AND `e.keyCode !== 229`.
