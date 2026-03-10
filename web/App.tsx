@@ -2383,15 +2383,16 @@ function AppInner() {
 							<IconGear size={14} />
 						</button>
 					)}
-					<button
-						type="button"
-						className="og-btn-icon og-lang-toggle"
-						title={t("lang.toggle")}
-						aria-label={t("lang.toggle")}
-						onClick={() => setLocale(locale === "en" ? "zh" : "en")}
+					<select
+						className="og-select"
+						value={locale}
+						onChange={(e) => setLocale(e.target.value as "en" | "zh")}
+						title={t("lang.selector")}
+						aria-label={t("lang.selector")}
 					>
-						{locale === "en" ? "中" : "EN"}
-					</button>
+						<option value="en">{t("lang.en")}</option>
+						<option value="zh">{t("lang.zh")}</option>
+					</select>
 					<select
 						className="og-theme-select"
 						value={theme}
