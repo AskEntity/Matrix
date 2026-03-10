@@ -1033,7 +1033,7 @@ function getToolCardTitle(
 	// File tools
 	if (toolName === "read_file") {
 		const path = extractArg(argsStr, "path");
-		return path ? `→ ${basename(path)}` : "→ read_file";
+		return path ? `▤ ${basename(path)}` : "▤ read_file";
 	}
 	if (toolName === "write_file") {
 		const path = extractArg(argsStr, "path");
