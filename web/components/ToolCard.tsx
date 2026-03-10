@@ -728,7 +728,7 @@ export function LogEntryView({
 	if (entry.type === "task_started" || entry.type === "task_completed") {
 		const isPassed =
 			entry.text.startsWith("✓") || entry.text.includes(" passed");
-		const icon = entry.type === "task_started" ? "▶" : isPassed ? "✓" : "✗";
+		const icon = entry.type === "task_started" ? "▶ " : "";
 		const statusClass =
 			entry.type === "task_started"
 				? "og-tool-card-pending"
@@ -753,7 +753,7 @@ export function LogEntryView({
 							onClick={() => setExpanded(!expanded)}
 						>
 							<span className="og-tool-card-name">
-								{icon} {headerText}
+								{icon}{headerText}
 							</span>
 							<span className="og-tool-card-toggle">
 								<IconChevron size={10} expanded={expanded} />
@@ -762,7 +762,7 @@ export function LogEntryView({
 					) : (
 						<div className="og-tool-card-header">
 							<span className="og-tool-card-name">
-								{icon} {entry.text}
+								{icon}{entry.text}
 							</span>
 						</div>
 					)}
