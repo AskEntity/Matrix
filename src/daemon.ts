@@ -705,7 +705,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						cwd: node.worktreePath as string,
 						systemPrompt: TASK_SYSTEM_PROMPT,
 						resumeSessionId: node.sessionId ?? undefined,
-						model: body.model,
+						model: body.model ?? continueCfg.model ?? undefined,
 						mcpServers: { opengraft: mcpServer },
 						mcpToolDefs: { opengraft: toolDefs },
 						queue: childQueue,
