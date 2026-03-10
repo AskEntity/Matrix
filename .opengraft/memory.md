@@ -76,17 +76,19 @@ Priority: API param > project config > env var > hardcoded default
 
 ## Web UI Features
 
-- **i18n**: en/zh localization via React Context. LocaleProvider wraps AppInner. All strings use t().
-- **Themes**: 4 themes (dark, light, cute-light, cute-dark) via dropdown. CuteCat component for cute themes.
+- **i18n**: en/zh localization via React Context. All strings use t().
+- **Themes**: 4 themes (dark, light, cute-light, cute-dark) via JS variable overrides in themes.ts.
 - **Task editing**: Title/description editable when pending (click-to-edit). Read-only with hint when running.
-- **Activity log**: Tool names localized. Task instructions shown in started events.
-- **Auto-save**: Prompt input saved to localStorage with 2s debounce, restored on mount.
-- **Settings panel**: Model, childModel, budget, clarifyTimeout, maxDepth. Restart button when running.
+- **Activity log**: Full tool results stored (no pre-truncation). Display truncation at 500 chars for raw results. MCP tool results formatted as human-readable summaries via `formatMcpToolResult()`.
+- **Tool labels**: `white-space: nowrap` on `.og-tool-name`, `.og-tool-result-ok`, `.og-tool-result-err` to prevent wrapping.
+- **Token badge**: In activity panel header. Color thresholds: green (<50%), yellow (50-80%), red (>80%).
+- **Pause/Resume**: UI-only convenience — send pre-formatted messages via existing API.
 
 ## Search Tool (Pure JS)
 
 `jsSearch()` in direct-provider.ts uses `Bun.Glob.scanSync()` + `RegExp`. No rg/grep dependency.
-Supports all output modes, context lines, case insensitivity. Path-based globs work natively.
+Supports directory and single-file paths, all output modes, context lines, case insensitivity.
+`multiline` parameter exists in schema but not yet implemented (TODO).
 
 ## Known Pitfalls
 
@@ -103,71 +105,15 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 
 ## Daemon Lifecycle
 
-- Auto-resume on startup: re-launches orchestrators with saved sessions
-- Orphan reset: in_progress tasks → failed before resume
-- startupReady guard prevents requests during auto-resume
-- Session auto-prune on startup (OG_SESSION_KEEP env, default: 5)
+- `activeSessions` Map is single source of truth for running state (no separate Set).
+- `launchAgent()` is async — callers `await` it to ensure session registration completes.
+- `autoResume` cleared on normal completion; persists only during restart or crash.
+- Orphan reset: in_progress tasks → failed before resume.
+- startupReady guard prevents requests during auto-resume.
+- Session auto-prune on startup (OG_SESSION_KEEP env, default: 5).
 
-## Token Usage Badge
+## Token Usage Tracking
 
-- Usage events arrive as `agent_event` with `eventType: "usage"`, containing `inputTokens`, `contextWindow`, `compressThreshold`, and optionally `estimated`.
-- The App.tsx WS handler previously had a `break` for usage events (ignored them). Now we track them per-taskId in state.
-- Badge shows in footer form, picks active task by priority: targetNodeId > selected task > first in_progress root task.
-- Color thresholds: green (<50%), yellow (50-80%), red (>80%) based on inputTokens/contextWindow ratio.
-- Light mode has separate color overrides for the badge.
-
-## SVG Cat + Theme System
-
-- CuteCat uses inline SVG (viewBox 0 0 100 120). Needs `<title>` + `role="img"` + `aria-label` for biome a11y.
-- Themes are data-driven JS objects in `web/themes.ts`. `applyTheme()` sets CSS variables on root element.
-- `ThemeConfig`: `{ name, variables, hasCat? }`. Dark theme uses `:root` defaults (empty variables).
-- CSS classes `.light-mode`, `.cute-mode` removed — everything via JS variable overrides.
-
-## Pause/Resume Buttons
-
-- Pause/Resume are UI-only convenience buttons — no backend endpoints needed.
-- They send pre-formatted messages via the existing `sendMessageToTask` API.
-- Pause message tells agent to call `yield()` and wait; Resume tells it to continue.
-- Both buttons show for `in_progress` and `testing` tasks in TaskDetail.
-- IconPause added as inline SVG (two vertical bars pattern).
-
-## Token Usage Badge Location
-- Badge moved from footer form (caused input resize) to activity panel header (og-panel-actions div).
-- Root orchestrator usage stored under PROJECT_NODE_ID key when taskId is falsy.
-- Badge lookup falls back to PROJECT_NODE_ID when no specific task is selected.
-
-## MCP Tool Result Formatting
-
-- `formatMcpToolResult()` in App.tsx parses tool result content and returns human-readable strings.
-- Only applied for successful (`isOk`) MCP tool results — errors still show raw content.
-- JSON content is pre-truncated to 200 chars at creation (in WS handler). For truncated JSON (e.g., large get_tree), regex fallbacks estimate counts.
-- All labels use i18n `t()` with keys prefixed `log.` (e.g., `log.createdTask`, `log.deletedTask`).
-- Returns `null` on parse failure → falls back to default rendering (tool name + raw content).
-
-## Selector Styling Unification
-- Theme selector was using `og-theme-select` (custom class) while language/project selectors used `og-select`. Unified to all use `og-select`.
-- Removed the now-unused `.og-theme-select` CSS rules from style.css.
-- Language name i18n: each locale should show language names in its own language (en: "English"/"Chinese", zh: "英语"/"中文").
-
-## Token Usage Tracking Fix
-- Usage events were only emitted inside `if (messages.length > 4)` block, missing first few turns.
-- The reported inputTokens was `estimatedInputTokens` from the previous turn (starts at 0), not actual.
-- Fix: emit usage event after API response using `response.usage.input_tokens` (always, unconditionally).
-- Compression check remains pre-call gated on `messages.length > 4` — these are separate concerns.
-
-## jsSearch Single-File Path Fix
-- `jsSearch()` crashed with ENOTDIR when `path` pointed to a file instead of a directory (e.g. `path: "src/daemon.ts"`).
-- Fix: `statSync` check before glob scan. If file, set `files = [basename]` and `absSearchPath = dirname`.
-- Also need `adjustedSearchPath` for correct `displayPath` computation — the original `searchPath` string would produce bad joins like `"src/daemon.ts/daemon.ts"`.
-- When `dirname(searchPath) === "."` (file in cwd root), set `adjustedSearchPath = ""` to avoid `"./filename"` display paths.
-
-## Tool Result Truncation Removal
-- Removed 200-char `.slice(0, 200)` from WS handler tool_result creation — full content now stored in activity log state.
-- Display truncation in LogEntryView increased from 120 to 500 chars for raw (non-MCP-formatted) results.
-- Regex fallbacks in `formatMcpToolResult` for `execute_tasks` (spawnedMatch) and `get_tree` (idMatches) removed — no longer needed since full JSON is available for parsing.
-
-## Root Orchestrator Lifecycle Simplification
-- Removed `activeOrchestrations` Set — `activeSessions` Map is the single source of truth for running state.
-- All `launchAgent()` callers now `await` it so `activeSessions.set()` completes before the caller returns, closing the race condition window that `activeOrchestrations.add()` previously covered.
-- `autoResume` is now cleared on normal completion (try block) when the session is still the active one, preventing unnecessary auto-resume after successful orchestration.
-- Removed duplicate `/run` endpoint — use `/orchestrate/agent` exclusively.
+- Usage events emitted after every API response using `response.usage.input_tokens`.
+- Tracked per-taskId in frontend state; root orchestrator under PROJECT_NODE_ID key.
+- Badge lookup: targetNodeId > selected task > first in_progress root task > PROJECT_NODE_ID.
