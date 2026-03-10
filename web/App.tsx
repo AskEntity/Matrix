@@ -1141,6 +1141,23 @@ function McpToolCardBody({
 				</div>
 			);
 		}
+		case "delete_task": {
+			const title =
+				typeof resultJson?.title === "string" ? resultJson.title : null;
+			return (
+				<div className="og-mcp-body">
+					{title ? (
+						<div className="og-mcp-task-title">
+							{t("log.deletedTask")} ✂ "{title}"
+						</div>
+					) : (
+						<div className="og-mcp-task-title">
+							{parsedArgs?.taskId?.slice(0, 8) ?? "?"}
+						</div>
+					)}
+				</div>
+			);
+		}
 		case "get_tree": {
 			const formatted =
 				isOk && resultContent
@@ -1498,9 +1515,6 @@ function TaskDetail({
 }) {
 	const { t } = useLocale();
 	const [continueMsg, setContinueMsg] = useState("");
-	const [commits, setCommits] = useState<{ hash: string; message: string }[]>(
-		[],
-	);
 	const [showHistory, setShowHistory] = useState(false);
 	const canContinue = node.status === "failed" || node.status === "stuck";
 	const isPending = node.status === "pending";
@@ -1549,17 +1563,6 @@ function TaskDetail({
 		},
 		[projectId, node.id, node.description],
 	);
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: refetch when status changes so new commits appear after task completes
-	useEffect(() => {
-		if (!projectId || !node.id) return;
-		fetch(`/projects/${projectId}/tasks/${node.id}/gitlog`)
-			.then((r) => r.json())
-			.then((data: { commits: { hash: string; message: string }[] }) => {
-				setCommits(data.commits ?? []);
-			})
-			.catch(() => setCommits([]));
-	}, [node.id, node.status, projectId]);
 
 	return (
 		<div className="og-detail-content">
@@ -1707,36 +1710,6 @@ function TaskDetail({
 					</div>
 				)}
 			</div>
-
-			{commits.length > 0 && (
-				<div className="og-detail-section">
-					<div className="og-detail-label" style={{ marginBottom: "6px" }}>
-						{t("detail.commits")}
-					</div>
-					{commits.slice(0, 10).map((commit) => (
-						<div
-							key={commit.hash}
-							style={{
-								display: "flex",
-								gap: "8px",
-								fontSize: "11px",
-								lineHeight: "1.5",
-								padding: "2px 0",
-							}}
-						>
-							<span
-								className="mono"
-								style={{ color: "var(--text-faint)", flexShrink: 0 }}
-							>
-								{commit.hash.slice(0, 7)}
-							</span>
-							<span style={{ color: "var(--text-secondary)" }}>
-								{commit.message}
-							</span>
-						</div>
-					))}
-				</div>
-			)}
 
 			<div className="og-detail-actions">
 				{canContinue && (
