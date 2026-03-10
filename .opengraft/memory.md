@@ -358,4 +358,10 @@ DirectProvider estimates token counts from `usage.input_tokens + usage.output_to
 - Button uses `og-btn-ghost` when off, `og-btn-active` when on (new class)
 - Fetches `GET /projects/:id/tasks/:nodeId/conversation` on toggle
 - CSS classes: `.og-conv-history`, `.og-conv-msg`, `.og-conv-role-badge`, `.og-conv-tools`
-- biome-ignore on array index key is needed for static message lists (no stable ID from API)
+
+## Clarify Timeout Implementation
+
+- `MessageQueue.waitForMessage(timeoutMs?: number)`: returns `"timeout"` sentinel on timeout. Uses `Promise.race` with `setTimeout`.
+- **Yield tool timeout logic**: When `pendingClarifications > 0` and `deps.clarifyTimeoutMs` is set, uses timeout. On `"timeout"`, synthesizes clarify_response, emits `clarification_timeout` event, resets `pendingClarifications = 0`.
+- **Daemon wiring**: Both `launchAgent` and continue handler pass `projectCfg.clarifyTimeoutMs` to `createOrchestratorTools`.
+- **Key design**: Timeout only activates when `pendingClarifications > 0`. Normal message waits use plain `wait()` (no spurious timeouts).

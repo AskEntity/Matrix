@@ -374,6 +374,8 @@ export interface OrchestratorToolsDeps {
 	parentQueue?: MessageQueue;
 	/** Default budget per task from project config. undefined = unlimited. */
 	defaultBudgetUsd?: number;
+	/** Timeout for clarify() responses in ms. undefined = wait forever. */
+	clarifyTimeoutMs?: number;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -958,16 +960,43 @@ export function createOrchestratorTools(
 					};
 				}
 				try {
-					// Wait for at least one message
-					const first = await deps.queue.wait();
-					// Drain any additional messages that accumulated
-					const rest = deps.queue.drain();
-					const all = [first, ...rest];
+					// Use timeout when there are pending clarifications and clarifyTimeoutMs is set
+					const timeoutMs =
+						pendingClarifications > 0 ? deps.clarifyTimeoutMs : undefined;
+					const result = await deps.queue.waitForMessage(timeoutMs);
 
-					// Track clarify_response messages — each one resolves a pending clarification
-					for (const msg of all) {
-						if (msg.source === "clarify_response") {
-							pendingClarifications = Math.max(0, pendingClarifications - 1);
+					let all: QueueMessage[];
+
+					if (result === "timeout") {
+						// Timeout fired — synthesize a clarify_response for all pending clarifications
+						const timeoutMsg = `[TIMEOUT] No response received within ${timeoutMs}ms. Proceed with your best judgement.`;
+						// Emit clarification_timeout event so the UI knows
+						emit({
+							type: "clarification_timeout",
+							taskId: currentTaskId ?? undefined,
+							timeoutMs,
+						});
+						// Synthesize one clarify_response for each pending clarification
+						const synthesized: QueueMessage[] = Array.from(
+							{ length: pendingClarifications },
+							() => ({
+								source: "clarify_response" as const,
+								answer: timeoutMsg,
+							}),
+						);
+						pendingClarifications = 0;
+						// Also drain any real messages that may have arrived simultaneously
+						all = [...synthesized, ...deps.queue.drain()];
+					} else {
+						// Got a real message — drain any additional messages that accumulated
+						const rest = deps.queue.drain();
+						all = [result, ...rest];
+
+						// Track clarify_response messages — each one resolves a pending clarification
+						for (const msg of all) {
+							if (msg.source === "clarify_response") {
+								pendingClarifications = Math.max(0, pendingClarifications - 1);
+							}
 						}
 					}
 

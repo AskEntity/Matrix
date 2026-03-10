@@ -193,4 +193,48 @@ describe("MessageQueue", () => {
 		expect(rest[1]?.source).toBe("parent_update");
 		expect(rest[2]?.source).toBe("clarify_response");
 	});
+
+	test("waitForMessage() with no timeout behaves like wait()", async () => {
+		const q = new MessageQueue();
+		q.enqueue({ source: "user", content: "hello" });
+		const result = await q.waitForMessage(undefined);
+		expect(result).toEqual({ source: "user", content: "hello" });
+	});
+
+	test("waitForMessage() returns message before timeout fires", async () => {
+		const q = new MessageQueue();
+		const promise = q.waitForMessage(200);
+
+		// Deliver message quickly
+		setTimeout(() => q.enqueue({ source: "user", content: "fast" }), 10);
+
+		const result = await promise;
+		expect(result).toEqual({ source: "user", content: "fast" });
+	});
+
+	test("waitForMessage() returns 'timeout' sentinel when no message arrives", async () => {
+		const q = new MessageQueue();
+		const result = await q.waitForMessage(20);
+		expect(result).toBe("timeout");
+	});
+
+	test("waitForMessage() resolves immediately if messages already pending", async () => {
+		const q = new MessageQueue();
+		q.enqueue({ source: "clarify_response", answer: "already here" });
+		const result = await q.waitForMessage(20);
+		expect(result).toEqual({ source: "clarify_response", answer: "already here" });
+	});
+
+	test("waitForMessage() rejects when queue is closed while waiting", async () => {
+		const q = new MessageQueue();
+		const promise = q.waitForMessage(1000);
+		q.close();
+		await expect(promise).rejects.toThrow("Queue closed");
+	});
+
+	test("waitForMessage() rejects immediately on closed queue", async () => {
+		const q = new MessageQueue();
+		q.close();
+		await expect(q.waitForMessage(100)).rejects.toThrow("Queue closed");
+	});
 });

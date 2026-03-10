@@ -690,6 +690,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								queue: childQueue,
 								doneRef,
 								defaultBudgetUsd: continueCfg.budgetUsd,
+								clarifyTimeoutMs: continueCfg.clarifyTimeoutMs,
 								onTaskEvent: (event) => {
 									broadcastEvent(project.id, event);
 									broadcastTreeUpdate(project.id, tracker);
@@ -986,6 +987,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				queue,
 				doneRef,
 				defaultBudgetUsd: projectCfg.budgetUsd,
+				clarifyTimeoutMs: projectCfg.clarifyTimeoutMs,
 				onTaskEvent: (event) => {
 					broadcastEvent(project.id, event);
 					broadcastTreeUpdate(project.id, tracker);
