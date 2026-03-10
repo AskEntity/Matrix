@@ -201,3 +201,9 @@ Key changes to address agent behavioral issues:
 ## App.tsx Modularization
 - Split from 3546→843 lines. 14 component files in web/components/. Shared `PROJECT_NODE_ID` in web/types.ts.
 - Components: icons, StatusBadge, TokenUsageBadge, CuteCat, ConversationHistory, ToolCard, ActivityLog, TaskTree, TaskDetail, OrchestratorDetail, SettingsPanel, AppHeader, AppFooter.
+
+## Content Truncation Removal (expanded cards)
+- Removed `.slice(0, N)+"…"` from all expanded body content EXCEPT read_file/write_file/edit_file (code stays truncated at 500 chars).
+- `isFileContentTool(toolName)` helper gates file-tool truncation in ToolCard result rendering.
+- Title/header truncation preserved — only expanded body content affected.
+- queue_message entries now expandable (button+chevron) when text > 100 chars.
