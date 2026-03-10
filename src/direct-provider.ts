@@ -1340,14 +1340,19 @@ export class DirectProvider implements AgentProvider {
 				response.usage.cache_creation_input_tokens ?? 0;
 			totalCacheReadTokens += response.usage.cache_read_input_tokens ?? 0;
 
-			// Update estimated token count for next turn's lazy threshold check
-			estimatedInputTokens =
-				response.usage.input_tokens + response.usage.output_tokens;
+			// Update estimated token count for next turn's lazy threshold check.
+			// input_tokens is ONLY non-cached tokens; must include cache_read and
+			// cache_creation to get the true context size for threshold comparison.
+			const totalTurnInput =
+				response.usage.input_tokens +
+				(response.usage.cache_creation_input_tokens ?? 0) +
+				(response.usage.cache_read_input_tokens ?? 0);
+			estimatedInputTokens = totalTurnInput + response.usage.output_tokens;
 
 			// Report actual token usage from the API response
 			yield {
 				type: "usage",
-				inputTokens: response.usage.input_tokens,
+				inputTokens: totalTurnInput,
 				compressThreshold: COMPRESS_THRESHOLD,
 				contextWindow: CONTEXT_WINDOW,
 			};

@@ -15,7 +15,7 @@ while IFS= read -r line; do
         continue
     fi
     # Skip SVG-related lines (points, d=, etc.)
-    if echo "$line" | grep -qE '(viewBox|strokeWidth|strokeLinecap|strokeLinejoin|fill=|stroke=|points=|<svg|</svg|<path|<line|<circle|<rect|<polygon|<polyline)'; then
+    if echo "$line" | grep -qE '(viewBox|strokeWidth|strokeLinecap|strokeLinejoin|fill=|stroke=|points=|<svg|</svg|<path|<line|<circle|<rect|<polygon|<polyline|<title|aria-label=)'; then
         continue
     fi
     
