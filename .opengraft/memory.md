@@ -135,3 +135,8 @@ Supports all output modes, context lines, case insensitivity. Path-based globs w
 - Badge moved from footer form (caused input resize) to activity panel header (og-panel-actions div).
 - Root orchestrator usage stored under PROJECT_NODE_ID key when taskId is falsy.
 - Badge lookup falls back to PROJECT_NODE_ID when no specific task is selected.
+
+## Selector Styling Unification
+- Theme selector was using `og-theme-select` (custom class) while language/project selectors used `og-select`. Unified to all use `og-select`.
+- Removed the now-unused `.og-theme-select` CSS rules from style.css.
+- Language name i18n: each locale should show language names in its own language (en: "English"/"Chinese", zh: "英语"/"中文").
