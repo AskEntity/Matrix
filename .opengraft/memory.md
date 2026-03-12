@@ -97,6 +97,13 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Pricing lookup: exact match first, then prefix match, default gpt-4o.
 - Mock `fetch` in tests: `as unknown as typeof fetch` (Bun mock type lacks `preconnect`).
 
+## OpenAI Provider — Dynamic Context Window
+- `fetchContextWindowFromAPI()` queries `GET {baseUrl}/models` (note: NOT `/v1/models` — the baseUrl already includes `/v1`) with `Authorization: Bearer` header.
+- Results cached in module-level `Map<string, number>` called `contextWindowCache`.
+- In `runLoop()`, the API fetch is called before the static `getContextWindow()` fallback. Uses `apiContextWindow ?? getContextWindow(model)`.
+- `clearContextWindowCache()` exported for test cleanup.
+- API response shape: `{ data: [{ id: string, context_length?: number }] }`.
+
 ## Known Pitfalls
 
 - **memory.md**: Never `write_file` to append. Use `edit_file` (append) or `echo >>`.

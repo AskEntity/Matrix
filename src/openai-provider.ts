@@ -93,6 +93,78 @@ const DEFAULT_CONTEXT_WINDOW = 128_000;
 const COMPACT_BUFFER_RATIO = 0.17;
 const DEFAULT_MAX_TOKENS = 16384;
 
+// ── Dynamic context window cache ──
+
+const contextWindowCache = new Map<string, number>();
+
+/** @internal Exported for testing */
+export function clearContextWindowCache(): void {
+	contextWindowCache.clear();
+}
+
+/**
+ * Fetch context window from the API's /v1/models endpoint.
+ * Returns null if the model isn't found or the request fails.
+ * Results are cached per model name.
+ */
+export async function fetchContextWindowFromAPI(
+	baseUrl: string,
+	apiKey: string,
+	model: string,
+): Promise<number | null> {
+	const cached = contextWindowCache.get(model);
+	if (cached !== undefined) {
+		return cached;
+	}
+
+	try {
+		const response = await fetch(`${baseUrl}/models`, {
+			method: "GET",
+			headers: {
+				Authorization: `Bearer ${apiKey}`,
+			},
+		});
+
+		if (!response.ok) {
+			return null;
+		}
+
+		const data = (await response.json()) as {
+			data?: Array<{ id: string; context_length?: number }>;
+		};
+
+		if (!Array.isArray(data.data)) {
+			return null;
+		}
+
+		// Exact match first, then prefix match
+		let contextLength: number | undefined;
+		for (const m of data.data) {
+			if (m.id === model) {
+				contextLength = m.context_length;
+				break;
+			}
+		}
+		if (contextLength === undefined) {
+			for (const m of data.data) {
+				if (m.id.startsWith(model) || model.startsWith(m.id)) {
+					contextLength = m.context_length;
+					break;
+				}
+			}
+		}
+
+		if (typeof contextLength === "number" && contextLength > 0) {
+			contextWindowCache.set(model, contextLength);
+			return contextLength;
+		}
+	} catch {
+		// Network or parse error — fall through to null
+	}
+
+	return null;
+}
+
 /** @internal Exported for testing */
 export function getModelPricing(model: string): {
 	inputPer1M: number;
@@ -388,7 +460,13 @@ export class OpenAIProvider implements AgentProvider {
 		let cwd = request.cwd;
 		const sessionsDir = request.sessionsDir;
 
-		const contextWindow = getContextWindow(model);
+		// Try to fetch context window from API, fall back to static lookup
+		const apiContextWindow = await fetchContextWindowFromAPI(
+			this.baseUrl,
+			this.apiKey,
+			model,
+		);
+		const contextWindow = apiContextWindow ?? getContextWindow(model);
 		const compressThreshold = Math.floor(
 			contextWindow * (1 - COMPACT_BUFFER_RATIO),
 		);

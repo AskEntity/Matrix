@@ -1,11 +1,21 @@
-import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import {
+	afterAll,
+	afterEach,
+	beforeAll,
+	describe,
+	expect,
+	mock,
+	test,
+} from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TOOLS } from "./direct-provider.ts";
 import {
+	clearContextWindowCache,
 	compressMessages,
 	convertToolsToOpenAI,
+	fetchContextWindowFromAPI,
 	getContextWindow,
 	getModelPricing,
 	type OpenAIMessage,
@@ -588,6 +598,120 @@ describe("runLoop integration", () => {
 			} else {
 				delete process.env.OPENAI_BASE_URL;
 			}
+			globalThis.fetch = originalFetch;
+		}
+	});
+});
+
+// ── fetchContextWindowFromAPI ──
+
+describe("fetchContextWindowFromAPI", () => {
+	afterEach(() => {
+		clearContextWindowCache();
+	});
+
+	test("returns context_length from /v1/models response", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(async () => {
+			return new Response(
+				JSON.stringify({
+					object: "list",
+					data: [
+						{
+							id: "my-custom-model",
+							object: "model",
+							created: 1234567890,
+							owned_by: "test",
+							context_length: 96_000,
+						},
+					],
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as unknown as typeof fetch;
+
+		try {
+			const result = await fetchContextWindowFromAPI(
+				"https://api.example.com/v1",
+				"test-key",
+				"my-custom-model",
+			);
+			expect(result).toBe(96_000);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("returns null when model is not found in response", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(async () => {
+			return new Response(
+				JSON.stringify({
+					object: "list",
+					data: [
+						{
+							id: "other-model",
+							object: "model",
+							created: 1234567890,
+							owned_by: "test",
+							context_length: 64_000,
+						},
+					],
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as unknown as typeof fetch;
+
+		try {
+			const result = await fetchContextWindowFromAPI(
+				"https://api.example.com/v1",
+				"test-key",
+				"missing-model",
+			);
+			expect(result).toBeNull();
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("caches result so second call does not fetch again", async () => {
+		const originalFetch = globalThis.fetch;
+		let callCount = 0;
+		globalThis.fetch = mock(async () => {
+			callCount++;
+			return new Response(
+				JSON.stringify({
+					object: "list",
+					data: [
+						{
+							id: "cached-model",
+							object: "model",
+							created: 1234567890,
+							owned_by: "test",
+							context_length: 50_000,
+						},
+					],
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as unknown as typeof fetch;
+
+		try {
+			const result1 = await fetchContextWindowFromAPI(
+				"https://api.example.com/v1",
+				"test-key",
+				"cached-model",
+			);
+			const result2 = await fetchContextWindowFromAPI(
+				"https://api.example.com/v1",
+				"test-key",
+				"cached-model",
+			);
+
+			expect(result1).toBe(50_000);
+			expect(result2).toBe(50_000);
+			expect(callCount).toBe(1); // Only one API call despite two fetches
+		} finally {
 			globalThis.fetch = originalFetch;
 		}
 	});
