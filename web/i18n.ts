@@ -117,8 +117,6 @@ const en: Translations = {
 
 	// Settings
 	"settings.title": "Project Settings",
-	"settings.model": "Model",
-	"settings.childModel": "Child Model",
 	"settings.budget": "Default Budget (USD)",
 	"settings.clarifyTimeout": "Clarify Timeout (ms)",
 	"settings.maxDepth": "Max Depth",
@@ -183,11 +181,6 @@ const en: Translations = {
 	// Task prompt
 	"prompt.taskTitle": "Task title:",
 	"prompt.taskDescription": "Description:",
-
-	// Model options
-	"model.sonnet": "Sonnet",
-	"model.opus": "Opus",
-	"model.haiku": "Haiku",
 
 	// MCP tool result labels
 	"log.createdTask": "Created task:",
@@ -341,8 +334,6 @@ const zh: Translations = {
 
 	// Settings
 	"settings.title": "项目设置",
-	"settings.model": "模型",
-	"settings.childModel": "子模型",
 	"settings.budget": "默认预算 (USD)",
 	"settings.clarifyTimeout": "澄清超时 (ms)",
 	"settings.maxDepth": "最大深度",
@@ -406,11 +397,6 @@ const zh: Translations = {
 	// Task prompt
 	"prompt.taskTitle": "任务标题：",
 	"prompt.taskDescription": "描述：",
-
-	// Model options
-	"model.sonnet": "Sonnet",
-	"model.opus": "Opus",
-	"model.haiku": "Haiku",
 
 	// MCP tool result labels
 	"log.createdTask": "创建了任务：",

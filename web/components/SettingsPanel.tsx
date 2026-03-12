@@ -22,32 +22,6 @@ export function SettingsPanel({
 				</button>
 			</div>
 			<label className="og-settings-field">
-				<span className="og-settings-label">{t("settings.model")}</span>
-				<select
-					className="og-select"
-					value={(config.model as string) || ""}
-					onChange={(e) => updateConfig({ model: e.target.value || null })}
-				>
-					<option value="">{t("settings.default")}</option>
-					<option value="claude-sonnet-4-6">{t("model.sonnet")}</option>
-					<option value="claude-opus-4-6">{t("model.opus")}</option>
-					<option value="claude-haiku-4-5-20251001">{t("model.haiku")}</option>
-				</select>
-			</label>
-			<label className="og-settings-field">
-				<span className="og-settings-label">{t("settings.childModel")}</span>
-				<select
-					className="og-select"
-					value={(config.childModel as string) || ""}
-					onChange={(e) => updateConfig({ childModel: e.target.value || null })}
-				>
-					<option value="">{t("settings.default")}</option>
-					<option value="claude-sonnet-4-6">{t("model.sonnet")}</option>
-					<option value="claude-opus-4-6">{t("model.opus")}</option>
-					<option value="claude-haiku-4-5-20251001">{t("model.haiku")}</option>
-				</select>
-			</label>
-			<label className="og-settings-field">
 				<span className="og-settings-label">{t("settings.budget")}</span>
 				<input
 					type="number"

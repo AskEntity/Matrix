@@ -841,7 +841,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		tracker: TaskTracker,
 		nodeId: string,
 		prompt: string,
-		model?: string,
+		_model?: string,
 	): Promise<void> {
 		const node = tracker.get(nodeId);
 		if (!node?.worktreePath) return;
@@ -885,7 +885,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				cwd: node.worktreePath as string,
 				systemPrompt: TASK_SYSTEM_PROMPT,
 				resumeSessionId: node.sessionId ?? undefined,
-				model: model ?? continueCfg.model ?? undefined,
+				model: resolveDefaultModel() ?? undefined,
 				mcpServers: { opengraft: mcpServer },
 				mcpToolDefs: { opengraft: toolDefs },
 				queue: childQueue,
@@ -1165,11 +1165,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const tracker = trackers.get(project.id);
 		if (!tracker) return;
 
-		// Load project config for model defaults
+		// Load project config (model always from env/daemon, not per-project config)
 		const projectCfg = await loadProjectConfig(config.dataDir, project.id);
-		const effectiveModel = opts.model ?? projectCfg.model ?? undefined;
-		const effectiveChildModel =
-			opts.childModel ?? projectCfg.childModel ?? undefined;
+		const effectiveModel = opts.model ?? undefined;
+		const effectiveChildModel = opts.childModel ?? undefined;
 
 		// Mark project for auto-resume on daemon restart
 		tracker.autoResume = true;
@@ -1388,9 +1387,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "Project not found" }, 404);
 		}
 		const session = activeSessions.get(project.id);
-		const projectCfg = await loadProjectConfig(config.dataDir, project.id);
-		const model =
-			projectCfg.model ?? resolveDefaultModel() ?? "claude-sonnet-4-6";
+		const model = resolveDefaultModel() ?? "claude-sonnet-4-6";
 		return c.json({
 			running: !!session,
 			sessionId: session?.sessionId ?? null,
