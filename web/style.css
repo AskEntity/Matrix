@@ -1527,7 +1527,7 @@ button.og-tool-card-header:hover {
 	background: linear-gradient(
 		90deg,
 		transparent,
-		rgba(163, 113, 247, 0.06),
+		rgba(163, 113, 247, 0.12),
 		transparent
 	);
 	border-top: 1px dashed rgba(163, 113, 247, 0.4);
@@ -1545,7 +1545,7 @@ button.og-tool-card-header:hover {
 	background: linear-gradient(
 		90deg,
 		transparent,
-		rgba(163, 113, 247, 0.3),
+		rgba(163, 113, 247, 0.5),
 		transparent
 	);
 	animation: compact-shimmer 3s ease-in-out infinite;
@@ -1567,6 +1567,7 @@ button.og-tool-card-header:hover {
 	font-weight: 600;
 	font-family: var(--font-mono);
 	flex: 1;
+	text-shadow: 0 0 8px rgba(163, 113, 247, 0.5);
 }
 
 .og-compact-toggle {
