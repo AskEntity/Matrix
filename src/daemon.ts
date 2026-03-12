@@ -24,6 +24,7 @@ import {
 import { ClaudeCodeProvider } from "./claude-code-provider.ts";
 import { DirectProvider } from "./direct-provider.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
+import { OpenAIProvider } from "./openai-provider.ts";
 import { loadProjectConfig, mergeProjectConfig } from "./project-config.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { TaskTracker } from "./task-tracker.ts";
@@ -72,17 +73,30 @@ export interface DaemonConfig {
 	agentProvider: AgentProvider;
 }
 
-/** Resolve the effective model: OG_MODEL > ANTHROPIC_MODEL > undefined (provider uses its default) */
+/** Resolve the effective model: OG_MODEL > ANTHROPIC_MODEL > OPENAI_MODEL > undefined (provider uses its default) */
 function resolveDefaultModel(): string | undefined {
-	return process.env.OG_MODEL ?? process.env.ANTHROPIC_MODEL ?? undefined;
+	return (
+		process.env.OG_MODEL ??
+		process.env.ANTHROPIC_MODEL ??
+		process.env.OPENAI_MODEL ??
+		undefined
+	);
 }
 
 function defaultProvider(): AgentProvider {
-	const provider = process.env.OG_PROVIDER ?? "claude-code";
-	if (provider === "direct") {
-		return new DirectProvider(resolveDefaultModel());
+	const provider = process.env.OG_PROVIDER;
+	if (provider === "openai") return new OpenAIProvider(resolveDefaultModel());
+	if (provider === "direct") return new DirectProvider(resolveDefaultModel());
+	if (provider === "claude-code") return new ClaudeCodeProvider();
+
+	// Auto-detect from model name
+	const model = resolveDefaultModel();
+	if (model && /^(gpt-|o1-|o3-|o4-|deepseek-)/.test(model)) {
+		return new OpenAIProvider(model);
 	}
-	return new ClaudeCodeProvider();
+
+	// Default: direct API (Anthropic)
+	return new DirectProvider(resolveDefaultModel());
 }
 
 /** Collect a node and all its descendants. */
