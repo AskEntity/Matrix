@@ -48,7 +48,7 @@ export interface AgentResult {
 		failed: string[];
 		errors: string[];
 	};
-	// Token breakdown (DirectProvider only; undefined for ClaudeCodeProvider)
+	// Token breakdown (AnthropicCompatibleProvider only; undefined for ClaudeAgentSdkProvider)
 	/** Non-cached input tokens consumed. */
 	inputTokens?: number;
 	/** Cache-creation (write) tokens consumed. */

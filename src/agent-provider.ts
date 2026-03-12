@@ -23,7 +23,7 @@ export interface AgentRequest {
 	resumeSessionId?: string;
 	/** MCP servers to attach to the agent session (for Claude Code provider). */
 	mcpServers?: Record<string, McpServerConfig>;
-	/** Raw MCP tool definitions for direct API forwarding (for DirectProvider). */
+	/** Raw MCP tool definitions for direct API forwarding (for AnthropicCompatibleProvider). */
 	// biome-ignore lint/suspicious/noExplicitAny: SdkMcpToolDefinition generic varies
 	mcpToolDefs?: Record<string, SdkMcpToolDefinition<any>[]>;
 	/** Claude model to use (e.g. 'claude-sonnet-4-6', 'claude-opus-4-6'). */
