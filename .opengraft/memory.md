@@ -10,7 +10,7 @@
 ## How to Run Tests
 
 ```bash
-bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/direct-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts
+bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/direct-provider.test.ts src/openai-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts
 bun run typecheck   # tsc --noEmit
 bun run check       # biome lint + format
 ```
@@ -25,7 +25,8 @@ Daemon (Hono: HTTP + WS on :7433)
    CLI            Web UI (React, bundled by Bun)
 ```
 
-- Two providers: ClaudeCodeProvider (subprocess), DirectProvider (direct Anthropic API)
+- Three providers: ClaudeCodeProvider (subprocess), DirectProvider (Anthropic API), OpenAIProvider (OpenAI-compatible API)
+- Provider selection: `OG_PROVIDER=openai|direct|claude-code` or auto-detect from model name prefix (`gpt-`, `o3-`, `deepseek-`)
 - Agent tree = Task tree. Each agent gets worktree + branch. Lifecycle = branch lifecycle.
 - All mutable APIs fire-and-forget. Observe via WebSocket.
 - MCP tools enable recursive orchestration (tested up to 5 levels deep).
@@ -36,210 +37,94 @@ Daemon (Hono: HTTP + WS on :7433)
 |------|---------|
 | src/daemon.ts | HTTP server, routes, WS, ORCHESTRATOR_SYSTEM_PROMPT |
 | src/agent-tools.ts | MCP tools (10), system prompts, ORCHESTRATION_KNOWLEDGE |
-| src/direct-provider.ts | Direct API provider, search tool (jsSearch), CWD tracking |
+| src/agent-provider.ts | AgentProvider interface, AgentEvent, AgentSession types |
+| src/direct-provider.ts | Anthropic API provider, built-in tools (bash/read/edit/search), compaction |
+| src/openai-provider.ts | OpenAI-compatible API provider (raw fetch, no SDK) |
 | src/task-tracker.ts | Task tree CRUD, JSON persistence |
 | src/worktree-manager.ts | Git worktree lifecycle |
 | src/message-queue.ts | MessageQueue + globalAgentQueues |
+| src/project-config.ts | Per-project config (model, provider, budget, etc.) |
 | web/App.tsx | Web UI main component |
 | web/hooks.ts | React hooks (useWebSocket, useProjects, useTasks, useAgent, useProjectConfig) |
 | web/i18n.ts | Localization (en/zh), LocaleProvider, useLocale, t() |
 | web/style.css | CSS design system, themes (dark/light/cute-light/cute-dark) |
+| web/components/ | 14 modular components split from App.tsx |
 
 ## API Reference
 
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | /projects/:id/orchestrate/agent | Start orchestration |
-| POST | /projects/:id/restart | Restart agent (applies config changes) |
-| POST | /projects/:id/stop | Stop agent (clears pending messages/clarifications) |
+| POST | /projects/:id/restart | Restart agent |
+| POST | /projects/:id/stop | Stop agent |
 | POST | /projects/:id/message | Message root agent |
 | POST | /projects/:id/tasks/:nodeId/message | Message specific agent |
-| POST | /projects/:id/tasks/:nodeId/continue | Continue failed task (uses runChildAgentInBackground) |
-| PATCH | /projects/:id/tasks/:nodeId | Update task (status, branch, title, description) |
+| POST | /projects/:id/tasks/:nodeId/continue | Continue failed task |
+| PATCH | /projects/:id/tasks/:nodeId | Update task |
 | GET/PATCH | /projects/:id/config | Project config CRUD |
 | POST | /projects/:id/clarify | Answer clarification |
 | WS | /ws | Real-time events |
-
-## MCP Tools (10 in agent-tools.ts)
-
-get_tree, create_task, update_task_status, execute_tasks, yield, send_message_to_child, report_to_parent, delete_task, clarify, done
 
 ## Project Config
 
 Fields: `model`, `childModel`, `provider`, `budgetUsd`, `clarifyTimeoutMs`, `maxDepth` (default: 3)
 Priority: API param > project config > env var > hardcoded default
 
-## Web UI Features
+## Provider Configuration
 
-- **i18n**: en/zh localization via React Context. All strings use t().
-- **Themes**: 4 themes via JS variable overrides in themes.ts.
-- **Prompt input**: `<textarea>` with Shift+Enter for newlines, Enter to submit. `isComposing` check for CJK IME compatibility. Auto-resize up to 4 lines.
-- **Activity log**: Full tool results stored (no pre-truncation). Display truncation at 500 chars for raw results. MCP results formatted via `formatMcpToolResult()`. Tool_use and tool_result use block layout with word-wrap.
-- **Task actions**: Pause/Resume + Delete for child tasks. Stop only on OrchestratorDetail.
-- **Token badge**: In activity panel header. green (<50%), yellow (50-80%), red (>80%).
+| Provider | Env Vars | Notes |
+|----------|----------|-------|
+| direct (Anthropic) | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | Default provider |
+| openai | `OPENAI_API_KEY`, `OPENAI_BASE_URL` (optional) | For GPT-4o, DeepSeek, local models |
+| claude-code | N/A | Uses Claude Code SDK subprocess |
 
-## Search Tool (Pure JS)
+Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 
-`jsSearch()` in direct-provider.ts: `Bun.Glob.scanSync()` + `RegExp`. No rg/grep dependency.
-Supports directory and single-file paths. `multiline` parameter in schema but not implemented (TODO).
+## Compaction System
+
+- `compressMessages()` returns ONE user message: task context + fresh memory + checkpoint summary + recent transcript (~80k chars as text).
+- No tail message preservation, no bridge messages, no tool_result orphaning issues.
+- `CHECKPOINT_SYSTEM_PROMPT` exported from direct-provider.ts, shared by both providers.
+- DirectProvider uses Anthropic streaming API; OpenAIProvider uses raw fetch to same endpoint.
+- `SUMMARY_MAX_TOKENS = 32768`, `TRANSCRIPT_CHAR_LIMIT = 640k chars`.
+
+## OpenAI Provider Details
+
+- Uses raw `fetch` (no SDK dependency). Tool format: `{ type: "function", function: { name, description, parameters } }`.
+- Messages: `tool` role with `tool_call_id` (not `tool_result` blocks in user messages).
+- Session files: `.openai.json` suffix to avoid conflicts with DirectProvider.
+- Context windows: gpt-4o=128k, o3=200k, deepseek=64k. Default=128k.
+- Pricing lookup: exact match first, then prefix match, default gpt-4o.
+- Mock `fetch` in tests: `as unknown as typeof fetch` (Bun mock type lacks `preconnect`).
 
 ## Known Pitfalls
 
-- **memory.md**: Never `write_file`. Always `edit_file` (append) or `echo >>`.
+- **memory.md**: Never `write_file` to append. Use `edit_file` (append) or `echo >>`.
 - **Git worktrees**: `extensions.worktreeConfig` required. `core.hooksPath` must be absolute. `bun install` in new worktrees.
 - **Prompt caching**: Don't put per-agent variables in system prompt — breaks cache sharing.
 - **macOS CWD**: `/var` → `/private/var` symlink. Fixed with `realpathSync()`.
 - **Biome**: Always typecheck BEFORE `bun run check` (--write can be destructive on broken JSX).
 - **Template literals**: Use `${"$"}` for literal `$` in backtick strings in agent-tools.ts.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`. Use `?? ""` or `!`.
-- **Multiline queue messages**: Pending message acknowledgement splits on `\n(?=\[)` not `\n` to handle multiline user messages.
+- **Compaction streaming**: Use `client.messages.stream().finalMessage()` not `create()` (avoids 10min timeout).
 
 ## Daemon Lifecycle
 
 - `activeSessions` Map is single source of truth for running state.
-- `launchAgent()` is async — callers `await` it for session registration.
-- `autoResume` cleared on normal completion; persists only during restart or crash.
-- `/stop` clears pendingMessages + pendingClarifications Maps + broadcasts empties.
-- `/restart` clears pendingClarifications (stale after context change).
-- `sessions/clear` rejects 409 if agent running.
-- `DELETE /projects/:id` stops running agent before deletion.
-- `runChildAgentInBackground()` extracted from `/continue` handler — reusable child agent runner.
-- Orphan reset: in_progress tasks → failed before auto-resume.
+- `stopAgent()`: single function for all stop operations. Resets in_progress children to failed.
+- Orphan reset: in_progress tasks → failed on startup and on agent crash/stop.
 - Session auto-prune on startup (OG_SESSION_KEEP env, default: 5).
+- `runChildAgentInBackground()` extracted for reusable child agent launching.
 
-## Token Usage Tracking
+## Web UI
 
-- Usage events emitted after every API response using `response.usage.input_tokens`.
-- Tracked per-taskId in frontend; root orchestrator under PROJECT_NODE_ID key.
-
-## Compaction Fix (2026-03-10)
-- **Bug**: `compressMessages()` returned `[user(checkpoint), assistant(ack)]`. The assistant ack caused the API call to fail because the Anthropic API rejects messages ending with assistant role.
-- **Fix**: Removed the assistant ack. Compressed messages now return only `[user(checkpoint)]`. The model generates a fresh response from the checkpoint context.
+- **Activity log**: Tool cards (collapsible), MCP tools get purple accent. Title-only cards for yield/get_tree/delete_task/update_task_status.
+- **Token badge**: green (<50%), yellow (50-80%), red (>80%). Cost badge shows after completion.
+- **Task selection**: defaults to root (PROJECT_NODE_ID). No "all activity" view.
+- **ErrorBoundary**: class component wrapping AppInner for graceful crash recovery.
+- **WebSocket**: onMessageRef pattern to avoid reconnection on callback change.
+- **IME**: composingRef + keyCode 229 + isComposing triple-check for CJK input.
 
 ## Task Execution Efficiency
-- Avoid running full test suites in every child task — too expensive. Use `bun run typecheck` for quick validation.
-- Skip biome/lint checks in child tasks unless the task specifically touches formatting.
-- Pre-commit hooks run typecheck + lint + tests automatically, so explicit runs are often redundant.
-
-## Compaction System Overhaul (2026-03-10)
-- **No truncation**: `compressMessages()` no longer truncates tool_use inputs, tool_result content, or per-message content. Full transcript sent to summarizer.
-- **Transcript limit**: 640k chars (~160k tokens) to leave room for 32k output tokens. Truncates from HEAD (keeps tail/newest), prepends "[Earlier conversation truncated]".
-- **max_tokens**: Increased from 8192 to 32768 for richer checkpoint summaries.
-- **Tail preservation**: After generating checkpoint, keeps ~80k chars of most recent messages. Tail must start with user role. Bridge assistant message inserted between checkpoint(user) and tail(user) to maintain valid alternation.
-- **CHECKPOINT_SYSTEM_PROMPT**: Added "Agent Tree State" and "Communication State" sections for multi-agent awareness.
-
-
-## Daemon Refactoring (stopAgent + shared handlers)
-- **`stopAgent()`**: Single function for all stop operations. Options: `clearAutoResume` (true for explicit user stop/delete), `keepPendingMessages` (true for restart so messages survive for new session).
-- **Shared handlers**: `handleOrchestrate()`, `handleInjectMessage()`, `handleClarifyResponse()` used by both REST routes and WS message handlers. Return `{ ok, error?, status? }`.
-- **`pruneSessionFiles()`**: Shared between autoResumeProjects and POST /sessions/prune.
-- **restartingProjects guard**: Both REST /orchestrate/agent and /agents/start now check `restartingProjects.has()` to prevent starting during restart.
-- **DELETE /projects/:id cleanup**: Now clears pendingMessages, pendingClarifications, eventHistory in addition to stopping agent and removing tracker.
-
-## Tool Card Redesign (activity log)
-- Tool entries (tool_use + tool_result) now render as cards instead of inline entries.
-- Merging logic is in the rendering layer: `ActivityLog` uses `useMemo` to pair adjacent tool_use → tool_result with matching tool names into `tool_card` entries.
-- `ToolCard` component: collapsible card with header (tool name, status icon, chevron toggle) and body (args + result).
-- MCP tools (mcp__opengraft__*) get purple accent and special card body rendering via `McpToolCardBody`.
-- Default collapsed if total content > 200 chars, expanded if short.
-- Resume button removed from TaskDetail — only Pause shown for running tasks.
-
-## IME Enter Key Fix (keyCode 229)
-- `composingRef` alone is insufficient — some IME candidate selections (e.g., English words in Chinese IME) bypass composition events entirely.
-- `e.keyCode === 229` is the most reliable IME detection: browsers set it for ALL IME-related key events. Despite being deprecated, it is universally supported and the only reliable method.
-- Belt-and-suspenders: check `composingRef.current`, `e.nativeEvent.isComposing`, AND `e.keyCode !== 229`.
-
-## Card Title Overhaul (activity log)
-- `getToolCardTitle(toolName, argsStr, resultContent)` generates descriptive titles with emoji icons for all tools.
-- `extractArg(argsStr, key)` parses the `key=value, key=value` format, handles JSON arrays/objects with bracket balancing.
-- `isTitleOnlyCard(toolName, argsStr)` determines which MCP tools show title-only (no expand/collapse): get_tree, yield, delete_task, update_task_status, report_to_parent (if msg ≤80 chars).
-- `localizeToolName()` and `IconTerminal` removed (replaced by `getToolCardTitle` and emoji-based titles).
-- `send_message_to_child` and `report_to_parent` added to McpToolCardBody switch for expanded body rendering.
-- `task_started`, `task_completed`, `queue_message` now render as card-like structures instead of plain text.
-- yield tool i18n key changed from "Yield (Wait)"/"等待消息" to just "yield" in both en/zh.
-
-
-## Icon Simplification (activity log)
-- Simple unicode/text symbols instead of emoji. File tools: `→ file`, `← file`, `✎ file`. Execute: `⚡`. Delete: `✕`.
-- `isPassed` check for task_completed entries: checks both `startsWith("✓")` and `includes(" passed")`.
-
-## Compaction Streaming Fix (timeout)
-- **Problem**: `client.messages.create()` times out after 10 minutes for large compaction summaries (32k max_tokens, ~160k token input).
-- **Fix**: Use `client.messages.stream({...}).finalMessage()` — streams internally but returns the complete `Message` object, same shape as `create()`.
-- **Test mocks**: `messages.stream` is a synchronous function (not async) that returns `{ finalMessage: async () => response }`. Three inline mock clients in the test needed updating alongside `makeMockClient`.
-
-
-## Compaction: Orphaned tool_result Fix
-- **Bug**: Tail preservation could start at a user message containing `tool_result` blocks without the preceding assistant `tool_use` blocks, causing API error "unexpected tool_use_id found in tool_result blocks".
-- **Fix**: After finding the first user message in the tail, check if it has `tool_result` blocks. If so, back up `tailStartIdx` by 1 to include the preceding assistant message with corresponding `tool_use` blocks. The bridge assistant message is only inserted when tail starts with `user` role — when tail starts with `assistant` (backed up), alternation is already valid.
-- **Test tip**: To test tail boundary behavior, create messages large enough (~100k chars total) to exceed the 80k tail budget, forcing the tail to start mid-conversation.
-
-## Activity Log Card Fixes (batch)
-- **Title-only ✓ duplicate**: Removed separate status span from title-only card headers since `getToolCardTitle()` already includes ✓/✗ for done cards.
-- **create_task expansion**: Gate `mcpBody` behind `expanded &&` in ToolCard render. Removed `expanded` prop from McpToolCardBody.
-- **File tool prefixes**: read_file → `▤ file`, write_file → `← file`, edit_file → `✎ file`.
-- **execute_tasks icon**: `⚡`. **delete_task icon**: `–` (en-dash, pairs with `+` for create).
-- **Standalone tool_result**: title-only tools (yield, get_tree, etc.) skip body rendering via `isTitleOnlyCard` check.
-- **Bash filter toggle**: `hideBash` state in ActivityLog, toggle button. i18n keys: `log.hideBash`/`log.showBash`.
-- **Compact shimmer opacity**: Boosted from `0.15` to `0.3`.
-
-## Token Badge Desync Fix
-- After compaction, emit a `usage` event with `estimated: true` containing post-compaction token estimate (compressed chars / 4). Reset `estimatedInputTokens` to this value.
-
-## System Prompt Improvements (2026-03-11)
-Key changes to address agent behavioral issues:
-- **Post-compaction drive loss**: Added "Remaining Work" section to CHECKPOINT_SYSTEM_PROMPT (between Open Questions and Next Action). Strengthened resume instruction to say "Your task is NOT done unless checkpoint says 'Current Phase: done'". Bridge message now says "Resuming from checkpoint — checking task state and continuing work."
-- **done() not called**: Added MANDATORY done() call notice at top of TASK_SYSTEM_PROMPT. Renamed "Child Agent Exit Conditions" → "Calling done() — REQUIRED" with stronger language about parent hanging.
-- **Redundancy removed**: Deleted duplicate "Session Continuity" section from ORCHESTRATOR_SYSTEM_PROMPT (was already in ORCHESTRATION_KNOWLEDGE which gets appended).
-- **Parallelism guidance**: Added "Maximize Parallelism" section to orchestrator prompt and parallelism note to TASK_SYSTEM_PROMPT opener.
-- **Stimulus Priority**: Added step 0 for post-compaction recovery. Changed step 5 from "Report final status, stop" → "Call done('passed', summary)".
-- **Never-Stop Principle**: Added "(CRITICAL — especially after context compaction)" to header, added post-compaction bullet.
-
-## CWD Sandboxing
-- Warn-only approach. After bash, if CWD leaves worktree, appends `[Note: CWD outside worktree]`. Uses `fallbackCwd` + `realpathSync`. No warning for root agent (no worktree boundary).
-
-## App.tsx Modularization
-- Split from 3546→843 lines. 14 component files in web/components/. Shared `PROJECT_NODE_ID` in web/types.ts.
-- Components: icons, StatusBadge, TokenUsageBadge, CuteCat, ConversationHistory, ToolCard, ActivityLog, TaskTree, TaskDetail, OrchestratorDetail, SettingsPanel, AppHeader, AppFooter.
-
-## Content Truncation Removal (expanded cards)
-- Removed `.slice(0, N)+"…"` from all expanded body content EXCEPT read_file/write_file/edit_file (code stays truncated at 500 chars).
-- `isFileContentTool(toolName)` helper gates file-tool truncation in ToolCard result rendering.
-- Title/header truncation preserved — only expanded body content affected.
-- queue_message entries now expandable (button+chevron) when text > 100 chars.
-
-
-## Compaction Simplification (no tail messages)
-- **Before**: compressMessages() returned checkpoint(user) + bridge(assistant) + raw tail messages (with tool_use/tool_result blocks causing orphaning and alternation issues).
-- **After**: Returns exactly ONE user message containing: task context + fresh memory + checkpoint summary + recent transcript as TEXT (~80k chars). No bridge messages, no tail message preservation, no orphan detection, no role alignment scanning.
-- **Key insight**: Raw API messages as tail caused tool_use/tool_result orphaning and user/user alternation issues. Including recent conversation as a text dump inside the single user message avoids all of this.
-- **recentTranscript**: Uses the same `fullTranscript` serialization (already built for the summarizer), sliced to last 80k chars.
-- **savedTokens calculation**: Now includes freshMemory.length. Memory is read before savedTokens computed.
-
-## Remove All Activity View (default to root)
-- `selectedTaskId` defaults to `PROJECT_NODE_ID` — there is no "nothing selected" state.
-- Clicking a selected task deselects it back to root, not null.
-- Orchestrator node click always selects (no toggle off).
-- Sidebar filter chip and activity subtitle only shown for child tasks (root is the implicit default).
-
-## Queue Message Multiline Fix
-- `queue_message` entries in activity log now properly display multiline content.
-- Previously, expanded long messages replaced header text inside `og-tool-card-name` (which has `white-space: nowrap`), collapsing newlines.
-- Fix: header always shows single-line preview; expanded content uses `og-mcp-task-desc` (has `white-space: pre-wrap`) in a body div below the header.
-- Messages with `\n` are now treated as expandable regardless of length.
-
-## Autonomous Mode (2026-03-12)
-- Running in autonomous improvement mode. Focus: stability, code quality, remove bad patterns, careful new features.
-- Self-restart daemon after changes. Run full tests before merging.
-- User preferences: clean UI, no clutter, consistent card styling, readable at a glance.
-
-
-## OpenAI Provider (src/openai-provider.ts)
-- Uses raw `fetch` instead of OpenAI SDK — simple enough for Chat Completions API.
-- Tool format mapping: Anthropic `input_schema` → OpenAI `parameters`, wrapped in `{ type: "function", function: {...} }`.
-- Message format: OpenAI uses separate `tool` role messages with `tool_call_id`, not `tool_result` blocks inside `user` messages.
-- Session files use `.openai.json` suffix to avoid conflicts with DirectProvider `.json` files.
-- Compaction calls the same OpenAI endpoint with `CHECKPOINT_SYSTEM_PROMPT` as system message.
-- Context windows and pricing are model-specific lookup tables with prefix matching for dated model names.
-- `getModelPricing()` defaults to gpt-4o pricing for unknown models (unlike DirectProvider which defaults to Sonnet).
-- Mock `fetch` in tests needs `as unknown as typeof fetch` (Bun mock type lacks `preconnect` property).
+- Avoid running full test suites in every child task — use `bun run typecheck` for quick validation.
+- Pre-commit hooks run typecheck + lint + tests automatically.
