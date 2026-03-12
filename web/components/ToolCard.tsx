@@ -442,7 +442,7 @@ function McpToolCardBody({
 					<div
 						className={`og-mcp-done-status ${isPassed ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
 					>
-						{isPassed ? `✓ ${t("tool.passed")}` : `✗ ${t("tool.failed")}`}
+						{isPassed ? t("tool.passed") : t("tool.failed")}
 					</div>
 					{summary && <div className="og-mcp-task-desc">{summary}</div>}
 				</div>
