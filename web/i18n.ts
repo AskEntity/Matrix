@@ -117,6 +117,9 @@ const en: Translations = {
 
 	// Settings
 	"settings.title": "Project Settings",
+	"settings.modelOverride": "Model Override",
+	"settings.modelOverridePlaceholder":
+		"e.g. gpt-4o, claude-opus-4-6 (leave empty for default)",
 	"settings.budget": "Default Budget (USD)",
 	"settings.clarifyTimeout": "Clarify Timeout (ms)",
 	"settings.maxDepth": "Max Depth",
@@ -334,6 +337,9 @@ const zh: Translations = {
 
 	// Settings
 	"settings.title": "项目设置",
+	"settings.modelOverride": "模型覆盖",
+	"settings.modelOverridePlaceholder":
+		"如 gpt-4o, claude-opus-4-6（留空使用默认）",
 	"settings.budget": "默认预算 (USD)",
 	"settings.clarifyTimeout": "澄清超时 (ms)",
 	"settings.maxDepth": "最大深度",

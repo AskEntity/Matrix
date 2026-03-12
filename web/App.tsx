@@ -281,7 +281,8 @@ function AppInner() {
 						if (!parsed) addLog("queue_message", raw, taskId);
 						break;
 					} else if (et === "status") {
-						text = (msg.message as string) || "";
+						// Internal status events — not shown in activity log (implementation noise)
+						break;
 					} else {
 						text = JSON.stringify(msg).slice(0, 200);
 					}

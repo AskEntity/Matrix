@@ -22,6 +22,16 @@ export function SettingsPanel({
 				</button>
 			</div>
 			<label className="og-settings-field">
+				<span className="og-settings-label">{t("settings.modelOverride")}</span>
+				<input
+					type="text"
+					className="og-settings-input"
+					placeholder={t("settings.modelOverridePlaceholder")}
+					value={(config.model as string) || ""}
+					onChange={(e) => updateConfig({ model: e.target.value || null })}
+				/>
+			</label>
+			<label className="og-settings-field">
 				<span className="og-settings-label">{t("settings.budget")}</span>
 				<input
 					type="number"

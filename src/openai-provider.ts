@@ -44,9 +44,9 @@ interface OpenAITool {
 }
 
 interface OpenAIUsage {
-	prompt_tokens: number;
-	completion_tokens: number;
-	total_tokens: number;
+	prompt_tokens?: number;
+	completion_tokens?: number;
+	total_tokens?: number;
 }
 
 interface OpenAIChoice {
@@ -56,7 +56,7 @@ interface OpenAIChoice {
 		content: string | null;
 		tool_calls?: OpenAIToolCall[];
 	};
-	finish_reason: "stop" | "tool_calls" | "length" | "content_filter";
+	finish_reason: string | null;
 }
 
 interface OpenAIChatResponse {
@@ -514,10 +514,14 @@ export class OpenAIProvider implements AgentProvider {
 			turns++;
 
 			// Build messages for API: system prompt first, then conversation
+			// Append tool-use instruction — models on OpenAI-compatible APIs need explicit guidance
+			const systemContent = request.systemPrompt
+				? `${request.systemPrompt}\n\nIMPORTANT: Always call at least one tool in each response. Use your tools to accomplish the task. Do not generate text responses without making tool calls.`
+				: "IMPORTANT: Always call at least one tool in each response.";
 			const apiMessages: OpenAIMessage[] = [
 				{
 					role: "system",
-					content: request.systemPrompt ?? "",
+					content: systemContent,
 				},
 				...messages,
 			];
@@ -538,14 +542,15 @@ export class OpenAIProvider implements AgentProvider {
 				break;
 			}
 
-			totalInputTokens += data.usage.prompt_tokens;
-			totalOutputTokens += data.usage.completion_tokens;
-			estimatedInputTokens =
-				data.usage.prompt_tokens + data.usage.completion_tokens;
+			const promptTokens = data.usage?.prompt_tokens ?? 0;
+			const completionTokens = data.usage?.completion_tokens ?? 0;
+			totalInputTokens += promptTokens;
+			totalOutputTokens += completionTokens;
+			estimatedInputTokens = promptTokens + completionTokens;
 
 			yield {
 				type: "usage",
-				inputTokens: data.usage.prompt_tokens,
+				inputTokens: promptTokens,
 				compressThreshold,
 				contextWindow,
 			};
@@ -693,13 +698,26 @@ export class OpenAIProvider implements AgentProvider {
 				});
 			}
 
+			// Append done() reminder to the last tool result
+			const lastToolMsg = messages[messages.length - 1];
+			if (
+				lastToolMsg?.role === "tool" &&
+				typeof lastToolMsg.content === "string" &&
+				!request.doneRef?.done
+			) {
+				lastToolMsg.content +=
+					"\n\n[CRITICAL: If your work is complete, call done() with status 'passed' or 'failed'. Do NOT stop without calling done().]";
+			}
+
 			// Cancellation point: drain queue and append to last tool result
 			if (queue && queue.pending > 0) {
 				const queueMsgs = queue.drain();
 				const formatted = queueMsgs.map(formatQueueMessage).join("\n");
-				const lastMsg = messages[messages.length - 1];
-				if (lastMsg?.role === "tool" && typeof lastMsg.content === "string") {
-					lastMsg.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
+				if (
+					lastToolMsg?.role === "tool" &&
+					typeof lastToolMsg.content === "string"
+				) {
+					lastToolMsg.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
 				}
 				yield { type: "queue_message", messages: formatted };
 			}
