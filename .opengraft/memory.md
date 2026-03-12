@@ -232,3 +232,14 @@ Key changes to address agent behavioral issues:
 - Running in autonomous improvement mode. Focus: stability, code quality, remove bad patterns, careful new features.
 - Self-restart daemon after changes. Run full tests before merging.
 - User preferences: clean UI, no clutter, consistent card styling, readable at a glance.
+
+
+## OpenAI Provider (src/openai-provider.ts)
+- Uses raw `fetch` instead of OpenAI SDK — simple enough for Chat Completions API.
+- Tool format mapping: Anthropic `input_schema` → OpenAI `parameters`, wrapped in `{ type: "function", function: {...} }`.
+- Message format: OpenAI uses separate `tool` role messages with `tool_call_id`, not `tool_result` blocks inside `user` messages.
+- Session files use `.openai.json` suffix to avoid conflicts with DirectProvider `.json` files.
+- Compaction calls the same OpenAI endpoint with `CHECKPOINT_SYSTEM_PROMPT` as system message.
+- Context windows and pricing are model-specific lookup tables with prefix matching for dated model names.
+- `getModelPricing()` defaults to gpt-4o pricing for unknown models (unlike DirectProvider which defaults to Sonnet).
+- Mock `fetch` in tests needs `as unknown as typeof fetch` (Bun mock type lacks `preconnect` property).
