@@ -135,3 +135,4 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 ## Task Execution Efficiency
 - Avoid running full test suites in every child task — use `bun run typecheck` for quick validation.
 - Pre-commit hooks run typecheck + lint + tests automatically.
+- Dynamic context window lookup: OpenAI provider now queries GET /v1/models for context_length field with caching. Fallback chain: /v1/models API → CONTEXT_WINDOWS static map → DEFAULT_CONTEXT_WINDOW (128k). Exported clearContextWindowCache() for testing.
