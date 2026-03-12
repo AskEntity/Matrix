@@ -10,7 +10,7 @@
 ## How to Run Tests
 
 ```bash
-bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/direct-provider.test.ts src/openai-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts
+bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/anthropic-compatible-provider.test.ts src/openai-compatible-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts
 bun run typecheck   # tsc --noEmit
 bun run check       # biome lint + format
 ```
@@ -25,7 +25,7 @@ Daemon (Hono: HTTP + WS on :7433)
    CLI            Web UI (React, bundled by Bun)
 ```
 
-- Three providers: ClaudeCodeProvider (subprocess), DirectProvider (Anthropic API), OpenAIProvider (OpenAI-compatible API)
+- Three providers: ClaudeAgentSdkProvider (subprocess), AnthropicCompatibleProvider (Anthropic API), OpenAICompatibleProvider (OpenAI-compatible API)
 - Provider selection: `OG_PROVIDER=openai|direct|claude-code` or auto-detect from model name prefix (`gpt-`, `o3-`, `deepseek-`)
 - Agent tree = Task tree. Each agent gets worktree + branch. Lifecycle = branch lifecycle.
 - All mutable APIs fire-and-forget. Observe via WebSocket.
@@ -38,8 +38,9 @@ Daemon (Hono: HTTP + WS on :7433)
 | src/daemon.ts | HTTP server, routes, WS, ORCHESTRATOR_SYSTEM_PROMPT |
 | src/agent-tools.ts | MCP tools (10), system prompts, ORCHESTRATION_KNOWLEDGE |
 | src/agent-provider.ts | AgentProvider interface, AgentEvent, AgentSession types |
-| src/direct-provider.ts | Anthropic API provider, built-in tools (bash/read/edit/search), compaction |
-| src/openai-provider.ts | OpenAI-compatible API provider (raw fetch, no SDK) |
+| src/anthropic-compatible-provider.ts | Anthropic API provider, built-in tools (bash/read/edit/search), compaction |
+| src/openai-compatible-provider.ts | OpenAI-compatible API provider (raw fetch, no SDK) |
+| src/claude-agent-sdk-provider.ts | Claude Code SDK subprocess provider |
 | src/task-tracker.ts | Task tree CRUD, JSON persistence |
 | src/worktree-manager.ts | Git worktree lifecycle |
 | src/message-queue.ts | MessageQueue + globalAgentQueues |
