@@ -199,7 +199,7 @@ export async function compressMessages(
 }
 
 /** Structured checkpoint prompt for context compression. */
-const CHECKPOINT_SYSTEM_PROMPT = `You are generating a structured checkpoint for an autonomous coding agent.
+export const CHECKPOINT_SYSTEM_PROMPT = `You are generating a structured checkpoint for an autonomous coding agent.
 The agent will resume from this checkpoint after context compression — it must be able to
 continue working as if it never stopped.
 
@@ -273,7 +273,7 @@ Rules:
 - Output ONLY the checkpoint, no preamble or commentary
 - Length: aim for under 10,000 tokens. Use more if the conversation was complex and detail is critical — better to be thorough than to lose important context. Never truncate mid-sentence.`;
 
-const TOOLS: Tool[] = [
+export const TOOLS: Tool[] = [
 	{
 		name: "bash",
 		description:
