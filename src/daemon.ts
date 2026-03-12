@@ -1171,7 +1171,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const effectiveModel =
 			opts.model ?? projectCfg.model ?? resolveDefaultModel() ?? undefined;
 		const effectiveChildModel =
-			opts.childModel ?? projectCfg.childModel ?? undefined;
+			opts.childModel ??
+			projectCfg.childModel ??
+			resolveDefaultModel() ??
+			undefined;
 
 		// Mark project for auto-resume on daemon restart
 		tracker.autoResume = true;

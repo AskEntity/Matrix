@@ -32,6 +32,16 @@ export function SettingsPanel({
 				/>
 			</label>
 			<label className="og-settings-field">
+				<span className="og-settings-label">{t("settings.childModel")}</span>
+				<input
+					type="text"
+					className="og-settings-input"
+					placeholder={t("settings.childModelPlaceholder")}
+					value={(config.childModel as string) || ""}
+					onChange={(e) => updateConfig({ childModel: e.target.value || null })}
+				/>
+			</label>
+			<label className="og-settings-field">
 				<span className="og-settings-label">{t("settings.budget")}</span>
 				<input
 					type="number"

@@ -120,6 +120,9 @@ const en: Translations = {
 	"settings.modelOverride": "Model Override",
 	"settings.modelOverridePlaceholder":
 		"e.g. gpt-4o, claude-opus-4-6 (leave empty for default)",
+	"settings.childModel": "Child Model",
+	"settings.childModelPlaceholder":
+		"Model for child agents (leave empty to use parent model)",
 	"settings.budget": "Default Budget (USD)",
 	"settings.clarifyTimeout": "Clarify Timeout (ms)",
 	"settings.maxDepth": "Max Depth",
@@ -340,6 +343,8 @@ const zh: Translations = {
 	"settings.modelOverride": "模型覆盖",
 	"settings.modelOverridePlaceholder":
 		"如 gpt-4o, claude-opus-4-6（留空使用默认）",
+	"settings.childModel": "子模型",
+	"settings.childModelPlaceholder": "子代理使用的模型（留空使用父模型）",
 	"settings.budget": "默认预算 (USD)",
 	"settings.clarifyTimeout": "澄清超时 (ms)",
 	"settings.maxDepth": "最大深度",
