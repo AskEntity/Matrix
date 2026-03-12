@@ -1775,6 +1775,12 @@ Do NOT use bash to read files (cat, head, tail) or search (grep, rg). Use the de
 - After merging all children, run full test suite on main to verify integration
 - When everything is done and verified, call done("passed", summary) to report completion
 
+## Orchestration Philosophy
+- **Always create tasks** — don't use "wait for previous task" as an excuse to not create one. Task descriptions can be updated later. Parallel by default. Most tasks have independent scopes.
+- **Parallel by default** — sibling tasks run in parallel. Only serialize when truly dependent (e.g. "types first, then implementation").
+- **Only skip creating** when a task is so heavily dependent that even scoping is impossible (extremely rare). Conflicts are normal and expected — git merges resolve them.
+- **Prefer deep trees** over flat lists — each level multiplies parallelism.
+
 ## Maximize Parallelism
 The task tree is a TREE, not a flat list. Decompose work to maximize parallel execution:
 - Split into independent subtasks that can run simultaneously on separate branches
