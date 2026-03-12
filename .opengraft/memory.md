@@ -136,3 +136,10 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Avoid running full test suites in every child task — use `bun run typecheck` for quick validation.
 - Pre-commit hooks run typecheck + lint + tests automatically.
 - Dynamic context window lookup: OpenAI provider now queries GET /v1/models for context_length field with caching. Fallback chain: /v1/models API → CONTEXT_WINDOWS static map → DEFAULT_CONTEXT_WINDOW (128k). Exported clearContextWindowCache() for testing.
+
+## Orchestration Philosophy
+
+- **Always create tasks** — don't use "wait for previous task" as an excuse to not create one. Task descriptions can be updated later.
+- **Parallel by default** — most tasks have independent scopes.少量冲突也可以并行运行任务树。
+- **Only skip creating** when a task is so heavily dependent on another that even scoping is impossible (extremely rare).
+- **Tree, not list** — prefer deep parallel trees over flat sequential lists.
