@@ -21,10 +21,10 @@ import {
 	ORCHESTRATION_KNOWLEDGE,
 	TASK_SYSTEM_PROMPT,
 } from "./agent-tools.ts";
-import { ClaudeCodeProvider } from "./claude-code-provider.ts";
-import { DirectProvider } from "./direct-provider.ts";
+import { AnthropicCompatibleProvider } from "./anthropic-compatible-provider.ts";
+import { ClaudeAgentSdkProvider } from "./claude-agent-sdk-provider.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
-import { OpenAIProvider } from "./openai-provider.ts";
+import { OpenAICompatibleProvider } from "./openai-compatible-provider.ts";
 import { loadProjectConfig, mergeProjectConfig } from "./project-config.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { TaskTracker } from "./task-tracker.ts";
@@ -85,18 +85,20 @@ function resolveDefaultModel(): string | undefined {
 
 function defaultProvider(): AgentProvider {
 	const provider = process.env.OG_PROVIDER;
-	if (provider === "openai") return new OpenAIProvider(resolveDefaultModel());
-	if (provider === "direct") return new DirectProvider(resolveDefaultModel());
-	if (provider === "claude-code") return new ClaudeCodeProvider();
+	if (provider === "openai")
+		return new OpenAICompatibleProvider(resolveDefaultModel());
+	if (provider === "direct")
+		return new AnthropicCompatibleProvider(resolveDefaultModel());
+	if (provider === "claude-code") return new ClaudeAgentSdkProvider();
 
 	// Auto-detect from model name
 	const model = resolveDefaultModel();
 	if (model && /^(gpt-|o1-|o3-|o4-|deepseek-)/.test(model)) {
-		return new OpenAIProvider(model);
+		return new OpenAICompatibleProvider(model);
 	}
 
 	// Default: direct API (Anthropic)
-	return new DirectProvider(resolveDefaultModel());
+	return new AnthropicCompatibleProvider(resolveDefaultModel());
 }
 
 /** Collect a node and all its descendants. */
@@ -1787,6 +1789,11 @@ The task tree is a TREE, not a flat list. Decompose work to maximize parallel ex
 - Each level of the tree multiplies parallelism — prefer deep parallel trees over shallow sequential lists
 - A child that receives a complex task should further decompose it into its own children
 - Only serialize tasks that truly depend on each other (e.g., "types first, then implementation")
+
+## Orchestration Philosophy
+- **Always create tasks** — don't use "wait for previous task" as an excuse to not create one. Task descriptions can be updated later. Parallel by default. Most tasks have independent scopes.
+- **Only skip creating** when a task is so heavily dependent that even scoping is impossible (extremely rare). Conflicts are normal and expected — git merges resolve them.
+- **Prefer deep trees** over flat lists — each level multiplies parallelism.
 
 ## Task Decomposition
 When decomposing work, write **high-quality task descriptions** for each child. Good task descriptions:

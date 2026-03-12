@@ -12,9 +12,9 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClaudeCodeProvider } from "./claude-code-provider.ts";
+import { AnthropicCompatibleProvider } from "./anthropic-compatible-provider.ts";
+import { ClaudeAgentSdkProvider } from "./claude-agent-sdk-provider.ts";
 import { createApp } from "./daemon.ts";
-import { DirectProvider } from "./direct-provider.ts";
 import type { TaskNode } from "./types.ts";
 
 const hasToken = Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
@@ -46,7 +46,7 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 		dataDir = await mkdtemp(join(tmpdir(), "og-e2e-data-"));
 		const result = createApp({
 			dataDir,
-			agentProvider: new ClaudeCodeProvider(),
+			agentProvider: new ClaudeAgentSdkProvider(),
 		});
 		app = result.app;
 		await result.pm.load();
@@ -148,7 +148,7 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 	);
 });
 
-describe.skipIf(!hasApiKey)("E2E: DirectProvider", () => {
+describe.skipIf(!hasApiKey)("E2E: AnthropicCompatibleProvider", () => {
 	let tempDir: string;
 	let dataDir: string;
 	let app: ReturnType<typeof createApp>["app"];
@@ -158,7 +158,7 @@ describe.skipIf(!hasApiKey)("E2E: DirectProvider", () => {
 		dataDir = await mkdtemp(join(tmpdir(), "og-e2e-direct-data-"));
 		const result = createApp({
 			dataDir,
-			agentProvider: new DirectProvider(),
+			agentProvider: new AnthropicCompatibleProvider(),
 		});
 		app = result.app;
 		await result.pm.load();

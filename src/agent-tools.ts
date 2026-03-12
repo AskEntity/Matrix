@@ -425,7 +425,7 @@ export class CostAccumulator {
 export interface OrchestratorToolsResult {
 	/** MCP server config for Claude Code provider. */
 	mcpServer: ReturnType<typeof createSdkMcpServer>;
-	/** Raw tool definitions for DirectProvider forwarding. */
+	/** Raw tool definitions for AnthropicCompatibleProvider forwarding. */
 	// biome-ignore lint/suspicious/noExplicitAny: SdkMcpToolDefinition generic is not narrowable here
 	toolDefs: SdkMcpToolDefinition<any>[];
 	/** Returns true if this agent has running children (childQueues is non-empty). */
@@ -435,7 +435,7 @@ export interface OrchestratorToolsResult {
 /**
  * Create orchestrator tools for the main agent.
  * Returns both an MCP server (for Claude Code provider) and raw tool definitions
- * (for DirectProvider to forward as Anthropic API tools).
+ * (for AnthropicCompatibleProvider to forward as Anthropic API tools).
  */
 export function createOrchestratorTools(
 	deps: OrchestratorToolsDeps,
