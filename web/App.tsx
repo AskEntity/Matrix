@@ -161,6 +161,8 @@ function AppInner() {
 		for (const n of nodes) map.set(n.id, n);
 		return map;
 	}, [nodes]);
+	const nodeMapRef = useRef(nodeMap);
+	nodeMapRef.current = nodeMap;
 
 	const totalCost = useMemo(() => {
 		const sum = nodes.reduce((acc, n) => acc + (n.costUsd ?? 0), 0);
@@ -361,8 +363,9 @@ function AppInner() {
 					break;
 				}
 				case "orchestration_started":
-					if (msg.prompt) addLog("user_prompt", msg.prompt as string);
-					addLog("lifecycle", "Orchestration started");
+					if (msg.prompt)
+						addLog("user_prompt", msg.prompt as string, PROJECT_NODE_ID);
+					addLog("lifecycle", "Orchestration started", PROJECT_NODE_ID);
 					setRunning(true);
 					if (msg.provider) setAgentProvider(msg.provider as string);
 					if (msg.model) setAgentModel(msg.model as string);
@@ -392,12 +395,13 @@ function AppInner() {
 					addLog(
 						"lifecycle",
 						`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${costStr}${tokenStr}`,
+						PROJECT_NODE_ID,
 					);
 					setRunning(false);
 					break;
 				}
 				case "agent_stopped":
-					addLog("lifecycle", "Agent stopped");
+					addLog("lifecycle", "Agent stopped", PROJECT_NODE_ID);
 					setRunning(false);
 					break;
 				case "task_started": {
@@ -405,18 +409,24 @@ function AppInner() {
 						? `\n${t("lifecycle.instructions")} ${msg.message}`
 						: "";
 					const startedText = `${t("lifecycle.taskStarted")} ${msg.title}${instruction}`;
+					const startedParentId =
+						nodeMapRef.current.get(msg.taskId as string)?.parentId ??
+						PROJECT_NODE_ID;
 					addLog("task_started", startedText, msg.taskId as string);
-					addLog("task_started", startedText);
+					addLog("task_started", startedText, startedParentId);
 					break;
 				}
 				case "task_completed": {
 					const completedText = `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
+					const completedParentId =
+						nodeMapRef.current.get(msg.taskId as string)?.parentId ??
+						PROJECT_NODE_ID;
 					addLog("task_completed", completedText, msg.taskId as string);
-					addLog("task_completed", completedText);
+					addLog("task_completed", completedText, completedParentId);
 					break;
 				}
 				case "error":
-					addLog("error", msg.message as string);
+					addLog("error", msg.message as string, PROJECT_NODE_ID);
 					break;
 				case "event_history": {
 					setLogs([]);
