@@ -72,6 +72,8 @@ export function formatQueueMessage(msg: QueueMessage): string {
 			return `[child_report] From child "${msg.title}" (${msg.taskId}): ${msg.content}`;
 		case "background_complete":
 			return `[background_complete] Command "${msg.command}" (${msg.commandId}): exit=${msg.exitCode}, duration=${msg.durationMs}ms\nstdout:\n${msg.stdout}\nstderr:\n${msg.stderr}`;
+		case "compact":
+			return "[compact] Manual compaction requested";
 	}
 }
 
@@ -1091,6 +1093,13 @@ export function createOrchestratorTools(
 								pendingClarifications = Math.max(0, pendingClarifications - 1);
 							}
 						}
+					}
+
+					// Re-enqueue compact signals for the provider to handle
+					const compactMsgs = all.filter((m) => m.source === "compact");
+					all = all.filter((m) => m.source !== "compact");
+					for (const cm of compactMsgs) {
+						deps.queue.enqueue(cm);
 					}
 
 					// Format messages for the agent

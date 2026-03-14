@@ -263,8 +263,12 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Recent transcript (~80k chars) is included verbatim in the compressed output for detailed context
 - The compressed output = 1 user message: task context + fresh memory + checkpoint summary + recent transcript
 
-## Thinking Indicator Scoping (v2)
-- Previous fix (visibleLengthOnRunStartRef) was insufficient — replaced with proper per-task check
-- App.tsx computes `isSelectedTaskRunning = running && (selectedTaskId === PROJECT_NODE_ID || selectedNode?.status === "in_progress")`
-- This boolean is passed to ActivityLog instead of global `running`, so thinking indicator only shows for the viewed task
-- Removed the visibleLengthOnRunStartRef workaround from ActivityLog — no longer needed
+## Thinking Indicator Scoping
+- `isSelectedTaskRunning` computed in App.tsx: checks if selected task is `in_progress` or is PROJECT_NODE_ID
+- Passed to ActivityLog instead of global `running`
+
+## Manual Compaction Trigger
+- `compact` source type in QueueMessage — signal-only, no content
+- POST /projects/:id/compact enqueues compact signal
+- Providers use `manualCompactRequested` flag — triggers pre-call compression regardless of token count
+- UI: compress button in TokenUsageBadge (shown when running)

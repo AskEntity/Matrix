@@ -576,6 +576,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		let totalOutputTokens = 0;
 		let estimatedInputTokens = 0;
 		let lastText = "";
+		let manualCompactRequested = false;
 
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
@@ -586,10 +587,15 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			}
 
 			// ── Pre-call compression ──
-			if (messages.length > 4 && estimatedInputTokens > compressThreshold) {
+			if (
+				messages.length > 4 &&
+				(manualCompactRequested || estimatedInputTokens > compressThreshold)
+			) {
 				yield {
 					type: "status",
-					message: `Compressing conversation (est. ${estimatedInputTokens} tokens, threshold: ${compressThreshold})`,
+					message: manualCompactRequested
+						? "Manual compaction triggered"
+						: `Compressing conversation (est. ${estimatedInputTokens} tokens, threshold: ${compressThreshold})`,
 				};
 				try {
 					const { compressed, savedTokens, checkpoint } =
@@ -631,7 +637,9 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						estimated: true,
 					};
 					yield { type: "compact", checkpoint, savedTokens };
+					manualCompactRequested = false;
 				} catch (e) {
+					manualCompactRequested = false;
 					yield {
 						type: "error",
 						message: `Compression failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -724,9 +732,16 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						const first = await queue.wait();
 						const rest = queue.drain();
 						const all = [first, ...rest];
-						const formatted = all.map(formatQueueMessage).join("\n");
+						if (all.some((m) => m.source === "compact")) {
+							manualCompactRequested = true;
+						}
+						const nonCompact = all.filter((m) => m.source !== "compact");
+						if (nonCompact.length === 0) {
+							continue;
+						}
+						const formatted = nonCompact.map(formatQueueMessage).join("\n");
 						yield { type: "queue_message", messages: formatted };
-						const imageParts = extractQueueImageParts(all);
+						const imageParts = extractQueueImageParts(nonCompact);
 						if (imageParts.length > 0) {
 							messages.push({
 								role: "user",
@@ -933,28 +948,34 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			// Cancellation point: drain queue and append to last tool result
 			if (queue && queue.pending > 0) {
 				const queueMsgs = queue.drain();
-				const formatted = queueMsgs.map(formatQueueMessage).join("\n");
-				if (
-					lastToolMsg?.role === "tool" &&
-					typeof lastToolMsg.content === "string"
-				) {
-					lastToolMsg.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
+				if (queueMsgs.some((m) => m.source === "compact")) {
+					manualCompactRequested = true;
 				}
-				// Add any queued images as a user message
-				const queueImageParts = extractQueueImageParts(queueMsgs);
-				if (queueImageParts.length > 0) {
-					messages.push({
-						role: "user",
-						content: [
-							{
-								type: "text" as const,
-								text: `[${queueImageParts.length} image(s) attached by user]`,
-							},
-							...queueImageParts,
-						],
-					});
+				const nonCompactMsgs = queueMsgs.filter((m) => m.source !== "compact");
+				if (nonCompactMsgs.length > 0) {
+					const formatted = nonCompactMsgs.map(formatQueueMessage).join("\n");
+					if (
+						lastToolMsg?.role === "tool" &&
+						typeof lastToolMsg.content === "string"
+					) {
+						lastToolMsg.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
+					}
+					// Add any queued images as a user message
+					const queueImageParts = extractQueueImageParts(nonCompactMsgs);
+					if (queueImageParts.length > 0) {
+						messages.push({
+							role: "user",
+							content: [
+								{
+									type: "text" as const,
+									text: `[${queueImageParts.length} image(s) attached by user]`,
+								},
+								...queueImageParts,
+							],
+						});
+					}
+					yield { type: "queue_message", messages: formatted };
 				}
-				yield { type: "queue_message", messages: formatted };
 			}
 
 			// Persist after tool results

@@ -1398,6 +1398,20 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ ok: true });
 	});
 
+	// Trigger manual compaction on a running session
+	app.post("/projects/:id/compact", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const session = activeSessions.get(project.id);
+		if (!session) {
+			return c.json({ error: "No active agent for this project" }, 404);
+		}
+		session.queue.enqueue({ source: "compact" });
+		return c.json({ compacting: true });
+	});
+
 	// Restart orchestrator: stop current session, relaunch with resume:true
 	app.post("/projects/:id/restart", async (c) => {
 		const project = pm.get(c.req.param("id"));

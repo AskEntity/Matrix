@@ -148,6 +148,7 @@ function AppInner() {
 		start,
 		stop,
 		checkStatus,
+		compact,
 		continueTask,
 		deleteTask,
 		sendMessage,
@@ -904,6 +905,7 @@ function AppInner() {
 											inputTokens={usage.inputTokens}
 											contextWindow={usage.contextWindow}
 											estimated={usage.estimated}
+											onCompact={running ? compact : undefined}
 										/>
 									) : null;
 								})()}
