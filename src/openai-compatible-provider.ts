@@ -10,9 +10,11 @@ import type {
 } from "./agent-provider.ts";
 import { formatQueueMessage } from "./agent-tools.ts";
 import {
-	CHECKPOINT_SYSTEM_PROMPT,
+	buildCompactedContext,
 	cleanupSessionBackgroundProcesses,
 	executeTool,
+	extractCheckpoint,
+	SUMMARIZATION_INSTRUCTION,
 	TOOLS,
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
@@ -237,132 +239,11 @@ export function convertToolsToOpenAI(tools: typeof TOOLS): OpenAITool[] {
 	}));
 }
 
-// ── Compaction ──
-
-/** @internal Exported for testing */
-export async function compressMessages(
-	messages: OpenAIMessage[],
-	model: string,
-	baseUrl: string,
-	apiKey: string,
-	taskContext?: string,
-	cwd?: string,
-): Promise<{
-	compressed: OpenAIMessage[];
-	savedTokens: number;
-	checkpoint: string;
-}> {
-	if (messages.length < 4) {
-		return { compressed: messages, savedTokens: 0, checkpoint: "" };
-	}
-
-	// Serialize all messages into text for the checkpoint generator
-	const fullTranscript = messages
-		.map((m, i) => {
-			let content: string;
-			if (typeof m.content === "string") {
-				content = m.content;
-			} else if (Array.isArray(m.content)) {
-				// Extract text parts from multi-modal content, skip image data
-				content = m.content
-					.filter((p) => p.type === "text")
-					.map((p) => (p as { text: string }).text)
-					.join("\n");
-			} else {
-				content = "";
-			}
-			if (m.tool_calls) {
-				const calls = m.tool_calls
-					.map(
-						(tc) =>
-							`[tool_call: ${tc.function.name}(${tc.function.arguments})]`,
-					)
-					.join("\n");
-				content = content ? `${content}\n${calls}` : calls;
-			}
-			if (m.role === "tool") {
-				content = `[tool_result for ${m.name ?? m.tool_call_id ?? "unknown"}]: ${typeof m.content === "string" ? m.content : ""}`;
-			}
-			return `[${i}] ${m.role}: ${content}`;
-		})
-		.join("\n---\n");
-
-	const SUMMARY_MAX_TOKENS = 32768;
-	const TRANSCRIPT_CHAR_LIMIT = 640_000;
-	const transcriptForApi =
-		fullTranscript.length > TRANSCRIPT_CHAR_LIMIT
-			? `[Earlier conversation truncated]\n\n${fullTranscript.slice(-TRANSCRIPT_CHAR_LIMIT)}`
-			: fullTranscript;
-
-	const response = await fetch(`${baseUrl}/chat/completions`, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${apiKey}`,
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-			model,
-			max_tokens: SUMMARY_MAX_TOKENS,
-			messages: [
-				{ role: "system", content: CHECKPOINT_SYSTEM_PROMPT },
-				{ role: "user", content: transcriptForApi },
-			],
-		}),
-	});
-
-	if (!response.ok) {
-		const errorText = await response.text();
-		throw new Error(`Compaction API error (${response.status}): ${errorText}`);
-	}
-
-	const data = (await response.json()) as OpenAIChatResponse;
-	const checkpoint =
-		data.choices[0]?.message?.content ?? "Failed to generate checkpoint";
-
-	// Include recent conversation as text dump
-	const RECENT_CHARS = 80_000;
-	const recentTranscript =
-		fullTranscript.length > RECENT_CHARS
-			? fullTranscript.slice(-RECENT_CHARS)
-			: fullTranscript;
-
-	// Re-read fresh memory from disk
-	let freshMemory = "";
-	if (cwd) {
-		try {
-			const memPath = join(cwd, ".opengraft", "memory.md");
-			freshMemory = await readFile(memPath, "utf-8");
-		} catch {
-			// No memory file
-		}
-	}
-
-	const oldChars = fullTranscript.length;
-	const newChars =
-		checkpoint.length +
-		recentTranscript.length +
-		(taskContext?.length ?? 0) +
-		freshMemory.length;
-	const savedTokens = Math.max(0, Math.floor((oldChars - newChars) / 4));
-
-	// Build single user message
-	const parts: string[] = [];
-	if (taskContext) parts.push(`## Original Task\n${taskContext}`);
-	if (freshMemory) parts.push(`## Project Memory (fresh)\n${freshMemory}`);
-	parts.push(`## Checkpoint Summary\n\n${checkpoint}`);
-	parts.push(
-		`## Recent Conversation (last ~${Math.round(recentTranscript.length / 1000)}k chars)\n${recentTranscript}`,
-	);
-	parts.push(
-		'Resume from this checkpoint. Your task is NOT done unless the checkpoint says "Current Phase: done". Continue working — check get_tree, follow the stimulus priority, and drive to completion.',
-	);
-
-	const compressed: OpenAIMessage[] = [
-		{ role: "user", content: parts.join("\n\n---\n\n") },
-	];
-
-	return { compressed, savedTokens, checkpoint };
-}
+// ── Compaction (in-context) ──
+// Compaction is now done in-context: a summarization instruction is pushed as a user
+// message, the model generates the checkpoint in its next response, and the context
+// is rebuilt. No separate API call is needed. See SUMMARIZATION_INSTRUCTION and
+// extractCheckpoint in anthropic-compatible-provider.ts.
 
 // ── Provider ──
 
@@ -577,6 +458,8 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		let estimatedInputTokens = 0;
 		let lastText = "";
 		let manualCompactRequested = false;
+		let compactionPending = false;
+		let preCompactTokenCount = 0;
 
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
@@ -586,48 +469,42 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				break;
 			}
 
-			// ── Pre-call compression ──
-			if (
-				messages.length > 4 &&
-				(manualCompactRequested || estimatedInputTokens > compressThreshold)
-			) {
-				yield {
-					type: "status",
-					message: manualCompactRequested
-						? "Manual compaction triggered"
-						: `Compressing conversation (est. ${estimatedInputTokens} tokens, threshold: ${compressThreshold})`,
-				};
-				try {
-					const { compressed, savedTokens, checkpoint } =
-						await compressMessages(
-							messages,
-							model,
-							this.baseUrl,
-							this.apiKey,
-							taskContext,
-							cwd,
-						);
-					messages.length = 0;
-					messages.push(...compressed);
-					// Prepend working directory
-					const firstMsg = messages[0];
-					if (
-						cwd &&
-						firstMsg?.role === "user" &&
-						typeof firstMsg.content === "string"
-					) {
-						if (!firstMsg.content.startsWith("Working directory:")) {
-							messages[0] = {
-								...firstMsg,
-								content: `Working directory: ${cwd}\n\n${firstMsg.content}`,
-							};
-						}
+			// ── Handle compaction response: extract checkpoint and rebuild context ──
+			if (compactionPending) {
+				compactionPending = false;
+				const lastMsg = messages[messages.length - 1];
+				let responseText = "";
+				if (lastMsg?.role === "assistant") {
+					const content = lastMsg.content;
+					if (typeof content === "string") {
+						responseText = content;
+					} else if (content === null) {
+						responseText = "";
 					}
-					const postCompactChars = compressed.reduce(
-						(sum, m) => sum + (m.content?.length ?? 0),
-						0,
+				}
+				const checkpoint = extractCheckpoint(responseText);
+
+				try {
+					const compactedContent = await buildCompactedContext(
+						taskContext,
+						checkpoint,
+						cwd,
 					);
+					const oldTokens = preCompactTokenCount;
+					messages.length = 0;
+					const userContent = cwd
+						? `Working directory: ${cwd}\n\n${compactedContent}`
+						: compactedContent;
+					messages.push({
+						role: "user" as const,
+						content: userContent,
+					});
+					const postCompactChars = userContent.length;
 					const estimatedPostCompactTokens = Math.floor(postCompactChars / 4);
+					const savedTokens = Math.max(
+						0,
+						oldTokens - estimatedPostCompactTokens,
+					);
 					estimatedInputTokens = estimatedPostCompactTokens;
 					yield {
 						type: "usage",
@@ -639,12 +516,33 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					yield { type: "compact", checkpoint, savedTokens };
 					manualCompactRequested = false;
 				} catch (e) {
-					manualCompactRequested = false;
 					yield {
 						type: "error",
-						message: `Compression failed: ${e instanceof Error ? e.message : String(e)}`,
+						message: `Compaction rebuild failed: ${e instanceof Error ? e.message : String(e)}`,
 					};
 				}
+				continue; // Skip normal processing, go to next API call with rebuilt context
+			}
+
+			// ── Pre-call compression: inject summarization instruction if over threshold ──
+			if (
+				messages.length > 4 &&
+				(manualCompactRequested || estimatedInputTokens > compressThreshold)
+			) {
+				yield {
+					type: "status",
+					message: manualCompactRequested
+						? "Manual compaction triggered"
+						: `Compressing conversation (est. ${estimatedInputTokens} tokens, threshold: ${compressThreshold})`,
+				};
+				// Inject summarization instruction as a user message instead of making a separate API call
+				messages.push({
+					role: "user" as const,
+					content: SUMMARIZATION_INSTRUCTION,
+				});
+				compactionPending = true;
+				preCompactTokenCount = estimatedInputTokens;
+				// Fall through to the normal API call — the model will generate the checkpoint
 			}
 
 			turns++;
@@ -699,10 +597,12 @@ export class OpenAICompatibleProvider implements AgentProvider {
 
 			const assistantMsg = choice.message;
 
-			// Emit text content
+			// Emit text content (skip during compaction — checkpoint text is not user-facing)
 			if (assistantMsg.content) {
 				lastText = assistantMsg.content;
-				yield { type: "text", content: assistantMsg.content };
+				if (!compactionPending) {
+					yield { type: "text", content: assistantMsg.content };
+				}
 			}
 
 			// Add assistant message to history
@@ -710,10 +610,20 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				role: "assistant",
 				content: assistantMsg.content,
 			};
-			if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {
+			if (
+				!compactionPending &&
+				assistantMsg.tool_calls &&
+				assistantMsg.tool_calls.length > 0
+			) {
 				historyMsg.tool_calls = assistantMsg.tool_calls;
 			}
 			messages.push(historyMsg);
+
+			// If compaction is pending, skip tool execution and continue to next iteration
+			// where the checkpoint will be extracted and context rebuilt
+			if (compactionPending) {
+				continue;
+			}
 
 			const toolCalls = assistantMsg.tool_calls ?? [];
 

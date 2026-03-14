@@ -274,7 +274,11 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - UI: compress button in TokenUsageBadge (shown when running)
 
 ## Lifecycle Event TaskId Assignment
-- task_started/task_completed WS events create 2 log entries: one with the child taskId, one with the parent taskId (looked up via nodeMapRef)
-- nodeMapRef pattern: `useRef(nodeMap)` + `nodeMapRef.current = nodeMap` after each render to access latest nodeMap inside memoized useCallback
-- orchestration_started/completed, agent_stopped, error use PROJECT_NODE_ID (root-level events)
-- Fallback to PROJECT_NODE_ID if parentId lookup fails (e.g. nodeMap not yet updated)
+- task_started/task_completed: 2 log entries — one with child taskId, one with parent taskId (nodeMapRef lookup)
+- Root-level events (orchestration_started/completed, etc.) use PROJECT_NODE_ID
+
+## In-Context Compaction
+- No separate API call — inject `SUMMARIZATION_INSTRUCTION` as user message, model responds with `<summary>` tags
+- `compactionPending` flag controls two-phase flow: inject instruction → extract checkpoint next iteration
+- `extractCheckpoint()` parses tags, falls back to full text
+- `buildCompactedContext()` rebuilds context with fresh memory from disk

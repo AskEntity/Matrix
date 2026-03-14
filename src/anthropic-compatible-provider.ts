@@ -112,114 +112,52 @@ export function getModelPricing(model: string): {
 	return MODEL_PRICING.sonnet as { inputPer1M: number; outputPer1M: number };
 }
 
+/** Summarization instruction injected as a user message for in-context compaction. */
+export const SUMMARIZATION_INSTRUCTION = `[SYSTEM: Context compression required. Generate a checkpoint summary NOW.
+
+Do NOT use any tools. Respond with ONLY the checkpoint in <summary>...</summary> tags.
+
+Include these sections:
+1. User Requests: ALL user messages and requests (critical — do not lose any)
+2. Current Phase: What stage of work we're in
+3. Completed Work: What's done, with key decisions and why
+4. Task Tree State: Running/passed/failed/draft tasks
+5. Rejected Approaches: What was tried and didn't work (prevent repeating)
+6. Key Context: Architectural decisions, discovered pitfalls, important state
+7. Pending Work: What still needs to be done
+8. Next Action: The very next thing to do after resuming
+
+Rules:
+- Be precise: file paths, function names, exact error messages
+- Do NOT repeat system prompt or task description content
+- Do NOT include file contents that can be re-read
+- Focus on context that's HARD to reconstruct
+- Include ALL user messages/requests verbatim or paraphrased]`;
+
 /**
- * Compact conversation by summarizing ALL messages into a structured checkpoint,
- * then rebuilding context from scratch (like Claude Code's compaction model).
- *
- * After compaction, messages = [task context + fresh memory + checkpoint].
- * System prompt is re-sent every API call so it's always fresh.
+ * Extract checkpoint text from an assistant response that should contain <summary>...</summary> tags.
+ * If no tags found, uses the full response text as the checkpoint.
+ * @internal Exported for testing
  */
-/** @internal Exported for testing */
-export async function compressMessages(
-	client: Anthropic,
-	messages: MessageParam[],
-	model: string,
-	/** Original task context to re-inject after compression (task description, memory, etc.) */
-	taskContext?: string,
-	/** Working directory — used to re-read fresh memory from disk */
-	cwd?: string,
-): Promise<{
-	compressed: MessageParam[];
-	savedTokens: number;
-	checkpoint: string;
-}> {
-	if (messages.length < 4) {
-		return { compressed: messages, savedTokens: 0, checkpoint: "" };
+export function extractCheckpoint(responseText: string): string {
+	const match = responseText.match(/<summary>([\s\S]*?)<\/summary>/);
+	if (match && match[1] !== undefined) {
+		return match[1].trim();
 	}
+	// No summary tags found — use full response text as checkpoint
+	return responseText.trim();
+}
 
-	// Serialize ALL messages into text for the checkpoint generator — no truncation
-	const fullTranscript = messages
-		.map((m, i) => {
-			const content =
-				typeof m.content === "string"
-					? m.content
-					: Array.isArray(m.content)
-						? m.content
-								.map((b) => {
-									if (typeof b === "string") return b;
-									if ("text" in b && typeof b.text === "string") return b.text;
-									if ("type" in b && b.type === "tool_use") {
-										const tu = b as ToolUseBlock;
-										const inputStr = JSON.stringify(tu.input);
-										return `[tool_use: ${tu.name}(${inputStr})]`;
-									}
-									if ("type" in b && b.type === "tool_result") {
-										const tr = b as ToolResultBlockParam;
-										let text: string;
-										if (typeof tr.content === "string") {
-											text = tr.content;
-										} else if (Array.isArray(tr.content)) {
-											text =
-												tr.content
-													.filter(
-														(p): p is { type: "text"; text: string } =>
-															typeof p === "object" &&
-															p !== null &&
-															"type" in p &&
-															p.type === "text",
-													)
-													.map((p) => p.text)
-													.join("\n") || "[result]";
-										} else {
-											text = "[result]";
-										}
-										return `[tool_result: ${text}]`;
-									}
-									return "[block]";
-								})
-								.join("\n")
-						: String(m.content);
-			return `[${i}] ${m.role}: ${content}`;
-		})
-		.join("\n---\n");
-
-	// Context window is ~200k tokens. Reserve max_tokens for output, send the rest as input.
-	// ~160k tokens input ≈ ~640k chars. Truncate from head (keep newest) if transcript exceeds this.
-	const SUMMARY_MAX_TOKENS = 32768;
-	const TRANSCRIPT_CHAR_LIMIT = 640_000;
-	const transcriptForApi =
-		fullTranscript.length > TRANSCRIPT_CHAR_LIMIT
-			? `[Earlier conversation truncated]\n\n${fullTranscript.slice(-TRANSCRIPT_CHAR_LIMIT)}`
-			: fullTranscript;
-
-	// Use sonnet for high-quality checkpoint (haiku loses too much nuance)
-	const summaryModel = model.includes("haiku")
-		? model
-		: model.includes("opus")
-			? model.replace("opus", "sonnet")
-			: model;
-
-	// Use streaming to avoid 10-minute timeout for long summary generation
-	const stream = client.messages.stream({
-		model: summaryModel,
-		max_tokens: SUMMARY_MAX_TOKENS,
-		system: CHECKPOINT_SYSTEM_PROMPT,
-		messages: [{ role: "user", content: transcriptForApi }],
-	});
-	const summaryResponse = await stream.finalMessage();
-
-	const checkpoint =
-		summaryResponse.content[0]?.type === "text"
-			? summaryResponse.content[0].text
-			: "Failed to generate checkpoint";
-
-	// Include recent conversation as text dump (~80k chars) for detailed context
-	const RECENT_CHARS = 80_000;
-	const recentTranscript =
-		fullTranscript.length > RECENT_CHARS
-			? fullTranscript.slice(-RECENT_CHARS)
-			: fullTranscript;
-
+/**
+ * Build the compacted context message after checkpoint generation.
+ * Combines task context, fresh memory, checkpoint, and recent transcript into a single user message.
+ * @internal Exported for testing
+ */
+export async function buildCompactedContext(
+	taskContext: string | undefined,
+	checkpoint: string,
+	cwd?: string,
+): Promise<string> {
 	// Re-read fresh memory from disk (agent may have updated it during session)
 	let freshMemory = "";
 	if (cwd) {
@@ -231,16 +169,6 @@ export async function compressMessages(
 		}
 	}
 
-	// Estimate saved tokens (~4 chars per token)
-	const oldChars = fullTranscript.length;
-	const newChars =
-		checkpoint.length +
-		recentTranscript.length +
-		(taskContext?.length ?? 0) +
-		freshMemory.length;
-	const savedTokens = Math.max(0, Math.floor((oldChars - newChars) / 4));
-
-	// Build single user message: task context + memory + checkpoint + recent transcript
 	const parts: string[] = [];
 	if (taskContext) {
 		parts.push(`## Original Task\n${taskContext}`);
@@ -250,17 +178,10 @@ export async function compressMessages(
 	}
 	parts.push(`## Checkpoint Summary\n\n${checkpoint}`);
 	parts.push(
-		`## Recent Conversation (last ~${Math.round(recentTranscript.length / 1000)}k chars)\nThe following is a text transcript of the most recent conversation before compaction.\nThis gives you detailed context for what was happening right before the compaction.\n\n${recentTranscript}`,
-	);
-	parts.push(
 		'Resume from this checkpoint. Your task is NOT done unless the checkpoint says "Current Phase: done". Continue working — check get_tree, follow the stimulus priority, and drive to completion.',
 	);
 
-	const compressed: MessageParam[] = [
-		{ role: "user" as const, content: parts.join("\n\n---\n\n") },
-	];
-
-	return { compressed, savedTokens, checkpoint };
+	return parts.join("\n\n---\n\n");
 }
 
 /** Structured checkpoint prompt for context compression. */
@@ -1694,6 +1615,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		let estimatedInputTokens = 0;
 		let lastText = "";
 		let manualCompactRequested = false;
+		let compactionPending = false;
+		let preCompactTokenCount = 0;
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
 		while (true) {
@@ -1703,7 +1626,71 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				break;
 			}
 
-			// ── Pre-call compression: count tokens, compress if over threshold ──
+			// ── Handle compaction response: extract checkpoint and rebuild context ──
+			if (compactionPending) {
+				compactionPending = false;
+				const lastMsg = messages[messages.length - 1];
+				let responseText = "";
+				if (lastMsg?.role === "assistant") {
+					const content = lastMsg.content;
+					if (typeof content === "string") {
+						responseText = content;
+					} else if (Array.isArray(content)) {
+						responseText = content
+							.filter(
+								(b): b is { type: "text"; text: string } =>
+									typeof b === "object" &&
+									b !== null &&
+									"type" in b &&
+									b.type === "text",
+							)
+							.map((b) => b.text)
+							.join("\n");
+					}
+				}
+				const checkpoint = extractCheckpoint(responseText);
+
+				try {
+					const compactedContent = await buildCompactedContext(
+						taskContext,
+						checkpoint,
+						cwd,
+					);
+					const oldTokens = preCompactTokenCount;
+					messages.length = 0;
+					const userContent = cwd
+						? `Working directory: ${cwd}\n\n${compactedContent}`
+						: compactedContent;
+					messages.push({
+						role: "user" as const,
+						content: userContent,
+					});
+					const postCompactChars = userContent.length;
+					const estimatedPostCompactTokens = Math.floor(postCompactChars / 4);
+					const savedTokens = Math.max(
+						0,
+						oldTokens - estimatedPostCompactTokens,
+					);
+					estimatedInputTokens = estimatedPostCompactTokens;
+					yield {
+						type: "usage",
+						inputTokens: estimatedPostCompactTokens,
+						compressThreshold: compressThreshold,
+						contextWindow: contextWindow,
+						estimated: true,
+					};
+					yield { type: "compact", checkpoint, savedTokens };
+					manualCompactRequested = false;
+				} catch (e) {
+					yield {
+						type: "error",
+						message: `Compaction rebuild failed: ${e instanceof Error ? e.message : String(e)}`,
+					};
+				}
+				continue; // Skip normal processing, go to next API call with rebuilt context
+			}
+
+			// ── Pre-call compression: count tokens, inject summarization instruction if over threshold ──
 			if (messages.length > 4) {
 				let tokenCount = estimatedInputTokens;
 				let isEstimated = true;
@@ -1734,56 +1721,14 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							? "Manual compaction triggered"
 							: `Compressing conversation (${tokenCount} tokens, threshold: ${compressThreshold})`,
 					};
-					try {
-						const { compressed, savedTokens, checkpoint } =
-							await compressMessages(
-								this.client,
-								messages,
-								model,
-								taskContext,
-								cwd,
-							);
-						messages.length = 0;
-						messages.push(...compressed);
-						const firstMsg = messages[0];
-						if (cwd && firstMsg?.role === "user") {
-							const content = firstMsg.content;
-							if (
-								typeof content === "string" &&
-								!content.startsWith("Working directory:")
-							) {
-								messages[0] = {
-									role: "user",
-									content: `Working directory: ${cwd}\n\n${content}`,
-								};
-							}
-						}
-						// Emit usage update so UI badge refreshes after compaction
-						const postCompactChars = compressed.reduce((sum, m) => {
-							const c =
-								typeof m.content === "string"
-									? m.content
-									: JSON.stringify(m.content);
-							return sum + c.length;
-						}, 0);
-						const estimatedPostCompactTokens = Math.floor(postCompactChars / 4);
-						estimatedInputTokens = estimatedPostCompactTokens;
-						yield {
-							type: "usage",
-							inputTokens: estimatedPostCompactTokens,
-							compressThreshold: compressThreshold,
-							contextWindow: contextWindow,
-							estimated: true,
-						};
-						yield { type: "compact", checkpoint, savedTokens };
-						manualCompactRequested = false;
-					} catch (e) {
-						manualCompactRequested = false;
-						yield {
-							type: "error",
-							message: `Compression failed: ${e instanceof Error ? e.message : String(e)}`,
-						};
-					}
+					// Inject summarization instruction as a user message instead of making a separate API call
+					messages.push({
+						role: "user" as const,
+						content: SUMMARIZATION_INSTRUCTION,
+					});
+					compactionPending = true;
+					preCompactTokenCount = tokenCount;
+					// Fall through to the normal API call — the model will generate the checkpoint
 				}
 			}
 
@@ -1874,19 +1819,30 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			for (const block of response.content) {
 				if (block.type === "text") {
 					lastText = block.text;
-					yield { type: "text", content: block.text };
+					if (!compactionPending) {
+						yield { type: "text", content: block.text };
+					}
 				} else if (block.type === "tool_use") {
-					toolUses.push(block);
-					yield {
-						type: "tool_use",
-						tool: block.name,
-						input: block.input as Record<string, unknown>,
-					};
+					if (!compactionPending) {
+						toolUses.push(block);
+						yield {
+							type: "tool_use",
+							tool: block.name,
+							input: block.input as Record<string, unknown>,
+						};
+					}
+					// Skip tool uses during compaction — we only want the text checkpoint
 				}
 			}
 
 			// Add assistant message to history
 			messages.push({ role: "assistant", content: response.content });
+
+			// If compaction is pending, skip tool execution and continue to next iteration
+			// where the checkpoint will be extracted and context rebuilt
+			if (compactionPending) {
+				continue;
+			}
 
 			// If no tool use, handle end_turn
 			if (response.stop_reason === "end_turn" || toolUses.length === 0) {
