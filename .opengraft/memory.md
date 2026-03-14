@@ -262,3 +262,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - TRANSCRIPT_CHAR_LIMIT (640k chars) truncates from HEAD (oldest dropped) — recent messages always preserved
 - Recent transcript (~80k chars) is included verbatim in the compressed output for detailed context
 - The compressed output = 1 user message: task context + fresh memory + checkpoint summary + recent transcript
+
+## Thinking Indicator Scoping (v2)
+- Previous fix (visibleLengthOnRunStartRef) was insufficient — replaced with proper per-task check
+- App.tsx computes `isSelectedTaskRunning = running && (selectedTaskId === PROJECT_NODE_ID || selectedNode?.status === "in_progress")`
+- This boolean is passed to ActivityLog instead of global `running`, so thinking indicator only shows for the viewed task
+- Removed the visibleLengthOnRunStartRef workaround from ActivityLog — no longer needed
