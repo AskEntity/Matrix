@@ -11,6 +11,7 @@ import type {
 import { formatQueueMessage } from "./agent-tools.ts";
 import {
 	CHECKPOINT_SYSTEM_PROMPT,
+	cleanupSessionBackgroundProcesses,
 	executeTool,
 	TOOLS,
 	zodShapeToJsonSchema,
@@ -443,6 +444,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			stop() {
 				queue.close();
 				abortController.abort();
+				cleanupSessionBackgroundProcesses(sessionId);
 			},
 		};
 	}
@@ -832,7 +834,14 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						}
 					}
 
-					return executeTool(tc.function.name, parsedInput, cwd, request.cwd);
+					return executeTool(
+						tc.function.name,
+						parsedInput,
+						cwd,
+						request.cwd,
+						sessionId,
+						queue,
+					);
 				}),
 			);
 

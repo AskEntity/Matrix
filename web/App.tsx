@@ -329,6 +329,12 @@ function AppInner() {
 									addLog("queue_message", `← From Parent: ${msgText}`, taskId);
 								} else if (msgType === "child_report") {
 									addLog("queue_message", `↑ Child Report: ${msgText}`, taskId);
+								} else if (msgType === "background_complete") {
+									addLog(
+										"queue_message",
+										`⚙ Background Complete: ${msgText}`,
+										taskId,
+									);
 								} else {
 									addLog("queue_message", `[${msgType}] ${msgText}`, taskId);
 								}
