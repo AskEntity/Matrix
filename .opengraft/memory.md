@@ -157,3 +157,12 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - ToolCard/LogEntryView prefer structured fields, fall back to text parsing for old event_history entries
 - `getToolCardTitle()` has an optional `toolArgs` param; `getArg()` helper checks structured args first, then `extractArg()`
 - `formatArgs` still exported from ToolCard.tsx — used by App.tsx to generate text fallback
+
+## URL Hash Routing
+- Hash format: `#<projectId>` or `#<projectId>/<taskId>` — no server changes needed
+- `parseHash()` and `updateHash()` are module-level helpers in App.tsx
+- Initial state reads from hash via `useMemo(() => parseHash(), [])` — runs once
+- Hash update effect fires on `[projectId, selectedTaskId]` changes
+- `hashchange` listener handles browser back/forward navigation
+- `PROJECT_NODE_ID` is excluded from hash (treated as "no task selected")
+- Auto-select-first-project effect validates that hash projectId exists in project list
