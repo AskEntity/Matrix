@@ -15,8 +15,32 @@ import {
 	TOOLS,
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
-import { MessageQueue } from "./message-queue.ts";
+import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { AgentResult } from "./types.ts";
+
+/** Extract image_url parts from queue messages for OpenAI format. */
+function extractQueueImageParts(
+	msgs: QueueMessage[],
+): Array<{ type: "image_url"; image_url: { url: string; detail: "auto" } }> {
+	const parts: Array<{
+		type: "image_url";
+		image_url: { url: string; detail: "auto" };
+	}> = [];
+	for (const msg of msgs) {
+		if (msg.source === "user" && msg.images) {
+			for (const img of msg.images) {
+				parts.push({
+					type: "image_url",
+					image_url: {
+						url: `data:${img.mediaType};base64,${img.base64}`,
+						detail: "auto",
+					},
+				});
+			}
+		}
+	}
+	return parts;
+}
 
 // ── Types ──
 
@@ -700,10 +724,24 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						const all = [first, ...rest];
 						const formatted = all.map(formatQueueMessage).join("\n");
 						yield { type: "queue_message", messages: formatted };
-						messages.push({
-							role: "user",
-							content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
-						});
+						const imageParts = extractQueueImageParts(all);
+						if (imageParts.length > 0) {
+							messages.push({
+								role: "user",
+								content: [
+									{
+										type: "text" as const,
+										text: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+									},
+									...imageParts,
+								],
+							});
+						} else {
+							messages.push({
+								role: "user",
+								content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+							});
+						}
 						continue;
 					} catch {
 						// Queue closed — fall through
@@ -753,13 +791,38 @@ export class OpenAICompatibleProvider implements AgentProvider {
 							const parts = Array.isArray(mcpResult.content)
 								? mcpResult.content
 								: [];
+							// Separate text and image parts
+							const textParts: string[] = [];
+							const mcpImages: Array<{
+								mediaType: string;
+								data: string;
+							}> = [];
+							for (const c of parts as Array<{
+								type: string;
+								text?: string;
+								source?: {
+									type: string;
+									media_type: string;
+									data: string;
+								};
+							}>) {
+								if (c.type === "text") {
+									textParts.push(c.text ?? "");
+								} else if (c.type === "image" && c.source?.type === "base64") {
+									mcpImages.push({
+										mediaType: c.source.media_type,
+										data: c.source.data,
+									});
+								} else {
+									textParts.push(JSON.stringify(c));
+								}
+							}
 							return {
-								content: parts
-									.map((c: { type: string; text?: string }) =>
-										c.type === "text" ? (c.text ?? "") : JSON.stringify(c),
-									)
-									.join("\n"),
+								content: textParts.join("\n"),
 								isError: mcpResult.isError ?? false,
+								// Pass images through for injection as user message
+								isImage: mcpImages.length > 0,
+								mcpImages,
 							};
 						} catch (e) {
 							return {
@@ -789,6 +852,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					isImage?: boolean;
 					imageData?: string;
 					mediaType?: string;
+					mcpImages?: Array<{ mediaType: string; data: string }>;
 				};
 
 				if (exec.cwd) cwd = exec.cwd;
@@ -813,6 +877,15 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						text: exec.content,
 						dataUri: `data:${exec.mediaType};base64,${exec.imageData}`,
 					});
+				}
+				// Handle images from MCP tool results (e.g. yield tool with user-attached images)
+				if (exec.mcpImages?.length) {
+					for (const img of exec.mcpImages) {
+						imageResults.push({
+							text: "[User-attached image]",
+							dataUri: `data:${img.mediaType};base64,${img.data}`,
+						});
+					}
 				}
 			}
 
@@ -857,6 +930,20 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					typeof lastToolMsg.content === "string"
 				) {
 					lastToolMsg.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
+				}
+				// Add any queued images as a user message
+				const queueImageParts = extractQueueImageParts(queueMsgs);
+				if (queueImageParts.length > 0) {
+					messages.push({
+						role: "user",
+						content: [
+							{
+								type: "text" as const,
+								text: `[${queueImageParts.length} image(s) attached by user]`,
+							},
+							...queueImageParts,
+						],
+					});
 				}
 				yield { type: "queue_message", messages: formatted };
 			}

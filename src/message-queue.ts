@@ -5,9 +5,15 @@
  */
 export const globalAgentQueues = new Map<string, MessageQueue>();
 
+/** Image attachment for user messages. */
+export interface QueueImage {
+	base64: string;
+	mediaType: string;
+}
+
 /** Message types that can flow through the queue. */
 export type QueueMessage =
-	| { source: "user"; content: string }
+	| { source: "user"; content: string; images?: QueueImage[] }
 	| {
 			source: "child_complete";
 			taskId: string;

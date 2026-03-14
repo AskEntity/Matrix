@@ -264,11 +264,16 @@ export function useAgent(projectId: string) {
 	);
 
 	const sendMessage = useCallback(
-		async (message: string) => {
+		async (
+			message: string,
+			images?: { base64: string; mediaType: string }[],
+		) => {
+			const body: Record<string, unknown> = { message };
+			if (images?.length) body.images = images;
 			const res = await fetch(`/projects/${projectId}/message`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ message }),
+				body: JSON.stringify(body),
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
 		},

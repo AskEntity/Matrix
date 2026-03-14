@@ -132,6 +132,9 @@ function AppInner() {
 	const [clarifyAnswers, setClarifyAnswers] = useState<Record<string, string>>(
 		{},
 	);
+	const [attachedImages, setAttachedImages] = useState<
+		{ base64: string; mediaType: string }[]
+	>([]);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
 	const { nodes, refresh: refreshTasks, updateFromWS } = useTasks(projectId);
@@ -524,14 +527,16 @@ function AppInner() {
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!prompt.trim() || !projectId) return;
+		const images = attachedImages.length > 0 ? attachedImages : undefined;
 		try {
 			if (running) {
 				if (targetNodeId) await sendMessageToTask(targetNodeId, prompt.trim());
-				else await sendMessage(prompt.trim());
+				else await sendMessage(prompt.trim(), images);
 			} else {
 				await start({ prompt: prompt.trim() });
 			}
 			setPrompt("");
+			setAttachedImages([]);
 			localStorage.removeItem("og-prompt-draft");
 		} catch (err) {
 			addLog("error", (err as Error).message);
@@ -925,8 +930,13 @@ function AppInner() {
 				pendingMessages={pendingMessages}
 				pendingClarifications={pendingClarifications}
 				clarifyAnswers={clarifyAnswers}
+				attachedImages={attachedImages}
 				onPromptChange={setPrompt}
 				onSubmit={handleSubmit}
+				onImageAttach={(img) => setAttachedImages((prev) => [...prev, img])}
+				onImageRemove={(index) =>
+					setAttachedImages((prev) => prev.filter((_, i) => i !== index))
+				}
 				onClarifySubmit={handleClarifySubmit}
 				onClarifyAnswerChange={(clarificationId, value) =>
 					setClarifyAnswers((prev) => ({

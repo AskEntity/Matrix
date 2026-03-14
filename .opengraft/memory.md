@@ -218,3 +218,23 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - OpenAI provider: tool results are text-only, so images are injected as a separate user message with `image_url` type (base64 data URI)
 - `OpenAIMessage.content` type expanded to `string | null | Array<{type: "text"} | {type: "image_url"}>` to support multi-modal content
 - Compaction transcript serialization in OpenAI provider extracts only text parts from array content, skipping image data
+
+## Image Upload/Paste Support (Web UI → Daemon → Providers)
+- `QueueImage` interface in message-queue.ts: `{ base64: string, mediaType: string }`
+- User QueueMessage extended with optional `images?: QueueImage[]`
+- Daemon `handleInjectMessage` accepts optional images, POST /message and WS inject_message both support images
+- Anthropic provider: `extractQueueImages()` helper converts QueueMessage images to Anthropic `ImageBlockParam` format
+  - Implicit yield: images added to content array alongside text
+  - Cancellation point: images mixed into tool_results user message via spread into content array
+  - Type narrowing: `media_type` cast to `ImageMediaType` union (`"image/jpeg" | "image/png" | "image/gif" | "image/webp"`)
+- OpenAI provider: `extractQueueImageParts()` helper converts to `image_url` format with data URIs
+  - Implicit yield: images added to content array
+  - Cancellation point: images injected as separate user message
+  - MCP tool results: image blocks extracted separately, not JSON.stringify'd; pushed to imageResults for user message injection
+- agent-tools.ts yield tool: extracts images from queue messages, returns as MCP `{ type: "image", data, mimeType }` content blocks
+- Web UI: AppFooter accepts `attachedImages`, `onImageAttach`, `onImageRemove` props
+  - Paste handler on textarea detects `image/*` clipboard items
+  - 5MB size limit per image (MAX_IMAGE_SIZE_BYTES constant)
+  - Image previews shown above textarea with hover-to-reveal remove button
+  - Images cleared on submit
+- hooks.ts `sendMessage` accepts optional images parameter

@@ -2,7 +2,9 @@ import type React from "react";
 import { useEffect, useRef } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconPlay, IconSend } from "./icons.tsx";
+import { IconClose, IconPlay, IconSend } from "./icons.tsx";
+
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
 export function AppFooter({
 	running,
@@ -13,8 +15,11 @@ export function AppFooter({
 	pendingMessages,
 	pendingClarifications,
 	clarifyAnswers,
+	attachedImages,
 	onPromptChange,
 	onSubmit,
+	onImageAttach,
+	onImageRemove,
 	onClarifySubmit,
 	onClarifyAnswerChange,
 }: {
@@ -36,8 +41,11 @@ export function AppFooter({
 		timestamp: number;
 	}[];
 	clarifyAnswers: Record<string, string>;
+	attachedImages: { base64: string; mediaType: string }[];
 	onPromptChange: (value: string) => void;
 	onSubmit: (e: React.FormEvent) => void;
+	onImageAttach: (img: { base64: string; mediaType: string }) => void;
+	onImageRemove: (index: number) => void;
 	onClarifySubmit: (clarificationId: string) => void;
 	onClarifyAnswerChange: (clarificationId: string, value: string) => void;
 }) {
@@ -51,6 +59,21 @@ export function AppFooter({
 			el.style.height = "auto";
 			el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
 		}
+	}
+
+	function handleFileToBase64(file: File) {
+		if (file.size > MAX_IMAGE_SIZE_BYTES) {
+			// Silently ignore files that are too large — could add toast later
+			return;
+		}
+		const reader = new FileReader();
+		reader.onload = () => {
+			const base64 = (reader.result as string).split(",")[1];
+			if (base64) {
+				onImageAttach({ base64, mediaType: file.type });
+			}
+		};
+		reader.readAsDataURL(file);
 	}
 
 	// Auto-resize on any prompt change (typing, paste, programmatic updates).
@@ -138,6 +161,28 @@ export function AppFooter({
 				</div>
 			)}
 			<form className="og-footer-form" onSubmit={onSubmit}>
+				{/* Image preview thumbnails */}
+				{attachedImages.length > 0 && (
+					<div className="og-image-previews">
+						{attachedImages.map((img, i) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: images have no natural unique ID
+							<div key={`${img.mediaType}-${i}`} className="og-image-preview">
+								<img
+									src={`data:${img.mediaType};base64,${img.base64}`}
+									alt={`Attachment ${i + 1}`}
+								/>
+								<button
+									type="button"
+									className="og-image-preview-remove"
+									onClick={() => onImageRemove(i)}
+									aria-label="Remove image"
+								>
+									<IconClose size={10} />
+								</button>
+							</div>
+						))}
+					</div>
+				)}
 				<textarea
 					ref={textareaRef}
 					className="og-prompt-input"
@@ -146,6 +191,17 @@ export function AppFooter({
 					onChange={(e) => {
 						onPromptChange(e.target.value);
 						adjustTextareaHeight();
+					}}
+					onPaste={(e) => {
+						const items = e.clipboardData?.items;
+						if (!items) return;
+						for (const item of items) {
+							if (item.type.startsWith("image/")) {
+								e.preventDefault();
+								const file = item.getAsFile();
+								if (file) handleFileToBase64(file);
+							}
+						}
 					}}
 					onCompositionStart={() => {
 						composingRef.current = true;

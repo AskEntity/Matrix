@@ -25,11 +25,39 @@ import type {
 	AgentSession,
 } from "./agent-provider.ts";
 import { formatQueueMessage } from "./agent-tools.ts";
-import { MessageQueue } from "./message-queue.ts";
+import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { AgentResult } from "./types.ts";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 16384;
+
+type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+/** Extract images from queue messages and return Anthropic image content blocks. */
+function extractQueueImages(msgs: QueueMessage[]): Array<{
+	type: "image";
+	source: { type: "base64"; media_type: ImageMediaType; data: string };
+}> {
+	const blocks: Array<{
+		type: "image";
+		source: { type: "base64"; media_type: ImageMediaType; data: string };
+	}> = [];
+	for (const msg of msgs) {
+		if (msg.source === "user" && msg.images) {
+			for (const img of msg.images) {
+				blocks.push({
+					type: "image",
+					source: {
+						type: "base64",
+						media_type: img.mediaType as ImageMediaType,
+						data: img.base64,
+					},
+				});
+			}
+		}
+	}
+	return blocks;
+}
 /** Reserve ~17% as compaction buffer — compress when messages exceed this */
 const COMPACT_BUFFER_RATIO = 0.17;
 
@@ -1565,10 +1593,24 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						const formatted = all.map(formatQueueMessage).join("\n");
 						yield { type: "queue_message", messages: formatted };
 						// Inject messages as a new user turn and continue the loop
-						messages.push({
-							role: "user" as const,
-							content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
-						});
+						const imageBlocks = extractQueueImages(all);
+						if (imageBlocks.length > 0) {
+							messages.push({
+								role: "user" as const,
+								content: [
+									{
+										type: "text" as const,
+										text: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+									},
+									...imageBlocks,
+								],
+							});
+						} else {
+							messages.push({
+								role: "user" as const,
+								content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+							});
+						}
 						continue;
 					} catch {
 						// Queue closed — fall through to normal exit
@@ -1677,6 +1719,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			}
 
 			// Cancellation point: drain queue and append messages to tool results
+			let cancellationImages: ReturnType<typeof extractQueueImages> = [];
 			if (queue && queue.pending > 0) {
 				const queueMsgs = queue.drain();
 				const formatted = queueMsgs.map(formatQueueMessage).join("\n");
@@ -1684,11 +1727,26 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				if (lastResult && typeof lastResult.content === "string") {
 					lastResult.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
 				}
+				cancellationImages = extractQueueImages(queueMsgs);
 				yield { type: "queue_message", messages: formatted };
 			}
 
-			// Add tool results to history
-			messages.push({ role: "user", content: toolResults });
+			// Add tool results to history (with any queued images appended)
+			if (cancellationImages.length > 0) {
+				messages.push({
+					role: "user",
+					content: [
+						...toolResults,
+						...cancellationImages,
+						{
+							type: "text" as const,
+							text: `[${cancellationImages.length} image(s) attached by user]`,
+						},
+					],
+				});
+			} else {
+				messages.push({ role: "user", content: toolResults });
+			}
 
 			// Persist after tool results too (captures full turn)
 			this.sessionHistory.set(sessionId, [...messages]);
