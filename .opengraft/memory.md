@@ -166,3 +166,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `hashchange` listener handles browser back/forward navigation
 - `PROJECT_NODE_ID` is excluded from hash (treated as "no task selected")
 - Auto-select-first-project effect validates that hash projectId exists in project list
+
+## Yield Card Replacement Pattern
+- Pre-scan in mergedVisible memo finds yield tool_results, scans BACKWARDS for matching tool_use, adds to consumedUseEntries set
+- Consumed yield tool_use entries are skipped in the main loop (loading card disappears)
+- Yield tool_result renders standalone as "▶ Resume from yield" (title-only card via isTitleOnlyCard)
+- While waiting (no result yet), yield tool_use shows as normal loading card with spinner
