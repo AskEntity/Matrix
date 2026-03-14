@@ -643,19 +643,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Restart daemon
 	app.post("/restart-daemon", async (c) => {
-		await shutdown();
-		const uid = process.getuid?.() ?? 501;
-		const label = "com.opengraft.daemon";
-		const proc = Bun.spawn(
-			["launchctl", "kickstart", "-kp", `gui/${uid}/${label}`],
-			{ stdout: "pipe", stderr: "pipe" },
-		);
-		const exitCode = await proc.exited;
-		if (exitCode !== 0) {
-			// Fallback: just exit and let launchd restart us
+		// Respond first, then shutdown
+		setTimeout(async () => {
+			await shutdown();
 			process.exit(0);
-		}
-		return c.json({ ok: true });
+		}, 100);
+		return c.json({ restarting: true });
 	});
 
 	// Projects CRUD
@@ -1832,7 +1825,10 @@ if (import.meta.main) {
 		fetch: app.fetch,
 		port,
 		websocket,
-		development: process.env.NODE_ENV === "development" ? { hmr: true, console: true } : false,
+		development:
+			process.env.NODE_ENV === "development"
+				? { hmr: true, console: true }
+				: false,
 	});
 
 	// Graceful shutdown: save sessions before exit
