@@ -227,8 +227,11 @@ export function ActivityLog({
 						/>
 					),
 				)}
-				{showThinking && (
-					<div className="og-thinking-indicator">
+				{running && (
+					<div
+						className="og-thinking-indicator"
+						style={{ visibility: showThinking ? "visible" : "hidden" }}
+					>
 						<span className="og-thinking-dots">
 							Thinking
 							<span className="og-dots-anim">...</span>
