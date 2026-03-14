@@ -1808,10 +1808,6 @@ Call done("passed", summary) when all tasks are resolved (all passed/merged) and
 Call done("failed", summary) if you're blocked and cannot make progress.
 Never stop just because you finished responding — check get_tree and keep driving.
 
-## Output Efficiency
-Be concise. Don't narrate — act. When thinking through a plan, keep it brief. Don't repeat
-information from memory.md or the task tree back. Your token budget matters.
-
 ${ORCHESTRATION_KNOWLEDGE}`;
 
 // Only start the server when run directly, not when imported for testing.
