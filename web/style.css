@@ -1704,8 +1704,57 @@ button.og-tool-card-header:hover {
 
 .og-footer-form {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: flex-end;
 	gap: 8px;
+}
+
+/* Image preview thumbnails */
+.og-image-previews {
+	display: flex;
+	gap: 6px;
+	width: 100%;
+	flex-wrap: wrap;
+	padding-bottom: 2px;
+}
+
+.og-image-preview {
+	position: relative;
+	width: 48px;
+	height: 48px;
+	border-radius: var(--radius);
+	overflow: hidden;
+	border: 1px solid var(--border);
+	flex-shrink: 0;
+}
+
+.og-image-preview img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.og-image-preview-remove {
+	position: absolute;
+	top: 2px;
+	right: 2px;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--bg-overlay);
+	border: 1px solid var(--border);
+	color: var(--text-secondary);
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	opacity: 0;
+	transition: opacity var(--t-fast);
+}
+
+.og-image-preview:hover .og-image-preview-remove {
+	opacity: 1;
 }
 
 .og-prompt-input {

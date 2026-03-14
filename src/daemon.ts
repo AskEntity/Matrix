@@ -23,7 +23,11 @@ import {
 } from "./agent-tools.ts";
 import { AnthropicCompatibleProvider } from "./anthropic-compatible-provider.ts";
 import { ClaudeAgentSdkProvider } from "./claude-agent-sdk-provider.ts";
-import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
+import {
+	globalAgentQueues,
+	MessageQueue,
+	type QueueImage,
+} from "./message-queue.ts";
 import { OpenAICompatibleProvider } from "./openai-compatible-provider.ts";
 import { loadProjectConfig, mergeProjectConfig } from "./project-config.ts";
 import { ProjectManager } from "./project-manager.ts";
@@ -495,6 +499,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	function handleInjectMessage(
 		projectId: string,
 		message: string,
+		images?: QueueImage[],
 	): { ok: boolean; error?: string; status?: number; sessionId?: string } {
 		const session = activeSessions.get(projectId);
 		if (!session) {
@@ -505,7 +510,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			};
 		}
 		try {
-			session.queue.enqueue({ source: "user", content: message });
+			const imgs = images?.length ? images : undefined;
+			session.queue.enqueue({ source: "user", content: message, images: imgs });
 		} catch {
 			return { ok: false, error: "Queue closed", status: 409 };
 		}
@@ -1474,12 +1480,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		const body = await c.req.json<{ message: string }>();
+		const body = await c.req.json<{
+			message: string;
+			images?: QueueImage[];
+		}>();
 		if (!body.message) {
 			return c.json({ error: "message is required" }, 400);
 		}
 
-		const result = handleInjectMessage(project.id, body.message);
+		const result = handleInjectMessage(project.id, body.message, body.images);
 		if (!result.ok) {
 			return c.json({ error: result.error }, result.status as 404);
 		}
@@ -1562,6 +1571,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							childModel?: string;
 							taskId?: string;
 							answer?: string;
+							images?: QueueImage[];
 						};
 
 						if (msg.type === "subscribe" && msg.projectId) {
@@ -1645,7 +1655,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						}
 
 						if (msg.type === "inject_message" && msg.projectId && msg.prompt) {
-							const result = handleInjectMessage(msg.projectId, msg.prompt);
+							const result = handleInjectMessage(
+								msg.projectId,
+								msg.prompt,
+								msg.images,
+							);
 							if (result.ok) {
 								broadcastEvent(msg.projectId, {
 									type: "message_injected",

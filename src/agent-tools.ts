@@ -1116,6 +1116,24 @@ export function createOrchestratorTools(
 						`- Pending clarifications: ${clarifyText}`,
 					].join("\n");
 
+					// Extract images from user queue messages (MCP image format)
+					const imageBlocks: Array<{
+						type: "image";
+						data: string;
+						mimeType: string;
+					}> = [];
+					for (const msg of all) {
+						if (msg.source === "user" && msg.images) {
+							for (const img of msg.images) {
+								imageBlocks.push({
+									type: "image",
+									data: img.base64,
+									mimeType: img.mediaType,
+								});
+							}
+						}
+					}
+
 					return {
 						content: [
 							{
@@ -1124,6 +1142,7 @@ export function createOrchestratorTools(
 									? formatted + pendingSection
 									: pendingSection.trimStart(),
 							},
+							...imageBlocks,
 						],
 					};
 				} catch (e) {
