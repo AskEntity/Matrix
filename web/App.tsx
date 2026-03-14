@@ -172,6 +172,11 @@ function AppInner() {
 			? (nodeMap.get(selectedTaskId) ?? null)
 			: null;
 
+	const isSelectedTaskRunning =
+		running &&
+		(selectedTaskId === PROJECT_NODE_ID ||
+			selectedNode?.status === "in_progress");
+
 	const addLog = useCallback(
 		(
 			type: string,
@@ -920,7 +925,7 @@ function AppInner() {
 							nodeMap={nodeMap}
 							autoScroll={autoScroll}
 							onAutoScrollChange={setAutoScroll}
-							running={running}
+							running={isSelectedTaskRunning}
 						/>
 					</div>
 				</section>

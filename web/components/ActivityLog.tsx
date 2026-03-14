@@ -26,8 +26,6 @@ export function ActivityLog({
 	const entriesRef = useRef(entries);
 	entriesRef.current = entries;
 	const [showThinking, setShowThinking] = useState(false);
-	// Track visible.length when `running` became true to detect if this task's agent is active
-	const visibleLengthOnRunStartRef = useRef<number | null>(null);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: reset search when filter task changes
 	useEffect(() => {
@@ -66,20 +64,7 @@ export function ActivityLog({
 		}
 	}, [visible.length, autoScroll]);
 
-	// Snapshot visible.length when `running` transitions to true.
-	// If visible entries haven't grown since then, the running agent is for a different task.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: only snapshot on running transition
-	useEffect(() => {
-		if (running) {
-			visibleLengthOnRunStartRef.current = visible.length;
-		} else {
-			visibleLengthOnRunStartRef.current = null;
-		}
-	}, [running]);
-
 	// Show "Thinking..." when agent is running but no events for 1.5s
-	// Only show if this task has received events since the agent started running,
-	// which indicates the running agent is for this task (not a sibling/child).
 	useEffect(() => {
 		if (!running) {
 			setShowThinking(false);
@@ -90,17 +75,10 @@ export function ActivityLog({
 			const lastEntry = currentEntries[currentEntries.length - 1];
 			const hasToolInProgress = lastEntry?.type === "tool_use";
 			const elapsed = Date.now() - lastEventTimeRef.current;
-			// Don't show thinking if visible entries haven't grown since running started
-			// — means the running agent is for a different task
-			const hasNewEntries =
-				visibleLengthOnRunStartRef.current === null ||
-				visible.length > visibleLengthOnRunStartRef.current;
-			setShowThinking(
-				running && !hasToolInProgress && elapsed > 1500 && hasNewEntries,
-			);
+			setShowThinking(running && !hasToolInProgress && elapsed > 1500);
 		}, 500);
 		return () => clearInterval(id);
-	}, [running, visible.length]);
+	}, [running]);
 
 	useEffect(() => {
 		const el = logRef.current;
