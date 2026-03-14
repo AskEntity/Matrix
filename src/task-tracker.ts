@@ -6,13 +6,13 @@ import type { TaskNode, TaskStatus } from "./types.ts";
 /**
  * Manages the task tree for a project.
  * Each project has one task tree stored as tree.json in the daemon data dir.
- * Tasks with parentId === null are top-level (direct children of the project).
- * The project itself (main branch) is the implicit root.
+ * The root node represents the orchestrator itself. Child tasks are created under it.
  */
 export class TaskTracker {
 	private nodes: Map<string, TaskNode> = new Map();
 	private _orchestratorSessionId: string | null = null;
 	private _autoResume = false;
+	private _rootNodeId: string | null = null;
 
 	constructor(private readonly treePath: string) {}
 
@@ -21,13 +21,14 @@ export class TaskTracker {
 		if (existsSync(this.treePath)) {
 			const raw = await readFile(this.treePath, "utf-8");
 			const data = JSON.parse(raw) as {
-				rootId?: string | null;
+				rootNodeId?: string | null;
 				nodes: TaskNode[];
 				orchestratorSessionId?: string | null;
 				autoResume?: boolean;
 			};
 			this._orchestratorSessionId = data.orchestratorSessionId ?? null;
 			this._autoResume = data.autoResume ?? false;
+			this._rootNodeId = data.rootNodeId ?? null;
 			for (const node of data.nodes) {
 				// Backward compat: old nodes may lack failCount
 				if (node.failCount === undefined) node.failCount = 0;
@@ -43,6 +44,7 @@ export class TaskTracker {
 		const data = {
 			orchestratorSessionId: this._orchestratorSessionId,
 			autoResume: this._autoResume,
+			rootNodeId: this._rootNodeId,
 			nodes: Array.from(this.nodes.values()),
 		};
 		await writeFile(this.treePath, JSON.stringify(data, null, "\t"), "utf-8");
@@ -65,6 +67,36 @@ export class TaskTracker {
 
 	set autoResume(value: boolean) {
 		this._autoResume = value;
+	}
+
+	/** Get the root node ID (the orchestrator's node). */
+	get rootNodeId(): string | null {
+		return this._rootNodeId;
+	}
+
+	/**
+	 * Ensure a root node exists for the orchestrator.
+	 * If one already exists, returns it. Otherwise creates a new one.
+	 * The root node represents the orchestrator itself — all tasks are children of it.
+	 * Any existing top-level orphan nodes are re-parented under the root node.
+	 */
+	ensureRootNode(title: string, description: string): TaskNode {
+		if (this._rootNodeId) {
+			const existing = this.nodes.get(this._rootNodeId);
+			if (existing) return existing;
+		}
+		// Collect existing top-level nodes before creating root
+		const orphans = Array.from(this.nodes.values()).filter(
+			(n) => n.parentId === null,
+		);
+		const node = this.createNode(title, description, null);
+		this._rootNodeId = node.id;
+		// Re-parent orphan top-level nodes under the new root
+		for (const orphan of orphans) {
+			orphan.parentId = node.id;
+			node.children.push(orphan.id);
+		}
+		return node;
 	}
 
 	/** Create a top-level task (direct child of the project). */

@@ -304,6 +304,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		broadcast(wsClients, projectId, {
 			type: "tree_updated",
 			nodes: tracker.allNodes(),
+			rootNodeId: tracker.rootNodeId,
 		});
 	}
 
@@ -385,7 +386,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			clarifications: [],
 		});
 
-		broadcastEvent(projectId, { type: "agent_stopped" });
+		const rootNodeId = tracker?.rootNodeId;
+		broadcastEvent(projectId, {
+			type: "agent_stopped",
+			...(rootNodeId ? { taskId: rootNodeId } : {}),
+		});
 	}
 
 	/**
@@ -762,9 +767,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const opts =
 			body.budgetUsd !== undefined ? { budgetUsd: body.budgetUsd } : undefined;
 		try {
-			const node = body.parentId
+			// Default to root node as parent if no parentId specified
+			const effectiveParentId = body.parentId ?? tracker.rootNodeId;
+			const node = effectiveParentId
 				? tracker.addChild(
-						body.parentId,
+						effectiveParentId,
 						body.title,
 						body.description ?? "",
 						opts,
@@ -909,6 +916,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			await tracker.save();
 			broadcastEvent(project.id, {
 				type: "error",
+				taskId: nodeId,
 				message: `Continue failed: ${e instanceof Error ? e.message : String(e)}`,
 			});
 			broadcastTreeUpdate(project.id, tracker);
@@ -1157,16 +1165,23 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			resolveDefaultModel() ??
 			undefined;
 
+		// Ensure root node exists for the orchestrator
+		const rootNode = tracker.ensureRootNode("Orchestrator", opts.prompt);
+		const rootNodeId = rootNode.id;
+		tracker.updateStatus(rootNodeId, "in_progress");
+
 		// Mark project for auto-resume on daemon restart
 		tracker.autoResume = true;
 		tracker.save().catch(() => {});
 
 		broadcastEvent(project.id, {
 			type: "orchestration_started",
+			taskId: rootNodeId,
 			prompt: opts.prompt,
 			provider: config.agentProvider.name,
 			model: effectiveModel ?? resolveDefaultModel() ?? "claude-sonnet-4-6",
 		});
+		broadcastTreeUpdate(project.id, tracker);
 
 		const wtRoot = join(project.path, ".worktrees");
 		const wm = new WorktreeManager(project.path, wtRoot);
@@ -1183,6 +1198,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				worktrees: wm,
 				projectPath: project.path,
 				repoPath: project.path,
+				currentTaskId: rootNodeId,
 				depth: 0,
 				childModel: effectiveChildModel,
 				queue,
@@ -1241,6 +1257,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					const { type: eventType, ...eventData } = result.value;
 					broadcastEvent(project.id, {
 						type: "agent_event",
+						taskId: rootNodeId,
 						eventType,
 						...eventData,
 					});
@@ -1253,11 +1270,18 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					await tracker.save();
 				}
 
+				// Update root node status based on result
+				const didPass = doneRef.done
+					? doneRef.done.status === "passed"
+					: finalResult.success;
+				tracker.updateStatus(rootNodeId, didPass ? "passed" : "failed");
+
 				const totalCostUsd =
 					(finalResult.costUsd ?? 0) + costAccumulator.totalCostUsd;
 				broadcastEvent(project.id, {
 					type: "orchestration_completed",
-					success: finalResult.success,
+					taskId: rootNodeId,
+					success: didPass,
 					costUsd: totalCostUsd,
 					turns: finalResult.turns,
 					inputTokens: finalResult.inputTokens,
@@ -1278,8 +1302,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				}
 			} catch (e) {
 				const message = e instanceof Error ? e.message : "Unknown error";
+				tracker.updateStatus(rootNodeId, "failed");
 				broadcastEvent(project.id, {
 					type: "error",
+					taskId: rootNodeId,
 					message: `Agent failed: ${message}`,
 				});
 			} finally {
@@ -1715,9 +1741,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			const tracker = await getTracker(project.id);
 			if (tracker.autoResume && tracker.orchestratorSessionId) {
 				// Reset orphaned in_progress tasks — their agent sessions died with the daemon
+				// Skip the root node — it will be re-activated by launchAgent
 				let orphanCount = 0;
 				for (const node of tracker.allNodes()) {
-					if (node.status === "in_progress") {
+					if (node.status === "in_progress" && node.id !== tracker.rootNodeId) {
 						tracker.updateStatus(node.id, "failed");
 						orphanCount++;
 					}

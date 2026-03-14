@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LogEntry, TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { PROJECT_NODE_ID } from "../types.ts";
 import { LogEntryView, ToolCard } from "./ToolCard.tsx";
 
 export function ActivityLog({
 	entries,
 	filterTaskId,
+	rootNodeId,
 	nodeMap,
 	autoScroll,
 	onAutoScrollChange,
@@ -14,6 +14,7 @@ export function ActivityLog({
 }: {
 	entries: LogEntry[];
 	filterTaskId: string | null;
+	rootNodeId: string | null;
 	nodeMap: Map<string, TaskNode>;
 	autoScroll: boolean;
 	onAutoScrollChange: (locked: boolean) => void;
@@ -32,15 +33,14 @@ export function ActivityLog({
 		setSearchText("");
 	}, [filterTaskId]);
 
+	const isRootFilter = !filterTaskId || filterTaskId === rootNodeId;
 	const visible = useMemo(() => {
 		let items: LogEntry[];
-		if (!filterTaskId || filterTaskId === PROJECT_NODE_ID) {
-			items = entries.filter((e) => !e.taskId);
+		if (isRootFilter) {
+			// Root/orchestrator view — show entries tagged with root node OR untagged (backward compat)
+			items = entries.filter((e) => !e.taskId || e.taskId === rootNodeId);
 		} else {
-			items = entries.filter((e) => {
-				if (!e.taskId) return !filterTaskId;
-				return e.taskId === filterTaskId;
-			});
+			items = entries.filter((e) => e.taskId === filterTaskId);
 		}
 
 		if (searchText.trim()) {
@@ -49,7 +49,7 @@ export function ActivityLog({
 		}
 
 		return items;
-	}, [entries, filterTaskId, searchText]);
+	}, [entries, filterTaskId, rootNodeId, isRootFilter, searchText]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new visible entries
 	useEffect(() => {

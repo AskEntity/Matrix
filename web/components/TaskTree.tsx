@@ -1,22 +1,36 @@
 import { useCallback, useMemo, useState } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { PROJECT_NODE_ID } from "../types.ts";
 import { IconChevron, IconHexagon } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
 
 export function TaskTree({
 	nodes,
 	selectedTaskId,
+	rootNodeId,
 	onSelect,
 	running,
 }: {
 	nodes: TaskNode[];
 	selectedTaskId: string | null;
+	rootNodeId: string | null;
 	onSelect: (id: string | null) => void;
 	running: boolean;
 }) {
-	const roots = useMemo(() => nodes.filter((n) => !n.parentId), [nodes]);
+	// Root node's children are the visible top-level tasks
+	const rootNode = useMemo(
+		() => (rootNodeId ? nodes.find((n) => n.id === rootNodeId) : undefined),
+		[nodes, rootNodeId],
+	);
+	const roots = useMemo(() => {
+		if (rootNode) {
+			// Show children of root node as top-level tasks
+			const childIds = new Set(rootNode.children);
+			return nodes.filter((n) => childIds.has(n.id));
+		}
+		// Fallback: show all nodes without a parent
+		return nodes.filter((n) => !n.parentId);
+	}, [nodes, rootNode]);
 	const childMap = useMemo(() => {
 		const map = new Map<string, TaskNode[]>();
 		for (const n of nodes) {
@@ -67,7 +81,8 @@ export function TaskTree({
 	}, [nodes, taskFilter, nodeMap]);
 
 	const { t } = useLocale();
-	const isOrchestratorSelected = selectedTaskId === PROJECT_NODE_ID;
+	const isOrchestratorSelected =
+		!selectedTaskId || selectedTaskId === rootNodeId;
 	const filteredRoots = matchingIds
 		? roots.filter((r) => matchingIds.has(r.id))
 		: roots;
@@ -91,7 +106,7 @@ export function TaskTree({
 				className={`og-orch-node${isOrchestratorSelected ? " selected" : ""}`}
 				onClick={(e) => {
 					e.stopPropagation();
-					onSelect(PROJECT_NODE_ID);
+					onSelect(rootNodeId);
 				}}
 			>
 				<span className="og-orch-icon">
@@ -105,7 +120,7 @@ export function TaskTree({
 				</span>
 			</button>
 
-			{nodes.length > 0 && <div className="og-sidebar-divider" />}
+			{roots.length > 0 && <div className="og-sidebar-divider" />}
 
 			{filteredRoots.map((root) => (
 				<TaskNodeView
@@ -114,6 +129,7 @@ export function TaskTree({
 					childMap={childMap}
 					depth={1}
 					selectedTaskId={selectedTaskId}
+					rootNodeId={rootNodeId}
 					onSelect={onSelect}
 					collapsed={collapsed}
 					toggleCollapse={toggleCollapse}
@@ -121,7 +137,7 @@ export function TaskTree({
 				/>
 			))}
 
-			{nodes.length === 0 && (
+			{roots.length === 0 && (
 				<div className="og-empty-state">
 					<span className="og-empty-icon">
 						<IconHexagon size={24} />
@@ -139,7 +155,7 @@ export function TaskTree({
 				</div>
 			)}
 
-			{nodes.length > 0 && filteredRoots.length === 0 && taskFilter && (
+			{roots.length > 0 && filteredRoots.length === 0 && taskFilter && (
 				<div className="og-tree-empty">
 					{t("tasks.noMatch")} "{taskFilter}"
 				</div>
@@ -153,6 +169,7 @@ function TaskNodeView({
 	childMap,
 	depth,
 	selectedTaskId,
+	rootNodeId,
 	onSelect,
 	collapsed,
 	toggleCollapse,
@@ -162,6 +179,7 @@ function TaskNodeView({
 	childMap: Map<string, TaskNode[]>;
 	depth: number;
 	selectedTaskId: string | null;
+	rootNodeId: string | null;
 	onSelect: (id: string | null) => void;
 	collapsed: Set<string>;
 	toggleCollapse: (id: string) => void;
@@ -184,7 +202,7 @@ function TaskNodeView({
 				className={`og-task-node${isSelected ? " selected" : ""}${node.draft ? " og-task-draft" : ""}`}
 				onClick={(e) => {
 					e.stopPropagation();
-					onSelect(isSelected ? PROJECT_NODE_ID : node.id);
+					onSelect(isSelected ? rootNodeId : node.id);
 				}}
 			>
 				<div
@@ -226,6 +244,7 @@ function TaskNodeView({
 						childMap={childMap}
 						depth={depth + 1}
 						selectedTaskId={selectedTaskId}
+						rootNodeId={rootNodeId}
 						onSelect={onSelect}
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}

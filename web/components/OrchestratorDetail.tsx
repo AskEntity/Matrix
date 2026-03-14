@@ -4,8 +4,8 @@ import { IconHexagon, IconStop, IconTrash } from "./icons.tsx";
 
 export function OrchestratorDetail({
 	running,
-	nodeCount,
 	nodes,
+	rootNodeId,
 	costUsd,
 	totalCost,
 	turns,
@@ -19,8 +19,8 @@ export function OrchestratorDetail({
 	onStop,
 }: {
 	running: boolean;
-	nodeCount: number;
 	nodes: TaskNode[];
+	rootNodeId?: string | null;
 	costUsd?: number | null;
 	totalCost?: number | null;
 	turns?: number | null;
@@ -34,11 +34,18 @@ export function OrchestratorDetail({
 	onStop?: () => void;
 }) {
 	const { t } = useLocale();
-	const passed = nodes.filter((n) => n.status === "passed").length;
-	const failed = nodes.filter(
+	// Exclude the root node from task counts
+	const childNodes = rootNodeId
+		? nodes.filter((n) => n.id !== rootNodeId)
+		: nodes;
+	const nodeCount = childNodes.length;
+	const passed = childNodes.filter((n) => n.status === "passed").length;
+	const failed = childNodes.filter(
 		(n) => n.status === "failed" || n.status === "stuck",
 	).length;
-	const inProgress = nodes.filter((n) => n.status === "in_progress").length;
+	const inProgress = childNodes.filter(
+		(n) => n.status === "in_progress",
+	).length;
 	return (
 		<div className="og-orch-detail">
 			<div className="og-orch-detail-header">

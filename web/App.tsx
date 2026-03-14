@@ -40,7 +40,6 @@ type StructuredFields = {
 
 import { LocaleProvider, useLocale } from "./i18n.ts";
 import { applyTheme, themes } from "./themes.ts";
-import { PROJECT_NODE_ID } from "./types.ts";
 
 // ── Hash routing helpers ───────────────────────────────────────────────────
 
@@ -52,9 +51,13 @@ function parseHash(): { projectId?: string; taskId?: string } {
 	return { projectId: raw.slice(0, slash), taskId: raw.slice(slash + 1) };
 }
 
-function updateHash(projectId: string, taskId: string | null) {
+function updateHash(
+	projectId: string,
+	taskId: string | null,
+	rootNodeId: string | null,
+) {
 	const hash =
-		taskId && taskId !== PROJECT_NODE_ID
+		taskId && taskId !== rootNodeId
 			? `#${projectId}/${taskId}`
 			: projectId
 				? `#${projectId}`
@@ -88,8 +91,9 @@ function AppInner() {
 	const [newProjectPath, setNewProjectPath] = useState("");
 	const [creatingProject, setCreatingProject] = useState(false);
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
-		initialHash.taskId ?? PROJECT_NODE_ID,
+		initialHash.taskId ?? null,
 	);
+	const [rootNodeId, setRootNodeId] = useState<string | null>(null);
 	const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
 	const [lastCostUsd, setLastCostUsd] = useState<number | null>(null);
 	const [lastTurns, setLastTurns] = useState<number | null>(null);
@@ -169,16 +173,14 @@ function AppInner() {
 		return sum > 0 ? sum : null;
 	}, [nodes]);
 
-	const isOrchestratorNode = selectedTaskId === PROJECT_NODE_ID;
+	const isOrchestratorNode = !selectedTaskId || selectedTaskId === rootNodeId;
 	const selectedNode =
 		selectedTaskId && !isOrchestratorNode
 			? (nodeMap.get(selectedTaskId) ?? null)
 			: null;
 
 	const isSelectedTaskRunning =
-		running &&
-		(selectedTaskId === PROJECT_NODE_ID ||
-			selectedNode?.status === "in_progress");
+		running && (isOrchestratorNode || selectedNode?.status === "in_progress");
 
 	const addLog = useCallback(
 		(
@@ -204,19 +206,22 @@ function AppInner() {
 	}, [theme]);
 
 	useEffect(() => {
-		const total = nodes.length;
+		const childNodes = rootNodeId
+			? nodes.filter((n) => n.id !== rootNodeId)
+			: nodes;
+		const total = childNodes.length;
 		if (total === 0) {
 			document.title = "OpenGraft";
 			return;
 		}
-		const passed = nodes.filter((n) => n.status === "passed").length;
-		const failed = nodes.filter(
+		const passed = childNodes.filter((n) => n.status === "passed").length;
+		const failed = childNodes.filter(
 			(n) => n.status === "failed" || n.status === "stuck",
 		).length;
 		if (failed > 0) document.title = `[!${failed}] OpenGraft`;
 		else if (passed === total) document.title = "[✓] OpenGraft";
 		else document.title = `[${passed}/${total}] OpenGraft`;
-	}, [nodes]);
+	}, [nodes, rootNodeId]);
 
 	const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
 		e.preventDefault();
@@ -252,7 +257,7 @@ function AppInner() {
 				target.tagName === "TEXTAREA" ||
 				target.isContentEditable;
 			if (e.key === "Escape" && !isInput) {
-				setSelectedTaskId(PROJECT_NODE_ID);
+				setSelectedTaskId(rootNodeId);
 				setTargetNodeId(null);
 			}
 			if (e.key === "/" && !isInput) {
@@ -264,7 +269,7 @@ function AppInner() {
 		};
 		document.addEventListener("keydown", handleKeyDown);
 		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, []);
+	}, [rootNodeId]);
 
 	// ── WebSocket handler ────────────────────────────────────────────────────
 
@@ -273,6 +278,9 @@ function AppInner() {
 			switch (msg.type) {
 				case "tree_updated":
 					updateFromWS(msg.nodes as TaskNode[]);
+					if (msg.rootNodeId) {
+						setRootNodeId(msg.rootNodeId as string);
+					}
 					break;
 				case "agent_event": {
 					const et = msg.eventType as string;
@@ -298,7 +306,7 @@ function AppInner() {
 						text = (msg.message as string) || "";
 					} else if (et === "usage") {
 						const usageKey =
-							(msg.taskId as string | undefined) || PROJECT_NODE_ID;
+							(msg.taskId as string | undefined) ?? "orchestrator";
 						setTokenUsage((prev) => ({
 							...prev,
 							[usageKey]: {
@@ -362,14 +370,17 @@ function AppInner() {
 					addLog(et, text, msg.taskId as string | undefined);
 					break;
 				}
-				case "orchestration_started":
+				case "orchestration_started": {
+					const startRootId = msg.taskId as string | undefined;
+					if (startRootId) setRootNodeId(startRootId);
 					if (msg.prompt)
-						addLog("user_prompt", msg.prompt as string, PROJECT_NODE_ID);
-					addLog("lifecycle", "Orchestration started", PROJECT_NODE_ID);
+						addLog("user_prompt", msg.prompt as string, startRootId);
+					addLog("lifecycle", "Orchestration started", startRootId);
 					setRunning(true);
 					if (msg.provider) setAgentProvider(msg.provider as string);
 					if (msg.model) setAgentModel(msg.model as string);
 					break;
+				}
 				case "orchestration_completed": {
 					const costStr = msg.costUsd
 						? ` · ${(msg.costUsd as number).toFixed(3)}`
@@ -395,13 +406,17 @@ function AppInner() {
 					addLog(
 						"lifecycle",
 						`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${costStr}${tokenStr}`,
-						PROJECT_NODE_ID,
+						msg.taskId as string | undefined,
 					);
 					setRunning(false);
 					break;
 				}
 				case "agent_stopped":
-					addLog("lifecycle", "Agent stopped", PROJECT_NODE_ID);
+					addLog(
+						"lifecycle",
+						"Agent stopped",
+						msg.taskId as string | undefined,
+					);
 					setRunning(false);
 					break;
 				case "task_started": {
@@ -410,23 +425,27 @@ function AppInner() {
 						: "";
 					const startedText = `${t("lifecycle.taskStarted")} ${msg.title}${instruction}`;
 					const startedParentId =
-						nodeMapRef.current.get(msg.taskId as string)?.parentId ??
-						PROJECT_NODE_ID;
+						nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
 					addLog("task_started", startedText, msg.taskId as string);
-					addLog("task_started", startedText, startedParentId);
+					if (startedParentId)
+						addLog("task_started", startedText, startedParentId);
 					break;
 				}
 				case "task_completed": {
 					const completedText = `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
 					const completedParentId =
-						nodeMapRef.current.get(msg.taskId as string)?.parentId ??
-						PROJECT_NODE_ID;
+						nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
 					addLog("task_completed", completedText, msg.taskId as string);
-					addLog("task_completed", completedText, completedParentId);
+					if (completedParentId)
+						addLog("task_completed", completedText, completedParentId);
 					break;
 				}
 				case "error":
-					addLog("error", msg.message as string, PROJECT_NODE_ID);
+					addLog(
+						"error",
+						msg.message as string,
+						msg.taskId as string | undefined,
+					);
 					break;
 				case "event_history": {
 					setLogs([]);
@@ -460,8 +479,8 @@ function AppInner() {
 
 	// Update hash when projectId or selectedTaskId changes
 	useEffect(() => {
-		if (projectId) updateHash(projectId, selectedTaskId);
-	}, [projectId, selectedTaskId]);
+		if (projectId) updateHash(projectId, selectedTaskId, rootNodeId);
+	}, [projectId, selectedTaskId, rootNodeId]);
 
 	// Listen for browser back/forward (hashchange)
 	useEffect(() => {
@@ -469,17 +488,17 @@ function AppInner() {
 			const { projectId: hp, taskId: ht } = parseHash();
 			if (hp && hp !== projectId) {
 				setProjectId(hp);
-				setSelectedTaskId(ht ?? PROJECT_NODE_ID);
+				setSelectedTaskId(ht ?? rootNodeId);
 				setLogs([]);
 			} else if (ht && ht !== selectedTaskId) {
 				setSelectedTaskId(ht);
-			} else if (!ht && selectedTaskId !== PROJECT_NODE_ID) {
-				setSelectedTaskId(PROJECT_NODE_ID);
+			} else if (!ht && selectedTaskId !== rootNodeId) {
+				setSelectedTaskId(rootNodeId);
 			}
 		};
 		window.addEventListener("hashchange", onHashChange);
 		return () => window.removeEventListener("hashchange", onHashChange);
-	}, [projectId, selectedTaskId]);
+	}, [projectId, selectedTaskId, rootNodeId]);
 
 	useEffect(() => {
 		if (projectId) checkStatus();
@@ -513,13 +532,13 @@ function AppInner() {
 	}, [projectId]);
 
 	useEffect(() => {
-		if (!selectedTaskId || selectedTaskId === PROJECT_NODE_ID) {
+		if (!selectedTaskId || selectedTaskId === rootNodeId) {
 			setTargetNodeId(null);
 			return;
 		}
 		const node = nodeMap.get(selectedTaskId);
 		setTargetNodeId(node?.status === "in_progress" ? selectedTaskId : null);
-	}, [selectedTaskId, nodeMap]);
+	}, [selectedTaskId, nodeMap, rootNodeId]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only trigger on task selection change
 	useEffect(() => {
@@ -650,7 +669,7 @@ function AppInner() {
 		try {
 			await deleteTask(selectedTaskId);
 			addLog("lifecycle", `Deleted: ${selectedNode.title}`);
-			setSelectedTaskId(PROJECT_NODE_ID);
+			setSelectedTaskId(rootNodeId);
 			await refreshTasks();
 		} catch (err) {
 			addLog("error", (err as Error).message);
@@ -677,7 +696,8 @@ function AppInner() {
 		try {
 			const project = await initProject(path);
 			setProjectId(project.id);
-			setSelectedTaskId(PROJECT_NODE_ID);
+			setSelectedTaskId(null);
+			setRootNodeId(null);
 			setLogs([]);
 			setNewProjectPath("");
 			setShowAddProject(false);
@@ -698,7 +718,8 @@ function AppInner() {
 		try {
 			await deleteProject(projectId);
 			setProjectId("");
-			setSelectedTaskId(PROJECT_NODE_ID);
+			setSelectedTaskId(null);
+			setRootNodeId(null);
 			setLogs([]);
 		} catch (err) {
 			addLog("error", (err as Error).message);
@@ -747,7 +768,8 @@ function AppInner() {
 				theme={theme}
 				onProjectChange={(id) => {
 					setProjectId(id);
-					setSelectedTaskId(PROJECT_NODE_ID);
+					setSelectedTaskId(null);
+					setRootNodeId(null);
 					setLogs([]);
 				}}
 				onDeleteProject={handleDeleteProject}
@@ -783,7 +805,7 @@ function AppInner() {
 					<div className="og-panel-header">
 						<span className="og-panel-title">{t("tasks.title")}</span>
 						<div className="og-panel-actions">
-							{selectedTaskId && selectedTaskId !== PROJECT_NODE_ID && (
+							{selectedTaskId && !isOrchestratorNode && (
 								<>
 									<span className="og-filter-chip" title={filterLabel ?? ""}>
 										{filterLabel}
@@ -791,7 +813,7 @@ function AppInner() {
 									<button
 										type="button"
 										className="og-btn-icon"
-										onClick={() => setSelectedTaskId(PROJECT_NODE_ID)}
+										onClick={() => setSelectedTaskId(rootNodeId)}
 										data-tip={t("tasks.clearFilter")}
 									>
 										<IconClose size={11} />
@@ -822,6 +844,7 @@ function AppInner() {
 					<TaskTree
 						nodes={nodes}
 						selectedTaskId={selectedTaskId}
+						rootNodeId={rootNodeId}
 						onSelect={setSelectedTaskId}
 						running={running}
 					/>
@@ -847,8 +870,8 @@ function AppInner() {
 						{isOrchestratorNode ? (
 							<OrchestratorDetail
 								running={running}
-								nodeCount={nodes.length}
 								nodes={nodes}
+								rootNodeId={rootNodeId}
 								costUsd={lastCostUsd}
 								totalCost={totalCost}
 								turns={lastTurns}
@@ -887,7 +910,7 @@ function AppInner() {
 						<div className="og-panel-header">
 							<span className="og-panel-title">
 								{t("activity.title")}
-								{filterLabel && selectedTaskId !== PROJECT_NODE_ID && (
+								{filterLabel && !isOrchestratorNode && (
 									<span
 										style={{
 											color: "var(--text-faint)",
@@ -906,12 +929,11 @@ function AppInner() {
 								{(() => {
 									const usageTaskId =
 										targetNodeId ??
-										(selectedTaskId === PROJECT_NODE_ID
-											? PROJECT_NODE_ID
-											: (selectedTaskId ?? null)) ??
+										selectedTaskId ??
+										rootNodeId ??
 										nodes.find((n) => !n.parentId && n.status === "in_progress")
 											?.id ??
-										PROJECT_NODE_ID;
+										"orchestrator";
 									const usage = tokenUsage[usageTaskId];
 									return usage ? (
 										<TokenUsageBadge
@@ -937,6 +959,7 @@ function AppInner() {
 						<ActivityLog
 							entries={logs}
 							filterTaskId={selectedTaskId}
+							rootNodeId={rootNodeId}
 							nodeMap={nodeMap}
 							autoScroll={autoScroll}
 							onAutoScrollChange={setAutoScroll}
