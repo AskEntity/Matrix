@@ -27,6 +27,18 @@ export function ActivityLog({
 		}
 	}, [entries.length, autoScroll]);
 
+	useEffect(() => {
+		const el = logRef.current;
+		if (!el) return;
+		const observer = new ResizeObserver(() => {
+			if (autoScroll) {
+				el.scrollTop = el.scrollHeight;
+			}
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [autoScroll]);
+
 	const handleScroll = useCallback(() => {
 		const el = logRef.current;
 		if (!el) return;
