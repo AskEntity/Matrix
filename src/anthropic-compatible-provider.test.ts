@@ -12,6 +12,8 @@ import {
 	addMessagesCacheControl,
 	compressMessages,
 	executeTool,
+	getCompactionThresholds,
+	getContextWindow,
 	getModelPricing,
 	jsSearch,
 	resolvePath,
@@ -45,6 +47,42 @@ describe("getModelPricing", () => {
 		const pricing = getModelPricing("gpt-4");
 		expect(pricing.inputPer1M).toBe(3);
 		expect(pricing.outputPer1M).toBe(15);
+	});
+});
+
+describe("getContextWindow", () => {
+	test("returns 1M for opus models", () => {
+		expect(getContextWindow("claude-opus-4-6")).toBe(1_000_000);
+	});
+
+	test("returns 1M for sonnet 4.6 models", () => {
+		expect(getContextWindow("claude-sonnet-4-6")).toBe(1_000_000);
+	});
+
+	test("returns 200k for haiku models", () => {
+		expect(getContextWindow("claude-haiku-4-5-20251001")).toBe(200_000);
+	});
+
+	test("returns 200k for unknown models", () => {
+		expect(getContextWindow("gpt-4")).toBe(200_000);
+	});
+});
+
+describe("getCompactionThresholds", () => {
+	test("computes thresholds for 200k context window", () => {
+		const { compressThreshold, lazyCountThreshold } =
+			getCompactionThresholds(200_000);
+		// 200k * 0.83 = 166k
+		expect(compressThreshold).toBe(Math.floor(200_000 * 0.83));
+		expect(lazyCountThreshold).toBe(compressThreshold - 16_000);
+	});
+
+	test("computes thresholds for 1M context window", () => {
+		const { compressThreshold, lazyCountThreshold } =
+			getCompactionThresholds(1_000_000);
+		// 1M * 0.83 = 830k
+		expect(compressThreshold).toBe(Math.floor(1_000_000 * 0.83));
+		expect(lazyCountThreshold).toBe(compressThreshold - 16_000);
 	});
 });
 

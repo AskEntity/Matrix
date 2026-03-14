@@ -115,3 +115,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - **Always create tasks** — don't use "wait for previous task" as an excuse to not create one.
 - **Parallel by default** — most tasks have independent scopes.
 - **Tree, not list** — prefer deep parallel trees over flat sequential lists.
+
+## 1M Context Support
+- Opus 4.6 and Sonnet 4.6 have 1M context by default — no beta header needed.
+- Haiku and older models use 200k context window.
+- getContextWindow(model) and getCompactionThresholds(contextWindow) make compaction model-aware.
+- COMPRESS_THRESHOLD and CONTEXT_WINDOW are no longer global constants — computed per-session in runLoop.
