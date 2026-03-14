@@ -30,16 +30,37 @@ import type { AgentResult } from "./types.ts";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 16384;
-/** Context window size and compaction budget (mirrors Claude Code's approach) */
-const CONTEXT_WINDOW = 200_000;
 /** Reserve ~17% as compaction buffer — compress when messages exceed this */
 const COMPACT_BUFFER_RATIO = 0.17;
-/** Compress when input_tokens > CONTEXT_WINDOW * (1 - COMPACT_BUFFER_RATIO) */
-const COMPRESS_THRESHOLD = Math.floor(
-	CONTEXT_WINDOW * (1 - COMPACT_BUFFER_RATIO),
-); // ~166k
-/** Only call countTokens when estimated tokens exceed this threshold */
-const LAZY_COUNT_THRESHOLD = COMPRESS_THRESHOLD - 16_000; // ~150k
+
+/**
+ * Get context window size for a model.
+ * Claude Opus 4.6 and Sonnet 4.6 have 1M context by default.
+ * Older models and Haiku use the standard 200k context window.
+ * @internal Exported for testing
+ */
+export function getContextWindow(model: string): number {
+	// Opus 4.6+ and Sonnet 4.6+ support 1M context natively
+	if (model.includes("opus") || model.includes("sonnet-4")) return 1_000_000;
+	return 200_000;
+}
+
+/**
+ * Get compaction thresholds derived from the context window.
+ * @internal Exported for testing
+ */
+export function getCompactionThresholds(contextWindow: number): {
+	compressThreshold: number;
+	lazyCountThreshold: number;
+} {
+	const compressThreshold = Math.floor(
+		contextWindow * (1 - COMPACT_BUFFER_RATIO),
+	);
+	return {
+		compressThreshold,
+		lazyCountThreshold: compressThreshold - 16_000,
+	};
+}
 
 /** Per-million-token pricing by model family. */
 const MODEL_PRICING: Record<
@@ -1229,6 +1250,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		queue?: MessageQueue,
 	): AsyncGenerator<AgentEvent, AgentResult> {
 		const model = request.model ?? this.model;
+		const contextWindow = getContextWindow(model);
+		const { compressThreshold, lazyCountThreshold } =
+			getCompactionThresholds(contextWindow);
+
 		let cwd = request.cwd;
 		const sessionsDir = request.sessionsDir;
 
@@ -1312,7 +1337,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				let tokenCount = estimatedInputTokens;
 				let isEstimated = true;
 
-				if (estimatedInputTokens >= LAZY_COUNT_THRESHOLD) {
+				if (estimatedInputTokens >= lazyCountThreshold) {
 					const result = await this.client.messages.countTokens({
 						model,
 						system: [{ type: "text", text: request.systemPrompt ?? "" }],
@@ -1323,10 +1348,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					isEstimated = false;
 				}
 
-				if (!isEstimated && tokenCount > COMPRESS_THRESHOLD) {
+				if (!isEstimated && tokenCount > compressThreshold) {
 					yield {
 						type: "status",
-						message: `Compressing conversation (${tokenCount} tokens, threshold: ${COMPRESS_THRESHOLD})`,
+						message: `Compressing conversation (${tokenCount} tokens, threshold: ${compressThreshold})`,
 					};
 					try {
 						const { compressed, savedTokens, checkpoint } =
@@ -1365,8 +1390,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						yield {
 							type: "usage",
 							inputTokens: estimatedPostCompactTokens,
-							compressThreshold: COMPRESS_THRESHOLD,
-							contextWindow: CONTEXT_WINDOW,
+							compressThreshold: compressThreshold,
+							contextWindow: contextWindow,
 							estimated: true,
 						};
 						yield { type: "compact", checkpoint, savedTokens };
@@ -1457,8 +1482,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			yield {
 				type: "usage",
 				inputTokens: totalTurnInput,
-				compressThreshold: COMPRESS_THRESHOLD,
-				contextWindow: CONTEXT_WINDOW,
+				compressThreshold: compressThreshold,
+				contextWindow: contextWindow,
 			};
 
 			// Process response content
