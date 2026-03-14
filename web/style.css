@@ -1378,6 +1378,24 @@ button.og-tool-card-header:hover {
 	color: rgba(137, 87, 229, 0.9);
 }
 
+.og-tool-card-loading {
+	border-left-color: var(--color-in-progress);
+}
+
+.og-tool-card-loading .og-tool-card-name {
+	animation: og-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes og-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.5;
+	}
+}
+
 .og-tool-card-status {
 	margin-left: auto;
 	font-weight: 600;
