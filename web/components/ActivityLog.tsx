@@ -103,11 +103,10 @@ export function ActivityLog({
 				i += 1;
 				continue;
 			}
-			// Hide yield and get_tree tool_use entries (noise); their tool_results still show
+			// Hide get_tree tool_use entries (noise); their tool_results still show
 			if (
 				cur.type === "tool_use" &&
-				(cur.text.startsWith("mcp__opengraft__yield(") ||
-					cur.text.startsWith("mcp__opengraft__get_tree("))
+				cur.text.startsWith("mcp__opengraft__get_tree(")
 			) {
 				i += 1;
 				continue;
