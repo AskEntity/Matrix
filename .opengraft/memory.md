@@ -26,7 +26,8 @@ Daemon (Hono: HTTP + WS on :7433)
 ```
 
 - Three providers: ClaudeAgentSdkProvider (subprocess), AnthropicCompatibleProvider (Anthropic API), OpenAICompatibleProvider (OpenAI-compatible API)
-- Provider selection: `OG_PROVIDER=openai|direct|claude-code` or auto-detect from model name prefix (`gpt-`, `o3-`, `deepseek-`)
+- Provider selection: `OG_PROVIDER=openai|anthropic|claude-code` (also accepts `direct` for backward compat). Auto-detect from model name prefix (`gpt-`, `o3-`, `deepseek-`).
+- Provider `name` field: `"anthropic"` (was `"direct-api"`), `"openai"`, `"claude-code"`
 - Agent tree = Task tree. Each agent gets worktree + branch. Lifecycle = branch lifecycle.
 - All mutable APIs fire-and-forget. Observe via WebSocket.
 - MCP tools enable recursive orchestration (tested up to 5 levels deep).
@@ -45,37 +46,17 @@ Daemon (Hono: HTTP + WS on :7433)
 | src/worktree-manager.ts | Git worktree lifecycle |
 | src/message-queue.ts | MessageQueue + globalAgentQueues |
 | src/project-config.ts | Per-project config (model, provider, budget, etc.) |
-| web/App.tsx | Web UI main component |
+| web/App.tsx | Web UI main component, WS event handling |
 | web/hooks.ts | React hooks (useWebSocket, useProjects, useTasks, useAgent, useProjectConfig) |
 | web/i18n.ts | Localization (en/zh), LocaleProvider, useLocale, t() |
 | web/style.css | CSS design system, themes (dark/light/cute-light/cute-dark) |
-| web/components/ | 14 modular components split from App.tsx |
-
-## API Reference
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | /projects/:id/orchestrate/agent | Start orchestration |
-| POST | /projects/:id/restart | Restart agent |
-| POST | /projects/:id/stop | Stop agent |
-| POST | /projects/:id/message | Message root agent |
-| POST | /projects/:id/tasks/:nodeId/message | Message specific agent |
-| POST | /projects/:id/tasks/:nodeId/continue | Continue failed task |
-| PATCH | /projects/:id/tasks/:nodeId | Update task |
-| GET/PATCH | /projects/:id/config | Project config CRUD |
-| POST | /projects/:id/clarify | Answer clarification |
-| WS | /ws | Real-time events |
-
-## Project Config
-
-Fields: `model`, `childModel`, `provider`, `budgetUsd`, `clarifyTimeoutMs`, `maxDepth` (default: 3)
-Priority: API param > project config > env var > hardcoded default
+| web/components/ | 14+ modular components split from App.tsx |
 
 ## Provider Configuration
 
 | Provider | Env Vars | Notes |
 |----------|----------|-------|
-| direct (Anthropic) | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | Default provider |
+| anthropic | `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | Default provider |
 | openai | `OPENAI_API_KEY`, `OPENAI_BASE_URL` (optional) | For GPT-4o, DeepSeek, local models |
 | claude-code | N/A | Uses Claude Code SDK subprocess |
 
@@ -84,26 +65,17 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 ## Compaction System
 
 - `compressMessages()` returns ONE user message: task context + fresh memory + checkpoint summary + recent transcript (~80k chars as text).
-- No tail message preservation, no bridge messages, no tool_result orphaning issues.
-- `CHECKPOINT_SYSTEM_PROMPT` exported from direct-provider.ts, shared by both providers.
-- DirectProvider uses Anthropic streaming API; OpenAIProvider uses raw fetch to same endpoint.
+- `CHECKPOINT_SYSTEM_PROMPT` exported from anthropic-compatible-provider.ts, shared by both providers.
 - `SUMMARY_MAX_TOKENS = 32768`, `TRANSCRIPT_CHAR_LIMIT = 640k chars`.
+- UI: compact boundary bar with shimmer animation (runs 2x then stops).
 
 ## OpenAI Provider Details
 
 - Uses raw `fetch` (no SDK dependency). Tool format: `{ type: "function", function: { name, description, parameters } }`.
 - Messages: `tool` role with `tool_call_id` (not `tool_result` blocks in user messages).
-- Session files: `.openai.json` suffix to avoid conflicts with DirectProvider.
-- Context windows: gpt-4o=128k, o3=200k, deepseek=64k. Default=128k.
-- Pricing lookup: exact match first, then prefix match, default gpt-4o.
-- Mock `fetch` in tests: `as unknown as typeof fetch` (Bun mock type lacks `preconnect`).
-
-## OpenAI Provider — Dynamic Context Window
-- `fetchContextWindowFromAPI()` queries `GET {baseUrl}/models` (note: NOT `/v1/models` — the baseUrl already includes `/v1`) with `Authorization: Bearer` header.
-- Results cached in module-level `Map<string, number>` called `contextWindowCache`.
-- In `runLoop()`, the API fetch is called before the static `getContextWindow()` fallback. Uses `apiContextWindow ?? getContextWindow(model)`.
-- `clearContextWindowCache()` exported for test cleanup.
-- API response shape: `{ data: [{ id: string, context_length?: number }] }`.
+- Session files: `.openai.json` suffix to avoid conflicts with AnthropicCompatibleProvider.
+- `fetchContextWindowFromAPI()` queries `GET {baseUrl}/models` with caching. Fallback: static map → 128k default.
+- **Test mocking**: Use URL-based dispatch (check `/models` vs `/chat/completions`) instead of plain callCount — `fetchContextWindowFromAPI()` makes an extra fetch. Always call `clearContextWindowCache()` in `finally`.
 
 ## Known Pitfalls
 
@@ -115,6 +87,7 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - **Template literals**: Use `${"$"}` for literal `$` in backtick strings in agent-tools.ts.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`. Use `?? ""` or `!`.
 - **Compaction streaming**: Use `client.messages.stream().finalMessage()` not `create()` (avoids 10min timeout).
+- **CSS specificity**: Place descending-specificity selectors (e.g. `.og-tool-card-loading .og-tool-card-name`) AFTER base selectors to avoid biome warnings.
 
 ## Daemon Lifecycle
 
@@ -127,31 +100,18 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 ## Web UI
 
 - **Activity log**: Tool cards (collapsible), MCP tools get purple accent. Title-only cards for yield/get_tree/delete_task/update_task_status.
+- **Tool cards**: Standalone `tool_use` entries show loading state (spinner + pulse). `getToolCardTitle()` accepts `nodeMap` to resolve taskId→title.
+- **Textarea**: Auto-resize on paste via `useEffect` on `prompt` prop. `ResizeObserver` on log container keeps auto-scroll working when textarea grows.
+- **Queue messages**: Prefixed by source type (← From Parent, ↑ Child Report).
 - **Token badge**: green (<50%), yellow (50-80%), red (>80%). Cost badge shows after completion.
 - **Task selection**: defaults to root (PROJECT_NODE_ID). No "all activity" view.
 - **ErrorBoundary**: class component wrapping AppInner for graceful crash recovery.
 - **WebSocket**: onMessageRef pattern to avoid reconnection on callback change.
 - **IME**: composingRef + keyCode 229 + isComposing triple-check for CJK input.
-
-## Task Execution Efficiency
-- Avoid running full test suites in every child task — use `bun run typecheck` for quick validation.
-- Pre-commit hooks run typecheck + lint + tests automatically.
-- Dynamic context window lookup: OpenAI provider now queries GET /v1/models for context_length field with caching. Fallback chain: /v1/models API → CONTEXT_WINDOWS static map → DEFAULT_CONTEXT_WINDOW (128k). Exported clearContextWindowCache() for testing.
+- **Text truncation**: Collapsed titles may truncate (40-80 chars). Expanded content shows FULL text — no caps.
 
 ## Orchestration Philosophy
 
-- **Always create tasks** — don't use "wait for previous task" as an excuse to not create one. Task descriptions can be updated later.
-- **Parallel by default** — most tasks have independent scopes.少量冲突也可以并行运行任务树。
-- **Only skip creating** when a task is so heavily dependent on another that even scoping is impossible (extremely rare).
+- **Always create tasks** — don't use "wait for previous task" as an excuse to not create one.
+- **Parallel by default** — most tasks have independent scopes.
 - **Tree, not list** — prefer deep parallel trees over flat sequential lists.
-
-## Test Mock Pattern for OpenAI Provider
-- When mocking `globalThis.fetch` in runLoop integration tests, use URL-based dispatch instead of plain callCount. `fetchContextWindowFromAPI()` calls `GET /models` before chat completions, so a naive counter will be off by one.
-- Pattern: check if URL includes `/models` (without `/chat/`) → return models response; if `/chat/completions` → use chat-specific counter.
-- Always call `clearContextWindowCache()` in `finally` blocks to prevent cache leaking between tests.
-
-## Tool Card Loading State & Title Resolution
-- Standalone `tool_use` entries (before `tool_result` arrives) get `og-tool-card-loading` class with spinner and pulsing name animation.
-- `getToolCardTitle()` accepts optional `nodeMap` param to resolve `taskId` → task title instead of showing truncated IDs.
-- `McpToolCardBody` also accepts `nodeMap` for execute_tasks/delete_task body rendering.
-- CSS specificity: place `.og-tool-card-loading .og-tool-card-name` AFTER base `.og-tool-card-name` to avoid biome descending-specificity warning.
