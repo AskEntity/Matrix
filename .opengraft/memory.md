@@ -149,3 +149,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - When mocking `globalThis.fetch` in runLoop integration tests, use URL-based dispatch instead of plain callCount. `fetchContextWindowFromAPI()` calls `GET /models` before chat completions, so a naive counter will be off by one.
 - Pattern: check if URL includes `/models` (without `/chat/`) → return models response; if `/chat/completions` → use chat-specific counter.
 - Always call `clearContextWindowCache()` in `finally` blocks to prevent cache leaking between tests.
+
+## Tool Card Loading State & Title Resolution
+- Standalone `tool_use` entries (before `tool_result` arrives) get `og-tool-card-loading` class with spinner and pulsing name animation.
+- `getToolCardTitle()` accepts optional `nodeMap` param to resolve `taskId` → task title instead of showing truncated IDs.
+- `McpToolCardBody` also accepts `nodeMap` for execute_tasks/delete_task body rendering.
+- CSS specificity: place `.og-tool-card-loading .og-tool-card-name` AFTER base `.og-tool-card-name` to avoid biome descending-specificity warning.

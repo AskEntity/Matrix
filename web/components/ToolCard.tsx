@@ -144,6 +144,7 @@ export function getToolCardTitle(
 	toolName: string,
 	argsStr: string,
 	resultContent: string | null,
+	nodeMap?: Map<string, { title?: string }>,
 ): string {
 	// File tools
 	if (toolName === "read_file") {
@@ -200,7 +201,11 @@ export function getToolCardTitle(
 					}
 				}
 				const taskId = extractArg(argsStr, "taskId");
-				return taskId ? `– Task: ${taskId.slice(0, 8)}` : "– Task";
+				if (taskId) {
+					const title = nodeMap?.get(taskId)?.title;
+					return `– Task: ${title ?? taskId.slice(0, 8)}`;
+				}
+				return "– Task";
 			}
 			case "execute_tasks": {
 				const tasksArg = extractArg(argsStr, "tasks");
@@ -276,14 +281,19 @@ export function getToolCardTitle(
 				}
 				if (status && title) return `${status} → ${title}`;
 				const taskId = extractArg(argsStr, "taskId");
-				if (status && taskId) return `${status} → ${taskId.slice(0, 8)}`;
+				if (status && taskId) {
+					const resolved = nodeMap?.get(taskId)?.title;
+					return `${status} → ${resolved ?? taskId.slice(0, 8)}`;
+				}
 				return "update_task_status";
 			}
 			case "send_message_to_child": {
 				const taskId = extractArg(argsStr, "taskId");
-				return taskId
-					? `→ Message Child: ${taskId.slice(0, 8)}`
-					: "→ Message Child";
+				if (taskId) {
+					const title = nodeMap?.get(taskId)?.title;
+					return `→ Message Child: ${title ?? taskId.slice(0, 8)}`;
+				}
+				return "→ Message Child";
 			}
 			case "report_to_parent":
 				return "← Report to Parent";
@@ -328,12 +338,14 @@ function McpToolCardBody({
 	resultContent,
 	isOk,
 	t,
+	nodeMap,
 }: {
 	toolName: string;
 	argsStr: string;
 	resultContent: string | null;
 	isOk: boolean;
 	t: (key: string, params?: Record<string, string>) => string;
+	nodeMap?: Map<string, { title?: string }>;
 }) {
 	const mcpTool = toolName.replace("mcp__opengraft__", "");
 
@@ -392,7 +404,11 @@ function McpToolCardBody({
 							// biome-ignore lint/suspicious/noArrayIndexKey: stable index
 							<div key={i} className="og-mcp-task-item">
 								<span className="og-mcp-task-title">
-									{rt.title ?? rt.taskId?.slice(0, 8) ?? "?"}
+									{rt.title ??
+										(rt.taskId
+											? (nodeMap?.get(rt.taskId)?.title ??
+												rt.taskId.slice(0, 8))
+											: "?")}
 								</span>
 								{taskInput?.mode && taskInput.mode !== "new" && (
 									<span className="og-mcp-task-mode">{taskInput.mode}</span>
@@ -461,7 +477,10 @@ function McpToolCardBody({
 						</div>
 					) : (
 						<div className="og-mcp-task-title">
-							{parsedArgs?.taskId?.slice(0, 8) ?? "?"}
+							{(parsedArgs?.taskId
+								? (nodeMap?.get(parsedArgs.taskId)?.title ??
+									parsedArgs.taskId.slice(0, 8))
+								: null) ?? "?"}
 						</div>
 					)}
 				</div>
@@ -537,6 +556,7 @@ export function ToolCard({
 			<McpToolCardBody
 				toolName={toolName}
 				argsStr={argsStr}
+				nodeMap={nodeMap}
 				resultContent={resultContent}
 				isOk={isOk}
 				t={t}
@@ -561,7 +581,7 @@ export function ToolCard({
 				{titleOnly ? (
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">
-							{getToolCardTitle(toolName, argsStr, resultContent)}
+							{getToolCardTitle(toolName, argsStr, resultContent, nodeMap)}
 						</span>
 					</div>
 				) : (
@@ -571,7 +591,7 @@ export function ToolCard({
 						onClick={() => setExpanded(!expanded)}
 					>
 						<span className="og-tool-card-name">
-							{getToolCardTitle(toolName, argsStr, resultContent)}
+							{getToolCardTitle(toolName, argsStr, resultContent, nodeMap)}
 						</span>
 						{toolName !== "mcp__opengraft__done" && (
 							<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
@@ -650,13 +670,15 @@ export function LogEntryView({
 					</span>
 				)}
 				<div
-					className={`og-tool-card og-tool-card-pending ${isMcp ? "og-tool-card-mcp" : ""}`}
+					className={`og-tool-card og-tool-card-pending og-tool-card-loading ${isMcp ? "og-tool-card-mcp" : ""}`}
 				>
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">
-							{getToolCardTitle(toolName, argsStr, null)}
+							{getToolCardTitle(toolName, argsStr, null, nodeMap)}
 						</span>
-						<span className="og-tool-card-status pending">⋯</span>
+						<span className="og-tool-card-status pending">
+							<span className="og-spinner" />
+						</span>
 					</div>
 					{argsStr && (
 						<div className="og-tool-card-body">
@@ -689,7 +711,7 @@ export function LogEntryView({
 				>
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">
-							{getToolCardTitle(toolName, "", content)}
+							{getToolCardTitle(toolName, "", content, nodeMap)}
 						</span>
 						{toolName !== "mcp__opengraft__done" && (
 							<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
