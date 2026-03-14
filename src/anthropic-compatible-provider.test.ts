@@ -10,11 +10,15 @@ import type {
 import { createOrchestratorTools } from "./agent-tools.ts";
 import {
 	addMessagesCacheControl,
+	backgroundProcesses,
+	cleanupSessionBackgroundProcesses,
 	compressMessages,
+	executeBashWithTimeout,
 	executeTool,
 	getCompactionThresholds,
 	getContextWindow,
 	getModelPricing,
+	getRunningBackgroundCount,
 	jsSearch,
 	resolvePath,
 	truncateSearchOutput,
@@ -676,6 +680,177 @@ describe("executeTool", () => {
 		const result = await executeTool("unknown_tool", {}, tempDir);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("Unknown tool");
+	});
+});
+
+describe("executeBashWithTimeout", () => {
+	let tempDir: string;
+
+	beforeAll(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "bash-timeout-"));
+	});
+
+	afterAll(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+		// Clean up any background processes
+		backgroundProcesses.clear();
+	});
+
+	test("foreground command completes within timeout", async () => {
+		const result = await executeBashWithTimeout(
+			"echo hello",
+			tempDir,
+			undefined,
+			5000,
+			10000,
+			undefined,
+			undefined,
+		);
+		expect(result.content).toContain("hello");
+		expect(result.content).toContain("exit code: 0");
+		expect(result.isError).toBe(false);
+	});
+
+	test("foreground_timeout=0 immediately backgrounds", async () => {
+		const sessionId = "test-bg-immediate";
+		const queue = new MessageQueue();
+		const result = await executeBashWithTimeout(
+			"echo bg-test",
+			tempDir,
+			undefined,
+			0,
+			10000,
+			sessionId,
+			queue,
+		);
+		expect(result.content).toContain("backgrounded immediately");
+		expect(result.content).toContain("Background ID: bg-");
+		expect(result.isError).toBe(false);
+
+		// Wait for background process to complete and notify
+		const msg = await queue.wait();
+		expect(msg.source).toBe("background_complete");
+		if (msg.source === "background_complete") {
+			expect(msg.exitCode).toBe(0);
+			expect(msg.stdout).toContain("bg-test");
+		}
+
+		cleanupSessionBackgroundProcesses(sessionId);
+	});
+
+	test("foreground timeout triggers backgrounding for slow command", async () => {
+		const sessionId = "test-bg-slow";
+		const queue = new MessageQueue();
+		const result = await executeBashWithTimeout(
+			"sleep 5 && echo done-slow",
+			tempDir,
+			undefined,
+			100, // 100ms foreground timeout — will trigger background
+			30000,
+			sessionId,
+			queue,
+		);
+		expect(result.content).toContain("moved to background");
+		expect(result.content).toContain("Background ID: bg-");
+		expect(result.isError).toBe(false);
+
+		// Verify it's tracked as running
+		expect(getRunningBackgroundCount(sessionId)).toBe(1);
+
+		// Wait for completion notification — this takes ~5s
+		const msg = await queue.wait();
+		expect(msg.source).toBe("background_complete");
+		if (msg.source === "background_complete") {
+			expect(msg.exitCode).toBe(0);
+			expect(msg.stdout).toContain("done-slow");
+			expect(msg.durationMs).toBeGreaterThan(100);
+		}
+
+		// Should no longer be running
+		expect(getRunningBackgroundCount(sessionId)).toBe(0);
+		cleanupSessionBackgroundProcesses(sessionId);
+	}, 10000);
+
+	test("foreground command that finishes before timeout returns normally", async () => {
+		const result = await executeBashWithTimeout(
+			"echo fast",
+			tempDir,
+			undefined,
+			5000,
+			10000,
+			"test-fast",
+			undefined,
+		);
+		expect(result.content).toContain("fast");
+		expect(result.content).toContain("exit code: 0");
+		expect(result.isError).toBe(false);
+		// Should NOT be backgrounded
+		expect(result.content).not.toContain("Background ID");
+		cleanupSessionBackgroundProcesses("test-fast");
+	});
+
+	test("executeTool bash with foreground_timeout passes through", async () => {
+		const result = await executeTool(
+			"bash",
+			{ command: "echo tool-test", foreground_timeout: 5000 },
+			tempDir,
+		);
+		expect(result.content).toContain("tool-test");
+		expect(result.content).toContain("exit code: 0");
+		expect(result.isError).toBe(false);
+	});
+
+	test("background warning shown when background commands running", async () => {
+		const sessionId = "test-bg-warn";
+		const queue = new MessageQueue();
+
+		// Start a slow background command
+		await executeBashWithTimeout(
+			"sleep 10",
+			tempDir,
+			undefined,
+			0,
+			30000,
+			sessionId,
+			queue,
+		);
+		expect(getRunningBackgroundCount(sessionId)).toBe(1);
+
+		// Run another command — should show warning
+		const result = await executeTool(
+			"bash",
+			{ command: "echo hello", foreground_timeout: 5000 },
+			tempDir,
+			undefined,
+			sessionId,
+		);
+		expect(result.content).toContain("background command(s) still running");
+
+		cleanupSessionBackgroundProcesses(sessionId);
+	});
+
+	test("cleanup removes all background processes for session", () => {
+		const sessionId = "test-cleanup";
+		backgroundProcesses.set(
+			sessionId,
+			new Map([
+				[
+					"bg-1",
+					{
+						id: "bg-1",
+						command: "test",
+						startTime: Date.now(),
+						stdout: "",
+						stderr: "",
+						exitCode: null,
+						status: "running",
+					},
+				],
+			]),
+		);
+		expect(backgroundProcesses.has(sessionId)).toBe(true);
+		cleanupSessionBackgroundProcesses(sessionId);
+		expect(backgroundProcesses.has(sessionId)).toBe(false);
 	});
 });
 

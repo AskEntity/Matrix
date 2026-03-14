@@ -238,3 +238,12 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
   - Image previews shown above textarea with hover-to-reveal remove button
   - Images cleared on submit
 - hooks.ts `sendMessage` accepts optional images parameter
+
+
+## Bash foreground_timeout + Background Queue
+- `executeBashWithTimeout()` extracted in anthropic-compatible-provider.ts — handles CWD tracking, foreground timeout, and background promotion
+- `executeTool()` now accepts optional `sessionId` and `queue` params (backward compatible — both default to undefined)
+- Background processes tracked per-session in `backgroundProcesses` Map, cleaned up on stop()
+- `foreground_timeout` defaults to `timeout` value (fully foreground) — only backgrounds when explicitly set lower
+- Background completions delivered as `background_complete` QueueMessage, formatted by `formatQueueMessage` in agent-tools.ts
+- OpenAI provider reuses all of this via imported `executeTool` and `cleanupSessionBackgroundProcesses`

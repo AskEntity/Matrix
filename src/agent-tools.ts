@@ -70,6 +70,8 @@ export function formatQueueMessage(msg: QueueMessage): string {
 			return `[clarify_response] ${msg.answer}`;
 		case "child_report":
 			return `[child_report] From child "${msg.title}" (${msg.taskId}): ${msg.content}`;
+		case "background_complete":
+			return `[background_complete] Command "${msg.command}" (${msg.commandId}): exit=${msg.exitCode}, duration=${msg.durationMs}ms\nstdout:\n${msg.stdout}\nstderr:\n${msg.stderr}`;
 	}
 }
 
@@ -294,6 +296,8 @@ Only implement directly if the task is small enough for a single agent session.
   Bad: \`cat src/foo.ts\` (use read_file), \`grep -r pattern .\` (use search), \`find . -name "*.ts"\` (use list_files)
   Your working directory persists across bash calls. Do NOT start every command with \`cd /path &&\` — it's wasteful.
   If you cd once, all subsequent commands run from that directory. Your CWD is tracked — if you navigate outside your worktree, you'll be warned. Remember to cd back when done.
+  **foreground_timeout**: Controls how long to wait before backgrounding. Default = timeout (fully foreground).
+  Use 0 for fire-and-forget (e.g. starting servers). Background completions arrive as messages on your next yield() or tool call.
 - read_file: Read file contents with optional offset/limit for large files.
   You MUST read a file before editing it — understand existing code before modifying.
 - write_file: Create or overwrite files (creates directories automatically).
