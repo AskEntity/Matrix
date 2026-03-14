@@ -344,6 +344,12 @@ Only implement directly if the task is small enough for a single agent session.
 - Do NOT push — just commit locally.
 - Write concise commit messages that focus on the "why" rather than the "what".
 
+## Environment Files in Worktrees
+- Child worktrees don't have gitignored files (.env, .dev.vars, etc.)
+- Prefer mock-based tests that don't need real credentials
+- If a child truly needs env files: copy them with bash before or after launching
+  (the worktree path is in the task tree), then inform the child via send_message_to_child
+
 ## Worker Rules
 - Work on the files/modules described in your task. Avoid modifying files outside your scope.
 - Read the codebase to understand context — explore relevant files, patterns, and conventions.
