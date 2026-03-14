@@ -1548,7 +1548,7 @@ button.og-tool-card-header:hover {
 		rgba(163, 113, 247, 0.5),
 		transparent
 	);
-	animation: compact-shimmer 3s ease-in-out infinite;
+	animation: compact-shimmer 2s ease-in-out 2;
 	pointer-events: none;
 }
 
