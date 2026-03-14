@@ -28,6 +28,8 @@ export interface TaskNode {
 	costUsd?: number;
 	/** Maximum cost in USD this task is allowed to spend. */
 	budgetUsd?: number;
+	/** Draft tasks can be created and edited but not executed. */
+	draft?: boolean;
 	createdAt: string;
 	updatedAt: string;
 }

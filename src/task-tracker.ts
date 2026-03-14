@@ -71,7 +71,7 @@ export class TaskTracker {
 	addTask(
 		title: string,
 		description: string,
-		opts?: { budgetUsd?: number },
+		opts?: { budgetUsd?: number; draft?: boolean },
 	): TaskNode {
 		return this.createNode(title, description, null, opts);
 	}
@@ -81,7 +81,7 @@ export class TaskTracker {
 		parentId: string,
 		title: string,
 		description: string,
-		opts?: { budgetUsd?: number },
+		opts?: { budgetUsd?: number; draft?: boolean },
 	): TaskNode {
 		const parent = this.nodes.get(parentId);
 		if (!parent) {
@@ -228,11 +228,23 @@ export class TaskTracker {
 		return Array.from(this.nodes.values()).filter((n) => n.status === status);
 	}
 
+	/** Update the draft flag on a task node. */
+	updateDraft(nodeId: string, draft: boolean): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		if (draft) {
+			node.draft = true;
+		} else {
+			delete node.draft;
+		}
+		node.updatedAt = new Date().toISOString();
+	}
+
 	private createNode(
 		title: string,
 		description: string,
 		parentId: string | null,
-		opts?: { budgetUsd?: number },
+		opts?: { budgetUsd?: number; draft?: boolean },
 	): TaskNode {
 		const now = new Date().toISOString();
 		const node: TaskNode = {
@@ -248,6 +260,7 @@ export class TaskTracker {
 			message: null,
 			failCount: 0,
 			...(opts?.budgetUsd !== undefined ? { budgetUsd: opts.budgetUsd } : {}),
+			...(opts?.draft ? { draft: true } : {}),
 			createdAt: now,
 			updatedAt: now,
 		};

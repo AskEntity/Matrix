@@ -121,3 +121,20 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Haiku and older models use 200k context window.
 - getContextWindow(model) and getCompactionThresholds(contextWindow) make compaction model-aware.
 - COMPRESS_THRESHOLD and CONTEXT_WINDOW are no longer global constants — computed per-session in runLoop.
+
+## Draft Task Feature
+- `draft?: boolean` on TaskNode — stored only when true, deleted when set to false (clean serialization)
+- `updateDraft()` method on TaskTracker — sets or deletes the field
+- Draft tasks blocked at execute_tasks validation, before worktree creation
+- PATCH endpoint accepts `draft` field for toggling via API
+
+## Clarify Input Sync Fix
+- `clarifyAnswers` keyed by clarification `c.id` not `c.taskId` to avoid input sync between multiple clarifications from same task
+- `handleClarifySubmit` takes `clarificationId`, looks up `taskId` from `pendingClarifications`
+- Daemon `removePendingClarification` accepts optional `clarificationId` for precise removal
+- POST /clarify accepts optional `clarificationId` in body
+
+## extractArg Bracket Parsing Fix
+- After bracket matching finds a result, check if what follows is end-of-string or `, key=`
+- If not (e.g. `[NOT SCOPED] Add draft task, description=...`), fall through to simple extraction
+- This prevents bracket matching from truncating non-JSON bracket-prefixed values

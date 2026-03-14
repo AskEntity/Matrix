@@ -181,7 +181,7 @@ function TaskNodeView({
 		<>
 			<button
 				type="button"
-				className={`og-task-node${isSelected ? " selected" : ""}`}
+				className={`og-task-node${isSelected ? " selected" : ""}${node.draft ? " og-task-draft" : ""}`}
 				onClick={(e) => {
 					e.stopPropagation();
 					onSelect(isSelected ? PROJECT_NODE_ID : node.id);
@@ -209,6 +209,7 @@ function TaskNodeView({
 						className={`og-task-status-dot ${statusDotClass(node.status)}`}
 					/>
 					<span className="og-task-title">{node.title}</span>
+					{node.draft && <span className="og-task-draft-badge">draft</span>}
 					{node.branch && (
 						<span className="og-task-branch-tag" title={node.branch}>
 							{node.branch.replace("og/", "").split("/").slice(1).join("/") ||

@@ -122,10 +122,19 @@ export function extractArg(argsStr: string, key: string): string | null {
 			if (argsStr[i] === open) depth++;
 			else if (argsStr[i] === close) {
 				depth--;
-				if (depth === 0) return argsStr.slice(start, i + 1);
+				if (depth === 0) {
+					const bracketResult = argsStr.slice(start, i + 1);
+					// Check if this looks like a valid JSON value:
+					// After the closing bracket, expect end-of-string or ", key="
+					const afterBracket = argsStr.slice(i + 1);
+					if (afterBracket === "" || /^, [a-zA-Z_]+=/.test(afterBracket)) {
+						return bracketResult;
+					}
+					// Not a JSON value (e.g. "[NOT SCOPED] Add draft task") — fall through to simple extraction
+					break;
+				}
 			}
 		}
-		return argsStr.slice(start);
 	}
 	// Simple value: read until ", key=" or end
 	const rest = argsStr.slice(start);
