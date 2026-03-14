@@ -1827,6 +1827,18 @@ ${ORCHESTRATION_KNOWLEDGE}`;
 // Only start the server when run directly, not when imported for testing.
 if (import.meta.main) {
 	const port = Number(process.env.PORT) || 7433;
+
+	// Check if another daemon is already running on this port
+	try {
+		const res = await fetch(`http://localhost:${port}/health`);
+		if (res.ok) {
+			console.error(`Error: OpenGraft daemon already running on port ${port}`);
+			process.exit(1);
+		}
+	} catch {
+		// Port is free, proceed
+	}
+
 	const { app, pm, autoResumeProjects, shutdown, markReady } = createApp();
 	await pm.load();
 	console.log(`OpenGraft daemon listening on http://localhost:${port}`);
