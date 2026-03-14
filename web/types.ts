@@ -1,1 +1,2 @@
-export const PROJECT_NODE_ID = "__project__";
+// This file intentionally left empty.
+// PROJECT_NODE_ID was removed — the orchestrator now has a real task node ID.

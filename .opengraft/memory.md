@@ -282,3 +282,19 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `compactionPending` flag controls two-phase flow: inject instruction → extract checkpoint next iteration
 - `extractCheckpoint()` parses tags, falls back to full text
 - `buildCompactedContext()` rebuilds context with fresh memory from disk
+
+## Root Orchestrator Task Node
+- Orchestrator now has a real task node (root node) instead of the `PROJECT_NODE_ID` hack
+- `TaskTracker.ensureRootNode(title, description)` creates the root node on first call, returns existing on subsequent calls
+- Root node ID persisted as `rootNodeId` in tree.json
+- `ensureRootNode()` re-parents any existing top-level orphan nodes under the new root
+- Daemon passes `currentTaskId: rootNodeId` to `createOrchestratorTools` — all child tasks auto-parent under root
+- All orchestrator events (orchestration_started/completed, agent_stopped, error, agent_event) include `taskId: rootNodeId`
+- `broadcastTreeUpdate` includes `rootNodeId` field for the UI
+- REST API `POST /tasks` defaults to root node as parent when no parentId specified
+- Root node status follows orchestrator lifecycle: in_progress → passed/failed
+- Auto-resume skips root node during orphan reset (it gets re-activated by launchAgent)
+- Web UI: `PROJECT_NODE_ID` constant removed; `rootNodeId` state derived from tree_updated events
+- ActivityLog backward compat: root filter shows both entries tagged with rootNodeId AND untagged entries (old sessions)
+- TaskTree shows root node's children as top-level tasks, not the root node itself
+

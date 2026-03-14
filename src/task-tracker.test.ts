@@ -249,4 +249,58 @@ describe("TaskTracker", () => {
 		await tracker2.load();
 		expect(tracker2.get(task.id)?.draft).toBe(true);
 	});
+
+	test("ensureRootNode creates root node", () => {
+		expect(tracker.rootNodeId).toBeNull();
+		const root = tracker.ensureRootNode("Orchestrator", "Initial prompt");
+		expect(root.title).toBe("Orchestrator");
+		expect(root.parentId).toBeNull();
+		expect(root.status).toBe("pending");
+		expect(tracker.rootNodeId).toBe(root.id);
+	});
+
+	test("ensureRootNode returns existing root node on second call", () => {
+		const root1 = tracker.ensureRootNode("Orchestrator", "prompt 1");
+		const root2 = tracker.ensureRootNode("Orchestrator", "prompt 2");
+		expect(root1.id).toBe(root2.id);
+	});
+
+	test("ensureRootNode re-parents existing top-level nodes", () => {
+		const orphan1 = tracker.addTask("Task A", "desc a");
+		const orphan2 = tracker.addTask("Task B", "desc b");
+		expect(orphan1.parentId).toBeNull();
+		expect(orphan2.parentId).toBeNull();
+
+		const root = tracker.ensureRootNode("Orchestrator", "prompt");
+		expect(orphan1.parentId).toBe(root.id);
+		expect(orphan2.parentId).toBe(root.id);
+		expect(root.children).toContain(orphan1.id);
+		expect(root.children).toContain(orphan2.id);
+		expect(tracker.getChildren(root.id)).toHaveLength(2);
+		expect(tracker.getTopLevel()).toHaveLength(1); // only root
+	});
+
+	test("rootNodeId persists across save/load", async () => {
+		const root = tracker.ensureRootNode("Orchestrator", "prompt");
+		await tracker.save();
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+		expect(tracker2.rootNodeId).toBe(root.id);
+		expect(tracker2.get(root.id)?.title).toBe("Orchestrator");
+	});
+
+	test("ensureRootNode restores after load when rootNodeId is set", async () => {
+		const root = tracker.ensureRootNode("Orchestrator", "prompt");
+		tracker.addChild(root.id, "Child", "child desc");
+		await tracker.save();
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+
+		// Calling ensureRootNode again should return the same root
+		const root2 = tracker2.ensureRootNode("Orchestrator", "new prompt");
+		expect(root2.id).toBe(root.id);
+		expect(tracker2.getChildren(root2.id)).toHaveLength(1);
+	});
 });
