@@ -184,28 +184,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		});
 	}
 
-	function removePendingMessagesByText(
-		projectId: string,
-		textsToRemove: string[],
-	): void {
-		const msgs = getPendingMessages(projectId);
-		let changed = false;
-		for (const text of textsToRemove) {
-			const idx = msgs.findIndex((m) => m.text === text);
-			if (idx !== -1) {
-				msgs.splice(idx, 1);
-				changed = true;
-			}
-		}
-		if (changed) {
-			broadcast(wsClients, projectId, {
-				type: "pending_messages",
-				projectId,
-				messages: msgs,
-			});
-		}
-	}
-
 	/** Pending clarifications per project — clarify() calls waiting for user answers. */
 	interface PendingClarification {
 		id: string;
@@ -338,23 +316,14 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 		broadcast(wsClients, projectId, event);
 
-		// Auto-remove pending messages when queue_message events fire (agent consumed the message)
-		if (
-			event.type === "agent_event" &&
-			event.eventType === "queue_message" &&
-			typeof event.messages === "string"
-		) {
-			const raw = event.messages as string;
-			const acknowledgedTexts: string[] = [];
-			// Split on newlines followed by [ to handle multiline message content
-			const blocks = raw.split(/\n(?=\[)/);
-			for (const block of blocks) {
-				const m = /^\[user\] ([\s\S]*)$/.exec(block);
-				if (m?.[1]) acknowledgedTexts.push(m[1]);
-			}
-			if (acknowledgedTexts.length > 0) {
-				removePendingMessagesByText(projectId, acknowledgedTexts);
-			}
+		// Agent consumed all queued messages — clear every pending indicator for this project
+		if (event.type === "agent_event" && event.eventType === "queue_message") {
+			pendingMessages.delete(projectId);
+			broadcast(wsClients, projectId, {
+				type: "pending_messages",
+				projectId,
+				messages: [],
+			});
 		}
 
 		// Track clarification_requested events for Web UI display
