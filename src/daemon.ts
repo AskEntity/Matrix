@@ -87,7 +87,7 @@ function defaultProvider(): AgentProvider {
 	const provider = process.env.OG_PROVIDER;
 	if (provider === "openai")
 		return new OpenAICompatibleProvider(resolveDefaultModel());
-	if (provider === "direct")
+	if (provider === "anthropic" || provider === "direct")
 		return new AnthropicCompatibleProvider(resolveDefaultModel());
 	if (provider === "claude-code") return new ClaudeAgentSdkProvider();
 
@@ -97,7 +97,7 @@ function defaultProvider(): AgentProvider {
 		return new OpenAICompatibleProvider(model);
 	}
 
-	// Default: direct API (Anthropic)
+	// Default: Anthropic API
 	return new AnthropicCompatibleProvider(resolveDefaultModel());
 }
 

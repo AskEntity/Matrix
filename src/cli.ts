@@ -835,7 +835,7 @@ function printConfig(cfg: ProjectConfig): void {
 	const rows: [string, string][] = [
 		["model", cfg.model ?? `${defaultModel} (default)`],
 		["childModel", cfg.childModel ?? `${defaultChildModel} (default)`],
-		["provider", cfg.provider ?? "direct (default)"],
+		["provider", cfg.provider ?? "anthropic (default)"],
 		[
 			"budgetUsd",
 			cfg.budgetUsd != null ? `${cfg.budgetUsd}` : "unlimited (default)",

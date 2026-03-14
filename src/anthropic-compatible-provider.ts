@@ -1124,7 +1124,7 @@ export function addMessagesCacheControl(
  * No Claude Code subprocess — direct API calls with custom tool execution.
  */
 export class AnthropicCompatibleProvider implements AgentProvider {
-	readonly name = "direct-api";
+	readonly name = "anthropic";
 	private client: Anthropic;
 	private model: string;
 	private useOAuth: boolean;
