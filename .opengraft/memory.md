@@ -254,3 +254,11 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Default for no-args cd is `$HOME` (not `.`) to match normal bash behavior
 - Template literal escaping: `${"$"}` trick for shell variables inside backtick strings
 - Both Anthropic and OpenAI providers benefit since OpenAI imports `executeTool` which calls `executeBashWithTimeout`
+
+## Compaction Audit Findings
+- All user messages ARE included in fullTranscript — no filtering by role, no per-message truncation
+- Queue messages (parent_update, user injections) are already converted to standard messages before compressMessages — safe
+- Image content: Anthropic drops image data to "[block]" in transcript (expected for text summary). Fixed tool_result with array content (e.g. image+text) to extract text parts instead of showing generic "[result]"
+- TRANSCRIPT_CHAR_LIMIT (640k chars) truncates from HEAD (oldest dropped) — recent messages always preserved
+- Recent transcript (~80k chars) is included verbatim in the compressed output for detailed context
+- The compressed output = 1 user message: task context + fresh memory + checkpoint summary + recent transcript

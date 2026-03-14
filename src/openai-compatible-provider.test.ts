@@ -274,6 +274,131 @@ describe("compressMessages", () => {
 			globalThis.fetch = originalFetch;
 		}
 	});
+
+	test("all user messages appear in transcript sent to summarizer", async () => {
+		const originalFetch = globalThis.fetch;
+		let capturedBody = "";
+		globalThis.fetch = mock(
+			async (_url: string | URL | Request, init?: RequestInit) => {
+				capturedBody = (init?.body as string) ?? "";
+				return new Response(
+					JSON.stringify({
+						choices: [
+							{ message: { role: "assistant", content: "checkpoint" } },
+						],
+						usage: {
+							prompt_tokens: 10,
+							completion_tokens: 5,
+							total_tokens: 15,
+						},
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			},
+		) as unknown as typeof fetch;
+
+		try {
+			const msgs: OpenAIMessage[] = [
+				{ role: "user", content: "Please build a REST API" },
+				{ role: "assistant", content: "Sure, starting" },
+				{ role: "user", content: "Add authentication too" },
+				{ role: "assistant", content: "Adding auth" },
+				{ role: "user", content: "Use JWT tokens" },
+			];
+			await compressMessages(msgs, "gpt-4o", "http://localhost", "key");
+
+			const parsed = JSON.parse(capturedBody);
+			const transcript = parsed.messages[1].content;
+			// ALL user messages must be in the transcript
+			expect(transcript).toContain("Please build a REST API");
+			expect(transcript).toContain("Add authentication too");
+			expect(transcript).toContain("Use JWT tokens");
+			// All assistant messages too
+			expect(transcript).toContain("Sure, starting");
+			expect(transcript).toContain("Adding auth");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("user messages appear in compressed output's recent transcript", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(async () => {
+			return new Response(
+				JSON.stringify({
+					choices: [
+						{ message: { role: "assistant", content: "checkpoint summary" } },
+					],
+					usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as unknown as typeof fetch;
+
+		try {
+			const msgs: OpenAIMessage[] = [
+				{ role: "user", content: "Implement feature X with unit tests" },
+				{ role: "assistant", content: "Working on it" },
+				{ role: "user", content: "Also fix bug Y in module Z" },
+				{ role: "assistant", content: "Fixed" },
+				{ role: "user", content: "Run the full test suite" },
+			];
+			const { compressed } = await compressMessages(
+				msgs,
+				"gpt-4o",
+				"http://localhost",
+				"key",
+			);
+
+			const content = compressed[0]?.content as string;
+			expect(content).toContain("Implement feature X with unit tests");
+			expect(content).toContain("Also fix bug Y in module Z");
+			expect(content).toContain("Run the full test suite");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("very long user message is not truncated per-message", async () => {
+		const originalFetch = globalThis.fetch;
+		let capturedBody = "";
+		globalThis.fetch = mock(
+			async (_url: string | URL | Request, init?: RequestInit) => {
+				capturedBody = (init?.body as string) ?? "";
+				return new Response(
+					JSON.stringify({
+						choices: [{ message: { role: "assistant", content: "summary" } }],
+						usage: {
+							prompt_tokens: 10,
+							completion_tokens: 5,
+							total_tokens: 15,
+						},
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			},
+		) as unknown as typeof fetch;
+
+		try {
+			const longMessage = `IMPORTANT_REQUEST: ${"x".repeat(15000)} END_REQUEST`;
+			const msgs: OpenAIMessage[] = [
+				{ role: "user", content: longMessage },
+				{ role: "assistant", content: "Processing" },
+				{ role: "user", content: "Status?" },
+				{ role: "assistant", content: "Working" },
+				{ role: "user", content: "Done?" },
+			];
+			await compressMessages(msgs, "gpt-4o", "http://localhost", "key");
+
+			const parsed = JSON.parse(capturedBody);
+			const transcript = parsed.messages[1].content;
+			expect(transcript).toContain("IMPORTANT_REQUEST:");
+			expect(transcript).toContain("END_REQUEST");
+			expect(transcript).toContain("x".repeat(15000));
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
 });
 
 // ── Constructor ──
