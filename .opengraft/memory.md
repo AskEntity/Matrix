@@ -247,3 +247,10 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `foreground_timeout` defaults to `timeout` value (fully foreground) — only backgrounds when explicitly set lower
 - Background completions delivered as `background_complete` QueueMessage, formatted by `formatQueueMessage` in agent-tools.ts
 - OpenAI provider reuses all of this via imported `executeTool` and `cleanupSessionBackgroundProcesses`
+
+## Cd Wrapper Injection
+- `executeBashWithTimeout` in anthropic-compatible-provider.ts prepends a shell `cd()` function that warns when already in the target directory
+- The function uses `builtin cd` to resolve the target path and compares with `$(pwd)` — warns to stderr if same
+- Default for no-args cd is `$HOME` (not `.`) to match normal bash behavior
+- Template literal escaping: `${"$"}` trick for shell variables inside backtick strings
+- Both Anthropic and OpenAI providers benefit since OpenAI imports `executeTool` which calls `executeBashWithTimeout`
