@@ -855,6 +855,7 @@ function AppInner() {
 							nodeMap={nodeMap}
 							autoScroll={autoScroll}
 							onAutoScrollChange={setAutoScroll}
+							running={running}
 						/>
 					</div>
 				</section>
