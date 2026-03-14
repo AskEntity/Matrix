@@ -39,16 +39,10 @@ export function ActivityLog({
 		if (!filterTaskId || filterTaskId === PROJECT_NODE_ID) {
 			items = entries.filter((e) => !e.taskId);
 		} else {
-			const descendantIds = new Set<string>();
-			const collect = (id: string) => {
-				descendantIds.add(id);
-				const node = nodeMap.get(id);
-				if (node?.children) {
-					for (const childId of node.children) collect(childId);
-				}
-			};
-			collect(filterTaskId);
-			items = entries.filter((e) => e.taskId && descendantIds.has(e.taskId));
+			items = entries.filter((e) => {
+				if (!e.taskId) return true; // entries without taskId (lifecycle) show everywhere
+				return e.taskId === filterTaskId;
+			});
 		}
 
 		if (searchText.trim()) {
@@ -57,7 +51,7 @@ export function ActivityLog({
 		}
 
 		return items;
-	}, [entries, filterTaskId, nodeMap, searchText]);
+	}, [entries, filterTaskId, searchText]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new visible entries
 	useEffect(() => {
