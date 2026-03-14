@@ -151,7 +151,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const activeSessions = new Map<string, AgentSession>();
 	/** Event history per project (capped at 500 entries, persisted to disk). */
 	const eventHistory = new Map<string, Record<string, unknown>[]>();
-	const MAX_EVENT_HISTORY = 500;
+	const MAX_EVENT_HISTORY = 5000;
 	const eventsDirty = new Set<string>();
 	let eventFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
