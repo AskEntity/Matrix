@@ -395,18 +395,17 @@ function AppInner() {
 					const instruction = msg.message
 						? `\n${t("lifecycle.instructions")} ${msg.message}`
 						: "";
-					addLog(
-						"task_started",
-						`${t("lifecycle.taskStarted")} ${msg.title}${instruction}`,
-					);
+					const startedText = `${t("lifecycle.taskStarted")} ${msg.title}${instruction}`;
+					addLog("task_started", startedText, msg.taskId as string);
+					addLog("task_started", startedText);
 					break;
 				}
-				case "task_completed":
-					addLog(
-						"task_completed",
-						`${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`,
-					);
+				case "task_completed": {
+					const completedText = `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
+					addLog("task_completed", completedText, msg.taskId as string);
+					addLog("task_completed", completedText);
 					break;
+				}
 				case "error":
 					addLog("error", msg.message as string);
 					break;
