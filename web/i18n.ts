@@ -18,6 +18,7 @@ const en: Translations = {
 
 	// Projects
 	"project.add": "Add",
+	"project.adding": "Adding…",
 	"project.cancel": "Cancel",
 	"project.pathPlaceholder": "Project path…",
 	"project.noProjects": "No projects",
@@ -241,6 +242,7 @@ const zh: Translations = {
 
 	// Projects
 	"project.add": "添加",
+	"project.adding": "添加中…",
 	"project.cancel": "取消",
 	"project.pathPlaceholder": "项目路径…",
 	"project.noProjects": "暂无项目",
