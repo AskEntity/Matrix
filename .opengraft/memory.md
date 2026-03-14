@@ -193,3 +193,15 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Fix: snapshot `visible.length` when `running` transitions to true via `visibleLengthOnRunStartRef`
 - Only show thinking if `visible.length > snapshot` (entries have grown → this task is active)
 - The 40px scroll threshold in handleScroll is fine with the sentinel div (empty div = 0px height)
+
+## Text-Based Tool Parsing Removed
+- Deleted `parseToolUse`, `parseToolResult`, `extractArg` from ToolCard.tsx — all text-based parsing gone
+- `getToolCardTitle` signature changed: `(toolName, toolArgs: Record<string, unknown> | undefined, resultContent, nodeMap)` — no more `argsStr` param
+- `getArg(args, key)` is the new simple helper: reads from structured `Record<string, unknown>` only
+- `isTitleOnlyCard` signature simplified: `(toolName, toolArgs?)` — no more `argsStr`
+- `McpToolCardBody` takes `toolArgs` instead of `argsStr` — no more manual key=value parsing
+- ToolCard and LogEntryView use `entry.toolName`, `entry.toolArgs`, `entry.toolResult`, `entry.isError` directly
+- App.tsx: tool_use text is just the tool name (for search); tool_result text is just the content
+- ActivityLog `getToolName` simplified to just `entry.toolName ?? ""`
+- `formatArgs` still exported from ToolCard.tsx but no longer imported by App.tsx
+- `update_task` card title now shows draft/undraft/rename/update labels based on which fields are being updated

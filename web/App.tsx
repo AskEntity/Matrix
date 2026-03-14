@@ -19,7 +19,7 @@ import {
 	formatTokenCount,
 	TokenUsageBadge,
 } from "./components/TokenUsageBadge.tsx";
-import { formatArgs } from "./components/ToolCard.tsx";
+
 import {
 	createLogEntry,
 	type LogEntry,
@@ -267,14 +267,14 @@ function AppInner() {
 					const et = msg.eventType as string;
 					let text = "";
 					if (et === "tool_use") {
-						text = `${msg.tool}(${formatArgs(msg.input as Record<string, unknown>)})`;
+						text = msg.tool as string;
 						addLog(et, text, msg.taskId as string | undefined, undefined, {
 							toolName: msg.tool as string,
 							toolArgs: msg.input as Record<string, unknown>,
 						});
 						break;
 					} else if (et === "tool_result") {
-						text = `${msg.isError ? "ERR" : "OK"} ${msg.tool}: ${(msg.content as string) || ""}`;
+						text = (msg.content as string) || "";
 						addLog(et, text, msg.taskId as string | undefined, undefined, {
 							toolName: msg.tool as string,
 							toolResult: (msg.content as string) || "",
