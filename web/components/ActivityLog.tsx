@@ -20,6 +20,7 @@ export function ActivityLog({
 	running: boolean;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
+	const bottomRef = useRef<HTMLDivElement>(null);
 	const [searchText, setSearchText] = useState("");
 	const lastEventTimeRef = useRef(Date.now());
 	const entriesRef = useRef(entries);
@@ -59,11 +60,12 @@ export function ActivityLog({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new visible entries
 	useEffect(() => {
 		lastEventTimeRef.current = Date.now();
-		if (autoScroll && logRef.current) {
+		if (autoScroll) {
 			requestAnimationFrame(() => {
-				if (logRef.current) {
-					logRef.current.scrollTop = logRef.current.scrollHeight;
-				}
+				bottomRef.current?.scrollIntoView({
+					block: "end",
+					behavior: "instant",
+				});
 			});
 		}
 	}, [visible.length, autoScroll]);
@@ -93,9 +95,10 @@ export function ActivityLog({
 		const observer = new ResizeObserver(() => {
 			if (autoScroll) {
 				requestAnimationFrame(() => {
-					if (logRef.current) {
-						logRef.current.scrollTop = logRef.current.scrollHeight;
-					}
+					bottomRef.current?.scrollIntoView({
+						block: "end",
+						behavior: "instant",
+					});
 				});
 			}
 		});
@@ -295,6 +298,7 @@ export function ActivityLog({
 						{searchText.trim() ? t("activity.noMatch") : t("activity.noEvents")}
 					</div>
 				)}
+				<div ref={bottomRef} />
 			</div>
 		</>
 	);
