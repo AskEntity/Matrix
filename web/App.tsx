@@ -389,7 +389,6 @@ function AppInner() {
 					addLog(
 						"task_started",
 						`${t("lifecycle.taskStarted")} ${msg.title}${instruction}`,
-						msg.taskId as string,
 					);
 					break;
 				}
@@ -397,7 +396,6 @@ function AppInner() {
 					addLog(
 						"task_completed",
 						`${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`,
-						msg.taskId as string,
 					);
 					break;
 				case "error":
