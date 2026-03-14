@@ -343,6 +343,7 @@ describe("runLoop integration", () => {
 	});
 
 	afterAll(async () => {
+		clearContextWindowCache();
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
@@ -354,11 +355,29 @@ describe("runLoop integration", () => {
 		process.env.OPENAI_API_KEY = "test-key";
 		process.env.OPENAI_BASE_URL = "http://localhost:9999";
 
-		let callCount = 0;
-		globalThis.fetch = mock(async () => {
-			callCount++;
-			if (callCount === 1) {
-				// First call: assistant calls done() tool
+		let chatCallCount = 0;
+		globalThis.fetch = mock(async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === "string"
+					? url
+					: url instanceof URL
+						? url.toString()
+						: url.url;
+			// GET /models for context window lookup
+			if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
+				return new Response(
+					JSON.stringify({
+						data: [{ id: "gpt-4o", context_length: 128000 }],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			chatCallCount++;
+			if (chatCallCount === 1) {
+				// First chat call: assistant calls done() tool
 				return new Response(
 					JSON.stringify({
 						id: "chatcmpl-1",
@@ -392,7 +411,10 @@ describe("runLoop integration", () => {
 							total_tokens: 600,
 						},
 					}),
-					{ status: 200, headers: { "Content-Type": "application/json" } },
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
 				);
 			}
 			// Shouldn't reach here but return a stop response just in case
@@ -413,7 +435,10 @@ describe("runLoop integration", () => {
 						total_tokens: 110,
 					},
 				}),
-				{ status: 200, headers: { "Content-Type": "application/json" } },
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
 			);
 		}) as unknown as typeof fetch;
 
@@ -484,6 +509,7 @@ describe("runLoop integration", () => {
 			const toolUseEvents = events.filter((e) => e.type === "tool_use");
 			expect(toolUseEvents.length).toBe(1);
 		} finally {
+			clearContextWindowCache();
 			process.env.OPENAI_API_KEY = originalKey ?? "";
 			if (originalBase) {
 				process.env.OPENAI_BASE_URL = originalBase;
@@ -502,7 +528,24 @@ describe("runLoop integration", () => {
 		process.env.OPENAI_API_KEY = "test-key";
 		process.env.OPENAI_BASE_URL = "http://localhost:9999";
 
-		globalThis.fetch = mock(async () => {
+		globalThis.fetch = mock(async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === "string"
+					? url
+					: url instanceof URL
+						? url.toString()
+						: url.url;
+			if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
+				return new Response(
+					JSON.stringify({
+						data: [{ id: "gpt-4o", context_length: 128000 }],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
 			return new Response(
 				JSON.stringify({
 					id: "chatcmpl-1",
@@ -520,7 +563,10 @@ describe("runLoop integration", () => {
 						total_tokens: 120,
 					},
 				}),
-				{ status: 200, headers: { "Content-Type": "application/json" } },
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
 			);
 		}) as unknown as typeof fetch;
 
@@ -534,6 +580,7 @@ describe("runLoop integration", () => {
 			expect(result.success).toBe(true);
 			expect(result.output).toBe("All done!");
 		} finally {
+			clearContextWindowCache();
 			process.env.OPENAI_API_KEY = originalKey ?? "";
 			if (originalBase) {
 				process.env.OPENAI_BASE_URL = originalBase;
@@ -552,10 +599,27 @@ describe("runLoop integration", () => {
 		process.env.OPENAI_API_KEY = "test-key";
 		process.env.OPENAI_BASE_URL = "http://localhost:9999";
 
-		let callCount = 0;
-		globalThis.fetch = mock(async () => {
-			callCount++;
-			if (callCount === 1) {
+		let chatCallCount = 0;
+		globalThis.fetch = mock(async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === "string"
+					? url
+					: url instanceof URL
+						? url.toString()
+						: url.url;
+			if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
+				return new Response(
+					JSON.stringify({
+						data: [{ id: "gpt-4o", context_length: 128000 }],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			chatCallCount++;
+			if (chatCallCount === 1) {
 				return new Response("Rate limited", { status: 429 });
 			}
 			return new Response(
@@ -565,13 +629,23 @@ describe("runLoop integration", () => {
 					choices: [
 						{
 							index: 0,
-							message: { role: "assistant", content: "Success after retry" },
+							message: {
+								role: "assistant",
+								content: "Success after retry",
+							},
 							finish_reason: "stop",
 						},
 					],
-					usage: { prompt_tokens: 50, completion_tokens: 10, total_tokens: 60 },
+					usage: {
+						prompt_tokens: 50,
+						completion_tokens: 10,
+						total_tokens: 60,
+					},
 				}),
-				{ status: 200, headers: { "Content-Type": "application/json" } },
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
 			);
 		}) as unknown as typeof fetch;
 
@@ -589,9 +663,10 @@ describe("runLoop integration", () => {
 				result = await gen.next();
 			}
 
-			expect(callCount).toBe(2);
+			expect(chatCallCount).toBe(2);
 			expect(result.value.output).toBe("Success after retry");
 		} finally {
+			clearContextWindowCache();
 			process.env.OPENAI_API_KEY = originalKey ?? "";
 			if (originalBase) {
 				process.env.OPENAI_BASE_URL = originalBase;
