@@ -210,3 +210,11 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 ## Claude Code Web Search
 - `claude --allowedTools "WebSearch" -p "query"` — can be used for web search for unfamiliar APIs
 - Useful when agent encounters unknown frameworks or needs latest API documentation
+
+## Image Support in read_file
+- `executeTool` return type extended with optional `isImage`, `imageData`, `mediaType` fields
+- Supported image extensions: png, jpg, jpeg, gif, webp (NOT svg — Anthropic API only supports these 4 media types)
+- Anthropic provider: tool_result content uses array format with `{ type: "image", source: { type: "base64", ... } }` + text description
+- OpenAI provider: tool results are text-only, so images are injected as a separate user message with `image_url` type (base64 data URI)
+- `OpenAIMessage.content` type expanded to `string | null | Array<{type: "text"} | {type: "image_url"}>` to support multi-modal content
+- Compaction transcript serialization in OpenAI provider extracts only text parts from array content, skipping image data
