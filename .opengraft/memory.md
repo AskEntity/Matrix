@@ -205,3 +205,8 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - ActivityLog `getToolName` simplified to just `entry.toolName ?? ""`
 - `formatArgs` still exported from ToolCard.tsx but no longer imported by App.tsx
 - `update_task` card title now shows draft/undraft/rename/update labels based on which fields are being updated
+
+
+## Claude Code Web Search
+- `claude --allowedTools "WebSearch" -p "query"` — can be used for web search for unfamiliar APIs
+- Useful when agent encounters unknown frameworks or needs latest API documentation
