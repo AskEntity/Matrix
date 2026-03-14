@@ -356,6 +356,98 @@ describe("executeTool", () => {
 		expect(result.content).not.toContain("[...");
 	});
 
+	test("read_file: reads PNG image as base64", async () => {
+		// Minimal 1x1 red PNG (67 bytes)
+		const pngData = Buffer.from(
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
+			"base64",
+		);
+		const path = join(tempDir, "test.png");
+		await writeFile(path, pngData);
+
+		const result = await executeTool("read_file", { path }, tempDir);
+		expect(result.isError).toBe(false);
+		expect(result.isImage).toBe(true);
+		expect(result.mediaType).toBe("image/png");
+		expect(result.imageData).toBeDefined();
+		// Verify the base64 round-trips correctly
+		const decoded = Buffer.from(result.imageData ?? "", "base64");
+		expect(decoded.equals(pngData)).toBe(true);
+		expect(result.content).toBe("[Image: test.png]");
+	});
+
+	test("read_file: reads JPEG image as base64", async () => {
+		const path = join(tempDir, "photo.jpg");
+		await writeFile(path, Buffer.from([0xff, 0xd8, 0xff, 0xe0])); // minimal JPEG header
+
+		const result = await executeTool("read_file", { path }, tempDir);
+		expect(result.isError).toBe(false);
+		expect(result.isImage).toBe(true);
+		expect(result.mediaType).toBe("image/jpeg");
+	});
+
+	test("read_file: reads .jpeg extension as image/jpeg", async () => {
+		const path = join(tempDir, "photo.jpeg");
+		await writeFile(path, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+
+		const result = await executeTool("read_file", { path }, tempDir);
+		expect(result.isImage).toBe(true);
+		expect(result.mediaType).toBe("image/jpeg");
+	});
+
+	test("read_file: reads WebP image as base64", async () => {
+		const path = join(tempDir, "image.webp");
+		await writeFile(path, Buffer.from("RIFF\x00\x00\x00\x00WEBP"));
+
+		const result = await executeTool("read_file", { path }, tempDir);
+		expect(result.isImage).toBe(true);
+		expect(result.mediaType).toBe("image/webp");
+	});
+
+	test("read_file: reads GIF image as base64", async () => {
+		const path = join(tempDir, "anim.gif");
+		await writeFile(path, Buffer.from("GIF89a"));
+
+		const result = await executeTool("read_file", { path }, tempDir);
+		expect(result.isImage).toBe(true);
+		expect(result.mediaType).toBe("image/gif");
+	});
+
+	test("read_file: non-image files still return text", async () => {
+		const path = join(tempDir, "code.ts");
+		await writeFile(path, 'console.log("hello");');
+
+		const result = await executeTool("read_file", { path }, tempDir);
+		expect(result.isError).toBe(false);
+		expect(result.isImage).toBeUndefined();
+		expect(result.imageData).toBeUndefined();
+		expect(result.content).toBe('console.log("hello");');
+	});
+
+	test("read_file: SVG files return text (not image)", async () => {
+		const path = join(tempDir, "icon.svg");
+		await writeFile(path, '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+
+		const result = await executeTool("read_file", { path }, tempDir);
+		expect(result.isError).toBe(false);
+		expect(result.isImage).toBeUndefined();
+		// SVG is XML text, not a supported image format for the API
+		expect(result.content).toBe(
+			'<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+		);
+	});
+
+	test("read_file: image error for missing file", async () => {
+		const result = await executeTool(
+			"read_file",
+			{ path: "missing.png" },
+			tempDir,
+		);
+		expect(result.isError).toBe(true);
+		expect(result.content).toContain("Error reading file");
+		expect(result.isImage).toBeUndefined();
+	});
+
 	test("edit_file: replaces string in file", async () => {
 		const path = join(tempDir, "editable.txt");
 		await writeFile(path, "hello world");

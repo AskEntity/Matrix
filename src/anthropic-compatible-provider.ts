@@ -681,7 +681,14 @@ export async function executeTool(
 	input: Record<string, unknown>,
 	cwd: string,
 	fallbackCwd?: string,
-): Promise<{ content: string; isError: boolean; cwd?: string }> {
+): Promise<{
+	content: string;
+	isError: boolean;
+	cwd?: string;
+	isImage?: boolean;
+	imageData?: string;
+	mediaType?: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+}> {
 	switch (name) {
 		case "bash": {
 			const command = input.command as string;
@@ -797,6 +804,38 @@ export async function executeTool(
 
 		case "read_file": {
 			const path = resolvePath(input.path as string, cwd);
+			const ext = path.split(".").pop()?.toLowerCase();
+			const IMAGE_MEDIA_TYPES: Record<
+				string,
+				"image/jpeg" | "image/png" | "image/gif" | "image/webp"
+			> = {
+				png: "image/png",
+				jpg: "image/jpeg",
+				jpeg: "image/jpeg",
+				gif: "image/gif",
+				webp: "image/webp",
+			};
+			const imageMediaType = ext ? IMAGE_MEDIA_TYPES[ext] : undefined;
+
+			if (imageMediaType) {
+				try {
+					const data = readFileSync(path);
+					const base64 = data.toString("base64");
+					return {
+						content: `[Image: ${basename(path)}]`,
+						isError: false,
+						isImage: true,
+						imageData: base64,
+						mediaType: imageMediaType,
+					};
+				} catch (e) {
+					return {
+						content: `Error reading file: ${e instanceof Error ? e.message : String(e)}`,
+						isError: true,
+					};
+				}
+			}
+
 			const offset = Math.max(1, (input.offset as number) ?? 1);
 			const limit = input.limit as number | undefined;
 			try {
@@ -1590,6 +1629,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					content: string;
 					isError: boolean;
 					cwd?: string;
+					isImage?: boolean;
+					imageData?: string;
+					mediaType?: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 				};
 
 				// Update cwd if bash tool changed it
@@ -1606,12 +1648,32 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					content: text.slice(0, 500),
 					isError,
 				};
-				toolResults.push({
-					type: "tool_result",
-					tool_use_id: toolUse.id,
-					content: text,
-					is_error: isError,
-				});
+
+				if (exec.isImage && exec.imageData && exec.mediaType) {
+					// Image: use array content with image block + text description
+					toolResults.push({
+						type: "tool_result",
+						tool_use_id: toolUse.id,
+						content: [
+							{
+								type: "image",
+								source: {
+									type: "base64",
+									media_type: exec.mediaType,
+									data: exec.imageData,
+								},
+							},
+							{ type: "text", text },
+						],
+					});
+				} else {
+					toolResults.push({
+						type: "tool_result",
+						tool_use_id: toolUse.id,
+						content: text,
+						is_error: isError,
+					});
+				}
 			}
 
 			// Cancellation point: drain queue and append messages to tool results

@@ -22,7 +22,13 @@ import type { AgentResult } from "./types.ts";
 
 export interface OpenAIMessage {
 	role: "system" | "user" | "assistant" | "tool";
-	content: string | null;
+	content:
+		| string
+		| null
+		| Array<
+				| { type: "text"; text: string }
+				| { type: "image_url"; image_url: { url: string; detail: "auto" } }
+		  >;
 	tool_calls?: OpenAIToolCall[];
 	tool_call_id?: string;
 	name?: string;
@@ -228,7 +234,18 @@ export async function compressMessages(
 	// Serialize all messages into text for the checkpoint generator
 	const fullTranscript = messages
 		.map((m, i) => {
-			let content = m.content ?? "";
+			let content: string;
+			if (typeof m.content === "string") {
+				content = m.content;
+			} else if (Array.isArray(m.content)) {
+				// Extract text parts from multi-modal content, skip image data
+				content = m.content
+					.filter((p) => p.type === "text")
+					.map((p) => (p as { text: string }).text)
+					.join("\n");
+			} else {
+				content = "";
+			}
 			if (m.tool_calls) {
 				const calls = m.tool_calls
 					.map(
@@ -239,7 +256,7 @@ export async function compressMessages(
 				content = content ? `${content}\n${calls}` : calls;
 			}
 			if (m.role === "tool") {
-				content = `[tool_result for ${m.name ?? m.tool_call_id ?? "unknown"}]: ${m.content ?? ""}`;
+				content = `[tool_result for ${m.name ?? m.tool_call_id ?? "unknown"}]: ${typeof m.content === "string" ? m.content : ""}`;
 			}
 			return `[${i}] ${m.role}: ${content}`;
 		})
@@ -497,9 +514,12 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			? [...existingHistory, { role: "user" as const, content: request.prompt }]
 			: [{ role: "user" as const, content: firstUserContent }];
 
+		const firstContent = existingHistory?.[0]?.content;
 		const taskContext =
 			isResume && existingHistory
-				? (existingHistory[0]?.content ?? request.prompt)
+				? typeof firstContent === "string"
+					? firstContent
+					: request.prompt
 				: request.prompt;
 
 		// Build tool list: built-in tools (converted) + MCP tools
@@ -559,7 +579,11 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					messages.push(...compressed);
 					// Prepend working directory
 					const firstMsg = messages[0];
-					if (cwd && firstMsg?.role === "user" && firstMsg.content) {
+					if (
+						cwd &&
+						firstMsg?.role === "user" &&
+						typeof firstMsg.content === "string"
+					) {
 						if (!firstMsg.content.startsWith("Working directory:")) {
 							messages[0] = {
 								...firstMsg,
@@ -750,12 +774,21 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			);
 
 			// Emit tool_result events and build response messages
+			// Collect image results to inject as user message after tool results
+			const imageResults: Array<{
+				text: string;
+				dataUri: string;
+			}> = [];
+
 			for (let i = 0; i < toolCalls.length; i++) {
 				const tc = toolCalls[i] as OpenAIToolCall;
 				const exec = execResults[i] as {
 					content: string;
 					isError: boolean;
 					cwd?: string;
+					isImage?: boolean;
+					imageData?: string;
+					mediaType?: string;
 				};
 
 				if (exec.cwd) cwd = exec.cwd;
@@ -774,6 +807,34 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					name: tc.function.name,
 					content: exec.content,
 				});
+
+				if (exec.isImage && exec.imageData && exec.mediaType) {
+					imageResults.push({
+						text: exec.content,
+						dataUri: `data:${exec.mediaType};base64,${exec.imageData}`,
+					});
+				}
+			}
+
+			// Inject images as a user message (OpenAI tool results are text-only)
+			if (imageResults.length > 0) {
+				const imageParts: Array<
+					| { type: "text"; text: string }
+					| {
+							type: "image_url";
+							image_url: { url: string; detail: "auto" };
+					  }
+				> = [];
+				for (const img of imageResults) {
+					imageParts.push(
+						{ type: "text", text: img.text },
+						{
+							type: "image_url",
+							image_url: { url: img.dataUri, detail: "auto" },
+						},
+					);
+				}
+				messages.push({ role: "user", content: imageParts });
 			}
 
 			// Append done() reminder to the last tool result
