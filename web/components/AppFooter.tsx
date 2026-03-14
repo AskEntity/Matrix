@@ -1,5 +1,5 @@
 import type React from "react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconPlay, IconSend } from "./icons.tsx";
@@ -52,6 +52,13 @@ export function AppFooter({
 			el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
 		}
 	}
+
+	// Auto-resize on any prompt change (typing, paste, programmatic updates).
+	// prompt drives textarea value → scrollHeight changes → need to re-measure.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: prompt is intentional — it triggers resize when textarea content changes
+	useEffect(() => {
+		adjustTextareaHeight();
+	}, [prompt]);
 
 	return (
 		<footer className="og-footer">
