@@ -177,3 +177,8 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - handleAddProject in App.tsx must mirror onProjectChange behavior: reset selectedTaskId + clear logs
 - AppHeader accepts creatingProject prop to disable form and show og-spinner during creation
 - WebSocket auto-reconnects on projectId change (projectId is in useWebSocket dependency array + separate subscribe effect)
+
+## Tool Card Merge
+- ActivityLog `mergedVisible` scan-ahead correctly handles interleaved entries between tool_use and tool_result
+- The `taskId` check in `findMatchingResult` prevents cross-child matching
+- "Loading card never completes" bug was likely stale HMR — restart daemon after code changes
