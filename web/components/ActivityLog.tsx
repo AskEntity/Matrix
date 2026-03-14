@@ -148,15 +148,9 @@ export function ActivityLog({
 			  }
 		> = [];
 
-		// Get effective tool name from an entry (structured field or text parsing)
+		// Get tool name from structured field
 		const getToolName = (entry: LogEntry): string => {
-			if (entry.toolName) return entry.toolName;
-			if (entry.type === "tool_use") return entry.text.split("(")[0] ?? "";
-			if (entry.type === "tool_result") {
-				const m = /^(?:OK|ERR) ([^:]+):/.exec(entry.text);
-				return m?.[1] ?? "";
-			}
-			return "";
+			return entry.toolName ?? "";
 		};
 
 		// Track which tool_result indices have been consumed by pairing

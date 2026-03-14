@@ -78,112 +78,44 @@ export function formatMcpToolResult(
 	}
 }
 
-/** Parse tool_use text "toolName(args...)" into {toolName, argsStr} */
-export function parseToolUse(text: string): {
-	toolName: string;
-	argsStr: string;
-} {
-	const idx = text.indexOf("(");
-	if (idx === -1) return { toolName: text, argsStr: "" };
-	return {
-		toolName: text.slice(0, idx),
-		argsStr: text.slice(idx + 1).replace(/\)$/, ""),
-	};
-}
-
-/** Parse tool_result text "OK toolName: content" into parts */
-export function parseToolResult(text: string): {
-	isOk: boolean;
-	isErr: boolean;
-	toolName: string;
-	content: string;
-} {
-	const isOk = text.startsWith("OK ");
-	const isErr = text.startsWith("ERR ");
-	const content = text.replace(/^(?:OK|ERR) [^:]+: /, "");
-	const match = /^(?:OK|ERR) ([^:]+):/.exec(text);
-	return { isOk, isErr, toolName: match?.[1] ?? "", content };
-}
-
-/** Extract a value from the key=value args string */
-export function extractArg(argsStr: string, key: string): string | null {
-	// Handle JSON values (arrays/objects) by finding key= and then matching balanced brackets
-	const prefix = `${key}=`;
-	const idx = argsStr.indexOf(prefix);
-	if (idx === -1) return null;
-	const start = idx + prefix.length;
-	const firstChar = argsStr[start];
-	if (firstChar === "[" || firstChar === "{") {
-		// Find matching bracket
-		const open = firstChar;
-		const close = open === "[" ? "]" : "}";
-		let depth = 0;
-		for (let i = start; i < argsStr.length; i++) {
-			if (argsStr[i] === open) depth++;
-			else if (argsStr[i] === close) {
-				depth--;
-				if (depth === 0) {
-					const bracketResult = argsStr.slice(start, i + 1);
-					// Check if this looks like a valid JSON value:
-					// After the closing bracket, expect end-of-string or ", key="
-					const afterBracket = argsStr.slice(i + 1);
-					if (afterBracket === "" || /^, [a-zA-Z_]+=/.test(afterBracket)) {
-						return bracketResult;
-					}
-					// Not a JSON value (e.g. "[NOT SCOPED] Add draft task") — fall through to simple extraction
-					break;
-				}
-			}
-		}
-	}
-	// Simple value: read until ", key=" or end
-	const rest = argsStr.slice(start);
-	const endMatch = /, [a-zA-Z_]+=/.exec(rest);
-	return endMatch ? rest.slice(0, endMatch.index) : rest;
-}
-
 /** Get a basename from a file path */
 export function basename(path: string): string {
 	const parts = path.split("/");
 	return parts[parts.length - 1] ?? path;
 }
 
-/** Helper to get a string arg from structured args or argsStr text */
+/** Get a string arg from structured tool args */
 function getArg(
+	args: Record<string, unknown> | undefined,
 	key: string,
-	argsStr: string,
-	toolArgs?: Record<string, unknown>,
 ): string | null {
-	if (toolArgs && key in toolArgs) {
-		const v = toolArgs[key];
-		return typeof v === "string" ? v : JSON.stringify(v);
-	}
-	return extractArg(argsStr, key);
+	if (!args) return null;
+	const val = args[key];
+	return val != null ? String(val) : null;
 }
 
 /** Generate a descriptive card title from tool name, args, and result */
 export function getToolCardTitle(
 	toolName: string,
-	argsStr: string,
+	toolArgs: Record<string, unknown> | undefined,
 	resultContent: string | null,
 	nodeMap?: Map<string, { title?: string }>,
-	toolArgs?: Record<string, unknown>,
 ): string {
 	// File tools
 	if (toolName === "read_file") {
-		const path = getArg("path", argsStr, toolArgs);
+		const path = getArg(toolArgs, "path");
 		return path ? `⌕ Read: ${basename(path)}` : "⌕ Read";
 	}
 	if (toolName === "write_file") {
-		const path = getArg("path", argsStr, toolArgs);
+		const path = getArg(toolArgs, "path");
 		return path ? `← Write: ${basename(path)}` : "← Write";
 	}
 	if (toolName === "edit_file") {
-		const path = getArg("path", argsStr, toolArgs);
+		const path = getArg(toolArgs, "path");
 		return path ? `✎ Edit: ${basename(path)}` : "✎ Edit";
 	}
 	if (toolName === "search") {
-		const pattern = getArg("pattern", argsStr, toolArgs);
+		const pattern = getArg(toolArgs, "pattern");
 		if (pattern) {
 			const display =
 				pattern.length > 40 ? `${pattern.slice(0, 40)}…` : pattern;
@@ -192,11 +124,11 @@ export function getToolCardTitle(
 		return "⌕ Search";
 	}
 	if (toolName === "list_files") {
-		const pattern = getArg("pattern", argsStr, toolArgs);
+		const pattern = getArg(toolArgs, "pattern");
 		return pattern ? `ls: ${pattern}` : "ls";
 	}
 	if (toolName === "bash") {
-		const command = getArg("command", argsStr, toolArgs);
+		const command = getArg(toolArgs, "command");
 		if (command) {
 			const display =
 				command.length > 50 ? `${command.slice(0, 50)}…` : command;
@@ -210,7 +142,7 @@ export function getToolCardTitle(
 	if (toolName.startsWith("mcp__opengraft__")) {
 		switch (mcpTool) {
 			case "create_task": {
-				const title = getArg("title", argsStr, toolArgs);
+				const title = getArg(toolArgs, "title");
 				return title ? `+ Task: ${title}` : "+ Task";
 			}
 			case "delete_task": {
@@ -223,7 +155,7 @@ export function getToolCardTitle(
 						/* ignore */
 					}
 				}
-				const taskId = getArg("taskId", argsStr, toolArgs);
+				const taskId = getArg(toolArgs, "taskId");
 				if (taskId) {
 					const title = nodeMap?.get(taskId)?.title;
 					return `– Task: ${title ?? taskId.slice(0, 8)}`;
@@ -231,7 +163,7 @@ export function getToolCardTitle(
 				return "– Task";
 			}
 			case "execute_tasks": {
-				const tasksArg = getArg("tasks", argsStr, toolArgs);
+				const tasksArg = getArg(toolArgs, "tasks");
 				if (tasksArg) {
 					try {
 						const tasks = JSON.parse(tasksArg) as Array<{
@@ -265,8 +197,8 @@ export function getToolCardTitle(
 				return "⚡ Run";
 			}
 			case "done": {
-				const status = getArg("status", argsStr, toolArgs);
-				const summary = getArg("summary", argsStr, toolArgs);
+				const status = getArg(toolArgs, "status");
+				const summary = getArg(toolArgs, "summary");
 				const isPassed = status === "passed";
 				const icon = isPassed ? "✓" : "✗";
 				const label = isPassed ? "Task Passed" : "Task Failed";
@@ -287,13 +219,16 @@ export function getToolCardTitle(
 			case "get_tree":
 				return "Tree";
 			case "update_task": {
-				const status = getArg("status", argsStr, toolArgs);
-				let title = "";
+				const status = getArg(toolArgs, "status");
+				const draft = getArg(toolArgs, "draft");
+				const updateTitle = getArg(toolArgs, "title");
+				const updateDesc = getArg(toolArgs, "description");
+				let resolvedTitle = "";
 				if (resultContent) {
 					try {
 						const json = JSON.parse(resultContent);
 						if (typeof json.title === "string") {
-							title =
+							resolvedTitle =
 								json.title.length > 40
 									? `${json.title.slice(0, 40)}…`
 									: json.title;
@@ -302,16 +237,28 @@ export function getToolCardTitle(
 						/* ignore */
 					}
 				}
-				if (status && title) return `${status} → ${title}`;
-				const taskId = getArg("taskId", argsStr, toolArgs);
-				if (status && taskId) {
+				// Build a label from what's being updated
+				const updateLabel = status
+					? status
+					: draft != null
+						? draft === "true"
+							? "draft"
+							: "undraft"
+						: updateTitle
+							? "rename"
+							: updateDesc
+								? "update"
+								: "update_task";
+				if (resolvedTitle) return `${updateLabel} → ${resolvedTitle}`;
+				const taskId = getArg(toolArgs, "taskId");
+				if (taskId) {
 					const resolved = nodeMap?.get(taskId)?.title;
-					return `${status} → ${resolved ?? taskId.slice(0, 8)}`;
+					return `${updateLabel} → ${resolved ?? taskId.slice(0, 8)}`;
 				}
-				return "update_task";
+				return updateLabel;
 			}
 			case "send_message_to_child": {
-				const taskId = getArg("taskId", argsStr, toolArgs);
+				const taskId = getArg(toolArgs, "taskId");
 				if (taskId) {
 					const title = nodeMap?.get(taskId)?.title;
 					return `→ Message Child: ${title ?? taskId.slice(0, 8)}`;
@@ -321,7 +268,7 @@ export function getToolCardTitle(
 			case "report_to_parent":
 				return "← Report to Parent";
 			case "clarify": {
-				const question = getArg("question", argsStr, toolArgs);
+				const question = getArg(toolArgs, "question");
 				if (question) {
 					const display =
 						question.length > 40 ? `${question.slice(0, 40)}…` : question;
@@ -338,7 +285,6 @@ export function getToolCardTitle(
 /** Determine if a tool card should be title-only (no expandable body) */
 export function isTitleOnlyCard(
 	toolName: string,
-	argsStr: string,
 	toolArgs?: Record<string, unknown>,
 ): boolean {
 	const mcpTool = toolName.replace("mcp__opengraft__", "");
@@ -350,7 +296,7 @@ export function isTitleOnlyCard(
 		case "update_task":
 			return true;
 		case "report_to_parent": {
-			const msg = getArg("message", argsStr, toolArgs);
+			const msg = getArg(toolArgs, "message");
 			return !msg || msg.length <= 80;
 		}
 		default:
@@ -361,39 +307,20 @@ export function isTitleOnlyCard(
 /** Render structured body for special MCP tools */
 function McpToolCardBody({
 	toolName,
-	argsStr,
+	toolArgs,
 	resultContent,
 	isOk,
 	t,
 	nodeMap,
 }: {
 	toolName: string;
-	argsStr: string;
+	toolArgs: Record<string, unknown> | undefined;
 	resultContent: string | null;
 	isOk: boolean;
 	t: (key: string, params?: Record<string, string>) => string;
 	nodeMap?: Map<string, { title?: string }>;
 }) {
 	const mcpTool = toolName.replace("mcp__opengraft__", "");
-
-	// Try to parse args as JSON-like key=value pairs
-	let parsedArgs: Record<string, string> | null = null;
-	try {
-		// argsStr format: key=value, key=value or key={"json"}, ...
-		// Try simple extraction
-		const obj: Record<string, string> = {};
-		// Handle JSON objects in args by parsing the raw format
-		const rawParts = argsStr.split(/, (?=[a-zA-Z_]+=)/);
-		for (const part of rawParts) {
-			const eqIdx = part.indexOf("=");
-			if (eqIdx > 0) {
-				obj[part.slice(0, eqIdx)] = part.slice(eqIdx + 1);
-			}
-		}
-		if (Object.keys(obj).length > 0) parsedArgs = obj;
-	} catch {
-		// ignore
-	}
 
 	// Try to parse result as JSON for structured display
 	let resultJson: Record<string, unknown> | null = null;
@@ -407,13 +334,15 @@ function McpToolCardBody({
 
 	switch (mcpTool) {
 		case "execute_tasks": {
-			// Parse tasks from args
-			const tasksArg = parsedArgs?.tasks;
+			// Parse tasks from structured args
 			let tasks: Array<{ taskId?: string; message?: string; mode?: string }> =
 				[];
-			if (tasksArg) {
+			const tasksVal = toolArgs?.tasks;
+			if (Array.isArray(tasksVal)) {
+				tasks = tasksVal as typeof tasks;
+			} else if (typeof tasksVal === "string") {
 				try {
-					tasks = JSON.parse(tasksArg) as typeof tasks;
+					tasks = JSON.parse(tasksVal) as typeof tasks;
 				} catch {
 					// ignore
 				}
@@ -457,8 +386,9 @@ function McpToolCardBody({
 			);
 		}
 		case "create_task": {
-			const title = String(parsedArgs?.title ?? resultJson?.title ?? "");
-			const desc = parsedArgs?.description;
+			const title =
+				getArg(toolArgs, "title") ?? String(resultJson?.title ?? "");
+			const desc = getArg(toolArgs, "description");
 			return (
 				<div className="og-mcp-body">
 					{title && <div className="og-mcp-task-title">{title}</div>}
@@ -467,8 +397,8 @@ function McpToolCardBody({
 			);
 		}
 		case "done": {
-			const status = parsedArgs?.status;
-			const summary = parsedArgs?.summary;
+			const status = getArg(toolArgs, "status");
+			const summary = getArg(toolArgs, "summary");
 			const isPassed =
 				status === "passed" || (isOk && resultContent?.includes("passed"));
 			return (
@@ -496,6 +426,7 @@ function McpToolCardBody({
 		case "delete_task": {
 			const title =
 				typeof resultJson?.title === "string" ? resultJson.title : null;
+			const taskId = getArg(toolArgs, "taskId");
 			return (
 				<div className="og-mcp-body">
 					{title ? (
@@ -504,9 +435,8 @@ function McpToolCardBody({
 						</div>
 					) : (
 						<div className="og-mcp-task-title">
-							{(parsedArgs?.taskId
-								? (nodeMap?.get(parsedArgs.taskId)?.title ??
-									parsedArgs.taskId.slice(0, 8))
+							{(taskId
+								? (nodeMap?.get(taskId)?.title ?? taskId.slice(0, 8))
 								: null) ?? "?"}
 						</div>
 					)}
@@ -527,7 +457,7 @@ function McpToolCardBody({
 			);
 		}
 		case "send_message_to_child": {
-			const msg = parsedArgs?.message ?? "";
+			const msg = getArg(toolArgs, "message") ?? "";
 			return (
 				<div className="og-mcp-body">
 					{msg && <div className="og-mcp-task-desc">{msg}</div>}
@@ -535,7 +465,7 @@ function McpToolCardBody({
 			);
 		}
 		case "report_to_parent": {
-			const msg = parsedArgs?.message ?? "";
+			const msg = getArg(toolArgs, "message") ?? "";
 			return msg.length > 80 ? (
 				<div className="og-mcp-body">
 					<div className="og-mcp-task-desc">{msg}</div>
@@ -559,25 +489,15 @@ export function ToolCard({
 }) {
 	const { t } = useLocale();
 
-	// Prefer structured fields, fall back to text parsing
-	const parsed = parseToolUse(useEntry.text);
-	const toolName = useEntry.toolName ?? parsed.toolName;
-	const argsStr = useEntry.toolArgs
-		? formatArgs(useEntry.toolArgs)
-		: parsed.argsStr;
-	const parsedResult = parseToolResult(resultEntry.text);
-	const resultContent =
-		resultEntry.toolResult !== undefined
-			? resultEntry.toolResult
-			: parsedResult.content;
-	const isErr = resultEntry.isError ?? parsedResult.isErr;
-	const isOk =
-		resultEntry.isError !== undefined
-			? !resultEntry.isError
-			: parsedResult.isOk;
+	const toolName = useEntry.toolName ?? "";
+	const toolArgs = useEntry.toolArgs;
+	const argsStr = formatArgs(toolArgs);
+	const resultContent = resultEntry.toolResult ?? resultEntry.text;
+	const isErr = resultEntry.isError ?? false;
+	const isOk = !isErr;
 
 	const isMcp = toolName.startsWith("mcp__opengraft__");
-	const titleOnly = isTitleOnlyCard(toolName, argsStr, useEntry.toolArgs);
+	const titleOnly = isTitleOnlyCard(toolName, toolArgs);
 	const totalContent = argsStr + (resultContent ?? "");
 	const [expanded, setExpanded] = useState(() =>
 		titleOnly ? false : totalContent.length <= 200,
@@ -593,7 +513,7 @@ export function ToolCard({
 		isMcp && !titleOnly ? (
 			<McpToolCardBody
 				toolName={toolName}
-				argsStr={argsStr}
+				toolArgs={toolArgs}
 				nodeMap={nodeMap}
 				resultContent={resultContent}
 				isOk={isOk}
@@ -619,13 +539,7 @@ export function ToolCard({
 				{titleOnly ? (
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">
-							{getToolCardTitle(
-								toolName,
-								argsStr,
-								resultContent,
-								nodeMap,
-								useEntry.toolArgs,
-							)}
+							{getToolCardTitle(toolName, toolArgs, resultContent, nodeMap)}
 						</span>
 					</div>
 				) : (
@@ -635,13 +549,7 @@ export function ToolCard({
 						onClick={() => setExpanded(!expanded)}
 					>
 						<span className="og-tool-card-name">
-							{getToolCardTitle(
-								toolName,
-								argsStr,
-								resultContent,
-								nodeMap,
-								useEntry.toolArgs,
-							)}
+							{getToolCardTitle(toolName, toolArgs, resultContent, nodeMap)}
 						</span>
 						{toolName !== "mcp__opengraft__done" && (
 							<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
@@ -709,11 +617,9 @@ export function LogEntryView({
 
 	// Standalone tool_use (not merged with result) — show as a card too
 	if (entry.type === "tool_use") {
-		const parsed = parseToolUse(entry.text);
-		const toolName = entry.toolName ?? parsed.toolName;
-		const argsStr = entry.toolArgs
-			? formatArgs(entry.toolArgs)
-			: parsed.argsStr;
+		const toolName = entry.toolName ?? "";
+		const toolArgs = entry.toolArgs;
+		const argsStr = formatArgs(toolArgs);
 		const isMcp = toolName.startsWith("mcp__opengraft__");
 		return (
 			<div className="og-log-entry og-event-tool_card">
@@ -728,13 +634,7 @@ export function LogEntryView({
 				>
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">
-							{getToolCardTitle(
-								toolName,
-								argsStr,
-								null,
-								nodeMap,
-								entry.toolArgs,
-							)}
+							{getToolCardTitle(toolName, toolArgs, null, nodeMap)}
 						</span>
 						<span className="og-tool-card-status pending">
 							<span className="og-spinner" />
@@ -752,12 +652,10 @@ export function LogEntryView({
 
 	// Standalone tool_result (not merged) — show as a card
 	if (entry.type === "tool_result") {
-		const parsed = parseToolResult(entry.text);
-		const toolName = entry.toolName ?? parsed.toolName;
-		const content =
-			entry.toolResult !== undefined ? entry.toolResult : parsed.content;
-		const isErr = entry.isError ?? parsed.isErr;
-		const isOk = entry.isError !== undefined ? !entry.isError : parsed.isOk;
+		const toolName = entry.toolName ?? "";
+		const content = entry.toolResult ?? entry.text;
+		const isErr = entry.isError ?? false;
+		const isOk = !isErr;
 		const mcpFormatted = isOk
 			? formatMcpToolResult(toolName, content, t)
 			: null;
@@ -776,7 +674,7 @@ export function LogEntryView({
 				>
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">
-							{getToolCardTitle(toolName, "", content, nodeMap)}
+							{getToolCardTitle(toolName, undefined, content, nodeMap)}
 						</span>
 						{toolName !== "mcp__opengraft__done" && (
 							<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
@@ -784,7 +682,7 @@ export function LogEntryView({
 							</span>
 						)}
 					</div>
-					{content && !isTitleOnlyCard(toolName, "") && (
+					{content && !isTitleOnlyCard(toolName) && (
 						<div className="og-tool-card-body">
 							<div className="og-tool-card-result">
 								{mcpFormatted ?? content}
