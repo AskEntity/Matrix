@@ -805,7 +805,8 @@ export async function executeBashWithTimeout(
 		effectiveCwd = fallbackCwd ?? cwd;
 	}
 
-	const wrappedCommand = `___og_trap() { echo "${CWD_MARKER}"; pwd; }; trap ___og_trap EXIT; ${command}`;
+	const cdWrapper = `cd() { local t="${"$"}{1:-${"$"}HOME}"; local r; r=${"$"}(builtin cd "${"$"}t" 2>/dev/null && pwd); if [ "${"$"}(pwd)" = "${"$"}r" ]; then echo "\u26a0 Already in ${"$"}(pwd) \u2014 no need to cd" >&2; fi; builtin cd "${"$"}t"; }; `;
+	const wrappedCommand = `___og_trap() { echo "${CWD_MARKER}"; pwd; }; trap ___og_trap EXIT; ${cdWrapper}${command}`;
 	const proc = Bun.spawn(["bash", "-c", wrappedCommand], {
 		cwd: effectiveCwd,
 		stdout: "pipe",
