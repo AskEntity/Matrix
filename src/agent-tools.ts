@@ -300,7 +300,7 @@ Only implement directly if the task is small enough for a single agent session.
   important intermediate results, blockers, or status without waiting for parent acknowledgement.
 
 ## Worker Workflow
-1. Read \`.opengraft/memory.md\` and the task description carefully
+1. Read \`.opengraft/memory.md\` and the task description carefully. Also read \`CLAUDE.md\` if it exists.
 2. Explore the codebase to understand context before writing any code:
    - list_files to find relevant files and understand project structure
    - search with output_mode="files_with_matches" to locate where things are defined
