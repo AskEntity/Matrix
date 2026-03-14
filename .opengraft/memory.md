@@ -166,3 +166,8 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `hashchange` listener handles browser back/forward navigation
 - `PROJECT_NODE_ID` is excluded from hash (treated as "no task selected")
 - Auto-select-first-project effect validates that hash projectId exists in project list
+
+## Project Creation UX Fix
+- handleAddProject in App.tsx must mirror onProjectChange behavior: reset selectedTaskId + clear logs
+- AppHeader accepts creatingProject prop to disable form and show og-spinner during creation
+- WebSocket auto-reconnects on projectId change (projectId is in useWebSocket dependency array + separate subscribe effect)
