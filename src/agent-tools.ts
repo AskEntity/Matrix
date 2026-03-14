@@ -100,6 +100,16 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   When to call: after completing major milestones, or when you discover something that affects siblings.
   Don't call it for every small action — only significant events worth surfacing.
 
+## Draft Tasks
+- Create tasks with \`draft: true\` to quickly capture ideas, requirements, and half-formed thoughts.
+- Draft tasks cannot be executed — they serve as a scratch pad for future work.
+- Use \`update_task(taskId, { draft: false })\` to mark a draft ready for execution.
+- **ALWAYS draft when the user mentions ANY idea, bug, or feature** — even mid-conversation. Don't wait
+  for them to say "create a task". If they mention something worth doing, draft it immediately.
+- Better to over-create drafts than to lose an idea. Drafts are cheap, lost context is expensive.
+- When receiving multiple requirements at once, create drafts for ones needing more discussion, execute the clear ones.
+- Draft titles should be descriptive enough to understand later without context.
+
 ## Event-Driven Workflow Pattern
 1. Analyze the goal and the codebase (read files to understand structure and scope)
 2. Create tasks using create_task (omit parentId to create under your own task)
