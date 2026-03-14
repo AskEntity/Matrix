@@ -187,3 +187,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - ActivityLog uses a `bottomRef` sentinel div at the end of scroll content instead of `scrollTop = scrollHeight`
 - `bottomRef.current?.scrollIntoView({ block: "end", behavior: "instant" })` reliably reaches absolute bottom
 - Works regardless of layout timing (textarea resize, thinking indicator, etc.)
+
+## Thinking Indicator Scoping
+- `running` prop is global (any agent running), but thinking should only show for the viewed task
+- Fix: snapshot `visible.length` when `running` transitions to true via `visibleLengthOnRunStartRef`
+- Only show thinking if `visible.length > snapshot` (entries have grown → this task is active)
+- The 40px scroll threshold in handleScroll is fine with the sentinel div (empty div = 0px height)
