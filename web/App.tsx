@@ -349,7 +349,10 @@ function AppInner() {
 						if (!parsed) addLog("queue_message", raw, taskId);
 						break;
 					} else if (et === "status") {
-						// Internal status events — not shown in activity log (implementation noise)
+						const statusText = (msg.message as string) || "";
+						if (statusText.includes("Compress")) {
+							addLog("status", statusText, msg.taskId as string | undefined);
+						}
 						break;
 					} else {
 						text = JSON.stringify(msg).slice(0, 2000);
