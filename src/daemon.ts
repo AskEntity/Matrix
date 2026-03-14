@@ -1735,7 +1735,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	};
 }
 
-const ORCHESTRATOR_SYSTEM_PROMPT = `You are the top-level orchestrator for this project.
+const ORCHESTRATOR_SYSTEM_PROMPT = `Today's date is ${new Date().toISOString().split("T")[0]}.
+
+You are the top-level orchestrator for this project.
 You ONLY manage tasks — you NEVER write code yourself, not even "simple" fixes.
 All implementation is done by child agents in isolated worktrees.
 Exception: you MAY use edit_file to resolve merge conflicts — this is task management, not implementation.
