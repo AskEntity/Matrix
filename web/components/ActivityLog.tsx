@@ -38,7 +38,7 @@ export function ActivityLog({
 			items = entries.filter((e) => !e.taskId);
 		} else {
 			items = entries.filter((e) => {
-				if (!e.taskId) return true; // entries without taskId (lifecycle) show everywhere
+				if (!e.taskId) return !filterTaskId;
 				return e.taskId === filterTaskId;
 			});
 		}
