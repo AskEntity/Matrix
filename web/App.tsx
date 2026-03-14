@@ -42,6 +42,28 @@ import { LocaleProvider, useLocale } from "./i18n.ts";
 import { applyTheme, themes } from "./themes.ts";
 import { PROJECT_NODE_ID } from "./types.ts";
 
+// ── Hash routing helpers ───────────────────────────────────────────────────
+
+function parseHash(): { projectId?: string; taskId?: string } {
+	const raw = window.location.hash.replace(/^#/, "");
+	if (!raw) return {};
+	const slash = raw.indexOf("/");
+	if (slash === -1) return { projectId: raw };
+	return { projectId: raw.slice(0, slash), taskId: raw.slice(slash + 1) };
+}
+
+function updateHash(projectId: string, taskId: string | null) {
+	const hash =
+		taskId && taskId !== PROJECT_NODE_ID
+			? `#${projectId}/${taskId}`
+			: projectId
+				? `#${projectId}`
+				: "";
+	if (window.location.hash !== hash) {
+		window.location.hash = hash;
+	}
+}
+
 // ── Main App ───────────────────────────────────────────────────────────────
 
 export function App() {
@@ -60,11 +82,12 @@ function AppInner() {
 		initProject,
 		deleteProject,
 	} = useProjects();
-	const [projectId, setProjectId] = useState("");
+	const initialHash = useMemo(() => parseHash(), []);
+	const [projectId, setProjectId] = useState(initialHash.projectId ?? "");
 	const [showAddProject, setShowAddProject] = useState(false);
 	const [newProjectPath, setNewProjectPath] = useState("");
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
-		PROJECT_NODE_ID,
+		initialHash.taskId ?? PROJECT_NODE_ID,
 	);
 	const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
 	const [lastCostUsd, setLastCostUsd] = useState<number | null>(null);
@@ -401,9 +424,36 @@ function AppInner() {
 	const { connected } = useWebSocket(projectId, handleWS);
 
 	useEffect(() => {
-		if (projects.length > 0 && !projectId && projects[0])
-			setProjectId(projects[0].id);
+		if (projects.length === 0) return;
+		if (projectId && projects.some((p) => p.id === projectId)) return;
+		const first = projects[0];
+		if (first) setProjectId(first.id);
 	}, [projects, projectId]);
+
+	// ── Hash routing sync ────────────────────────────────────────────────────
+
+	// Update hash when projectId or selectedTaskId changes
+	useEffect(() => {
+		if (projectId) updateHash(projectId, selectedTaskId);
+	}, [projectId, selectedTaskId]);
+
+	// Listen for browser back/forward (hashchange)
+	useEffect(() => {
+		const onHashChange = () => {
+			const { projectId: hp, taskId: ht } = parseHash();
+			if (hp && hp !== projectId) {
+				setProjectId(hp);
+				setSelectedTaskId(ht ?? PROJECT_NODE_ID);
+				setLogs([]);
+			} else if (ht && ht !== selectedTaskId) {
+				setSelectedTaskId(ht);
+			} else if (!ht && selectedTaskId !== PROJECT_NODE_ID) {
+				setSelectedTaskId(PROJECT_NODE_ID);
+			}
+		};
+		window.addEventListener("hashchange", onHashChange);
+		return () => window.removeEventListener("hashchange", onHashChange);
+	}, [projectId, selectedTaskId]);
 
 	useEffect(() => {
 		if (projectId) checkStatus();
