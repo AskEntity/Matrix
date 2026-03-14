@@ -128,6 +128,61 @@ describe("ProjectManager", () => {
 		});
 	});
 
+	describe("git exclude — .worktrees", () => {
+		test("new project has .worktrees in .git/info/exclude", async () => {
+			const projectPath = join(tempDir, "new-exclude");
+			await pm.init(projectPath);
+
+			const exclude = await readFile(
+				join(projectPath, ".git", "info", "exclude"),
+				"utf-8",
+			);
+			expect(exclude).toContain(".worktrees");
+		});
+
+		test("existing project gets .worktrees in .git/info/exclude", async () => {
+			const projectPath = join(tempDir, "existing-exclude");
+			await mkdir(projectPath, { recursive: true });
+			// Init git manually
+			const proc = Bun.spawn(["git", "init"], {
+				cwd: projectPath,
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			await proc.exited;
+
+			await pm.init(projectPath);
+
+			const exclude = await readFile(
+				join(projectPath, ".git", "info", "exclude"),
+				"utf-8",
+			);
+			expect(exclude).toContain(".worktrees");
+		});
+
+		test("does not duplicate .worktrees if already in exclude", async () => {
+			const projectPath = join(tempDir, "no-dup-exclude");
+			await mkdir(projectPath, { recursive: true });
+			const proc = Bun.spawn(["git", "init"], {
+				cwd: projectPath,
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+			await proc.exited;
+
+			// Pre-add .worktrees to exclude
+			const excludePath = join(projectPath, ".git", "info", "exclude");
+			const existing = await readFile(excludePath, "utf-8");
+			await writeFile(excludePath, `${existing}.worktrees\n`, "utf-8");
+
+			await pm.init(projectPath);
+
+			const exclude = await readFile(excludePath, "utf-8");
+			const matches = exclude.match(/\.worktrees/g);
+			expect(matches).toHaveLength(1);
+		});
+	});
+
 	test("rejects duplicate path registration", async () => {
 		const projectPath = join(tempDir, "dup");
 		await pm.init(projectPath);

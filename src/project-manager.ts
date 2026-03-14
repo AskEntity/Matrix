@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { Project } from "./types.ts";
 
@@ -87,6 +87,7 @@ export class ProjectManager {
 
 		// Initialize git repo
 		await this.exec(["git", "init"], projectPath);
+		await this.excludeWorktrees(projectPath);
 
 		await writeFile(
 			join(projectPath, ".gitignore"),
@@ -120,6 +121,7 @@ export class ProjectManager {
 		if (!existsSync(join(projectPath, ".git"))) {
 			await this.exec(["git", "init"], projectPath);
 		}
+		await this.excludeWorktrees(projectPath);
 
 		// Commit new .opengraft/ files so the working tree stays clean
 		// (spawn_task/spawn_children require a clean working tree)
@@ -132,6 +134,26 @@ export class ProjectManager {
 		}
 
 		return this.register(projectPath);
+	}
+
+	/** Ensure .worktrees is listed in .git/info/exclude so worktree dirs stay untracked. */
+	private async excludeWorktrees(projectPath: string): Promise<void> {
+		const infoDir = join(projectPath, ".git", "info");
+		const excludePath = join(infoDir, "exclude");
+
+		await mkdir(infoDir, { recursive: true });
+
+		let content = "";
+		try {
+			content = await readFile(excludePath, "utf-8");
+		} catch {
+			// File doesn't exist yet — will create it
+		}
+
+		if (!content.split("\n").some((line) => line.trim() === ".worktrees")) {
+			const suffix = content.length > 0 && !content.endsWith("\n") ? "\n" : "";
+			await appendFile(excludePath, `${suffix}.worktrees\n`, "utf-8");
+		}
 	}
 
 	/** Register the project in daemon metadata. */

@@ -143,3 +143,8 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Tool renamed from `update_task_status` to `update_task` with optional fields: status, title, description, draft
 - All tracker methods (updateTitle, updateDescription, updateDraft) already existed — no task-tracker changes needed
 - References updated across: agent-tools.ts, ToolCard.tsx, i18n.ts (en+zh), e2e.test.ts, OpenGraft.md, CHANGELOG.md
+
+## Git Exclude for Worktrees
+- `excludeWorktrees()` in ProjectManager adds `.worktrees` to `.git/info/exclude` (local gitignore)
+- Called from both `createNew` (after git init) and `convertExisting` (after ensuring git repo exists)
+- Idempotent: checks line-by-line so it won't duplicate the entry
