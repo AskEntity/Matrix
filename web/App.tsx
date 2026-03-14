@@ -30,6 +30,14 @@ import {
 	useTasks,
 	useWebSocket,
 } from "./hooks.ts";
+
+type StructuredFields = {
+	toolName?: string;
+	toolArgs?: Record<string, unknown>;
+	toolResult?: string;
+	isError?: boolean;
+};
+
 import { LocaleProvider, useLocale } from "./i18n.ts";
 import { applyTheme, themes } from "./themes.ts";
 import { PROJECT_NODE_ID } from "./types.ts";
@@ -138,8 +146,14 @@ function AppInner() {
 			: null;
 
 	const addLog = useCallback(
-		(type: string, text: string, taskId?: string, checkpoint?: string) => {
-			const entry = createLogEntry(type, text, taskId);
+		(
+			type: string,
+			text: string,
+			taskId?: string,
+			checkpoint?: string,
+			structured?: StructuredFields,
+		) => {
+			const entry = createLogEntry(type, text, taskId, structured);
 			if (checkpoint) entry.checkpoint = checkpoint;
 			setLogs((prev) => [...prev, entry]);
 		},
@@ -230,8 +244,19 @@ function AppInner() {
 					let text = "";
 					if (et === "tool_use") {
 						text = `${msg.tool}(${formatArgs(msg.input as Record<string, unknown>)})`;
+						addLog(et, text, msg.taskId as string | undefined, undefined, {
+							toolName: msg.tool as string,
+							toolArgs: msg.input as Record<string, unknown>,
+						});
+						break;
 					} else if (et === "tool_result") {
 						text = `${msg.isError ? "ERR" : "OK"} ${msg.tool}: ${(msg.content as string) || ""}`;
+						addLog(et, text, msg.taskId as string | undefined, undefined, {
+							toolName: msg.tool as string,
+							toolResult: (msg.content as string) || "",
+							isError: (msg.isError as boolean) || false,
+						});
+						break;
 					} else if (et === "text") {
 						text = (msg.content as string) || "";
 					} else if (et === "error") {
