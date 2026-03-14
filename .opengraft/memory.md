@@ -166,3 +166,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `hashchange` listener handles browser back/forward navigation
 - `PROJECT_NODE_ID` is excluded from hash (treated as "no task selected")
 - Auto-select-first-project effect validates that hash projectId exists in project list
+
+## Tool Card Merge Investigation (No Bug Found)
+- ActivityLog `mergedVisible` scan-ahead correctly handles interleaved non-tool entries (user messages, queue messages) between tool_use and tool_result
+- The `taskId` check in `findMatchingResult` is NEEDED: prevents cross-child matching when viewing parent with multiple children using the same tool (e.g., two children both running bash)
+- `visible` array is already filtered by selected task + descendants, but taskId check adds precision within that filtered set
+- Bug report was likely stale HMR after structured events refactor — code is correct
