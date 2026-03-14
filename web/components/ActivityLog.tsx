@@ -22,6 +22,8 @@ export function ActivityLog({
 	const logRef = useRef<HTMLDivElement>(null);
 	const [searchText, setSearchText] = useState("");
 	const lastEventTimeRef = useRef(Date.now());
+	const entriesRef = useRef(entries);
+	entriesRef.current = entries;
 	const [showThinking, setShowThinking] = useState(false);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new entries
@@ -43,7 +45,14 @@ export function ActivityLog({
 			return;
 		}
 		const id = setInterval(() => {
-			setShowThinking(running && Date.now() - lastEventTimeRef.current > 1500);
+			const currentEntries = entriesRef.current;
+			const lastEntry = currentEntries[currentEntries.length - 1];
+			const hasToolInProgress = lastEntry?.type === "tool_use";
+			setShowThinking(
+				running &&
+					!hasToolInProgress &&
+					Date.now() - lastEventTimeRef.current > 1500,
+			);
 		}, 500);
 		return () => clearInterval(id);
 	}, [running]);
