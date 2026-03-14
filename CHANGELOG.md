@@ -12,7 +12,7 @@
 ### UI Redesign: Activity Log
 - **Tool cards**: Tool calls now render as collapsible cards with descriptive titles, status icons, and expandable bodies
 - **MCP tool cards**: Purple accent with special rendering for orchestration tools (create_task shows title+description, execute_tasks shows task count, etc.)
-- **Title-only cards**: get_tree, yield, delete_task, update_task_status show as compact single-line entries
+- **Title-only cards**: get_tree, yield, delete_task, update_task show as compact single-line entries
 - **Clean log**: Status events ("Starting agent loop", "Context window") filtered from activity log — only meaningful events shown
 - **Error boundary**: Graceful React error recovery instead of white screen crash
 

@@ -115,7 +115,7 @@ describe.skipIf(!hasToken)("E2E: agent execution", () => {
 						"These modules are INDEPENDENT. " +
 						"Steps: create_task for root, create_task for each module as children, " +
 						"spawn_children to execute in parallel, merge each passed child's branch yourself, then delete_task to clean up, " +
-						"then update_task_status root to passed when done.",
+						"then update_task root to passed when done.",
 				}),
 			});
 			expect(startRes.status).toBe(200);

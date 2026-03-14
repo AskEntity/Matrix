@@ -138,3 +138,8 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - After bracket matching finds a result, check if what follows is end-of-string or `, key=`
 - If not (e.g. `[NOT SCOPED] Add draft task, description=...`), fall through to simple extraction
 - This prevents bracket matching from truncating non-JSON bracket-prefixed values
+
+## update_task_status → update_task Rename
+- Tool renamed from `update_task_status` to `update_task` with optional fields: status, title, description, draft
+- All tracker methods (updateTitle, updateDescription, updateDraft) already existed — no task-tracker changes needed
+- References updated across: agent-tools.ts, ToolCard.tsx, i18n.ts (en+zh), e2e.test.ts, OpenGraft.md, CHANGELOG.md

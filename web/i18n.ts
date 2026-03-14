@@ -206,7 +206,7 @@ const en: Translations = {
 	// Tool names (MCP)
 	"tools.mcp__opengraft__get_tree": "Get Tree",
 	"tools.mcp__opengraft__create_task": "Create Task",
-	"tools.mcp__opengraft__update_task_status": "Update Status",
+	"tools.mcp__opengraft__update_task": "Update Task",
 	"tools.mcp__opengraft__execute_tasks": "Execute Tasks",
 	"tools.mcp__opengraft__yield": "yield",
 	"tools.mcp__opengraft__send_message_to_child": "Message Child",
@@ -427,7 +427,7 @@ const zh: Translations = {
 	// Tool names (MCP)
 	"tools.mcp__opengraft__get_tree": "查看任务树",
 	"tools.mcp__opengraft__create_task": "创建任务",
-	"tools.mcp__opengraft__update_task_status": "更新状态",
+	"tools.mcp__opengraft__update_task": "更新任务",
 	"tools.mcp__opengraft__execute_tasks": "执行任务",
 	"tools.mcp__opengraft__yield": "yield",
 	"tools.mcp__opengraft__send_message_to_child": "发送给子任务",
