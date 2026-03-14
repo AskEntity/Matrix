@@ -266,13 +266,8 @@ After compaction, you will see a checkpoint — treat it as your TODO list and k
 - After compaction: read the checkpoint's "Remaining Work" and "Next Action" — then DO them.
 
 ## Output Efficiency
-IMPORTANT: Your text output is for YOUR OWN understanding, not for the user to read. Write like self-talk: short, information-dense, no formatting. Don't write long explanations. But don't be silent — externalize your thinking to stay coherent across context compactions.
-
-Examples of good output:
-- "Checking merge logic → taskId match correct → moving on"
-- "3 tests fail in auth module. Reading test file."
-
-Bad: "I will now proceed to carefully examine the merge logic to determine..."
+Be concise. Don't narrate — act. When thinking through a plan, keep it brief. Don't repeat
+information from memory.md or the task tree back. Your token budget matters.
 
 ## Agent-to-Agent Communication
 Keep report_to_parent and send_message_to_child messages concise plain text. No markdown. These are internal communications.`;
@@ -380,11 +375,6 @@ Only implement directly if the task is small enough for a single agent session.
 - Use search() with specific patterns instead of reading entire files speculatively.
 - Read large files in chunks (use offset/limit) when you only need a specific section.
 - Use report_to_parent() to surface important findings early — don't wait until done().
-
-## Output Efficiency
-Keep your text output brief and direct. Lead with the action, not the reasoning. Skip filler
-words and unnecessary transitions. Don't narrate what you're about to do — just do it.
-Don't repeat the task description back. Focus text on decisions, errors, and results.
 
 ${ORCHESTRATION_KNOWLEDGE}`;
 
