@@ -172,3 +172,8 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Consumed yield tool_use entries are skipped in the main loop (loading card disappears)
 - Yield tool_result renders standalone as "▶ Resume from yield" (title-only card via isTitleOnlyCard)
 - While waiting (no result yet), yield tool_use shows as normal loading card with spinner
+
+## Project Creation UX Fix
+- handleAddProject in App.tsx must mirror onProjectChange behavior: reset selectedTaskId + clear logs
+- AppHeader accepts creatingProject prop to disable form and show og-spinner during creation
+- WebSocket auto-reconnects on projectId change (projectId is in useWebSocket dependency array + separate subscribe effect)

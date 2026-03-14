@@ -15,6 +15,7 @@ export function AppHeader({
 	projectId,
 	showAddProject,
 	newProjectPath,
+	creatingProject,
 	showSettings,
 	theme,
 	onProjectChange,
@@ -31,6 +32,7 @@ export function AppHeader({
 	projectId: string;
 	showAddProject: boolean;
 	newProjectPath: string;
+	creatingProject: boolean;
 	showSettings: boolean;
 	theme: string;
 	onProjectChange: (id: string) => void;
@@ -69,20 +71,29 @@ export function AppHeader({
 							placeholder={t("project.pathPlaceholder")}
 							value={newProjectPath}
 							onChange={(e) => onNewProjectPathChange(e.target.value)}
+							disabled={creatingProject}
 							style={{ width: "220px" }}
 						/>
 						<button
 							type="submit"
 							className="og-btn og-btn-primary"
 							style={{ fontSize: "12px", padding: "4px 10px" }}
+							disabled={creatingProject}
 						>
-							{t("project.add")}
+							{creatingProject ? (
+								<>
+									<span className="og-spinner" /> {t("project.adding")}
+								</>
+							) : (
+								t("project.add")
+							)}
 						</button>
 						<button
 							type="button"
 							className="og-btn-icon"
 							title={t("project.cancel")}
 							onClick={onCancelAddProject}
+							disabled={creatingProject}
 						>
 							<IconClose size={11} />
 						</button>

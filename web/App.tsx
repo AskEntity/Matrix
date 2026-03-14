@@ -86,6 +86,7 @@ function AppInner() {
 	const [projectId, setProjectId] = useState(initialHash.projectId ?? "");
 	const [showAddProject, setShowAddProject] = useState(false);
 	const [newProjectPath, setNewProjectPath] = useState("");
+	const [creatingProject, setCreatingProject] = useState(false);
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
 		initialHash.taskId ?? PROJECT_NODE_ID,
 	);
@@ -644,14 +645,19 @@ function AppInner() {
 	async function handleAddProject(e: React.FormEvent) {
 		e.preventDefault();
 		const path = newProjectPath.trim();
-		if (!path) return;
+		if (!path || creatingProject) return;
+		setCreatingProject(true);
 		try {
 			const project = await initProject(path);
 			setProjectId(project.id);
+			setSelectedTaskId(PROJECT_NODE_ID);
+			setLogs([]);
 			setNewProjectPath("");
 			setShowAddProject(false);
 		} catch (err) {
 			addLog("error", (err as Error).message);
+		} finally {
+			setCreatingProject(false);
 		}
 	}
 
@@ -709,6 +715,7 @@ function AppInner() {
 				projectId={projectId}
 				showAddProject={showAddProject}
 				newProjectPath={newProjectPath}
+				creatingProject={creatingProject}
 				showSettings={showSettings}
 				theme={theme}
 				onProjectChange={(id) => {
