@@ -148,3 +148,12 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `excludeWorktrees()` in ProjectManager adds `.worktrees` to `.git/info/exclude` (local gitignore)
 - Called from both `createNew` (after git init) and `convertExisting` (after ensuring git repo exists)
 - Idempotent: checks line-by-line so it won't duplicate the entry
+
+## Structured Tool Events Refactor
+- LogEntry now has optional `toolName`, `toolArgs`, `toolResult`, `isError` fields for structured tool data
+- `createLogEntry()` accepts an optional `structured` parameter for these fields
+- App.tsx WS handler passes structured data from agent_event alongside text fallback
+- ActivityLog merge logic uses `toolName` to pair tool_use with tool_result (handles parallel calls via scan-ahead)
+- ToolCard/LogEntryView prefer structured fields, fall back to text parsing for old event_history entries
+- `getToolCardTitle()` has an optional `toolArgs` param; `getArg()` helper checks structured args first, then `extractArg()`
+- `formatArgs` still exported from ToolCard.tsx — used by App.tsx to generate text fallback

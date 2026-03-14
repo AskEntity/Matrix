@@ -34,6 +34,11 @@ export interface LogEntry {
 	taskId?: string;
 	/** Full checkpoint content for compact events (collapsible in UI). */
 	checkpoint?: string;
+	/** Structured tool fields — present for tool_use/tool_result from live WS events. */
+	toolName?: string;
+	toolArgs?: Record<string, unknown>;
+	toolResult?: string;
+	isError?: boolean;
 }
 
 let logIdCounter = 0;
@@ -308,14 +313,28 @@ export function createLogEntry(
 	type: string,
 	text: string,
 	taskId?: string,
+	structured?: {
+		toolName?: string;
+		toolArgs?: Record<string, unknown>;
+		toolResult?: string;
+		isError?: boolean;
+	},
 ): LogEntry {
-	return {
+	const entry: LogEntry = {
 		id: logIdCounter++,
 		time: new Date().toLocaleTimeString(),
 		type,
 		text,
 		taskId,
 	};
+	if (structured) {
+		if (structured.toolName !== undefined) entry.toolName = structured.toolName;
+		if (structured.toolArgs !== undefined) entry.toolArgs = structured.toolArgs;
+		if (structured.toolResult !== undefined)
+			entry.toolResult = structured.toolResult;
+		if (structured.isError !== undefined) entry.isError = structured.isError;
+	}
+	return entry;
 }
 
 // --- useProjectConfig ---

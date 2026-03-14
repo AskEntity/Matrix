@@ -86,7 +86,10 @@ export function ActivityLog({
 
 	const { t } = useLocale();
 
-	// Merge adjacent tool_use + tool_result into combined entries for rendering
+	// Merge tool_use + tool_result into combined entries for rendering.
+	// Uses structured toolName field when available, falls back to text parsing.
+	// Handles parallel tool calls (A_use, B_use, A_result, B_result) by scanning
+	// ahead to find matching tool_result by toolName.
 	const mergedVisible = useMemo(() => {
 		const result: Array<
 			| { kind: "single"; entry: LogEntry }
@@ -96,6 +99,37 @@ export function ActivityLog({
 					resultEntry: LogEntry;
 			  }
 		> = [];
+
+		// Get effective tool name from an entry (structured field or text parsing)
+		const getToolName = (entry: LogEntry): string => {
+			if (entry.toolName) return entry.toolName;
+			if (entry.type === "tool_use") return entry.text.split("(")[0] ?? "";
+			if (entry.type === "tool_result") {
+				const m = /^(?:OK|ERR) ([^:]+):/.exec(entry.text);
+				return m?.[1] ?? "";
+			}
+			return "";
+		};
+
+		// Track which tool_result indices have been consumed by pairing
+		const consumedResults = new Set<number>();
+
+		// For each tool_use, scan ahead to find its matching tool_result
+		const findMatchingResult = (
+			useIdx: number,
+			name: string,
+			taskId: string | undefined,
+		): number => {
+			for (let j = useIdx + 1; j < visible.length; j++) {
+				const candidate = visible[j];
+				if (!candidate || candidate.type !== "tool_result") continue;
+				if (candidate.taskId !== taskId) continue;
+				if (consumedResults.has(j)) continue;
+				if (getToolName(candidate) === name) return j;
+			}
+			return -1;
+		};
+
 		let i = 0;
 		while (i < visible.length) {
 			const cur = visible[i];
@@ -103,31 +137,36 @@ export function ActivityLog({
 				i += 1;
 				continue;
 			}
-			// Hide get_tree tool_use entries (noise); their tool_results still show
-			if (
-				cur.type === "tool_use" &&
-				cur.text.startsWith("mcp__opengraft__get_tree(")
-			) {
+
+			// Skip already-consumed tool_result entries (paired with an earlier tool_use)
+			if (consumedResults.has(i)) {
 				i += 1;
 				continue;
 			}
-			const next = visible[i + 1];
-			if (
-				cur.type === "tool_use" &&
-				next?.type === "tool_result" &&
-				next.taskId === cur.taskId
-			) {
-				// Extract tool name from tool_use text: "toolName(args...)"
-				const useToolName = cur.text.split("(")[0] ?? "";
-				// Extract tool name from tool_result text: "OK toolName: ..." or "ERR toolName: ..."
-				const resultToolMatch = /^(?:OK|ERR) ([^:]+):/.exec(next.text);
-				const resultToolName = resultToolMatch?.[1] ?? "";
-				if (useToolName === resultToolName) {
-					result.push({ kind: "tool_card", useEntry: cur, resultEntry: next });
-					i += 2;
+
+			// Hide get_tree tool_use entries (noise); their tool_results still show
+			if (cur.type === "tool_use") {
+				const name = getToolName(cur);
+				if (name === "mcp__opengraft__get_tree") {
+					i += 1;
+					continue;
+				}
+
+				// Try to find a matching tool_result
+				const resultIdx = findMatchingResult(i, name, cur.taskId);
+				const resultEntry = resultIdx !== -1 ? visible[resultIdx] : undefined;
+				if (resultEntry) {
+					consumedResults.add(resultIdx);
+					result.push({
+						kind: "tool_card",
+						useEntry: cur,
+						resultEntry,
+					});
+					i += 1;
 					continue;
 				}
 			}
+
 			result.push({ kind: "single", entry: cur });
 			i += 1;
 		}
