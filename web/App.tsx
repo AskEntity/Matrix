@@ -284,7 +284,7 @@ function AppInner() {
 						// Internal status events — not shown in activity log (implementation noise)
 						break;
 					} else {
-						text = JSON.stringify(msg).slice(0, 200);
+						text = JSON.stringify(msg).slice(0, 2000);
 					}
 					addLog(et, text, msg.taskId as string | undefined);
 					break;
@@ -331,7 +331,7 @@ function AppInner() {
 					break;
 				case "task_started": {
 					const instruction = msg.message
-						? `\n${t("lifecycle.instructions")} ${(msg.message as string).length > 200 ? `${(msg.message as string).slice(0, 200)}…` : msg.message}`
+						? `\n${t("lifecycle.instructions")} ${msg.message}`
 						: "";
 					addLog(
 						"task_started",

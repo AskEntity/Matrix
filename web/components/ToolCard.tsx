@@ -3,15 +3,6 @@ import type { LogEntry, TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron } from "./icons.tsx";
 
-/** Tools whose expanded content can stay truncated (code content). */
-function isFileContentTool(toolName: string): boolean {
-	return (
-		toolName === "read_file" ||
-		toolName === "write_file" ||
-		toolName === "edit_file"
-	);
-}
-
 /** Format MCP tool results as human-readable summaries instead of raw JSON. */
 export function formatMcpToolResult(
 	toolName: string,
@@ -600,10 +591,7 @@ export function ToolCard({
 						{argsStr && <div className="og-tool-card-args">{argsStr}</div>}
 						{resultContent && (
 							<div className="og-tool-card-result">
-								{mcpFormatted ??
-									(isFileContentTool(toolName) && resultContent.length > 500
-										? `${resultContent.slice(0, 500)}…`
-										: resultContent)}
+								{mcpFormatted ?? resultContent}
 							</div>
 						)}
 					</div>
@@ -712,10 +700,7 @@ export function LogEntryView({
 					{content && !isTitleOnlyCard(toolName, "") && (
 						<div className="og-tool-card-body">
 							<div className="og-tool-card-result">
-								{mcpFormatted ??
-									(isFileContentTool(toolName) && content.length > 500
-										? `${content.slice(0, 500)}…`
-										: content)}
+								{mcpFormatted ?? content}
 							</div>
 						</div>
 					)}
