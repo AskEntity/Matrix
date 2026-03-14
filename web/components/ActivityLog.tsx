@@ -139,6 +139,8 @@ export function ActivityLog({
 
 		// Track which tool_result indices have been consumed by pairing
 		const consumedResults = new Set<number>();
+		// Track yield tool_use indices consumed when their result arrives
+		const consumedUseEntries = new Set<number>();
 
 		// For each tool_use, scan ahead to find its matching tool_result
 		const findMatchingResult = (
@@ -156,6 +158,26 @@ export function ActivityLog({
 			return -1;
 		};
 
+		// Pre-scan: for each yield tool_result, find its matching tool_use and
+		// mark the tool_use as consumed. The tool_result will render standalone
+		// as "Resume from yield", replacing the loading card.
+		for (let j = 0; j < visible.length; j++) {
+			const entry = visible[j];
+			if (!entry || entry.type !== "tool_result") continue;
+			if (getToolName(entry) !== "mcp__opengraft__yield") continue;
+			// Scan backwards to find the matching yield tool_use
+			for (let k = j - 1; k >= 0; k--) {
+				const candidate = visible[k];
+				if (!candidate || candidate.type !== "tool_use") continue;
+				if (candidate.taskId !== entry.taskId) continue;
+				if (consumedUseEntries.has(k)) continue;
+				if (getToolName(candidate) === "mcp__opengraft__yield") {
+					consumedUseEntries.add(k);
+					break;
+				}
+			}
+		}
+
 		let i = 0;
 		while (i < visible.length) {
 			const cur = visible[i];
@@ -164,8 +186,8 @@ export function ActivityLog({
 				continue;
 			}
 
-			// Skip already-consumed tool_result entries (paired with an earlier tool_use)
-			if (consumedResults.has(i)) {
+			// Skip already-consumed entries
+			if (consumedResults.has(i) || consumedUseEntries.has(i)) {
 				i += 1;
 				continue;
 			}
