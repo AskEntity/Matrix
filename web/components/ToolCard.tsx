@@ -58,7 +58,7 @@ export function formatMcpToolResult(
 			}
 			return null;
 		}
-		case "update_task_status": {
+		case "update_task": {
 			if (json && typeof json.status === "string") {
 				const title = typeof json.title === "string" ? ` "${json.title}"` : "";
 				return `${t("log.statusUpdate", { status: json.status as string })}${title}`;
@@ -272,7 +272,7 @@ export function getToolCardTitle(
 			}
 			case "get_tree":
 				return "Tree";
-			case "update_task_status": {
+			case "update_task": {
 				const status = extractArg(argsStr, "status");
 				let title = "";
 				if (resultContent) {
@@ -294,7 +294,7 @@ export function getToolCardTitle(
 					const resolved = nodeMap?.get(taskId)?.title;
 					return `${status} → ${resolved ?? taskId.slice(0, 8)}`;
 				}
-				return "update_task_status";
+				return "update_task";
 			}
 			case "send_message_to_child": {
 				const taskId = extractArg(argsStr, "taskId");
@@ -329,7 +329,7 @@ export function isTitleOnlyCard(toolName: string, argsStr: string): boolean {
 		case "get_tree":
 		case "yield":
 		case "delete_task":
-		case "update_task_status":
+		case "update_task":
 			return true;
 		case "report_to_parent": {
 			const msg = extractArg(argsStr, "message");

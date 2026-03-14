@@ -80,7 +80,7 @@ export function formatQueueMessage(msg: QueueMessage): string {
 export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "opengraft")
 - get_tree: View the current task tree (always check this first)
 - create_task: Create tasks (omit parentId to create under your own task, or provide parentId for a specific parent)
-- update_task_status: Update a task's status
+- update_task: Update a task's status, title, description, or draft flag
 - execute_tasks: Fire-and-forget. Spawns children in background, returns immediately with task IDs.
   Results arrive via yield() as child_complete messages.
   Modes: "new" (fresh start), "resume" (continue failed task's session), "reset" (wipe branch, restart)
@@ -637,17 +637,32 @@ export function createOrchestratorTools(
 		),
 
 		tool(
-			"update_task_status",
-			"Update the status of a task node. Valid statuses: pending, in_progress, testing, passed, failed.",
+			"update_task",
+			"Update a task node. All fields except taskId are optional — provide only the fields you want to change.",
 			{
 				taskId: z.string().describe("Task node ID"),
 				status: z
 					.enum(["pending", "in_progress", "testing", "passed", "failed"])
+					.optional()
 					.describe("New status"),
+				title: z.string().optional().describe("New title"),
+				description: z.string().optional().describe("New description"),
+				draft: z.boolean().optional().describe("Set draft flag"),
 			},
 			async (args) => {
 				try {
-					tracker.updateStatus(args.taskId, args.status);
+					if (args.status !== undefined) {
+						tracker.updateStatus(args.taskId, args.status);
+					}
+					if (args.title !== undefined) {
+						tracker.updateTitle(args.taskId, args.title);
+					}
+					if (args.description !== undefined) {
+						tracker.updateDescription(args.taskId, args.description);
+					}
+					if (args.draft !== undefined) {
+						tracker.updateDraft(args.taskId, args.draft);
+					}
 					await tracker.save();
 					broadcastTreeUpdate?.();
 					const node = tracker.get(args.taskId);

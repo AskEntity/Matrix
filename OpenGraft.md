@@ -468,7 +468,7 @@ Worker Tools（DirectProvider 内置）：
 Orchestration Tools（MCP server "opengraft"，10 tools）：
   get_tree() → task tree (flat or tree format)
   create_task(title, desc, parentId?) → node
-  update_task_status(taskId, status) → node
+  update_task(taskId, { status?, title?, description?, draft? }) → node
   execute_tasks(tasks[]) → fire-and-forget, returns spawned task IDs
   yield() → suspends until queue message, returns messages + ## Pending
   send_message_to_child(taskId, message) → sends parent_update
