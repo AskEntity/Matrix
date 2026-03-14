@@ -180,7 +180,7 @@ function AppInner() {
 			: null;
 
 	const isSelectedTaskRunning =
-		running && (isOrchestratorNode || selectedNode?.status === "in_progress");
+		running && selectedNode?.status === "in_progress";
 
 	const addLog = useCallback(
 		(
