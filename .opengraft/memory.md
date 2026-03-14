@@ -272,3 +272,15 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - POST /projects/:id/compact enqueues compact signal
 - Providers use `manualCompactRequested` flag — triggers pre-call compression regardless of token count
 - UI: compress button in TokenUsageBadge (shown when running)
+
+
+## In-Context Compaction Redesign
+- Replaced separate-API-call compaction with in-context summarization
+- `compressMessages()` removed from both providers — no longer makes separate API calls
+- New approach: inject `SUMMARIZATION_INSTRUCTION` as user message, model generates checkpoint in `<summary>` tags, then rebuild context
+- `extractCheckpoint(text)` parses `<summary>...</summary>` tags; falls back to full text if no tags
+- `buildCompactedContext(taskContext, checkpoint, cwd)` rebuilds the single user message (reads fresh memory from disk)
+- `compactionPending` flag in runLoop controls the two-phase flow: inject instruction → extract checkpoint on next iteration
+- When `compactionPending=true`, tool uses in the response are skipped (only text content extracted)
+- `CHECKPOINT_SYSTEM_PROMPT` kept exported for backward compat but no longer used by either provider
+- `SUMMARIZATION_INSTRUCTION` and `extractCheckpoint` shared between Anthropic and OpenAI providers

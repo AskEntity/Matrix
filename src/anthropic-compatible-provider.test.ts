@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type Anthropic from "@anthropic-ai/sdk";
 import type {
 	MessageParam,
 	TextBlockParam,
@@ -11,16 +10,18 @@ import { createOrchestratorTools } from "./agent-tools.ts";
 import {
 	addMessagesCacheControl,
 	backgroundProcesses,
+	buildCompactedContext,
 	cleanupSessionBackgroundProcesses,
-	compressMessages,
 	executeBashWithTimeout,
 	executeTool,
+	extractCheckpoint,
 	getCompactionThresholds,
 	getContextWindow,
 	getModelPricing,
 	getRunningBackgroundCount,
 	jsSearch,
 	resolvePath,
+	SUMMARIZATION_INSTRUCTION,
 	truncateSearchOutput,
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
@@ -887,393 +888,117 @@ describe("truncateSearchOutput", () => {
 	});
 });
 
-describe("compressMessages", () => {
-	function makeMockClient(summaryText: string) {
-		return {
-			messages: {
-				stream: () => ({
-					finalMessage: async () => ({
-						content: [{ type: "text", text: summaryText }],
-					}),
-				}),
-			},
-		} as unknown as Anthropic;
-	}
-
-	test("skips compression for short conversations", async () => {
-		const messages: MessageParam[] = [
-			{ role: "user", content: "hello" },
-			{ role: "assistant", content: "hi" },
-		];
-		const client = makeMockClient("summary");
-		const { compressed } = await compressMessages(
-			client,
-			messages,
-			"claude-sonnet-4-6",
-		);
-		expect(compressed).toEqual(messages);
+describe("extractCheckpoint", () => {
+	test("extracts text between summary tags", () => {
+		const response =
+			"<summary>\n## Current Phase\nimplementation\n\n## Completed Work\nDid stuff\n</summary>";
+		const checkpoint = extractCheckpoint(response);
+		expect(checkpoint).toContain("Current Phase");
+		expect(checkpoint).toContain("implementation");
+		expect(checkpoint).toContain("Completed Work");
 	});
 
-	test("compacts messages into single user message", async () => {
-		const messages: MessageParam[] = [];
-		for (let i = 0; i < 20; i++) {
-			messages.push({ role: "user", content: `message ${i}` });
-			messages.push({ role: "assistant", content: `reply ${i}` });
-		}
-		const client = makeMockClient("This is the conversation summary.");
-		const { compressed, savedTokens, checkpoint } = await compressMessages(
-			client,
-			messages,
-			"claude-sonnet-4-6",
-		);
-		// Output is exactly ONE user message
-		expect(compressed.length).toBe(1);
-		expect(compressed[0]?.role).toBe("user");
-		const content = compressed[0]?.content as string;
-		// Contains checkpoint summary
-		expect(content).toContain("Checkpoint Summary");
-		expect(content).toContain("This is the conversation summary.");
-		// Contains recent conversation transcript as text
-		expect(content).toContain("Recent Conversation");
-		expect(content).toContain("message 19");
-		expect(content).toContain("reply 19");
-		// Should return checkpoint text
-		expect(checkpoint).toBe("This is the conversation summary.");
-		// Should report saved tokens
-		expect(savedTokens).toBeGreaterThanOrEqual(0);
+	test("trims whitespace from extracted content", () => {
+		const response = "<summary>\n  some content  \n</summary>";
+		expect(extractCheckpoint(response)).toBe("some content");
 	});
 
-	test("re-injects task context and fresh memory", async () => {
-		const messages: MessageParam[] = [];
-		for (let i = 0; i < 10; i++) {
-			messages.push({ role: "user", content: `msg ${i}` });
-			messages.push({ role: "assistant", content: `reply ${i}` });
-		}
-		const client = makeMockClient("checkpoint content");
-		const { compressed } = await compressMessages(
-			client,
-			messages,
-			"claude-sonnet-4-6",
+	test("uses full response when no summary tags present", () => {
+		const response = "Just a plain text checkpoint without tags";
+		expect(extractCheckpoint(response)).toBe(
+			"Just a plain text checkpoint without tags",
+		);
+	});
+
+	test("handles empty summary tags", () => {
+		const response = "<summary></summary>";
+		expect(extractCheckpoint(response)).toBe("");
+	});
+
+	test("handles response with text before and after summary tags", () => {
+		const response =
+			"Some preamble\n<summary>\nThe actual checkpoint\n</summary>\nSome epilogue";
+		expect(extractCheckpoint(response)).toBe("The actual checkpoint");
+	});
+
+	test("handles multiline checkpoint content", () => {
+		const response =
+			"<summary>\n## Phase\ndone\n\n## Work\n- item 1\n- item 2\n</summary>";
+		const checkpoint = extractCheckpoint(response);
+		expect(checkpoint).toContain("## Phase");
+		expect(checkpoint).toContain("- item 1");
+		expect(checkpoint).toContain("- item 2");
+	});
+});
+
+describe("buildCompactedContext", () => {
+	test("includes task context and checkpoint", async () => {
+		const result = await buildCompactedContext(
 			"Build a calculator app",
+			"## Current Phase\nimplementation",
 		);
-		const content = compressed[0]?.content as string;
-		// Should contain original task context
-		expect(content).toContain("Build a calculator app");
-		// Should contain checkpoint
-		expect(content).toContain("checkpoint content");
+		expect(result).toContain("Build a calculator app");
+		expect(result).toContain("Checkpoint Summary");
+		expect(result).toContain("## Current Phase");
+		expect(result).toContain("Resume from this checkpoint");
 	});
 
-	test("uses same-tier model for checkpoint generation", async () => {
-		let calledModel = "";
-		const client = {
-			messages: {
-				stream: (params: { model: string }) => {
-					calledModel = params.model;
-					return {
-						finalMessage: async () => ({
-							content: [{ type: "text", text: "summary" }],
-						}),
-					};
-				},
-			},
-		} as unknown as Anthropic;
-		const messages: MessageParam[] = [];
-		for (let i = 0; i < 10; i++) {
-			messages.push({ role: "user", content: `msg ${i}` });
-			messages.push({ role: "assistant", content: `reply ${i}` });
-		}
-		await compressMessages(client, messages, "claude-sonnet-4-6");
-		expect(calledModel).toBe("claude-sonnet-4-6");
-	});
+	test("includes fresh memory when cwd has memory file", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-compact-test-"));
+		try {
+			await mkdir(join(tempDir, ".opengraft"), { recursive: true });
+			await writeFile(
+				join(tempDir, ".opengraft", "memory.md"),
+				"# Project Memory\n- important note",
+			);
 
-	test("includes recent transcript as text in single message", async () => {
-		const messages: MessageParam[] = [];
-		for (let i = 0; i < 40; i++) {
-			messages.push({ role: "user", content: `user-msg-${i}` });
-			messages.push({ role: "assistant", content: `assistant-reply-${i}` });
-		}
-		const client = makeMockClient("checkpoint summary");
-		const { compressed } = await compressMessages(
-			client,
-			messages,
-			"claude-sonnet-4-6",
-		);
-		// Exactly one user message
-		expect(compressed.length).toBe(1);
-		expect(compressed[0]?.role).toBe("user");
-		const content = compressed[0]?.content as string;
-		expect(content).toContain("checkpoint summary");
-		// Recent conversation included as text transcript, not raw API messages
-		expect(content).toContain("Recent Conversation");
-		expect(content).toContain("user-msg-39");
-		expect(content).toContain("assistant-reply-39");
-		expect(content).toContain("user-msg-38");
-		// No bridge message, no separate tail messages
-		expect(content).not.toContain("Resuming from checkpoint");
-	});
-
-	test("sends full transcript without truncation to summarizer", async () => {
-		let capturedContent = "";
-		const client = {
-			messages: {
-				stream: (params: { model: string; messages: MessageParam[] }) => {
-					const msg = params.messages[0];
-					capturedContent = typeof msg?.content === "string" ? msg.content : "";
-					return {
-						finalMessage: async () => ({
-							content: [{ type: "text", text: "summary" }],
-						}),
-					};
-				},
-			},
-		} as unknown as Anthropic;
-		const messages: MessageParam[] = [];
-		// Create messages with long content
-		for (let i = 0; i < 10; i++) {
-			messages.push({
-				role: "user",
-				content: `msg-${"x".repeat(3000)}-${i}`,
-			});
-			messages.push({
-				role: "assistant",
-				content: `reply-${"y".repeat(3000)}-${i}`,
-			});
-		}
-		await compressMessages(client, messages, "claude-sonnet-4-6");
-		// Full content should be in the transcript — no per-message truncation
-		for (let i = 0; i < 10; i++) {
-			expect(capturedContent).toContain(`msg-${"x".repeat(3000)}-${i}`);
-			expect(capturedContent).toContain(`reply-${"y".repeat(3000)}-${i}`);
+			const result = await buildCompactedContext(
+				"Some task",
+				"checkpoint content",
+				tempDir,
+			);
+			expect(result).toContain("Project Memory (fresh)");
+			expect(result).toContain("important note");
+		} finally {
+			await rm(tempDir, { recursive: true });
 		}
 	});
 
-	test("uses 32768 max_tokens for summary generation", async () => {
-		let capturedMaxTokens = 0;
-		const client = {
-			messages: {
-				stream: (params: { max_tokens: number }) => {
-					capturedMaxTokens = params.max_tokens;
-					return {
-						finalMessage: async () => ({
-							content: [{ type: "text", text: "summary" }],
-						}),
-					};
-				},
-			},
-		} as unknown as Anthropic;
-		const messages: MessageParam[] = [];
-		for (let i = 0; i < 10; i++) {
-			messages.push({ role: "user", content: `msg ${i}` });
-			messages.push({ role: "assistant", content: `reply ${i}` });
+	test("works without task context", async () => {
+		const result = await buildCompactedContext(undefined, "checkpoint text");
+		expect(result).toContain("Checkpoint Summary");
+		expect(result).toContain("checkpoint text");
+		expect(result).not.toContain("Original Task");
+	});
+
+	test("works when memory file does not exist", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-nomem-test-"));
+		try {
+			const result = await buildCompactedContext("task", "checkpoint", tempDir);
+			expect(result).toContain("Checkpoint Summary");
+			expect(result).not.toContain("Project Memory");
+		} finally {
+			await rm(tempDir, { recursive: true });
 		}
-		await compressMessages(client, messages, "claude-sonnet-4-6");
-		expect(capturedMaxTokens).toBe(32768);
+	});
+});
+
+describe("SUMMARIZATION_INSTRUCTION", () => {
+	test("instructs model not to use tools", () => {
+		expect(SUMMARIZATION_INSTRUCTION).toContain("Do NOT use any tools");
 	});
 
-	test("tool_use/tool_result serialized as text in transcript, no raw API blocks", async () => {
-		const messages: MessageParam[] = [];
-		// Add some normal messages
-		for (let i = 0; i < 5; i++) {
-			messages.push({ role: "user", content: `msg ${i}` });
-			messages.push({ role: "assistant", content: `reply ${i}` });
-		}
-		// Add tool_use / tool_result sequence
-		messages.push({
-			role: "assistant",
-			content: [
-				{
-					type: "tool_use",
-					id: "toolu_test123",
-					name: "bash",
-					input: { command: "ls" },
-				},
-			],
-		});
-		messages.push({
-			role: "user",
-			content: [
-				{
-					type: "tool_result",
-					tool_use_id: "toolu_test123",
-					content: "file1.txt",
-				},
-			],
-		});
-		messages.push({ role: "assistant", content: "here are the files" });
-		messages.push({ role: "user", content: "thanks" });
-
-		const client = makeMockClient("checkpoint summary");
-		const { compressed } = await compressMessages(
-			client,
-			messages,
-			"claude-sonnet-4-6",
-		);
-
-		// Exactly one user message — no raw API message blocks
-		expect(compressed.length).toBe(1);
-		expect(compressed[0]?.role).toBe("user");
-		const content = compressed[0]?.content as string;
-		// Tool interactions appear as text in the transcript
-		expect(content).toContain("[tool_use: bash(");
-		expect(content).toContain("[tool_result: file1.txt]");
-		expect(content).toContain("here are the files");
+	test("requires summary tags", () => {
+		expect(SUMMARIZATION_INSTRUCTION).toContain("<summary>");
+		expect(SUMMARIZATION_INSTRUCTION).toContain("</summary>");
 	});
 
-	test("all user messages appear in transcript sent to summarizer", async () => {
-		let capturedContent = "";
-		const client = {
-			messages: {
-				stream: (params: { messages: MessageParam[] }) => {
-					const msg = params.messages[0];
-					capturedContent = typeof msg?.content === "string" ? msg.content : "";
-					return {
-						finalMessage: async () => ({
-							content: [{ type: "text", text: "checkpoint" }],
-						}),
-					};
-				},
-			},
-		} as unknown as Anthropic;
-
-		const messages: MessageParam[] = [
-			{ role: "user", content: "Please build a REST API" },
-			{ role: "assistant", content: "Sure, starting" },
-			{ role: "user", content: "Add authentication too" },
-			{ role: "assistant", content: "Adding auth" },
-			{ role: "user", content: "Use JWT tokens" },
-			{ role: "assistant", content: "Using JWT" },
-			{ role: "user", content: "Deploy to production" },
-		];
-
-		await compressMessages(client, messages, "claude-sonnet-4-6");
-
-		// ALL user messages must be in the transcript sent to summarizer
-		expect(capturedContent).toContain("Please build a REST API");
-		expect(capturedContent).toContain("Add authentication too");
-		expect(capturedContent).toContain("Use JWT tokens");
-		expect(capturedContent).toContain("Deploy to production");
-		// All assistant messages too
-		expect(capturedContent).toContain("Sure, starting");
-		expect(capturedContent).toContain("Adding auth");
-		expect(capturedContent).toContain("Using JWT");
-	});
-
-	test("user messages appear in compressed output's recent transcript", async () => {
-		const client = makeMockClient("checkpoint summary");
-		const messages: MessageParam[] = [
-			{ role: "user", content: "Implement feature X with unit tests" },
-			{ role: "assistant", content: "Working on it" },
-			{ role: "user", content: "Also fix bug Y in module Z" },
-			{ role: "assistant", content: "Fixed" },
-			{ role: "user", content: "Run the full test suite" },
-		];
-
-		const { compressed } = await compressMessages(
-			client,
-			messages,
-			"claude-sonnet-4-6",
-		);
-
-		const content = compressed[0]?.content as string;
-		// User messages must appear in the recent transcript section
-		expect(content).toContain("Implement feature X with unit tests");
-		expect(content).toContain("Also fix bug Y in module Z");
-		expect(content).toContain("Run the full test suite");
-	});
-
-	test("tool_result with array content (e.g. image) extracts text", async () => {
-		let capturedContent = "";
-		const client = {
-			messages: {
-				stream: (params: { messages: MessageParam[] }) => {
-					const msg = params.messages[0];
-					capturedContent = typeof msg?.content === "string" ? msg.content : "";
-					return {
-						finalMessage: async () => ({
-							content: [{ type: "text", text: "summary" }],
-						}),
-					};
-				},
-			},
-		} as unknown as Anthropic;
-
-		const messages: MessageParam[] = [
-			{ role: "user", content: "Read the image" },
-			{
-				role: "assistant",
-				content: [
-					{
-						type: "tool_use",
-						id: "toolu_img",
-						name: "read_file",
-						input: { path: "photo.png" },
-					},
-				],
-			},
-			{
-				role: "user",
-				content: [
-					{
-						type: "tool_result",
-						tool_use_id: "toolu_img",
-						content: [
-							{
-								type: "image",
-								source: {
-									type: "base64",
-									media_type: "image/png",
-									data: "iVBOR...",
-								},
-							},
-							{ type: "text", text: "[Image: photo.png]" },
-						],
-					},
-				],
-			},
-			{ role: "assistant", content: "I can see the image" },
-			{ role: "user", content: "describe it" },
-		];
-
-		await compressMessages(client, messages, "claude-sonnet-4-6");
-
-		// The text part of the image tool result should be preserved
-		expect(capturedContent).toContain("[Image: photo.png]");
-		// Should NOT show generic "[result]" for image results with text
-		expect(capturedContent).not.toContain("[tool_result: [result]]");
-	});
-
-	test("very long user message is not truncated per-message", async () => {
-		let capturedContent = "";
-		const client = {
-			messages: {
-				stream: (params: { messages: MessageParam[] }) => {
-					const msg = params.messages[0];
-					capturedContent = typeof msg?.content === "string" ? msg.content : "";
-					return {
-						finalMessage: async () => ({
-							content: [{ type: "text", text: "summary" }],
-						}),
-					};
-				},
-			},
-		} as unknown as Anthropic;
-
-		// 15k character user message
-		const longMessage = `IMPORTANT_REQUEST: ${"x".repeat(15000)} END_REQUEST`;
-		const messages: MessageParam[] = [
-			{ role: "user", content: longMessage },
-			{ role: "assistant", content: "Processing" },
-			{ role: "user", content: "Status update?" },
-			{ role: "assistant", content: "Still working" },
-			{ role: "user", content: "Done?" },
-		];
-
-		await compressMessages(client, messages, "claude-sonnet-4-6");
-
-		// The entire long message must be in the transcript, not truncated
-		expect(capturedContent).toContain("IMPORTANT_REQUEST:");
-		expect(capturedContent).toContain("END_REQUEST");
-		expect(capturedContent).toContain("x".repeat(15000));
+	test("lists required checkpoint sections", () => {
+		expect(SUMMARIZATION_INSTRUCTION).toContain("User Requests");
+		expect(SUMMARIZATION_INSTRUCTION).toContain("Current Phase");
+		expect(SUMMARIZATION_INSTRUCTION).toContain("Completed Work");
+		expect(SUMMARIZATION_INSTRUCTION).toContain("Rejected Approaches");
+		expect(SUMMARIZATION_INSTRUCTION).toContain("Next Action");
 	});
 });
 
