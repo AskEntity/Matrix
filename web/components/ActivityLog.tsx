@@ -218,6 +218,28 @@ export function ActivityLog({
 			result.push({ kind: "single", entry: cur });
 			i += 1;
 		}
+
+		// Post-process: only keep the latest yield/resume entry
+		let foundLatestYield = false;
+		for (let j = result.length - 1; j >= 0; j--) {
+			const item = result[j];
+			const entry =
+				item?.kind === "single"
+					? item.entry
+					: item?.kind === "tool_card"
+						? item.useEntry
+						: null;
+			if (!entry) continue;
+			const name = entry.toolName ?? "";
+			if (name.includes("yield")) {
+				if (foundLatestYield) {
+					result.splice(j, 1); // remove earlier yield entries
+				} else {
+					foundLatestYield = true; // keep this one
+				}
+			}
+		}
+
 		return result;
 	}, [visible]);
 
