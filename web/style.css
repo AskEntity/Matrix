@@ -1449,7 +1449,7 @@ button.og-tool-card-header:hover {
 
 /* MCP tool card body styles */
 .og-mcp-body {
-	padding-top: 4px;
+	padding: 8px 12px;
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
