@@ -10,18 +10,23 @@ export function ActivityLog({
 	nodeMap,
 	autoScroll,
 	onAutoScrollChange,
+	running,
 }: {
 	entries: LogEntry[];
 	filterTaskId: string | null;
 	nodeMap: Map<string, TaskNode>;
 	autoScroll: boolean;
 	onAutoScrollChange: (locked: boolean) => void;
+	running: boolean;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 	const [searchText, setSearchText] = useState("");
+	const lastEventTimeRef = useRef(Date.now());
+	const [showThinking, setShowThinking] = useState(false);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new entries
 	useEffect(() => {
+		lastEventTimeRef.current = Date.now();
 		if (autoScroll && logRef.current) {
 			requestAnimationFrame(() => {
 				if (logRef.current) {
@@ -30,6 +35,18 @@ export function ActivityLog({
 			});
 		}
 	}, [entries.length, autoScroll]);
+
+	// Show "Thinking..." when agent is running but no events for 1.5s
+	useEffect(() => {
+		if (!running) {
+			setShowThinking(false);
+			return;
+		}
+		const id = setInterval(() => {
+			setShowThinking(running && Date.now() - lastEventTimeRef.current > 1500);
+		}, 500);
+		return () => clearInterval(id);
+	}, [running]);
 
 	useEffect(() => {
 		const el = logRef.current;
@@ -201,7 +218,15 @@ export function ActivityLog({
 						/>
 					),
 				)}
-				{mergedVisible.length === 0 && (
+				{showThinking && (
+					<div className="og-thinking-indicator">
+						<span className="og-thinking-dots">
+							Thinking
+							<span className="og-dots-anim">...</span>
+						</span>
+					</div>
+				)}
+				{mergedVisible.length === 0 && !showThinking && (
 					<div
 						style={{
 							padding: "32px 20px",
