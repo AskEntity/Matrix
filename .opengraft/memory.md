@@ -144,3 +144,8 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - **Parallel by default** — most tasks have independent scopes.少量冲突也可以并行运行任务树。
 - **Only skip creating** when a task is so heavily dependent on another that even scoping is impossible (extremely rare).
 - **Tree, not list** — prefer deep parallel trees over flat sequential lists.
+
+## Test Mock Pattern for OpenAI Provider
+- When mocking `globalThis.fetch` in runLoop integration tests, use URL-based dispatch instead of plain callCount. `fetchContextWindowFromAPI()` calls `GET /models` before chat completions, so a naive counter will be off by one.
+- Pattern: check if URL includes `/models` (without `/chat/`) → return models response; if `/chat/completions` → use chat-specific counter.
+- Always call `clearContextWindowCache()` in `finally` blocks to prevent cache leaking between tests.
