@@ -1832,10 +1832,7 @@ if (import.meta.main) {
 		fetch: app.fetch,
 		port,
 		websocket,
-		development: {
-			hmr: true,
-			console: true,
-		},
+		development: process.env.NODE_ENV === "development" ? { hmr: true, console: true } : false,
 	});
 
 	// Graceful shutdown: save sessions before exit
