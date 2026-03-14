@@ -176,9 +176,7 @@ function AppInner() {
 			: null;
 
 	const isSelectedTaskRunning =
-		running &&
-		(selectedTaskId === PROJECT_NODE_ID ||
-			selectedNode?.status === "in_progress");
+		running && selectedNode?.status === "in_progress";
 
 	const addLog = useCallback(
 		(
