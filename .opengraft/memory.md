@@ -272,3 +272,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - POST /projects/:id/compact enqueues compact signal
 - Providers use `manualCompactRequested` flag — triggers pre-call compression regardless of token count
 - UI: compress button in TokenUsageBadge (shown when running)
+
+## Lifecycle Event TaskId Assignment
+- task_started/task_completed WS events create 2 log entries: one with the child taskId, one with the parent taskId (looked up via nodeMapRef)
+- nodeMapRef pattern: `useRef(nodeMap)` + `nodeMapRef.current = nodeMap` after each render to access latest nodeMap inside memoized useCallback
+- orchestration_started/completed, agent_stopped, error use PROJECT_NODE_ID (root-level events)
+- Fallback to PROJECT_NODE_ID if parentId lookup fails (e.g. nodeMap not yet updated)
