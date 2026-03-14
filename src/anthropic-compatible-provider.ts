@@ -1693,6 +1693,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		let totalCacheReadTokens = 0;
 		let estimatedInputTokens = 0;
 		let lastText = "";
+		let manualCompactRequested = false;
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
 		while (true) {
@@ -1707,21 +1708,31 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				let tokenCount = estimatedInputTokens;
 				let isEstimated = true;
 
-				if (estimatedInputTokens >= lazyCountThreshold) {
-					const result = await this.client.messages.countTokens({
-						model,
-						system: [{ type: "text", text: request.systemPrompt ?? "" }],
-						messages,
-						tools: allTools,
-					});
-					tokenCount = result.input_tokens;
-					isEstimated = false;
+				if (
+					manualCompactRequested ||
+					estimatedInputTokens >= lazyCountThreshold
+				) {
+					if (!manualCompactRequested) {
+						const result = await this.client.messages.countTokens({
+							model,
+							system: [{ type: "text", text: request.systemPrompt ?? "" }],
+							messages,
+							tools: allTools,
+						});
+						tokenCount = result.input_tokens;
+						isEstimated = false;
+					}
 				}
 
-				if (!isEstimated && tokenCount > compressThreshold) {
+				if (
+					manualCompactRequested ||
+					(!isEstimated && tokenCount > compressThreshold)
+				) {
 					yield {
 						type: "status",
-						message: `Compressing conversation (${tokenCount} tokens, threshold: ${compressThreshold})`,
+						message: manualCompactRequested
+							? "Manual compaction triggered"
+							: `Compressing conversation (${tokenCount} tokens, threshold: ${compressThreshold})`,
 					};
 					try {
 						const { compressed, savedTokens, checkpoint } =
@@ -1765,7 +1776,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							estimated: true,
 						};
 						yield { type: "compact", checkpoint, savedTokens };
+						manualCompactRequested = false;
 					} catch (e) {
+						manualCompactRequested = false;
 						yield {
 							type: "error",
 							message: `Compression failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -1893,10 +1906,18 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						const first = await queue.wait();
 						const rest = queue.drain();
 						const all = [first, ...rest];
-						const formatted = all.map(formatQueueMessage).join("\n");
+						if (all.some((m) => m.source === "compact")) {
+							manualCompactRequested = true;
+						}
+						const nonCompact = all.filter((m) => m.source !== "compact");
+						if (nonCompact.length === 0) {
+							// Only compact signal — no messages to inject, just continue to trigger compaction
+							continue;
+						}
+						const formatted = nonCompact.map(formatQueueMessage).join("\n");
 						yield { type: "queue_message", messages: formatted };
 						// Inject messages as a new user turn and continue the loop
-						const imageBlocks = extractQueueImages(all);
+						const imageBlocks = extractQueueImages(nonCompact);
 						if (imageBlocks.length > 0) {
 							messages.push({
 								role: "user" as const,
@@ -2027,13 +2048,19 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			let cancellationImages: ReturnType<typeof extractQueueImages> = [];
 			if (queue && queue.pending > 0) {
 				const queueMsgs = queue.drain();
-				const formatted = queueMsgs.map(formatQueueMessage).join("\n");
-				const lastResult = toolResults[toolResults.length - 1];
-				if (lastResult && typeof lastResult.content === "string") {
-					lastResult.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
+				if (queueMsgs.some((m) => m.source === "compact")) {
+					manualCompactRequested = true;
 				}
-				cancellationImages = extractQueueImages(queueMsgs);
-				yield { type: "queue_message", messages: formatted };
+				const nonCompactMsgs = queueMsgs.filter((m) => m.source !== "compact");
+				if (nonCompactMsgs.length > 0) {
+					const formatted = nonCompactMsgs.map(formatQueueMessage).join("\n");
+					const lastResult = toolResults[toolResults.length - 1];
+					if (lastResult && typeof lastResult.content === "string") {
+						lastResult.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
+					}
+					cancellationImages = extractQueueImages(nonCompactMsgs);
+					yield { type: "queue_message", messages: formatted };
+				}
 			}
 
 			// Add tool results to history (with any queued images appended)

@@ -32,7 +32,8 @@ export type QueueMessage =
 			stdout: string;
 			stderr: string;
 			durationMs: number;
-	  };
+	  }
+	| { source: "compact" };
 
 /**
  * A simple async message queue for inter-agent communication.

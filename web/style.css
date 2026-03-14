@@ -1840,6 +1840,22 @@ button.og-tool-card-header:hover {
 	margin-left: 1px;
 }
 
+.og-compact-btn {
+	background: none;
+	border: none;
+	color: inherit;
+	cursor: pointer;
+	padding: 0 2px;
+	font-size: 11px;
+	opacity: 0.6;
+	margin-left: 2px;
+	line-height: 1;
+}
+
+.og-compact-btn:hover {
+	opacity: 1;
+}
+
 /* Footer run/send button */
 .og-btn-run {
 	display: inline-flex;

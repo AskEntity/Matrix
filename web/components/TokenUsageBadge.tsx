@@ -11,10 +11,12 @@ export function TokenUsageBadge({
 	inputTokens,
 	contextWindow,
 	estimated,
+	onCompact,
 }: {
 	inputTokens: number;
 	contextWindow: number;
 	estimated?: boolean;
+	onCompact?: () => void;
 }) {
 	const { t } = useLocale();
 	const ratio = contextWindow > 0 ? inputTokens / contextWindow : 0;
@@ -24,6 +26,16 @@ export function TokenUsageBadge({
 		<span className={`og-token-badge og-token-${level}`} title={tooltip}>
 			{formatTokenCount(inputTokens)} / {formatTokenCount(contextWindow)}
 			{estimated && <span className="og-token-estimated">~</span>}
+			{onCompact && (
+				<button
+					type="button"
+					className="og-compact-btn"
+					onClick={onCompact}
+					title={t("footer.compact")}
+				>
+					⌘
+				</button>
+			)}
 		</span>
 	);
 }

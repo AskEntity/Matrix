@@ -142,6 +142,7 @@ const en: Translations = {
 	"footer.run": "Run",
 	"footer.contextWindow": "Context",
 	"footer.estimated": "estimated",
+	"footer.compact": "Compact context",
 
 	// Clarifications
 	"clarify.needed": "Clarification needed",
@@ -365,6 +366,7 @@ const zh: Translations = {
 	"footer.run": "运行",
 	"footer.contextWindow": "上下文",
 	"footer.estimated": "估算",
+	"footer.compact": "压缩上下文",
 
 	// Clarifications
 	"clarify.needed": "需要澄清",

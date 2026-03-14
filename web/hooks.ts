@@ -280,6 +280,13 @@ export function useAgent(projectId: string) {
 		[projectId],
 	);
 
+	const compact = useCallback(async () => {
+		const res = await fetch(`/projects/${projectId}/compact`, {
+			method: "POST",
+		});
+		if (!res.ok) throw new Error((await res.json()).error);
+	}, [projectId]);
+
 	const sendMessageToTask = useCallback(
 		async (taskId: string, content: string) => {
 			const res = await fetch(
@@ -304,6 +311,7 @@ export function useAgent(projectId: string) {
 		setModel,
 		start,
 		stop,
+		compact,
 		checkStatus,
 		continueTask,
 		deleteTask,

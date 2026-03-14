@@ -51,9 +51,16 @@ export class ClaudeAgentSdkProvider implements AgentProvider {
 					}
 					// Drain queue after each assistant turn (cancellation point)
 					if (request.queue && request.queue.pending > 0) {
-						const msgs = request.queue.drain();
-						const formatted = msgs.map(formatQueueMessage).join("\n");
-						yield { type: "queue_message" as const, messages: formatted };
+						const msgs = request.queue
+							.drain()
+							.filter((m) => m.source !== "compact");
+						if (msgs.length > 0) {
+							const formatted = msgs.map(formatQueueMessage).join("\n");
+							yield {
+								type: "queue_message" as const,
+								messages: formatted,
+							};
+						}
 					}
 					break;
 				}
@@ -145,7 +152,8 @@ export class ClaudeAgentSdkProvider implements AgentProvider {
 						}
 						// Drain queue after each assistant turn and inject into conversation
 						if (queue.pending > 0) {
-							const msgs = queue.drain();
+							const msgs = queue.drain().filter((m) => m.source !== "compact");
+							if (msgs.length === 0) continue;
 							const formatted = msgs.map(formatQueueMessage).join("\n");
 							yield { type: "queue_message" as const, messages: formatted };
 							const sdkMsg: SDKUserMessage = {

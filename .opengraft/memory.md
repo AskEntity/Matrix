@@ -262,3 +262,11 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - TRANSCRIPT_CHAR_LIMIT (640k chars) truncates from HEAD (oldest dropped) — recent messages always preserved
 - Recent transcript (~80k chars) is included verbatim in the compressed output for detailed context
 - The compressed output = 1 user message: task context + fresh memory + checkpoint summary + recent transcript
+
+## Manual Compaction Trigger
+- `compact` source type added to QueueMessage — a signal-only message with no content
+- POST /projects/:id/compact endpoint enqueues compact signal to active session queue
+- Both providers (Anthropic + OpenAI) use `manualCompactRequested` flag — set when compact signal is drained from queue, triggers pre-call compression at next loop iteration regardless of token count
+- Compact signals are filtered out at: cancellation points, implicit yield, yield MCP tool (re-enqueued for provider), Claude Code SDK provider (silently dropped — no compaction support)
+- UI: compress button (⌘) in TokenUsageBadge, only shown when agent is running
+- hooks.ts: `compact()` function added to useAgent return value
