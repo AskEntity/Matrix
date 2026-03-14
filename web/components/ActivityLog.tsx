@@ -23,7 +23,11 @@ export function ActivityLog({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new entries
 	useEffect(() => {
 		if (autoScroll && logRef.current) {
-			logRef.current.scrollTop = logRef.current.scrollHeight;
+			requestAnimationFrame(() => {
+				if (logRef.current) {
+					logRef.current.scrollTop = logRef.current.scrollHeight;
+				}
+			});
 		}
 	}, [entries.length, autoScroll]);
 
@@ -32,7 +36,11 @@ export function ActivityLog({
 		if (!el) return;
 		const observer = new ResizeObserver(() => {
 			if (autoScroll) {
-				el.scrollTop = el.scrollHeight;
+				requestAnimationFrame(() => {
+					if (logRef.current) {
+						logRef.current.scrollTop = logRef.current.scrollHeight;
+					}
+				});
 			}
 		});
 		observer.observe(el);
@@ -92,6 +100,15 @@ export function ActivityLog({
 		while (i < visible.length) {
 			const cur = visible[i];
 			if (!cur) {
+				i += 1;
+				continue;
+			}
+			// Hide yield and get_tree tool_use entries (noise); their tool_results still show
+			if (
+				cur.type === "tool_use" &&
+				(cur.text.startsWith("mcp__opengraft__yield(") ||
+					cur.text.startsWith("mcp__opengraft__get_tree("))
+			) {
 				i += 1;
 				continue;
 			}
