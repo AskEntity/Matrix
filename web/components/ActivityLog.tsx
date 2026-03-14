@@ -26,7 +26,37 @@ export function ActivityLog({
 	entriesRef.current = entries;
 	const [showThinking, setShowThinking] = useState(false);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new entries
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset search when filter task changes
+	useEffect(() => {
+		setSearchText("");
+	}, [filterTaskId]);
+
+	const visible = useMemo(() => {
+		let items: LogEntry[];
+		if (!filterTaskId || filterTaskId === PROJECT_NODE_ID) {
+			items = entries.filter((e) => !e.taskId);
+		} else {
+			const descendantIds = new Set<string>();
+			const collect = (id: string) => {
+				descendantIds.add(id);
+				const node = nodeMap.get(id);
+				if (node?.children) {
+					for (const childId of node.children) collect(childId);
+				}
+			};
+			collect(filterTaskId);
+			items = entries.filter((e) => e.taskId && descendantIds.has(e.taskId));
+		}
+
+		if (searchText.trim()) {
+			const lower = searchText.toLowerCase();
+			items = items.filter((e) => e.text.toLowerCase().includes(lower));
+		}
+
+		return items;
+	}, [entries, filterTaskId, nodeMap, searchText]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new visible entries
 	useEffect(() => {
 		lastEventTimeRef.current = Date.now();
 		if (autoScroll && logRef.current) {
@@ -36,7 +66,7 @@ export function ActivityLog({
 				}
 			});
 		}
-	}, [entries.length, autoScroll]);
+	}, [visible.length, autoScroll]);
 
 	// Show "Thinking..." when agent is running but no events for 1.5s
 	useEffect(() => {
@@ -79,36 +109,6 @@ export function ActivityLog({
 		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
 		onAutoScrollChange(atBottom);
 	}, [onAutoScrollChange]);
-
-	// biome-ignore lint/correctness/useExhaustiveDependencies: reset search when filter task changes
-	useEffect(() => {
-		setSearchText("");
-	}, [filterTaskId]);
-
-	const visible = useMemo(() => {
-		let items: LogEntry[];
-		if (!filterTaskId || filterTaskId === PROJECT_NODE_ID) {
-			items = entries.filter((e) => !e.taskId);
-		} else {
-			const descendantIds = new Set<string>();
-			const collect = (id: string) => {
-				descendantIds.add(id);
-				const node = nodeMap.get(id);
-				if (node?.children) {
-					for (const childId of node.children) collect(childId);
-				}
-			};
-			collect(filterTaskId);
-			items = entries.filter((e) => e.taskId && descendantIds.has(e.taskId));
-		}
-
-		if (searchText.trim()) {
-			const lower = searchText.toLowerCase();
-			items = items.filter((e) => e.text.toLowerCase().includes(lower));
-		}
-
-		return items;
-	}, [entries, filterTaskId, nodeMap, searchText]);
 
 	const { t } = useLocale();
 
