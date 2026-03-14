@@ -65,9 +65,12 @@ describe("project-config", () => {
 	test("merge on empty config creates new config", async () => {
 		const result = await mergeProjectConfig(dataDir, projectId, {
 			model: "claude-sonnet-4-6",
-			provider: "direct",
+			provider: "anthropic",
 		});
-		expect(result).toEqual({ model: "claude-sonnet-4-6", provider: "direct" });
+		expect(result).toEqual({
+			model: "claude-sonnet-4-6",
+			provider: "anthropic",
+		});
 	});
 
 	test("maxDepth round-trips through save and load", async () => {
