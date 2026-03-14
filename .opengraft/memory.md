@@ -182,3 +182,8 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - ActivityLog `mergedVisible` scan-ahead correctly handles interleaved entries between tool_use and tool_result
 - The `taskId` check in `findMatchingResult` prevents cross-child matching
 - "Loading card never completes" bug was likely stale HMR — restart daemon after code changes
+
+## Auto-scroll Sentinel Pattern
+- ActivityLog uses a `bottomRef` sentinel div at the end of scroll content instead of `scrollTop = scrollHeight`
+- `bottomRef.current?.scrollIntoView({ block: "end", behavior: "instant" })` reliably reaches absolute bottom
+- Works regardless of layout timing (textarea resize, thinking indicator, etc.)
