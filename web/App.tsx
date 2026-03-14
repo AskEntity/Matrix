@@ -271,11 +271,15 @@ function AppInner() {
 								const msgType = m[1];
 								const msgText = m[2] ?? "";
 								if (msgType === "child_complete") continue;
-								addLog(
-									msgType === "user" ? "user_prompt" : "queue_message",
-									msgText,
-									taskId,
-								);
+								if (msgType === "user") {
+									addLog("user_prompt", msgText, taskId);
+								} else if (msgType === "parent_update") {
+									addLog("queue_message", `← From Parent: ${msgText}`, taskId);
+								} else if (msgType === "child_report") {
+									addLog("queue_message", `↑ Child Report: ${msgText}`, taskId);
+								} else {
+									addLog("queue_message", `[${msgType}] ${msgText}`, taskId);
+								}
 							}
 						}
 						if (!parsed) addLog("queue_message", raw, taskId);
