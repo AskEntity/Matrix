@@ -565,16 +565,22 @@ async function watchProject(projectId: string): Promise<void> {
 	const wsUrl = `${DAEMON_URL.replace(/^http/, "ws")}/ws`;
 	let retryCount = 0;
 	let userCancelled = false;
+	let activeWs: WebSocket | null = null;
 
-	// Handle Ctrl+C gracefully — add only once here
+	// Handle Ctrl+C gracefully — close WebSocket so event loop can exit
 	process.on("SIGINT", () => {
 		userCancelled = true;
+		if (activeWs) {
+			activeWs.close();
+			activeWs = null;
+		}
 		console.log("\nDetached.");
 		process.exit(0);
 	});
 
 	function connect(): void {
 		const ws = new WebSocket(wsUrl);
+		activeWs = ws;
 
 		ws.onopen = () => {
 			if (retryCount > 0) {
