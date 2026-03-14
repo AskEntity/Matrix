@@ -1118,6 +1118,163 @@ describe("compressMessages", () => {
 		expect(content).toContain("[tool_result: file1.txt]");
 		expect(content).toContain("here are the files");
 	});
+
+	test("all user messages appear in transcript sent to summarizer", async () => {
+		let capturedContent = "";
+		const client = {
+			messages: {
+				stream: (params: { messages: MessageParam[] }) => {
+					const msg = params.messages[0];
+					capturedContent = typeof msg?.content === "string" ? msg.content : "";
+					return {
+						finalMessage: async () => ({
+							content: [{ type: "text", text: "checkpoint" }],
+						}),
+					};
+				},
+			},
+		} as unknown as Anthropic;
+
+		const messages: MessageParam[] = [
+			{ role: "user", content: "Please build a REST API" },
+			{ role: "assistant", content: "Sure, starting" },
+			{ role: "user", content: "Add authentication too" },
+			{ role: "assistant", content: "Adding auth" },
+			{ role: "user", content: "Use JWT tokens" },
+			{ role: "assistant", content: "Using JWT" },
+			{ role: "user", content: "Deploy to production" },
+		];
+
+		await compressMessages(client, messages, "claude-sonnet-4-6");
+
+		// ALL user messages must be in the transcript sent to summarizer
+		expect(capturedContent).toContain("Please build a REST API");
+		expect(capturedContent).toContain("Add authentication too");
+		expect(capturedContent).toContain("Use JWT tokens");
+		expect(capturedContent).toContain("Deploy to production");
+		// All assistant messages too
+		expect(capturedContent).toContain("Sure, starting");
+		expect(capturedContent).toContain("Adding auth");
+		expect(capturedContent).toContain("Using JWT");
+	});
+
+	test("user messages appear in compressed output's recent transcript", async () => {
+		const client = makeMockClient("checkpoint summary");
+		const messages: MessageParam[] = [
+			{ role: "user", content: "Implement feature X with unit tests" },
+			{ role: "assistant", content: "Working on it" },
+			{ role: "user", content: "Also fix bug Y in module Z" },
+			{ role: "assistant", content: "Fixed" },
+			{ role: "user", content: "Run the full test suite" },
+		];
+
+		const { compressed } = await compressMessages(
+			client,
+			messages,
+			"claude-sonnet-4-6",
+		);
+
+		const content = compressed[0]?.content as string;
+		// User messages must appear in the recent transcript section
+		expect(content).toContain("Implement feature X with unit tests");
+		expect(content).toContain("Also fix bug Y in module Z");
+		expect(content).toContain("Run the full test suite");
+	});
+
+	test("tool_result with array content (e.g. image) extracts text", async () => {
+		let capturedContent = "";
+		const client = {
+			messages: {
+				stream: (params: { messages: MessageParam[] }) => {
+					const msg = params.messages[0];
+					capturedContent = typeof msg?.content === "string" ? msg.content : "";
+					return {
+						finalMessage: async () => ({
+							content: [{ type: "text", text: "summary" }],
+						}),
+					};
+				},
+			},
+		} as unknown as Anthropic;
+
+		const messages: MessageParam[] = [
+			{ role: "user", content: "Read the image" },
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "tool_use",
+						id: "toolu_img",
+						name: "read_file",
+						input: { path: "photo.png" },
+					},
+				],
+			},
+			{
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						tool_use_id: "toolu_img",
+						content: [
+							{
+								type: "image",
+								source: {
+									type: "base64",
+									media_type: "image/png",
+									data: "iVBOR...",
+								},
+							},
+							{ type: "text", text: "[Image: photo.png]" },
+						],
+					},
+				],
+			},
+			{ role: "assistant", content: "I can see the image" },
+			{ role: "user", content: "describe it" },
+		];
+
+		await compressMessages(client, messages, "claude-sonnet-4-6");
+
+		// The text part of the image tool result should be preserved
+		expect(capturedContent).toContain("[Image: photo.png]");
+		// Should NOT show generic "[result]" for image results with text
+		expect(capturedContent).not.toContain("[tool_result: [result]]");
+	});
+
+	test("very long user message is not truncated per-message", async () => {
+		let capturedContent = "";
+		const client = {
+			messages: {
+				stream: (params: { messages: MessageParam[] }) => {
+					const msg = params.messages[0];
+					capturedContent = typeof msg?.content === "string" ? msg.content : "";
+					return {
+						finalMessage: async () => ({
+							content: [{ type: "text", text: "summary" }],
+						}),
+					};
+				},
+			},
+		} as unknown as Anthropic;
+
+		// 15k character user message
+		const longMessage = `IMPORTANT_REQUEST: ${"x".repeat(15000)} END_REQUEST`;
+		const messages: MessageParam[] = [
+			{ role: "user", content: longMessage },
+			{ role: "assistant", content: "Processing" },
+			{ role: "user", content: "Status update?" },
+			{ role: "assistant", content: "Still working" },
+			{ role: "user", content: "Done?" },
+		];
+
+		await compressMessages(client, messages, "claude-sonnet-4-6");
+
+		// The entire long message must be in the transcript, not truncated
+		expect(capturedContent).toContain("IMPORTANT_REQUEST:");
+		expect(capturedContent).toContain("END_REQUEST");
+		expect(capturedContent).toContain("x".repeat(15000));
+	});
 });
 
 describe("zodShapeToJsonSchema", () => {

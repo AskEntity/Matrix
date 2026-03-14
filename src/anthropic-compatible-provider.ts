@@ -155,8 +155,24 @@ export async function compressMessages(
 									}
 									if ("type" in b && b.type === "tool_result") {
 										const tr = b as ToolResultBlockParam;
-										const text =
-											typeof tr.content === "string" ? tr.content : "[result]";
+										let text: string;
+										if (typeof tr.content === "string") {
+											text = tr.content;
+										} else if (Array.isArray(tr.content)) {
+											text =
+												tr.content
+													.filter(
+														(p): p is { type: "text"; text: string } =>
+															typeof p === "object" &&
+															p !== null &&
+															"type" in p &&
+															p.type === "text",
+													)
+													.map((p) => p.text)
+													.join("\n") || "[result]";
+										} else {
+											text = "[result]";
+										}
 										return `[tool_result: ${text}]`;
 									}
 									return "[block]";
