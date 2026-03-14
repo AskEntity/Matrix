@@ -492,6 +492,22 @@ select {
 	white-space: nowrap;
 }
 
+.og-task-draft .og-task-title {
+	opacity: 0.6;
+	font-style: italic;
+}
+
+.og-task-draft-badge {
+	flex-shrink: 0;
+	font-size: 9px;
+	color: var(--text-faint);
+	background: var(--bg-subtle);
+	border: 1px dashed var(--border-subtle);
+	padding: 0 4px;
+	border-radius: var(--radius-sm);
+	font-style: italic;
+}
+
 .og-tree-toggle {
 	background: none;
 	border: none;

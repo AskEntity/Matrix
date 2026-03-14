@@ -21,6 +21,7 @@ export interface TaskNode {
 	message: string | null;
 	costUsd?: number;
 	budgetUsd?: number;
+	draft?: boolean;
 	createdAt?: string | null;
 	updatedAt: string | null;
 }

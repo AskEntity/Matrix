@@ -242,9 +242,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return entry;
 	}
 
-	function removePendingClarification(projectId: string, taskId: string): void {
+	function removePendingClarification(
+		projectId: string,
+		taskId: string,
+		clarificationId?: string,
+	): void {
 		const clarifications = getPendingClarifications(projectId);
-		const idx = clarifications.findIndex((c) => c.taskId === taskId);
+		const idx = clarificationId
+			? clarifications.findIndex((c) => c.id === clarificationId)
+			: clarifications.findIndex((c) => c.taskId === taskId);
 		if (idx !== -1) {
 			clarifications.splice(idx, 1);
 			broadcast(wsClients, projectId, {
@@ -543,6 +549,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		projectId: string,
 		taskId: string,
 		answer: string,
+		clarificationId?: string,
 	): { ok: boolean; error?: string; status?: number } {
 		const session = activeSessions.get(projectId);
 		if (!session) {
@@ -557,7 +564,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		} catch {
 			return { ok: false, error: "Queue closed", status: 409 };
 		}
-		removePendingClarification(projectId, taskId);
+		removePendingClarification(projectId, taskId, clarificationId);
 		broadcastEvent(projectId, {
 			type: "clarification_answered",
 			taskId,
@@ -820,6 +827,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			branch?: string;
 			title?: string;
 			description?: string;
+			draft?: boolean;
 		}>();
 		if (body.status) {
 			tracker.updateStatus(nodeId, body.status);
@@ -832,6 +840,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 		if (body.description !== undefined) {
 			tracker.updateDescription(node.id, body.description);
+		}
+		if (body.draft !== undefined) {
+			tracker.updateDraft(node.id, body.draft);
 		}
 		await tracker.save();
 		broadcastTreeUpdate(project.id, tracker);
@@ -1542,12 +1553,21 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	// Respond to a pending clarification request
 	app.post("/projects/:id/clarify", async (c) => {
 		const projectId = c.req.param("id");
-		const body = await c.req.json<{ taskId: string; answer: string }>();
+		const body = await c.req.json<{
+			taskId: string;
+			answer: string;
+			clarificationId?: string;
+		}>();
 		if (!body.taskId || !body.answer) {
 			return c.json({ error: "taskId and answer are required" }, 400);
 		}
 
-		const result = handleClarifyResponse(projectId, body.taskId, body.answer);
+		const result = handleClarifyResponse(
+			projectId,
+			body.taskId,
+			body.answer,
+			body.clarificationId,
+		);
 		if (!result.ok) {
 			return c.json({ error: result.error }, result.status as 404);
 		}

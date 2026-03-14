@@ -211,4 +211,42 @@ describe("TaskTracker", () => {
 		await tracker2.load();
 		expect(tracker2.get(task.id)?.budgetUsd).toBe(2.0);
 	});
+
+	test("addTask accepts draft option", () => {
+		const task = tracker.addTask("Draft task", "desc", { draft: true });
+		expect(task.draft).toBe(true);
+	});
+
+	test("addChild accepts draft option", () => {
+		const parent = tracker.addTask("Parent", "desc");
+		const child = tracker.addChild(parent.id, "Child", "desc", {
+			draft: true,
+		});
+		expect(child.draft).toBe(true);
+	});
+
+	test("draft is undefined when not provided", () => {
+		const task = tracker.addTask("No draft", "desc");
+		expect(task.draft).toBeUndefined();
+	});
+
+	test("updateDraft sets and unsets draft flag", () => {
+		const task = tracker.addTask("Toggle draft", "desc");
+		expect(task.draft).toBeUndefined();
+
+		tracker.updateDraft(task.id, true);
+		expect(tracker.get(task.id)?.draft).toBe(true);
+
+		tracker.updateDraft(task.id, false);
+		expect(tracker.get(task.id)?.draft).toBeUndefined();
+	});
+
+	test("draft persists across save/load", async () => {
+		const task = tracker.addTask("Draft persist", "desc", { draft: true });
+		await tracker.save();
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+		expect(tracker2.get(task.id)?.draft).toBe(true);
+	});
 });

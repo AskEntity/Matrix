@@ -472,15 +472,23 @@ function AppInner() {
 		}
 	}
 
-	async function handleClarifySubmit(taskId: string) {
+	async function handleClarifySubmit(clarificationId: string) {
 		if (!projectId) return;
-		const answer = clarifyAnswers[taskId]?.trim();
+		const answer = clarifyAnswers[clarificationId]?.trim();
 		if (!answer) return;
+		const clarification = pendingClarifications.find(
+			(c) => c.id === clarificationId,
+		);
+		if (!clarification) return;
 		try {
 			const res = await fetch(`/projects/${projectId}/clarify`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ taskId, answer }),
+				body: JSON.stringify({
+					taskId: clarification.taskId,
+					clarificationId: clarification.id,
+					answer,
+				}),
 			});
 			if (!res.ok) {
 				const body = (await res.json()) as { error: string };
@@ -489,7 +497,7 @@ function AppInner() {
 			}
 			setClarifyAnswers((prev) => {
 				const next = { ...prev };
-				delete next[taskId];
+				delete next[clarificationId];
 				return next;
 			});
 		} catch (err) {
@@ -839,8 +847,11 @@ function AppInner() {
 				onPromptChange={setPrompt}
 				onSubmit={handleSubmit}
 				onClarifySubmit={handleClarifySubmit}
-				onClarifyAnswerChange={(taskId, value) =>
-					setClarifyAnswers((prev) => ({ ...prev, [taskId]: value }))
+				onClarifyAnswerChange={(clarificationId, value) =>
+					setClarifyAnswers((prev) => ({
+						...prev,
+						[clarificationId]: value,
+					}))
 				}
 			/>
 

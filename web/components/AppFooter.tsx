@@ -38,8 +38,8 @@ export function AppFooter({
 	clarifyAnswers: Record<string, string>;
 	onPromptChange: (value: string) => void;
 	onSubmit: (e: React.FormEvent) => void;
-	onClarifySubmit: (taskId: string) => void;
-	onClarifyAnswerChange: (taskId: string, value: string) => void;
+	onClarifySubmit: (clarificationId: string) => void;
+	onClarifyAnswerChange: (clarificationId: string, value: string) => void;
 }) {
 	const { t } = useLocale();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -83,16 +83,16 @@ export function AppFooter({
 									className="og-clarification-form"
 									onSubmit={(e) => {
 										e.preventDefault();
-										onClarifySubmit(c.taskId);
+										onClarifySubmit(c.id);
 									}}
 								>
 									<input
 										type="text"
 										className="og-clarification-input"
 										placeholder={t("clarify.placeholder")}
-										value={clarifyAnswers[c.taskId] ?? ""}
+										value={clarifyAnswers[c.id] ?? ""}
 										onChange={(e) =>
-											onClarifyAnswerChange(c.taskId, e.target.value)
+											onClarifyAnswerChange(c.id, e.target.value)
 										}
 										// biome-ignore lint/a11y/noAutofocus: clarification input should grab focus immediately
 										autoFocus
@@ -100,7 +100,7 @@ export function AppFooter({
 									<button
 										type="submit"
 										className="og-btn-run"
-										disabled={!clarifyAnswers[c.taskId]?.trim()}
+										disabled={!clarifyAnswers[c.id]?.trim()}
 									>
 										{t("clarify.answer")}
 									</button>

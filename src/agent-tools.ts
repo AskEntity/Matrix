@@ -571,6 +571,12 @@ export function createOrchestratorTools(
 					.describe(
 						"Parent task ID. Omit to create a child of your current task.",
 					),
+				draft: z
+					.boolean()
+					.optional()
+					.describe(
+						"If true, creates the task as a draft. Draft tasks can be edited but not executed.",
+					),
 			},
 			async (args) => {
 				try {
@@ -595,17 +601,21 @@ export function createOrchestratorTools(
 						};
 					}
 
-					const opts = deps.defaultBudgetUsd
-						? { budgetUsd: deps.defaultBudgetUsd }
-						: undefined;
+					const opts: { budgetUsd?: number; draft?: boolean } = {};
+					if (deps.defaultBudgetUsd) opts.budgetUsd = deps.defaultBudgetUsd;
+					if (args.draft) opts.draft = true;
 					const node = effectiveParentId
 						? tracker.addChild(
 								effectiveParentId,
 								args.title,
 								args.description,
-								opts,
+								Object.keys(opts).length > 0 ? opts : undefined,
 							)
-						: tracker.addTask(args.title, args.description, opts);
+						: tracker.addTask(
+								args.title,
+								args.description,
+								Object.keys(opts).length > 0 ? opts : undefined,
+							);
 					await tracker.save();
 					broadcastTreeUpdate?.();
 					return {
@@ -726,6 +736,22 @@ export function createOrchestratorTools(
 								{
 									type: "text" as const,
 									text: `Error: Task ${t.taskId} is not your direct child`,
+								},
+							],
+							isError: true,
+						};
+					}
+				}
+
+				// Validate: draft tasks cannot be executed
+				for (const t of args.tasks) {
+					const node = tracker.get(t.taskId);
+					if (node?.draft) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Error: Task "${node.title}" (${t.taskId}) is a draft and cannot be executed. Remove draft status first.`,
 								},
 							],
 							isError: true,
