@@ -151,6 +151,57 @@ function SettingNumberField({
 	);
 }
 
+// ---- Auth Group Select (dropdown) ----
+
+function SettingAuthGroupSelect({
+	label,
+	field,
+	tab,
+	layers,
+	draft,
+	onDraftChange,
+}: {
+	label: string;
+	field: string;
+	tab: ActiveTab;
+	layers: ThreeLayerConfig;
+	draft: Record<string, unknown>;
+	onDraftChange: (patch: Record<string, unknown>) => void;
+}) {
+	const { t } = useLocale();
+	const inherited = inheritedValue(layers, tab, field);
+	const value = (draft[field] as string | undefined) ?? "";
+
+	// Auth group names come from the global config layer
+	const authGroups = (layers.global.authGroups ?? {}) as Record<
+		string,
+		unknown
+	>;
+	const groupNames = Object.keys(authGroups);
+
+	return (
+		<div className="og-settings-field">
+			<span className="og-settings-label">{label}</span>
+			<select
+				className="og-select og-settings-input"
+				value={value}
+				onChange={(e) => onDraftChange({ [field]: e.target.value })}
+			>
+				<option value="">
+					{inherited
+						? `${t("settings.authGroupNone")} (${inherited})`
+						: t("settings.authGroupNone")}
+				</option>
+				{groupNames.map((name) => (
+					<option key={name} value={name}>
+						{name}
+					</option>
+				))}
+			</select>
+		</div>
+	);
+}
+
 // ---- Auth Group Editor ----
 
 function AuthGroupEditor({
@@ -609,19 +660,9 @@ function GlobalTab({
 				<div className="og-settings-section-title">
 					{t("settings.sectionModels")}
 				</div>
-				<SettingStringField
+				<SettingAuthGroupSelect
 					label={t("settings.defaultAuth")}
 					field="defaultAuth"
-					placeholder={t("settings.authGroupName")}
-					tab={tab}
-					layers={layers}
-					draft={draft}
-					onDraftChange={onDraftChange}
-				/>
-				<SettingStringField
-					label={t("settings.modelOverride")}
-					field="model"
-					placeholder={t("settings.modelOverridePlaceholder")}
 					tab={tab}
 					layers={layers}
 					draft={draft}
@@ -669,6 +710,13 @@ function GlobalTab({
 				</div>
 			</div>
 
+			<McpServersSection
+				tab={tab}
+				layers={layers}
+				draft={draft}
+				onDraftChange={onDraftChange}
+			/>
+
 			<TabActions dirty={dirty} onSave={onSave} onRevert={onRevert} />
 		</div>
 	);
@@ -699,28 +747,35 @@ function ProjectTab({
 				<div className="og-settings-section-title">
 					{t("settings.sectionModels")}
 				</div>
-				<SettingStringField
-					label={t("settings.modelOverride")}
-					field="model"
-					placeholder={t("settings.modelOverridePlaceholder")}
+				<SettingAuthGroupSelect
+					label={t("settings.defaultAuth")}
+					field="defaultAuth"
 					tab={tab}
 					layers={layers}
 					draft={draft}
 					onDraftChange={onDraftChange}
 				/>
-				<SettingStringField
+				<SettingAuthGroupSelect
 					label={t("settings.childAuth")}
 					field="childAuth"
-					placeholder={t("settings.authGroupName")}
 					tab={tab}
 					layers={layers}
 					draft={draft}
 					onDraftChange={onDraftChange}
 				/>
 				<SettingStringField
-					label={t("settings.childModel")}
+					label={t("settings.rootModel")}
+					field="model"
+					placeholder={t("settings.rootModelPlaceholder")}
+					tab={tab}
+					layers={layers}
+					draft={draft}
+					onDraftChange={onDraftChange}
+				/>
+				<SettingStringField
+					label={t("settings.taskAgentModel")}
 					field="childModel"
-					placeholder={t("settings.childModelPlaceholder")}
+					placeholder={t("settings.taskAgentModelPlaceholder")}
 					tab={tab}
 					layers={layers}
 					draft={draft}
