@@ -106,3 +106,10 @@ Daemon (Hono: HTTP + WS on :7433)
   - `index.ts`: barrel re-exports
 - Provider re-exports from `./tools/index.ts` for backward compatibility.
 - `readProjectMemory(path, includeHeaders?)` in daemon/helpers.ts — single function for CLAUDE.md + memory.md reading. Agent-tools.ts imports with `includeHeaders=false`.
+
+## Task UI Features
+
+- **Color labels**: `color?: string` on TaskNode. 7-color palette in TaskDetail. Color dot in TaskTree row. PATCH + agent tools support.
+- **Inline task creation**: `isCreating` state -> inline input in TaskTree. IME-safe. Blur with text confirms, without cancels.
+- **Trash drop zone**: Appears during drag at TaskTree bottom. Uses dataTransfer for task ID.
+- **CSS**: Use double-class selectors instead of `!important` (Biome rejects it). Always `type="button"` on buttons.

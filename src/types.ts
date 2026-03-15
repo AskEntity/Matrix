@@ -32,6 +32,8 @@ export interface TaskNode {
 	draft?: boolean;
 	/** Who last modified this node: 'user' (REST/CLI) or 'agent' (MCP tools). */
 	editedBy?: "user" | "agent";
+	/** Optional color label for visual categorization. */
+	color?: string;
 	createdAt: string;
 	updatedAt: string;
 }

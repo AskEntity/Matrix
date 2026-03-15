@@ -5,6 +5,16 @@ import { ConversationHistory } from "./ConversationHistory.tsx";
 import { IconPause, IconRepeat, IconTrash } from "./icons.tsx";
 import { StatusBadge, statusDotClass } from "./StatusBadge.tsx";
 
+const TASK_COLORS = [
+	{ name: "Red", value: "#f85149" },
+	{ name: "Blue", value: "#388bfd" },
+	{ name: "Green", value: "#3fb950" },
+	{ name: "Yellow", value: "#e3b341" },
+	{ name: "Purple", value: "#a371f7" },
+	{ name: "Orange", value: "#f0883e" },
+	{ name: "Gray", value: "#6e7681" },
+];
+
 /** Format a date as relative time: "5m ago", "2h 10m ago", "3d ago" */
 function formatRelativeTime(dateStr: string | null | undefined): string {
 	if (!dateStr) return "";
@@ -182,6 +192,44 @@ export function TaskDetail({
 				<div className="og-detail-field">
 					<div className="og-detail-label">{t("detail.status")}</div>
 					<StatusBadge status={node.status} />
+				</div>
+				<div className="og-detail-field">
+					<div className="og-detail-label">{t("detail.color")}</div>
+					<div className="og-color-picker">
+						{TASK_COLORS.map((c) => (
+							<button
+								key={c.value}
+								type="button"
+								className={`og-color-swatch${node.color === c.value ? " selected" : ""}`}
+								style={{ backgroundColor: c.value }}
+								title={c.name}
+								onClick={() => {
+									const newColor = node.color === c.value ? null : c.value;
+									fetch(`/projects/${projectId}/tasks/${node.id}`, {
+										method: "PATCH",
+										headers: { "Content-Type": "application/json" },
+										body: JSON.stringify({ color: newColor }),
+									});
+								}}
+							/>
+						))}
+						{node.color && (
+							<button
+								type="button"
+								className="og-color-clear"
+								title="Clear color"
+								onClick={() => {
+									fetch(`/projects/${projectId}/tasks/${node.id}`, {
+										method: "PATCH",
+										headers: { "Content-Type": "application/json" },
+										body: JSON.stringify({ color: null }),
+									});
+								}}
+							>
+								✕
+							</button>
+						)}
+					</div>
 				</div>
 				{node.branch && (
 					<div className="og-detail-field">

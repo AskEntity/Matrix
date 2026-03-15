@@ -101,6 +101,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			title?: string;
 			description?: string;
 			draft?: boolean;
+			color?: string | null;
 		}>();
 		if (body.status) {
 			tracker.updateStatus(nodeId, body.status, "user");
@@ -116,6 +117,9 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 		if (body.draft !== undefined) {
 			tracker.updateDraft(node.id, body.draft, "user");
+		}
+		if (body.color !== undefined) {
+			tracker.updateColor(node.id, body.color);
 		}
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);

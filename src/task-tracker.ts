@@ -301,6 +301,18 @@ export class TaskTracker {
 		return Array.from(this.nodes.values()).filter((n) => n.status === status);
 	}
 
+	/** Update the color label on a task node. */
+	updateColor(nodeId: string, color: string | null): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		if (color) {
+			node.color = color;
+		} else {
+			delete node.color;
+		}
+		node.updatedAt = new Date().toISOString();
+	}
+
 	/** Update the draft flag on a task node. */
 	updateDraft(
 		nodeId: string,
