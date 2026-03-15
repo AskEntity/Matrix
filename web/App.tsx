@@ -15,10 +15,8 @@ import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
 import { TaskTree } from "./components/TaskTree.tsx";
-import {
-	formatTokenCount,
-	TokenUsageBadge,
-} from "./components/TokenUsageBadge.tsx";
+import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
+import { createActionHandlers } from "./handlers.ts";
 
 import {
 	createLogEntry,
@@ -40,6 +38,7 @@ type StructuredFields = {
 
 import { LocaleProvider, useLocale } from "./i18n.ts";
 import { applyTheme, themes } from "./themes.ts";
+import { createWSHandler } from "./ws-handler.ts";
 
 // ── Hash routing helpers ───────────────────────────────────────────────────
 
@@ -289,282 +288,30 @@ function AppInner() {
 
 	// ── WebSocket handler ────────────────────────────────────────────────────
 
-	const handleWS = useCallback(
-		(msg: Record<string, unknown>) => {
-			switch (msg.type) {
-				case "tree_updated":
-					updateFromWS(msg.nodes as TaskNode[]);
-					if (msg.rootNodeId) {
-						setRootNodeId(msg.rootNodeId as string);
-					}
-					break;
-				case "agent_event": {
-					const et = msg.eventType as string;
-					let text = "";
-					if (et === "tool_use") {
-						text = msg.tool as string;
-						addLog(et, text, msg.taskId as string | undefined, undefined, {
-							toolName: msg.tool as string,
-							toolArgs: msg.input as Record<string, unknown>,
-						});
-						break;
-					} else if (et === "tool_result") {
-						text = (msg.content as string) || "";
-						addLog(et, text, msg.taskId as string | undefined, undefined, {
-							toolName: msg.tool as string,
-							toolResult: (msg.content as string) || "",
-							isError: (msg.isError as boolean) || false,
-						});
-						break;
-					} else if (et === "text_delta") {
-						const deltaText = (msg.content as string) || "";
-						const deltaTaskId = msg.taskId as string | undefined;
-						if (deltaText) {
-							setLogs((prev) => {
-								// Find last entry for this task — append if it's a text entry
-								for (let i = prev.length - 1; i >= 0; i--) {
-									const e = prev[i];
-									if (e && e.type === "text" && e.taskId === deltaTaskId) {
-										const updated = [...prev];
-										updated[i] = { ...e, text: e.text + deltaText };
-										return updated;
-									}
-									// If we hit a non-text entry for this task, stop searching
-									if (e && e.taskId === deltaTaskId && e.type !== "text") break;
-								}
-								// No existing text entry — create a new one
-								return [
-									...prev,
-									createLogEntry("text", deltaText, deltaTaskId),
-								];
-							});
-						}
-						break;
-					} else if (et === "text") {
-						text = (msg.content as string) || "";
-					} else if (et === "error") {
-						text = (msg.message as string) || "";
-					} else if (et === "usage") {
-						const usageKey =
-							(msg.taskId as string | undefined) ?? "orchestrator";
-						setTokenUsage((prev) => ({
-							...prev,
-							[usageKey]: {
-								inputTokens: msg.inputTokens as number,
-								contextWindow: msg.contextWindow as number,
-								estimated: (msg.estimated as boolean) || false,
-							},
-						}));
-						break;
-					} else if (et === "compact_started") {
-						setPendingCompact(false);
-						// Only add a placeholder if there isn't already a compact entry without a checkpoint
-						setLogs((prev) => {
-							for (let i = prev.length - 1; i >= 0; i--) {
-								const e = prev[i];
-								if (e && e.type === "compact" && !e.checkpoint) {
-									// Existing placeholder found — don't add a duplicate
-									return prev;
-								}
-							}
-							const entry = createLogEntry(
-								"compact",
-								"Compressing context...",
-								msg.taskId as string | undefined,
-							);
-							entry.checkpoint = "";
-							return [...prev, entry];
-						});
-						break;
-					} else if (et === "compact") {
-						const compactText = `Context compacted (saved ~${msg.savedTokens} tokens)`;
-						const compactCheckpoint = msg.checkpoint as string;
-						const compactTaskId = msg.taskId as string | undefined;
-						setLogs((prev) => {
-							// Find the placeholder compact entry (last one without checkpoint) and update it
-							for (let i = prev.length - 1; i >= 0; i--) {
-								const e = prev[i];
-								if (e && e.type === "compact" && !e.checkpoint) {
-									const updated = [...prev];
-									updated[i] = {
-										...e,
-										text: compactText,
-										checkpoint: compactCheckpoint,
-									};
-									return updated;
-								}
-							}
-							// No placeholder found — add new entry
-							const entry = createLogEntry(
-								"compact",
-								compactText,
-								compactTaskId,
-							);
-							entry.checkpoint = compactCheckpoint;
-							return [...prev, entry];
-						});
-						break;
-					} else if (et === "queue_message") {
-						const taskId = msg.taskId as string | undefined;
-						const rawMessages = msg.rawMessages as
-							| Array<{ source: string; content: string }>
-							| undefined;
-						if (rawMessages && rawMessages.length > 0) {
-							// Structured path — no text parsing needed
-							for (const rm of rawMessages) {
-								if (rm.source === "child_complete") continue;
-								if (rm.source === "user") {
-									addLog("user_prompt", rm.content, taskId);
-									continue;
-								}
-								if (rm.source === "parent_update") {
-									addLog(
-										"queue_message",
-										`← From Parent: ${rm.content}`,
-										taskId,
-									);
-								} else if (rm.source === "child_report") {
-									addLog(
-										"queue_message",
-										`↑ Child Report: ${rm.content}`,
-										taskId,
-									);
-								} else if (rm.source === "background_complete") {
-									addLog(
-										"queue_message",
-										`⚙ Background Complete: ${rm.content}`,
-										taskId,
-									);
-								} else {
-									addLog(
-										"queue_message",
-										`[${rm.source}] ${rm.content}`,
-										taskId,
-									);
-								}
-							}
-						} else {
-							const raw = (msg.messages as string) || "";
-							if (raw) addLog("queue_message", raw, taskId);
-						}
-						break;
-					} else if (et === "status") {
-						const statusText = (msg.message as string) || "";
-						if (statusText.includes("Compress")) {
-							addLog("status", statusText, msg.taskId as string | undefined);
-						}
-						break;
-					} else {
-						text = JSON.stringify(msg).slice(0, 2000);
-					}
-					addLog(et, text, msg.taskId as string | undefined);
-					break;
-				}
-				case "orchestration_started": {
-					const startRootId = msg.taskId as string | undefined;
-					if (startRootId) setRootNodeId(startRootId);
-					if (msg.prompt) {
-						const imgs = lastSubmittedImagesRef.current;
-						lastSubmittedImagesRef.current = undefined;
-						addLog(
-							"user_prompt",
-							msg.prompt as string,
-							startRootId,
-							undefined,
-							undefined,
-							imgs,
-						);
-					}
-					addLog("lifecycle", "Orchestration started", startRootId);
-					setRunning(true);
-					if (msg.provider) setAgentProvider(msg.provider as string);
-					if (msg.model) setAgentModel(msg.model as string);
-					break;
-				}
-				case "orchestration_completed": {
-					const costStr = msg.costUsd
-						? ` · ${(msg.costUsd as number).toFixed(3)}`
-						: "";
-					const hasTokens =
-						msg.inputTokens !== undefined ||
-						msg.cacheCreationTokens !== undefined ||
-						msg.cacheReadTokens !== undefined ||
-						msg.outputTokens !== undefined;
-					const tokenStr = hasTokens
-						? ` · ${formatTokenCount((msg.inputTokens as number) ?? 0)} in · ${formatTokenCount((msg.cacheCreationTokens as number) ?? 0)} write · ${formatTokenCount((msg.cacheReadTokens as number) ?? 0)} read · ${formatTokenCount((msg.outputTokens as number) ?? 0)} out`
-						: "";
-					if (msg.costUsd !== undefined) setLastCostUsd(msg.costUsd as number);
-					if (msg.turns !== undefined) setLastTurns(msg.turns as number);
-					if (msg.inputTokens !== undefined)
-						setLastInputTokens(msg.inputTokens as number);
-					if (msg.cacheCreationTokens !== undefined)
-						setLastCacheCreationTokens(msg.cacheCreationTokens as number);
-					if (msg.cacheReadTokens !== undefined)
-						setLastCacheReadTokens(msg.cacheReadTokens as number);
-					if (msg.outputTokens !== undefined)
-						setLastOutputTokens(msg.outputTokens as number);
-					addLog(
-						"lifecycle",
-						`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${costStr}${tokenStr}`,
-						msg.taskId as string | undefined,
-					);
-					setRunning(false);
-					setPendingCompact(false);
-					break;
-				}
-				case "agent_stopped":
-					addLog(
-						"lifecycle",
-						"Agent stopped",
-						msg.taskId as string | undefined,
-					);
-					setRunning(false);
-					setPendingCompact(false);
-					break;
-				case "task_started": {
-					const instruction = msg.message
-						? `\n${t("lifecycle.instructions")} ${msg.message}`
-						: "";
-					const startedText = `${t("lifecycle.taskStarted")} ${msg.title}${instruction}`;
-					const startedParentId =
-						nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
-					addLog("task_started", startedText, msg.taskId as string);
-					if (startedParentId)
-						addLog("task_started", startedText, startedParentId);
-					break;
-				}
-				case "task_completed": {
-					const completedText = `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
-					const completedParentId =
-						nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
-					addLog("task_completed", completedText, msg.taskId as string);
-					if (completedParentId)
-						addLog("task_completed", completedText, completedParentId);
-					break;
-				}
-				case "error":
-					addLog(
-						"error",
-						msg.message as string,
-						msg.taskId as string | undefined,
-					);
-					break;
-				case "event_history": {
-					setLogs([]);
-					for (const evt of msg.events as Record<string, unknown>[])
-						handleWS(evt);
-					break;
-				}
-				case "pending_messages":
-					setPendingMessages((msg.messages as typeof pendingMessages) ?? []);
-					break;
-				case "pending_clarifications":
-					setPendingClarifications(
-						(msg.clarifications as typeof pendingClarifications) ?? [],
-					);
-					break;
-			}
-		},
+	const handleWS = useMemo(
+		() =>
+			createWSHandler({
+				addLog,
+				updateFromWS,
+				setRootNodeId,
+				setRunning,
+				setAgentProvider,
+				setAgentModel,
+				setLogs,
+				setTokenUsage,
+				setPendingCompact,
+				setPendingMessages,
+				setPendingClarifications,
+				setLastCostUsd,
+				setLastTurns,
+				setLastInputTokens,
+				setLastCacheCreationTokens,
+				setLastCacheReadTokens,
+				setLastOutputTokens,
+				lastSubmittedImagesRef,
+				nodeMapRef,
+				t,
+			}),
 		[addLog, updateFromWS, setRunning, setAgentProvider, setAgentModel, t],
 	);
 
@@ -669,186 +416,61 @@ function AppInner() {
 
 	// ── Handlers ─────────────────────────────────────────────────────────────
 
-	async function handleSubmit(e: React.FormEvent) {
-		e.preventDefault();
-		if (!prompt.trim() || !projectId) return;
-		const images = attachedImages.length > 0 ? attachedImages : undefined;
-		try {
-			if (running) {
-				if (targetNodeId) await sendMessageToTask(targetNodeId, prompt.trim());
-				else await sendMessage(prompt.trim(), images);
-			} else {
-				lastSubmittedImagesRef.current = images;
-				await start({ prompt: prompt.trim() });
-			}
-			setPrompt("");
-			setAttachedImages([]);
-			localStorage.removeItem("og-prompt-draft");
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
-	async function handleStop() {
-		try {
-			await stop();
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
-	async function handleClarifySubmit(clarificationId: string) {
-		if (!projectId) return;
-		const answer = clarifyAnswers[clarificationId]?.trim();
-		if (!answer) return;
-		const clarification = pendingClarifications.find(
-			(c) => c.id === clarificationId,
-		);
-		if (!clarification) return;
-		try {
-			const res = await fetch(`/projects/${projectId}/clarify`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					taskId: clarification.taskId,
-					clarificationId: clarification.id,
-					answer,
-				}),
-			});
-			if (!res.ok) {
-				const body = (await res.json()) as { error: string };
-				addLog("error", `Failed to answer clarification: ${body.error}`);
-				return;
-			}
-			setClarifyAnswers((prev) => {
-				const next = { ...prev };
-				delete next[clarificationId];
-				return next;
-			});
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
-	async function handleClearSessions() {
-		if (!confirm(t("confirm.clearSessions"))) return;
-		try {
-			const res = await fetch(`/projects/${projectId}/sessions/clear`, {
-				method: "POST",
-			});
-			if (!res.ok) throw new Error((await res.json()).error);
-			setLastCostUsd(null);
-			setLastTurns(null);
-			setLastInputTokens(null);
-			setLastCacheCreationTokens(null);
-			setLastCacheReadTokens(null);
-			setLastOutputTokens(null);
-			setLogs([]);
-			addLog("lifecycle", "Session history cleared");
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
-	async function handleContinueTask(msg?: string) {
-		if (!selectedTaskId) return;
-		try {
-			await continueTask(selectedTaskId, msg);
-			addLog(
-				"task_started",
-				`↳ Continued: ${selectedNode?.title}`,
-				selectedTaskId,
-			);
-			await refreshTasks();
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
-	async function handleDeleteTask() {
-		if (!selectedTaskId || !selectedNode) return;
-		if (!confirm(t("confirm.deleteTask", { title: selectedNode.title })))
-			return;
-		try {
-			await deleteTask(selectedTaskId);
-			addLog("lifecycle", `Deleted: ${selectedNode.title}`);
-			setSelectedTaskId(rootNodeId);
-			await refreshTasks();
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
-	async function handlePauseTask() {
-		if (!selectedTaskId) return;
-		try {
-			await sendMessageToTask(
-				selectedTaskId,
-				"⏸ PAUSED by user. Please call yield() and wait for further instructions before continuing.",
-			);
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
-	async function handleAddProject(e: React.FormEvent) {
-		e.preventDefault();
-		const path = newProjectPath.trim();
-		if (!path || creatingProject) return;
-		setCreatingProject(true);
-		try {
-			const project = await initProject(path);
-			setProjectId(project.id);
-			setSelectedTaskId(null);
-			setRootNodeId(null);
-			setLogs([]);
-			setNewProjectPath("");
-			setShowAddProject(false);
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		} finally {
-			setCreatingProject(false);
-		}
-	}
-
-	async function handleDeleteProject() {
-		if (!projectId) return;
-		const project = projects.find((p) => p.id === projectId);
-		if (
-			!confirm(t("confirm.removeProject", { name: project?.name ?? projectId }))
-		)
-			return;
-		try {
-			await deleteProject(projectId);
-			setProjectId("");
-			setSelectedTaskId(null);
-			setRootNodeId(null);
-			setLogs([]);
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
-	async function handleAddTask() {
-		if (!projectId) return;
-		const title = window.prompt(t("prompt.taskTitle"));
-		if (!title) return;
-		const description = window.prompt(t("prompt.taskDescription")) ?? "";
-		const body: Record<string, string> = { title, description };
-		if (selectedTaskId && !isOrchestratorNode) body.parentId = selectedTaskId;
-		try {
-			const res = await fetch(`/projects/${projectId}/tasks`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(body),
-			});
-			if (!res.ok)
-				throw new Error(((await res.json()) as { error: string }).error);
-			await refreshTasks();
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
+	const {
+		handleSubmit,
+		handleStop,
+		handleClarifySubmit,
+		handleClearSessions,
+		handleContinueTask,
+		handleDeleteTask,
+		handlePauseTask,
+		handleAddProject,
+		handleDeleteProject,
+		handleAddTask,
+	} = createActionHandlers({
+		projectId,
+		running,
+		selectedTaskId,
+		rootNodeId,
+		selectedNode,
+		isOrchestratorNode,
+		prompt,
+		targetNodeId,
+		attachedImages,
+		clarifyAnswers,
+		pendingClarifications,
+		newProjectPath,
+		creatingProject,
+		projects,
+		lastSubmittedImagesRef,
+		addLog,
+		setPrompt,
+		setAttachedImages,
+		setLogs,
+		setLastCostUsd,
+		setLastTurns,
+		setLastInputTokens,
+		setLastCacheCreationTokens,
+		setLastCacheReadTokens,
+		setLastOutputTokens,
+		setProjectId,
+		setSelectedTaskId,
+		setRootNodeId,
+		setClarifyAnswers,
+		setCreatingProject,
+		setNewProjectPath,
+		setShowAddProject,
+		start,
+		stop,
+		sendMessage,
+		sendMessageToTask,
+		continueTask,
+		deleteTask,
+		initProject,
+		deleteProject,
+		refreshTasks,
+		t,
+	});
 
 	const filterLabel = isOrchestratorNode
 		? t("orch.label")
