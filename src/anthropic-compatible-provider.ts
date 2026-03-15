@@ -126,7 +126,7 @@ Chronological timeline of every user message or parent instruction received, wit
 - Tasks completed/merged in response (what was accomplished)
 - Decisions made or deferred
 This creates a complete narrative thread. The resuming agent has NO access to previous messages — this is the only record.
-For requests fully completed and merged in earlier compaction rounds, keep only a one-line summary. Expand only requests from this round or still in progress.
+For resolved requests, state the outcome concisely. Do not carry forward debugging narratives or step-by-step problem-solving details from issues that are fully resolved.
 
 ## 2. Current Phase
 What the agent is doing RIGHT NOW: planning / implementing / testing / debugging / reviewing / orchestrating / done
@@ -135,7 +135,7 @@ If debugging: include the exact error message and what has been tried.
 ## 3. Completed Work
 What has been built, tested, committed, and merged — with key architectural and technical decisions.
 Include specific file paths and function names. Note WHY decisions were made, not just what.
-For work inherited from a previous checkpoint that hasn't changed, collapse to a brief list. Expand only new work done since the last checkpoint.
+Focus on outcomes and key decisions. Omit debugging journeys and error traces for issues already resolved.
 
 ## 4. Task Tree State
 Current live task tree. Only tasks that currently exist (pending/in_progress/failed/draft). For each: ID, title, status, branch. Omit completed/merged tasks (they're recorded in Section 1's timeline). Group: Running → Failed → Pending → Draft.
@@ -172,7 +172,7 @@ Rules:
 - Each user request must note: what was asked → what was done → what was the outcome
 - Aim for thoroughness — lost context is far more expensive than a longer checkpoint
 - Length: use as many tokens as needed for complex sessions. Never truncate mid-thought.
-- On re-compaction (previous checkpoint exists), aggressively trim stale inherited context. The goal is a shrinking checkpoint for completed work and an expanding one for active work.]`;
+- On re-compaction, resolved issues need only their resolution noted — not the journey to get there. Retain useful architectural and decision context.]`;
 
 /**
  * Extract checkpoint text from an assistant response that should contain <summary>...</summary> tags.
