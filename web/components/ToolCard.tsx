@@ -503,10 +503,7 @@ export function ToolCard({
 		titleOnly ? false : totalContent.length <= 200,
 	);
 
-	const taskLabel = useEntry.taskId
-		? (nodeMap.get(useEntry.taskId)?.title?.slice(0, 18) ??
-			useEntry.taskId.slice(0, 8))
-		: null;
+	const taskLabel = null;
 
 	// Try structured MCP rendering (skip for title-only cards)
 	const mcpBody =
@@ -587,10 +584,7 @@ export function LogEntryView({
 	nodeMap: Map<string, TaskNode>;
 }) {
 	const [expanded, setExpanded] = useState(false);
-	const taskLabel = entry.taskId
-		? (nodeMap.get(entry.taskId)?.title?.slice(0, 18) ??
-			entry.taskId.slice(0, 8))
-		: null;
+	const taskLabel = null;
 
 	const { t } = useLocale();
 
