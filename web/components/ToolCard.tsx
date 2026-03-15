@@ -94,6 +94,17 @@ function getArg(
 	return val != null ? String(val) : null;
 }
 
+/** Keys to exclude from displayed args for bash bg_action calls */
+const BASH_BG_EXCLUDE = new Set(["command"]);
+
+function bashBgExcludeKeys(
+	toolName: string,
+	toolArgs: Record<string, unknown> | undefined,
+): Set<string> | undefined {
+	if (toolName === "bash" && toolArgs?.bg_action) return BASH_BG_EXCLUDE;
+	return undefined;
+}
+
 /** Generate a descriptive card title from tool name, args, and result */
 export function getToolCardTitle(
 	toolName: string,
@@ -128,6 +139,11 @@ export function getToolCardTitle(
 		return pattern ? `ls: ${pattern}` : "ls";
 	}
 	if (toolName === "bash") {
+		const bgAction = getArg(toolArgs, "bg_action");
+		if (bgAction) {
+			const bgId = getArg(toolArgs, "background_id") ?? "?";
+			return `bg ${bgAction}: ${bgId}`;
+		}
 		const command = getArg(toolArgs, "command");
 		if (command) {
 			const display =
@@ -491,7 +507,8 @@ export function ToolCard({
 
 	const toolName = useEntry.toolName ?? "";
 	const toolArgs = useEntry.toolArgs;
-	const argsStr = formatArgs(toolArgs);
+	const argsExclude = bashBgExcludeKeys(toolName, toolArgs);
+	const argsStr = formatArgs(toolArgs, argsExclude);
 	const resultContent = resultEntry.toolResult ?? resultEntry.text;
 	const isErr = resultEntry.isError ?? false;
 	const isOk = !isErr;
@@ -617,7 +634,7 @@ export function LogEntryView({
 	if (entry.type === "tool_use") {
 		const toolName = entry.toolName ?? "";
 		const toolArgs = entry.toolArgs;
-		const argsStr = formatArgs(toolArgs);
+		const argsStr = formatArgs(toolArgs, bashBgExcludeKeys(toolName, toolArgs));
 		const isMcp = toolName.startsWith("mcp__opengraft__");
 		return (
 			<div className="og-log-entry og-event-tool_card">
@@ -857,12 +874,16 @@ export function LogEntryView({
 	);
 }
 
-export function formatArgs(input: Record<string, unknown> | undefined): string {
+export function formatArgs(
+	input: Record<string, unknown> | undefined,
+	excludeKeys?: Set<string>,
+): string {
 	if (!input) return "";
-	const parts = Object.entries(input).map(([k, v]) => {
-		const val = typeof v === "string" ? v : JSON.stringify(v);
-		return `${k}=${val}`;
-	});
-	const joined = parts.join(", ");
-	return joined;
+	const parts = Object.entries(input)
+		.filter(([k]) => !excludeKeys?.has(k))
+		.map(([k, v]) => {
+			const val = typeof v === "string" ? v : JSON.stringify(v);
+			return `${k}=${val}`;
+		});
+	return parts.join(", ");
 }

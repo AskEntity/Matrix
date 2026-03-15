@@ -176,3 +176,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - No more automatic `setTimeout(() => proc.kill(), ...)` kill timers.
 - The `foregroundTimeout >= hardTimeout` branch was removed — foreground commands just race `foreground_timeout` vs process exit.
 - executor.ts no longer has a 600s safety timeout constant.
+
+## Bash Tool Card Rendering Fix (March 2026)
+
+- `getToolCardTitle()` for bash: when `bg_action` is present in toolArgs, shows `bg kill: <bgId>` or `bg status: <bgId>` instead of `$ ignored`.
+- `formatArgs()` accepts optional `excludeKeys?: Set<string>` parameter. For bash bg_action calls, `command` key is excluded from displayed args.
+- `bashBgExcludeKeys()` helper returns the exclude set when toolName is "bash" and bg_action is present.
