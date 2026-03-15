@@ -50,6 +50,7 @@ export type AgentEvent =
 	  }
 	| { type: "text"; content: string }
 	| { type: "error"; message: string }
+	| { type: "compact_started" }
 	| {
 			type: "compact";
 			checkpoint: string;

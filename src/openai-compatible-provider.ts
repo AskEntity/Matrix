@@ -529,6 +529,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				messages.length > 4 &&
 				(manualCompactRequested || estimatedInputTokens > compressThreshold)
 			) {
+				yield { type: "compact_started" };
 				yield {
 					type: "status",
 					message: manualCompactRequested
