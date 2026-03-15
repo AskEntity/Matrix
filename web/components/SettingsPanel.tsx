@@ -69,43 +69,6 @@ function isDirty(
 
 // ---- Simple field components (single-layer, controlled) ----
 
-function SettingStringField({
-	label,
-	field,
-	placeholder,
-	type,
-	tab,
-	layers,
-	draft,
-	onDraftChange,
-}: {
-	label: string;
-	field: string;
-	placeholder?: string;
-	type?: string;
-	tab: ActiveTab;
-	layers: ThreeLayerConfig;
-	draft: Record<string, unknown>;
-	onDraftChange: (patch: Record<string, unknown>) => void;
-}) {
-	const { t } = useLocale();
-	const inherited = inheritedValue(layers, tab, field);
-	const value = (draft[field] as string | undefined) ?? "";
-
-	return (
-		<div className="og-settings-field">
-			<span className="og-settings-label">{label}</span>
-			<input
-				type={type ?? "text"}
-				className="og-settings-input"
-				placeholder={inherited ?? placeholder ?? t("settings.inherit")}
-				value={value}
-				onChange={(e) => onDraftChange({ [field]: e.target.value })}
-			/>
-		</div>
-	);
-}
-
 function SettingNumberField({
 	label,
 	field,
@@ -151,53 +114,133 @@ function SettingNumberField({
 	);
 }
 
-// ---- Auth Group Select (dropdown) ----
+// ---- Models & Auth Section (shared across all tabs) ----
 
-function SettingAuthGroupSelect({
-	label,
-	field,
-	tab,
-	layers,
+function ModelsAuthSection({
+	layer,
+	authGroupNames,
 	draft,
 	onDraftChange,
 }: {
-	label: string;
-	field: string;
-	tab: ActiveTab;
-	layers: ThreeLayerConfig;
+	layer: "global" | "project" | "local";
+	authGroupNames: string[];
 	draft: Record<string, unknown>;
 	onDraftChange: (patch: Record<string, unknown>) => void;
 }) {
 	const { t } = useLocale();
-	const inherited = inheritedValue(layers, tab, field);
-	const value = (draft[field] as string | undefined) ?? "";
+	const isGlobal = layer === "global";
 
-	// Auth group names come from the global config layer
-	const authGroups = (layers.global.authGroups ?? {}) as Record<
-		string,
-		unknown
-	>;
-	const groupNames = Object.keys(authGroups);
+	const defaultAuth = (draft.defaultAuth as string | undefined) ?? "";
+	const model = (draft.model as string | undefined) ?? "";
+	const childAuth = (draft.childAuth as string | undefined) ?? "";
+	const childModel = (draft.childModel as string | undefined) ?? "";
+
+	// Build Root Auth options
+	const rootAuthOptions: { value: string; label: string }[] = [];
+	if (!isGlobal) {
+		rootAuthOptions.push({ value: "", label: t("settings.inheritOption") });
+	} else {
+		rootAuthOptions.push({ value: "", label: t("settings.authGroupNone") });
+	}
+	for (const name of authGroupNames) {
+		rootAuthOptions.push({ value: name, label: name });
+	}
+
+	// Build Child Auth options
+	const childAuthOptions: { value: string; label: string }[] = [];
+	if (!isGlobal) {
+		childAuthOptions.push({ value: "", label: t("settings.inheritOption") });
+	}
+	childAuthOptions.push({
+		value: "__use_root_auth__",
+		label: t("settings.useRootAuth"),
+	});
+	for (const name of authGroupNames) {
+		childAuthOptions.push({ value: name, label: name });
+	}
+
+	// For childAuth, empty string means "use root auth" on global,
+	// and "__use_root_auth__" is a sentinel we map to empty/undefined
+	const childAuthValue = isGlobal
+		? childAuth || "__use_root_auth__"
+		: childAuth;
+
+	const handleChildAuthChange = (val: string) => {
+		if (val === "__use_root_auth__") {
+			// Clear childAuth so it falls back to defaultAuth
+			onDraftChange({ childAuth: "" });
+		} else {
+			onDraftChange({ childAuth: val });
+		}
+	};
 
 	return (
-		<div className="og-settings-field">
-			<span className="og-settings-label">{label}</span>
-			<select
-				className="og-select og-settings-input"
-				value={value}
-				onChange={(e) => onDraftChange({ [field]: e.target.value })}
-			>
-				<option value="">
-					{inherited
-						? `${t("settings.authGroupNone")} (${inherited})`
-						: t("settings.authGroupNone")}
-				</option>
-				{groupNames.map((name) => (
-					<option key={name} value={name}>
-						{name}
-					</option>
-				))}
-			</select>
+		<div className="og-settings-section">
+			<div className="og-settings-section-title">
+				{t("settings.sectionModels")}
+			</div>
+
+			{/* Root Auth */}
+			<div className="og-settings-field">
+				<span className="og-settings-label">{t("settings.rootAuth")}</span>
+				<select
+					className="og-select og-settings-input"
+					value={defaultAuth}
+					onChange={(e) => onDraftChange({ defaultAuth: e.target.value })}
+				>
+					{rootAuthOptions.map((opt) => (
+						<option key={opt.value} value={opt.value}>
+							{opt.label}
+						</option>
+					))}
+				</select>
+			</div>
+
+			{/* Root Model */}
+			<div className="og-settings-field">
+				<span className="og-settings-label">{t("settings.rootModel")}</span>
+				<input
+					type="text"
+					className="og-settings-input"
+					placeholder={
+						isGlobal
+							? t("settings.rootModelPlaceholder")
+							: t("settings.inheritOption")
+					}
+					value={model}
+					onChange={(e) => onDraftChange({ model: e.target.value })}
+				/>
+			</div>
+
+			{/* Child Auth */}
+			<div className="og-settings-field">
+				<span className="og-settings-label">{t("settings.childAuth")}</span>
+				<select
+					className="og-select og-settings-input"
+					value={childAuthValue}
+					onChange={(e) => handleChildAuthChange(e.target.value)}
+				>
+					{childAuthOptions.map((opt) => (
+						<option key={opt.value} value={opt.value}>
+							{opt.label}
+						</option>
+					))}
+				</select>
+			</div>
+
+			{/* Child Model */}
+			<div className="og-settings-field">
+				<span className="og-settings-label">{t("settings.childModel")}</span>
+				<input
+					type="text"
+					className="og-settings-input"
+					placeholder={
+						isGlobal ? t("settings.useRootModel") : t("settings.inheritOption")
+					}
+					value={childModel}
+					onChange={(e) => onDraftChange({ childModel: e.target.value })}
+				/>
+			</div>
 		</div>
 	);
 }
@@ -651,24 +694,27 @@ function GlobalTab({
 }) {
 	const { t } = useLocale();
 	const tab: ActiveTab = "global";
+	const authGroupNames = Object.keys(
+		(layers.global.authGroups ?? {}) as Record<string, unknown>,
+	);
 
 	return (
 		<div className="og-tab-content">
 			<AuthGroupsSection draft={draft} onDraftChange={onDraftChange} />
 
-			<div className="og-settings-section">
-				<div className="og-settings-section-title">
-					{t("settings.sectionModels")}
-				</div>
-				<SettingAuthGroupSelect
-					label={t("settings.defaultAuth")}
-					field="defaultAuth"
-					tab={tab}
-					layers={layers}
-					draft={draft}
-					onDraftChange={onDraftChange}
-				/>
-			</div>
+			<ModelsAuthSection
+				layer="global"
+				authGroupNames={authGroupNames}
+				draft={draft}
+				onDraftChange={onDraftChange}
+			/>
+
+			<McpServersSection
+				tab={tab}
+				layers={layers}
+				draft={draft}
+				onDraftChange={onDraftChange}
+			/>
 
 			<div className="og-settings-section">
 				<div className="og-settings-section-title">
@@ -710,13 +756,6 @@ function GlobalTab({
 				</div>
 			</div>
 
-			<McpServersSection
-				tab={tab}
-				layers={layers}
-				draft={draft}
-				onDraftChange={onDraftChange}
-			/>
-
 			<TabActions dirty={dirty} onSave={onSave} onRevert={onRevert} />
 		</div>
 	);
@@ -731,7 +770,7 @@ function ProjectTab({
 	onRevert,
 	dirty,
 }: {
-	tab: ActiveTab;
+	tab: "project" | "local";
 	layers: ThreeLayerConfig;
 	draft: Record<string, unknown>;
 	onDraftChange: (patch: Record<string, unknown>) => void;
@@ -740,48 +779,18 @@ function ProjectTab({
 	dirty: boolean;
 }) {
 	const { t } = useLocale();
+	const authGroupNames = Object.keys(
+		(layers.global.authGroups ?? {}) as Record<string, unknown>,
+	);
 
 	return (
 		<div className="og-tab-content">
-			<div className="og-settings-section">
-				<div className="og-settings-section-title">
-					{t("settings.sectionModels")}
-				</div>
-				<SettingAuthGroupSelect
-					label={t("settings.defaultAuth")}
-					field="defaultAuth"
-					tab={tab}
-					layers={layers}
-					draft={draft}
-					onDraftChange={onDraftChange}
-				/>
-				<SettingAuthGroupSelect
-					label={t("settings.childAuth")}
-					field="childAuth"
-					tab={tab}
-					layers={layers}
-					draft={draft}
-					onDraftChange={onDraftChange}
-				/>
-				<SettingStringField
-					label={t("settings.rootModel")}
-					field="model"
-					placeholder={t("settings.rootModelPlaceholder")}
-					tab={tab}
-					layers={layers}
-					draft={draft}
-					onDraftChange={onDraftChange}
-				/>
-				<SettingStringField
-					label={t("settings.taskAgentModel")}
-					field="childModel"
-					placeholder={t("settings.taskAgentModelPlaceholder")}
-					tab={tab}
-					layers={layers}
-					draft={draft}
-					onDraftChange={onDraftChange}
-				/>
-			</div>
+			<ModelsAuthSection
+				layer={tab}
+				authGroupNames={authGroupNames}
+				draft={draft}
+				onDraftChange={onDraftChange}
+			/>
 
 			<div className="og-settings-section">
 				<div className="og-settings-section-title">
@@ -975,10 +984,16 @@ export function SettingsPanel({
 	const revertRepo = () => setDraftRepo({ ...layers.repo });
 	const revertLocal = () => setDraftLocal({ ...layers.local });
 
+	const tabTitleKey = {
+		global: "settings.titleGlobal",
+		project: "settings.titleProject",
+		local: "settings.titleLocal",
+	} as const;
+
 	return (
 		<div className="og-settings-panel og-settings-panel-wide">
 			<div className="og-settings-header">
-				<span className="og-settings-title">{t("settings.title")}</span>
+				<span className="og-settings-title">{t(tabTitleKey[activeTab])}</span>
 				<button type="button" className="og-btn-icon" onClick={onClose}>
 					<IconClose size={11} />
 				</button>
