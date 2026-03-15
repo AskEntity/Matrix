@@ -114,14 +114,20 @@ Daemon (Hono: HTTP + WS on :7433)
 - `executeBashWithTimeout()`: foreground timeout → background promotion → completions via `background_complete` queue messages.
 - cd wrapper injected to warn on redundant directory changes.
 - Per-session cleanup in `backgroundProcesses` Map.
-\n## Compact Notification Deduplication Fix\n- compact_started fires from 3 places (yield tool, implicit yield, cancellation point). When manual compact is clicked, yield tool emits compact_started AND re-enqueues, then provider emits compact_started again, causing duplicates.\n- Fix: in compact_started handler, scan backwards through logs for existing compact entry without checkpoint (entry.type === "compact" && !entry.checkpoint). If found, skip adding a new one.\n- Removed compacting state from App.tsx entirely — no longer needed since the compact log entry bar itself shows the correct state (shimmer while no checkpoint, stats when checkpoint arrives).\n- Removed compacting prop and og-compressing-indicator block from ActivityLog.tsx.\n- The thinking indicator was previously gated on !compacting — simplified to just running.
 
-## SettingsPanel Refactor: Save/Revert Pattern
-- Draft state per tab: `draftGlobal`, `draftRepo`, `draftLocal` initialized from `layers`, reset via `useEffect` when `layers` changes after save.
-- `updateDraft` helper: patches draft object; empty string / undefined / null all mean "delete the key" (equals "inherit from lower layer").
-- `isDirty` uses `JSON.stringify` deep comparison to detect changes including complex objects (authGroups, mcpServers).
-- `buildPatch` computes PATCH diff: only sends fields that changed. Missing fields in draft (vs saved) become `null` in patch to explicitly clear.
-- AuthGroupsSection/McpServersSection now accept `draft + onDraftChange` instead of calling `updateGlobal/updateRepo/updateLocal` directly — this is critical for the tab-level Save to capture auth group and MCP changes.
-- `settings.revert` i18n key added to both en and zh.
-- CSS: `.og-settings-tab-actions` for Save/Revert bar, `.og-settings-dirty` for the asterisk indicator.
-\n## Test Isolation: globalConfigPath in DaemonConfig\n- saveGlobalConfig/loadGlobalConfig in config.ts now accept optional path param. No path = defaults to ~/.opengraft/config.json.\n- DaemonConfig has globalConfigPath?: string. daemon.ts loadConfig() and PATCH /config/global use config.globalConfigPath when provided.\n- Tests calling PATCH /config/global must pass globalConfigPath: join(dataDir, 'config.json') to createApp to avoid writing to real user config.
+## Settings UI
+
+- **Save/Revert pattern**: SettingsPanel maintains `draftGlobal/draftRepo/draftLocal` state; controlled inputs; explicit Save/Revert buttons per tab.
+- `isDirty` uses `JSON.stringify` deep comparison. `buildPatch` computes diff (missing fields → null to explicitly clear).
+- AuthGroupsSection/McpServersSection accept `draft + onDraftChange` — tab-level Save captures auth group and MCP changes.
+- Test isolation: `saveGlobalConfig/loadGlobalConfig` in config.ts accept optional path param (default: `~/.opengraft/config.json`). Tests must pass `globalConfigPath: join(dataDir, 'config.json')` to `createApp` to avoid writing to real user config.
+
+## Compact Deduplication
+
+- `compact_started` fires from 3 places (yield tool + implicit yield + cancellation point) → duplicates.
+- Fix: in `compact_started` handler in App.tsx, scan backwards for existing entry with `type === "compact" && !checkpoint`. If found, skip. No `compacting` state needed — the bar text handles state.
+
+## Provider Configuration
+
+- `createProviderFromConfig()` in daemon.ts: NO env var fallback. Throws if no auth group configured.
+- Tests use `config.agentProvider` (injected mock) — unaffected by this change.
