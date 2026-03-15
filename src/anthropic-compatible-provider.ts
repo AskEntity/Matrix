@@ -1919,13 +1919,34 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							const parts = Array.isArray(mcpResult.content)
 								? mcpResult.content
 								: [];
+							const textParts: string[] = [];
+							const imageParts: Array<{
+								base64: string;
+								mediaType: string;
+							}> = [];
+							for (const c of parts as Array<{
+								type: string;
+								text?: string;
+								data?: string;
+								mimeType?: string;
+							}>) {
+								if (c.type === "text") {
+									textParts.push(c.text ?? "");
+								} else if (c.type === "image" && c.data) {
+									imageParts.push({
+										base64: c.data,
+										mediaType: c.mimeType ?? "image/png",
+									});
+								} else {
+									textParts.push(JSON.stringify(c));
+								}
+							}
 							return {
-								content: parts
-									.map((c: { type: string; text?: string }) =>
-										c.type === "text" ? (c.text ?? "") : JSON.stringify(c),
-									)
-									.join("\n"),
+								content: textParts.join("\n"),
 								isError: mcpResult.isError ?? false,
+								isImage: imageParts.length > 0,
+								imageData: imageParts[0]?.base64,
+								mediaType: imageParts[0]?.mediaType,
 							};
 						} catch (e) {
 							return {

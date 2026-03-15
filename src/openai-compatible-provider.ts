@@ -727,6 +727,8 @@ export class OpenAICompatibleProvider implements AgentProvider {
 							for (const c of parts as Array<{
 								type: string;
 								text?: string;
+								data?: string;
+								mimeType?: string;
 								source?: {
 									type: string;
 									media_type: string;
@@ -735,7 +737,14 @@ export class OpenAICompatibleProvider implements AgentProvider {
 							}>) {
 								if (c.type === "text") {
 									textParts.push(c.text ?? "");
+								} else if (c.type === "image" && c.data) {
+									// MCP format: { type: "image", data, mimeType }
+									mcpImages.push({
+										mediaType: c.mimeType ?? "image/png",
+										data: c.data,
+									});
 								} else if (c.type === "image" && c.source?.type === "base64") {
+									// Anthropic format: { type: "image", source: { type: "base64", media_type, data } }
 									mcpImages.push({
 										mediaType: c.source.media_type,
 										data: c.source.data,

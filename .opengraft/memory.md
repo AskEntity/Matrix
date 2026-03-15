@@ -305,3 +305,11 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `compacting` state in App.tsx: set true on compact click, cleared on compact event / orchestration_completed / agent_stopped
 - ActivityLog shows "Compressing..." with shimmer animation when `compacting=true`, "Thinking..." otherwise
 - CSS: `.og-compressing-dots` uses animated gradient text (background-clip: text) for shimmer effect
+
+## MCP Tool Result Image Handling Fix
+- MCP yield tool returns images in MCP format: `{ type: "image", data: string, mimeType: string }`
+- Anthropic provider was JSON.stringify-ing image blocks → 1.2M token text blobs
+- Fix: parse image blocks separately, return `isImage/imageData/mediaType` flags for proper content block assembly
+- OpenAI provider had same bug: was checking for Anthropic API format (`c.source?.type === "base64"`) instead of MCP format (`c.data`)
+- Fix: check MCP format first (`c.data`), then fall back to Anthropic format (`c.source`)
+
