@@ -55,6 +55,7 @@ export interface ActionHandlerDeps {
 	setCreatingProject: React.Dispatch<React.SetStateAction<boolean>>;
 	setNewProjectPath: React.Dispatch<React.SetStateAction<string>>;
 	setShowAddProject: React.Dispatch<React.SetStateAction<boolean>>;
+	setIsCreatingTask: React.Dispatch<React.SetStateAction<boolean>>;
 
 	start: (opts: { prompt: string }) => Promise<void>;
 	stop: () => Promise<void>;
@@ -105,6 +106,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		setCreatingProject,
 		setNewProjectPath,
 		setShowAddProject,
+		setIsCreatingTask,
 		start,
 		stop,
 		sendMessage,
@@ -277,12 +279,15 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		}
 	}
 
-	async function handleAddTask() {
+	function handleAddTask() {
 		if (!projectId) return;
-		const title = window.prompt(t("prompt.taskTitle"));
-		if (!title) return;
-		const description = window.prompt(t("prompt.taskDescription")) ?? "";
-		const body: Record<string, string> = { title, description };
+		setIsCreatingTask(true);
+	}
+
+	async function handleCreateTask(title: string) {
+		if (!projectId) return;
+		setIsCreatingTask(false);
+		const body: Record<string, string> = { title };
 		if (selectedTaskId && !isOrchestratorNode) body.parentId = selectedTaskId;
 		try {
 			const res = await fetch(`/projects/${projectId}/tasks`, {
@@ -292,6 +297,22 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			});
 			if (!res.ok)
 				throw new Error(((await res.json()) as { error: string }).error);
+			await refreshTasks();
+		} catch (err) {
+			addLog("error", (err as Error).message);
+		}
+	}
+
+	function handleCancelCreate() {
+		setIsCreatingTask(false);
+	}
+
+	async function handleDeleteTaskByDrag(taskId: string) {
+		if (!projectId) return;
+		try {
+			await deleteTask(taskId);
+			addLog("lifecycle", `${t("lifecycle.deleted")} ${taskId}`);
+			if (selectedTaskId === taskId) setSelectedTaskId(rootNodeId);
 			await refreshTasks();
 		} catch (err) {
 			addLog("error", (err as Error).message);
@@ -309,5 +330,8 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		handleAddProject,
 		handleDeleteProject,
 		handleAddTask,
+		handleCreateTask,
+		handleCancelCreate,
+		handleDeleteTaskByDrag,
 	};
 }

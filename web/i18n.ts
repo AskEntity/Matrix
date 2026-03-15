@@ -48,6 +48,7 @@ const en: Translations = {
 	"tasks.addTask": "Add task",
 	"tasks.refresh": "Refresh",
 	"tasks.clearFilter": "Clear filter",
+	"tasks.dropToDelete": "Drop to delete",
 
 	// Orchestrator
 	"orch.label": "Orchestrator",
@@ -312,6 +313,7 @@ const zh: Translations = {
 	"tasks.addTask": "添加任务",
 	"tasks.refresh": "刷新",
 	"tasks.clearFilter": "清除筛选",
+	"tasks.dropToDelete": "拖放以删除",
 
 	// Orchestrator
 	"orch.label": "编排器",

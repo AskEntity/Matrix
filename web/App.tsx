@@ -92,6 +92,7 @@ function AppInner() {
 	const [showAddProject, setShowAddProject] = useState(false);
 	const [newProjectPath, setNewProjectPath] = useState("");
 	const [creatingProject, setCreatingProject] = useState(false);
+	const [isCreatingTask, setIsCreatingTask] = useState(false);
 	const [selectedTaskId, setSelectedTaskId] = useState<string | null>(
 		initialHash.taskId ?? null,
 	);
@@ -430,6 +431,9 @@ function AppInner() {
 		handleAddProject,
 		handleDeleteProject,
 		handleAddTask,
+		handleCreateTask,
+		handleCancelCreate,
+		handleDeleteTaskByDrag,
 	} = createActionHandlers({
 		projectId,
 		running,
@@ -463,6 +467,7 @@ function AppInner() {
 		setCreatingProject,
 		setNewProjectPath,
 		setShowAddProject,
+		setIsCreatingTask,
 		start,
 		stop,
 		sendMessage,
@@ -580,6 +585,10 @@ function AppInner() {
 						onSelect={setSelectedTaskId}
 						running={running}
 						onReorder={reorderTasks}
+						isCreating={isCreatingTask}
+						onCreateTask={handleCreateTask}
+						onCancelCreate={handleCancelCreate}
+						onDeleteTask={handleDeleteTaskByDrag}
 					/>
 				</aside>
 
