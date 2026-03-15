@@ -94,3 +94,9 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Event History Replay
 
 - `ws-handler.ts` splits into `collectEntries()` (pure, builds array) and `processSideEffects()` (state setters). Prevents tool card JSON flash during event_history replay by setting all logs in one `setLogs()` call.
+
+## Deduplication: readProjectMemory
+- `readProjectMemory(projectPath, includeHeaders?)` in `src/daemon/helpers.ts` is the single function for reading CLAUDE.md + .opengraft/memory.md
+- `includeHeaders=true` (default): adds `[read_file: ...]` headers (used for orchestrator initial prompt)
+- `includeHeaders=false`: plain concatenation (used for child task prompts via agent-tools.ts)
+- Old `readMemory()` in agent-tools.ts was removed; it now imports from daemon/helpers.ts
