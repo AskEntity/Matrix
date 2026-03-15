@@ -384,3 +384,8 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - New tab CSS classes: og-settings-tabs, og-settings-tab, og-settings-tab-active-{global,project,local}
 - Tab accent colors: global=amber(#c9a227), project=var(--accent), local=blue(#508cdc)
 - Old three-layer CSS (og-tl-*, og-tlfield-*) still in style.css but unused — safe to remove later
+
+## Compact Button Feedback Improvements
+- Emit `compact_started` immediately when compact signal detected in implicit yield path and cancellation point — gives instant UI feedback
+- Short context guard (messages.length <= 4): emit status + compact_started + compact with savedTokens=0, then reset and continue — completes the Compressing... cycle even with no actual compaction
+- Both anthropic-compatible-provider.ts and openai-compatible-provider.ts have the same pattern

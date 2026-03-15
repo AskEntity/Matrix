@@ -527,6 +527,17 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			}
 
 			// ── Pre-call compression: inject summarization instruction if over threshold ──
+			if (manualCompactRequested && messages.length <= 4) {
+				yield { type: "status", message: "Context is too short to compact" };
+				yield { type: "compact_started" };
+				yield {
+					type: "compact",
+					checkpoint: "Context too short for meaningful compaction",
+					savedTokens: 0,
+				};
+				manualCompactRequested = false;
+				continue;
+			}
 			if (
 				messages.length > 4 &&
 				(manualCompactRequested || estimatedInputTokens > compressThreshold)
@@ -647,6 +658,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						const all = [first, ...rest];
 						if (all.some((m) => m.source === "compact")) {
 							manualCompactRequested = true;
+							yield { type: "compact_started" };
 						}
 						const nonCompact = all.filter((m) => m.source !== "compact");
 						if (nonCompact.length === 0) {
@@ -876,6 +888,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				const queueMsgs = queue.drain();
 				if (queueMsgs.some((m) => m.source === "compact")) {
 					manualCompactRequested = true;
+					yield { type: "compact_started" };
 				}
 				const nonCompactMsgs = queueMsgs.filter((m) => m.source !== "compact");
 				if (nonCompactMsgs.length > 0) {
