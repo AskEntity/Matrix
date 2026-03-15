@@ -447,7 +447,8 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						function: {
 							name: toolName,
 							description: def.description,
-							parameters: zodShapeToJsonSchema(def.inputSchema),
+							parameters:
+								def.jsonSchema ?? zodShapeToJsonSchema(def.inputSchema),
 						},
 					});
 				}

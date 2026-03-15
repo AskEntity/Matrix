@@ -606,8 +606,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					const toolName = `mcp__${serverName}__${def.name}`;
 					mcpHandlers.set(toolName, def);
 
-					// Convert Zod schema to JSON Schema for the API
-					const jsonSchema = zodShapeToJsonSchema(def.inputSchema);
+					// Use pre-computed JSON Schema if available (external MCP tools),
+					// otherwise convert Zod schema
+					const jsonSchema =
+						def.jsonSchema ?? zodShapeToJsonSchema(def.inputSchema);
 					allTools.push({
 						name: toolName,
 						description: def.description,
