@@ -94,3 +94,14 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Event History Replay
 
 - `ws-handler.ts` splits into `collectEntries()` (pure, builds array) and `processSideEffects()` (state setters). Prevents tool card JSON flash during event_history replay by setting all logs in one `setLogs()` call.
+
+## Tool Module Extraction (2026-03-15)
+
+- Extracted `src/tools/` from `anthropic-compatible-provider.ts` (2190→1212 lines):
+  - `definitions.ts`: TOOLS array (built-in tool schemas)
+  - `search.ts`: jsSearch(), truncateSearchOutput(), formatContextBlock()
+  - `bash.ts`: executeBashWithTimeout(), BackgroundProcess, background process management
+  - `executor.ts`: executeTool(), resolvePath()
+  - `index.ts`: barrel re-exports
+- Provider re-exports everything from `./tools/index.ts` for backward compatibility (no import changes needed elsewhere).
+- Internal usage in provider uses aliased imports: `_TOOLS`, `_executeTool`, `_cleanupBg`.
