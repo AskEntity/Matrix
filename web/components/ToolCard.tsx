@@ -588,21 +588,23 @@ export function LogEntryView({
 
 	const { t } = useLocale();
 
-	if (entry.type === "compact" && entry.checkpoint) {
+	if (entry.type === "compact") {
 		return (
 			<div className="og-compact-boundary">
 				<div className="og-compact-hint">{t("compact.notVisible")}</div>
 				<div className="og-compact-bar">
 					<span className="og-compact-label">◈ {entry.text}</span>
-					<button
-						type="button"
-						className="og-compact-toggle"
-						onClick={() => setExpanded(!expanded)}
-					>
-						{expanded ? t("compact.collapse") : t("compact.checkpoint")}
-					</button>
+					{entry.checkpoint && (
+						<button
+							type="button"
+							className="og-compact-toggle"
+							onClick={() => setExpanded(!expanded)}
+						>
+							{expanded ? t("compact.collapse") : t("compact.checkpoint")}
+						</button>
+					)}
 				</div>
-				{expanded && (
+				{expanded && entry.checkpoint && (
 					<pre className="og-compact-checkpoint">{entry.checkpoint}</pre>
 				)}
 			</div>

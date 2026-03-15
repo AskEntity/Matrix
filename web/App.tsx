@@ -330,19 +330,39 @@ function AppInner() {
 					} else if (et === "compact_started") {
 						setCompacting(true);
 						addLog(
-							"status",
+							"compact",
 							"Compressing context...",
 							msg.taskId as string | undefined,
+							"",
 						);
 						break;
 					} else if (et === "compact") {
-						text = `Context compacted (saved ~${msg.savedTokens} tokens)`;
-						addLog(
-							et,
-							text,
-							msg.taskId as string | undefined,
-							msg.checkpoint as string,
-						);
+						const compactText = `Context compacted (saved ~${msg.savedTokens} tokens)`;
+						const compactCheckpoint = msg.checkpoint as string;
+						const compactTaskId = msg.taskId as string | undefined;
+						setLogs((prev) => {
+							// Find the placeholder compact entry (last one without checkpoint) and update it
+							for (let i = prev.length - 1; i >= 0; i--) {
+								const e = prev[i];
+								if (e && e.type === "compact" && !e.checkpoint) {
+									const updated = [...prev];
+									updated[i] = {
+										...e,
+										text: compactText,
+										checkpoint: compactCheckpoint,
+									};
+									return updated;
+								}
+							}
+							// No placeholder found — add new entry
+							const entry = createLogEntry(
+								"compact",
+								compactText,
+								compactTaskId,
+							);
+							entry.checkpoint = compactCheckpoint;
+							return [...prev, entry];
+						});
 						setCompacting(false);
 						break;
 					} else if (et === "queue_message") {

@@ -400,3 +400,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Fix: `isSelectedTaskRunning = running && (isOrchestratorNode || selectedNode?.status === "in_progress")` — orchestrator node is considered running when global `running` is true
 - Also added a `addLog("status", "Compressing context...", taskId)` call on `compact_started` event — gives a visible log entry, not just the floating indicator
 - The "Compressing..." indicator in ActivityLog was correct (`running && compacting`) — it just never showed because `running` was false for orchestrator view
+
+## Compact Shimmer Bar at Start
+- On `compact_started`: add a `compact`-type log entry (not `status`) so the shimmer bar renders immediately
+- Empty string checkpoint passed to addLog but since `if (checkpoint)` is falsy for `""`, the entry has `checkpoint: undefined`
+- On `compact`: use `setLogs` callback to search backwards for the last compact entry without checkpoint and UPDATE it (avoids duplicate shimmer bars)
+- ToolCard renders `og-compact-boundary` for all compact entries, but conditionally renders the Checkpoint button only when `entry.checkpoint` is truthy
