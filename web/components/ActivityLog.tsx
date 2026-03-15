@@ -129,46 +129,81 @@ export function ActivityLog({
 			return entry.toolName ?? "";
 		};
 
-		// Track which tool_result indices have been consumed by pairing
-		const consumedResults = new Set<number>();
-		// Track tool_use indices to hide (e.g. yield entries)
-		const consumedUseEntries = new Set<number>();
+		// --- ID-based + FIFO pairing ---
+		// Primary: match tool_use → tool_result by toolUseId (unique per call).
+		// Fallback: FIFO queue per (toolName, taskId) for legacy events without IDs.
+		const paired = new Map<number, number>(); // useIdx → resultIdx
+		const pairedResults = new Set<number>(); // result indices already consumed
 
-		// For each tool_use, scan ahead to find its matching tool_result
-		const findMatchingResult = (
-			useIdx: number,
-			name: string,
-			taskId: string | undefined,
-		): number => {
-			for (let j = useIdx + 1; j < visible.length; j++) {
-				const candidate = visible[j];
-				if (!candidate || candidate.type !== "tool_result") continue;
-				if (candidate.taskId !== taskId) continue;
-				if (consumedResults.has(j)) continue;
-				if (getToolName(candidate) === name) return j;
-			}
-			return -1;
-		};
+		// Index tool_use entries by toolUseId for O(1) lookup
+		const useByToolUseId = new Map<string, number>();
+		// FIFO queues for fallback matching (keyed by "toolName\0taskId")
+		const useQueues = new Map<string, number[]>();
+		// Indices to hide: yield pairs
+		const hiddenIndices = new Set<number>();
 
-		// Pre-scan: hide completed yield pairs (tool_use + tool_result).
-		// Only an unmatched yield tool_use at the end (agent currently waiting) stays visible.
+		// First pass: register all tool_use entries
 		for (let j = 0; j < visible.length; j++) {
 			const entry = visible[j];
-			if (!entry) continue;
-			if (getToolName(entry) !== "mcp__opengraft__yield") continue;
-			if (entry.type === "tool_result") {
-				consumedResults.add(j);
-				// Also consume the matching tool_use
-				for (let k = j - 1; k >= 0; k--) {
-					const candidate = visible[k];
-					if (!candidate || candidate.type !== "tool_use") continue;
-					if (candidate.taskId !== entry.taskId) continue;
-					if (consumedUseEntries.has(k)) continue;
-					if (getToolName(candidate) === "mcp__opengraft__yield") {
-						consumedUseEntries.add(k);
-						break;
+			if (!entry || entry.type !== "tool_use") continue;
+			if (entry.toolUseId) {
+				useByToolUseId.set(entry.toolUseId, j);
+			}
+			const name = getToolName(entry);
+			const key = `${name}\0${entry.taskId ?? ""}`;
+			let q = useQueues.get(key);
+			if (!q) {
+				q = [];
+				useQueues.set(key, q);
+			}
+			q.push(j);
+		}
+
+		// Second pass: match tool_result entries to tool_use entries
+		for (let j = 0; j < visible.length; j++) {
+			const entry = visible[j];
+			if (!entry || entry.type !== "tool_result") continue;
+
+			let useIdx: number | undefined;
+
+			// Primary: match by toolUseId
+			if (entry.toolUseId) {
+				useIdx = useByToolUseId.get(entry.toolUseId);
+			}
+
+			// Fallback: FIFO by (toolName, taskId)
+			if (useIdx === undefined) {
+				const name = getToolName(entry);
+				const key = `${name}\0${entry.taskId ?? ""}`;
+				const q = useQueues.get(key);
+				if (q && q.length > 0) {
+					useIdx = q.shift();
+				}
+			}
+
+			if (useIdx !== undefined) {
+				// Remove from FIFO queue if matched by ID (to keep queue in sync)
+				if (entry.toolUseId) {
+					const name = getToolName(entry);
+					const key = `${name}\0${entry.taskId ?? ""}`;
+					const q = useQueues.get(key);
+					if (q) {
+						const idx = q.indexOf(useIdx);
+						if (idx !== -1) q.splice(idx, 1);
 					}
 				}
+				paired.set(useIdx, j);
+				pairedResults.add(j);
+			}
+		}
+
+		// Pre-scan: hide completed yield pairs.
+		// Only an unmatched yield tool_use at the end (agent waiting) stays visible.
+		for (const [useIdx, resultIdx] of paired) {
+			const entry = visible[useIdx];
+			if (entry && getToolName(entry) === "mcp__opengraft__yield") {
+				hiddenIndices.add(useIdx);
+				hiddenIndices.add(resultIdx);
 			}
 		}
 
@@ -180,8 +215,8 @@ export function ActivityLog({
 				continue;
 			}
 
-			// Skip already-consumed entries
-			if (consumedResults.has(i) || consumedUseEntries.has(i)) {
+			// Skip hidden entries (yield pairs, consumed results)
+			if (hiddenIndices.has(i) || pairedResults.has(i)) {
 				i += 1;
 				continue;
 			}
@@ -194,11 +229,11 @@ export function ActivityLog({
 					continue;
 				}
 
-				// Try to find a matching tool_result
-				const resultIdx = findMatchingResult(i, name, cur.taskId);
-				const resultEntry = resultIdx !== -1 ? visible[resultIdx] : undefined;
+				// Check for a paired tool_result
+				const resultIdx = paired.get(i);
+				const resultEntry =
+					resultIdx !== undefined ? visible[resultIdx] : undefined;
 				if (resultEntry) {
-					consumedResults.add(resultIdx);
 					result.push({
 						kind: "tool_card",
 						useEntry: cur,

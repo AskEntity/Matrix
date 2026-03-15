@@ -4,6 +4,7 @@ import { createLogEntry, type LogEntry, type TaskNode } from "./hooks.ts";
 
 type StructuredFields = {
 	toolName?: string;
+	toolUseId?: string;
 	toolArgs?: Record<string, unknown>;
 	toolResult?: string;
 	isError?: boolean;
@@ -110,6 +111,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 							msg.taskId as string | undefined,
 							{
 								toolName: msg.tool as string,
+								toolUseId: (msg.toolUseId as string) || undefined,
 								toolArgs: msg.input as Record<string, unknown>,
 							},
 						),
@@ -124,6 +126,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 							msg.taskId as string | undefined,
 							{
 								toolName: msg.tool as string,
+								toolUseId: (msg.toolUseId as string) || undefined,
 								toolResult: (msg.content as string) || "",
 								isError: (msg.isError as boolean) || false,
 							},
@@ -345,7 +348,10 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				return true;
 			}
 			case "task_completed": {
-				const completedText = `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
+				const output = (msg.output as string) || "";
+				const completedText = output
+					? `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}\n${output}`
+					: `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
 				const completedParentId =
 					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
 				entries.push(
@@ -442,6 +448,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					text = msg.tool as string;
 					addLog(et, text, msg.taskId as string | undefined, undefined, {
 						toolName: msg.tool as string,
+						toolUseId: (msg.toolUseId as string) || undefined,
 						toolArgs: msg.input as Record<string, unknown>,
 					});
 					break;
@@ -449,6 +456,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					text = (msg.content as string) || "";
 					addLog(et, text, msg.taskId as string | undefined, undefined, {
 						toolName: msg.tool as string,
+						toolUseId: (msg.toolUseId as string) || undefined,
 						toolResult: (msg.content as string) || "",
 						isError: (msg.isError as boolean) || false,
 					});
@@ -643,7 +651,10 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				break;
 			}
 			case "task_completed": {
-				const completedText = `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
+				const output = (msg.output as string) || "";
+				const completedText = output
+					? `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}\n${output}`
+					: `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
 				const completedParentId =
 					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
 				addLog("task_completed", completedText, msg.taskId as string);

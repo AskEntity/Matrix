@@ -32,6 +32,7 @@ import {
 
 type StructuredFields = {
 	toolName?: string;
+	toolUseId?: string;
 	toolArgs?: Record<string, unknown>;
 	toolResult?: string;
 	isError?: boolean;

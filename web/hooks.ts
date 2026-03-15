@@ -22,6 +22,8 @@ export interface LogEntry {
 	checkpoint?: string;
 	/** Structured tool fields — present for tool_use/tool_result from live WS events. */
 	toolName?: string;
+	/** Unique ID linking a tool_use to its tool_result (from provider's tool_use_id). */
+	toolUseId?: string;
 	toolArgs?: Record<string, unknown>;
 	toolResult?: string;
 	isError?: boolean;
@@ -351,6 +353,7 @@ export function createLogEntry(
 	taskId?: string,
 	structured?: {
 		toolName?: string;
+		toolUseId?: string;
 		toolArgs?: Record<string, unknown>;
 		toolResult?: string;
 		isError?: boolean;
@@ -366,6 +369,8 @@ export function createLogEntry(
 	};
 	if (structured) {
 		if (structured.toolName !== undefined) entry.toolName = structured.toolName;
+		if (structured.toolUseId !== undefined)
+			entry.toolUseId = structured.toolUseId;
 		if (structured.toolArgs !== undefined) entry.toolArgs = structured.toolArgs;
 		if (structured.toolResult !== undefined)
 			entry.toolResult = structured.toolResult;
