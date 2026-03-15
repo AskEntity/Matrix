@@ -140,3 +140,14 @@ Daemon (Hono: HTTP + WS on :7433)
 - Global tab: auth groups + default auth dropdown + daemon settings + MCP servers. No model fields (those are project/local level).
 - Project/Local tabs (shared `ProjectTab` component): auth dropdowns, root model, task agent model, limits, MCP servers.
 - Translation keys renamed: `settings.modelOverride` → `settings.rootModel`, `settings.childModel` → `settings.taskAgentModel`.
+
+## SettingsPanel Refactor (March 2026)
+
+- `ModelsAuthSection` component: shared across all 3 tabs (global/project/local). Takes `layer`, `authGroupNames`, `draft`, `onDraftChange`.
+- Config key mapping: Root Auth → `defaultAuth`, Root Model → `model`, Child Auth → `childAuth`, Child Model → `childModel`.
+- Global tab: no inherit options, Child Auth defaults to "Use Root Auth", Child Model placeholder is "Use Root Model".
+- Project/Local tabs: all fields have "— Inherit —" as first option (empty string value). Child Auth also has "Use Root Auth" option.
+- `__use_root_auth__` sentinel in childAuth select maps to empty string on save (clears childAuth → falls back to defaultAuth).
+- Panel header title changes per active tab: "Global Settings" / "Project Settings" / "Local Settings".
+- Removed `SettingStringField` and `SettingAuthGroupSelect` (replaced by inline rendering in ModelsAuthSection).
+- i18n keys added: `settings.rootAuth`, `settings.childModel`, `settings.inheritOption`, `settings.useRootAuth`, `settings.useRootModel`, `settings.titleGlobal/Project/Local`.
