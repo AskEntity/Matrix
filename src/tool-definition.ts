@@ -16,6 +16,12 @@ export interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 		args: InferShape<Schema>,
 		extra: unknown,
 	) => Promise<CallToolResult>;
+	/**
+	 * Pre-computed JSON Schema for the tool's input. When present, providers
+	 * use this directly instead of converting inputSchema via zodShapeToJsonSchema.
+	 * Used by external MCP server tools where the schema is already JSON Schema.
+	 */
+	jsonSchema?: Record<string, unknown>;
 }
 
 /**

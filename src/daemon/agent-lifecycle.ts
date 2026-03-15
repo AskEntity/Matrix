@@ -5,9 +5,11 @@ import {
 	TASK_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
 import { DEFAULT_MODEL } from "../config.ts";
+import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage } from "../message-queue.ts";
 import { globalAgentQueues, MessageQueue } from "../message-queue.ts";
 import type { TaskTracker } from "../task-tracker.ts";
+import type { ToolDefinition } from "../tool-definition.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
 import {
@@ -90,6 +92,7 @@ export async function runChildAgentInBackground(
 	if (!node?.worktreePath) return;
 	const childQueue = new MessageQueue();
 	globalAgentQueues.set(nodeId, childQueue);
+	const mcpManager = new McpClientManager();
 	try {
 		const wtRoot = join(project.path, ".worktrees");
 		const wm = new WorktreeManager(project.path, wtRoot);
@@ -103,6 +106,14 @@ export async function runChildAgentInBackground(
 			project.id,
 		);
 		const provider = getProjectProvider(ctx, effectiveCfg);
+
+		// Connect to external MCP servers if configured
+		if (
+			effectiveCfg.mcpServers &&
+			Object.keys(effectiveCfg.mcpServers).length > 0
+		) {
+			await mcpManager.connectAll(effectiveCfg.mcpServers);
+		}
 
 		const { toolDefs, hasRunningChildren } = createOrchestratorTools(
 			{
@@ -128,13 +139,19 @@ export async function runChildAgentInBackground(
 			costAccumulator,
 		);
 
+		// Merge opengraft tools with external MCP server tools
+		const mcpToolDefs: Record<string, ToolDefinition[]> = {
+			opengraft: toolDefs,
+			...mcpManager.getToolDefs(),
+		};
+
 		const session = provider.startSession({
 			prompt,
 			cwd: node.worktreePath as string,
 			systemPrompt: TASK_SYSTEM_PROMPT,
 			resumeSessionId: node.sessionId ?? undefined,
 			model: effectiveCfg.model,
-			mcpToolDefs: { opengraft: toolDefs },
+			mcpToolDefs,
 			queue: childQueue,
 			doneRef,
 			hasRunningChildren,
@@ -182,6 +199,7 @@ export async function runChildAgentInBackground(
 	} finally {
 		globalAgentQueues.delete(nodeId);
 		childQueue.close();
+		await mcpManager.disconnectAll();
 	}
 }
 
@@ -241,6 +259,15 @@ export async function launchAgent(
 	const doneRef: {
 		done: null | { status: "passed" | "failed"; summary: string };
 	} = { done: null };
+	const mcpManager = new McpClientManager();
+
+	// Connect to external MCP servers if configured
+	if (
+		effectiveCfg.mcpServers &&
+		Object.keys(effectiveCfg.mcpServers).length > 0
+	) {
+		await mcpManager.connectAll(effectiveCfg.mcpServers);
+	}
 
 	const { toolDefs, hasRunningChildren } = createOrchestratorTools(
 		{
@@ -266,6 +293,12 @@ export async function launchAgent(
 		costAccumulator,
 	);
 
+	// Merge opengraft tools with external MCP server tools
+	const mcpToolDefs: Record<string, ToolDefinition[]> = {
+		opengraft: toolDefs,
+		...mcpManager.getToolDefs(),
+	};
+
 	// Auto-resume: if we have a previous session, always resume it
 	const hasSession = Boolean(tracker.orchestratorSessionId);
 	const shouldResume = opts.resume || hasSession;
@@ -289,7 +322,7 @@ export async function launchAgent(
 		projectPath: project.path,
 		sessionsDir: join(ctx.config.dataDir, "sessions", project.id),
 		systemPrompt: orchestratorSystemPrompt,
-		mcpToolDefs: { opengraft: toolDefs },
+		mcpToolDefs,
 		resumeSessionId,
 		model: effectiveModel,
 		queue,
@@ -384,6 +417,7 @@ export async function launchAgent(
 				}
 			}
 			broadcastTreeUpdate(ctx, project.id, tracker);
+			await mcpManager.disconnectAll();
 		}
 	})();
 }

@@ -151,3 +151,11 @@ Daemon (Hono: HTTP + WS on :7433)
 - Panel header title changes per active tab: "Global Settings" / "Project Settings" / "Local Settings".
 - Removed `SettingStringField` and `SettingAuthGroupSelect` (replaced by inline rendering in ModelsAuthSection).
 - i18n keys added: `settings.rootAuth`, `settings.childModel`, `settings.inheritOption`, `settings.useRootAuth`, `settings.useRootModel`, `settings.titleGlobal/Project/Local`.
+
+## External MCP Server Support
+
+- `src/mcp-client.ts`: `McpClientManager` class connects to external MCP servers via stdio transport using `@modelcontextprotocol/sdk`.
+- External tool schemas are JSON Schema (not Zod). Added optional `jsonSchema` field to `ToolDefinition` — providers use it directly instead of calling `zodShapeToJsonSchema()`.
+- Integration in `agent-lifecycle.ts`: both `launchAgent` and `runChildAgentInBackground` create `McpClientManager`, `connectAll()` from config, merge tool defs, and `disconnectAll()` in finally/cleanup.
+- `connectAll()` uses `Promise.allSettled` — individual server failures don't block others. Failed servers are logged but not added to the map.
+- Tool handler closure captures `serverName` and `tool.name`, calls `mcpManager.callTool()` which returns `CallToolResult` directly — compatible with both providers.
