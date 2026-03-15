@@ -361,3 +361,13 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `DaemonConfig.initialConfig` added for tests to inject config without touching global config file
 - `createApp()` returns `getConfig()` getter for accessing globalConfig from outside (e.g. `import.meta.main` block)
 - In startup: `loadConfig()` runs before port is read, so config.port takes effect
+
+## Three-Layer Settings UI
+- SettingsPanel.tsx rewritten to show Global/Repo/Local layers per field
+- Each field shows: effective value + source badge (from: global/repo/local) + 3 inputs
+- Auth groups editor only edits global layer (only place they make sense to define)
+- `useThreeLayerConfig` hook in hooks.ts fetches `/projects/:id/config/all` for all 3 layers
+- Daemon endpoints: GET/PATCH `/config/global`, GET `/projects/:id/config/repo`, PATCH `/projects/:id/config/repo`, GET `/projects/:id/config/all`
+- `saveProjectRepoConfig` must be imported in daemon.ts (was missing — caused runtime error)
+- SettingsPanel now uses `layers/updateGlobal/updateRepo/updateLocal` props — removed old `config/updateConfig`
+- CSS: `.og-settings-panel-wide` widens panel to 380px with scroll; layer colors: global=amber, repo=blue, local=green
