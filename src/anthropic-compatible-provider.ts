@@ -1891,8 +1891,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							"Agent ended turn with running children — implicit yield (waiting for messages)",
 					};
 					try {
+						perfLog("implicit yield: waiting on queue.wait()...");
 						const first = await queue.wait();
+						perfLog(
+							`implicit yield: queue.wait() returned source=${first.source}`,
+						);
 						const rest = queue.drain();
+						perfLog(`implicit yield: drained ${rest.length} additional msgs`);
 						const all = [first, ...rest];
 						if (all.some((m) => m.source === "compact")) {
 							perfLog("compact signal consumed at implicit yield");

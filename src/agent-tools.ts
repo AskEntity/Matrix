@@ -1140,6 +1140,10 @@ export function createOrchestratorTools(
 							for (const cm of compactMsgs) {
 								deps.queue.enqueue(cm);
 							}
+							// Break immediately — compact signal is re-enqueued for the provider.
+							// Do NOT loop back to waitForMessage: the re-enqueued compact would be
+							// immediately dequeued → re-enqueued → dequeued → infinite sync loop (CPU 100%).
+							break;
 						}
 
 						// If we have real messages, break out and return them
