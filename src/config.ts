@@ -26,6 +26,8 @@ export interface OpenGraftConfig {
 	maxDepth?: number;
 	clarifyTimeoutMs?: number;
 	mcpServers?: Record<string, McpServerConfig>;
+	port?: number;
+	sessionKeep?: number;
 }
 
 function globalConfigPath(): string {
@@ -104,6 +106,8 @@ export function resolveConfig(
 		"budgetUsd",
 		"maxDepth",
 		"clarifyTimeoutMs",
+		"port",
+		"sessionKeep",
 	] as const;
 
 	for (const key of scalarKeys) {

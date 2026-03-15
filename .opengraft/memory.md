@@ -352,3 +352,12 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Providers created from config, not env vars. Constructors accept optional `opts` for API keys
 - CLI: `og config set/get`, `og config auth add/list/remove`
 - claude-code provider deprecated, fallback to anthropic
+
+## Port and SessionKeep in Config
+- `port` and `sessionKeep` added to OpenGraftConfig as optional number fields
+- Daemon reads `globalConfig.sessionKeep ?? 5` (was `process.env.OG_SESSION_KEEP`)
+- Daemon reads `globalConfig.port ?? 7433` (was `process.env.PORT`)
+- Health check no longer falls back to `process.env.ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` — uses only authGroup values
+- `DaemonConfig.initialConfig` added for tests to inject config without touching global config file
+- `createApp()` returns `getConfig()` getter for accessing globalConfig from outside (e.g. `import.meta.main` block)
+- In startup: `loadConfig()` runs before port is read, so config.port takes effect

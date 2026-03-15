@@ -2280,7 +2280,7 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 		await rm(dataDir, { recursive: true });
 	});
 
-	test("prunes old sessions keeping OG_SESSION_KEEP most recent on startup", async () => {
+	test("prunes old sessions keeping sessionKeep most recent on startup", async () => {
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
 
@@ -2291,15 +2291,14 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 		}
 
 		// session-7 is newest, session-0 is oldest
-		// OG_SESSION_KEEP=3 → keep session-5, session-6, session-7; delete session-0..4
-		process.env.OG_SESSION_KEEP = "3";
-		try {
-			const result = createApp({ dataDir, agentProvider: mockProvider });
-			await result.pm.load();
-			await result.autoResumeProjects();
-		} finally {
-			delete process.env.OG_SESSION_KEEP;
-		}
+		// sessionKeep=3 → keep session-5, session-6, session-7; delete session-0..4
+		const result = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+			initialConfig: { sessionKeep: 3 },
+		});
+		await result.pm.load();
+		await result.autoResumeProjects();
 
 		const remaining = await readdir(sessionsDir);
 		const jsonFiles = remaining.filter((f) => f.endsWith(".json"));
@@ -2314,21 +2313,20 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 			await writeFile(join(sessionsDir, `session-${i}.json`), `{"i":${i}}`);
 		}
 
-		process.env.OG_SESSION_KEEP = "5";
-		try {
-			const result = createApp({ dataDir, agentProvider: mockProvider });
-			await result.pm.load();
-			await result.autoResumeProjects();
-		} finally {
-			delete process.env.OG_SESSION_KEEP;
-		}
+		const result = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+			initialConfig: { sessionKeep: 5 },
+		});
+		await result.pm.load();
+		await result.autoResumeProjects();
 
 		const remaining = await readdir(sessionsDir);
 		const jsonFiles = remaining.filter((f) => f.endsWith(".json"));
 		expect(jsonFiles.length).toBe(3);
 	});
 
-	test("defaults to keeping 5 sessions when OG_SESSION_KEEP not set", async () => {
+	test("defaults to keeping 5 sessions when sessionKeep not set", async () => {
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
 
@@ -2337,16 +2335,10 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 			await new Promise((r) => setTimeout(r, 5));
 		}
 
-		// Ensure OG_SESSION_KEEP is not set
-		const prev = process.env.OG_SESSION_KEEP;
-		delete process.env.OG_SESSION_KEEP;
-		try {
-			const result = createApp({ dataDir, agentProvider: mockProvider });
-			await result.pm.load();
-			await result.autoResumeProjects();
-		} finally {
-			if (prev !== undefined) process.env.OG_SESSION_KEEP = prev;
-		}
+		// No initialConfig.sessionKeep → defaults to 5
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		await result.pm.load();
+		await result.autoResumeProjects();
 
 		const remaining = await readdir(sessionsDir);
 		const jsonFiles = remaining.filter((f) => f.endsWith(".json"));
@@ -2355,15 +2347,14 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 
 	test("does not fail when sessions directory does not exist", async () => {
 		// No sessionsDir created — should be a no-op
-		process.env.OG_SESSION_KEEP = "5";
-		try {
-			const result = createApp({ dataDir, agentProvider: mockProvider });
-			await result.pm.load();
-			// Should not throw
-			await result.autoResumeProjects();
-		} finally {
-			delete process.env.OG_SESSION_KEEP;
-		}
+		const result = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+			initialConfig: { sessionKeep: 5 },
+		});
+		await result.pm.load();
+		// Should not throw
+		await result.autoResumeProjects();
 	});
 });
 
