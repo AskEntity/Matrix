@@ -1425,15 +1425,15 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		this.model = model ?? DEFAULT_MODEL;
 	}
 
-	/** Create a message, using beta endpoint for OAuth auth. */
-	private createMessage(
+	/** Create a message using streaming to avoid 10-minute timeout on large requests. */
+	private async createMessage(
 		params: Anthropic.Messages.MessageCreateParamsNonStreaming,
 	): Promise<Anthropic.Messages.Message> {
 		if (this.useOAuth) {
 			// biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
-			return this.client.beta.messages.create(params as any) as any;
+			return (this.client.beta.messages as any).stream(params).finalMessage();
 		}
-		return this.client.messages.create(params);
+		return this.client.messages.stream(params).finalMessage();
 	}
 
 	async execute(request: AgentRequest): Promise<AgentResult> {
