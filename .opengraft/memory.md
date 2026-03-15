@@ -321,9 +321,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `broadcastTreeUpdate` should be called in finally block to update UI tree after any exit path
 
 ## User Image Display in Activity Log
-- LogEntry has optional `images?: { base64: string; mediaType: string }[]` field
-- `createLogEntry` accepts optional `images` param (6th arg after structured)
-- `addLog` in App.tsx also extended with images param (8th arg)
-- Images saved via `lastSubmittedImagesRef` on submit, consumed by orchestration_started handler
-- For inject messages (while running), user_prompt log created directly in handleSubmit with images
-- ToolCard renders thumbnails in `.og-user-images` container after prompt text
+- LogEntry has optional `images` field, rendered as thumbnails in user_prompt cards
+
+## Structured Queue Messages
+- Queue messages carry structured `rawMessages` in WS events, no text parsing needed
+- `formatQueueMessage()` uses XML tags for LLM injection safety
+- UI reads rawMessages directly, no regex splitting

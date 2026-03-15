@@ -8,7 +8,7 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
-import { formatQueueMessage } from "./agent-tools.ts";
+import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
 import {
 	buildCompactedContext,
 	cleanupSessionBackgroundProcesses,
@@ -650,7 +650,11 @@ export class OpenAICompatibleProvider implements AgentProvider {
 							continue;
 						}
 						const formatted = nonCompact.map(formatQueueMessage).join("\n");
-						yield { type: "queue_message", messages: formatted };
+						yield {
+							type: "queue_message",
+							messages: formatted,
+							rawMessages: nonCompact.map(toRawMessage),
+						};
 						const imageParts = extractQueueImageParts(nonCompact);
 						if (imageParts.length > 0) {
 							messages.push({
@@ -893,7 +897,11 @@ export class OpenAICompatibleProvider implements AgentProvider {
 							],
 						});
 					}
-					yield { type: "queue_message", messages: formatted };
+					yield {
+						type: "queue_message",
+						messages: formatted,
+						rawMessages: nonCompactMsgs.map(toRawMessage),
+					};
 				}
 			}
 
