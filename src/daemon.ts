@@ -22,7 +22,7 @@ import {
 	TASK_SYSTEM_PROMPT,
 } from "./agent-tools.ts";
 import { AnthropicCompatibleProvider } from "./anthropic-compatible-provider.ts";
-import { ClaudeAgentSdkProvider } from "./claude-agent-sdk-provider.ts";
+// claude-code provider is deprecated — falling back to AnthropicCompatibleProvider
 import {
 	globalAgentQueues,
 	MessageQueue,
@@ -93,7 +93,12 @@ function defaultProvider(): AgentProvider {
 		return new OpenAICompatibleProvider(resolveDefaultModel());
 	if (provider === "anthropic" || provider === "direct")
 		return new AnthropicCompatibleProvider(resolveDefaultModel());
-	if (provider === "claude-code") return new ClaudeAgentSdkProvider();
+	if (provider === "claude-code") {
+		console.warn(
+			'WARNING: claude-code provider is deprecated. Use provider "anthropic" instead.',
+		);
+		return new AnthropicCompatibleProvider(resolveDefaultModel());
+	}
 
 	// Auto-detect from model name
 	const model = resolveDefaultModel();

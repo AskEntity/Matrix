@@ -56,6 +56,15 @@ export async function loadProjectRepoConfig(
 	return readJsonConfig(join(projectPath, ".opengraft", "config.json"));
 }
 
+export async function saveProjectRepoConfig(
+	projectPath: string,
+	config: OpenGraftConfig,
+): Promise<void> {
+	const path = join(projectPath, ".opengraft", "config.json");
+	await mkdir(dirname(path), { recursive: true });
+	await writeFile(path, JSON.stringify(config, null, "\t"), "utf-8");
+}
+
 export async function loadProjectLocalConfig(
 	dataDir: string,
 	projectId: string,

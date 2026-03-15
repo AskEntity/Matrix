@@ -1,5 +1,16 @@
 #!/usr/bin/env bun
 
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import type { AuthGroup, OpenGraftConfig } from "./config.ts";
+import {
+	loadGlobalConfig,
+	loadProjectRepoConfig,
+	resolveConfig,
+	saveGlobalConfig,
+	saveProjectRepoConfig,
+} from "./config.ts";
+
 const _pkg = JSON.parse(
 	await Bun.file(new URL("../package.json", import.meta.url).pathname).text(),
 ) as { version: string };
@@ -816,7 +827,8 @@ async function handleSend(args: string[]): Promise<void> {
 const KNOWN_CONFIG_KEYS = [
 	"model",
 	"childModel",
-	"provider",
+	"defaultAuth",
+	"childAuth",
 	"budgetUsd",
 	"clarifyTimeoutMs",
 	"maxDepth",
@@ -824,98 +836,328 @@ const KNOWN_CONFIG_KEYS = [
 
 type KnownConfigKey = (typeof KNOWN_CONFIG_KEYS)[number];
 
-interface ProjectConfig {
-	model?: string;
-	childModel?: string;
-	provider?: string;
-	budgetUsd?: number;
-	clarifyTimeoutMs?: number;
-	maxDepth?: number;
-}
-
-function printConfig(cfg: ProjectConfig): void {
-	const defaultModel =
-		process.env.OG_MODEL ?? process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
-	const defaultChildModel = process.env.OG_CHILD_MODEL ?? defaultModel;
-
+function printResolvedConfig(cfg: OpenGraftConfig): void {
 	const rows: [string, string][] = [
-		["model", cfg.model ?? `${defaultModel} (default)`],
-		["childModel", cfg.childModel ?? `${defaultChildModel} (default)`],
-		["provider", cfg.provider ?? "anthropic (default)"],
-		[
-			"budgetUsd",
-			cfg.budgetUsd != null ? `${cfg.budgetUsd}` : "unlimited (default)",
-		],
+		["model", cfg.model ?? "(not set)"],
+		["childModel", cfg.childModel ?? "(not set)"],
+		["defaultAuth", cfg.defaultAuth ?? "(not set)"],
+		["childAuth", cfg.childAuth ?? "(not set)"],
+		["budgetUsd", cfg.budgetUsd != null ? `${cfg.budgetUsd}` : "(not set)"],
 		[
 			"clarifyTimeoutMs",
-			cfg.clarifyTimeoutMs != null
-				? `${cfg.clarifyTimeoutMs}ms`
-				: "none (default)",
+			cfg.clarifyTimeoutMs != null ? `${cfg.clarifyTimeoutMs}ms` : "(not set)",
 		],
-		[
-			"maxDepth",
-			cfg.maxDepth != null ? String(cfg.maxDepth) : "none (default)",
-		],
+		["maxDepth", cfg.maxDepth != null ? String(cfg.maxDepth) : "(not set)"],
 	];
 
 	const keyWidth = Math.max(...rows.map(([k]) => k.length));
 	for (const [key, value] of rows) {
 		console.log(`  ${key.padEnd(keyWidth)}  ${value}`);
 	}
+
+	// Auth groups
+	if (cfg.authGroups && Object.keys(cfg.authGroups).length > 0) {
+		console.log("");
+		console.log("  Auth groups:");
+		for (const [name, group] of Object.entries(cfg.authGroups)) {
+			const isDefault = name === cfg.defaultAuth;
+			const marker = isDefault ? " (default)" : "";
+			const keys: string[] = [];
+			if (group.anthropicApiKey) keys.push("ANTHROPIC_API_KEY");
+			if (group.claudeOauthToken) keys.push("CLAUDE_CODE_OAUTH_TOKEN");
+			if (group.openaiApiKey) keys.push("OPENAI_API_KEY");
+			if (group.openaiBaseUrl) keys.push(`base=${group.openaiBaseUrl}`);
+			console.log(
+				`    ${name}${marker}: provider=${group.provider} [${keys.join(", ")}]`,
+			);
+		}
+	}
+
+	// MCP servers
+	if (cfg.mcpServers && Object.keys(cfg.mcpServers).length > 0) {
+		console.log("");
+		console.log("  MCP servers:");
+		for (const [name, server] of Object.entries(cfg.mcpServers)) {
+			const cmdLine = [server.command, ...(server.args ?? [])].join(" ");
+			console.log(`    ${name}: ${cmdLine}`);
+		}
+	}
+}
+
+/**
+ * Find the project path from cwd by walking up to find .git.
+ * Returns null if not in a git repo.
+ */
+function findProjectPath(): string | null {
+	let dir = process.cwd();
+	while (true) {
+		if (existsSync(join(dir, ".git"))) return dir;
+		const parent = dirname(dir);
+		if (parent === dir) return null;
+		dir = parent;
+	}
 }
 
 async function handleConfig(args: string[]): Promise<void> {
-	const projectId = await resolveCurrentProject();
-	if (!projectId) {
-		console.error("No project found for current directory.");
-		process.exit(1);
-	}
-
 	const sub = args[0];
+
+	// Dispatch to auth subcommand
+	if (sub === "auth") {
+		await handleConfigAuth(args.slice(1));
+		return;
+	}
 
 	if (sub === "set" && args.length >= 3) {
 		const key = args[1] as string;
+		const rawValue = args[2] as string;
+
+		// Determine scope
+		const isGlobal = args.includes("--global");
+		const isProject = args.includes("--project");
+
 		if (!KNOWN_CONFIG_KEYS.includes(key as KnownConfigKey)) {
 			console.warn(
 				`Warning: "${key}" is not a known config key. Known keys: ${KNOWN_CONFIG_KEYS.join(", ")}`,
 			);
 		}
-		let value: string | number = args[2] as string;
-		if (!Number.isNaN(Number(value))) value = Number(value);
-		const res = await api(`/projects/${projectId}/config`, {
-			method: "PATCH",
-			body: JSON.stringify({ [key]: value }),
-		});
-		const cfg = (await res.json()) as ProjectConfig;
-		console.log(`Set ${key} =`, value);
-		console.log("");
-		printConfig(cfg);
+
+		let value: string | number = rawValue;
+		if (!Number.isNaN(Number(value)) && value !== "") value = Number(value);
+
+		if (isGlobal) {
+			const cfg = await loadGlobalConfig();
+			(cfg as Record<string, unknown>)[key] = value;
+			await saveGlobalConfig(cfg);
+			console.log(`Set ${key} = ${value} (global)`);
+		} else if (isProject) {
+			const projectPath = findProjectPath();
+			if (!projectPath) {
+				console.error("Not in a git repository. Cannot set project config.");
+				process.exit(1);
+			}
+			const cfg = await loadProjectRepoConfig(projectPath);
+			(cfg as Record<string, unknown>)[key] = value;
+			await saveProjectRepoConfig(projectPath, cfg);
+			console.log(`Set ${key} = ${value} (project: ${projectPath})`);
+		} else {
+			// Default: use daemon API for local config (backward compat)
+			const projectId = await resolveCurrentProject();
+			if (!projectId) return;
+			const res = await api(`/projects/${projectId}/config`, {
+				method: "PATCH",
+				body: JSON.stringify({ [key]: value }),
+			});
+			if (!res.ok) {
+				const err = (await res.json()) as { error: string };
+				console.error(`Error: ${err.error}`);
+				process.exit(1);
+			}
+			console.log(`Set ${key} = ${value}`);
+		}
 	} else if (sub === "unset" && args.length >= 2) {
 		const key = args[1] as string;
-		const res = await api(`/projects/${projectId}/config`, {
-			method: "PATCH",
-			body: JSON.stringify({ [key]: null }),
-		});
-		const cfg = (await res.json()) as ProjectConfig;
-		console.log(`Unset ${key}`);
-		console.log("");
-		printConfig(cfg);
-	} else if (!sub) {
-		const res = await api(`/projects/${projectId}/config`);
-		const cfg = (await res.json()) as ProjectConfig;
-		const hasAny = Object.keys(cfg).length > 0;
-		if (hasAny) {
-			console.log("Project config:");
+		const isGlobal = args.includes("--global");
+		const isProject = args.includes("--project");
+
+		if (isGlobal) {
+			const cfg = await loadGlobalConfig();
+			delete (cfg as Record<string, unknown>)[key];
+			await saveGlobalConfig(cfg);
+			console.log(`Unset ${key} (global)`);
+		} else if (isProject) {
+			const projectPath = findProjectPath();
+			if (!projectPath) {
+				console.error("Not in a git repository.");
+				process.exit(1);
+			}
+			const cfg = await loadProjectRepoConfig(projectPath);
+			delete (cfg as Record<string, unknown>)[key];
+			await saveProjectRepoConfig(projectPath, cfg);
+			console.log(`Unset ${key} (project)`);
 		} else {
-			console.log("Project config (all defaults):");
+			const projectId = await resolveCurrentProject();
+			if (!projectId) return;
+			await api(`/projects/${projectId}/config`, {
+				method: "PATCH",
+				body: JSON.stringify({ [key]: null }),
+			});
+			console.log(`Unset ${key}`);
 		}
+	} else if (!sub) {
+		// Show resolved config
+		const globalCfg = await loadGlobalConfig();
+		const projectPath = findProjectPath();
+		const repoCfg = projectPath ? await loadProjectRepoConfig(projectPath) : {};
+
+		// Try to get local config via daemon API
+		let localCfg: OpenGraftConfig = {};
+		try {
+			const projectId = await resolveCurrentProject();
+			if (projectId) {
+				const res = await api(`/projects/${projectId}/config`);
+				if (res.ok) {
+					localCfg = (await res.json()) as OpenGraftConfig;
+				}
+			}
+		} catch {
+			// Daemon not running, skip local config
+		}
+
+		const resolved = resolveConfig(globalCfg, repoCfg, localCfg);
+		console.log("Resolved config:");
 		console.log("");
-		printConfig(cfg);
+		printResolvedConfig(resolved);
 		console.log("");
-		console.log(`  Use: og config set <key> <value>  |  og config unset <key>`);
+		console.log("  Use: og config set <key> <value> [--global|--project]");
+		console.log("       og config auth add <name> --provider <p> --key <k>");
+		console.log("       og config auth list");
 	} else {
-		console.error("Usage: og config [set <key> <value> | unset <key>]");
+		console.error(
+			"Usage: og config [set <key> <value> | unset <key> | auth ...]",
+		);
 		console.error(`Known keys: ${KNOWN_CONFIG_KEYS.join(", ")}`);
+		process.exit(1);
+	}
+}
+
+async function handleConfigAuth(args: string[]): Promise<void> {
+	const sub = args[0];
+
+	if (sub === "add" && args.length >= 2) {
+		const name = args[1] as string;
+
+		// Parse flags
+		let provider: "anthropic" | "openai" = "anthropic";
+		let apiKey: string | undefined;
+		let oauthToken: string | undefined;
+		let baseUrl: string | undefined;
+		const isProject = args.includes("--project");
+
+		for (let i = 2; i < args.length; i++) {
+			const arg = args[i];
+			if (arg === "--provider" && i + 1 < args.length) {
+				const p = args[++i] as string;
+				if (p !== "anthropic" && p !== "openai") {
+					console.error(
+						`Invalid provider: ${p}. Must be "anthropic" or "openai".`,
+					);
+					process.exit(1);
+				}
+				provider = p;
+			} else if (arg === "--key" && i + 1 < args.length) {
+				apiKey = args[++i] as string;
+			} else if (arg === "--oauth-token" && i + 1 < args.length) {
+				oauthToken = args[++i] as string;
+			} else if (arg === "--base-url" && i + 1 < args.length) {
+				baseUrl = args[++i] as string;
+			}
+		}
+
+		const group: AuthGroup = { provider };
+		if (provider === "anthropic") {
+			if (apiKey) group.anthropicApiKey = apiKey;
+			if (oauthToken) group.claudeOauthToken = oauthToken;
+			if (!apiKey && !oauthToken) {
+				console.error(
+					"Anthropic auth requires --key <api-key> or --oauth-token <token>",
+				);
+				process.exit(1);
+			}
+		} else {
+			if (apiKey) group.openaiApiKey = apiKey;
+			if (baseUrl) group.openaiBaseUrl = baseUrl;
+			if (!apiKey) {
+				console.error("OpenAI auth requires --key <api-key>");
+				process.exit(1);
+			}
+		}
+
+		// Save to appropriate config layer
+		if (isProject) {
+			const projectPath = findProjectPath();
+			if (!projectPath) {
+				console.error("Not in a git repository.");
+				process.exit(1);
+			}
+			const cfg = await loadProjectRepoConfig(projectPath);
+			cfg.authGroups = { ...cfg.authGroups, [name]: group };
+			await saveProjectRepoConfig(projectPath, cfg);
+			console.log(`Added auth group "${name}" to project config.`);
+		} else {
+			// Default to global (auth groups are typically global)
+			const cfg = await loadGlobalConfig();
+			cfg.authGroups = { ...cfg.authGroups, [name]: group };
+			await saveGlobalConfig(cfg);
+			console.log(`Added auth group "${name}" to global config.`);
+		}
+	} else if (sub === "list") {
+		const globalCfg = await loadGlobalConfig();
+		const projectPath = findProjectPath();
+		const repoCfg = projectPath ? await loadProjectRepoConfig(projectPath) : {};
+		const resolved = resolveConfig(globalCfg, repoCfg, {});
+
+		if (!resolved.authGroups || Object.keys(resolved.authGroups).length === 0) {
+			console.log("No auth groups configured.");
+			console.log(
+				"  Add one: og config auth add <name> --provider anthropic --key sk-ant-...",
+			);
+			return;
+		}
+
+		console.log("Auth groups:");
+		for (const [name, group] of Object.entries(resolved.authGroups)) {
+			const isDefault = name === resolved.defaultAuth;
+			const marker = isDefault ? " (default)" : "";
+			const maskedKeys: string[] = [];
+			if (group.anthropicApiKey) {
+				maskedKeys.push(`key=${group.anthropicApiKey.slice(0, 10)}...`);
+			}
+			if (group.claudeOauthToken) {
+				maskedKeys.push("oauth=***");
+			}
+			if (group.openaiApiKey) {
+				maskedKeys.push(`key=${group.openaiApiKey.slice(0, 10)}...`);
+			}
+			if (group.openaiBaseUrl) {
+				maskedKeys.push(`base=${group.openaiBaseUrl}`);
+			}
+			console.log(
+				`  ${name}${marker}: provider=${group.provider} [${maskedKeys.join(", ")}]`,
+			);
+		}
+	} else if (sub === "remove" && args.length >= 2) {
+		const name = args[1] as string;
+		const isProject = args.includes("--project");
+
+		if (isProject) {
+			const projectPath = findProjectPath();
+			if (!projectPath) {
+				console.error("Not in a git repository.");
+				process.exit(1);
+			}
+			const cfg = await loadProjectRepoConfig(projectPath);
+			if (cfg.authGroups) {
+				delete cfg.authGroups[name];
+				if (Object.keys(cfg.authGroups).length === 0) delete cfg.authGroups;
+			}
+			await saveProjectRepoConfig(projectPath, cfg);
+			console.log(`Removed auth group "${name}" from project config.`);
+		} else {
+			const cfg = await loadGlobalConfig();
+			if (cfg.authGroups) {
+				delete cfg.authGroups[name];
+				if (Object.keys(cfg.authGroups).length === 0) delete cfg.authGroups;
+			}
+			await saveGlobalConfig(cfg);
+			console.log(`Removed auth group "${name}" from global config.`);
+		}
+	} else {
+		console.error("Usage:");
+		console.error(
+			"  og config auth add <name> --provider <anthropic|openai> --key <key> [--base-url <url>]",
+		);
+		console.error("  og config auth list");
+		console.error("  og config auth remove <name> [--global|--project]");
 		process.exit(1);
 	}
 }
@@ -948,26 +1190,11 @@ const LOG_DIR = `${process.env.HOME}/.opengraft/logs`;
 function daemonPlist(): string {
 	const bunPath = process.argv[0]; // bun binary that's running this CLI
 
-	// Collect env vars to forward
+	// Only forward PATH and HOME — API keys now live in config.json
 	const envEntries: string[] = [];
-	const forwardVars = [
-		"PATH",
-		"HOME",
-		"ANTHROPIC_API_KEY",
-		"CLAUDE_CODE_OAUTH_TOKEN",
-		"OPENAI_API_KEY",
-		"OPENAI_BASE_URL",
-		"OPENAI_API_BASE",
-		"OPENAI_MODEL",
-		"OG_PROVIDER",
-		"OG_MODEL",
-		"ANTHROPIC_MODEL",
-		"PORT",
-	];
-	for (const key of forwardVars) {
+	for (const key of ["PATH", "HOME"]) {
 		const val = process.env[key];
 		if (val) {
-			// XML-escape ampersands and angle brackets
 			const escaped = val
 				.replace(/&/g, "&amp;")
 				.replace(/</g, "&lt;")
@@ -1004,8 +1231,6 @@ ${envEntries.join("\n")}
 \t<string>${LOG_DIR}/daemon.log</string>
 \t<key>StandardErrorPath</key>
 \t<string>${LOG_DIR}/daemon.err</string>
-\t<key>ProcessType</key>
-\t<string>Background</string>
 </dict>
 </plist>`;
 }
@@ -1318,14 +1543,19 @@ switch (command) {
 		console.log("");
 		console.log("  Config");
 		console.log(
-			"    config                   Show project config (all fields)",
+			"    config                   Show resolved config (global + project)",
 		);
-		console.log("    config set <key> <value> Set a config value");
 		console.log(
-			"    config unset <key>       Remove a config value (reset to default)",
+			"    config set <key> <value> [--global|--project]  Set a config value",
 		);
-		console.log("");
-		console.log(`  Known config keys: ${KNOWN_CONFIG_KEYS.join(", ")}`);
+		console.log(
+			"    config unset <key> [--global|--project]        Remove a config value",
+		);
+		console.log(
+			"    config auth add <name>   Add auth group (--provider, --key)",
+		);
+		console.log("    config auth list         List auth groups");
+		console.log("    config auth remove <name>  Remove auth group");
 		console.log("");
 		console.log("  Other");
 		console.log("    health                   Check daemon health");
