@@ -113,3 +113,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - **Inline task creation**: `isCreating` state -> inline input in TaskTree. IME-safe. Blur with text confirms, without cancels.
 - **Trash drop zone**: Appears during drag at TaskTree bottom. Uses dataTransfer for task ID.
 - **CSS**: Use double-class selectors instead of `!important` (Biome rejects it). Always `type="button"` on buttons.
+
+## Agent Notification on User Tree Mutations
+
+- REST task mutations (POST/PATCH/DELETE in `src/daemon/routes/tasks.ts`) now enqueue a `[TREE UPDATED]` message to the running agent session if one exists.
+- `editedBy?: "user" | "agent"` field on TaskNode tracks who last modified each node. Set via optional parameter on tracker mutation methods.
+- `notifyAgentOfTreeChange()` helper checks `ctx.activeSessions` for the project and enqueues into `session.queue`. Wrapped in try/catch for closed queues.

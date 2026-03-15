@@ -672,7 +672,7 @@ export function createOrchestratorTools(
 							)
 						: tracker.addTask(args.title, args.description, opts);
 					if (args.color) {
-						tracker.updateColor(node.id, args.color);
+						tracker.updateColor(node.id, args.color, "agent");
 					}
 					await tracker.save();
 					broadcastTreeUpdate?.();
@@ -728,7 +728,7 @@ export function createOrchestratorTools(
 						tracker.updateDraft(args.taskId, args.draft, "agent");
 					}
 					if (args.color !== undefined) {
-						tracker.updateColor(args.taskId, args.color || null);
+						tracker.updateColor(args.taskId, args.color || null, "agent");
 					}
 					await tracker.save();
 					broadcastTreeUpdate?.();

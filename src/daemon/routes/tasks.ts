@@ -119,7 +119,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			tracker.updateDraft(node.id, body.draft, "user");
 		}
 		if (body.color !== undefined) {
-			tracker.updateColor(node.id, body.color);
+			tracker.updateColor(node.id, body.color, "user");
 		}
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);

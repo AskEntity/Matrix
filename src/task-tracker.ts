@@ -302,7 +302,11 @@ export class TaskTracker {
 	}
 
 	/** Update the color label on a task node. */
-	updateColor(nodeId: string, color: string | null): void {
+	updateColor(
+		nodeId: string,
+		color: string | null,
+		editedBy?: "user" | "agent",
+	): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
 		if (color) {
@@ -310,6 +314,7 @@ export class TaskTracker {
 		} else {
 			delete node.color;
 		}
+		if (editedBy) node.editedBy = editedBy;
 		node.updatedAt = new Date().toISOString();
 	}
 
