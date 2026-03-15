@@ -6,13 +6,12 @@ import { IconPause, IconRepeat, IconTrash } from "./icons.tsx";
 import { StatusBadge, statusDotClass } from "./StatusBadge.tsx";
 
 const TASK_COLORS = [
-	{ name: "Red", value: "#f85149" },
-	{ name: "Blue", value: "#388bfd" },
-	{ name: "Green", value: "#3fb950" },
-	{ name: "Yellow", value: "#e3b341" },
-	{ name: "Purple", value: "#a371f7" },
-	{ name: "Orange", value: "#f0883e" },
-	{ name: "Gray", value: "#6e7681" },
+	{ name: "Bug", value: "#f85149" },
+	{ name: "Feature", value: "#388bfd" },
+	{ name: "Refactor", value: "#3fb950" },
+	{ name: "Optimization", value: "#d29922" },
+	{ name: "Research", value: "#a371f7" },
+	{ name: "Chore", value: "#768390" },
 ];
 
 /** Format a date as relative time: "5m ago", "2h 10m ago", "3d ago" */
@@ -200,9 +199,7 @@ export function TaskDetail({
 							<button
 								key={c.value}
 								type="button"
-								className={`og-color-swatch${node.color === c.value ? " selected" : ""}`}
-								style={{ backgroundColor: c.value }}
-								title={c.name}
+								className={`og-color-category${node.color === c.value ? " selected" : ""}`}
 								onClick={() => {
 									const newColor = node.color === c.value ? null : c.value;
 									fetch(`/projects/${projectId}/tasks/${node.id}`, {
@@ -211,7 +208,13 @@ export function TaskDetail({
 										body: JSON.stringify({ color: newColor }),
 									});
 								}}
-							/>
+							>
+								<span
+									className="og-color-swatch"
+									style={{ backgroundColor: c.value }}
+								/>
+								{c.name}
+							</button>
 						))}
 						{node.color && (
 							<button

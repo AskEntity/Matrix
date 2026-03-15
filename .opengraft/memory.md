@@ -191,3 +191,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - `killBackgroundProcess()` no longer reads output or cleans up files. Returns metadata + file paths.
 - Foreground commands with large output (>50KB) return a 5KB preview + file path instead of full content. Files preserved for `read_file` access.
 - `formatQueueMessage()` and `toRawMessage()` for background_complete no longer include output content.
+
+## Named Color Categories (March 2026)
+
+- TASK_COLORS in TaskDetail.tsx changed from generic color names (Red, Blue, etc.) to named categories: Bug, Feature, Refactor, Optimization, Research, Chore.
+- `resolveColor()` in agent-tools.ts converts named colors (red, blue, green, yellow, purple, orange, gray) to hex values. Agent tools accept both named colors and raw hex.
+- Color picker uses `og-color-category` class (pill-shaped buttons with swatch + label) instead of standalone `og-color-swatch` circles.
