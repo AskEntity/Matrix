@@ -1744,6 +1744,35 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							(this.client.beta.messages as any).stream(createParams)
 						: this.client.messages.stream(createParams);
 
+					// Stream text deltas to UI (throttled to ~12 yields/sec)
+					let textBuffer = "";
+					let lastFlushTime = Date.now();
+					const TEXT_FLUSH_INTERVAL = 80;
+
+					for await (const event of stream) {
+						if (
+							event.type === "content_block_delta" &&
+							(event.delta as { type?: string })?.type === "text_delta" &&
+							!compactionPending
+						) {
+							textBuffer += (event.delta as { text: string }).text;
+							const now = Date.now();
+							if (now - lastFlushTime >= TEXT_FLUSH_INTERVAL) {
+								yield {
+									type: "text_delta" as const,
+									content: textBuffer,
+								};
+								textBuffer = "";
+								lastFlushTime = now;
+							}
+						}
+					}
+					if (textBuffer) {
+						yield {
+							type: "text_delta" as const,
+							content: textBuffer,
+						};
+					}
 					response = await stream.finalMessage();
 					break;
 				} catch (e) {
@@ -1791,9 +1820,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			for (const block of response.content) {
 				if (block.type === "text") {
 					lastText = block.text;
-					if (!compactionPending) {
-						yield { type: "text", content: block.text };
-					}
+					// Text already streamed via throttled text_delta events
 				} else if (block.type === "tool_use") {
 					if (!compactionPending) {
 						toolUses.push(block);
