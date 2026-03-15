@@ -592,7 +592,9 @@ export function LogEntryView({
 		return (
 			<div className="og-compact-boundary">
 				<div className="og-compact-hint">{t("compact.notVisible")}</div>
-				<div className="og-compact-bar">
+				<div
+					className={`og-compact-bar${entry.checkpoint ? "" : " og-compact-bar-loading"}`}
+				>
 					<span className="og-compact-label">◈ {entry.text}</span>
 					{entry.checkpoint && (
 						<button

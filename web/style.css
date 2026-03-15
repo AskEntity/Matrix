@@ -1617,6 +1617,10 @@ button.og-tool-card-header:hover {
 	pointer-events: none;
 }
 
+.og-compact-bar-loading::after {
+	animation-iteration-count: infinite;
+}
+
 @keyframes compact-shimmer {
 	0% {
 		left: -100%;
