@@ -906,7 +906,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			if (response.stop_reason === "end_turn" || toolUses.length === 0) {
 				// Check if done() was called in a previous tool batch
 				if (request.doneRef?.done) {
-					break;
+					// Race condition guard: if a user message arrived between done() and loop exit,
+					// reset done state and continue so the agent can process it
+					if (queue && queue.pending > 0) {
+						request.doneRef.done = null;
+					} else {
+						break;
+					}
 				}
 
 				// Implicit yield: if agent has running children, wait for messages
@@ -1162,9 +1168,15 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				}
 			}
 
-			// Check if done() was called by a tool in this batch — exit immediately
+			// Check if done() was called by a tool in this batch
 			if (request.doneRef?.done) {
-				break;
+				// Race condition guard: if a user message arrived while tools were executing,
+				// reset done state and continue so the agent can process it
+				if (queue && queue.pending > 0) {
+					request.doneRef.done = null;
+				} else {
+					break;
+				}
 			}
 		}
 
