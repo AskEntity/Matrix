@@ -340,7 +340,10 @@ function AppInner() {
 							// Structured path — no text parsing needed
 							for (const rm of rawMessages) {
 								if (rm.source === "child_complete") continue;
-								if (rm.source === "user") continue; // already shown by handleSubmit
+								if (rm.source === "user") {
+									addLog("user_prompt", rm.content, taskId);
+									continue;
+								}
 								if (rm.source === "parent_update") {
 									addLog(
 										"queue_message",
@@ -597,20 +600,12 @@ function AppInner() {
 		e.preventDefault();
 		if (!prompt.trim() || !projectId) return;
 		const images = attachedImages.length > 0 ? attachedImages : undefined;
-		lastSubmittedImagesRef.current = images;
 		try {
 			if (running) {
 				if (targetNodeId) await sendMessageToTask(targetNodeId, prompt.trim());
 				else await sendMessage(prompt.trim(), images);
-				addLog(
-					"user_prompt",
-					prompt.trim(),
-					undefined,
-					undefined,
-					undefined,
-					images,
-				);
 			} else {
+				lastSubmittedImagesRef.current = images;
 				await start({ prompt: prompt.trim() });
 			}
 			setPrompt("");
