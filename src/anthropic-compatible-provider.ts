@@ -1398,10 +1398,6 @@ export function addMessagesCacheControl(
  * Uses the Messages API with tool use for a lightweight, controllable agent loop.
  * No Claude Code subprocess — direct API calls with custom tool execution.
  */
-function perfLog(label: string) {
-	console.log(`[PERF ${new Date().toISOString()}] ${label}`);
-}
-
 export class AnthropicCompatibleProvider implements AgentProvider {
 	readonly name = "anthropic";
 	private client: Anthropic;
@@ -1579,7 +1575,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
 		while (true) {
-			perfLog("loop iteration start");
 			// Check abort signal
 			if (request.signal?.aborted) {
 				yield { type: "status", message: "Aborted" };
@@ -1588,7 +1583,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 			// ── Handle compaction response: extract checkpoint and rebuild context ──
 			if (compactionPending) {
-				perfLog("compact: processing compaction response");
 				compactionPending = false;
 				const lastMsg = messages[messages.length - 1];
 				let responseText = "";
@@ -1610,16 +1604,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					}
 				}
 				const checkpoint = extractCheckpoint(responseText);
-				perfLog(`compact: checkpoint extracted (${checkpoint.length} chars)`);
 
 				try {
-					perfLog("buildCompactedContext start");
 					const compactedContent = await buildCompactedContext(
 						taskContext,
 						checkpoint,
 						cwd,
 					);
-					perfLog(`buildCompactedContext done (${compactedContent.length} chars)`);
 					const oldTokens = preCompactTokenCount;
 					messages.length = 0;
 					const userContent = cwd
@@ -1645,7 +1636,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					};
 					yield { type: "compact", checkpoint, savedTokens };
 					manualCompactRequested = false;
-					perfLog("compact: context rebuilt");
 				} catch (e) {
 					yield {
 						type: "error",
@@ -1657,7 +1647,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 			// ── Pre-call compression: count tokens, inject summarization instruction if over threshold ──
 			if (manualCompactRequested && messages.length <= 4) {
-				perfLog("compact: context too short, skipping");
 				yield { type: "status", message: "Context is too short to compact" };
 				yield { type: "compact_started" };
 				yield {
@@ -1677,14 +1666,12 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					estimatedInputTokens >= lazyCountThreshold
 				) {
 					if (!manualCompactRequested) {
-						perfLog(`countTokens start (messages: ${messages.length})`);
 						const result = await this.client.messages.countTokens({
 							model,
 							system: [{ type: "text", text: request.systemPrompt ?? "" }],
 							messages,
 							tools: allTools,
 						});
-						perfLog(`countTokens done: ${result.input_tokens}`);
 						tokenCount = result.input_tokens;
 						isEstimated = false;
 					}
@@ -1694,7 +1681,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					manualCompactRequested ||
 					(!isEstimated && tokenCount > compressThreshold)
 				) {
-					perfLog(`compact: triggering compaction (manual=${manualCompactRequested}, tokens=${tokenCount})`);
 					yield { type: "compact_started" };
 					yield {
 						type: "status",
@@ -1740,13 +1726,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			// Cache control: add a cache breakpoint at the second-to-last user message
 			// (i.e. the last user turn before the current one), so that accumulated
 			// conversation history is cached between turns.
-			const tCache0 = Date.now();
 			const messagesWithCache: MessageParam[] =
 				addMessagesCacheControl(messages);
-			const tCacheDt = Date.now() - tCache0;
-			if (tCacheDt > 10) perfLog(`addMessagesCacheControl took ${tCacheDt}ms`);
 
-			const tParams0 = Date.now();
 			const createParams = {
 				model,
 				max_tokens: DEFAULT_MAX_TOKENS,
@@ -1754,28 +1736,18 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				messages: messagesWithCache,
 				tools: toolsWithCache,
 			};
-			const tParamsDt = Date.now() - tParams0;
-			if (tParamsDt > 10) perfLog(`createParams construction took ${tParamsDt}ms`);
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {
 				try {
-					perfLog(
-						`API call start (messages: ${messages.length}, compactionPending: ${compactionPending}, manualCompact: ${manualCompactRequested})`,
-					);
-					perfLog("about to call stream()");
-					const tStream0 = Date.now();
 					const stream = this.useOAuth
 						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
 							(this.client.beta.messages as any).stream(createParams)
 						: this.client.messages.stream(createParams);
-					const tStreamDt = Date.now() - tStream0;
-					perfLog(`stream() returned in ${tStreamDt}ms`);
 
 					// Stream text deltas to UI (throttled to ~12 yields/sec)
 					let textBuffer = "";
 					let lastFlushTime = Date.now();
 					const TEXT_FLUSH_INTERVAL = 80;
-					perfLog("entering for-await stream loop");
 
 					for await (const event of stream) {
 						if (
@@ -1801,9 +1773,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							content: textBuffer,
 						};
 					}
-					perfLog("stream iteration done");
 					response = await stream.finalMessage();
-					perfLog("finalMessage done");
 					break;
 				} catch (e) {
 					const isTransient =
@@ -1881,9 +1851,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				}
 
 				// Implicit yield: if agent has running children, wait for messages
-				perfLog(
-					`end_turn: hasRunningChildren=${request.hasRunningChildren?.()}, hasQueue=${!!queue}`,
-				);
 				if (request.hasRunningChildren?.() && queue) {
 					yield {
 						type: "status",
@@ -1891,16 +1858,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							"Agent ended turn with running children — implicit yield (waiting for messages)",
 					};
 					try {
-						perfLog("implicit yield: waiting on queue.wait()...");
 						const first = await queue.wait();
-						perfLog(
-							`implicit yield: queue.wait() returned source=${first.source}`,
-						);
 						const rest = queue.drain();
-						perfLog(`implicit yield: drained ${rest.length} additional msgs`);
 						const all = [first, ...rest];
 						if (all.some((m) => m.source === "compact")) {
-							perfLog("compact signal consumed at implicit yield");
 							manualCompactRequested = true;
 							yield { type: "compact_started" };
 						}
@@ -2069,7 +2030,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			if (queue && queue.pending > 0) {
 				const queueMsgs = queue.drain();
 				if (queueMsgs.some((m) => m.source === "compact")) {
-					perfLog("compact signal consumed at cancellation point");
 					manualCompactRequested = true;
 					yield { type: "compact_started" };
 				}
@@ -2109,13 +2069,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			// Persist after tool results too (captures full turn)
 			this.sessionHistory.set(sessionId, [...messages]);
 			if (sessionsDir) {
-				const tPersist0 = Date.now();
-				const persistJson = JSON.stringify(messages);
-				const tPersistDt = Date.now() - tPersist0;
-				if (tPersistDt > 10) perfLog(`session persist stringify took ${tPersistDt}ms (${messages.length} msgs, ${persistJson.length} bytes)`);
 				writeFile(
 					join(sessionsDir, `${sessionId}.json`),
-					persistJson,
+					JSON.stringify(messages),
 					"utf-8",
 				).catch(() => {});
 			}
@@ -2160,13 +2116,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		if (sessionsDir) {
 			try {
 				await mkdir(sessionsDir, { recursive: true });
-				const tFinal0 = Date.now();
-				const finalJson = JSON.stringify(finalMessages);
-				const tFinalDt = Date.now() - tFinal0;
-				if (tFinalDt > 10) perfLog(`final persist stringify took ${tFinalDt}ms (${finalMessages.length} msgs, ${finalJson.length} bytes)`);
 				await writeFile(
 					join(sessionsDir, `${sessionId}.json`),
-					finalJson,
+					JSON.stringify(finalMessages),
 					"utf-8",
 				);
 			} catch {
