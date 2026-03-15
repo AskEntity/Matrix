@@ -369,50 +369,8 @@ function AppInner() {
 								}
 							}
 						} else {
-							// Fallback: parse formatted text (backward compat with old event_history)
 							const raw = (msg.messages as string) || "";
-							const lines = raw
-								.split(
-									/\n(?=\[(?:user|parent_update|child_complete|child_report|clarify_response|background_complete)\] )/,
-								)
-								.filter((l) => l.trim() && !l.startsWith("## "));
-							let parsed = false;
-							for (const line of lines) {
-								const m =
-									/^\[(user|parent_update|child_complete|child_report|clarify_response|background_complete)\] ([\s\S]*)$/.exec(
-										line,
-									);
-								if (m) {
-									parsed = true;
-									const msgType = m[1];
-									const msgText = m[2] ?? "";
-									if (msgType === "child_complete") continue;
-									if (msgType === "user") {
-										addLog("user_prompt", msgText, taskId);
-									} else if (msgType === "parent_update") {
-										addLog(
-											"queue_message",
-											`← From Parent: ${msgText}`,
-											taskId,
-										);
-									} else if (msgType === "child_report") {
-										addLog(
-											"queue_message",
-											`↑ Child Report: ${msgText}`,
-											taskId,
-										);
-									} else if (msgType === "background_complete") {
-										addLog(
-											"queue_message",
-											`⚙ Background Complete: ${msgText}`,
-											taskId,
-										);
-									} else {
-										addLog("queue_message", `[${msgType}] ${msgText}`, taskId);
-									}
-								}
-							}
-							if (!parsed) addLog("queue_message", raw, taskId);
+							if (raw) addLog("queue_message", raw, taskId);
 						}
 						break;
 					} else if (et === "status") {
