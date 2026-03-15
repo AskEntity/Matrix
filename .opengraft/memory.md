@@ -26,12 +26,11 @@ Daemon (Hono: HTTP + WS on :7433)
 ```
 
 - Two providers: AnthropicCompatibleProvider (Anthropic API), OpenAICompatibleProvider (raw fetch, no SDK).
-- Three-layer config: global (`~/.opengraft/config.json`) > repo (`.opengraft/config.json`) > local (per-project). Auth groups define provider+credentials.
+- Three-layer config: global > repo > local. Auth groups define provider+credentials.
 - Agent tree = Task tree. Each agent gets worktree + branch. Lifecycle = branch lifecycle.
 - Orchestrator has a real task node (root node with ID).
 - All mutable APIs fire-and-forget. Observe via WebSocket.
 - MCP tools enable recursive orchestration (tested up to 5 levels deep).
-- Own `ToolDefinition` type and `tool()` factory in `src/tool-definition.ts`.
 
 ## Key Files
 
@@ -40,121 +39,54 @@ Daemon (Hono: HTTP + WS on :7433)
 | src/daemon.ts | Hono app setup, route registration, ORCHESTRATOR_SYSTEM_PROMPT (~405 lines) |
 | src/daemon/ | Extracted modules: context, event-system, helpers, agent-lifecycle, routes/ |
 | src/agent-tools.ts | MCP tools (10), system prompts, ORCHESTRATION_KNOWLEDGE |
-| src/agent-provider.ts | AgentProvider interface, AgentEvent, AgentSession types |
-| src/tool-definition.ts | ToolDefinition type, tool() factory, CallToolResult |
-| src/anthropic-compatible-provider.ts | Anthropic API provider, built-in tools, in-context compaction |
+| src/anthropic-compatible-provider.ts | Anthropic API provider, built-in tools, compaction |
 | src/openai-compatible-provider.ts | OpenAI-compatible API provider (raw fetch) |
-| src/config.ts | Three-layer config system, auth groups, resolve functions |
-| src/task-tracker.ts | Task tree CRUD, JSON persistence, ensureRootNode |
+| src/config.ts | Config system, auth groups, DEFAULT_MODEL constant |
+| src/task-tracker.ts | Task tree CRUD, JSON persistence |
 | src/worktree-manager.ts | Git worktree lifecycle |
 | src/message-queue.ts | MessageQueue + globalAgentQueues |
-| web/App.tsx | Web UI main component (~650 lines, extracted WS/handlers) |
-| web/ws-handler.ts | WebSocket event handler (createWSHandler) |
-| web/handlers.ts | Action handlers (createActionHandlers) |
-| web/components/ | 14+ modular components (ActivityLog, ToolCard, SettingsPanel, etc.) |
+| web/App.tsx | Web UI main (~650 lines, WS/handlers extracted) |
+| web/ws-handler.ts | WebSocket event handler |
+| web/handlers.ts | Action handlers |
+| web/hooks.ts | React hooks + re-exports TaskNode/TaskStatus from src/types.ts |
+| web/components/ | 15+ components (ActivityLog, ToolCard, SettingsPanel, ErrorBoundary, etc.) |
 
-## Config System
+## Daemon Module Structure
 
-- Global: `~/.opengraft/config.json` — auth groups, daemon settings (port, sessionKeep)
-- Repo: `<project>/.opengraft/config.json` — project defaults, versioned in git
-- Local: `~/.opengraft/projects/<id>/config.json` — highest priority overrides
-- `resolveConfig(global, repo, local)` merges with local > repo > global priority
-- Auth groups: `{ "claude": { provider: "anthropic", claudeOauthToken: "..." } }` — referenced by `defaultAuth`/`childAuth`
-- Daemon reads NO env vars (except PATH/HOME/NODE_ENV). All config from files.
-- Settings UI: three tabs (Global/Project/Local) with Save/Revert buttons. Test isolation via `globalConfigPath` param.
-
-## Compaction (In-Context)
-
-- `SUMMARIZATION_INSTRUCTION` injected as user message → model responds with `<summary>` tags → `extractCheckpoint()` parses
-- `compactionPending` flag: inject instruction → extract checkpoint next iteration → `buildCompactedContext()`
-- Compact lifecycle: `compact_started` → shimmer bar (infinite animation) → `compact` → bar updates in-place
-- Manual compact: POST /compact → queue signal → yield tool re-enqueues → provider handles
+`DaemonContext` (context.ts) holds all shared state. Route modules registered via `registerXxxRoutes(app, ctx)`:
+- `agent-lifecycle.ts`: launchAgent, stopAgent, runChildAgentInBackground, handleOrchestrate/InjectMessage/ClarifyResponse
+- `event-system.ts`: broadcast, broadcastEvent/TreeUpdate, pending messages/clarifications, event history persistence
+- `helpers.ts`: getTracker, resolveProjectConfig, getProjectProvider, readProjectMemory, pruneSessionFiles
+- `routes/`: projects, tasks, config, agent, websocket
 
 ## Known Pitfalls
 
 - **memory.md**: Never `write_file` to append. Use `edit_file` (append) or `echo >>`.
 - **Git worktrees**: `extensions.worktreeConfig` required. `core.hooksPath` must be absolute. `bun install` in new worktrees.
 - **Prompt caching**: Don't put per-agent variables in system prompt — breaks cache sharing.
-- **macOS CWD**: `/var` → `/private/var` symlink. Fixed with `realpathSync()`.
 - **Biome**: Always typecheck BEFORE `bun run check` (--write can be destructive on broken JSX).
 - **Template literals**: Use `${"$"}` for literal `$` in backtick strings in agent-tools.ts.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`. Use `?? ""` or `!`.
-- **OpenAI test mocking**: URL-based dispatch (check `/models` vs `/chat/completions`). Always `clearContextWindowCache()` in `finally`.
-- **Compact signal in yield**: Yield tool filters compact signals and re-enqueues them. MUST `break` after re-enqueue — without break, `waitForMessage()` immediately returns the re-enqueued compact → infinite sync loop → 100% CPU.
+- **Compact signal in yield**: Yield tool MUST `break` after re-enqueue — without break, infinite sync loop → 100% CPU.
 - **Orchestrator must never edit src files directly**: Use child tasks in worktrees. Direct edits trigger bun --watch daemon restart.
-
-## Daemon Lifecycle
-
-- `activeSessions` Map is single source of truth for running state.
-- `stopAgent()`: single function for all stop operations. Resets in_progress children to failed.
-- Agent crash cleanup: catch broadcasts `agent_stopped`, finally wraps `tracker.save()` in try/catch.
-- Orphan reset on startup: in_progress tasks → failed (skip root node).
+- **React overrides**: ErrorBoundary class component requires `override` keyword on state/componentDidCatch/render (noImplicitOverride).
+- **Shared types**: `web/hooks.ts` re-exports `TaskNode`/`TaskStatus` from `../src/types.ts`. All web code imports from hooks.ts.
 
 ## Web UI
 
-- **Activity log**: Tool cards (collapsible), MCP tools get purple accent. Structured fields only.
-- **Yield cards**: Completed yield pairs hidden. Only pending yield (agent waiting) shows as "⏸ Yield".
-- **Auto-scroll**: sentinel div + `scrollIntoView`. Two mechanisms: `visible.length` useEffect for new entries, MutationObserver (`childList + subtree + characterData`) for in-place text growth from streaming text_delta. Don't use ResizeObserver on scroll container — it only fires on container resize, not inner content growth.
-- **Thinking indicator**: `isSelectedTaskRunning` checks running + node status.
-- **Compact bar**: shimmer runs indefinitely until checkpoint arrives.
-- **User messages**: appear at agent-received time (via rawMessages), pending chip for feedback.
-- **URL hash routing**: `#<projectId>/<taskId>` format.
+- **Auto-scroll**: MutationObserver (`childList + subtree + characterData`) for streaming text growth. ResizeObserver doesn't work.
+- **Stop button**: Handles 404 gracefully (session gone) — resets UI. Backend resets orphaned root nodes too.
 - **IME**: composingRef + keyCode 229 + isComposing triple-check for CJK input.
-- **Streaming**: `text_delta` events appended to last text entry per taskId. 80ms throttle.
-- **Stop button**: Handles 404 gracefully (session already gone) — resets UI running state. Backend also resets orphaned in_progress root nodes on 404.
+- **Task DnD**: HTML5 drag, `setTimeout` for setDragState in onDragStart, midpoint check for before/after.
+- **App.tsx pattern**: `createWSHandler(deps)` + `createActionHandlers(deps)` — deps interface with state setters.
 
-## Image Support
+## Compaction
 
-- read_file: detects png/jpg/jpeg/gif/webp (NOT svg), returns base64.
-- User paste: AppFooter handles clipboard images, 5MB limit.
-- MCP yield tool: returns images as `{ type: "image", data, mimeType }`.
+- `SUMMARIZATION_INSTRUCTION` → model responds with `<summary>` tags → `extractCheckpoint()` parses
+- Resolved issues get concise outcome notes, not debugging narratives (prevents fixation on stale context)
+- Manual compact: POST /compact → queue signal → yield tool re-enqueues → provider handles
 
-## Search Tool Directory Filtering
+## Search Tool
 
-- `jsSearch()` in `anthropic-compatible-provider.ts` filters out common noisy dirs (node_modules, .git, dist, out, .worktrees, .cache, coverage, .next, build) after glob scanning.
-- Filter handles both top-level (`node_modules/...`) and nested (`foo/node_modules/...`) paths.
-- Only applied for directory scans (not single-file mode) via `if (!pathStat?.isFile())` guard.
-
-## Task Reordering (Drag-and-Drop)
-
-- `TaskTracker.reorderChildren(parentId, orderedChildIds)` validates exact same set of children, just reordered.
-- `PATCH /projects/:id/tasks/:nodeId/reorder` endpoint with `{ children: string[] }` body.
-- `childMap` in TaskTree must preserve parent.children order (not arbitrary Map insertion order from filtering).
-- HTML5 DnD: use `setTimeout` for `setDragState` in `onDragStart` so the drag image renders before opacity change.
-- Drop indicator uses midpoint check (clientY vs rect midY) to determine before/after insertion.
-
-## App.tsx Refactoring Pattern
-
-- Extracted WS handler to `web/ws-handler.ts` via `createWSHandler(deps)` — takes state setters as a deps object, returns a handler function. Used with `useMemo` in App.tsx.
-- Extracted action handlers to `web/handlers.ts` via `createActionHandlers(deps)` — called on each render (not memoized) since handlers read current state values. Returns an object of handler functions.
-- Both use a deps interface pattern to pass component state/setters as parameters.
-
-## Daemon Module Structure
-
-`src/daemon.ts` (405 lines) is the entry point — creates the Hono app, shared `DaemonContext`, registers route groups, and contains the `ORCHESTRATOR_SYSTEM_PROMPT`. Extracted modules:
-
-| Module | Purpose |
-|--------|---------|
-| `src/daemon/context.ts` | `DaemonContext` interface (shared state: trackers, activeSessions, wsClients, pendingMessages, etc.) |
-| `src/daemon/event-system.ts` | broadcast(), broadcastEvent(), broadcastTreeUpdate(), pending messages/clarifications, event history persistence |
-| `src/daemon/helpers.ts` | getTracker(), resolveProjectConfig(), getProjectProvider(), readProjectMemory(), pruneSessionFiles(), collectDescendants() |
-| `src/daemon/agent-lifecycle.ts` | launchAgent(), stopAgent(), runChildAgentInBackground(), handleOrchestrate(), handleInjectMessage(), handleClarifyResponse() |
-| `src/daemon/routes/projects.ts` | Project CRUD + events + pending messages/clarifications endpoints |
-| `src/daemon/routes/tasks.ts` | Task tree CRUD, continue, gitlog, conversation, child message injection |
-| `src/daemon/routes/config.ts` | Global, repo, local config endpoints |
-| `src/daemon/routes/agent.ts` | orchestrate, start, stop, compact, restart, message, clarify, sessions clear/prune |
-| `src/daemon/routes/websocket.ts` | WebSocket upgrade handler (subscribe, orchestrate, clarify_response, inject_message) |
-
-Pattern: All modules receive a `DaemonContext` object instead of capturing state via closure. Route modules are registered with `registerXxxRoutes(app, ctx)`.
-
-
-## ErrorBoundary
-
-- React ErrorBoundary requires `override` keyword on `state`, `componentDidCatch`, and `render` when `noImplicitOverride` is enabled in tsconfig.
-- Placed inside `LocaleProvider` but outside `AppInner` so locale context is available if the fallback UI ever needs i18n.
-
-## Shared Types (Frontend/Backend)
-
-- `web/hooks.ts` re-exports `TaskNode` and `TaskStatus` from `../src/types.ts` — all web code imports from `hooks.ts`.
-- `StatusBadge.tsx` uses `TaskStatus` instead of `string` for type safety.
-- Bun bundler handles cross-directory imports (`../src/types.ts` from `web/`) without issues.
+- `jsSearch()` filters SKIP_DIRS (node_modules, .git, dist, etc.) via `excluded_dirs` parameter
+- Agent can pass custom `excluded_dirs` or empty array to search all
