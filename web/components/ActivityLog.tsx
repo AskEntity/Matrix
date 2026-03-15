@@ -83,7 +83,7 @@ export function ActivityLog({
 	useEffect(() => {
 		const el = logRef.current;
 		if (!el) return;
-		const observer = new ResizeObserver(() => {
+		const observer = new MutationObserver(() => {
 			if (autoScroll) {
 				requestAnimationFrame(() => {
 					bottomRef.current?.scrollIntoView({
@@ -93,7 +93,11 @@ export function ActivityLog({
 				});
 			}
 		});
-		observer.observe(el);
+		observer.observe(el, {
+			childList: true,
+			subtree: true,
+			characterData: true,
+		});
 		return () => observer.disconnect();
 	}, [autoScroll]);
 
