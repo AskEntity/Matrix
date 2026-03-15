@@ -227,7 +227,7 @@ export const TOOLS: Tool[] = [
 	{
 		name: "bash",
 		description:
-			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). Working directory is automatically tracked across calls — if you `cd` in one command, subsequent commands run from the new directory. No need to prefix every command with `cd /path &&`. Exception: after a daemon restart, your workdir resets to the project root. If you navigate outside your worktree, you'll be warned — remember to cd back when done.\n\nforeground_timeout controls how long to wait in the foreground before backgrounding the command. Use 0 for immediate background (fire-and-forget). If the command finishes before the timeout, results are returned immediately. If not, the command moves to background and you get partial output + a background handle. Background completions are delivered as messages on your next yield() or tool call.",
+			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). Working directory is automatically tracked across calls — if you `cd` in one command, subsequent commands run from the new directory. Do NOT cd to the directory you are already in — it will return an error. No need to prefix every command with `cd /path &&`. Exception: after a daemon restart, your workdir resets to the project root. If you navigate outside your worktree, you'll be warned — remember to cd back when done.\n\nforeground_timeout controls how long to wait in the foreground before backgrounding the command. Use 0 for immediate background (fire-and-forget). If the command finishes before the timeout, results are returned immediately. If not, the command moves to background and you get partial output + a background handle. Background completions are delivered as messages on your next yield() or tool call.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -706,7 +706,7 @@ export async function executeBashWithTimeout(
 		effectiveCwd = fallbackCwd ?? cwd;
 	}
 
-	const cdWrapper = `cd() { local t="${"$"}{1:-${"$"}HOME}"; local r; r=${"$"}(builtin cd "${"$"}t" 2>/dev/null && pwd); if [ "${"$"}(pwd)" = "${"$"}r" ]; then echo "\u26a0 Already in ${"$"}(pwd) \u2014 no need to cd" >&2; fi; builtin cd "${"$"}t"; }; `;
+	const cdWrapper = `cd() { local t="${"$"}{1:-${"$"}HOME}"; local r; r=${"$"}(builtin cd "${"$"}t" 2>/dev/null && pwd); if [ "${"$"}(pwd)" = "${"$"}r" ]; then echo "\u26a0 Already in ${"$"}(pwd) \u2014 no need to cd" >&2; return 1; fi; builtin cd "${"$"}t"; }; `;
 	const wrappedCommand = `___og_trap() { echo "${CWD_MARKER}"; pwd; }; trap ___og_trap EXIT; ${cdWrapper}${command}`;
 	const proc = Bun.spawn(["bash", "-c", wrappedCommand], {
 		cwd: effectiveCwd,
