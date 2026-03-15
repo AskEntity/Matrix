@@ -168,3 +168,11 @@ Daemon (Hono: HTTP + WS on :7433)
 - `timeout` parameter removed from bash tool schema. Internal 600s safety timeout hardcoded in executor.ts.
 - Temp files cleaned up on completion, kill, or session cleanup.
 - CWD tracking only applies to foreground-completed commands. Backgrounded commands never update CWD.
+
+## Hard Timeout Removal (March 2026)
+
+- Removed `hardTimeout` parameter from `executeBashWithTimeout()` and all callers.
+- Background processes (immediate or promoted from foreground) now run until natural exit or explicit `bg_action: "kill"`.
+- No more automatic `setTimeout(() => proc.kill(), ...)` kill timers.
+- The `foregroundTimeout >= hardTimeout` branch was removed — foreground commands just race `foreground_timeout` vs process exit.
+- executor.ts no longer has a 600s safety timeout constant.

@@ -705,7 +705,6 @@ describe("executeBashWithTimeout", () => {
 			tempDir,
 			undefined,
 			5000,
-			10000,
 			undefined,
 			undefined,
 		);
@@ -722,7 +721,6 @@ describe("executeBashWithTimeout", () => {
 			tempDir,
 			undefined,
 			0,
-			10000,
 			sessionId,
 			queue,
 		);
@@ -749,7 +747,6 @@ describe("executeBashWithTimeout", () => {
 			tempDir,
 			undefined,
 			100, // 100ms foreground timeout — will trigger background
-			30000,
 			sessionId,
 			queue,
 		);
@@ -780,7 +777,6 @@ describe("executeBashWithTimeout", () => {
 			tempDir,
 			undefined,
 			5000,
-			10000,
 			"test-fast",
 			undefined,
 		);
@@ -813,7 +809,6 @@ describe("executeBashWithTimeout", () => {
 			tempDir,
 			undefined,
 			0,
-			30000,
 			sessionId,
 			queue,
 		);
@@ -867,7 +862,6 @@ describe("executeBashWithTimeout", () => {
 			tempDir,
 			undefined,
 			0,
-			60000,
 			sessionId,
 			queue,
 		);
@@ -930,7 +924,6 @@ describe("executeBashWithTimeout", () => {
 			tempDir,
 			undefined,
 			0,
-			60000,
 			sessionId,
 			queue,
 		);
@@ -995,7 +988,6 @@ describe("executeBashWithTimeout", () => {
 			tempDir,
 			undefined,
 			0,
-			60000,
 			sessionId,
 			queue,
 		);

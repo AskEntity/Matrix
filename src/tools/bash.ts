@@ -225,8 +225,7 @@ export function getBackgroundStatus(
  * @param command - The bash command to execute
  * @param cwd - Working directory
  * @param fallbackCwd - Fallback if cwd doesn't exist (worktree root)
- * @param foregroundTimeout - Ms to wait in foreground (0 = immediate background)
- * @param hardTimeout - Hard kill timeout in ms (default 120000)
+ * @param foregroundTimeout - Ms to wait in foreground (0 = immediate background, undefined = wait forever)
  * @param sessionId - Session ID for background tracking
  * @param queue - Message queue for background completion notifications
  */
@@ -235,7 +234,6 @@ export async function executeBashWithTimeout(
 	cwd: string,
 	fallbackCwd: string | undefined,
 	foregroundTimeout: number,
-	hardTimeout: number,
 	sessionId: string | undefined,
 	queue: MessageQueue | undefined,
 ): Promise<{
@@ -400,14 +398,10 @@ export async function executeBashWithTimeout(
 		};
 		bgMap.set(bgId, bgEntry);
 
-		// Set up hard timeout kill
-		const killTimer = setTimeout(() => proc.kill(), hardTimeout);
-
 		// Monitor in background
 		(async () => {
 			try {
 				const exitCode = await proc.exited;
-				clearTimeout(killTimer);
 				const output = readAndCleanup();
 				bgEntry.stdout = output.stdout;
 				bgEntry.stderr = output.stderr;
@@ -451,24 +445,6 @@ export async function executeBashWithTimeout(
 		timedOut: false as const,
 	}));
 
-	// If foregroundTimeout >= hardTimeout, just wait with hard timeout (original behavior)
-	if (foregroundTimeout >= hardTimeout) {
-		const timer = setTimeout(() => proc.kill(), hardTimeout);
-		try {
-			const { exitCode } = await exitPromise;
-			clearTimeout(timer);
-			const { stdout, stderr } = readAndCleanup();
-			return parseResult(stdout, stderr, exitCode);
-		} catch (e) {
-			clearTimeout(timer);
-			readAndCleanup(); // Clean up files on error
-			return {
-				content: `Error: ${e instanceof Error ? e.message : String(e)}`,
-				isError: true,
-			};
-		}
-	}
-
 	// Race: foreground timeout vs process completion
 	const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
 		setTimeout(() => resolve({ timedOut: true }), foregroundTimeout);
@@ -509,17 +485,10 @@ export async function executeBashWithTimeout(
 	};
 	bgMap.set(bgId, bgEntry);
 
-	// Set up hard timeout kill
-	const killTimer = setTimeout(
-		() => proc.kill(),
-		hardTimeout - foregroundTimeout,
-	);
-
 	// Monitor in background
 	(async () => {
 		try {
 			const { exitCode } = await exitPromise;
-			clearTimeout(killTimer);
 			const output = readAndCleanup();
 			bgEntry.stdout = output.stdout;
 			bgEntry.stderr = output.stderr;
