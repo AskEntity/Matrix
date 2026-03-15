@@ -117,22 +117,65 @@ export const SUMMARIZATION_INSTRUCTION = `[SYSTEM: Context compression required.
 
 Do NOT use any tools. Respond with ONLY the checkpoint in <summary>...</summary> tags.
 
-Include these sections:
-1. User Requests: ALL user messages and requests (critical — do not lose any)
-2. Current Phase: What stage of work we're in
-3. Completed Work: What's done, with key decisions and why
-4. Task Tree State: Running/passed/failed/draft tasks
-5. Rejected Approaches: What was tried and didn't work (prevent repeating)
-6. Key Context: Architectural decisions, discovered pitfalls, important state
-7. Pending Work: What still needs to be done
-8. Next Action: The very next thing to do after resuming
+Write the checkpoint with these sections IN ORDER. Every section is required.
+
+## 1. User Requests (MOST CRITICAL)
+Chronological list of EVERY user message or parent instruction received during this session.
+For each, include:
+- The request (verbatim quote or close paraphrase — do NOT summarize away detail)
+- What action was taken: tasks created (with IDs), decisions made, code written
+- The outcome: completed, in progress, blocked, or deferred
+
+This is the highest-value section. The resuming agent has NO access to previous messages.
+If a user request is lost here, it will never be addressed. Be thorough.
+
+## 2. Current Phase
+What the agent is doing RIGHT NOW: planning / implementing / testing / debugging / reviewing / orchestrating / done
+If debugging: include the exact error message and what has been tried.
+
+## 3. Completed Work
+What has been built, tested, committed, and merged — with key architectural and technical decisions.
+Include specific file paths and function names. Note WHY decisions were made, not just what.
+
+## 4. Task Tree State
+Snapshot of the current task tree. For each task include:
+- Task ID, title, status (pending/in_progress/passed/failed/draft)
+- Branch name (if applicable)
+- Whether it has been merged into the parent branch
+Group by: running → failed → pending → passed/merged.
+
+## 5. Rejected Approaches
+What was tried and DIDN'T work. For each failure:
+- What was attempted (specific approach, file, function)
+- The exact error or reason it failed
+- Why it should NOT be retried
+This prevents the resuming agent from wasting time on known dead ends.
+If truly nothing failed, write "None so far."
+
+## 6. Key Context
+Important state and knowledge that is HARD to reconstruct from disk:
+- Architectural decisions and constraints discovered during this session
+- Pitfalls, API quirks, or gotchas encountered
+- Environment or configuration state that affects the work
+- Communication state: pending clarifications, recent messages to/from parent or children
+
+## 7. Pending Work
+Numbered list of ALL remaining tasks/steps to complete the goal.
+Be specific: "implement X in file Y", "add test for Z", "merge child branch A".
+
+## 8. Next Action
+The single, concrete, immediate next step. Start with a verb.
+e.g. "Run bun test src/foo.test.ts to verify the fix" — not "continue testing".
 
 Rules:
-- Be precise: file paths, function names, exact error messages
-- Do NOT repeat system prompt or task description content
-- Do NOT include file contents that can be re-read
-- Focus on context that's HARD to reconstruct
-- Include ALL user messages/requests verbatim or paraphrased]`;
+- Be precise: file paths, function names, exact error messages, task IDs
+- Do NOT repeat system prompt or task description content — the agent already has those
+- Do NOT include file contents that can be re-read from disk
+- Focus on context that is HARD to reconstruct: decisions, state, user intent, failures
+- Include ALL user messages/requests — verbatim or close paraphrase, never summarize away
+- Each user request must note: what was asked → what was done → what was the outcome
+- Aim for thoroughness — lost context is far more expensive than a longer checkpoint
+- Length: use as many tokens as needed for complex sessions. Never truncate mid-thought.]`;
 
 /**
  * Extract checkpoint text from an assistant response that should contain <summary>...</summary> tags.
@@ -183,81 +226,6 @@ export async function buildCompactedContext(
 
 	return parts.join("\n\n---\n\n");
 }
-
-/** Structured checkpoint prompt for context compression. */
-export const CHECKPOINT_SYSTEM_PROMPT = `You are generating a structured checkpoint for an autonomous coding agent.
-The agent will resume from this checkpoint after context compression — it must be able to
-continue working as if it never stopped.
-
-CRITICAL: The agent resuming from this checkpoint cannot see any previous conversation.
-Whatever you omit, the agent will not know. Whatever you write, the agent will remember.
-Err on the side of more detail in Rejected Approaches — the cost of repeating failed work far
-exceeds the cost of a slightly longer checkpoint.
-
-Analyze the conversation and output a checkpoint in EXACTLY this format (all sections required):
-
-## Current Phase
-[What phase of the task the agent is in: design / implementation / testing / fixing / done]
-
-## Completed Work
-[What has been implemented, tested, and committed successfully — with specific file paths and line numbers]
-[Key decisions made and WHY, not just what]
-
-## Modified Files
-- [path/to/file — what was changed and why]
-
-## Current State
-[What the agent was doing RIGHT NOW when compression happened]
-[If debugging: the exact error message, what's been tried, what hasn't]
-[If implementing: what's done, what remains in progress]
-
-## Rejected Approaches
-[THE MOST IMPORTANT SECTION — read every past message carefully for failures]
-[For EVERY failed attempt, test failure, or dead end: describe it here]
-[Format: "- Tried: <what was attempted> | Failed: <exact error/reason> | Do not retry: <why>"]
-[Search for: test failures, compile errors, "doesn't work", "failed", wrong approaches]
-[If truly nothing failed: "None so far" — but re-read carefully first]
-[This section prevents the agent from wasting turns re-trying the same failed approaches]
-
-## Open Questions
-[Unresolved uncertainties that may affect next steps]
-[Things the agent was unsure about that still need verification]
-[If none, write "None"]
-[Example: "Need to verify whether X API is available in this environment"]
-
-## Remaining Work
-[List ALL tasks/steps still needed to complete the goal — not just the next one]
-[Be specific: "implement X in file Y", "add test for Z", "merge child branch A"]
-[If orchestrator: list unmerged children and integration steps remaining]
-[If task is nearly done: "Run final checks and call done('passed')"]
-
-## Next Action
-[Single, specific, concrete action to take IMMEDIATELY — start with a verb]
-[e.g. "Run \`bun test src/foo.test.ts\` to verify the fix" not "continue testing"]
-[e.g. "Edit src/bar.ts line 42 to change X to Y" not "fix the bug"]
-
-## Agent Tree State
-[Is this agent an orchestrator (has children) or a leaf worker?]
-[List all child tasks with their IDs, titles, branches, and current statuses (pending/in_progress/passed/failed)]
-[Which children have been merged? Which are still running? Which failed and need retry?]
-[If orchestrator: what's the merge/integration plan?]
-[If leaf worker: who is the parent, and what was the parent's instruction?]
-
-## Communication State
-[Any pending messages from parent that haven't been fully addressed?]
-[Any pending clarifications awaiting user response?]
-[Recent report_to_parent messages sent — what was communicated?]
-[Recent send_message_to_child instructions — what was told to which child?]
-[Has done() been called? If so, with what status and summary?]
-
-Rules:
-- Be precise: file paths, line numbers, function names, exact error messages
-- Be forward-looking: the checkpoint exists to RESUME work, not to document history
-- Do NOT repeat information from the system prompt (task description, methodology, instructions)
-- Do NOT include file contents that can be re-read — only state/context hard to reconstruct
-- Rejected Approaches is the highest-value section — fill it thoroughly even if it seems obvious
-- Output ONLY the checkpoint, no preamble or commentary
-- Length: aim for under 10,000 tokens. Use more if the conversation was complex and detail is critical — better to be thorough than to lose important context. Never truncate mid-sentence.`;
 
 export const TOOLS: Tool[] = [
 	{
