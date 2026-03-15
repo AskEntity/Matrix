@@ -340,9 +340,8 @@ function AppInner() {
 							// Structured path — no text parsing needed
 							for (const rm of rawMessages) {
 								if (rm.source === "child_complete") continue;
-								if (rm.source === "user") {
-									addLog("user_prompt", rm.content, taskId);
-								} else if (rm.source === "parent_update") {
+								if (rm.source === "user") continue; // already shown by handleSubmit
+								if (rm.source === "parent_update") {
 									addLog(
 										"queue_message",
 										`← From Parent: ${rm.content}`,
