@@ -191,3 +191,10 @@ Daemon (Hono: HTTP + WS on :7433)
 - `killBackgroundProcess()` no longer reads output or cleans up files. Returns metadata + file paths.
 - Foreground commands with large output (>50KB) return a 5KB preview + file path instead of full content. Files preserved for `read_file` access.
 - `formatQueueMessage()` and `toRawMessage()` for background_complete no longer include output content.
+
+## Agent Lifecycle Deduplication (March 2026)
+
+- `createAgentContext()`: Shared helper that resolves project config, creates provider, connects MCP servers, and builds orchestrator tools. Used by both `launchAgent` and `runChildAgentInBackground`.
+- `consumeAgentEvents()`: Shared event loop that drains an `AsyncGenerator<AgentEvent, AgentResult>` and calls `onEvent` for each event. Returns the final `AgentResult`.
+- `mcpManager` is passed into `createAgentContext` via opts so callers own the instance for cleanup in `finally` blocks.
+- `childModel` resolution: `createAgentContext` falls back to `effectiveCfg.childModel` when `opts.childModel` is undefined. Callers pass API-level overrides if any.
