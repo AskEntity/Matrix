@@ -381,6 +381,12 @@ export const TOOLS: Tool[] = [
 					description:
 						"Enable multiline matching with RegExp 's' flag, allowing '.' to match newlines (default: false). NOTE: not yet implemented — reserved for future use.",
 				},
+				excluded_dirs: {
+					type: "array",
+					items: { type: "string" },
+					description:
+						"Directories to exclude from search. Defaults to: node_modules, .git, dist, out, .worktrees, .cache, coverage, .next, build. Pass empty array to include all.",
+				},
 			},
 			required: ["pattern"],
 		},
@@ -425,6 +431,7 @@ export async function jsSearch(opts: {
 	outputMode: string;
 	headLimit: number;
 	caseInsensitive: boolean;
+	excludedDirs?: string[];
 	cwd: string;
 }): Promise<string> {
 	const {
@@ -435,6 +442,7 @@ export async function jsSearch(opts: {
 		outputMode,
 		headLimit,
 		caseInsensitive,
+		excludedDirs,
 		cwd: baseCwd,
 	} = opts;
 
@@ -467,25 +475,30 @@ export async function jsSearch(opts: {
 	}
 
 	// Filter out common noisy directories (only matters for directory scans, not single files)
+	const DEFAULT_SKIP_DIRS = [
+		"node_modules/",
+		".git/",
+		"dist/",
+		"out/",
+		".worktrees/",
+		".cache/",
+		"coverage/",
+		".next/",
+		"build/",
+	];
 	if (!pathStat?.isFile()) {
-		const SKIP_DIRS = [
-			"node_modules/",
-			".git/",
-			"dist/",
-			"out/",
-			".worktrees/",
-			".cache/",
-			"coverage/",
-			".next/",
-			"build/",
-		];
-		files = files.filter(
-			(f) =>
-				!SKIP_DIRS.some(
-					(prefix) =>
-						f.startsWith(prefix) || f.includes(`/${prefix.slice(0, -1)}/`),
-				),
-		);
+		const skipDirs = excludedDirs
+			? excludedDirs.map((d) => (d.endsWith("/") ? d : `${d}/`))
+			: DEFAULT_SKIP_DIRS;
+		if (skipDirs.length > 0) {
+			files = files.filter(
+				(f) =>
+					!skipDirs.some(
+						(prefix) =>
+							f.startsWith(prefix) || f.includes(`/${prefix.slice(0, -1)}/`),
+					),
+			);
+		}
 	}
 
 	// Sort for deterministic output
@@ -1178,6 +1191,7 @@ export async function executeTool(
 			const outputMode = (input.output_mode as string) ?? "content";
 			const headLimit = Math.min((input.head_limit as number) ?? 50, 200);
 			const caseInsensitive = (input.case_insensitive as boolean) ?? false;
+			const excludedDirs = input.excluded_dirs as string[] | undefined;
 			// TODO: implement multiline search — currently jsSearch uses line-by-line matching,
 			// so the 'multiline' param (input.multiline) is accepted in the schema but ignored here.
 
@@ -1190,6 +1204,7 @@ export async function executeTool(
 					outputMode,
 					headLimit,
 					caseInsensitive,
+					excludedDirs,
 					cwd,
 				});
 				return { content: result || "(no matches)", isError: false };
