@@ -190,7 +190,7 @@ function AppInner() {
 			: null;
 
 	const isSelectedTaskRunning =
-		running && selectedNode?.status === "in_progress";
+		running && (isOrchestratorNode || selectedNode?.status === "in_progress");
 
 	const addLog = useCallback(
 		(
@@ -329,6 +329,11 @@ function AppInner() {
 						break;
 					} else if (et === "compact_started") {
 						setCompacting(true);
+						addLog(
+							"status",
+							"Compressing context...",
+							msg.taskId as string | undefined,
+						);
 						break;
 					} else if (et === "compact") {
 						text = `Context compacted (saved ~${msg.savedTokens} tokens)`;

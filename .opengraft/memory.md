@@ -389,3 +389,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Emit `compact_started` immediately when compact signal detected in implicit yield path and cancellation point — gives instant UI feedback
 - Short context guard (messages.length <= 4): emit status + compact_started + compact with savedTokens=0, then reset and continue — completes the Compressing... cycle even with no actual compaction
 - Both anthropic-compatible-provider.ts and openai-compatible-provider.ts have the same pattern
+
+## Compact Notification Fix
+- Root cause: `isSelectedTaskRunning` was `running && selectedNode?.status === "in_progress"` but when viewing the orchestrator/root node, `selectedNode` is set to null (intentionally, for root filter logic). So `isSelectedTaskRunning` was always false for the root view.
+- Fix: `isSelectedTaskRunning = running && (isOrchestratorNode || selectedNode?.status === "in_progress")` — orchestrator node is considered running when global `running` is true
+- Also added a `addLog("status", "Compressing context...", taskId)` call on `compact_started` event — gives a visible log entry, not just the floating indicator
+- The "Compressing..." indicator in ActivityLog was correct (`running && compacting`) — it just never showed because `running` was false for orchestrator view
