@@ -406,6 +406,13 @@ select {
 	opacity: 0.4;
 }
 
+.og-task-node.og-reparent-target {
+	background: rgba(56, 139, 253, 0.15);
+	outline: 1.5px dashed var(--accent);
+	outline-offset: -1.5px;
+	border-radius: 4px;
+}
+
 .og-drop-indicator {
 	height: 2px;
 	background: var(--accent);

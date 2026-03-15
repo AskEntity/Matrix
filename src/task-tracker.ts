@@ -266,6 +266,46 @@ export class TaskTracker {
 		parent.updatedAt = new Date().toISOString();
 	}
 
+	/** Move a node to a new parent. Validates no circular dependency. */
+	reparent(nodeId: string, newParentId: string): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		const newParent = this.nodes.get(newParentId);
+		if (!newParent) throw new Error(`New parent not found: ${newParentId}`);
+		if (nodeId === newParentId)
+			throw new Error("Cannot reparent a node under itself");
+
+		// Circular check: newParentId must not be a descendant of nodeId
+		let current: TaskNode | undefined = newParent;
+		while (current) {
+			if (current.parentId === nodeId) {
+				throw new Error(
+					"Cannot reparent under a descendant (would create cycle)",
+				);
+			}
+			if (!current.parentId) break;
+			current = this.nodes.get(current.parentId);
+		}
+
+		// Already under the same parent — nothing to do
+		if (node.parentId === newParentId) return;
+
+		// Remove from old parent's children list
+		if (node.parentId) {
+			const oldParent = this.nodes.get(node.parentId);
+			if (oldParent) {
+				oldParent.children = oldParent.children.filter((id) => id !== nodeId);
+				oldParent.updatedAt = new Date().toISOString();
+			}
+		}
+
+		// Add to new parent's children list
+		newParent.children.push(nodeId);
+		newParent.updatedAt = new Date().toISOString();
+		node.parentId = newParentId;
+		node.updatedAt = new Date().toISOString();
+	}
+
 	/** Remove a node and all its descendants. */
 	remove(nodeId: string): void {
 		const node = this.nodes.get(nodeId);

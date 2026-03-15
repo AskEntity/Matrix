@@ -116,6 +116,10 @@ Daemon (Hono: HTTP + WS on :7433)
 
 ## Agent Notification on User Tree Mutations
 
-- REST task mutations (POST/PATCH/DELETE in `src/daemon/routes/tasks.ts`) now enqueue a `[TREE UPDATED]` message to the running agent session if one exists.
-- `editedBy?: "user" | "agent"` field on TaskNode tracks who last modified each node. Set via optional parameter on tracker mutation methods.
-- `notifyAgentOfTreeChange()` helper checks `ctx.activeSessions` for the project and enqueues into `session.queue`. Wrapped in try/catch for closed queues.
+- REST task mutations inject `[TREE UPDATED]` message into running agent session. `editedBy?: "user" | "agent"` on TaskNode.
+
+## Task Reparenting
+
+- `TaskTracker.reparent(nodeId, newParentId)` with circular dep validation. PATCH with `{ parentId }`.
+- Agent `update_task` tool: `parentId` field with scope validation.
+- DnD: center 40% of row = reparent, top/bottom 30% = reorder. `.og-reparent-target` visual indicator.

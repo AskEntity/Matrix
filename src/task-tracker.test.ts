@@ -322,6 +322,61 @@ describe("TaskTracker", () => {
 		);
 	});
 
+	test("reparent moves node to new parent", () => {
+		const parent1 = tracker.addTask("Parent 1", "desc");
+		const parent2 = tracker.addTask("Parent 2", "desc");
+		const child = tracker.addChild(parent1.id, "Child", "desc");
+
+		expect(child.parentId).toBe(parent1.id);
+		expect(parent1.children).toContain(child.id);
+
+		tracker.reparent(child.id, parent2.id);
+
+		expect(child.parentId).toBe(parent2.id);
+		expect(parent1.children).not.toContain(child.id);
+		expect(parent2.children).toContain(child.id);
+	});
+
+	test("reparent throws when reparenting under self", () => {
+		const task = tracker.addTask("Self ref", "desc");
+		expect(() => tracker.reparent(task.id, task.id)).toThrow(
+			"Cannot reparent a node under itself",
+		);
+	});
+
+	test("reparent throws when reparenting under descendant (circular)", () => {
+		const parent = tracker.addTask("Root", "desc");
+		const child = tracker.addChild(parent.id, "Child", "desc");
+		const grandchild = tracker.addChild(child.id, "Grandchild", "desc");
+
+		expect(() => tracker.reparent(parent.id, grandchild.id)).toThrow(
+			"Cannot reparent under a descendant",
+		);
+		expect(() => tracker.reparent(parent.id, child.id)).toThrow(
+			"Cannot reparent under a descendant",
+		);
+	});
+
+	test("reparent throws for nonexistent nodes", () => {
+		const task = tracker.addTask("Real", "desc");
+		expect(() => tracker.reparent("nonexistent", task.id)).toThrow(
+			"Node not found",
+		);
+		expect(() => tracker.reparent(task.id, "nonexistent")).toThrow(
+			"New parent not found",
+		);
+	});
+
+	test("reparent is a no-op when already under the same parent", () => {
+		const parent = tracker.addTask("Parent", "desc");
+		const child = tracker.addChild(parent.id, "Child", "desc");
+
+		tracker.reparent(child.id, parent.id);
+
+		expect(child.parentId).toBe(parent.id);
+		expect(parent.children).toEqual([child.id]);
+	});
+
 	test("reorderChildren throws for mismatched children", () => {
 		const parent = tracker.addTask("App", "desc");
 		const c1 = tracker.addChild(parent.id, "A", "a");

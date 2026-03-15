@@ -18,6 +18,8 @@ interface DropIndicator {
 	index: number;
 }
 
+type DropZone = "before" | "center" | "after";
+
 export function TaskTree({
 	nodes,
 	selectedTaskId,
@@ -25,6 +27,7 @@ export function TaskTree({
 	onSelect,
 	running,
 	onReorder,
+	onReparent,
 	isCreating,
 	onCreateTask,
 	onCancelCreate,
@@ -36,6 +39,7 @@ export function TaskTree({
 	onSelect: (id: string | null) => void;
 	running: boolean;
 	onReorder?: (parentId: string, children: string[]) => Promise<void>;
+	onReparent?: (nodeId: string, newParentId: string) => Promise<void>;
 	isCreating?: boolean;
 	onCreateTask?: (title: string) => void;
 	onCancelCreate?: () => void;
@@ -117,6 +121,21 @@ export function TaskTree({
 	const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(
 		null,
 	);
+	const [reparentTargetId, setReparentTargetId] = useState<string | null>(null);
+
+	/** Check if nodeId is the dragged node or an ancestor of it. */
+	const isDescendantOfDragged = useCallback(
+		(nodeId: string, dragId: string): boolean => {
+			let current = nodeMap.get(nodeId);
+			while (current) {
+				if (current.id === dragId) return true;
+				if (!current.parentId) return false;
+				current = nodeMap.get(current.parentId);
+			}
+			return false;
+		},
+		[nodeMap],
+	);
 
 	const handleDragStart = useCallback(
 		(nodeId: string, parentId: string, e: React.DragEvent) => {
@@ -128,6 +147,16 @@ export function TaskTree({
 		[],
 	);
 
+	/** Determine which drop zone the cursor is in: top 30%, center 40%, bottom 30%. */
+	const getDropZone = useCallback((e: React.DragEvent): DropZone => {
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		const relY = e.clientY - rect.top;
+		const ratio = relY / rect.height;
+		if (ratio < 0.3) return "before";
+		if (ratio > 0.7) return "after";
+		return "center";
+	}, []);
+
 	const handleDragOver = useCallback(
 		(
 			targetNodeId: string,
@@ -136,37 +165,73 @@ export function TaskTree({
 			e: React.DragEvent,
 		) => {
 			if (!dragState) return;
-			// Only allow reorder within the same parent
-			if (dragState.parentId !== targetParentId) return;
 			if (dragState.dragId === targetNodeId) {
 				e.preventDefault();
 				e.dataTransfer.dropEffect = "move";
+				setDropIndicator(null);
+				setReparentTargetId(null);
+				return;
+			}
+
+			const zone = getDropZone(e);
+
+			if (zone === "center" && onReparent) {
+				// Reparent mode — can't drop onto self or a descendant
+				if (isDescendantOfDragged(targetNodeId, dragState.dragId)) return;
+				e.preventDefault();
+				e.dataTransfer.dropEffect = "move";
+				setDropIndicator(null);
+				setReparentTargetId(targetNodeId);
+				return;
+			}
+
+			// Reorder mode — only within same parent
+			if (dragState.parentId !== targetParentId) {
+				setDropIndicator(null);
+				setReparentTargetId(null);
 				return;
 			}
 
 			e.preventDefault();
 			e.dataTransfer.dropEffect = "move";
+			setReparentTargetId(null);
 
-			// Determine if we should insert before or after based on cursor position
-			const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-			const midY = rect.top + rect.height / 2;
 			const targetIndex = siblingIds.indexOf(targetNodeId);
-			const insertIndex = e.clientY < midY ? targetIndex : targetIndex + 1;
-
+			const insertIndex = zone === "before" ? targetIndex : targetIndex + 1;
 			setDropIndicator({ parentId: targetParentId, index: insertIndex });
 		},
-		[dragState],
+		[dragState, onReparent, getDropZone, isDescendantOfDragged],
 	);
 
 	const handleDragEnd = useCallback(() => {
 		setDragState(null);
 		setDropIndicator(null);
+		setReparentTargetId(null);
 	}, []);
 
 	const handleDrop = useCallback(
-		(targetParentId: string, siblingIds: string[], e: React.DragEvent) => {
+		(
+			_targetNodeId: string,
+			targetParentId: string,
+			siblingIds: string[],
+			e: React.DragEvent,
+		) => {
 			e.preventDefault();
-			if (!dragState || !dropIndicator || !onReorder) {
+			if (!dragState) {
+				handleDragEnd();
+				return;
+			}
+
+			// Reparent drop
+			if (reparentTargetId && onReparent) {
+				const dragId = dragState.dragId;
+				handleDragEnd();
+				onReparent(dragId, reparentTargetId);
+				return;
+			}
+
+			// Reorder drop
+			if (!dropIndicator || !onReorder) {
 				handleDragEnd();
 				return;
 			}
@@ -198,7 +263,14 @@ export function TaskTree({
 
 			handleDragEnd();
 		},
-		[dragState, dropIndicator, onReorder, handleDragEnd],
+		[
+			dragState,
+			dropIndicator,
+			reparentTargetId,
+			onReorder,
+			onReparent,
+			handleDragEnd,
+		],
 	);
 
 	const { t } = useLocale();
@@ -261,6 +333,7 @@ export function TaskTree({
 					matchingIds={matchingIds}
 					dragState={dragState}
 					dropIndicator={dropIndicator}
+					reparentTargetId={reparentTargetId}
 					parentId={topLevelParentId}
 					siblingIds={topLevelSiblingIds}
 					siblingIndex={i}
@@ -326,6 +399,7 @@ function TaskNodeView({
 	matchingIds,
 	dragState,
 	dropIndicator,
+	reparentTargetId,
 	parentId,
 	siblingIds,
 	siblingIndex,
@@ -345,6 +419,7 @@ function TaskNodeView({
 	matchingIds: Set<string> | null;
 	dragState: DragState | null;
 	dropIndicator: DropIndicator | null;
+	reparentTargetId: string | null;
 	parentId: string;
 	siblingIds: string[];
 	siblingIndex: number;
@@ -357,6 +432,7 @@ function TaskNodeView({
 	) => void;
 	onDragEnd: () => void;
 	onDrop: (
+		targetNodeId: string,
 		targetParentId: string,
 		siblingIds: string[],
 		e: React.DragEvent,
@@ -373,6 +449,7 @@ function TaskNodeView({
 	const isCollapsed = matchingIds ? false : collapsed.has(node.id);
 
 	const isDragging = dragState?.dragId === node.id;
+	const isReparentTarget = reparentTargetId === node.id;
 	// Show indicator before this node
 	const showIndicatorBefore =
 		dropIndicator &&
@@ -399,12 +476,12 @@ function TaskNodeView({
 			)}
 			<button
 				type="button"
-				className={`og-task-node${isSelected ? " selected" : ""}${node.draft ? " og-task-draft" : ""}${isDragging ? " og-task-dragging" : ""}`}
+				className={`og-task-node${isSelected ? " selected" : ""}${node.draft ? " og-task-draft" : ""}${isDragging ? " og-task-dragging" : ""}${isReparentTarget ? " og-reparent-target" : ""}`}
 				draggable
 				onDragStart={(e) => onDragStart(node.id, parentId, e)}
 				onDragOver={(e) => onDragOver(node.id, parentId, siblingIds, e)}
 				onDragEnd={onDragEnd}
-				onDrop={(e) => onDrop(parentId, siblingIds, e)}
+				onDrop={(e) => onDrop(node.id, parentId, siblingIds, e)}
 				onClick={(e) => {
 					e.stopPropagation();
 					onSelect(isSelected ? rootNodeId : node.id);
@@ -468,6 +545,7 @@ function TaskNodeView({
 						matchingIds={matchingIds}
 						dragState={dragState}
 						dropIndicator={dropIndicator}
+						reparentTargetId={reparentTargetId}
 						parentId={node.id}
 						siblingIds={childSiblingIds}
 						siblingIndex={i}

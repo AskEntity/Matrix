@@ -706,6 +706,12 @@ export function createOrchestratorTools(
 				title: z.string().optional().describe("New title"),
 				description: z.string().optional().describe("New description"),
 				draft: z.boolean().optional().describe("Set draft flag"),
+				parentId: z
+					.string()
+					.optional()
+					.describe(
+						"New parent task ID. Moves the task under this parent (reparent).",
+					),
 				color: z
 					.string()
 					.optional()
@@ -715,6 +721,40 @@ export function createOrchestratorTools(
 			},
 			async (args) => {
 				try {
+					if (args.parentId !== undefined) {
+						// Scope validation: agent can only reparent tasks under itself or its descendants
+						if (
+							currentTaskId !== null &&
+							args.taskId !== currentTaskId &&
+							!isDescendantOf(tracker, args.taskId, currentTaskId)
+						) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: `Cannot reparent ${args.taskId}: not your task or descendant`,
+									},
+								],
+								isError: true,
+							};
+						}
+						if (
+							currentTaskId !== null &&
+							args.parentId !== currentTaskId &&
+							!isDescendantOf(tracker, args.parentId, currentTaskId)
+						) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: `Cannot reparent under ${args.parentId}: not your task or descendant`,
+									},
+								],
+								isError: true,
+							};
+						}
+						tracker.reparent(args.taskId, args.parentId);
+					}
 					if (args.status !== undefined) {
 						tracker.updateStatus(args.taskId, args.status, "agent");
 					}
