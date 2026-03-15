@@ -105,3 +105,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - read_file: detects png/jpg/jpeg/gif/webp (NOT svg), returns base64.
 - User paste: AppFooter handles clipboard images, 5MB limit.
 - MCP yield tool: returns images as `{ type: "image", data, mimeType }`.
+
+## Search Tool Directory Filtering
+
+- `jsSearch()` in `anthropic-compatible-provider.ts` filters out common noisy dirs (node_modules, .git, dist, out, .worktrees, .cache, coverage, .next, build) after glob scanning.
+- Filter handles both top-level (`node_modules/...`) and nested (`foo/node_modules/...`) paths.
+- Only applied for directory scans (not single-file mode) via `if (!pathStat?.isFile())` guard.
