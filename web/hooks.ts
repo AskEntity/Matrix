@@ -310,6 +310,21 @@ export function useAgent(projectId: string) {
 		[projectId],
 	);
 
+	const reorderTasks = useCallback(
+		async (nodeId: string, children: string[]) => {
+			const res = await fetch(
+				`/projects/${projectId}/tasks/${nodeId}/reorder`,
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ children }),
+				},
+			);
+			if (!res.ok) throw new Error((await res.json()).error);
+		},
+		[projectId],
+	);
+
 	return {
 		running,
 		setRunning,
@@ -325,6 +340,7 @@ export function useAgent(projectId: string) {
 		deleteTask,
 		sendMessage,
 		sendMessageToTask,
+		reorderTasks,
 	};
 }
 

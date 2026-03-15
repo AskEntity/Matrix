@@ -111,3 +111,11 @@ Daemon (Hono: HTTP + WS on :7433)
 - `jsSearch()` in `anthropic-compatible-provider.ts` filters out common noisy dirs (node_modules, .git, dist, out, .worktrees, .cache, coverage, .next, build) after glob scanning.
 - Filter handles both top-level (`node_modules/...`) and nested (`foo/node_modules/...`) paths.
 - Only applied for directory scans (not single-file mode) via `if (!pathStat?.isFile())` guard.
+
+## Task Reordering (Drag-and-Drop)
+
+- `TaskTracker.reorderChildren(parentId, orderedChildIds)` validates exact same set of children, just reordered.
+- `PATCH /projects/:id/tasks/:nodeId/reorder` endpoint with `{ children: string[] }` body.
+- `childMap` in TaskTree must preserve parent.children order (not arbitrary Map insertion order from filtering).
+- HTML5 DnD: use `setTimeout` for `setDragState` in `onDragStart` so the drag image renders before opacity change.
+- Drop indicator uses midpoint check (clientY vs rect midY) to determine before/after insertion.

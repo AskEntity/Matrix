@@ -161,6 +161,7 @@ function AppInner() {
 		deleteTask,
 		sendMessage,
 		sendMessageToTask,
+		reorderTasks,
 	} = useAgent(projectId);
 	const {
 		layers,
@@ -953,6 +954,7 @@ function AppInner() {
 						rootNodeId={rootNodeId}
 						onSelect={setSelectedTaskId}
 						running={running}
+						onReorder={reorderTasks}
 					/>
 				</aside>
 
