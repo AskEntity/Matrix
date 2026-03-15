@@ -799,6 +799,19 @@ export function LogEntryView({
 									src={`data:${img.mediaType};base64,${img.base64}`}
 									alt="attached"
 									className="og-user-image-thumb"
+									onClick={() =>
+										window.open(
+											`data:${img.mediaType};base64,${img.base64}`,
+											"_blank",
+										)
+									}
+									onKeyDown={(e) => {
+										if (e.key === "Enter" || e.key === " ")
+											window.open(
+												`data:${img.mediaType};base64,${img.base64}`,
+												"_blank",
+											);
+									}}
 								/>
 							))}
 						</div>
