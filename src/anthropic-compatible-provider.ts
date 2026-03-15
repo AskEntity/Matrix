@@ -1744,19 +1744,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							(this.client.beta.messages as any).stream(createParams)
 						: this.client.messages.stream(createParams);
 
-					// Stream text deltas to UI in real-time
-					for await (const event of stream) {
-						if (
-							event.type === "content_block_delta" &&
-							(event.delta as { type?: string })?.type === "text_delta" &&
-							!compactionPending
-						) {
-							yield {
-								type: "text_delta" as const,
-								content: (event.delta as { text: string }).text,
-							};
-						}
-					}
 					response = await stream.finalMessage();
 					break;
 				} catch (e) {
@@ -1804,8 +1791,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			for (const block of response.content) {
 				if (block.type === "text") {
 					lastText = block.text;
-					// Text already streamed via text_delta events above;
-					// skip duplicate full-text yield.
+					if (!compactionPending) {
+						yield { type: "text", content: block.text };
+					}
 				} else if (block.type === "tool_use") {
 					if (!compactionPending) {
 						toolUses.push(block);

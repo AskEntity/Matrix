@@ -117,3 +117,10 @@ Daemon (Hono: HTTP + WS on :7433)
 - RunLoop iterates `for await (const event of stream)` inline, yielding `text_delta` events for real-time UI display. Filters for `delta.type === "text_delta"` only (ignores thinking blocks).
 - `text_delta` events NOT stored in event history (too granular). UI appends deltas to last text entry for same taskId.
 - Uses `stream.finalMessage()` to get full `Message` at the end — avoids 10-minute timeout on large requests.
+
+## Streaming Text Delta CPU Lockup Fix
+- `for await` loop over stream events with `yield` on every text_delta caused 100% CPU and event loop starvation during compaction
+- Quick fix: removed the `for await` loop entirely, reverted to `stream.finalMessage()` only
+- Restored full-text `yield { type: "text" }` in response processing block (was skipped because text_delta was handling it)
+- `text_delta` event type kept in agent-provider.ts and App.tsx handler for future use — just no events emitted currently
+- Future: re-implement streaming with proper throttling (batch deltas, flush every ~100ms)
