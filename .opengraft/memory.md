@@ -106,3 +106,12 @@ Daemon (Hono: HTTP + WS on :7433)
   - `index.ts`: barrel re-exports
 - Provider re-exports from `./tools/index.ts` for backward compatibility.
 - `readProjectMemory(path, includeHeaders?)` in daemon/helpers.ts — single function for CLAUDE.md + memory.md reading. Agent-tools.ts imports with `includeHeaders=false`.
+
+## Color Labels for Tasks
+- `color?: string` on TaskNode — stores hex color values
+- `updateColor(nodeId, color)` in TaskTracker — pass `null` to clear
+- PATCH API accepts `color: string | null`
+- Agent tools: both `create_task` and `update_task` accept optional `color` param
+- UI: 7-color palette (matching existing status color vars) in TaskDetail, color dot in TaskTree row
+- TASK_COLORS constant in TaskDetail.tsx defines the palette
+
