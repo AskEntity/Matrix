@@ -2507,6 +2507,140 @@ describe("PATCH /projects/:id/config", () => {
 	});
 });
 
+describe("GET /config/global", () => {
+	test("returns empty object by default", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "og-gcfg-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const res = await app.request("/config/global");
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body).toEqual({});
+
+		await rm(dataDir, { recursive: true });
+	});
+});
+
+describe("PATCH /config/global", () => {
+	test("sets and returns global config", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "og-gcfg-patch-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const res = await app.request("/config/global", {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: "claude-opus-4-5", maxDepth: 3 }),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { model?: string; maxDepth?: number };
+		expect(body.model).toBe("claude-opus-4-5");
+		expect(body.maxDepth).toBe(3);
+
+		// GET should reflect the change
+		const getRes = await app.request("/config/global");
+		const getBody = (await getRes.json()) as {
+			model?: string;
+			maxDepth?: number;
+		};
+		expect(getBody.model).toBe("claude-opus-4-5");
+		expect(getBody.maxDepth).toBe(3);
+
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("null removes a field", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "og-gcfg-null-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		// Set a value
+		await app.request("/config/global", {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: "claude-opus-4-5" }),
+		});
+
+		// Null it out
+		const res = await app.request("/config/global", {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ model: null }),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { model?: string };
+		expect(body.model).toBeUndefined();
+
+		await rm(dataDir, { recursive: true });
+	});
+});
+
+describe("GET /projects/:id/config/repo", () => {
+	test("returns empty object when no repo config exists", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-repo-cfg-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-repo-cfg-data-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		const res = await app.request(`/projects/${project.id}/config/repo`);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body).toEqual({});
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns repo config when .opengraft/config.json exists", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "og-repo-cfg2-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "og-repo-cfg2-data-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		// Write a repo config file in the project directory
+		await mkdir(join(tempDir, ".opengraft"), { recursive: true });
+		await writeFile(
+			join(tempDir, ".opengraft", "config.json"),
+			JSON.stringify({ model: "claude-haiku-4-5", maxDepth: 2 }),
+		);
+
+		const res = await app.request(`/projects/${project.id}/config/repo`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { model?: string; maxDepth?: number };
+		expect(body.model).toBe("claude-haiku-4-5");
+		expect(body.maxDepth).toBe(2);
+
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "og-repo-cfg3-"));
+		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		await pm.load();
+
+		const res = await app.request("/projects/nonexistent-id/config/repo");
+		expect(res.status).toBe(404);
+
+		await rm(dataDir, { recursive: true });
+	});
+});
+
 describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 	let tempDir: string;
 	let dataDir: string;

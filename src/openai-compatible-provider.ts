@@ -254,15 +254,16 @@ export class OpenAICompatibleProvider implements AgentProvider {
 	private model: string;
 	private sessionHistory = new Map<string, OpenAIMessage[]>();
 
-	constructor(model?: string) {
+	constructor(model?: string, opts?: { apiKey?: string; baseUrl?: string }) {
 		this.baseUrl =
+			opts?.baseUrl ??
 			process.env.OPENAI_BASE_URL ??
 			process.env.OPENAI_API_BASE ??
 			"https://api.openai.com/v1";
-		this.apiKey = process.env.OPENAI_API_KEY ?? "";
+		this.apiKey = opts?.apiKey ?? process.env.OPENAI_API_KEY ?? "";
 		if (!this.apiKey) {
 			throw new Error(
-				"OPENAI_API_KEY environment variable is required for OpenAICompatibleProvider",
+				"OPENAI_API_KEY is required for OpenAICompatibleProvider (set via config or environment variable)",
 			);
 		}
 		this.model = model ?? "gpt-4o";

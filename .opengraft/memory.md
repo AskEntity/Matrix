@@ -345,3 +345,17 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Scalar fields: higher priority wins. mcpServers and authGroups: merged (union), higher priority overrides same-named entries.
 - resolveAuthGroup: looks up by name or falls back to defaultAuth. Returns null if not found.
 - Existing project-config.ts handles the old per-project config; new config.ts is the unified three-layer system.
+
+
+## Config Layer 2: Daemon Integration
+- Provider constructors (AnthropicCompatibleProvider, OpenAICompatibleProvider) now accept optional `opts` parameter for API keys, so they can be created from config without env vars
+- Daemon resolves config per-project: `resolveProjectConfig(projectPath, projectId)` merges global + repo + local
+- `getProjectProvider(effectiveCfg)` creates provider from resolved config; falls back to injected test provider
+- `DaemonConfig.agentProvider` is now optional — tests inject mock providers, production uses config-driven selection
+- `createProviderFromAuth(authGroup, model)` maps AuthGroup to concrete provider instances
+- `createProviderFromConfig(effectiveCfg)` resolves auth group and creates provider; falls back to env-var-based detection for backward compat
+- Global config loaded at daemon startup via `loadConfig()`, stored in `globalConfig` closure variable
+- Old `project-config.ts` (loadProjectConfig, mergeProjectConfig) is no longer imported by daemon.ts — replaced by config.ts
+- New API endpoints: GET/PATCH /config/global, GET /projects/:id/config/repo
+- Existing /projects/:id/config endpoints now use loadProjectLocalConfig/saveProjectLocalConfig from config.ts
+- ClaudeAgentSdkProvider import removed from daemon.ts — not selectable via config system (AuthGroup only supports anthropic/openai)
