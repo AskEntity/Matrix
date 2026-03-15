@@ -319,3 +319,11 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `tracker.save()` in finally block must be wrapped in try/catch — otherwise save failure prevents `activeSessions.delete()`
 - Use `caughtError` flag to only broadcast `agent_stopped` on error path (success already sends `orchestration_completed`)
 - `broadcastTreeUpdate` should be called in finally block to update UI tree after any exit path
+
+## Structured Queue Messages (rawMessages)
+- AgentEvent queue_message now carries optional `rawMessages: Array<{ source: string; content: string }>` alongside formatted `messages` text
+- `toRawMessage()` in agent-tools.ts converts QueueMessage to simplified { source, content } for WS events
+- `formatQueueMessage()` switched from `[type] content` bracket format to XML tags (`<user_message>`, `<parent_update>`, etc.) to prevent injection
+- All 7 emit sites (2 in anthropic, 2 in openai, 2 in claude-sdk, 1 in agent-tools yield) include rawMessages
+- App.tsx queue_message handler prefers rawMessages (structured), falls back to text parsing with restricted regexes for old event_history
+- Daemon passes rawMessages through via spread: `{ type: "agent_event", eventType, ...eventData }` — no daemon changes needed

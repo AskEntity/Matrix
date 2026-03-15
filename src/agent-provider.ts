@@ -59,6 +59,8 @@ export type AgentEvent =
 			type: "queue_message";
 			/** Formatted queue messages injected at cancellation points */
 			messages: string;
+			/** Structured raw messages for UI consumption (avoids text parsing) */
+			rawMessages?: Array<{ source: string; content: string }>;
 	  }
 	| {
 			type: "usage";

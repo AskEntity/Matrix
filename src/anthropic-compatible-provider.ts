@@ -24,7 +24,7 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
-import { formatQueueMessage } from "./agent-tools.ts";
+import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { AgentResult } from "./types.ts";
 
@@ -1871,7 +1871,11 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							continue;
 						}
 						const formatted = nonCompact.map(formatQueueMessage).join("\n");
-						yield { type: "queue_message", messages: formatted };
+						yield {
+							type: "queue_message",
+							messages: formatted,
+							rawMessages: nonCompact.map(toRawMessage),
+						};
 						// Inject messages as a new user turn and continue the loop
 						const imageBlocks = extractQueueImages(nonCompact);
 						if (imageBlocks.length > 0) {
@@ -2036,7 +2040,11 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						lastResult.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
 					}
 					cancellationImages = extractQueueImages(nonCompactMsgs);
-					yield { type: "queue_message", messages: formatted };
+					yield {
+						type: "queue_message",
+						messages: formatted,
+						rawMessages: nonCompactMsgs.map(toRawMessage),
+					};
 				}
 			}
 

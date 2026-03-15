@@ -7,7 +7,7 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
-import { formatQueueMessage } from "./agent-tools.ts";
+import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
 import { MessageQueue } from "./message-queue.ts";
 import type { AgentResult } from "./types.ts";
 
@@ -59,6 +59,7 @@ export class ClaudeAgentSdkProvider implements AgentProvider {
 							yield {
 								type: "queue_message" as const,
 								messages: formatted,
+								rawMessages: msgs.map(toRawMessage),
 							};
 						}
 					}
@@ -155,7 +156,11 @@ export class ClaudeAgentSdkProvider implements AgentProvider {
 							const msgs = queue.drain().filter((m) => m.source !== "compact");
 							if (msgs.length === 0) continue;
 							const formatted = msgs.map(formatQueueMessage).join("\n");
-							yield { type: "queue_message" as const, messages: formatted };
+							yield {
+								type: "queue_message" as const,
+								messages: formatted,
+								rawMessages: msgs.map(toRawMessage),
+							};
 							const sdkMsg: SDKUserMessage = {
 								type: "user",
 								message: {

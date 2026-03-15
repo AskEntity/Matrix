@@ -57,23 +57,55 @@ async function isGitClean(projectPath: string): Promise<{
 	};
 }
 
-/** Format a QueueMessage for display to the agent. */
+/** Format a QueueMessage for display to the agent (XML format to prevent injection). */
 export function formatQueueMessage(msg: QueueMessage): string {
 	switch (msg.source) {
 		case "child_complete":
-			return `[child_complete] Task "${msg.title}" (${msg.taskId}) ${msg.success ? "passed" : "failed"}: ${msg.output.slice(0, 500)}`;
+			return `<child_complete task="${msg.title}" id="${msg.taskId}" status="${msg.success ? "passed" : "failed"}">${msg.output.slice(0, 500)}</child_complete>`;
 		case "user":
-			return `[user] ${msg.content}`;
+			return `<user_message>${msg.content}</user_message>`;
 		case "parent_update":
-			return `[parent_update] ${msg.content}`;
+			return `<parent_update>${msg.content}</parent_update>`;
 		case "clarify_response":
-			return `[clarify_response] ${msg.answer}`;
+			return `<clarify_response>${msg.answer}</clarify_response>`;
 		case "child_report":
-			return `[child_report] From child "${msg.title}" (${msg.taskId}): ${msg.content}`;
+			return `<child_report from="${msg.title}" id="${msg.taskId}">${msg.content}</child_report>`;
 		case "background_complete":
-			return `[background_complete] Command "${msg.command}" (${msg.commandId}): exit=${msg.exitCode}, duration=${msg.durationMs}ms\nstdout:\n${msg.stdout}\nstderr:\n${msg.stderr}`;
+			return `<background_complete command="${msg.command}" id="${msg.commandId}" exit="${msg.exitCode}" duration="${msg.durationMs}ms">stdout:\n${msg.stdout}\nstderr:\n${msg.stderr}</background_complete>`;
 		case "compact":
-			return "[compact] Manual compaction requested";
+			return "<compact>Manual compaction requested</compact>";
+	}
+}
+
+/** Convert a QueueMessage to a simplified { source, content } for structured WS events. */
+export function toRawMessage(msg: QueueMessage): {
+	source: string;
+	content: string;
+} {
+	switch (msg.source) {
+		case "child_complete":
+			return {
+				source: msg.source,
+				content: `Task "${msg.title}" (${msg.taskId}) ${msg.success ? "passed" : "failed"}: ${msg.output.slice(0, 500)}`,
+			};
+		case "user":
+			return { source: msg.source, content: msg.content };
+		case "parent_update":
+			return { source: msg.source, content: msg.content };
+		case "clarify_response":
+			return { source: msg.source, content: msg.answer };
+		case "child_report":
+			return {
+				source: msg.source,
+				content: `From child "${msg.title}" (${msg.taskId}): ${msg.content}`,
+			};
+		case "background_complete":
+			return {
+				source: msg.source,
+				content: `Command "${msg.command}" (${msg.commandId}): exit=${msg.exitCode}, duration=${msg.durationMs}ms\nstdout:\n${msg.stdout}\nstderr:\n${msg.stderr}`,
+			};
+		case "compact":
+			return { source: msg.source, content: "Manual compaction requested" };
 	}
 }
 
@@ -1112,6 +1144,7 @@ export function createOrchestratorTools(
 							taskId: currentTaskId ?? undefined,
 							eventType: "queue_message",
 							messages: formatted,
+							rawMessages: all.map(toRawMessage),
 						});
 					}
 
