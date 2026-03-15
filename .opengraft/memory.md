@@ -131,3 +131,8 @@ Daemon (Hono: HTTP + WS on :7433)
 
 - `createProviderFromConfig()` in daemon.ts: NO env var fallback. Throws if no auth group configured.
 - Tests use `config.agentProvider` (injected mock) — unaffected by this change.
+
+## Compact Pending Indicator
+- `pendingCompact` state in App.tsx, set true on compact click, cleared on `compact_started`, `agent_stopped`, and `orchestration_completed` events
+- Rendered as `og-pending-chip` in AppFooter alongside pending message chips
+- i18n keys: `footer.compactPending` (en: "Compact pending…", zh: "压缩等待中…")
