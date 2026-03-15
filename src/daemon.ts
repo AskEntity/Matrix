@@ -85,6 +85,7 @@ const startTime = Date.now();
 export interface DaemonConfig {
 	dataDir: string;
 	agentProvider?: AgentProvider;
+	initialConfig?: OpenGraftConfig;
 }
 
 /** Create an AgentProvider from an AuthGroup and model. */
@@ -153,7 +154,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const app = new Hono();
 	let requestCount = 0;
 	let startupReady = false;
-	let globalConfig: OpenGraftConfig = {};
+	let globalConfig: OpenGraftConfig = config.initialConfig ?? {};
 	app.use("*", async (_c, next) => {
 		requestCount++;
 		await next();
@@ -598,11 +599,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			const authGroup = resolveAuthGroup(globalConfig);
 			const modelName = globalConfig.model ?? "claude-sonnet-4-6";
 
-			// Determine auth method from config, fall back to env vars
-			const apiKey =
-				authGroup?.anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;
-			const oauthToken =
-				authGroup?.claudeOauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			const apiKey = authGroup?.anthropicApiKey;
+			const oauthToken = authGroup?.claudeOauthToken;
 			const useOAuth = Boolean(oauthToken && !apiKey);
 
 			let client: Anthropic;
@@ -1813,7 +1811,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	/** Auto-resume orchestrations that were running before daemon restart. */
 	async function autoResumeProjects(): Promise<void> {
-		const sessionKeep = Number.parseInt(process.env.OG_SESSION_KEEP ?? "5", 10);
+		const sessionKeep = globalConfig.sessionKeep ?? 5;
 		const projects = pm.list();
 		for (const project of projects) {
 			// Auto-prune old session files to prevent unbounded disk growth
@@ -1878,6 +1876,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		getTracker,
 		markReady,
 		loadConfig,
+		getConfig: () => globalConfig,
 	};
 }
 
@@ -1958,7 +1957,19 @@ ${ORCHESTRATION_KNOWLEDGE}`;
 
 // Only start the server when run directly, not when imported for testing.
 if (import.meta.main) {
-	const port = Number(process.env.PORT) || 7433;
+	const {
+		app,
+		pm,
+		autoResumeProjects,
+		shutdown,
+		markReady,
+		loadConfig,
+		getConfig,
+	} = createApp();
+	await pm.load();
+	await loadConfig();
+
+	const port = getConfig().port ?? 7433;
 
 	// Check if another daemon is already running on this port
 	try {
@@ -1970,11 +1981,6 @@ if (import.meta.main) {
 	} catch {
 		// Port is free, proceed
 	}
-
-	const { app, pm, autoResumeProjects, shutdown, markReady, loadConfig } =
-		createApp();
-	await pm.load();
-	await loadConfig();
 	console.log(`OpenGraft daemon listening on http://localhost:${port}`);
 	console.log(`Web UI: http://localhost:${port}/`);
 
