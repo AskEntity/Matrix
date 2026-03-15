@@ -130,3 +130,6 @@ Daemon (Hono: HTTP + WS on :7433)
 - **Root drop zone**: `RootDropZone` component appears during drag when the dragged node is not already at root level. Uses `og-root-drop-zone` CSS class with accent-blue hover styling.
 - **[TREE UPDATED] card**: Detected via `entry.text.includes("[TREE UPDATED]")` in `queue_message` handler in ToolCard.tsx. Rendered with `og-tool-card-system` class (green accent).
 - **Color UI**: Was already fully implemented - color dot in TaskTree row, color picker in TaskDetail, PATCH API support.
+## Agent MCP Tools
+
+- `reorder_tasks` tool added alongside existing tools. Pattern: scope validation (currentTaskId check + isDescendantOf), then tracker method, save, broadcastTreeUpdate.
