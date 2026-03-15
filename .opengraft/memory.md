@@ -133,3 +133,10 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Agent MCP Tools
 
 - `reorder_tasks` tool added alongside existing tools. Pattern: scope validation (currentTaskId check + isDescendantOf), then tracker method, save, broadcastTreeUpdate.
+
+## Settings Panel Auth Group Dropdown
+
+- `SettingAuthGroupSelect` component: reusable select dropdown that reads auth group names from `layers.global.authGroups` keys. Used for both `defaultAuth` and `childAuth` fields.
+- Global tab: auth groups + default auth dropdown + daemon settings + MCP servers. No model fields (those are project/local level).
+- Project/Local tabs (shared `ProjectTab` component): auth dropdowns, root model, task agent model, limits, MCP servers.
+- Translation keys renamed: `settings.modelOverride` → `settings.rootModel`, `settings.childModel` → `settings.taskAgentModel`.

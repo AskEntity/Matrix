@@ -121,12 +121,13 @@ const en: Translations = {
 
 	// Settings
 	"settings.title": "Project Settings",
-	"settings.modelOverride": "Model Override",
-	"settings.modelOverridePlaceholder":
+	"settings.rootModel": "Root Model",
+	"settings.rootModelPlaceholder":
 		"e.g. gpt-4o, claude-opus-4-6 (leave empty for default)",
-	"settings.childModel": "Child Model",
-	"settings.childModelPlaceholder":
-		"Model for child agents (leave empty to use parent model)",
+	"settings.taskAgentModel": "Task Agent Model",
+	"settings.taskAgentModelPlaceholder":
+		"Model for child agents (leave empty to use root model)",
+	"settings.authGroupNone": "— None —",
 	"settings.budget": "Default Budget (USD)",
 	"settings.clarifyTimeout": "Clarify Timeout (ms)",
 	"settings.maxDepth": "Max Depth",
@@ -389,11 +390,11 @@ const zh: Translations = {
 
 	// Settings
 	"settings.title": "项目设置",
-	"settings.modelOverride": "模型覆盖",
-	"settings.modelOverridePlaceholder":
-		"如 gpt-4o, claude-opus-4-6（留空使用默认）",
-	"settings.childModel": "子模型",
-	"settings.childModelPlaceholder": "子代理使用的模型（留空使用父模型）",
+	"settings.rootModel": "根模型",
+	"settings.rootModelPlaceholder": "如 gpt-4o, claude-opus-4-6（留空使用默认）",
+	"settings.taskAgentModel": "任务代理模型",
+	"settings.taskAgentModelPlaceholder": "子代理使用的模型（留空使用根模型）",
+	"settings.authGroupNone": "— 无 —",
 	"settings.budget": "默认预算 (USD)",
 	"settings.clarifyTimeout": "澄清超时 (ms)",
 	"settings.maxDepth": "最大深度",
