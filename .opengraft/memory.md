@@ -215,3 +215,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - `consumeAgentEvents()`: Shared event loop that drains an `AsyncGenerator<AgentEvent, AgentResult>` and calls `onEvent` for each event. Returns the final `AgentResult`.
 - `mcpManager` is passed into `createAgentContext` via opts so callers own the instance for cleanup in `finally` blocks.
 - `childModel` resolution: `createAgentContext` falls back to `effectiveCfg.childModel` when `opts.childModel` is undefined. Callers pass API-level overrides if any.
+## Multiline Search Implementation (March 2026)
+
+- `jsSearch()` accepts `multiline?: boolean`. When true, uses RegExp `s` flag (dotAll) so `.` matches newlines.
+- Multiline mode matches against full file content, then maps match byte offsets to line numbers via binary search (`offsetToLine` helper with precomputed line offset table).
+- All output modes (content, files_with_matches, count) work with multiline. Context lines work too.
+- Standard (non-multiline) mode uses a separate `lineRegex` without `g` flag to avoid stateful `lastIndex` issues from the global regex.

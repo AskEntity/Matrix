@@ -253,8 +253,7 @@ export async function executeTool(
 			const headLimit = Math.min((input.head_limit as number) ?? 50, 200);
 			const caseInsensitive = (input.case_insensitive as boolean) ?? false;
 			const excludedDirs = input.excluded_dirs as string[] | undefined;
-			// TODO: implement multiline search — currently jsSearch uses line-by-line matching,
-			// so the 'multiline' param (input.multiline) is accepted in the schema but ignored here.
+			const multiline = (input.multiline as boolean) ?? false;
 
 			try {
 				const result = await jsSearch({
@@ -265,6 +264,7 @@ export async function executeTool(
 					outputMode,
 					headLimit,
 					caseInsensitive,
+					multiline,
 					excludedDirs,
 					cwd,
 				});
