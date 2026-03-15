@@ -160,6 +160,16 @@ const en: Translations = {
 	"settings.sessionKeep": "Session Keep",
 	"settings.save": "Save",
 	"settings.cancel": "Cancel",
+	"settings.delete": "Delete",
+	"settings.tabGlobal": "Global",
+	"settings.tabProject": "Project",
+	"settings.tabLocal": "Local",
+	"settings.mcpServers": "MCP Servers",
+	"settings.addMcpServer": "Add MCP server",
+	"settings.mcpServerName": "Server name",
+	"settings.mcpServerCommand": "Command",
+	"settings.mcpServerArgs": "Args (space-separated)",
+	"settings.inherited": "inherited",
 
 	// Footer
 	"footer.describeBuild": "Describe what to build…",
@@ -411,6 +421,16 @@ const zh: Translations = {
 	"settings.sessionKeep": "保留会话数",
 	"settings.save": "保存",
 	"settings.cancel": "取消",
+	"settings.delete": "删除",
+	"settings.tabGlobal": "全局",
+	"settings.tabProject": "项目",
+	"settings.tabLocal": "本地",
+	"settings.mcpServers": "MCP 服务器",
+	"settings.addMcpServer": "添加 MCP 服务器",
+	"settings.mcpServerName": "服务器名称",
+	"settings.mcpServerCommand": "命令",
+	"settings.mcpServerArgs": "参数（空格分隔）",
+	"settings.inherited": "继承",
 
 	// Footer
 	"footer.describeBuild": "描述你要构建的内容…",

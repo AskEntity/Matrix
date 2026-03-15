@@ -371,3 +371,16 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `saveProjectRepoConfig` must be imported in daemon.ts (was missing — caused runtime error)
 - SettingsPanel now uses `layers/updateGlobal/updateRepo/updateLocal` props — removed old `config/updateConfig`
 - CSS: `.og-settings-panel-wide` widens panel to 380px with scroll; layer colors: global=amber, repo=blue, local=green
+
+## Settings UI Three-Tab Redesign
+- SettingsPanel redesigned from stacked "three rows per field" to three tabs (Global/Project/Local)
+- Each tab shows ONE input per field, with inherited value as placeholder text
+- `inheritedValue()` helper: Global→no inheritance, Project→inherits from global, Local→inherits from repo then global
+- `layerForTab()`: global→"global", project→"repo", local→"local"
+- onBlur save pattern: uncontrolled inputs (defaultValue) + useRef + useEffect sync (only when input not focused)
+- port and sessionKeep ONLY in Global tab — daemon-level settings that don't make sense per-project
+- MCP servers section shows inherited servers (read-only, dashed border) + this layer's servers (deletable) + add form
+- Auth group item now shows masked key preview (first 6 + last 4 chars) + provider badge
+- New tab CSS classes: og-settings-tabs, og-settings-tab, og-settings-tab-active-{global,project,local}
+- Tab accent colors: global=amber(#c9a227), project=var(--accent), local=blue(#508cdc)
+- Old three-layer CSS (og-tl-*, og-tlfield-*) still in style.css but unused — safe to remove later
