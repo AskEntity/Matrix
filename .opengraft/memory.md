@@ -124,3 +124,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - Restored full-text `yield { type: "text" }` in response processing block (was skipped because text_delta was handling it)
 - `text_delta` event type kept in agent-provider.ts and App.tsx handler for future use — just no events emitted currently
 - Future: re-implement streaming with proper throttling (batch deltas, flush every ~100ms)
+
+## Streaming Text Delta Throttling (updated)
+- Re-added `for await` loop over stream events with throttled yields (80ms / ~12 yields/sec)
+- textBuffer accumulates deltas, flushes when TEXT_FLUSH_INTERVAL elapsed
+- Removed full-text `yield { type: "text" }` from response processing (text_delta covers it)
+- Key: the `for await` loop runs BEFORE `stream.finalMessage()` — both work on the same stream object
