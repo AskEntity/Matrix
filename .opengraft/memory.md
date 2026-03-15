@@ -31,7 +31,7 @@ Daemon (Hono: HTTP + WS on :7433)
 - Orchestrator has a real task node (root node with ID).
 - All mutable APIs fire-and-forget. Observe via WebSocket.
 - MCP tools enable recursive orchestration (tested up to 5 levels deep).
-- Own `ToolDefinition` type and `tool()` factory in `src/tool-definition.ts` (replaced claude-agent-sdk).
+- Own `ToolDefinition` type and `tool()` factory in `src/tool-definition.ts`.
 
 ## Key Files
 
@@ -65,13 +65,7 @@ Daemon (Hono: HTTP + WS on :7433)
 - `SUMMARIZATION_INSTRUCTION` injected as user message → model responds with `<summary>` tags → `extractCheckpoint()` parses
 - `compactionPending` flag: inject instruction → extract checkpoint next iteration → `buildCompactedContext()`
 - Compact lifecycle: `compact_started` → shimmer bar (infinite animation) → `compact` → bar updates in-place
-- Manual compact: POST /compact → queue signal → provider handles. Pending chip shown in footer.
-- Short context guard (messages.length ≤ 4): emits full cycle with savedTokens=0
-
-## Structured Data Flow
-
-- Tool events: LogEntry has `toolName`, `toolArgs`, `toolResult`, `isError` — no text parsing
-- Queue messages: `rawMessages` (structured) in WS events; `formatQueueMessage()` uses XML tags for LLM injection only
+- Manual compact: POST /compact → queue signal → yield tool re-enqueues → provider handles
 
 ## Known Pitfalls
 
@@ -83,6 +77,8 @@ Daemon (Hono: HTTP + WS on :7433)
 - **Template literals**: Use `${"$"}` for literal `$` in backtick strings in agent-tools.ts.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`. Use `?? ""` or `!`.
 - **OpenAI test mocking**: URL-based dispatch (check `/models` vs `/chat/completions`). Always `clearContextWindowCache()` in `finally`.
+- **Compact signal in yield**: Yield tool filters compact signals and re-enqueues them. MUST `break` after re-enqueue — without break, `waitForMessage()` immediately returns the re-enqueued compact → infinite sync loop → 100% CPU.
+- **Orchestrator must never edit src files directly**: Use child tasks in worktrees. Direct edits trigger bun --watch daemon restart.
 
 ## Daemon Lifecycle
 
@@ -94,35 +90,17 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Web UI
 
 - **Activity log**: Tool cards (collapsible), MCP tools get purple accent. Structured fields only.
+- **Yield cards**: Completed yield pairs hidden. Only pending yield (agent waiting) shows as "⏸ Yield".
 - **Auto-scroll**: sentinel div + `scrollIntoView({ block: "end", behavior: "instant" })`.
-- **Thinking indicator**: `isSelectedTaskRunning` = `running && (isOrchestratorNode || selectedNode?.status === "in_progress")`.
-- **Compact bar**: shimmer runs indefinitely via `og-compact-bar-loading` class; stops when checkpoint arrives.
+- **Thinking indicator**: `isSelectedTaskRunning` checks running + node status.
+- **Compact bar**: shimmer runs indefinitely until checkpoint arrives.
 - **User messages**: appear at agent-received time (via rawMessages), pending chip for feedback.
-- **Compact pending**: `pendingCompact` state → `og-pending-chip` in footer, cleared on `compact_started`.
 - **URL hash routing**: `#<projectId>/<taskId>` format.
 - **IME**: composingRef + keyCode 229 + isComposing triple-check for CJK input.
+- **Streaming**: `text_delta` events appended to last text entry per taskId. 80ms throttle.
 
 ## Image Support
 
-- read_file: detects png/jpg/jpeg/gif/webp (NOT svg), returns base64 with `isImage/imageData/mediaType`.
-- User paste: AppFooter handles `image/*` clipboard items, 5MB limit, base64 via FileReader.
-- MCP yield tool: returns images as `{ type: "image", data, mimeType }` — providers convert to native format.
-
-## Bash Background Processes
-
-- `executeBashWithTimeout()`: foreground timeout → background promotion → completions via `background_complete` queue messages.
-- cd wrapper injected to warn on redundant directory changes.
-
-## Streaming Text Display
-- RunLoop iterates `for await (const event of stream)` with **throttled** `text_delta` yields (80ms batching, ~12/sec). Prevents event loop starvation that occurs with per-event yields.
-- Filters for `delta.type === "text_delta"` only (ignores thinking blocks). Uses `stream.finalMessage()` after loop for full Message.
-- `text_delta` events NOT stored in event history. UI appends deltas to last text entry for same taskId.
-- Known issue: compact during streaming may still cause brief unresponsiveness due to large JSON parsing (not streaming-related, see investigation draft).
-
-## Debug Logging
-- Temporary `[PERF]` debug logging was added and later removed (compact lockup investigation). If re-adding, use a `perfLog()` helper with `[PERF <ISO timestamp>]` prefix for easy grep.
-
-## Yield Card Display in Activity Log
-- Completed yield pairs (tool_use + tool_result) are hidden in ActivityLog.tsx mergedVisible computation.
-- Only pending yield tool_use entries (agent currently waiting) remain visible as "⏸ Yield" cards.
-- The queue_message events already render the actual messages the agent received, so showing "Resume from yield" cards was redundant and caused ordering issues (queue_message appeared before tool_result).
+- read_file: detects png/jpg/jpeg/gif/webp (NOT svg), returns base64.
+- User paste: AppFooter handles clipboard images, 5MB limit.
+- MCP yield tool: returns images as `{ type: "image", data, mimeType }`.
