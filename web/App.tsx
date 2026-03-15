@@ -311,6 +311,30 @@ function AppInner() {
 							isError: (msg.isError as boolean) || false,
 						});
 						break;
+					} else if (et === "text_delta") {
+						const deltaText = (msg.content as string) || "";
+						const deltaTaskId = msg.taskId as string | undefined;
+						if (deltaText) {
+							setLogs((prev) => {
+								// Find last entry for this task — append if it's a text entry
+								for (let i = prev.length - 1; i >= 0; i--) {
+									const e = prev[i];
+									if (e && e.type === "text" && e.taskId === deltaTaskId) {
+										const updated = [...prev];
+										updated[i] = { ...e, text: e.text + deltaText };
+										return updated;
+									}
+									// If we hit a non-text entry for this task, stop searching
+									if (e && e.taskId === deltaTaskId && e.type !== "text") break;
+								}
+								// No existing text entry — create a new one
+								return [
+									...prev,
+									createLogEntry("text", deltaText, deltaTaskId),
+								];
+							});
+						}
+						break;
 					} else if (et === "text") {
 						text = (msg.content as string) || "";
 					} else if (et === "error") {

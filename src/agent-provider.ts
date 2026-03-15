@@ -44,6 +44,7 @@ export type AgentEvent =
 			isError: boolean;
 	  }
 	| { type: "text"; content: string }
+	| { type: "text_delta"; content: string }
 	| { type: "error"; message: string }
 	| { type: "compact_started" }
 	| {

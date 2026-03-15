@@ -325,8 +325,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	/** Broadcast an agent event to subscribers and store in history. */
 	function broadcastEvent(projectId: string, event: Record<string, unknown>) {
-		// Store in history (skip tree_updated — sent on WS connect separately)
-		if (event.type !== "tree_updated") {
+		// Store in history (skip tree_updated and text_delta — too granular for persistence)
+		if (
+			event.type !== "tree_updated" &&
+			!(event.type === "agent_event" && event.eventType === "text_delta")
+		) {
 			const history = getEventHistory(projectId);
 			history.push({ ...event, timestamp: Date.now() });
 			if (history.length > MAX_EVENT_HISTORY) {

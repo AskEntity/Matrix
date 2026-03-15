@@ -1425,17 +1425,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		this.model = model ?? DEFAULT_MODEL;
 	}
 
-	/** Create a message using streaming to avoid 10-minute timeout on large requests. */
-	private async createMessage(
-		params: Anthropic.Messages.MessageCreateParamsNonStreaming,
-	): Promise<Anthropic.Messages.Message> {
-		if (this.useOAuth) {
-			// biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
-			return (this.client.beta.messages as any).stream(params).finalMessage();
-		}
-		return this.client.messages.stream(params).finalMessage();
-	}
-
 	async execute(request: AgentRequest): Promise<AgentResult> {
 		const sessionId = request.resumeSessionId ?? randomUUID();
 		const gen = this.runLoop(request, sessionId);
@@ -1750,7 +1739,25 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {
 				try {
-					response = await this.createMessage(createParams);
+					const stream = this.useOAuth
+						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
+							(this.client.beta.messages as any).stream(createParams)
+						: this.client.messages.stream(createParams);
+
+					// Stream text deltas to UI in real-time
+					for await (const event of stream) {
+						if (
+							event.type === "content_block_delta" &&
+							(event.delta as { type?: string })?.type === "text_delta" &&
+							!compactionPending
+						) {
+							yield {
+								type: "text_delta" as const,
+								content: (event.delta as { text: string }).text,
+							};
+						}
+					}
+					response = await stream.finalMessage();
 					break;
 				} catch (e) {
 					const isTransient =
@@ -1797,9 +1804,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			for (const block of response.content) {
 				if (block.type === "text") {
 					lastText = block.text;
-					if (!compactionPending) {
-						yield { type: "text", content: block.text };
-					}
+					// Text already streamed via text_delta events above;
+					// skip duplicate full-text yield.
 				} else if (block.type === "tool_use") {
 					if (!compactionPending) {
 						toolUses.push(block);
