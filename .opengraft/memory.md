@@ -198,3 +198,8 @@ Daemon (Hono: HTTP + WS on :7433)
 - If pending messages exist (e.g., user sent a message right as agent called done()), `doneRef.done` is reset to null and the loop continues.
 - This prevents message loss in the race window between done() tool execution and loop exit.
 - Fix applied at two points in each provider: (1) after end_turn/stop with no tool calls, (2) after tool batch execution.
+## Named Color Categories (March 2026)
+
+- TASK_COLORS in TaskDetail.tsx changed from generic color names (Red, Blue, etc.) to named categories: Bug, Feature, Refactor, Optimization, Research, Chore.
+- `resolveColor()` in agent-tools.ts converts named colors (red, blue, green, yellow, purple, orange, gray) to hex values. Agent tools accept both named colors and raw hex.
+- Color picker uses `og-color-category` class (pill-shaped buttons with swatch + label) instead of standalone `og-color-swatch` circles.

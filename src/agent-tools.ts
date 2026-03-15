@@ -10,6 +10,22 @@ import type { TaskTracker } from "./task-tracker.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
 
+/** Named color → hex mapping for agent tools. Accepts common names and converts to hex. */
+const NAMED_COLORS: Record<string, string> = {
+	red: "#f85149",
+	blue: "#388bfd",
+	green: "#3fb950",
+	yellow: "#d29922",
+	purple: "#a371f7",
+	orange: "#f0883e",
+	gray: "#768390",
+};
+
+/** Resolve a color value: converts named colors to hex, passes hex through. */
+export function resolveColor(color: string): string {
+	return NAMED_COLORS[color.toLowerCase()] ?? color;
+}
+
 /**
  * Check if nodeId is a descendant of ancestorId by walking up the parent chain.
  */
@@ -635,7 +651,8 @@ export function createOrchestratorTools(
 					.string()
 					.optional()
 					.describe(
-						"Optional color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex like '#ff5733').",
+						"Optional color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex like '#ff5733'). " +
+							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
 					),
 			},
 			async (args) => {
@@ -677,7 +694,7 @@ export function createOrchestratorTools(
 							)
 						: tracker.addTask(args.title, args.description, opts);
 					if (args.color) {
-						tracker.updateColor(node.id, args.color, "agent");
+						tracker.updateColor(node.id, resolveColor(args.color), "agent");
 					}
 					await tracker.save();
 					broadcastTreeUpdate?.();
@@ -721,7 +738,8 @@ export function createOrchestratorTools(
 					.string()
 					.optional()
 					.describe(
-						"Color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex).",
+						"Color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex). " +
+							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
 					),
 			},
 			async (args) => {
@@ -773,7 +791,11 @@ export function createOrchestratorTools(
 						tracker.updateDraft(args.taskId, args.draft, "agent");
 					}
 					if (args.color !== undefined) {
-						tracker.updateColor(args.taskId, args.color || null, "agent");
+						tracker.updateColor(
+							args.taskId,
+							args.color ? resolveColor(args.color) : null,
+							"agent",
+						);
 					}
 					await tracker.save();
 					broadcastTreeUpdate?.();

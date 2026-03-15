@@ -609,28 +609,41 @@ select {
 .og-color-picker {
 	display: flex;
 	align-items: center;
-	gap: 5px;
+	gap: 4px;
 	flex-wrap: wrap;
 }
 
-.og-color-swatch {
-	width: 18px;
-	height: 18px;
-	border-radius: 50%;
-	border: 2px solid transparent;
+.og-color-category {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	background: none;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	padding: 2px 8px 2px 4px;
 	cursor: pointer;
-	padding: 0;
+	font-size: 11px;
+	color: var(--text-muted);
 	transition:
 		border-color var(--t-fast),
-		transform var(--t-fast);
+		color var(--t-fast);
 }
 
-.og-color-swatch:hover {
-	transform: scale(1.15);
+.og-color-category:hover {
+	border-color: var(--text-muted);
+	color: var(--text-primary);
 }
 
-.og-color-swatch.selected {
+.og-color-category.selected {
 	border-color: var(--text-primary);
+	color: var(--text-primary);
+}
+
+.og-color-swatch {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex-shrink: 0;
 }
 
 .og-color-clear {
