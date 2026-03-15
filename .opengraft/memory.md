@@ -113,3 +113,11 @@ Daemon (Hono: HTTP + WS on :7433)
 - **Inline task creation**: `isCreating` state -> inline input in TaskTree. IME-safe. Blur with text confirms, without cancels.
 - **Trash drop zone**: Appears during drag at TaskTree bottom. Uses dataTransfer for task ID.
 - **CSS**: Use double-class selectors instead of `!important` (Biome rejects it). Always `type="button"` on buttons.
+
+## Task Reparenting
+
+- `TaskTracker.reparent(nodeId, newParentId)` validates circular deps by walking up parent chain from newParent.
+- PATCH `/tasks/:nodeId` with `{ parentId }` triggers reparent. Returns 400 for circular dependency.
+- Agent `update_task` tool: `parentId` field with scope validation (same as create_task — must be own descendant).
+- DnD reparent: top/bottom 30% of row = reorder (existing), center 40% = reparent. Visual: `.og-reparent-target` class with dashed accent outline.
+- `handleDrop` signature changed to include `targetNodeId` for reparent support — first param is `_targetNodeId` (unused in reorder path, reparent uses `reparentTargetId` state).
