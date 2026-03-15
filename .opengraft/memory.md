@@ -123,3 +123,7 @@ Daemon (Hono: HTTP + WS on :7433)
 - `TaskTracker.reparent(nodeId, newParentId)` with circular dep validation. PATCH with `{ parentId }`.
 - Agent `update_task` tool: `parentId` field with scope validation.
 - DnD: center 40% of row = reparent, top/bottom 30% = reorder. `.og-reparent-target` visual indicator.
+
+## Agent MCP Tools
+
+- `reorder_tasks` tool added alongside existing tools. Pattern: scope validation (currentTaskId check + isDescendantOf), then tracker method, save, broadcastTreeUpdate.
