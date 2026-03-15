@@ -95,8 +95,13 @@ Daemon (Hono: HTTP + WS on :7433)
 
 - `ws-handler.ts` splits into `collectEntries()` (pure, builds array) and `processSideEffects()` (state setters). Prevents tool card JSON flash during event_history replay by setting all logs in one `setLogs()` call.
 
-## Deduplication: readProjectMemory
-- `readProjectMemory(projectPath, includeHeaders?)` in `src/daemon/helpers.ts` is the single function for reading CLAUDE.md + .opengraft/memory.md
-- `includeHeaders=true` (default): adds `[read_file: ...]` headers (used for orchestrator initial prompt)
-- `includeHeaders=false`: plain concatenation (used for child task prompts via agent-tools.ts)
-- Old `readMemory()` in agent-tools.ts was removed; it now imports from daemon/helpers.ts
+## Tool Module Structure
+
+- `src/tools/`: Extracted from anthropic-compatible-provider.ts (2190→1212 lines)
+  - `definitions.ts`: TOOLS array
+  - `search.ts`: jsSearch(), truncateSearchOutput(), formatContextBlock()
+  - `bash.ts`: executeBashWithTimeout(), background process management
+  - `executor.ts`: executeTool(), resolvePath()
+  - `index.ts`: barrel re-exports
+- Provider re-exports from `./tools/index.ts` for backward compatibility.
+- `readProjectMemory(path, includeHeaders?)` in daemon/helpers.ts — single function for CLAUDE.md + memory.md reading. Agent-tools.ts imports with `includeHeaders=false`.
