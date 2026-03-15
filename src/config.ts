@@ -30,6 +30,8 @@ export interface OpenGraftConfig {
 	sessionKeep?: number;
 }
 
+export const DEFAULT_MODEL = "claude-sonnet-4-6";
+
 function globalConfigPath(): string {
 	return join(homedir(), ".opengraft", "config.json");
 }

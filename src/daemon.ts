@@ -6,7 +6,7 @@ import { Hono } from "hono";
 import { serveStatic, websocket } from "hono/bun";
 import type { AgentSession } from "./agent-provider.ts";
 import { ORCHESTRATION_KNOWLEDGE } from "./agent-tools.ts";
-import { loadGlobalConfig, resolveAuthGroup } from "./config.ts";
+import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
 import { launchAgent, stopAgent } from "./daemon/agent-lifecycle.ts";
 import type {
 	DaemonConfig,
@@ -82,7 +82,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 		if (c.req.query("check_model") === "true") {
 			const authGroup = resolveAuthGroup(ctx.globalConfig);
-			const modelName = ctx.globalConfig.model ?? "claude-sonnet-4-6";
+			const modelName = ctx.globalConfig.model ?? DEFAULT_MODEL;
 
 			const apiKey = authGroup?.anthropicApiKey;
 			const oauthToken = authGroup?.claudeOauthToken;

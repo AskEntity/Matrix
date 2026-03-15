@@ -24,11 +24,11 @@ import type {
 	AgentSession,
 } from "./agent-provider.ts";
 import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
+import { DEFAULT_MODEL } from "./config.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 
-const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 16384;
 
 type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
