@@ -119,3 +119,21 @@ Daemon (Hono: HTTP + WS on :7433)
 - `childMap` in TaskTree must preserve parent.children order (not arbitrary Map insertion order from filtering).
 - HTML5 DnD: use `setTimeout` for `setDragState` in `onDragStart` so the drag image renders before opacity change.
 - Drop indicator uses midpoint check (clientY vs rect midY) to determine before/after insertion.
+
+## Daemon Module Structure
+
+`src/daemon.ts` (405 lines) is the entry point — creates the Hono app, shared `DaemonContext`, registers route groups, and contains the `ORCHESTRATOR_SYSTEM_PROMPT`. Extracted modules:
+
+| Module | Purpose |
+|--------|---------|
+| `src/daemon/context.ts` | `DaemonContext` interface (shared state: trackers, activeSessions, wsClients, pendingMessages, etc.) |
+| `src/daemon/event-system.ts` | broadcast(), broadcastEvent(), broadcastTreeUpdate(), pending messages/clarifications, event history persistence |
+| `src/daemon/helpers.ts` | getTracker(), resolveProjectConfig(), getProjectProvider(), readProjectMemory(), pruneSessionFiles(), collectDescendants() |
+| `src/daemon/agent-lifecycle.ts` | launchAgent(), stopAgent(), runChildAgentInBackground(), handleOrchestrate(), handleInjectMessage(), handleClarifyResponse() |
+| `src/daemon/routes/projects.ts` | Project CRUD + events + pending messages/clarifications endpoints |
+| `src/daemon/routes/tasks.ts` | Task tree CRUD, continue, gitlog, conversation, child message injection |
+| `src/daemon/routes/config.ts` | Global, repo, local config endpoints |
+| `src/daemon/routes/agent.ts` | orchestrate, start, stop, compact, restart, message, clarify, sessions clear/prune |
+| `src/daemon/routes/websocket.ts` | WebSocket upgrade handler (subscribe, orchestrate, clarify_response, inject_message) |
+
+Pattern: All modules receive a `DaemonContext` object instead of capturing state via closure. Route modules are registered with `registerXxxRoutes(app, ctx)`.
