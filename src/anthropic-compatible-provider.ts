@@ -1588,6 +1588,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 			// ── Handle compaction response: extract checkpoint and rebuild context ──
 			if (compactionPending) {
+				perfLog("compact: processing compaction response");
 				compactionPending = false;
 				const lastMsg = messages[messages.length - 1];
 				let responseText = "";
@@ -1609,6 +1610,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					}
 				}
 				const checkpoint = extractCheckpoint(responseText);
+				perfLog(`compact: checkpoint extracted (${checkpoint.length} chars)`);
 
 				try {
 					perfLog("buildCompactedContext start");
@@ -1643,6 +1645,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					};
 					yield { type: "compact", checkpoint, savedTokens };
 					manualCompactRequested = false;
+					perfLog("compact: context rebuilt");
 				} catch (e) {
 					yield {
 						type: "error",
@@ -1654,6 +1657,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 			// ── Pre-call compression: count tokens, inject summarization instruction if over threshold ──
 			if (manualCompactRequested && messages.length <= 4) {
+				perfLog("compact: context too short, skipping");
 				yield { type: "status", message: "Context is too short to compact" };
 				yield { type: "compact_started" };
 				yield {
@@ -1690,6 +1694,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					manualCompactRequested ||
 					(!isEstimated && tokenCount > compressThreshold)
 				) {
+					perfLog(`compact: triggering compaction (manual=${manualCompactRequested}, tokens=${tokenCount})`);
 					yield { type: "compact_started" };
 					yield {
 						type: "status",
@@ -1886,6 +1891,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						const rest = queue.drain();
 						const all = [first, ...rest];
 						if (all.some((m) => m.source === "compact")) {
+							perfLog("compact signal consumed at implicit yield");
 							manualCompactRequested = true;
 							yield { type: "compact_started" };
 						}
@@ -2054,6 +2060,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			if (queue && queue.pending > 0) {
 				const queueMsgs = queue.drain();
 				if (queueMsgs.some((m) => m.source === "compact")) {
+					perfLog("compact signal consumed at cancellation point");
 					manualCompactRequested = true;
 					yield { type: "compact_started" };
 				}

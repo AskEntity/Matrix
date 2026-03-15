@@ -64,6 +64,10 @@ interface WSClient {
 	projectId: string | null;
 }
 
+function perfLog(label: string) {
+	console.log(`[PERF ${new Date().toISOString()}] ${label}`);
+}
+
 /** Broadcast an event to all WebSocket clients subscribed to a project. */
 function broadcast(
 	clients: Set<WSClient>,
@@ -1548,6 +1552,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Trigger manual compaction on a running session
 	app.post("/projects/:id/compact", async (c) => {
+		perfLog("POST /compact received for " + c.req.param("id").slice(0, 8));
 		const project = pm.get(c.req.param("id"));
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
@@ -1557,6 +1562,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "No active agent for this project" }, 404);
 		}
 		session.queue.enqueue({ source: "compact" });
+		perfLog("compact signal enqueued");
 		return c.json({ compacting: true });
 	});
 
