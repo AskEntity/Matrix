@@ -25,12 +25,13 @@ Daemon (Hono: HTTP + WS on :7433)
    CLI            Web UI (React, bundled by Bun)
 ```
 
-- Two active providers: AnthropicCompatibleProvider (Anthropic API), OpenAICompatibleProvider (raw fetch, no SDK). Claude Code provider deprecated.
-- Three-layer config: global (`~/.opengraft/config.json`) > repo (`.opengraft/config.json`) > local (per-project in dataDir). Auth groups define provider+credentials combos.
+- Two providers: AnthropicCompatibleProvider (Anthropic API), OpenAICompatibleProvider (raw fetch, no SDK).
+- Three-layer config: global (`~/.opengraft/config.json`) > repo (`.opengraft/config.json`) > local (per-project). Auth groups define provider+credentials.
 - Agent tree = Task tree. Each agent gets worktree + branch. Lifecycle = branch lifecycle.
-- Orchestrator has a real task node (root node with ID), not a PROJECT_NODE_ID hack.
+- Orchestrator has a real task node (root node with ID).
 - All mutable APIs fire-and-forget. Observe via WebSocket.
 - MCP tools enable recursive orchestration (tested up to 5 levels deep).
+- Own `ToolDefinition` type and `tool()` factory in `src/tool-definition.ts` (replaced claude-agent-sdk).
 
 ## Key Files
 
@@ -39,6 +40,7 @@ Daemon (Hono: HTTP + WS on :7433)
 | src/daemon.ts | HTTP server, routes, WS, ORCHESTRATOR_SYSTEM_PROMPT |
 | src/agent-tools.ts | MCP tools (10), system prompts, ORCHESTRATION_KNOWLEDGE |
 | src/agent-provider.ts | AgentProvider interface, AgentEvent, AgentSession types |
+| src/tool-definition.ts | ToolDefinition type, tool() factory, CallToolResult |
 | src/anthropic-compatible-provider.ts | Anthropic API provider, built-in tools, in-context compaction |
 | src/openai-compatible-provider.ts | OpenAI-compatible API provider (raw fetch) |
 | src/config.ts | Three-layer config system, auth groups, resolve functions |
@@ -50,28 +52,26 @@ Daemon (Hono: HTTP + WS on :7433)
 
 ## Config System
 
-- Global config: `~/.opengraft/config.json` — auth groups, daemon settings (port, sessionKeep)
-- Repo config: `<project>/.opengraft/config.json` — project defaults, versioned in git
-- Local config: `~/.opengraft/projects/<id>/config.json` — highest priority overrides
+- Global: `~/.opengraft/config.json` — auth groups, daemon settings (port, sessionKeep)
+- Repo: `<project>/.opengraft/config.json` — project defaults, versioned in git
+- Local: `~/.opengraft/projects/<id>/config.json` — highest priority overrides
 - `resolveConfig(global, repo, local)` merges with local > repo > global priority
 - Auth groups: `{ "claude": { provider: "anthropic", claudeOauthToken: "..." } }` — referenced by `defaultAuth`/`childAuth`
 - Daemon reads NO env vars (except PATH/HOME/NODE_ENV). All config from files.
-- Settings UI: three tabs (Global/Project/Local) with inherited value placeholders
+- Settings UI: three tabs (Global/Project/Local) with Save/Revert buttons. Test isolation via `globalConfigPath` param.
 
 ## Compaction (In-Context)
 
 - `SUMMARIZATION_INSTRUCTION` injected as user message → model responds with `<summary>` tags → `extractCheckpoint()` parses
-- `compactionPending` flag controls two-phase flow: inject instruction → extract checkpoint next iteration
-- `buildCompactedContext()` rebuilds: task context + fresh memory from disk + checkpoint
-- Compact lifecycle events: `compact_started` → shimmer bar appears → `compact` → bar updates with stats
-- Manual compact via POST /compact → queue signal → yield loop re-enqueues → provider handles
-- Short context guard (messages.length ≤ 4): emits full compact_started/compact cycle with savedTokens=0
+- `compactionPending` flag: inject instruction → extract checkpoint next iteration → `buildCompactedContext()`
+- Compact lifecycle: `compact_started` → shimmer bar (infinite animation) → `compact` → bar updates in-place
+- Manual compact: POST /compact → queue signal → provider handles. Pending chip shown in footer.
+- Short context guard (messages.length ≤ 4): emits full cycle with savedTokens=0
 
 ## Structured Data Flow
 
-- Tool events: LogEntry has `toolName`, `toolArgs`, `toolResult`, `isError` — all text-based parsing removed
+- Tool events: LogEntry has `toolName`, `toolArgs`, `toolResult`, `isError` — no text parsing
 - Queue messages: `rawMessages` (structured) in WS events; `formatQueueMessage()` uses XML tags for LLM injection only
-- No text parsing fallbacks anywhere — all paths use structured data
 
 ## Known Pitfalls
 
@@ -88,55 +88,27 @@ Daemon (Hono: HTTP + WS on :7433)
 
 - `activeSessions` Map is single source of truth for running state.
 - `stopAgent()`: single function for all stop operations. Resets in_progress children to failed.
-- Agent crash cleanup: catch block broadcasts `agent_stopped`, finally block wraps `tracker.save()` in try/catch.
+- Agent crash cleanup: catch broadcasts `agent_stopped`, finally wraps `tracker.save()` in try/catch.
 - Orphan reset on startup: in_progress tasks → failed (skip root node).
-- Session auto-prune on startup (`config.sessionKeep`, default: 5).
 
 ## Web UI
 
 - **Activity log**: Tool cards (collapsible), MCP tools get purple accent. Structured fields only.
 - **Auto-scroll**: sentinel div + `scrollIntoView({ block: "end", behavior: "instant" })`.
 - **Thinking indicator**: `isSelectedTaskRunning` = `running && (isOrchestratorNode || selectedNode?.status === "in_progress")`.
-- **Compact bar**: shimmer animation appears on `compact_started`, updated in-place on `compact` (no duplicates).
-- **User messages**: appear at agent-received time (via rawMessages), pending chip for immediate feedback.
+- **Compact bar**: shimmer runs indefinitely via `og-compact-bar-loading` class; stops when checkpoint arrives.
+- **User messages**: appear at agent-received time (via rawMessages), pending chip for feedback.
+- **Compact pending**: `pendingCompact` state → `og-pending-chip` in footer, cleared on `compact_started`.
 - **URL hash routing**: `#<projectId>/<taskId>` format.
 - **IME**: composingRef + keyCode 229 + isComposing triple-check for CJK input.
 
 ## Image Support
 
-- read_file: detects png/jpg/jpeg/gif/webp (NOT svg), returns base64 with `isImage/imageData/mediaType` flags.
+- read_file: detects png/jpg/jpeg/gif/webp (NOT svg), returns base64 with `isImage/imageData/mediaType`.
 - User paste: AppFooter handles `image/*` clipboard items, 5MB limit, base64 via FileReader.
-- MCP yield tool: returns images as `{ type: "image", data, mimeType }` — providers must convert to their native format (not JSON.stringify).
-- Anthropic: `ImageBlockParam` with `source.type: "base64"`. OpenAI: `image_url` with data URI.
+- MCP yield tool: returns images as `{ type: "image", data, mimeType }` — providers convert to native format.
 
 ## Bash Background Processes
 
 - `executeBashWithTimeout()`: foreground timeout → background promotion → completions via `background_complete` queue messages.
 - cd wrapper injected to warn on redundant directory changes.
-- Per-session cleanup in `backgroundProcesses` Map.
-
-## Settings UI
-
-- **Save/Revert pattern**: SettingsPanel maintains `draftGlobal/draftRepo/draftLocal` state; controlled inputs; explicit Save/Revert buttons per tab.
-- `isDirty` uses `JSON.stringify` deep comparison. `buildPatch` computes diff (missing fields → null to explicitly clear).
-- AuthGroupsSection/McpServersSection accept `draft + onDraftChange` — tab-level Save captures auth group and MCP changes.
-- Test isolation: `saveGlobalConfig/loadGlobalConfig` in config.ts accept optional path param (default: `~/.opengraft/config.json`). Tests must pass `globalConfigPath: join(dataDir, 'config.json')` to `createApp` to avoid writing to real user config.
-
-## Compact Deduplication
-
-- `compact_started` fires from 3 places (yield tool + implicit yield + cancellation point) → duplicates.
-- Fix: in `compact_started` handler in App.tsx, scan backwards for existing entry with `type === "compact" && !checkpoint`. If found, skip. No `compacting` state needed — the bar text handles state.
-
-## Provider Configuration
-
-- `createProviderFromConfig()` in daemon.ts: NO env var fallback. Throws if no auth group configured.
-- Tests use `config.agentProvider` (injected mock) — unaffected by this change.
-
-## Compact Pending Indicator
-- `pendingCompact` state in App.tsx, set true on compact click, cleared on `compact_started`, `agent_stopped`, and `orchestration_completed` events
-- Rendered as `og-pending-chip` in AppFooter alongside pending message chips
-
-## SDK Removal
-- `@anthropic-ai/claude-agent-sdk` removed. Own `ToolDefinition` type and `tool()` factory in `src/tool-definition.ts`.
-- `CallToolResult` imported from `@modelcontextprotocol/sdk/types.js`.
-- `AgentRequest.mcpServers` removed (dead code). `mcpToolDefs` remains for provider tool forwarding.
