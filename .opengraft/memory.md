@@ -119,10 +119,5 @@ Daemon (Hono: HTTP + WS on :7433)
 - `text_delta` events NOT stored in event history. UI appends deltas to last text entry for same taskId.
 - Known issue: compact during streaming may still cause brief unresponsiveness due to large JSON parsing (not streaming-related, see investigation draft).
 
-## Debug Logging for Compact Lockup Investigation
-- Added `perfLog()` helper in anthropic-compatible-provider.ts (uses `[PERF <ISO timestamp>]` prefix)
-- All timing logs use `[PERF]` prefix for easy grep
-- Provider logs: loop iteration, countTokens, API call, stream done, finalMessage, buildCompactedContext, addMessagesCacheControl, createParams, session persist stringify
-- Daemon logs: broadcast stringify (>50ms), event_history send (always), broadcastEvent total (>50ms)
-- Session persist and addMessagesCacheControl only log if >10ms to reduce noise
-- These are temporary debug logs — remove after identifying the lockup cause
+## Debug Logging
+- Temporary `[PERF]` debug logging was added and later removed (compact lockup investigation). If re-adding, use a `perfLog()` helper with `[PERF <ISO timestamp>]` prefix for easy grep.
