@@ -1,7 +1,8 @@
+import type { TaskStatus } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 
-export function statusDotClass(status: string): string {
-	const map: Record<string, string> = {
+export function statusDotClass(status: TaskStatus): string {
+	const map: Record<TaskStatus, string> = {
 		pending: "status-dot-pending",
 		in_progress: "status-dot-in_progress",
 		testing: "status-dot-testing",
@@ -9,10 +10,10 @@ export function statusDotClass(status: string): string {
 		failed: "status-dot-failed",
 		stuck: "status-dot-stuck",
 	};
-	return map[status] ?? "status-dot-pending";
+	return map[status];
 }
 
-export function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({ status }: { status: TaskStatus }) {
 	const { t } = useLocale();
 	const key = `status.${status}`;
 	return (

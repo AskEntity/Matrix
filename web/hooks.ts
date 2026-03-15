@@ -1,29 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+export type { TaskNode, TaskStatus } from "../src/types.ts";
+
+import type { TaskNode } from "../src/types.ts";
+
 // --- Types ---
 
 export interface Project {
 	id: string;
 	name: string;
 	path: string;
-}
-
-export interface TaskNode {
-	id: string;
-	title: string;
-	description: string;
-	status: string;
-	parentId: string | null;
-	children: string[];
-	branch: string | null;
-	worktreePath: string | null;
-	sessionId: string | null;
-	message: string | null;
-	costUsd?: number;
-	budgetUsd?: number;
-	draft?: boolean;
-	createdAt?: string | null;
-	updatedAt: string | null;
 }
 
 export interface LogEntry {
