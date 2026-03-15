@@ -394,3 +394,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Dead code from old separate-API-call compaction approach — safely deleted
 - Only SUMMARIZATION_INSTRUCTION remains, used by both Anthropic and OpenAI providers via import
 - In-context compaction flow: inject as user message → model responds with <summary> tags → extractCheckpoint() parses
+
+## Compact Notification Fix
+- Root cause: `isSelectedTaskRunning` was `running && selectedNode?.status === "in_progress"` but when viewing the orchestrator/root node, `selectedNode` is set to null (intentionally, for root filter logic). So `isSelectedTaskRunning` was always false for the root view.
+- Fix: `isSelectedTaskRunning = running && (isOrchestratorNode || selectedNode?.status === "in_progress")` — orchestrator node is considered running when global `running` is true
+- Also added a `addLog("status", "Compressing context...", taskId)` call on `compact_started` event — gives a visible log entry, not just the floating indicator
+- The "Compressing..." indicator in ActivityLog was correct (`running && compacting`) — it just never showed because `running` was false for orchestrator view
