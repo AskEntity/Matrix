@@ -90,3 +90,9 @@ Daemon (Hono: HTTP + WS on :7433)
 
 - `jsSearch()` filters SKIP_DIRS (node_modules, .git, dist, etc.) via `excluded_dirs` parameter
 - Agent can pass custom `excluded_dirs` or empty array to search all
+
+## Event History Replay Batching
+
+- **Bug**: Tool cards briefly flash raw JSON during event_history replay because each `handleWS(evt)` call triggered `addLog` → `setLogs(prev => [...prev, entry])`, causing intermediate renders where `tool_result` entries exist without their matching `tool_use`.
+- **Fix**: Extracted `collectEntries()` (pure entry-building into a mutable array) and `processSideEffects()` (state setters other than setLogs). The `event_history` handler now builds all entries first, then calls `setLogs(entries)` once.
+- `collectEntries` handles text_delta merging and compact updates in-place on the accumulator array.

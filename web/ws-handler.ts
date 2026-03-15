@@ -84,6 +84,349 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		t,
 	} = deps;
 
+	/**
+	 * Pure entry-building function: converts an event into LogEntry items
+	 * and appends them to the `entries` array. Handles text_delta merging
+	 * and compact updates in-place on the accumulator.
+	 *
+	 * Returns true if the event was fully handled (no side effects needed),
+	 * false if the caller should also process side effects.
+	 */
+	function collectEntries(
+		msg: Record<string, unknown>,
+		entries: LogEntry[],
+	): boolean {
+		switch (msg.type) {
+			case "tree_updated":
+				// No log entries — only side effects
+				return false;
+			case "agent_event": {
+				const et = msg.eventType as string;
+				if (et === "tool_use") {
+					entries.push(
+						createLogEntry(
+							et,
+							msg.tool as string,
+							msg.taskId as string | undefined,
+							{
+								toolName: msg.tool as string,
+								toolArgs: msg.input as Record<string, unknown>,
+							},
+						),
+					);
+					return true;
+				}
+				if (et === "tool_result") {
+					entries.push(
+						createLogEntry(
+							et,
+							(msg.content as string) || "",
+							msg.taskId as string | undefined,
+							{
+								toolName: msg.tool as string,
+								toolResult: (msg.content as string) || "",
+								isError: (msg.isError as boolean) || false,
+							},
+						),
+					);
+					return true;
+				}
+				if (et === "text_delta") {
+					const deltaText = (msg.content as string) || "";
+					const deltaTaskId = msg.taskId as string | undefined;
+					if (deltaText) {
+						// Merge into last text entry for same taskId, or create new
+						let merged = false;
+						for (let i = entries.length - 1; i >= 0; i--) {
+							const e = entries[i];
+							if (e && e.type === "text" && e.taskId === deltaTaskId) {
+								entries[i] = { ...e, text: e.text + deltaText };
+								merged = true;
+								break;
+							}
+							if (e && e.taskId === deltaTaskId && e.type !== "text") break;
+						}
+						if (!merged) {
+							entries.push(createLogEntry("text", deltaText, deltaTaskId));
+						}
+					}
+					return true;
+				}
+				if (et === "text") {
+					entries.push(
+						createLogEntry(
+							et,
+							(msg.content as string) || "",
+							msg.taskId as string | undefined,
+						),
+					);
+					return true;
+				}
+				if (et === "error") {
+					entries.push(
+						createLogEntry(
+							et,
+							(msg.message as string) || "",
+							msg.taskId as string | undefined,
+						),
+					);
+					return true;
+				}
+				if (et === "usage") {
+					// No log entries — only side effects
+					return false;
+				}
+				if (et === "compact_started") {
+					const entry = createLogEntry(
+						"compact",
+						"Compressing context...",
+						msg.taskId as string | undefined,
+					);
+					entry.checkpoint = "";
+					entries.push(entry);
+					return false; // also has setPendingCompact side effect
+				}
+				if (et === "compact") {
+					const compactText = `Context compacted (saved ~${msg.savedTokens} tokens)`;
+					const compactCheckpoint = msg.checkpoint as string;
+					const compactTaskId = msg.taskId as string | undefined;
+					// Update existing compact_started entry in-place
+					let updated = false;
+					for (let i = entries.length - 1; i >= 0; i--) {
+						const e = entries[i];
+						if (e && e.type === "compact" && !e.checkpoint) {
+							entries[i] = {
+								...e,
+								text: compactText,
+								checkpoint: compactCheckpoint,
+							};
+							updated = true;
+							break;
+						}
+					}
+					if (!updated) {
+						const entry = createLogEntry("compact", compactText, compactTaskId);
+						entry.checkpoint = compactCheckpoint;
+						entries.push(entry);
+					}
+					return true;
+				}
+				if (et === "queue_message") {
+					const taskId = msg.taskId as string | undefined;
+					const rawMessages = msg.rawMessages as
+						| Array<{ source: string; content: string }>
+						| undefined;
+					if (rawMessages && rawMessages.length > 0) {
+						for (const rm of rawMessages) {
+							if (rm.source === "child_complete") continue;
+							if (rm.source === "user") {
+								entries.push(createLogEntry("user_prompt", rm.content, taskId));
+								continue;
+							}
+							if (rm.source === "parent_update") {
+								entries.push(
+									createLogEntry(
+										"queue_message",
+										`← From Parent: ${rm.content}`,
+										taskId,
+									),
+								);
+							} else if (rm.source === "child_report") {
+								entries.push(
+									createLogEntry(
+										"queue_message",
+										`↑ Child Report: ${rm.content}`,
+										taskId,
+									),
+								);
+							} else if (rm.source === "background_complete") {
+								entries.push(
+									createLogEntry(
+										"queue_message",
+										`⚙ Background Complete: ${rm.content}`,
+										taskId,
+									),
+								);
+							} else {
+								entries.push(
+									createLogEntry(
+										"queue_message",
+										`[${rm.source}] ${rm.content}`,
+										taskId,
+									),
+								);
+							}
+						}
+					} else {
+						const raw = (msg.messages as string) || "";
+						if (raw) entries.push(createLogEntry("queue_message", raw, taskId));
+					}
+					return true;
+				}
+				if (et === "status") {
+					const statusText = (msg.message as string) || "";
+					if (statusText.includes("Compress")) {
+						entries.push(
+							createLogEntry(
+								"status",
+								statusText,
+								msg.taskId as string | undefined,
+							),
+						);
+					}
+					return true;
+				}
+				// Unknown event type
+				entries.push(
+					createLogEntry(
+						et,
+						JSON.stringify(msg).slice(0, 2000),
+						msg.taskId as string | undefined,
+					),
+				);
+				return true;
+			}
+			case "orchestration_started": {
+				const startRootId = msg.taskId as string | undefined;
+				if (msg.prompt) {
+					entries.push(
+						createLogEntry("user_prompt", msg.prompt as string, startRootId),
+					);
+				}
+				entries.push(
+					createLogEntry("lifecycle", "Orchestration started", startRootId),
+				);
+				return false; // also has setRunning, setAgentProvider, etc.
+			}
+			case "orchestration_completed": {
+				const costStr = msg.costUsd
+					? ` · ${(msg.costUsd as number).toFixed(3)}`
+					: "";
+				const hasTokens =
+					msg.inputTokens !== undefined ||
+					msg.cacheCreationTokens !== undefined ||
+					msg.cacheReadTokens !== undefined ||
+					msg.outputTokens !== undefined;
+				const tokenStr = hasTokens
+					? ` · ${formatTokenCount((msg.inputTokens as number) ?? 0)} in · ${formatTokenCount((msg.cacheCreationTokens as number) ?? 0)} write · ${formatTokenCount((msg.cacheReadTokens as number) ?? 0)} read · ${formatTokenCount((msg.outputTokens as number) ?? 0)} out`
+					: "";
+				entries.push(
+					createLogEntry(
+						"lifecycle",
+						`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${costStr}${tokenStr}`,
+						msg.taskId as string | undefined,
+					),
+				);
+				return false; // also has setLastCostUsd, setRunning, etc.
+			}
+			case "agent_stopped":
+				entries.push(
+					createLogEntry(
+						"lifecycle",
+						"Agent stopped",
+						msg.taskId as string | undefined,
+					),
+				);
+				return false; // also has setRunning, setPendingCompact
+			case "task_started": {
+				const instruction = msg.message
+					? `\n${t("lifecycle.instructions")} ${msg.message}`
+					: "";
+				const startedText = `${t("lifecycle.taskStarted")} ${msg.title}${instruction}`;
+				const startedParentId =
+					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
+				entries.push(
+					createLogEntry("task_started", startedText, msg.taskId as string),
+				);
+				if (startedParentId)
+					entries.push(
+						createLogEntry("task_started", startedText, startedParentId),
+					);
+				return true;
+			}
+			case "task_completed": {
+				const completedText = `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
+				const completedParentId =
+					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
+				entries.push(
+					createLogEntry("task_completed", completedText, msg.taskId as string),
+				);
+				if (completedParentId)
+					entries.push(
+						createLogEntry("task_completed", completedText, completedParentId),
+					);
+				return true;
+			}
+			case "error":
+				entries.push(
+					createLogEntry(
+						"error",
+						msg.message as string,
+						msg.taskId as string | undefined,
+					),
+				);
+				return true;
+			default:
+				return true;
+		}
+	}
+
+	/**
+	 * Process side effects only (state setters other than setLogs/addLog).
+	 * Called during event_history replay after entries are batched.
+	 */
+	function processSideEffects(msg: Record<string, unknown>) {
+		switch (msg.type) {
+			case "tree_updated":
+				updateFromWS(msg.nodes as TaskNode[]);
+				if (msg.rootNodeId) setRootNodeId(msg.rootNodeId as string);
+				break;
+			case "agent_event": {
+				const et = msg.eventType as string;
+				if (et === "usage") {
+					const usageKey = (msg.taskId as string | undefined) ?? "orchestrator";
+					setTokenUsage((prev) => ({
+						...prev,
+						[usageKey]: {
+							inputTokens: msg.inputTokens as number,
+							contextWindow: msg.contextWindow as number,
+							estimated: (msg.estimated as boolean) || false,
+						},
+					}));
+				} else if (et === "compact_started") {
+					setPendingCompact(false);
+				}
+				break;
+			}
+			case "orchestration_started": {
+				const startRootId = msg.taskId as string | undefined;
+				if (startRootId) setRootNodeId(startRootId);
+				setRunning(true);
+				if (msg.provider) setAgentProvider(msg.provider as string);
+				if (msg.model) setAgentModel(msg.model as string);
+				break;
+			}
+			case "orchestration_completed":
+				if (msg.costUsd !== undefined) setLastCostUsd(msg.costUsd as number);
+				if (msg.turns !== undefined) setLastTurns(msg.turns as number);
+				if (msg.inputTokens !== undefined)
+					setLastInputTokens(msg.inputTokens as number);
+				if (msg.cacheCreationTokens !== undefined)
+					setLastCacheCreationTokens(msg.cacheCreationTokens as number);
+				if (msg.cacheReadTokens !== undefined)
+					setLastCacheReadTokens(msg.cacheReadTokens as number);
+				if (msg.outputTokens !== undefined)
+					setLastOutputTokens(msg.outputTokens as number);
+				setRunning(false);
+				setPendingCompact(false);
+				break;
+			case "agent_stopped":
+				setRunning(false);
+				setPendingCompact(false);
+				break;
+		}
+	}
+
 	function handleWS(msg: Record<string, unknown>) {
 		switch (msg.type) {
 			case "tree_updated":
@@ -316,9 +659,15 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				);
 				break;
 			case "event_history": {
-				setLogs([]);
-				for (const evt of msg.events as Record<string, unknown>[])
-					handleWS(evt);
+				// Batch all entries at once to avoid intermediate renders where
+				// tool_result entries exist without their matching tool_use,
+				// which causes raw JSON to flash before tool cards render.
+				const entries: LogEntry[] = [];
+				for (const evt of msg.events as Record<string, unknown>[]) {
+					collectEntries(evt, entries);
+					processSideEffects(evt);
+				}
+				setLogs(entries);
 				break;
 			}
 			case "pending_messages":
