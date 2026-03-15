@@ -644,7 +644,15 @@ export class OpenAICompatibleProvider implements AgentProvider {
 
 			// If no tool calls, handle end of turn
 			if (toolCalls.length === 0 || choice.finish_reason === "stop") {
-				if (request.doneRef?.done) break;
+				if (request.doneRef?.done) {
+					// Race condition guard: if a user message arrived between done() and loop exit,
+					// reset done state and continue so the agent can process it
+					if (queue && queue.pending > 0) {
+						request.doneRef.done = null;
+					} else {
+						break;
+					}
+				}
 
 				// Implicit yield: if agent has running children, wait for messages
 				if (request.hasRunningChildren?.() && queue) {
@@ -951,7 +959,15 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				}
 			}
 
-			if (request.doneRef?.done) break;
+			if (request.doneRef?.done) {
+				// Race condition guard: if a user message arrived while tools were executing,
+				// reset done state and continue so the agent can process it
+				if (queue && queue.pending > 0) {
+					request.doneRef.done = null;
+				} else {
+					break;
+				}
+			}
 		}
 
 		// Persist final conversation history

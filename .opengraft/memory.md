@@ -191,3 +191,10 @@ Daemon (Hono: HTTP + WS on :7433)
 - `killBackgroundProcess()` no longer reads output or cleans up files. Returns metadata + file paths.
 - Foreground commands with large output (>50KB) return a 5KB preview + file path instead of full content. Files preserved for `read_file` access.
 - `formatQueueMessage()` and `toRawMessage()` for background_complete no longer include output content.
+
+## Race Condition Fix: done() + pending messages (March 2026)
+
+- Both providers now check `queue.pending` before exiting the runLoop when `doneRef.done` is set.
+- If pending messages exist (e.g., user sent a message right as agent called done()), `doneRef.done` is reset to null and the loop continues.
+- This prevents message loss in the race window between done() tool execution and loop exit.
+- Fix applied at two points in each provider: (1) after end_turn/stop with no tool calls, (2) after tool batch execution.
