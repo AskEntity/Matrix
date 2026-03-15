@@ -2561,6 +2561,22 @@ button.og-tool-card-header:hover {
 	font-family: monospace;
 }
 
+/* Settings tab-level Save/Revert actions */
+.og-settings-tab-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 12px;
+	padding-top: 10px;
+	border-top: 1px solid var(--border-subtle);
+}
+
+/* Dirty indicator in tab label */
+.og-settings-dirty {
+	margin-left: 3px;
+	color: var(--color-stuck);
+	font-weight: 700;
+}
+
 /* MCP Servers section */
 .og-mcp-server-row {
 	display: flex;

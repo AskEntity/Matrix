@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ThreeLayerConfig } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconPlus, IconRefresh, IconTrash } from "./icons.tsx";
@@ -47,24 +47,27 @@ function inheritedValue(
 	return undefined;
 }
 
-function layerForTab(tab: ActiveTab): "global" | "repo" | "local" {
-	if (tab === "global") return "global";
-	if (tab === "project") return "repo";
-	return "local";
+/** Check if two draft objects differ from the saved layer config */
+function isDirty(
+	draft: Record<string, unknown>,
+	saved: Record<string, unknown>,
+): boolean {
+	// Check all keys in draft
+	for (const key of Object.keys(draft)) {
+		const dv = draft[key];
+		const sv = saved[key];
+		if (JSON.stringify(dv) !== JSON.stringify(sv)) return true;
+	}
+	// Check keys in saved that are missing from draft (treat as undefined)
+	for (const key of Object.keys(saved)) {
+		if (!(key in draft)) {
+			if (saved[key] !== undefined) return true;
+		}
+	}
+	return false;
 }
 
-function updateFnForTab(
-	tab: ActiveTab,
-	updateGlobal: (p: Record<string, unknown>) => void,
-	updateRepo: (p: Record<string, unknown>) => void,
-	updateLocal: (p: Record<string, unknown>) => void,
-) {
-	if (tab === "global") return updateGlobal;
-	if (tab === "project") return updateRepo;
-	return updateLocal;
-}
-
-// ---- Simple field components (single-layer) ----
+// ---- Simple field components (single-layer, controlled) ----
 
 function SettingStringField({
 	label,
@@ -73,9 +76,8 @@ function SettingStringField({
 	type,
 	tab,
 	layers,
-	updateGlobal,
-	updateRepo,
-	updateLocal,
+	draft,
+	onDraftChange,
 }: {
 	label: string;
 	field: string;
@@ -83,41 +85,22 @@ function SettingStringField({
 	type?: string;
 	tab: ActiveTab;
 	layers: ThreeLayerConfig;
-	updateGlobal: (p: Record<string, unknown>) => void;
-	updateRepo: (p: Record<string, unknown>) => void;
-	updateLocal: (p: Record<string, unknown>) => void;
+	draft: Record<string, unknown>;
+	onDraftChange: (patch: Record<string, unknown>) => void;
 }) {
 	const { t } = useLocale();
-	const layer = layerForTab(tab);
-	const serverValue = (layers[layer][field] as string | undefined) ?? "";
 	const inherited = inheritedValue(layers, tab, field);
-	const update = updateFnForTab(tab, updateGlobal, updateRepo, updateLocal);
-	const inputRef = useRef<HTMLInputElement>(null);
-
-	// When serverValue changes externally (after a save completes), sync the input
-	// if it doesn't have focus (user not actively editing).
-	useEffect(() => {
-		const el = inputRef.current;
-		if (el && el !== document.activeElement) {
-			el.value = serverValue;
-		}
-	}, [serverValue]);
+	const value = (draft[field] as string | undefined) ?? "";
 
 	return (
 		<div className="og-settings-field">
 			<span className="og-settings-label">{label}</span>
 			<input
-				ref={inputRef}
 				type={type ?? "text"}
 				className="og-settings-input"
 				placeholder={inherited ?? placeholder ?? t("settings.inherit")}
-				defaultValue={serverValue}
-				onBlur={(e) => {
-					const v = e.target.value;
-					if (v !== serverValue) {
-						update({ [field]: v || null });
-					}
-				}}
+				value={value}
+				onChange={(e) => onDraftChange({ [field]: e.target.value })}
 			/>
 		</div>
 	);
@@ -131,9 +114,8 @@ function SettingNumberField({
 	step,
 	tab,
 	layers,
-	updateGlobal,
-	updateRepo,
-	updateLocal,
+	draft,
+	onDraftChange,
 }: {
 	label: string;
 	field: string;
@@ -142,42 +124,28 @@ function SettingNumberField({
 	step?: number;
 	tab: ActiveTab;
 	layers: ThreeLayerConfig;
-	updateGlobal: (p: Record<string, unknown>) => void;
-	updateRepo: (p: Record<string, unknown>) => void;
-	updateLocal: (p: Record<string, unknown>) => void;
+	draft: Record<string, unknown>;
+	onDraftChange: (patch: Record<string, unknown>) => void;
 }) {
 	const { t } = useLocale();
-	const layer = layerForTab(tab);
-	const serverValue = layers[layer][field] as number | undefined;
 	const inherited = inheritedValue(layers, tab, field);
-	const update = updateFnForTab(tab, updateGlobal, updateRepo, updateLocal);
-	const inputRef = useRef<HTMLInputElement>(null);
-
-	useEffect(() => {
-		const el = inputRef.current;
-		if (el && el !== document.activeElement) {
-			el.value = serverValue !== undefined ? String(serverValue) : "";
-		}
-	}, [serverValue]);
+	const value = draft[field] !== undefined ? String(draft[field]) : "";
 
 	return (
 		<div className="og-settings-field">
 			<span className="og-settings-label">{label}</span>
 			<input
-				ref={inputRef}
 				type="number"
 				className="og-settings-input"
 				placeholder={inherited ?? placeholder ?? t("settings.inherit")}
 				min={min}
 				step={step}
-				defaultValue={serverValue !== undefined ? String(serverValue) : ""}
-				onBlur={(e) => {
-					const v = e.target.value ? Number(e.target.value) : null;
-					const current = serverValue !== undefined ? serverValue : null;
-					if (v !== current) {
-						update({ [field]: v });
-					}
-				}}
+				value={value}
+				onChange={(e) =>
+					onDraftChange({
+						[field]: e.target.value ? Number(e.target.value) : undefined,
+					})
+				}
 			/>
 		</div>
 	);
@@ -331,26 +299,23 @@ function AuthGroupEditor({
 // ---- Auth Groups Section ----
 
 function AuthGroupsSection({
-	layers,
-	updateGlobal,
+	draft,
+	onDraftChange,
 }: {
-	layers: ThreeLayerConfig;
-	updateGlobal: (patch: Record<string, unknown>) => void;
+	draft: Record<string, unknown>;
+	onDraftChange: (patch: Record<string, unknown>) => void;
 }) {
 	const { t } = useLocale();
 	const [editingGroup, setEditingGroup] = useState<string | null>(null);
 	const [addingNew, setAddingNew] = useState(false);
 
-	const authGroups = (layers.global.authGroups ?? {}) as Record<
-		string,
-		AuthGroup
-	>;
+	const authGroups = (draft.authGroups ?? {}) as Record<string, AuthGroup>;
 
 	const saveGroup = (oldName: string, newName: string, group: AuthGroup) => {
 		const updated = { ...authGroups };
 		if (oldName !== newName) delete updated[oldName];
 		updated[newName] = group;
-		updateGlobal({ authGroups: updated });
+		onDraftChange({ authGroups: updated });
 		setEditingGroup(null);
 		setAddingNew(false);
 	};
@@ -358,7 +323,7 @@ function AuthGroupsSection({
 	const deleteGroup = (name: string) => {
 		const updated = { ...authGroups };
 		delete updated[name];
-		updateGlobal({ authGroups: updated });
+		onDraftChange({ authGroups: updated });
 		setEditingGroup(null);
 	};
 
@@ -430,15 +395,13 @@ function AuthGroupsSection({
 function McpServersSection({
 	tab,
 	layers,
-	updateGlobal,
-	updateRepo,
-	updateLocal,
+	draft,
+	onDraftChange,
 }: {
 	tab: ActiveTab;
 	layers: ThreeLayerConfig;
-	updateGlobal: (p: Record<string, unknown>) => void;
-	updateRepo: (p: Record<string, unknown>) => void;
-	updateLocal: (p: Record<string, unknown>) => void;
+	draft: Record<string, unknown>;
+	onDraftChange: (patch: Record<string, unknown>) => void;
 }) {
 	const { t } = useLocale();
 	const [addingNew, setAddingNew] = useState(false);
@@ -446,13 +409,7 @@ function McpServersSection({
 	const [newCommand, setNewCommand] = useState("");
 	const [newArgs, setNewArgs] = useState("");
 
-	const layer = layerForTab(tab);
-	const update = updateFnForTab(tab, updateGlobal, updateRepo, updateLocal);
-
-	const servers = (layers[layer].mcpServers ?? {}) as Record<
-		string,
-		McpServerConfig
-	>;
+	const servers = (draft.mcpServers ?? {}) as Record<string, McpServerConfig>;
 	// inherited from lower layers
 	const inheritedServers: Record<string, McpServerConfig> = {};
 	if (tab === "local") {
@@ -476,7 +433,9 @@ function McpServersSection({
 	const deleteServer = (name: string) => {
 		const updated = { ...servers };
 		delete updated[name];
-		update({ mcpServers: Object.keys(updated).length > 0 ? updated : null });
+		onDraftChange({
+			mcpServers: Object.keys(updated).length > 0 ? updated : undefined,
+		});
 	};
 
 	const addServer = () => {
@@ -486,7 +445,7 @@ function McpServersSection({
 			command: newCommand.trim(),
 			...(args.length > 0 ? { args } : {}),
 		};
-		update({ mcpServers: { ...servers, [newName.trim()]: server } });
+		onDraftChange({ mcpServers: { ...servers, [newName.trim()]: server } });
 		setNewName("");
 		setNewCommand("");
 		setNewArgs("");
@@ -586,19 +545,57 @@ function McpServersSection({
 	);
 }
 
+// ---- Tab-level Save/Revert bar ----
+
+function TabActions({
+	dirty,
+	onSave,
+	onRevert,
+}: {
+	dirty: boolean;
+	onSave: () => void;
+	onRevert: () => void;
+}) {
+	const { t } = useLocale();
+	return (
+		<div className="og-settings-tab-actions">
+			<button
+				type="button"
+				className="og-btn og-btn-sm og-btn-primary"
+				onClick={onSave}
+				disabled={!dirty}
+			>
+				{t("settings.save")}
+			</button>
+			<button
+				type="button"
+				className="og-btn og-btn-sm og-btn-ghost"
+				onClick={onRevert}
+				disabled={!dirty}
+			>
+				{t("settings.revert")}
+			</button>
+		</div>
+	);
+}
+
 // ---- Tab Content ----
 
 function GlobalTab({
 	layers,
-	updateGlobal,
-	updateRepo,
-	updateLocal,
+	draft,
+	onDraftChange,
+	onSave,
+	onRevert,
+	dirty,
 	onRestart,
 }: {
 	layers: ThreeLayerConfig;
-	updateGlobal: (p: Record<string, unknown>) => void;
-	updateRepo: (p: Record<string, unknown>) => void;
-	updateLocal: (p: Record<string, unknown>) => void;
+	draft: Record<string, unknown>;
+	onDraftChange: (patch: Record<string, unknown>) => void;
+	onSave: () => void;
+	onRevert: () => void;
+	dirty: boolean;
 	onRestart: () => void;
 }) {
 	const { t } = useLocale();
@@ -606,7 +603,7 @@ function GlobalTab({
 
 	return (
 		<div className="og-tab-content">
-			<AuthGroupsSection layers={layers} updateGlobal={updateGlobal} />
+			<AuthGroupsSection draft={draft} onDraftChange={onDraftChange} />
 
 			<div className="og-settings-section">
 				<div className="og-settings-section-title">
@@ -618,9 +615,8 @@ function GlobalTab({
 					placeholder={t("settings.authGroupName")}
 					tab={tab}
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draft}
+					onDraftChange={onDraftChange}
 				/>
 				<SettingStringField
 					label={t("settings.modelOverride")}
@@ -628,9 +624,8 @@ function GlobalTab({
 					placeholder={t("settings.modelOverridePlaceholder")}
 					tab={tab}
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draft}
+					onDraftChange={onDraftChange}
 				/>
 			</div>
 
@@ -646,9 +641,8 @@ function GlobalTab({
 					step={1}
 					tab={tab}
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draft}
+					onDraftChange={onDraftChange}
 				/>
 				<SettingNumberField
 					label={t("settings.sessionKeep")}
@@ -658,9 +652,8 @@ function GlobalTab({
 					step={1}
 					tab={tab}
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draft}
+					onDraftChange={onDraftChange}
 				/>
 				<div className="og-settings-field">
 					<span className="og-settings-label">
@@ -675,6 +668,8 @@ function GlobalTab({
 					</button>
 				</div>
 			</div>
+
+			<TabActions dirty={dirty} onSave={onSave} onRevert={onRevert} />
 		</div>
 	);
 }
@@ -682,15 +677,19 @@ function GlobalTab({
 function ProjectTab({
 	tab,
 	layers,
-	updateGlobal,
-	updateRepo,
-	updateLocal,
+	draft,
+	onDraftChange,
+	onSave,
+	onRevert,
+	dirty,
 }: {
 	tab: ActiveTab;
 	layers: ThreeLayerConfig;
-	updateGlobal: (p: Record<string, unknown>) => void;
-	updateRepo: (p: Record<string, unknown>) => void;
-	updateLocal: (p: Record<string, unknown>) => void;
+	draft: Record<string, unknown>;
+	onDraftChange: (patch: Record<string, unknown>) => void;
+	onSave: () => void;
+	onRevert: () => void;
+	dirty: boolean;
 }) {
 	const { t } = useLocale();
 
@@ -706,9 +705,8 @@ function ProjectTab({
 					placeholder={t("settings.modelOverridePlaceholder")}
 					tab={tab}
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draft}
+					onDraftChange={onDraftChange}
 				/>
 				<SettingStringField
 					label={t("settings.childAuth")}
@@ -716,9 +714,8 @@ function ProjectTab({
 					placeholder={t("settings.authGroupName")}
 					tab={tab}
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draft}
+					onDraftChange={onDraftChange}
 				/>
 				<SettingStringField
 					label={t("settings.childModel")}
@@ -726,9 +723,8 @@ function ProjectTab({
 					placeholder={t("settings.childModelPlaceholder")}
 					tab={tab}
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draft}
+					onDraftChange={onDraftChange}
 				/>
 			</div>
 
@@ -744,9 +740,8 @@ function ProjectTab({
 					step={0.01}
 					tab={tab}
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draft}
+					onDraftChange={onDraftChange}
 				/>
 				<SettingNumberField
 					label={t("settings.maxDepth")}
@@ -756,9 +751,8 @@ function ProjectTab({
 					step={1}
 					tab={tab}
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draft}
+					onDraftChange={onDraftChange}
 				/>
 				<SettingNumberField
 					label={t("settings.clarifyTimeout")}
@@ -768,21 +762,46 @@ function ProjectTab({
 					step={1000}
 					tab={tab}
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draft}
+					onDraftChange={onDraftChange}
 				/>
 			</div>
 
 			<McpServersSection
 				tab={tab}
 				layers={layers}
-				updateGlobal={updateGlobal}
-				updateRepo={updateRepo}
-				updateLocal={updateLocal}
+				draft={draft}
+				onDraftChange={onDraftChange}
 			/>
+
+			<TabActions dirty={dirty} onSave={onSave} onRevert={onRevert} />
 		</div>
 	);
+}
+
+// ---- Build diff patch: only send fields that changed ----
+
+function buildPatch(
+	draft: Record<string, unknown>,
+	saved: Record<string, unknown>,
+): Record<string, unknown> {
+	const patch: Record<string, unknown> = {};
+	// Fields in draft that differ from saved
+	for (const key of Object.keys(draft)) {
+		const dv = draft[key];
+		const sv = saved[key];
+		if (JSON.stringify(dv) !== JSON.stringify(sv)) {
+			// Send undefined as null to explicitly clear the field
+			patch[key] = dv === undefined ? null : dv;
+		}
+	}
+	// Fields in saved but missing/removed from draft — send null to clear
+	for (const key of Object.keys(saved)) {
+		if (!(key in draft) && saved[key] !== undefined) {
+			patch[key] = null;
+		}
+	}
+	return patch;
 }
 
 // ---- Main SettingsPanel ----
@@ -808,6 +827,99 @@ export function SettingsPanel({
 	const { t } = useLocale();
 	const [activeTab, setActiveTab] = useState<ActiveTab>("global");
 
+	// Draft state per tab — initialized from layers, reset when layers changes
+	const [draftGlobal, setDraftGlobal] = useState<Record<string, unknown>>(
+		() => ({ ...layers.global }),
+	);
+	const [draftRepo, setDraftRepo] = useState<Record<string, unknown>>(() => ({
+		...layers.repo,
+	}));
+	const [draftLocal, setDraftLocal] = useState<Record<string, unknown>>(() => ({
+		...layers.local,
+	}));
+
+	// When layers changes after a save, reset drafts to the new saved values
+	useEffect(() => {
+		setDraftGlobal({ ...layers.global });
+	}, [layers.global]);
+
+	useEffect(() => {
+		setDraftRepo({ ...layers.repo });
+	}, [layers.repo]);
+
+	useEffect(() => {
+		setDraftLocal({ ...layers.local });
+	}, [layers.local]);
+
+	// Patch update handlers for each draft
+	const updateDraftGlobal = (patch: Record<string, unknown>) => {
+		setDraftGlobal((prev) => {
+			const next = { ...prev };
+			for (const [k, v] of Object.entries(patch)) {
+				if (v === undefined || v === null || v === "") {
+					delete next[k];
+				} else {
+					next[k] = v;
+				}
+			}
+			return next;
+		});
+	};
+
+	const updateDraftRepo = (patch: Record<string, unknown>) => {
+		setDraftRepo((prev) => {
+			const next = { ...prev };
+			for (const [k, v] of Object.entries(patch)) {
+				if (v === undefined || v === null || v === "") {
+					delete next[k];
+				} else {
+					next[k] = v;
+				}
+			}
+			return next;
+		});
+	};
+
+	const updateDraftLocal = (patch: Record<string, unknown>) => {
+		setDraftLocal((prev) => {
+			const next = { ...prev };
+			for (const [k, v] of Object.entries(patch)) {
+				if (v === undefined || v === null || v === "") {
+					delete next[k];
+				} else {
+					next[k] = v;
+				}
+			}
+			return next;
+		});
+	};
+
+	// Dirty flags
+	const dirtyGlobal = isDirty(draftGlobal, layers.global);
+	const dirtyRepo = isDirty(draftRepo, layers.repo);
+	const dirtyLocal = isDirty(draftLocal, layers.local);
+
+	// Save handlers — compute diff patch and send
+	const saveGlobal = () => {
+		const patch = buildPatch(draftGlobal, layers.global);
+		if (Object.keys(patch).length > 0) updateGlobal(patch);
+	};
+
+	const saveRepo = () => {
+		const patch = buildPatch(draftRepo, layers.repo);
+		if (Object.keys(patch).length > 0) updateRepo(patch);
+	};
+
+	const saveLocal = () => {
+		const patch = buildPatch(draftLocal, layers.local);
+		if (Object.keys(patch).length > 0) updateLocal(patch);
+	};
+
+	// Revert handlers — reset draft to current saved state
+	const revertGlobal = () => setDraftGlobal({ ...layers.global });
+	const revertRepo = () => setDraftRepo({ ...layers.repo });
+	const revertLocal = () => setDraftLocal({ ...layers.local });
+
 	return (
 		<div className="og-settings-panel og-settings-panel-wide">
 			<div className="og-settings-header">
@@ -829,6 +941,7 @@ export function SettingsPanel({
 					onClick={() => setActiveTab("global")}
 				>
 					{t("settings.tabGlobal")}
+					{dirtyGlobal && <span className="og-settings-dirty">*</span>}
 				</button>
 				<button
 					type="button"
@@ -836,6 +949,7 @@ export function SettingsPanel({
 					onClick={() => setActiveTab("project")}
 				>
 					{t("settings.tabProject")}
+					{dirtyRepo && <span className="og-settings-dirty">*</span>}
 				</button>
 				<button
 					type="button"
@@ -843,6 +957,7 @@ export function SettingsPanel({
 					onClick={() => setActiveTab("local")}
 				>
 					{t("settings.tabLocal")}
+					{dirtyLocal && <span className="og-settings-dirty">*</span>}
 				</button>
 			</div>
 
@@ -850,9 +965,11 @@ export function SettingsPanel({
 			{activeTab === "global" && (
 				<GlobalTab
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draftGlobal}
+					onDraftChange={updateDraftGlobal}
+					onSave={saveGlobal}
+					onRevert={revertGlobal}
+					dirty={dirtyGlobal}
 					onRestart={onRestart}
 				/>
 			)}
@@ -860,18 +977,22 @@ export function SettingsPanel({
 				<ProjectTab
 					tab="project"
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draftRepo}
+					onDraftChange={updateDraftRepo}
+					onSave={saveRepo}
+					onRevert={revertRepo}
+					dirty={dirtyRepo}
 				/>
 			)}
 			{activeTab === "local" && (
 				<ProjectTab
 					tab="local"
 					layers={layers}
-					updateGlobal={updateGlobal}
-					updateRepo={updateRepo}
-					updateLocal={updateLocal}
+					draft={draftLocal}
+					onDraftChange={updateDraftLocal}
+					onSave={saveLocal}
+					onRevert={revertLocal}
+					dirty={dirtyLocal}
 				/>
 			)}
 		</div>
