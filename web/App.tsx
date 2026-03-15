@@ -142,7 +142,6 @@ function AppInner() {
 	const lastSubmittedImagesRef = useRef<
 		{ base64: string; mediaType: string }[] | undefined
 	>(undefined);
-	const [compacting, setCompacting] = useState(false);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
 	const { nodes, refresh: refreshTasks, updateFromWS } = useTasks(projectId);
@@ -328,13 +327,23 @@ function AppInner() {
 						}));
 						break;
 					} else if (et === "compact_started") {
-						setCompacting(true);
-						addLog(
-							"compact",
-							"Compressing context...",
-							msg.taskId as string | undefined,
-							"",
-						);
+						// Only add a placeholder if there isn't already a compact entry without a checkpoint
+						setLogs((prev) => {
+							for (let i = prev.length - 1; i >= 0; i--) {
+								const e = prev[i];
+								if (e && e.type === "compact" && !e.checkpoint) {
+									// Existing placeholder found — don't add a duplicate
+									return prev;
+								}
+							}
+							const entry = createLogEntry(
+								"compact",
+								"Compressing context...",
+								msg.taskId as string | undefined,
+							);
+							entry.checkpoint = "";
+							return [...prev, entry];
+						});
 						break;
 					} else if (et === "compact") {
 						const compactText = `Context compacted (saved ~${msg.savedTokens} tokens)`;
@@ -363,7 +372,6 @@ function AppInner() {
 							entry.checkpoint = compactCheckpoint;
 							return [...prev, entry];
 						});
-						setCompacting(false);
 						break;
 					} else if (et === "queue_message") {
 						const taskId = msg.taskId as string | undefined;
@@ -470,7 +478,6 @@ function AppInner() {
 						msg.taskId as string | undefined,
 					);
 					setRunning(false);
-					setCompacting(false);
 					break;
 				}
 				case "agent_stopped":
@@ -480,7 +487,6 @@ function AppInner() {
 						msg.taskId as string | undefined,
 					);
 					setRunning(false);
-					setCompacting(false);
 					break;
 				case "task_started": {
 					const instruction = msg.message
@@ -1032,7 +1038,6 @@ function AppInner() {
 							autoScroll={autoScroll}
 							onAutoScrollChange={setAutoScroll}
 							running={isSelectedTaskRunning}
-							compacting={compacting}
 						/>
 					</div>
 				</section>
