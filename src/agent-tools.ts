@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { z } from "zod";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
+import { readProjectMemory } from "./daemon/helpers.ts";
 import {
 	globalAgentQueues,
 	MessageQueue,
@@ -906,7 +905,7 @@ export function createOrchestratorTools(
 						});
 
 						// Build prompt based on mode
-						const memory = readMemory(projectPath);
+						const memory = readProjectMemory(projectPath, false);
 						let prompt: string;
 						const branchReminder = node.branch
 							? `\n\nYou are on branch \`${node.branch}\`. Do NOT switch branches.`
@@ -1473,29 +1472,6 @@ export function createOrchestratorTools(
 		toolDefs,
 		hasRunningChildren: () => childQueues.size > 0,
 	};
-}
-
-function readMemory(projectPath: string): string {
-	const parts: string[] = [];
-
-	try {
-		const claudeMd = readFileSync(join(projectPath, "CLAUDE.md"), "utf-8");
-		if (claudeMd) parts.push(claudeMd);
-	} catch {
-		// No CLAUDE.md
-	}
-
-	try {
-		const memory = readFileSync(
-			join(projectPath, ".opengraft", "memory.md"),
-			"utf-8",
-		);
-		if (memory) parts.push(memory);
-	} catch {
-		// No memory file
-	}
-
-	return parts.join("\n\n");
 }
 
 /** @internal Exported for testing */

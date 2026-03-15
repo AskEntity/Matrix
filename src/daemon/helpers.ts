@@ -104,18 +104,30 @@ export function getProjectProvider(
 	return createProviderFromConfig(effectiveConfig);
 }
 
-/** Read project files and format as pre-read context for the agent. */
-export function readProjectMemory(projectPath: string): string {
+/**
+ * Read project memory files (CLAUDE.md and .opengraft/memory.md).
+ * @param includeHeaders - When true, adds '[read_file: ...]' headers and a preamble
+ *   (used for orchestrator initial prompt). When false, plain concatenation (used for child prompts).
+ */
+export function readProjectMemory(
+	projectPath: string,
+	includeHeaders = true,
+): string {
 	const parts: string[] = [];
 
-	parts.push(
-		"The following files have been pre-read for you. Do NOT re-read them unless you need to check for updates.",
-	);
+	if (includeHeaders) {
+		parts.push(
+			"The following files have been pre-read for you. Do NOT re-read them unless you need to check for updates.",
+		);
+	}
 
 	// Read CLAUDE.md for project architecture context
 	try {
 		const claudeMd = readFileSync(join(projectPath, "CLAUDE.md"), "utf-8");
-		if (claudeMd) parts.push(`[read_file: CLAUDE.md]\n${claudeMd}`);
+		if (claudeMd)
+			parts.push(
+				includeHeaders ? `[read_file: CLAUDE.md]\n${claudeMd}` : claudeMd,
+			);
 	} catch {
 		// No CLAUDE.md, that's fine
 	}
@@ -126,7 +138,12 @@ export function readProjectMemory(projectPath: string): string {
 			join(projectPath, ".opengraft", "memory.md"),
 			"utf-8",
 		);
-		if (memory) parts.push(`[read_file: .opengraft/memory.md]\n${memory}`);
+		if (memory)
+			parts.push(
+				includeHeaders
+					? `[read_file: .opengraft/memory.md]\n${memory}`
+					: memory,
+			);
 	} catch {
 		// No memory file, that's fine
 	}
