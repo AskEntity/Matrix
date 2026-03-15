@@ -91,8 +91,6 @@ Daemon (Hono: HTTP + WS on :7433)
 - `jsSearch()` filters SKIP_DIRS (node_modules, .git, dist, etc.) via `excluded_dirs` parameter
 - Agent can pass custom `excluded_dirs` or empty array to search all
 
-## Git Hash Display
-- Git commit hash captured once at daemon startup via `Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"])` — stored as `GIT_HASH` constant.
-- Included in `/health` and `/version` endpoint responses as `gitHash` field.
-- CLI `og version` runs git locally; `og health` and `og daemon status` read from daemon API.
-- Web UI AppHeader fetches `/version` on mount and shows `v0.1.0 (abc1234)` next to the title.
+## Event History Replay
+
+- `ws-handler.ts` splits into `collectEntries()` (pure, builds array) and `processSideEffects()` (state setters). Prevents tool card JSON flash during event_history replay by setting all logs in one `setLogs()` call.
