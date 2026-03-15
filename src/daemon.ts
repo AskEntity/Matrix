@@ -881,29 +881,28 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			const effectiveCfg = await resolveProjectConfig(project.path, project.id);
 			const provider = getProjectProvider(effectiveCfg);
 
-			const { mcpServer, toolDefs, hasRunningChildren } =
-				createOrchestratorTools(
-					{
-						tracker,
-						provider,
-						worktrees: wm,
-						projectPath: node.worktreePath as string,
-						repoPath: project.path,
-						currentTaskId: nodeId,
-						depth: 1,
-						queue: childQueue,
-						doneRef,
-						defaultBudgetUsd: effectiveCfg.budgetUsd,
-						clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
-						maxDepth: effectiveCfg.maxDepth,
-						onTaskEvent: (event) => {
-							broadcastEvent(project.id, event);
-							broadcastTreeUpdate(project.id, tracker);
-						},
-						broadcastTreeUpdate: () => broadcastTreeUpdate(project.id, tracker),
+			const { toolDefs, hasRunningChildren } = createOrchestratorTools(
+				{
+					tracker,
+					provider,
+					worktrees: wm,
+					projectPath: node.worktreePath as string,
+					repoPath: project.path,
+					currentTaskId: nodeId,
+					depth: 1,
+					queue: childQueue,
+					doneRef,
+					defaultBudgetUsd: effectiveCfg.budgetUsd,
+					clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
+					maxDepth: effectiveCfg.maxDepth,
+					onTaskEvent: (event) => {
+						broadcastEvent(project.id, event);
+						broadcastTreeUpdate(project.id, tracker);
 					},
-					costAccumulator,
-				);
+					broadcastTreeUpdate: () => broadcastTreeUpdate(project.id, tracker),
+				},
+				costAccumulator,
+			);
 
 			const session = provider.startSession({
 				prompt,
@@ -911,7 +910,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				systemPrompt: TASK_SYSTEM_PROMPT,
 				resumeSessionId: node.sessionId ?? undefined,
 				model: effectiveCfg.model,
-				mcpServers: { opengraft: mcpServer },
 				mcpToolDefs: { opengraft: toolDefs },
 				queue: childQueue,
 				doneRef,
@@ -1225,7 +1223,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			done: null | { status: "passed" | "failed"; summary: string };
 		} = { done: null };
 
-		const { mcpServer, toolDefs, hasRunningChildren } = createOrchestratorTools(
+		const { toolDefs, hasRunningChildren } = createOrchestratorTools(
 			{
 				tracker,
 				provider,
@@ -1272,7 +1270,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			projectPath: project.path,
 			sessionsDir: join(config.dataDir, "sessions", project.id),
 			systemPrompt: `${ORCHESTRATOR_SYSTEM_PROMPT}\n\n${ORCHESTRATION_KNOWLEDGE}`,
-			mcpServers: { opengraft: mcpServer },
 			mcpToolDefs: { opengraft: toolDefs },
 			resumeSessionId,
 			model: effectiveModel,

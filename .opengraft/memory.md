@@ -131,3 +131,11 @@ Daemon (Hono: HTTP + WS on :7433)
 
 - `createProviderFromConfig()` in daemon.ts: NO env var fallback. Throws if no auth group configured.
 - Tests use `config.agentProvider` (injected mock) — unaffected by this change.
+
+## SDK Removal Notes
+
+- `@anthropic-ai/claude-agent-sdk` removed. Own `ToolDefinition` type and `tool()` factory in `src/tool-definition.ts`.
+- `CallToolResult` imported from `@modelcontextprotocol/sdk/types.js` (already a direct dep).
+- Zod v4 (`ZodRawShape` via compat layer): `import type { ZodRawShape } from "zod"` works because `zod/v4/classic/compat.d.ts` re-exports `core.$ZodShape` as `ZodRawShape`.
+- `AgentRequest.mcpServers` removed (was dead code — only the deleted Claude Code provider used it). `mcpToolDefs` remains for provider tool forwarding.
+- `OrchestratorToolsResult.mcpServer` removed — no longer creating SDK MCP server objects.

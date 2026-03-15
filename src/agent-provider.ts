@@ -1,8 +1,5 @@
-import type {
-	McpServerConfig,
-	SdkMcpToolDefinition,
-} from "@anthropic-ai/claude-agent-sdk";
 import type { MessageQueue } from "./message-queue.ts";
+import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 
 /** What the orchestrator sends to an agent. */
@@ -21,11 +18,9 @@ export interface AgentRequest {
 	signal?: AbortSignal;
 	/** Session ID to resume a previous conversation. */
 	resumeSessionId?: string;
-	/** MCP servers to attach to the agent session (for Claude Code provider). */
-	mcpServers?: Record<string, McpServerConfig>;
 	/** Raw MCP tool definitions for direct API forwarding (for AnthropicCompatibleProvider). */
-	// biome-ignore lint/suspicious/noExplicitAny: SdkMcpToolDefinition generic varies
-	mcpToolDefs?: Record<string, SdkMcpToolDefinition<any>[]>;
+	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+	mcpToolDefs?: Record<string, ToolDefinition<any>[]>;
 	/** Claude model to use (e.g. 'claude-sonnet-4-6', 'claude-opus-4-6'). */
 	model?: string;
 	/** External MessageQueue — if provided, startSession uses this instead of creating a new one. */

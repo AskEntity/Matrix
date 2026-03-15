@@ -9,7 +9,6 @@ import {
 } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
 	MessageParam,
@@ -26,6 +25,7 @@ import type {
 } from "./agent-provider.ts";
 import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
+import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -1185,7 +1185,7 @@ export async function executeTool(
 }
 
 /**
- * Convert a Zod raw shape (from SdkMcpToolDefinition.inputSchema) to JSON Schema.
+ * Convert a Zod raw shape (from ToolDefinition.inputSchema) to JSON Schema.
  * Handles the types used in our orchestrator tools: string, enum, optional.
  */
 export function zodShapeToJsonSchema(
@@ -1553,8 +1553,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 		// Add MCP tool definitions from mcpToolDefs
 		const allTools: Tool[] = [...TOOLS];
-		// biome-ignore lint/suspicious/noExplicitAny: SdkMcpToolDefinition generic varies
-		const mcpHandlers = new Map<string, SdkMcpToolDefinition<any>>();
+		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+		const mcpHandlers = new Map<string, ToolDefinition<any>>();
 
 		if (request.mcpToolDefs) {
 			for (const [serverName, defs] of Object.entries(request.mcpToolDefs)) {
