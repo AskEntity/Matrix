@@ -147,3 +147,9 @@ Daemon (Hono: HTTP + WS on :7433)
 
 Pattern: All modules receive a `DaemonContext` object instead of capturing state via closure. Route modules are registered with `registerXxxRoutes(app, ctx)`.
 
+
+## Shared Types (Frontend/Backend)
+
+- `web/hooks.ts` re-exports `TaskNode` and `TaskStatus` from `../src/types.ts` — all web code imports from `hooks.ts`.
+- `StatusBadge.tsx` uses `TaskStatus` instead of `string` for type safety.
+- Bun bundler handles cross-directory imports (`../src/types.ts` from `web/`) without issues.
