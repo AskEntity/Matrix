@@ -39,6 +39,7 @@ export interface LogEntry {
 	toolArgs?: Record<string, unknown>;
 	toolResult?: string;
 	isError?: boolean;
+	images?: { base64: string; mediaType: string }[];
 }
 
 let logIdCounter = 0;
@@ -332,6 +333,7 @@ export function createLogEntry(
 		toolResult?: string;
 		isError?: boolean;
 	},
+	images?: { base64: string; mediaType: string }[],
 ): LogEntry {
 	const entry: LogEntry = {
 		id: logIdCounter++,
@@ -347,6 +349,7 @@ export function createLogEntry(
 			entry.toolResult = structured.toolResult;
 		if (structured.isError !== undefined) entry.isError = structured.isError;
 	}
+	if (images && images.length > 0) entry.images = images;
 	return entry;
 }
 

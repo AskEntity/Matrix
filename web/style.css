@@ -1334,6 +1334,19 @@ select {
 	color: var(--text-primary);
 }
 
+.og-user-images {
+	display: flex;
+	gap: 4px;
+	margin-top: 6px;
+}
+
+.og-user-image-thumb {
+	max-width: 200px;
+	max-height: 150px;
+	border-radius: 6px;
+	cursor: pointer;
+}
+
 /* =========================================================
    Tool Cards
    ========================================================= */
