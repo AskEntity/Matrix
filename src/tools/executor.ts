@@ -3,8 +3,10 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import type { MessageQueue } from "../message-queue.ts";
 import {
 	executeBashWithTimeout,
+	getBackgroundStatus,
 	getRunningBackgroundCount,
 	getRunningBackgroundSummary,
+	killBackgroundProcess,
 } from "./bash.ts";
 import { jsSearch } from "./search.ts";
 
@@ -31,13 +33,57 @@ export async function executeTool(
 }> {
 	switch (name) {
 		case "bash": {
+			const bgAction = input.bg_action as string | undefined;
+			const backgroundId = input.background_id as string | undefined;
+
+			// Handle background process management actions
+			if (bgAction) {
+				if (!backgroundId) {
+					return {
+						content: "Error: background_id is required when bg_action is set.",
+						isError: true,
+					};
+				}
+				if (!sessionId) {
+					return {
+						content:
+							"Error: no session context for background process management.",
+						isError: true,
+					};
+				}
+
+				if (bgAction === "kill") {
+					const result = killBackgroundProcess(sessionId, backgroundId);
+					if (result === null) {
+						return {
+							content: `Background process ${backgroundId} not found.`,
+							isError: true,
+						};
+					}
+					return { content: result, isError: false };
+				}
+
+				if (bgAction === "status") {
+					const result = getBackgroundStatus(sessionId, backgroundId);
+					if (result === null) {
+						return {
+							content: `Background process ${backgroundId} not found.`,
+							isError: true,
+						};
+					}
+					return { content: result, isError: false };
+				}
+
+				return {
+					content: `Unknown bg_action: ${bgAction}. Use 'kill' or 'status'.`,
+					isError: true,
+				};
+			}
+
 			const command = input.command as string;
-			const hardTimeout = Math.min(
-				Math.max((input.timeout as number) ?? 120000, 1000),
-				600000,
-			);
+			const hardTimeout = 600000; // 10 min safety timeout (not exposed to agent)
 			const foregroundTimeout = Math.min(
-				Math.max((input.foreground_timeout as number) ?? hardTimeout, 0),
+				Math.max((input.foreground_timeout as number) ?? 120000, 0),
 				hardTimeout,
 			);
 

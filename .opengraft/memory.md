@@ -151,3 +151,13 @@ Daemon (Hono: HTTP + WS on :7433)
 - Panel header title changes per active tab: "Global Settings" / "Project Settings" / "Local Settings".
 - Removed `SettingStringField` and `SettingAuthGroupSelect` (replaced by inline rendering in ModelsAuthSection).
 - i18n keys added: `settings.rootAuth`, `settings.childModel`, `settings.inheritOption`, `settings.useRootAuth`, `settings.useRootModel`, `settings.titleGlobal/Project/Local`.
+
+## Background Process Management
+
+- ALL bash commands use file-based stdout/stderr redirection (`Bun.file(path)` to `/tmp/opengraft-bg/`). Consistent approach — no piped output.
+- `BackgroundProcess` interface has `kill: (() => void) | null`, `stdoutPath`, `stderrPath` fields.
+- Agent can `read_file` on output file paths for partial output while process is running.
+- `bg_action` parameter on bash tool: `kill` terminates process + returns final output, `status` returns metadata + file paths (running) or stored output (completed).
+- `timeout` parameter removed from bash tool schema. Internal 600s safety timeout hardcoded in executor.ts.
+- Temp files cleaned up on completion, kill, or session cleanup.
+- CWD tracking only applies to foreground-completed commands. Backgrounded commands never update CWD.
