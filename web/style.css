@@ -414,6 +414,55 @@ select {
 	pointer-events: none;
 }
 
+/* Inline create row */
+.og-task-node.og-inline-create {
+	border-left-color: var(--accent);
+}
+
+.og-inline-create-input {
+	flex: 1;
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--border);
+	color: var(--text-primary);
+	font-size: 12px;
+	font-family: inherit;
+	padding: 2px 0;
+	outline: none;
+}
+
+.og-inline-create-input:focus {
+	border-bottom-color: var(--accent);
+}
+
+.og-inline-create-input::placeholder {
+	color: var(--text-faint);
+}
+
+/* Trash drop zone */
+.og-trash-drop-zone {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	margin: 8px 10px;
+	padding: 10px;
+	border: 1px dashed var(--border);
+	border-radius: 6px;
+	color: var(--text-faint);
+	font-size: 11px;
+	transition:
+		background var(--t-fast),
+		border-color var(--t-fast),
+		color var(--t-fast);
+}
+
+.og-trash-drop-zone.og-trash-over {
+	background: rgba(248, 81, 73, 0.1);
+	border-color: #f85149;
+	color: #f85149;
+}
+
 .og-task-row {
 	display: flex;
 	align-items: center;
