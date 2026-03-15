@@ -25,9 +25,9 @@ import {
 	type LogEntry,
 	type TaskNode,
 	useAgent,
-	useProjectConfig,
 	useProjects,
 	useTasks,
+	useThreeLayerConfig,
 	useWebSocket,
 } from "./hooks.ts";
 
@@ -162,7 +162,13 @@ function AppInner() {
 		sendMessage,
 		sendMessageToTask,
 	} = useAgent(projectId);
-	const { config: projectConfig, updateConfig } = useProjectConfig(projectId);
+	const {
+		layers,
+		loading: configLoading,
+		updateGlobal,
+		updateRepo,
+		updateLocal,
+	} = useThreeLayerConfig(projectId);
 
 	const nodeMap = useMemo(() => {
 		const map = new Map<string, TaskNode>();
@@ -819,8 +825,12 @@ function AppInner() {
 
 			{showSettings && projectId && (
 				<SettingsPanel
-					config={projectConfig}
-					updateConfig={updateConfig}
+					projectId={projectId}
+					layers={layers}
+					loading={configLoading}
+					updateGlobal={updateGlobal}
+					updateRepo={updateRepo}
+					updateLocal={updateLocal}
 					onClose={() => setShowSettings(false)}
 					onRestart={async () => {
 						try {

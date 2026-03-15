@@ -384,3 +384,82 @@ export function useProjectConfig(projectId: string | null) {
 
 	return { config, updateConfig };
 }
+
+// --- useThreeLayerConfig ---
+
+export interface ThreeLayerConfig {
+	global: Record<string, unknown>;
+	repo: Record<string, unknown>;
+	local: Record<string, unknown>;
+	resolved: Record<string, unknown>;
+}
+
+export function useThreeLayerConfig(projectId: string | null) {
+	const [layers, setLayers] = useState<ThreeLayerConfig>({
+		global: {},
+		repo: {},
+		local: {},
+		resolved: {},
+	});
+	const [loading, setLoading] = useState(false);
+
+	const refresh = useCallback(async () => {
+		if (!projectId) {
+			setLayers({ global: {}, repo: {}, local: {}, resolved: {} });
+			return;
+		}
+		setLoading(true);
+		try {
+			const res = await fetch(`/projects/${projectId}/config/all`);
+			if (res.ok) setLayers(await res.json());
+		} catch {
+			/* ignore */
+		} finally {
+			setLoading(false);
+		}
+	}, [projectId]);
+
+	useEffect(() => {
+		refresh();
+	}, [refresh]);
+
+	const updateGlobal = useCallback(
+		async (partial: Record<string, unknown>) => {
+			const res = await fetch("/config/global", {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(partial),
+			});
+			if (res.ok) await refresh();
+		},
+		[refresh],
+	);
+
+	const updateRepo = useCallback(
+		async (partial: Record<string, unknown>) => {
+			if (!projectId) return;
+			const res = await fetch(`/projects/${projectId}/config/repo`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(partial),
+			});
+			if (res.ok) await refresh();
+		},
+		[projectId, refresh],
+	);
+
+	const updateLocal = useCallback(
+		async (partial: Record<string, unknown>) => {
+			if (!projectId) return;
+			const res = await fetch(`/projects/${projectId}/config`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(partial),
+			});
+			if (res.ok) await refresh();
+		},
+		[projectId, refresh],
+	);
+
+	return { layers, loading, refresh, updateGlobal, updateRepo, updateLocal };
+}

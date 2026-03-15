@@ -33,6 +33,7 @@ import {
 	resolveConfig,
 	saveGlobalConfig,
 	saveProjectLocalConfig,
+	saveProjectRepoConfig,
 } from "./config.ts";
 import {
 	globalAgentQueues,
@@ -1451,6 +1452,40 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		if (!project) return c.json({ error: "Project not found" }, 404);
 		const cfg = await loadProjectRepoConfig(project.path);
 		return c.json(cfg);
+	});
+
+	app.patch("/projects/:id/config/repo", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const partial = (await c.req.json()) as Partial<OpenGraftConfig>;
+		const existing = await loadProjectRepoConfig(project.path);
+		const merged = { ...existing };
+		for (const [k, v] of Object.entries(partial)) {
+			if (v === null || v === undefined) {
+				delete (merged as Record<string, unknown>)[k];
+			} else {
+				(merged as Record<string, unknown>)[k] = v;
+			}
+		}
+		await saveProjectRepoConfig(project.path, merged);
+		return c.json(merged);
+	});
+
+	// All three config layers + resolved for a project
+	app.get("/projects/:id/config/all", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const [repoConfig, localConfig] = await Promise.all([
+			loadProjectRepoConfig(project.path),
+			loadProjectLocalConfig(config.dataDir, project.id),
+		]);
+		const resolved = resolveConfig(globalConfig, repoConfig, localConfig);
+		return c.json({
+			global: globalConfig,
+			repo: repoConfig,
+			local: localConfig,
+			resolved,
+		});
 	});
 
 	// Project local config (stored in dataDir/projects/<id>/config.json)
