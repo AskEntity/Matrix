@@ -112,3 +112,6 @@ Daemon (Hono: HTTP + WS on :7433)
 
 - `executeBashWithTimeout()`: foreground timeout → background promotion → completions via `background_complete` queue messages.
 - cd wrapper injected to warn on redundant directory changes.
+
+## Streaming API
+- `createMessage()` uses `client.messages.stream(params).finalMessage()` (not `create()`) to avoid 10-minute timeout on large requests. Critical for compaction of 1M contexts.
