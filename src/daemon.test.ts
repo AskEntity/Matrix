@@ -2516,7 +2516,12 @@ describe("GET /config/global", () => {
 describe("PATCH /config/global", () => {
 	test("sets and returns global config", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "og-gcfg-patch-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const globalConfigPath = join(dataDir, "config.json");
+		const { app, pm } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+			globalConfigPath,
+		});
 		await pm.load();
 
 		const res = await app.request("/config/global", {
@@ -2543,7 +2548,12 @@ describe("PATCH /config/global", () => {
 
 	test("null removes a field", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "og-gcfg-null-"));
-		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
+		const globalConfigPath = join(dataDir, "config.json");
+		const { app, pm } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+			globalConfigPath,
+		});
 		await pm.load();
 
 		// Set a value

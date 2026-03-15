@@ -87,6 +87,7 @@ export interface DaemonConfig {
 	dataDir: string;
 	agentProvider?: AgentProvider;
 	initialConfig?: OpenGraftConfig;
+	globalConfigPath?: string;
 }
 
 /** Create an AgentProvider from an AuthGroup and model. */
@@ -1438,7 +1439,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				(globalConfig as Record<string, unknown>)[k] = v;
 			}
 		}
-		await saveGlobalConfig(globalConfig);
+		await saveGlobalConfig(globalConfig, config.globalConfigPath);
 		return c.json(globalConfig);
 	});
 
@@ -1895,7 +1896,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	}
 
 	async function loadConfig() {
-		globalConfig = await loadGlobalConfig();
+		globalConfig = await loadGlobalConfig(config.globalConfigPath);
 	}
 
 	return {
