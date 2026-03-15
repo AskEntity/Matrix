@@ -59,8 +59,11 @@ export function TaskTree({
 				.map((id) => nodeById.get(id))
 				.filter((n): n is TaskNode => n !== undefined);
 		}
-		// Fallback: show all nodes without a parent
-		return nodes.filter((n) => !n.parentId);
+		// Fallback: filter out root nodes (nodes with no parent that are parents of others)
+		// This prevents the root orchestrator node from flickering on initial render
+		// before rootNodeId is received via WebSocket
+		const parentIds = new Set(nodes.map((n) => n.parentId).filter(Boolean));
+		return nodes.filter((n) => !n.parentId && !parentIds.has(n.id));
 	}, [nodes, rootNode]);
 
 	const childMap = useMemo(() => {
@@ -316,6 +319,17 @@ export function TaskTree({
 						: t("status.idle").toLowerCase()}
 				</span>
 			</button>
+
+			{/* Root-level drop zone — visible only during drag for reparenting to root */}
+			{dragState && rootNodeId && onReparent && (
+				<RootDropZone
+					rootNodeId={rootNodeId}
+					dragId={dragState.dragId}
+					dragParentId={dragState.parentId}
+					onReparent={onReparent}
+					onDragEnd={handleDragEnd}
+				/>
+			)}
 
 			{roots.length > 0 && <div className="og-sidebar-divider" />}
 
@@ -615,6 +629,49 @@ function InlineCreateRow({
 					}}
 				/>
 			</div>
+		</div>
+	);
+}
+
+// ── Root drop zone (reparent to root) ────────────────────────────────────
+
+function RootDropZone({
+	rootNodeId,
+	dragId,
+	dragParentId,
+	onReparent,
+	onDragEnd,
+}: {
+	rootNodeId: string;
+	dragId: string;
+	dragParentId: string;
+	onReparent: (nodeId: string, newParentId: string) => Promise<void>;
+	onDragEnd: () => void;
+}) {
+	const [isOver, setIsOver] = useState(false);
+	const { t } = useLocale();
+
+	// Only show if the dragged node is NOT already a direct child of root
+	if (dragParentId === rootNodeId) return null;
+
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: drop target for drag-and-drop
+		<div
+			className={`og-root-drop-zone${isOver ? " og-root-drop-over" : ""}`}
+			onDragOver={(e) => {
+				e.preventDefault();
+				e.dataTransfer.dropEffect = "move";
+				setIsOver(true);
+			}}
+			onDragLeave={() => setIsOver(false)}
+			onDrop={(e) => {
+				e.preventDefault();
+				onReparent(dragId, rootNodeId);
+				setIsOver(false);
+				onDragEnd();
+			}}
+		>
+			<span className="og-root-drop-label">{t("tasks.moveToRoot")}</span>
 		</div>
 	);
 }

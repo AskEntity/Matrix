@@ -123,3 +123,10 @@ Daemon (Hono: HTTP + WS on :7433)
 - `TaskTracker.reparent(nodeId, newParentId)` with circular dep validation. PATCH with `{ parentId }`.
 - Agent `update_task` tool: `parentId` field with scope validation.
 - DnD: center 40% of row = reparent, top/bottom 30% = reorder. `.og-reparent-target` visual indicator.
+
+## UI Fix Notes (March 2026)
+
+- **Root node flicker fix**: The fallback `roots` computation (when `rootNodeId` is null) now excludes nodes that are parents of other nodes, not just nodes with no `parentId`. This prevents the root orchestrator node from showing during initial render.
+- **Root drop zone**: `RootDropZone` component appears during drag when the dragged node is not already at root level. Uses `og-root-drop-zone` CSS class with accent-blue hover styling.
+- **[TREE UPDATED] card**: Detected via `entry.text.includes("[TREE UPDATED]")` in `queue_message` handler in ToolCard.tsx. Rendered with `og-tool-card-system` class (green accent).
+- **Color UI**: Was already fully implemented - color dot in TaskTree row, color picker in TaskDetail, PATCH API support.

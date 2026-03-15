@@ -747,6 +747,23 @@ export function LogEntryView({
 	}
 
 	if (entry.type === "queue_message") {
+		// Detect [TREE UPDATED] system notifications and render as a system card
+		const isTreeUpdate = entry.text.includes("[TREE UPDATED]");
+		if (isTreeUpdate) {
+			return (
+				<div className="og-log-entry og-event-tool_card">
+					<span className="og-log-time">{entry.time}</span>
+					<div className="og-tool-card og-tool-card-system">
+						<div className="og-tool-card-header">
+							<span className="og-tool-card-name">
+								🌿 {t("log.treeUpdated")}
+							</span>
+						</div>
+					</div>
+				</div>
+			);
+		}
+
 		const isLong = entry.text.length > 100 || entry.text.includes("\n");
 		const headerText =
 			entry.text.length > 100
