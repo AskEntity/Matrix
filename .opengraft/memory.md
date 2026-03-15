@@ -113,13 +113,7 @@ Daemon (Hono: HTTP + WS on :7433)
 - `executeBashWithTimeout()`: foreground timeout → background promotion → completions via `background_complete` queue messages.
 - cd wrapper injected to warn on redundant directory changes.
 
-## Streaming API
-- `createMessage()` uses `client.messages.stream(params).finalMessage()` (not `create()`) to avoid 10-minute timeout on large requests. Critical for compaction of 1M contexts.
-
-
 ## Streaming Text Display
-- Stream events: iterate `for await (const event of stream)` in runLoop to yield text_delta events. Cannot use callbacks since `yield` only works in generator body.
-- Removed `createMessage()` private method — streaming iteration is inline in runLoop now.
-- text_delta events are NOT stored in event history (too granular, would bloat persistence).
-- UI appends deltas to last text entry for same taskId, creating new entry if needed.
-- Old `text` event yield removed from response processing (deltas already sent everything). `lastText` still set from finalMessage for internal use.
+- RunLoop iterates `for await (const event of stream)` inline, yielding `text_delta` events for real-time UI display. Filters for `delta.type === "text_delta"` only (ignores thinking blocks).
+- `text_delta` events NOT stored in event history (too granular). UI appends deltas to last text entry for same taskId.
+- Uses `stream.finalMessage()` to get full `Message` at the end — avoids 10-minute timeout on large requests.
