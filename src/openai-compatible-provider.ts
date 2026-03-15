@@ -262,9 +262,10 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			"https://api.openai.com/v1";
 		this.apiKey = opts?.apiKey ?? process.env.OPENAI_API_KEY ?? "";
 		if (!this.apiKey) {
-			throw new Error(
-				"OPENAI_API_KEY is required for OpenAICompatibleProvider (set via config or environment variable)",
+			console.warn(
+				"OpenAICompatibleProvider: no API key configured. Calls will fail.",
 			);
+			// Don't throw — let it fail gracefully on first API call
 		}
 		this.model = model ?? "gpt-4o";
 	}

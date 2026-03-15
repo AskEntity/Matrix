@@ -5,6 +5,7 @@ import {
 	describe,
 	expect,
 	mock,
+	spyOn,
 	test,
 } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -131,13 +132,18 @@ describe("OpenAICompatibleProvider constructor", () => {
 		}
 	});
 
-	test("throws when OPENAI_API_KEY is not set", () => {
+	test("warns (does not throw) when OPENAI_API_KEY is not set", () => {
 		const saved = process.env.OPENAI_API_KEY;
 		delete process.env.OPENAI_API_KEY;
+		const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
 		try {
-			expect(() => new OpenAICompatibleProvider()).toThrow("OPENAI_API_KEY");
+			expect(() => new OpenAICompatibleProvider()).not.toThrow();
+			expect(warnSpy).toHaveBeenCalledWith(
+				expect.stringContaining("no API key configured"),
+			);
 		} finally {
 			process.env.OPENAI_API_KEY = saved;
+			warnSpy.mockRestore();
 		}
 	});
 
