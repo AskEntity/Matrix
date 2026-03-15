@@ -119,6 +119,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   Call this after spawning tasks. Returns all accumulated messages plus a "## Pending" summary section
   showing running children and pending clarifications. Zero token burn while suspended.
 - send_message_to_child: Send a requirement update or instruction to a running child agent.
+- reorder_tasks: Reorder children of a task node. Pass the parent nodeId and an array of child IDs in the desired order.
 - delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
 - clarify: Send a clarification question to the user or parent orchestrator. Returns immediately —
   you can continue doing other work that doesn't need the answer, then call yield() when ready
@@ -1489,6 +1490,62 @@ export function createOrchestratorTools(
 								text: `Error reporting to parent: ${message}`,
 							},
 						],
+						isError: true,
+					};
+				}
+			},
+		),
+
+		tool(
+			"reorder_tasks",
+			"Reorder children of a task node. The children array must contain exactly the same task IDs as the current children, just in a different order.",
+			{
+				nodeId: z.string().describe("Parent task ID whose children to reorder"),
+				children: z
+					.array(z.string())
+					.describe("Ordered list of child task IDs"),
+			},
+			async (args) => {
+				try {
+					// Scope validation: must be own task or descendant
+					if (
+						currentTaskId !== null &&
+						args.nodeId !== currentTaskId &&
+						!isDescendantOf(tracker, args.nodeId, currentTaskId)
+					) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Cannot reorder children of ${args.nodeId}: not your task or descendant`,
+								},
+							],
+							isError: true,
+						};
+					}
+					tracker.reorderChildren(args.nodeId, args.children);
+					await tracker.save();
+					broadcastTreeUpdate?.();
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify(
+									{
+										reordered: true,
+										nodeId: args.nodeId,
+										children: args.children,
+									},
+									null,
+									2,
+								),
+							},
+						],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [{ type: "text" as const, text: `Error: ${message}` }],
 						isError: true,
 					};
 				}
