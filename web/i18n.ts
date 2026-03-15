@@ -181,6 +181,7 @@ const en: Translations = {
 	"footer.contextWindow": "Context",
 	"footer.estimated": "estimated",
 	"footer.compact": "Compact context",
+	"footer.compactPending": "Compact pending…",
 
 	// Clarifications
 	"clarify.needed": "Clarification needed",
@@ -443,6 +444,7 @@ const zh: Translations = {
 	"footer.contextWindow": "上下文",
 	"footer.estimated": "估算",
 	"footer.compact": "压缩上下文",
+	"footer.compactPending": "压缩等待中…",
 
 	// Clarifications
 	"clarify.needed": "需要澄清",

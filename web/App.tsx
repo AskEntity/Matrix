@@ -127,6 +127,7 @@ function AppInner() {
 			{ inputTokens: number; contextWindow: number; estimated?: boolean }
 		>
 	>({});
+	const [pendingCompact, setPendingCompact] = useState(false);
 	const [pendingMessages, setPendingMessages] = useState<
 		{ id: string; taskId: string | null; text: string; timestamp: number }[]
 	>([]);
@@ -327,6 +328,7 @@ function AppInner() {
 						}));
 						break;
 					} else if (et === "compact_started") {
+						setPendingCompact(false);
 						// Only add a placeholder if there isn't already a compact entry without a checkpoint
 						setLogs((prev) => {
 							for (let i = prev.length - 1; i >= 0; i--) {
@@ -478,6 +480,7 @@ function AppInner() {
 						msg.taskId as string | undefined,
 					);
 					setRunning(false);
+					setPendingCompact(false);
 					break;
 				}
 				case "agent_stopped":
@@ -487,6 +490,7 @@ function AppInner() {
 						msg.taskId as string | undefined,
 					);
 					setRunning(false);
+					setPendingCompact(false);
 					break;
 				case "task_started": {
 					const instruction = msg.message
@@ -1014,7 +1018,14 @@ function AppInner() {
 											inputTokens={usage.inputTokens}
 											contextWindow={usage.contextWindow}
 											estimated={usage.estimated}
-											onCompact={running ? () => compact() : undefined}
+											onCompact={
+												running
+													? () => {
+															setPendingCompact(true);
+															compact();
+														}
+													: undefined
+											}
 										/>
 									) : null;
 								})()}
@@ -1049,6 +1060,7 @@ function AppInner() {
 				prompt={prompt}
 				targetNodeId={targetNodeId}
 				nodeMap={nodeMap}
+				pendingCompact={pendingCompact}
 				pendingMessages={pendingMessages}
 				pendingClarifications={pendingClarifications}
 				clarifyAnswers={clarifyAnswers}
