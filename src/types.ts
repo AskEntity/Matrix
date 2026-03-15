@@ -30,6 +30,8 @@ export interface TaskNode {
 	budgetUsd?: number;
 	/** Draft tasks can be created and edited but not executed. */
 	draft?: boolean;
+	/** Who last modified this node: 'user' (REST/CLI) or 'agent' (MCP tools). */
+	editedBy?: "user" | "agent";
 	createdAt: string;
 	updatedAt: string;
 }

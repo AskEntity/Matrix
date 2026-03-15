@@ -103,7 +103,7 @@ export class TaskTracker {
 	addTask(
 		title: string,
 		description: string,
-		opts?: { budgetUsd?: number; draft?: boolean },
+		opts?: { budgetUsd?: number; draft?: boolean; editedBy?: "user" | "agent" },
 	): TaskNode {
 		return this.createNode(title, description, null, opts);
 	}
@@ -113,7 +113,7 @@ export class TaskTracker {
 		parentId: string,
 		title: string,
 		description: string,
-		opts?: { budgetUsd?: number; draft?: boolean },
+		opts?: { budgetUsd?: number; draft?: boolean; editedBy?: "user" | "agent" },
 	): TaskNode {
 		const parent = this.nodes.get(parentId);
 		if (!parent) {
@@ -131,12 +131,17 @@ export class TaskTracker {
 	}
 
 	/** Update the status of a task node. */
-	updateStatus(nodeId: string, status: TaskStatus): void {
+	updateStatus(
+		nodeId: string,
+		status: TaskStatus,
+		editedBy?: "user" | "agent",
+	): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) {
 			throw new Error(`Node not found: ${nodeId}`);
 		}
 		node.status = status;
+		if (editedBy) node.editedBy = editedBy;
 		node.updatedAt = new Date().toISOString();
 	}
 
@@ -166,18 +171,28 @@ export class TaskTracker {
 	}
 
 	/** Update the title of a task node. */
-	updateTitle(nodeId: string, title: string): void {
+	updateTitle(
+		nodeId: string,
+		title: string,
+		editedBy?: "user" | "agent",
+	): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
 		node.title = title;
+		if (editedBy) node.editedBy = editedBy;
 		node.updatedAt = new Date().toISOString();
 	}
 
 	/** Update the description of a task node. */
-	updateDescription(nodeId: string, description: string): void {
+	updateDescription(
+		nodeId: string,
+		description: string,
+		editedBy?: "user" | "agent",
+	): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
 		node.description = description;
+		if (editedBy) node.editedBy = editedBy;
 		node.updatedAt = new Date().toISOString();
 	}
 
@@ -287,7 +302,11 @@ export class TaskTracker {
 	}
 
 	/** Update the draft flag on a task node. */
-	updateDraft(nodeId: string, draft: boolean): void {
+	updateDraft(
+		nodeId: string,
+		draft: boolean,
+		editedBy?: "user" | "agent",
+	): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
 		if (draft) {
@@ -295,6 +314,7 @@ export class TaskTracker {
 		} else {
 			delete node.draft;
 		}
+		if (editedBy) node.editedBy = editedBy;
 		node.updatedAt = new Date().toISOString();
 	}
 
@@ -302,7 +322,7 @@ export class TaskTracker {
 		title: string,
 		description: string,
 		parentId: string | null,
-		opts?: { budgetUsd?: number; draft?: boolean },
+		opts?: { budgetUsd?: number; draft?: boolean; editedBy?: "user" | "agent" },
 	): TaskNode {
 		const now = new Date().toISOString();
 		const node: TaskNode = {
@@ -319,6 +339,7 @@ export class TaskTracker {
 			failCount: 0,
 			...(opts?.budgetUsd !== undefined ? { budgetUsd: opts.budgetUsd } : {}),
 			...(opts?.draft ? { draft: true } : {}),
+			...(opts?.editedBy ? { editedBy: opts.editedBy } : {}),
 			createdAt: now,
 			updatedAt: now,
 		};

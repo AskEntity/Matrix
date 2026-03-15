@@ -650,7 +650,11 @@ export function createOrchestratorTools(
 						};
 					}
 
-					const opts: { budgetUsd?: number; draft?: boolean } = {};
+					const opts: {
+						budgetUsd?: number;
+						draft?: boolean;
+						editedBy: "agent";
+					} = { editedBy: "agent" };
 					if (deps.defaultBudgetUsd) opts.budgetUsd = deps.defaultBudgetUsd;
 					if (args.draft) opts.draft = true;
 					const node = effectiveParentId
@@ -658,13 +662,9 @@ export function createOrchestratorTools(
 								effectiveParentId,
 								args.title,
 								args.description,
-								Object.keys(opts).length > 0 ? opts : undefined,
+								opts,
 							)
-						: tracker.addTask(
-								args.title,
-								args.description,
-								Object.keys(opts).length > 0 ? opts : undefined,
-							);
+						: tracker.addTask(args.title, args.description, opts);
 					await tracker.save();
 					broadcastTreeUpdate?.();
 					return {
@@ -701,16 +701,16 @@ export function createOrchestratorTools(
 			async (args) => {
 				try {
 					if (args.status !== undefined) {
-						tracker.updateStatus(args.taskId, args.status);
+						tracker.updateStatus(args.taskId, args.status, "agent");
 					}
 					if (args.title !== undefined) {
-						tracker.updateTitle(args.taskId, args.title);
+						tracker.updateTitle(args.taskId, args.title, "agent");
 					}
 					if (args.description !== undefined) {
-						tracker.updateDescription(args.taskId, args.description);
+						tracker.updateDescription(args.taskId, args.description, "agent");
 					}
 					if (args.draft !== undefined) {
-						tracker.updateDraft(args.taskId, args.draft);
+						tracker.updateDraft(args.taskId, args.draft, "agent");
 					}
 					await tracker.save();
 					broadcastTreeUpdate?.();

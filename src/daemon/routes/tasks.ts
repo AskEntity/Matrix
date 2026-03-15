@@ -16,6 +16,22 @@ import {
 	readProjectMemory,
 } from "../helpers.ts";
 
+/** Notify the running agent (if any) that the task tree was modified by the user. */
+function notifyAgentOfTreeChange(ctx: DaemonContext, projectId: string): void {
+	const session = ctx.activeSessions.get(projectId);
+	if (session) {
+		try {
+			session.queue.enqueue({
+				source: "user",
+				content:
+					"[TREE UPDATED] The task tree was modified by the user via the Web UI. Call get_tree to see the latest state.",
+			});
+		} catch {
+			/* queue may be closed */
+		}
+	}
+}
+
 export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 	// Task tree
 	app.get("/projects/:id/tasks", async (c) => {
@@ -45,8 +61,8 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 
 		const tracker = await getTracker(ctx, project.id);
-		const opts =
-			body.budgetUsd !== undefined ? { budgetUsd: body.budgetUsd } : undefined;
+		const opts: { budgetUsd?: number; editedBy: "user" } = { editedBy: "user" };
+		if (body.budgetUsd !== undefined) opts.budgetUsd = body.budgetUsd;
 		try {
 			// Default to root node as parent if no parentId specified
 			const effectiveParentId = body.parentId ?? tracker.rootNodeId;
@@ -60,6 +76,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				: tracker.addTask(body.title, body.description ?? "", opts);
 			await tracker.save();
 			broadcastTreeUpdate(ctx, project.id, tracker);
+			notifyAgentOfTreeChange(ctx, project.id);
 			return c.json(node, 201);
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -86,22 +103,23 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			draft?: boolean;
 		}>();
 		if (body.status) {
-			tracker.updateStatus(nodeId, body.status);
+			tracker.updateStatus(nodeId, body.status, "user");
 		}
 		if (body.branch) {
 			tracker.assignBranch(nodeId, body.branch);
 		}
 		if (body.title) {
-			tracker.updateTitle(node.id, body.title);
+			tracker.updateTitle(node.id, body.title, "user");
 		}
 		if (body.description !== undefined) {
-			tracker.updateDescription(node.id, body.description);
+			tracker.updateDescription(node.id, body.description, "user");
 		}
 		if (body.draft !== undefined) {
-			tracker.updateDraft(node.id, body.draft);
+			tracker.updateDraft(node.id, body.draft, "user");
 		}
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
+		notifyAgentOfTreeChange(ctx, project.id);
 		return c.json(tracker.get(nodeId));
 	});
 
@@ -130,6 +148,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
+		notifyAgentOfTreeChange(ctx, project.id);
 		return c.json({ ok: true });
 	});
 
@@ -249,6 +268,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		tracker.remove(nodeId);
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
+		notifyAgentOfTreeChange(ctx, project.id);
 		return c.json({ ok: true });
 	});
 
