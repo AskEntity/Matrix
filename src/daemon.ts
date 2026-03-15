@@ -106,17 +106,17 @@ function createProviderFromAuth(
 	});
 }
 
-/** Create a provider from resolved config. Falls back to env-var-based providers. */
+/** Create a provider from resolved config. Requires an auth group to be configured. */
 function createProviderFromConfig(
 	effectiveConfig: OpenGraftConfig,
 ): AgentProvider {
 	const authGroup = resolveAuthGroup(effectiveConfig);
-	if (authGroup) {
-		return createProviderFromAuth(authGroup, effectiveConfig.model);
+	if (!authGroup) {
+		throw new Error(
+			"No auth group configured. Add an auth group in Settings > Global > Auth Groups and set defaultAuth.",
+		);
 	}
-
-	// No auth group configured — fallback to Anthropic with env vars for backward compat
-	return new AnthropicCompatibleProvider(effectiveConfig.model);
+	return createProviderFromAuth(authGroup, effectiveConfig.model);
 }
 
 /** Collect a node and all its descendants. */
