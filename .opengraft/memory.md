@@ -25,39 +25,38 @@ Daemon (Hono: HTTP + WS on :7433)
    CLI            Web UI (React, bundled by Bun)
 ```
 
-- Two providers: AnthropicCompatibleProvider (Anthropic API), OpenAICompatibleProvider (raw fetch, no SDK).
+- Two providers: AnthropicCompatibleProvider (Anthropic API), OpenAICompatibleProvider (raw fetch, no SDK). Both share `src/tools/` (definitions, search, bash, executor) and compaction flow.
 - Three-layer config: global > repo > local. Auth groups define provider+credentials.
 - Agent tree = Task tree. Each agent gets worktree + branch. Lifecycle = branch lifecycle.
 - Orchestrator has a real task node (root node with ID).
 - All mutable APIs fire-and-forget. Observe via WebSocket.
 - MCP tools enable recursive orchestration (tested up to 5 levels deep).
+- External MCP servers: `McpClientManager` (src/mcp-client.ts) connects via stdio, tools get `jsonSchema` field (not Zod).
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| src/daemon.ts | Hono app setup, route registration, ORCHESTRATOR_SYSTEM_PROMPT (~405 lines) |
+| src/daemon.ts | Hono app setup, route registration, ORCHESTRATOR_SYSTEM_PROMPT |
 | src/daemon/ | Extracted modules: context, event-system, helpers, agent-lifecycle, routes/ |
-| src/agent-tools.ts | MCP tools (10), system prompts, ORCHESTRATION_KNOWLEDGE |
-| src/anthropic-compatible-provider.ts | Anthropic API provider, compaction (~1200 lines) |
-| src/tools/ | Extracted: definitions, search, bash, executor |
+| src/agent-tools.ts | MCP tools, system prompts, ORCHESTRATION_KNOWLEDGE |
+| src/anthropic-compatible-provider.ts | Anthropic API provider, compaction |
+| src/tools/ | definitions.ts, search.ts, bash.ts, executor.ts, index.ts |
 | src/openai-compatible-provider.ts | OpenAI-compatible API provider (raw fetch) |
 | src/config.ts | Config system, auth groups, DEFAULT_MODEL constant |
 | src/task-tracker.ts | Task tree CRUD, JSON persistence |
 | src/worktree-manager.ts | Git worktree lifecycle |
 | src/message-queue.ts | MessageQueue + globalAgentQueues |
-| web/App.tsx | Web UI main (~650 lines, WS/handlers extracted) |
-| web/ws-handler.ts | WebSocket event handler |
-| web/handlers.ts | Action handlers |
+| web/App.tsx | Web UI main, WS/handlers extracted to ws-handler.ts + handlers.ts |
 | web/hooks.ts | React hooks + re-exports TaskNode/TaskStatus from src/types.ts |
 | web/components/ | 15+ components (ActivityLog, ToolCard, SettingsPanel, ErrorBoundary, etc.) |
 
 ## Daemon Module Structure
 
-`DaemonContext` (context.ts) holds all shared state. Route modules registered via `registerXxxRoutes(app, ctx)`:
-- `agent-lifecycle.ts`: launchAgent, stopAgent, runChildAgentInBackground, handleOrchestrate/InjectMessage/ClarifyResponse
-- `event-system.ts`: broadcast, broadcastEvent/TreeUpdate, pending messages/clarifications, event history persistence
-- `helpers.ts`: getTracker, resolveProjectConfig, getProjectProvider, readProjectMemory, pruneSessionFiles
+`DaemonContext` (context.ts) holds all shared state. Route modules via `registerXxxRoutes(app, ctx)`:
+- `agent-lifecycle.ts`: launchAgent, stopAgent (cascades to children), runChildAgentInBackground, createAgentContext (shared setup), consumeAgentEvents (shared event loop)
+- `event-system.ts`: broadcast, broadcastEvent/TreeUpdate, pending messages/clarifications
+- `helpers.ts`: getTracker, resolveProjectConfig, getProjectProvider, readProjectMemory
 - `routes/`: projects, tasks, config, agent, websocket
 
 ## Known Pitfalls
@@ -68,170 +67,49 @@ Daemon (Hono: HTTP + WS on :7433)
 - **Biome**: Always typecheck BEFORE `bun run check` (--write can be destructive on broken JSX).
 - **Template literals**: Use `${"$"}` for literal `$` in backtick strings in agent-tools.ts.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`. Use `?? ""` or `!`.
-- **Compact signal in yield**: Yield tool MUST `break` after re-enqueue — without break, infinite sync loop → 100% CPU.
+- **Compact signal in yield**: MUST `break` after re-enqueue — without break, infinite sync loop → 100% CPU.
 - **Orchestrator must never edit src files directly**: Use child tasks in worktrees. Direct edits trigger bun --watch daemon restart.
-- **React overrides**: ErrorBoundary class component requires `override` keyword on state/componentDidCatch/render (noImplicitOverride).
+- **React overrides**: ErrorBoundary class component requires `override` keyword (noImplicitOverride).
 - **Shared types**: `web/hooks.ts` re-exports `TaskNode`/`TaskStatus` from `../src/types.ts`. All web code imports from hooks.ts.
+- **CSS**: Use double-class selectors instead of `!important` (Biome rejects it). Always `type="button"` on buttons.
 
-## Web UI
+## Agent Lifecycle
 
-- **Auto-scroll**: MutationObserver (`childList + subtree + characterData`) for streaming text growth. ResizeObserver doesn't work.
-- **Stop button**: Handles 404 gracefully (session gone) — resets UI. Backend resets orphaned root nodes too.
-- **IME**: composingRef + keyCode 229 + isComposing triple-check for CJK input.
-- **Task DnD**: HTML5 drag, `setTimeout` for setDragState in onDragStart, midpoint check for before/after.
-- **App.tsx pattern**: `createWSHandler(deps)` + `createActionHandlers(deps)` — deps interface with state setters.
+- `stopAgent()` cascades: closes all child `MessageQueue`s via `globalAgentQueues`, sets children to `failed`.
+- `activeSessions` Map is single source of truth for orchestrator running state.
+- Orphan reset on startup: in_progress tasks → failed (skip root node).
+- `done()` race fix: providers check `queue.pending` before exiting when `doneRef.done` is set.
 
-## Compaction
+## Bash Tool
 
-- `SUMMARIZATION_INSTRUCTION` → model responds with `<summary>` tags → `extractCheckpoint()` parses
-- Resolved issues get concise outcome notes, not debugging narratives (prevents fixation on stale context)
-- Manual compact: POST /compact → queue signal → yield tool re-enqueues → provider handles
+- File-based stdout/stderr to `/tmp/opengraft-bg/`. Large output (>50KB) → 5KB preview + file path.
+- `bg_action: kill|status` for background processes. No hard timeout — runs until exit or explicit kill.
+- CWD tracked for foreground commands only. `cd` to same directory returns error.
+- Temp files persist until session cleanup via `cleanupSessionBackgroundProcesses()`.
 
 ## Search Tool
 
-- `jsSearch()` filters SKIP_DIRS (node_modules, .git, dist, etc.) via `excluded_dirs` parameter
-- Agent can pass custom `excluded_dirs` or empty array to search all
+- `jsSearch()` in `src/tools/search.ts`. Filters SKIP_DIRS via `excluded_dirs` parameter.
+- Multiline mode: RegExp `s` flag, `offsetToLine` binary search for match→line mapping.
 
-## Event History Replay
+## Web UI
 
-- `ws-handler.ts` splits into `collectEntries()` (pure, builds array) and `processSideEffects()` (state setters). Prevents tool card JSON flash during event_history replay by setting all logs in one `setLogs()` call.
+- **Auto-scroll**: MutationObserver (`childList + subtree + characterData`) for streaming text growth.
+- **Stop button**: Handles 404 gracefully — resets UI. Backend resets orphaned root nodes too.
+- **IME**: composingRef + keyCode 229 + isComposing triple-check for CJK input.
+- **Task DnD**: HTML5 drag. Center 40% = reparent, top/bottom 30% = reorder. Trash/root drop zones.
+- **ActivityLog**: toolUseId-based pairing for tool_use→tool_result. task_completed includes output summary.
+- **Event replay**: `ws-handler.ts` batches all entries in one `setLogs()` call (prevents flash).
+- **Settings**: `ModelsAuthSection` shared across 3 tabs. `__use_root_auth__` sentinel for childAuth.
 
-## Tool Module Structure
+## Compaction
 
-- `src/tools/`: Extracted from anthropic-compatible-provider.ts (2190→1212 lines)
-  - `definitions.ts`: TOOLS array
-  - `search.ts`: jsSearch(), truncateSearchOutput(), formatContextBlock()
-  - `bash.ts`: executeBashWithTimeout(), background process management
-  - `executor.ts`: executeTool(), resolvePath()
-  - `index.ts`: barrel re-exports
-- Provider re-exports from `./tools/index.ts` for backward compatibility.
-- `readProjectMemory(path, includeHeaders?)` in daemon/helpers.ts — single function for CLAUDE.md + memory.md reading. Agent-tools.ts imports with `includeHeaders=false`.
+- `SUMMARIZATION_INSTRUCTION` → `<summary>` tags → `extractCheckpoint()`. Manual: POST /compact.
+- Guidance: resolved issues get concise outcome notes, not debugging narratives.
 
-## Task UI Features
+## Task System
 
-- **Color labels**: `color?: string` on TaskNode. 7-color palette in TaskDetail. Color dot in TaskTree row. PATCH + agent tools support.
-- **Inline task creation**: `isCreating` state -> inline input in TaskTree. IME-safe. Blur with text confirms, without cancels.
-- **Trash drop zone**: Appears during drag at TaskTree bottom. Uses dataTransfer for task ID.
-- **CSS**: Use double-class selectors instead of `!important` (Biome rejects it). Always `type="button"` on buttons.
-
-## Agent Notification on User Tree Mutations
-
-- REST task mutations inject `[TREE UPDATED]` message into running agent session. `editedBy?: "user" | "agent"` on TaskNode.
-
-## Task Reparenting
-
-- `TaskTracker.reparent(nodeId, newParentId)` with circular dep validation. PATCH with `{ parentId }`.
-- Agent `update_task` tool: `parentId` field with scope validation.
-- DnD: center 40% of row = reparent, top/bottom 30% = reorder. `.og-reparent-target` visual indicator.
-
-## UI Fix Notes (March 2026)
-
-- **Root node flicker fix**: The fallback `roots` computation (when `rootNodeId` is null) now excludes nodes that are parents of other nodes, not just nodes with no `parentId`. This prevents the root orchestrator node from showing during initial render.
-- **Root drop zone**: `RootDropZone` component appears during drag when the dragged node is not already at root level. Uses `og-root-drop-zone` CSS class with accent-blue hover styling.
-- **[TREE UPDATED] card**: Detected via `entry.text.includes("[TREE UPDATED]")` in `queue_message` handler in ToolCard.tsx. Rendered with `og-tool-card-system` class (green accent).
-- **Color UI**: Was already fully implemented - color dot in TaskTree row, color picker in TaskDetail, PATCH API support.
-## Agent MCP Tools
-
-- `reorder_tasks` tool added alongside existing tools. Pattern: scope validation (currentTaskId check + isDescendantOf), then tracker method, save, broadcastTreeUpdate.
-
-## Settings Panel Auth Group Dropdown
-
-- `SettingAuthGroupSelect` component: reusable select dropdown that reads auth group names from `layers.global.authGroups` keys. Used for both `defaultAuth` and `childAuth` fields.
-- Global tab: auth groups + default auth dropdown + daemon settings + MCP servers. No model fields (those are project/local level).
-- Project/Local tabs (shared `ProjectTab` component): auth dropdowns, root model, task agent model, limits, MCP servers.
-- Translation keys renamed: `settings.modelOverride` → `settings.rootModel`, `settings.childModel` → `settings.taskAgentModel`.
-
-## SettingsPanel Refactor (March 2026)
-
-- `ModelsAuthSection` component: shared across all 3 tabs (global/project/local). Takes `layer`, `authGroupNames`, `draft`, `onDraftChange`.
-- Config key mapping: Root Auth → `defaultAuth`, Root Model → `model`, Child Auth → `childAuth`, Child Model → `childModel`.
-- Global tab: no inherit options, Child Auth defaults to "Use Root Auth", Child Model placeholder is "Use Root Model".
-- Project/Local tabs: all fields have "— Inherit —" as first option (empty string value). Child Auth also has "Use Root Auth" option.
-- `__use_root_auth__` sentinel in childAuth select maps to empty string on save (clears childAuth → falls back to defaultAuth).
-- Panel header title changes per active tab: "Global Settings" / "Project Settings" / "Local Settings".
-- Removed `SettingStringField` and `SettingAuthGroupSelect` (replaced by inline rendering in ModelsAuthSection).
-- i18n keys added: `settings.rootAuth`, `settings.childModel`, `settings.inheritOption`, `settings.useRootAuth`, `settings.useRootModel`, `settings.titleGlobal/Project/Local`.
-
-## External MCP Server Support
-
-- `src/mcp-client.ts`: `McpClientManager` class connects to external MCP servers via stdio transport using `@modelcontextprotocol/sdk`.
-- External tool schemas are JSON Schema (not Zod). Added optional `jsonSchema` field to `ToolDefinition` — providers use it directly instead of calling `zodShapeToJsonSchema()`.
-- Integration in `agent-lifecycle.ts`: both `launchAgent` and `runChildAgentInBackground` create `McpClientManager`, `connectAll()` from config, merge tool defs, and `disconnectAll()` in finally/cleanup.
-- `connectAll()` uses `Promise.allSettled` — individual server failures don't block others. Failed servers are logged but not added to the map.
-- Tool handler closure captures `serverName` and `tool.name`, calls `mcpManager.callTool()` which returns `CallToolResult` directly — compatible with both providers.
-## Background Process Management
-
-- ALL bash commands use file-based stdout/stderr redirection (`Bun.file(path)` to `/tmp/opengraft-bg/`). Consistent approach — no piped output.
-- `BackgroundProcess` interface has `kill: (() => void) | null`, `stdoutPath`, `stderrPath` fields.
-- Agent can `read_file` on output file paths for partial output while process is running.
-- `bg_action` parameter on bash tool: `kill` terminates process + returns final output, `status` returns metadata + file paths (running) or stored output (completed).
-- `timeout` parameter removed from bash tool schema. Internal 600s safety timeout hardcoded in executor.ts.
-- Temp files cleaned up on completion, kill, or session cleanup.
-- CWD tracking only applies to foreground-completed commands. Backgrounded commands never update CWD.
-
-## Hard Timeout Removal (March 2026)
-
-- Removed `hardTimeout` parameter from `executeBashWithTimeout()` and all callers.
-- Background processes (immediate or promoted from foreground) now run until natural exit or explicit `bg_action: "kill"`.
-- No more automatic `setTimeout(() => proc.kill(), ...)` kill timers.
-- The `foregroundTimeout >= hardTimeout` branch was removed — foreground commands just race `foreground_timeout` vs process exit.
-- executor.ts no longer has a 600s safety timeout constant.
-
-## Bash Tool Card Rendering Fix (March 2026)
-
-- `getToolCardTitle()` for bash: when `bg_action` is present in toolArgs, shows `bg kill: <bgId>` or `bg status: <bgId>` instead of `$ ignored`.
-- `formatArgs()` accepts optional `excludeKeys?: Set<string>` parameter. For bash bg_action calls, `command` key is excluded from displayed args.
-- `bashBgExcludeKeys()` helper returns the exclude set when toolName is "bash" and bg_action is present.
-
-## Background Process Completion Simplification (March 2026)
-
-- `background_complete` queue messages now contain metadata only (commandId, command, exitCode, durationMs). stdout/stderr fields are optional and no longer included.
-- Background process temp files are NOT cleaned up on completion — they persist until session ends via `cleanupSessionBackgroundProcesses()`. Agent reads output via `read_file` at any granularity.
-- `getBackgroundStatus()` returns metadata + file paths only, no stdout/stderr content. Works for both running and completed processes.
-- `killBackgroundProcess()` no longer reads output or cleans up files. Returns metadata + file paths.
-- Foreground commands with large output (>50KB) return a 5KB preview + file path instead of full content. Files preserved for `read_file` access.
-- `formatQueueMessage()` and `toRawMessage()` for background_complete no longer include output content.
-
-## Race Condition Fix: done() + pending messages (March 2026)
-
-- Both providers now check `queue.pending` before exiting the runLoop when `doneRef.done` is set.
-- If pending messages exist (e.g., user sent a message right as agent called done()), `doneRef.done` is reset to null and the loop continues.
-- This prevents message loss in the race window between done() tool execution and loop exit.
-- Fix applied at two points in each provider: (1) after end_turn/stop with no tool calls, (2) after tool batch execution.
-## Named Color Categories (March 2026)
-
-- TASK_COLORS in TaskDetail.tsx changed from generic color names (Red, Blue, etc.) to named categories: Bug, Feature, Refactor, Optimization, Research, Chore.
-- `resolveColor()` in agent-tools.ts converts named colors (red, blue, green, yellow, purple, orange, gray) to hex values. Agent tools accept both named colors and raw hex.
-- Color picker uses `og-color-category` class (pill-shaped buttons with swatch + label) instead of standalone `og-color-swatch` circles.
-## OpenAI Provider Audit (March 2026)
-
-- **Import cleanup**: OpenAI provider now imports `TOOLS`, `executeTool`, `cleanupSessionBackgroundProcesses` directly from `./tools/index.ts` instead of through anthropic-compatible-provider re-exports. Compaction-specific imports (`buildCompactedContext`, `extractCheckpoint`, `SUMMARIZATION_INSTRUCTION`, `zodShapeToJsonSchema`) remain from anthropic-compatible-provider.ts where they are defined.
-- **Model coverage expanded**: Added gpt-4.1/mini/nano, gpt-4-turbo, o1/o1-mini/o1-pro, o4-mini with correct pricing and context windows. GPT-4.1 family gets 1M+ context window (1,047,576 tokens).
-- **Prefix match bug fix**: Both `getModelPricing()` and `getContextWindow()` now sort keys by length (longest first) before prefix matching, preventing e.g. "gpt-4.1" from matching before "gpt-4.1-mini" for dated model names like "gpt-4.1-mini-2025-04-14".
-- **Feature parity confirmed**: Both providers use same shared `executeTool`, same `TOOLS` array, same `mcpToolDefs` handling pattern (mcp__serverName__toolName), same compaction flow. Key differences are by design: Anthropic uses `countTokens` API for precise token counting vs OpenAI uses estimated counts; Anthropic uses SDK streaming vs OpenAI uses non-streaming raw fetch.
-## Agent Lifecycle Deduplication (March 2026)
-
-- `createAgentContext()`: Shared helper that resolves project config, creates provider, connects MCP servers, and builds orchestrator tools. Used by both `launchAgent` and `runChildAgentInBackground`.
-- `consumeAgentEvents()`: Shared event loop that drains an `AsyncGenerator<AgentEvent, AgentResult>` and calls `onEvent` for each event. Returns the final `AgentResult`.
-- `mcpManager` is passed into `createAgentContext` via opts so callers own the instance for cleanup in `finally` blocks.
-- `childModel` resolution: `createAgentContext` falls back to `effectiveCfg.childModel` when `opts.childModel` is undefined. Callers pass API-level overrides if any.
-## Multiline Search Implementation (March 2026)
-
-- `jsSearch()` accepts `multiline?: boolean`. When true, uses RegExp `s` flag (dotAll) so `.` matches newlines.
-- Multiline mode matches against full file content, then maps match byte offsets to line numbers via binary search (`offsetToLine` helper with precomputed line offset table).
-- All output modes (content, files_with_matches, count) work with multiline. Context lines work too.
-- Standard (non-multiline) mode uses a separate `lineRegex` without `g` flag to avoid stateful `lastIndex` issues from the global regex.
-
-## Activity Log Bug Fixes (March 2026)
-
-- **toolUseId matching**: Added `toolUseId` field to `AgentEvent` (tool_use/tool_result), `LogEntry`, and WS events. ActivityLog.tsx now pairs tool_use→tool_result by unique ID instead of tool name, fixing cascading mismatch bug where sequential same-name tool calls (e.g. multiple bash commands) would steal each others results, leaving the last one with a permanent spinner.
-- **FIFO fallback**: For legacy events without toolUseId, falls back to FIFO queue per (toolName, taskId).
-- **task_completed summary**: Both agent-tools.ts and agent-lifecycle.ts now include `output` (done() summary) in task_completed events. ws-handler.ts renders the summary in the log entry text. child_complete queue_message was already suppressed (the `continue` existed before).
-- **execute_tasks title**: `getToolCardTitle` for execute_tasks now handles `toolArgs.tasks` as either array (live events) or JSON string (event_history), fixing garbled title display.
-
-
-## Stop Agent Cascade Fix (March 2026)
-
-- `stopAgent()` now cascades stop to all in-progress child agents by closing their `MessageQueue` from `globalAgentQueues` and setting their status to `failed`.
-- The queue close causes the child's `runChildAgentInBackground` catch block to fire (sets `stuck`), but since `stopAgent` already set `failed`, the final state is acceptable either way — both are terminal.
-- Order matters: close queues AND update status in stopAgent before the child's catch block races to set `stuck`.
+- Color labels: named categories (Bug=red, Feature=blue, etc.) via `resolveColor()` in agent-tools.ts.
+- `editedBy?: "user" | "agent"` on TaskNode. REST mutations inject `[TREE UPDATED]` message.
+- `reparent(nodeId, newParentId)` with circular dep validation. `reorderChildren()` for ordering.
+- `reorder_tasks` MCP tool with scope validation (currentTaskId + isDescendantOf).
