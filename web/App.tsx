@@ -4,6 +4,7 @@ import { ActivityLog } from "./components/ActivityLog.tsx";
 import { AppFooter } from "./components/AppFooter.tsx";
 import { AppHeader } from "./components/AppHeader.tsx";
 import { CuteCat } from "./components/CuteCat.tsx";
+import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import {
 	IconArrowDown,
 	IconClose,
@@ -71,7 +72,9 @@ function updateHash(
 export function App() {
 	return (
 		<LocaleProvider>
-			<AppInner />
+			<ErrorBoundary>
+				<AppInner />
+			</ErrorBoundary>
 		</LocaleProvider>
 	);
 }

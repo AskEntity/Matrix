@@ -147,3 +147,8 @@ Daemon (Hono: HTTP + WS on :7433)
 
 Pattern: All modules receive a `DaemonContext` object instead of capturing state via closure. Route modules are registered with `registerXxxRoutes(app, ctx)`.
 
+
+## ErrorBoundary
+
+- React ErrorBoundary requires `override` keyword on `state`, `componentDidCatch`, and `render` when `noImplicitOverride` is enabled in tsconfig.
+- Placed inside `LocaleProvider` but outside `AppInner` so locale context is available if the fallback UI ever needs i18n.
