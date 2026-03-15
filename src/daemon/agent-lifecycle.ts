@@ -260,6 +260,7 @@ export async function runChildAgentInBackground(
 			taskId: nodeId,
 			title: node.title,
 			success: didPass,
+			output: (doneRef.done?.summary ?? agentResult.output ?? "").slice(0, 500),
 		});
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} catch (e) {

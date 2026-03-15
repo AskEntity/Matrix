@@ -759,6 +759,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				yield {
 					type: "tool_use",
 					tool: tc.function.name,
+					toolUseId: tc.id,
 					input: parsedInput,
 				};
 			}
@@ -868,6 +869,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				yield {
 					type: "tool_result",
 					tool: tc.function.name,
+					toolUseId: tc.id,
 					content: exec.content.slice(0, 500),
 					isError: exec.isError,
 				};

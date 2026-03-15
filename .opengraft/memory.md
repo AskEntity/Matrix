@@ -221,3 +221,11 @@ Daemon (Hono: HTTP + WS on :7433)
 - Multiline mode matches against full file content, then maps match byte offsets to line numbers via binary search (`offsetToLine` helper with precomputed line offset table).
 - All output modes (content, files_with_matches, count) work with multiline. Context lines work too.
 - Standard (non-multiline) mode uses a separate `lineRegex` without `g` flag to avoid stateful `lastIndex` issues from the global regex.
+
+## Activity Log Bug Fixes (March 2026)
+
+- **toolUseId matching**: Added `toolUseId` field to `AgentEvent` (tool_use/tool_result), `LogEntry`, and WS events. ActivityLog.tsx now pairs tool_use→tool_result by unique ID instead of tool name, fixing cascading mismatch bug where sequential same-name tool calls (e.g. multiple bash commands) would steal each others results, leaving the last one with a permanent spinner.
+- **FIFO fallback**: For legacy events without toolUseId, falls back to FIFO queue per (toolName, taskId).
+- **task_completed summary**: Both agent-tools.ts and agent-lifecycle.ts now include `output` (done() summary) in task_completed events. ws-handler.ts renders the summary in the log entry text. child_complete queue_message was already suppressed (the `continue` existed before).
+- **execute_tasks title**: `getToolCardTitle` for execute_tasks now handles `toolArgs.tasks` as either array (live events) or JSON string (event_history), fixing garbled title display.
+

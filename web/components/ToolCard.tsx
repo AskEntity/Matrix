@@ -179,36 +179,40 @@ export function getToolCardTitle(
 				return "– Task";
 			}
 			case "execute_tasks": {
-				const tasksArg = getArg(toolArgs, "tasks");
-				if (tasksArg) {
-					try {
-						const tasks = JSON.parse(tasksArg) as Array<{
-							taskId?: string;
-							title?: string;
-						}>;
-						// Try to get titles from result
-						let titles: string[] = [];
-						if (resultContent) {
-							try {
-								const json = JSON.parse(resultContent) as {
-									tasks?: Array<{ title?: string }>;
-								};
-								if (Array.isArray(json.tasks)) {
-									titles = json.tasks
-										.map((t) => t.title ?? "?")
-										.filter(Boolean);
-								}
-							} catch {
-								/* ignore */
-							}
+				// toolArgs.tasks may be an array (live) or a JSON string (event_history)
+				let parsedTasks: Array<{ taskId?: string; title?: string }> = [];
+				const tasksVal = toolArgs?.tasks;
+				if (Array.isArray(tasksVal)) {
+					parsedTasks = tasksVal as typeof parsedTasks;
+				} else {
+					const tasksArg = getArg(toolArgs, "tasks");
+					if (tasksArg) {
+						try {
+							parsedTasks = JSON.parse(tasksArg) as typeof parsedTasks;
+						} catch {
+							/* ignore */
 						}
-						if (titles.length > 0) {
-							return `⚡ Run ${titles.length}: ${titles.join(", ")}`;
-						}
-						return `⚡ Run ${tasks.length}`;
-					} catch {
-						/* ignore */
 					}
+				}
+				if (parsedTasks.length > 0) {
+					// Try to get titles from result
+					let titles: string[] = [];
+					if (resultContent) {
+						try {
+							const json = JSON.parse(resultContent) as {
+								tasks?: Array<{ title?: string }>;
+							};
+							if (Array.isArray(json.tasks)) {
+								titles = json.tasks.map((t) => t.title ?? "?").filter(Boolean);
+							}
+						} catch {
+							/* ignore */
+						}
+					}
+					if (titles.length > 0) {
+						return `⚡ Run ${titles.length}: ${titles.join(", ")}`;
+					}
+					return `⚡ Run ${parsedTasks.length}`;
 				}
 				return "⚡ Run";
 			}

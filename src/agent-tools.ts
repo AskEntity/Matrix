@@ -1067,6 +1067,7 @@ export function createOrchestratorTools(
 									taskId: nodeRef.id,
 									title: nodeRef.title,
 									success: result.success,
+									output: result.output.slice(0, 500),
 								});
 
 								// Enqueue child_complete message to parent's queue
@@ -1094,6 +1095,7 @@ export function createOrchestratorTools(
 									title: nodeRef.title,
 									success: false,
 									error: message,
+									output: `Error: ${message}`,
 								});
 
 								// Enqueue child_complete (failure) to parent's queue

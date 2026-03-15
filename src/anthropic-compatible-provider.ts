@@ -886,6 +886,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						yield {
 							type: "tool_use",
 							tool: block.name,
+							toolUseId: block.id,
 							input: block.input as Record<string, unknown>,
 						};
 					}
@@ -1059,6 +1060,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				yield {
 					type: "tool_result",
 					tool: toolUse.name,
+					toolUseId: toolUse.id,
 					content: text.slice(0, 500),
 					isError,
 				};

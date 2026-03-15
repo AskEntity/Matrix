@@ -36,10 +36,16 @@ export interface AgentRequest {
 /** Streaming event emitted by an agent during execution. */
 export type AgentEvent =
 	| { type: "status"; message: string }
-	| { type: "tool_use"; tool: string; input: Record<string, unknown> }
+	| {
+			type: "tool_use";
+			tool: string;
+			toolUseId: string;
+			input: Record<string, unknown>;
+	  }
 	| {
 			type: "tool_result";
 			tool: string;
+			toolUseId: string;
 			content: string;
 			isError: boolean;
 	  }
