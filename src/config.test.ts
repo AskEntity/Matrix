@@ -1,0 +1,227 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+	loadProjectLocalConfig,
+	loadProjectRepoConfig,
+	type OpenGraftConfig,
+	resolveAuthGroup,
+	resolveConfig,
+	saveProjectLocalConfig,
+} from "./config.ts";
+
+describe("resolveConfig", () => {
+	test("local > repo > global for scalar fields", () => {
+		const global: OpenGraftConfig = {
+			model: "global-model",
+			budgetUsd: 10,
+			maxDepth: 3,
+		};
+		const repo: OpenGraftConfig = {
+			model: "repo-model",
+			budgetUsd: 20,
+		};
+		const local: OpenGraftConfig = {
+			model: "local-model",
+		};
+
+		const result = resolveConfig(global, repo, local);
+		expect(result.model).toBe("local-model");
+		expect(result.budgetUsd).toBe(20);
+		expect(result.maxDepth).toBe(3);
+	});
+
+	test("empty layers are skipped", () => {
+		const global: OpenGraftConfig = { model: "global-model" };
+		const result = resolveConfig(global, {}, {});
+		expect(result.model).toBe("global-model");
+	});
+
+	test("all empty returns empty config", () => {
+		const result = resolveConfig({}, {}, {});
+		expect(result).toEqual({});
+	});
+
+	test("mcpServers are merged (union), local overrides same-named", () => {
+		const global: OpenGraftConfig = {
+			mcpServers: {
+				filesystem: { command: "mcp-fs", args: ["--read-only"] },
+				search: { command: "mcp-search" },
+			},
+		};
+		const repo: OpenGraftConfig = {
+			mcpServers: {
+				database: { command: "mcp-db" },
+			},
+		};
+		const local: OpenGraftConfig = {
+			mcpServers: {
+				filesystem: {
+					command: "mcp-fs-v2",
+					args: ["--rw"],
+					env: { HOME: "/tmp" },
+				},
+			},
+		};
+
+		const result = resolveConfig(global, repo, local);
+		expect(result.mcpServers).toEqual({
+			filesystem: {
+				command: "mcp-fs-v2",
+				args: ["--rw"],
+				env: { HOME: "/tmp" },
+			},
+			search: { command: "mcp-search" },
+			database: { command: "mcp-db" },
+		});
+	});
+
+	test("authGroups are merged (union), local overrides same-named", () => {
+		const global: OpenGraftConfig = {
+			authGroups: {
+				work: { provider: "anthropic", anthropicApiKey: "sk-work" },
+				personal: { provider: "openai", openaiApiKey: "sk-personal" },
+			},
+		};
+		const local: OpenGraftConfig = {
+			authGroups: {
+				work: {
+					provider: "anthropic",
+					anthropicApiKey: "sk-work-updated",
+				},
+			},
+		};
+
+		const result = resolveConfig(global, {}, local);
+		expect(result.authGroups?.work?.anthropicApiKey).toBe("sk-work-updated");
+		expect(result.authGroups?.personal?.provider).toBe("openai");
+	});
+
+	test("partial configs merge correctly across all layers", () => {
+		const global: OpenGraftConfig = {
+			maxDepth: 5,
+			clarifyTimeoutMs: 30000,
+		};
+		const repo: OpenGraftConfig = {
+			childModel: "sonnet",
+			mcpServers: { git: { command: "mcp-git" } },
+		};
+		const local: OpenGraftConfig = {
+			defaultAuth: "team",
+			childAuth: "team",
+		};
+
+		const result = resolveConfig(global, repo, local);
+		expect(result).toEqual({
+			maxDepth: 5,
+			clarifyTimeoutMs: 30000,
+			childModel: "sonnet",
+			defaultAuth: "team",
+			childAuth: "team",
+			mcpServers: { git: { command: "mcp-git" } },
+		});
+	});
+});
+
+describe("resolveAuthGroup", () => {
+	const config: OpenGraftConfig = {
+		defaultAuth: "default-group",
+		authGroups: {
+			"default-group": {
+				provider: "anthropic",
+				anthropicApiKey: "sk-default",
+			},
+			"openai-group": {
+				provider: "openai",
+				openaiApiKey: "sk-openai",
+				openaiBaseUrl: "https://api.openai.com/v1",
+			},
+		},
+	};
+
+	test("resolves by explicit name", () => {
+		const group = resolveAuthGroup(config, "openai-group");
+		expect(group).toEqual({
+			provider: "openai",
+			openaiApiKey: "sk-openai",
+			openaiBaseUrl: "https://api.openai.com/v1",
+		});
+	});
+
+	test("resolves default when no name given", () => {
+		const group = resolveAuthGroup(config);
+		expect(group?.provider).toBe("anthropic");
+		expect(group?.anthropicApiKey).toBe("sk-default");
+	});
+
+	test("returns null for nonexistent group", () => {
+		expect(resolveAuthGroup(config, "nonexistent")).toBeNull();
+	});
+
+	test("returns null when no defaultAuth and no name", () => {
+		expect(resolveAuthGroup({}, undefined)).toBeNull();
+	});
+
+	test("returns null when no authGroups defined", () => {
+		const cfg: OpenGraftConfig = { defaultAuth: "missing" };
+		expect(resolveAuthGroup(cfg)).toBeNull();
+	});
+});
+
+describe("file loading", () => {
+	let tmpDir: string;
+
+	beforeEach(async () => {
+		tmpDir = await mkdtemp(join(tmpdir(), "og-config-test-"));
+	});
+
+	afterEach(async () => {
+		await rm(tmpDir, { recursive: true, force: true });
+	});
+
+	test("loadProjectRepoConfig reads from .opengraft/config.json", async () => {
+		const projectPath = join(tmpDir, "my-project");
+		const configDir = join(projectPath, ".opengraft");
+		await mkdir(configDir, { recursive: true });
+		const config: OpenGraftConfig = { model: "test-model" };
+		await writeFile(join(configDir, "config.json"), JSON.stringify(config));
+
+		const loaded = await loadProjectRepoConfig(projectPath);
+		expect(loaded.model).toBe("test-model");
+	});
+
+	test("loadProjectRepoConfig returns empty for missing file", async () => {
+		const loaded = await loadProjectRepoConfig(join(tmpDir, "nonexistent"));
+		expect(loaded).toEqual({});
+	});
+
+	test("loadProjectLocalConfig reads from dataDir/projects/<id>/config.json", async () => {
+		const projectId = "abc-123";
+		const configDir = join(tmpDir, "projects", projectId);
+		await mkdir(configDir, { recursive: true });
+		const config: OpenGraftConfig = { budgetUsd: 42 };
+		await writeFile(join(configDir, "config.json"), JSON.stringify(config));
+
+		const loaded = await loadProjectLocalConfig(tmpDir, projectId);
+		expect(loaded.budgetUsd).toBe(42);
+	});
+
+	test("loadProjectLocalConfig returns empty for missing file", async () => {
+		const loaded = await loadProjectLocalConfig(tmpDir, "nonexistent-id");
+		expect(loaded).toEqual({});
+	});
+
+	test("saveProjectLocalConfig creates directories and writes config", async () => {
+		const projectId = "new-project";
+		const config: OpenGraftConfig = {
+			model: "claude-4",
+			mcpServers: { test: { command: "test-cmd" } },
+		};
+
+		await saveProjectLocalConfig(tmpDir, projectId, config);
+		const loaded = await loadProjectLocalConfig(tmpDir, projectId);
+		expect(loaded.model).toBe("claude-4");
+		expect(loaded.mcpServers?.test?.command).toBe("test-cmd");
+	});
+});

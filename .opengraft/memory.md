@@ -339,3 +339,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - New AgentEvent type `compact_started` emitted by both providers right before summarization instruction is pushed
 - UI handles it to set compacting state via event instead of onClick hack
 - Flow: compact signal → provider picks up → emits compact_started → UI shows "Compressing..." → compaction runs → emits compact → UI clears
+
+## Config System (src/config.ts)
+- Three-layer config resolution: global (~/.opengraft/config.json) < repo (<project>/.opengraft/config.json) < local (dataDir/projects/<id>/config.json)
+- Scalar fields: higher priority wins. mcpServers and authGroups: merged (union), higher priority overrides same-named entries.
+- resolveAuthGroup: looks up by name or falls back to defaultAuth. Returns null if not found.
+- Existing project-config.ts handles the old per-project config; new config.ts is the unified three-layer system.
