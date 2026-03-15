@@ -162,7 +162,7 @@ export const TOOLS: Tool[] = [
 				multiline: {
 					type: "boolean",
 					description:
-						"Enable multiline matching with RegExp 's' flag, allowing '.' to match newlines (default: false). NOTE: not yet implemented — reserved for future use.",
+						"Enable multiline matching with RegExp 's' flag, allowing '.' to match newlines (default: false).",
 				},
 				excluded_dirs: {
 					type: "array",

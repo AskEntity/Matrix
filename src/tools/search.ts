@@ -40,6 +40,7 @@ export async function jsSearch(opts: {
 	outputMode: string;
 	headLimit: number;
 	caseInsensitive: boolean;
+	multiline?: boolean;
 	excludedDirs?: string[];
 	cwd: string;
 }): Promise<string> {
@@ -51,11 +52,16 @@ export async function jsSearch(opts: {
 		outputMode,
 		headLimit,
 		caseInsensitive,
+		multiline,
 		excludedDirs,
 		cwd: baseCwd,
 	} = opts;
 
-	const regex = new RegExp(pattern, caseInsensitive ? "i" : "");
+	let flags = "g";
+	if (caseInsensitive) flags += "i";
+	if (multiline) flags += "s";
+	const regex = new RegExp(pattern, flags);
+	const lineRegex = new RegExp(pattern, caseInsensitive ? "i" : "");
 	let absSearchPath = isAbsolute(searchPath)
 		? searchPath
 		: join(baseCwd, searchPath);
@@ -144,83 +150,187 @@ export async function jsSearch(opts: {
 
 		const lines = content.split("\n");
 
-		if (outputMode === "files_with_matches") {
-			for (const line of lines) {
-				if (regex.test(line)) {
-					outputLines.push(displayPath);
-					entryCount++;
-					break;
-				}
+		if (multiline) {
+			// Multiline mode: match against full content using 's' flag
+			regex.lastIndex = 0;
+			const matches: Array<{ startLine: number; endLine: number }> = [];
+			// Build line offset table for O(log n) offset-to-line lookups
+			const lineOffsets: number[] = [0];
+			for (let i = 0; i < lines.length - 1; i++) {
+				lineOffsets.push(
+					(lineOffsets[i] as number) + (lines[i] as string).length + 1,
+				);
 			}
-		} else if (outputMode === "count") {
-			let count = 0;
-			for (const line of lines) {
-				if (regex.test(line)) count++;
+
+			for (let m = regex.exec(content); m !== null; m = regex.exec(content)) {
+				const startOffset = m.index;
+				const endOffset = m.index + m[0].length - 1;
+				const startLine = offsetToLine(lineOffsets, startOffset);
+				const endLine = offsetToLine(lineOffsets, endOffset);
+				matches.push({ startLine, endLine });
+				// Prevent infinite loop on zero-length matches
+				if (m[0].length === 0) regex.lastIndex++;
 			}
-			if (count > 0) {
-				outputLines.push(`${displayPath}:${count}`);
+
+			if (matches.length === 0) continue;
+
+			if (outputMode === "files_with_matches") {
+				outputLines.push(displayPath);
 				entryCount++;
-			}
-		} else {
-			// content mode — with optional context lines
-			const matchIndices: number[] = [];
-			for (let i = 0; i < lines.length; i++) {
-				if (regex.test(lines[i] ?? "")) matchIndices.push(i);
-			}
-			if (matchIndices.length === 0) continue;
-
-			if (useContext) {
-				// Group matches into context blocks
-				const blocks: string[] = [];
-				// biome-ignore lint/style/noNonNullAssertion: length checked above
-				let blockStart = Math.max(0, matchIndices[0]! - ctxRange);
-				// biome-ignore lint/style/noNonNullAssertion: length checked above
-				let blockEnd = Math.min(lines.length - 1, matchIndices[0]! + ctxRange);
-
-				for (let m = 1; m < matchIndices.length; m++) {
-					const mi = matchIndices[m] as number;
-					const newStart = Math.max(0, mi - ctxRange);
-					const newEnd = Math.min(lines.length - 1, mi + ctxRange);
-					if (newStart <= blockEnd + 1) {
-						// Merge with current block
-						blockEnd = newEnd;
-					} else {
-						// Emit current block
-						blocks.push(
-							formatContextBlock(
-								lines,
-								blockStart,
-								blockEnd,
-								matchIndices,
-								displayPath,
-							),
-						);
-						blockStart = newStart;
-						blockEnd = newEnd;
+			} else if (outputMode === "count") {
+				outputLines.push(`${displayPath}:${matches.length}`);
+				entryCount++;
+			} else {
+				// content mode — collect all lines touched by matches
+				const matchLineSet = new Set<number>();
+				for (const match of matches) {
+					for (let i = match.startLine; i <= match.endLine; i++) {
+						matchLineSet.add(i);
 					}
 				}
-				blocks.push(
-					formatContextBlock(
-						lines,
-						blockStart,
-						blockEnd,
-						matchIndices,
-						displayPath,
-					),
-				);
+				const matchIndices = Array.from(matchLineSet).sort((a, b) => a - b);
 
-				for (const block of blocks) {
-					if (entryCount >= headLimit) break;
-					if (outputLines.length > 0) outputLines.push("--");
-					outputLines.push(block);
+				if (useContext) {
+					const blocks: string[] = [];
+
+					// Find contiguous groups
+					let groupStartIdx = 0;
+					for (let k = 1; k < matchIndices.length; k++) {
+						const prevEnd = (matchIndices[k - 1] as number) + ctxRange;
+						const currStart = (matchIndices[k] as number) - ctxRange;
+						if (currStart > prevEnd + 1) {
+							// Emit previous group
+							const gEnd = Math.min(
+								lines.length - 1,
+								(matchIndices[k - 1] as number) + ctxRange,
+							);
+							blocks.push(
+								formatContextBlock(
+									lines,
+									Math.max(
+										0,
+										(matchIndices[groupStartIdx] as number) - ctxRange,
+									),
+									gEnd,
+									matchIndices,
+									displayPath,
+								),
+							);
+							groupStartIdx = k;
+						}
+					}
+					// Emit last group
+					blocks.push(
+						formatContextBlock(
+							lines,
+							Math.max(0, (matchIndices[groupStartIdx] as number) - ctxRange),
+							Math.min(
+								lines.length - 1,
+								(matchIndices[matchIndices.length - 1] as number) + ctxRange,
+							),
+							matchIndices,
+							displayPath,
+						),
+					);
+
+					for (const block of blocks) {
+						if (entryCount >= headLimit) break;
+						if (outputLines.length > 0) outputLines.push("--");
+						outputLines.push(block);
+						entryCount++;
+					}
+				} else {
+					// No context — show lines that are part of matches
+					for (const idx of matchIndices) {
+						if (entryCount >= headLimit) break;
+						outputLines.push(`${displayPath}:${idx + 1}:${lines[idx]}`);
+						entryCount++;
+					}
+				}
+			}
+		} else {
+			// Standard line-by-line mode
+			if (outputMode === "files_with_matches") {
+				for (const line of lines) {
+					if (lineRegex.test(line)) {
+						outputLines.push(displayPath);
+						entryCount++;
+						break;
+					}
+				}
+			} else if (outputMode === "count") {
+				let count = 0;
+				for (const line of lines) {
+					if (lineRegex.test(line)) count++;
+				}
+				if (count > 0) {
+					outputLines.push(`${displayPath}:${count}`);
 					entryCount++;
 				}
 			} else {
-				// No context — just matching lines
-				for (const idx of matchIndices) {
-					if (entryCount >= headLimit) break;
-					outputLines.push(`${displayPath}:${idx + 1}:${lines[idx]}`);
-					entryCount++;
+				// content mode — with optional context lines
+				const matchIndices: number[] = [];
+				for (let i = 0; i < lines.length; i++) {
+					if (lineRegex.test(lines[i] ?? "")) matchIndices.push(i);
+				}
+				if (matchIndices.length === 0) continue;
+
+				if (useContext) {
+					// Group matches into context blocks
+					const blocks: string[] = [];
+					// biome-ignore lint/style/noNonNullAssertion: length checked above
+					let blockStart = Math.max(0, matchIndices[0]! - ctxRange);
+					let blockEnd = Math.min(
+						lines.length - 1,
+						// biome-ignore lint/style/noNonNullAssertion: length checked above
+						matchIndices[0]! + ctxRange,
+					);
+
+					for (let m = 1; m < matchIndices.length; m++) {
+						const mi = matchIndices[m] as number;
+						const newStart = Math.max(0, mi - ctxRange);
+						const newEnd = Math.min(lines.length - 1, mi + ctxRange);
+						if (newStart <= blockEnd + 1) {
+							// Merge with current block
+							blockEnd = newEnd;
+						} else {
+							// Emit current block
+							blocks.push(
+								formatContextBlock(
+									lines,
+									blockStart,
+									blockEnd,
+									matchIndices,
+									displayPath,
+								),
+							);
+							blockStart = newStart;
+							blockEnd = newEnd;
+						}
+					}
+					blocks.push(
+						formatContextBlock(
+							lines,
+							blockStart,
+							blockEnd,
+							matchIndices,
+							displayPath,
+						),
+					);
+
+					for (const block of blocks) {
+						if (entryCount >= headLimit) break;
+						if (outputLines.length > 0) outputLines.push("--");
+						outputLines.push(block);
+						entryCount++;
+					}
+				} else {
+					// No context — just matching lines
+					for (const idx of matchIndices) {
+						if (entryCount >= headLimit) break;
+						outputLines.push(`${displayPath}:${idx + 1}:${lines[idx]}`);
+						entryCount++;
+					}
 				}
 			}
 		}
@@ -231,6 +341,23 @@ export async function jsSearch(opts: {
 		result += `\n[... truncated at ${headLimit} entries]`;
 	}
 	return result.slice(0, 20000);
+}
+
+/**
+ * Binary search to find which line a byte offset falls on.
+ */
+function offsetToLine(lineOffsets: number[], offset: number): number {
+	let lo = 0;
+	let hi = lineOffsets.length - 1;
+	while (lo < hi) {
+		const mid = (lo + hi + 1) >> 1;
+		if ((lineOffsets[mid] as number) <= offset) {
+			lo = mid;
+		} else {
+			hi = mid - 1;
+		}
+	}
+	return lo;
 }
 
 function formatContextBlock(

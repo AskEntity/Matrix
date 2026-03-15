@@ -191,3 +191,10 @@ Daemon (Hono: HTTP + WS on :7433)
 - `killBackgroundProcess()` no longer reads output or cleans up files. Returns metadata + file paths.
 - Foreground commands with large output (>50KB) return a 5KB preview + file path instead of full content. Files preserved for `read_file` access.
 - `formatQueueMessage()` and `toRawMessage()` for background_complete no longer include output content.
+
+## Multiline Search Implementation (March 2026)
+
+- `jsSearch()` accepts `multiline?: boolean`. When true, uses RegExp `s` flag (dotAll) so `.` matches newlines.
+- Multiline mode matches against full file content, then maps match byte offsets to line numbers via binary search (`offsetToLine` helper with precomputed line offset table).
+- All output modes (content, files_with_matches, count) work with multiline. Context lines work too.
+- Standard (non-multiline) mode uses a separate `lineRegex` without `g` flag to avoid stateful `lastIndex` issues from the global regex.

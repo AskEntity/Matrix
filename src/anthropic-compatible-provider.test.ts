@@ -1609,4 +1609,88 @@ describe("jsSearch", () => {
 		expect(result).toContain("hello.ts");
 		expect(result).toContain("world.ts");
 	});
+
+	test("multiline matches pattern spanning multiple lines", async () => {
+		const result = await jsSearch({
+			pattern: "const x.*\\nconst y",
+			searchPath: join(tempDir, "hello.ts"),
+			outputMode: "content",
+			headLimit: 50,
+			caseInsensitive: false,
+			multiline: true,
+			cwd: tempDir,
+		});
+		expect(result).toContain("const x = 1;");
+		expect(result).toContain("const y = 2;");
+	});
+
+	test("multiline without flag does not match across lines", async () => {
+		const result = await jsSearch({
+			pattern: "const x.*const y",
+			searchPath: join(tempDir, "hello.ts"),
+			outputMode: "content",
+			headLimit: 50,
+			caseInsensitive: false,
+			multiline: false,
+			cwd: tempDir,
+		});
+		// Should not match because .* doesn't cross newlines without 's' flag
+		expect(result).toBe("");
+	});
+
+	test("multiline with dotAll matches across newlines", async () => {
+		const result = await jsSearch({
+			pattern: "const x.+const y",
+			searchPath: join(tempDir, "hello.ts"),
+			outputMode: "content",
+			headLimit: 50,
+			caseInsensitive: false,
+			multiline: true,
+			cwd: tempDir,
+		});
+		expect(result).toContain("const x = 1;");
+		expect(result).toContain("const y = 2;");
+	});
+
+	test("multiline files_with_matches mode", async () => {
+		const result = await jsSearch({
+			pattern: "const x.*\\nconst y",
+			searchPath: tempDir,
+			outputMode: "files_with_matches",
+			headLimit: 50,
+			caseInsensitive: false,
+			multiline: true,
+			cwd: tempDir,
+		});
+		expect(result).toContain("hello.ts");
+		expect(result).not.toContain("world.ts");
+	});
+
+	test("multiline count mode", async () => {
+		const result = await jsSearch({
+			pattern: "const x.*\\nconst y",
+			searchPath: tempDir,
+			outputMode: "count",
+			headLimit: 50,
+			caseInsensitive: false,
+			multiline: true,
+			cwd: tempDir,
+		});
+		expect(result).toContain("hello.ts:1");
+	});
+
+	test("multiline with context lines", async () => {
+		const result = await jsSearch({
+			pattern: "const x.*\\nconst y",
+			searchPath: join(tempDir, "hello.ts"),
+			outputMode: "content",
+			contextLines: 1,
+			headLimit: 50,
+			caseInsensitive: false,
+			multiline: true,
+			cwd: tempDir,
+		});
+		expect(result).toContain("const x = 1;");
+		expect(result).toContain("const y = 2;");
+	});
 });
