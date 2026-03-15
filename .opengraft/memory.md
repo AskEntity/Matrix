@@ -327,3 +327,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Queue messages carry structured `rawMessages` in WS events, no text parsing needed
 - `formatQueueMessage()` uses XML tags for LLM injection safety
 - UI reads rawMessages directly, no regex splitting
+
+## User Message Position Fix
+- Removed `addLog("user_prompt")` from handleSubmit running case — user messages now appear at agent-received time via rawMessages handler
+- Restored `rm.source === "user"` handling in queue_message rawMessages loop to create user_prompt log entries
+- `lastSubmittedImagesRef` only set for new orchestration path (non-running), not running case
+- Images for running-case user messages not yet included in rawMessages — future improvement
