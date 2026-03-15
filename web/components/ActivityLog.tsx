@@ -11,7 +11,6 @@ export function ActivityLog({
 	autoScroll,
 	onAutoScrollChange,
 	running,
-	compacting,
 }: {
 	entries: LogEntry[];
 	filterTaskId: string | null;
@@ -20,7 +19,6 @@ export function ActivityLog({
 	autoScroll: boolean;
 	onAutoScrollChange: (locked: boolean) => void;
 	running: boolean;
-	compacting?: boolean;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 	const bottomRef = useRef<HTMLDivElement>(null);
@@ -261,15 +259,7 @@ export function ActivityLog({
 						/>
 					),
 				)}
-				{running && compacting && (
-					<div className="og-thinking-indicator og-compressing-indicator">
-						<span className="og-compressing-dots">
-							Compressing
-							<span className="og-dots-anim">...</span>
-						</span>
-					</div>
-				)}
-				{running && !compacting && (
+				{running && (
 					<div
 						className="og-thinking-indicator"
 						style={{ visibility: showThinking ? "visible" : "hidden" }}
