@@ -1087,51 +1087,64 @@ export function createOrchestratorTools(
 					};
 				}
 				try {
-					// Use timeout when there are pending clarifications and clarifyTimeoutMs is set
-					const timeoutMs =
-						pendingClarifications > 0 ? deps.clarifyTimeoutMs : undefined;
-					const result = await deps.queue.waitForMessage(timeoutMs);
-
 					let all: QueueMessage[];
 
-					if (result === "timeout") {
-						// Timeout fired — synthesize a clarify_response for all pending clarifications
-						const timeoutMsg = `[TIMEOUT] No response received within ${timeoutMs}ms. Proceed with your best judgement.`;
-						// Emit clarification_timeout event so the UI knows
-						emit({
-							type: "clarification_timeout",
-							taskId: currentTaskId ?? undefined,
-							timeoutMs,
-						});
-						// Synthesize one clarify_response for each pending clarification
-						const synthesized: QueueMessage[] = Array.from(
-							{ length: pendingClarifications },
-							() => ({
-								source: "clarify_response" as const,
-								answer: timeoutMsg,
-							}),
-						);
-						pendingClarifications = 0;
-						// Also drain any real messages that may have arrived simultaneously
-						all = [...synthesized, ...deps.queue.drain()];
-					} else {
-						// Got a real message — drain any additional messages that accumulated
-						const rest = deps.queue.drain();
-						all = [result, ...rest];
+					// Loop until we have real (non-compact) messages.
+					// Compact signals are re-enqueued for the provider; if they're
+					// the only messages, we silently wait again instead of returning
+					// a spurious "Resume from yield" to the UI.
+					while (true) {
+						// Use timeout when there are pending clarifications and clarifyTimeoutMs is set
+						const timeoutMs =
+							pendingClarifications > 0 ? deps.clarifyTimeoutMs : undefined;
+						const result = await deps.queue.waitForMessage(timeoutMs);
 
-						// Track clarify_response messages — each one resolves a pending clarification
-						for (const msg of all) {
-							if (msg.source === "clarify_response") {
-								pendingClarifications = Math.max(0, pendingClarifications - 1);
+						if (result === "timeout") {
+							// Timeout fired — synthesize a clarify_response for all pending clarifications
+							const timeoutMsg = `[TIMEOUT] No response received within ${timeoutMs}ms. Proceed with your best judgement.`;
+							// Emit clarification_timeout event so the UI knows
+							emit({
+								type: "clarification_timeout",
+								taskId: currentTaskId ?? undefined,
+								timeoutMs,
+							});
+							// Synthesize one clarify_response for each pending clarification
+							const synthesized: QueueMessage[] = Array.from(
+								{ length: pendingClarifications },
+								() => ({
+									source: "clarify_response" as const,
+									answer: timeoutMsg,
+								}),
+							);
+							pendingClarifications = 0;
+							// Also drain any real messages that may have arrived simultaneously
+							all = [...synthesized, ...deps.queue.drain()];
+						} else {
+							// Got a real message — drain any additional messages that accumulated
+							const rest = deps.queue.drain();
+							all = [result, ...rest];
+
+							// Track clarify_response messages — each one resolves a pending clarification
+							for (const msg of all) {
+								if (msg.source === "clarify_response") {
+									pendingClarifications = Math.max(
+										0,
+										pendingClarifications - 1,
+									);
+								}
 							}
 						}
-					}
 
-					// Re-enqueue compact signals for the provider to handle
-					const compactMsgs = all.filter((m) => m.source === "compact");
-					all = all.filter((m) => m.source !== "compact");
-					for (const cm of compactMsgs) {
-						deps.queue.enqueue(cm);
+						// Re-enqueue compact signals for the provider to handle
+						const compactMsgs = all.filter((m) => m.source === "compact");
+						all = all.filter((m) => m.source !== "compact");
+						for (const cm of compactMsgs) {
+							deps.queue.enqueue(cm);
+						}
+
+						// If we have real messages, break out and return them
+						if (all.length > 0) break;
+						// Otherwise only compact signals arrived — loop and wait again
 					}
 
 					// Format messages for the agent

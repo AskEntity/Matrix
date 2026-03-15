@@ -327,3 +327,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Queue messages carry structured `rawMessages` in WS events, no text parsing needed
 - `formatQueueMessage()` uses XML tags for LLM injection safety
 - UI reads rawMessages directly, no regex splitting
+
+## Compact Signal Yield Loop Fix
+- Yield tool now wraps wait+drain+filter in a `while(true)` loop
+- If after filtering compact signals there are no real messages, yield re-enters wait state silently
+- Prevents spurious "Resume from yield" UI entries when compact button is clicked during agent yield
+
