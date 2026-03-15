@@ -139,6 +139,7 @@ function AppInner() {
 	const [attachedImages, setAttachedImages] = useState<
 		{ base64: string; mediaType: string }[]
 	>([]);
+	const [compacting, setCompacting] = useState(false);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
 	const { nodes, refresh: refreshTasks, updateFromWS } = useTasks(projectId);
@@ -324,6 +325,7 @@ function AppInner() {
 							msg.taskId as string | undefined,
 							msg.checkpoint as string,
 						);
+						setCompacting(false);
 						break;
 					} else if (et === "queue_message") {
 						const raw = (msg.messages as string) || "";
@@ -409,6 +411,7 @@ function AppInner() {
 						msg.taskId as string | undefined,
 					);
 					setRunning(false);
+					setCompacting(false);
 					break;
 				}
 				case "agent_stopped":
@@ -418,6 +421,7 @@ function AppInner() {
 						msg.taskId as string | undefined,
 					);
 					setRunning(false);
+					setCompacting(false);
 					break;
 				case "task_started": {
 					const instruction = msg.message
@@ -940,7 +944,14 @@ function AppInner() {
 											inputTokens={usage.inputTokens}
 											contextWindow={usage.contextWindow}
 											estimated={usage.estimated}
-											onCompact={running ? compact : undefined}
+											onCompact={
+												running
+													? () => {
+															setCompacting(true);
+															compact();
+														}
+													: undefined
+											}
 										/>
 									) : null;
 								})()}
@@ -964,6 +975,7 @@ function AppInner() {
 							autoScroll={autoScroll}
 							onAutoScrollChange={setAutoScroll}
 							running={isSelectedTaskRunning}
+							compacting={compacting}
 						/>
 					</div>
 				</section>

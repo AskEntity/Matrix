@@ -23,19 +23,21 @@ export function TokenUsageBadge({
 	const level = ratio >= 0.8 ? "red" : ratio >= 0.5 ? "yellow" : "green";
 	const tooltip = `${t("footer.contextWindow")}: ${formatTokenCount(inputTokens)} / ${formatTokenCount(contextWindow)}${estimated ? ` (${t("footer.estimated")})` : ""}`;
 	return (
-		<span className={`og-token-badge og-token-${level}`} title={tooltip}>
-			{formatTokenCount(inputTokens)} / {formatTokenCount(contextWindow)}
-			{estimated && <span className="og-token-estimated">~</span>}
+		<>
 			{onCompact && (
 				<button
 					type="button"
-					className="og-compact-btn"
+					className="og-compact-trigger-btn"
 					onClick={onCompact}
 					title={t("footer.compact")}
 				>
 					⌘
 				</button>
 			)}
-		</span>
+			<span className={`og-token-badge og-token-${level}`} title={tooltip}>
+				{formatTokenCount(inputTokens)} / {formatTokenCount(contextWindow)}
+				{estimated && <span className="og-token-estimated">~</span>}
+			</span>
+		</>
 	);
 }
