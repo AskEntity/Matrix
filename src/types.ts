@@ -73,6 +73,7 @@ export interface Project {
 export interface HealthResponse {
 	status: "ok";
 	version: string;
+	gitHash?: string;
 	uptime: number;
 	model?:
 		| { status: "ok"; model: string; latencyMs: number }
@@ -82,6 +83,7 @@ export interface HealthResponse {
 /** Daemon version response. */
 export interface VersionResponse {
 	version: string;
+	gitHash?: string;
 	nodeCount: number;
 	projectCount: number;
 }

@@ -1,4 +1,5 @@
 import type React from "react";
+import { useEffect, useState } from "react";
 import type { Project } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import {
@@ -45,6 +46,20 @@ export function AppHeader({
 	onThemeChange: (theme: string) => void;
 }) {
 	const { locale, setLocale, t } = useLocale();
+	const [versionInfo, setVersionInfo] = useState<string>("");
+
+	useEffect(() => {
+		fetch("/version")
+			.then((r) => r.json())
+			.then((data: { version?: string; gitHash?: string }) => {
+				const hash =
+					data.gitHash && data.gitHash !== "unknown"
+						? ` (${data.gitHash})`
+						: "";
+				setVersionInfo(`v${data.version ?? "?"}${hash}`);
+			})
+			.catch(() => {});
+	}, []);
 
 	return (
 		<header className="og-header">
@@ -53,6 +68,17 @@ export function AppHeader({
 					<IconHexagon size={14} />
 				</div>
 				<span className="og-header-title">{t("header.title")}</span>
+				{versionInfo && (
+					<span
+						style={{
+							fontSize: "10px",
+							color: "var(--text-faint)",
+							marginLeft: "4px",
+						}}
+					>
+						{versionInfo}
+					</span>
+				)}
 				<div className={`og-connection-badge${connected ? " connected" : ""}`}>
 					<span className="og-connection-dot" />
 					{connected ? t("header.connected") : t("header.disconnected")}

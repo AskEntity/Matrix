@@ -1168,10 +1168,12 @@ async function handleHealth(): Promise<void> {
 		const body = (await res.json()) as {
 			status: string;
 			version: string;
+			gitHash?: string;
 			uptime: number;
 		};
+		const hash = body.gitHash ? ` (${body.gitHash})` : "";
 		console.log(
-			`Daemon: ${body.status} v${body.version} (uptime: ${Math.round(body.uptime / 1000)}s)`,
+			`Daemon: ${body.status} v${body.version}${hash} (uptime: ${Math.round(body.uptime / 1000)}s)`,
 		);
 	} catch {
 		console.error("Daemon not reachable. Start it with: og daemon start");
@@ -1372,10 +1374,12 @@ async function handleDaemon(args: string[]): Promise<void> {
 				const body = (await res.json()) as {
 					status: string;
 					version: string;
+					gitHash?: string;
 					uptime: number;
 				};
+				const hash = body.gitHash ? ` (${body.gitHash})` : "";
 				console.log(
-					`Daemon: ${body.status} v${body.version} (uptime: ${Math.round(body.uptime / 1000)}s)`,
+					`Daemon: ${body.status} v${body.version}${hash} (uptime: ${Math.round(body.uptime / 1000)}s)`,
 				);
 			} catch {
 				console.log(
@@ -1419,7 +1423,16 @@ async function handleDaemon(args: string[]): Promise<void> {
 const [command, ...args] = process.argv.slice(2);
 
 if (command === "--version" || command === "-v" || command === "version") {
-	console.log(`og v${VERSION}`);
+	let gitHash = "unknown";
+	try {
+		const result = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"]);
+		if (result.exitCode === 0) {
+			gitHash = new TextDecoder().decode(result.stdout).trim();
+		}
+	} catch {
+		// git not available or not a git repo
+	}
+	console.log(`OpenGraft v${VERSION} (${gitHash})`);
 	process.exit(0);
 }
 
