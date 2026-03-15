@@ -313,3 +313,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - OpenAI provider had same bug: was checking for Anthropic API format (`c.source?.type === "base64"`) instead of MCP format (`c.data`)
 - Fix: check MCP format first (`c.data`), then fall back to Anthropic format (`c.source`)
 
+
+## Agent Crash Cleanup Fix
+- Event loop catch block must broadcast `agent_stopped` (not just `error`) — UI only clears running state on `orchestration_completed` or `agent_stopped`
+- `tracker.save()` in finally block must be wrapped in try/catch — otherwise save failure prevents `activeSessions.delete()`
+- Use `caughtError` flag to only broadcast `agent_stopped` on error path (success already sends `orchestration_completed`)
+- `broadcastTreeUpdate` should be called in finally block to update UI tree after any exit path
