@@ -1762,19 +1762,20 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					perfLog(
 						`API call start (messages: ${messages.length}, compactionPending: ${compactionPending}, manualCompact: ${manualCompactRequested})`,
 					);
+					perfLog("about to call stream()");
 					const tStream0 = Date.now();
 					const stream = this.useOAuth
 						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
 							(this.client.beta.messages as any).stream(createParams)
 						: this.client.messages.stream(createParams);
 					const tStreamDt = Date.now() - tStream0;
-					if (tStreamDt > 10)
-						perfLog(`stream() construction took ${tStreamDt}ms`);
+					perfLog(`stream() returned in ${tStreamDt}ms`);
 
 					// Stream text deltas to UI (throttled to ~12 yields/sec)
 					let textBuffer = "";
 					let lastFlushTime = Date.now();
 					const TEXT_FLUSH_INTERVAL = 80;
+					perfLog("entering for-await stream loop");
 
 					for await (const event of stream) {
 						if (
@@ -1880,6 +1881,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				}
 
 				// Implicit yield: if agent has running children, wait for messages
+				perfLog(
+					`end_turn: hasRunningChildren=${request.hasRunningChildren?.()}, hasQueue=${!!queue}`,
+				);
 				if (request.hasRunningChildren?.() && queue) {
 					yield {
 						type: "status",
