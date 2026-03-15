@@ -1,56 +1,36 @@
 import { readFileSync } from "node:fs";
-import {
-	mkdir,
-	readdir,
-	readFile,
-	rm,
-	stat,
-	unlink,
-	writeFile,
-} from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
-import { serveStatic, upgradeWebSocket, websocket } from "hono/bun";
-import type { WSContext } from "hono/ws";
-import type { AgentProvider, AgentSession } from "./agent-provider.ts";
-import {
-	CostAccumulator,
-	createOrchestratorTools,
-	ORCHESTRATION_KNOWLEDGE,
-	TASK_SYSTEM_PROMPT,
-} from "./agent-tools.ts";
-import { AnthropicCompatibleProvider } from "./anthropic-compatible-provider.ts";
-// claude-code provider is deprecated — use config-driven provider selection
-import {
-	type AuthGroup,
-	loadGlobalConfig,
-	loadProjectLocalConfig,
-	loadProjectRepoConfig,
-	type OpenGraftConfig,
-	resolveAuthGroup,
-	resolveConfig,
-	saveGlobalConfig,
-	saveProjectLocalConfig,
-	saveProjectRepoConfig,
-} from "./config.ts";
-import {
-	globalAgentQueues,
-	MessageQueue,
-	type QueueImage,
-} from "./message-queue.ts";
-import { OpenAICompatibleProvider } from "./openai-compatible-provider.ts";
+import { serveStatic, websocket } from "hono/bun";
+import type { AgentSession } from "./agent-provider.ts";
+import { ORCHESTRATION_KNOWLEDGE } from "./agent-tools.ts";
+import { loadGlobalConfig, resolveAuthGroup } from "./config.ts";
+import { launchAgent, stopAgent } from "./daemon/agent-lifecycle.ts";
+import type {
+	DaemonConfig,
+	DaemonContext,
+	PendingClarification,
+	PendingMessage,
+	WSClient,
+} from "./daemon/context.ts";
+import { flushEvents, loadEventHistory } from "./daemon/event-system.ts";
+import { getTracker, pruneSessionFiles } from "./daemon/helpers.ts";
+import { registerAgentRoutes } from "./daemon/routes/agent.ts";
+import { registerConfigRoutes } from "./daemon/routes/config.ts";
+import { registerProjectRoutes } from "./daemon/routes/projects.ts";
+import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
+import { registerWebSocketRoute } from "./daemon/routes/websocket.ts";
 import { ProjectManager } from "./project-manager.ts";
-import { TaskTracker } from "./task-tracker.ts";
 import type {
 	HealthResponse,
 	StatsResponse,
-	TaskNode,
-	TaskStatus,
 	VersionResponse,
 } from "./types.ts";
-import { WorktreeManager } from "./worktree-manager.ts";
+
+// Re-export DaemonConfig so tests can import from daemon.ts
+export type { DaemonConfig } from "./daemon/context.ts";
 
 // Read version from package.json at startup.
 const _pkg = JSON.parse(
@@ -58,535 +38,39 @@ const _pkg = JSON.parse(
 ) as { version: string };
 const VERSION = _pkg.version;
 
-/** WebSocket client connection with project subscription. */
-interface WSClient {
-	ws: WSContext;
-	projectId: string | null;
-}
-
-/** Broadcast an event to all WebSocket clients subscribed to a project. */
-function broadcast(
-	clients: Set<WSClient>,
-	projectId: string,
-	event: Record<string, unknown>,
-) {
-	const msg = JSON.stringify(event);
-	for (const client of clients) {
-		if (client.projectId === projectId) {
-			try {
-				client.ws.send(msg);
-			} catch {
-				clients.delete(client);
-			}
-		}
-	}
-}
 const startTime = Date.now();
-
-export interface DaemonConfig {
-	dataDir: string;
-	agentProvider?: AgentProvider;
-	initialConfig?: OpenGraftConfig;
-	globalConfigPath?: string;
-}
-
-/** Create an AgentProvider from an AuthGroup and model. */
-function createProviderFromAuth(
-	authGroup: AuthGroup,
-	model?: string,
-): AgentProvider {
-	if (authGroup.provider === "anthropic") {
-		return new AnthropicCompatibleProvider(model, {
-			apiKey: authGroup.anthropicApiKey,
-			oauthToken: authGroup.claudeOauthToken,
-		});
-	}
-	return new OpenAICompatibleProvider(model, {
-		apiKey: authGroup.openaiApiKey,
-		baseUrl: authGroup.openaiBaseUrl,
-	});
-}
-
-/** Create a provider from resolved config. Requires an auth group to be configured. */
-function createProviderFromConfig(
-	effectiveConfig: OpenGraftConfig,
-): AgentProvider {
-	const authGroup = resolveAuthGroup(effectiveConfig);
-	if (!authGroup) {
-		throw new Error(
-			"No auth group configured. Add an auth group in Settings > Global > Auth Groups and set defaultAuth.",
-		);
-	}
-	return createProviderFromAuth(authGroup, effectiveConfig.model);
-}
-
-/** Collect a node and all its descendants. */
-function collectDescendants(tracker: TaskTracker, nodeId: string): TaskNode[] {
-	const node = tracker.get(nodeId);
-	if (!node) return [];
-	const result: TaskNode[] = [node];
-	for (const childId of node.children) {
-		result.push(...collectDescendants(tracker, childId));
-	}
-	return result;
-}
 
 const defaultConfig: DaemonConfig = {
 	dataDir: join(homedir(), ".opengraft"),
 };
 
 export function createApp(config: DaemonConfig = defaultConfig) {
-	/*
-	 * Agent Lifecycle:
-	 *   IDLE → STARTING → RUNNING → STOPPING → IDLE
-	 *
-	 *   IDLE:     No active session. Can start via /orchestrate/agent or WS orchestrate.
-	 *   STARTING: launchAgent() called, session being created. Guard: startupReady check.
-	 *   RUNNING:  Session in activeSessions map. Can inject messages, clarify, restart.
-	 *   STOPPING: stopAgent() called. Cleanup in progress. Guard: restartingProjects set.
-	 *
-	 *   State is determined by activeSessions.has(projectId).
-	 *   The restartingProjects set prevents concurrent stop+start during restart.
-	 *   All stop/cleanup goes through stopAgent() — single path for lifecycle transitions.
-	 */
 	const app = new Hono();
-	let requestCount = 0;
-	let startupReady = false;
-	let globalConfig: OpenGraftConfig = config.initialConfig ?? {};
+
+	// Build the shared context object
+	const ctx: DaemonContext = {
+		config,
+		pm: new ProjectManager(config.dataDir),
+		trackers: new Map(),
+		restartingProjects: new Set(),
+		wsClients: new Set<WSClient>(),
+		activeSessions: new Map<string, AgentSession>(),
+		eventHistory: new Map<string, Record<string, unknown>[]>(),
+		eventsDirty: new Set<string>(),
+		pendingMessages: new Map<string, PendingMessage[]>(),
+		pendingClarifications: new Map<string, PendingClarification[]>(),
+		MAX_EVENT_HISTORY: 5000,
+		requestCount: 0,
+		startupReady: false,
+		globalConfig: config.initialConfig ?? {},
+		eventFlushTimer: null,
+	};
+
+	// Request counter middleware
 	app.use("*", async (_c, next) => {
-		requestCount++;
+		ctx.requestCount++;
 		await next();
 	});
-	const pm = new ProjectManager(config.dataDir);
-	const trackers = new Map<string, TaskTracker>();
-	/** Guard against concurrent restart requests for the same project. */
-	const restartingProjects = new Set<string>();
-	const wsClients = new Set<WSClient>();
-	/** Active agent sessions by project ID, for message injection. */
-	const activeSessions = new Map<string, AgentSession>();
-	/** Event history per project (capped at 500 entries, persisted to disk). */
-	const eventHistory = new Map<string, Record<string, unknown>[]>();
-	const MAX_EVENT_HISTORY = 5000;
-	const eventsDirty = new Set<string>();
-	let eventFlushTimer: ReturnType<typeof setTimeout> | null = null;
-
-	/** Pending messages per project — user messages waiting to be consumed by agents. */
-	interface PendingMessage {
-		id: string;
-		taskId: string | null;
-		text: string;
-		timestamp: number;
-	}
-	const pendingMessages = new Map<string, PendingMessage[]>();
-
-	function getPendingMessages(projectId: string): PendingMessage[] {
-		if (!pendingMessages.has(projectId)) pendingMessages.set(projectId, []);
-		return pendingMessages.get(projectId) as PendingMessage[];
-	}
-
-	function addPendingMessage(
-		projectId: string,
-		taskId: string | null,
-		text: string,
-	): void {
-		const msgs = getPendingMessages(projectId);
-		msgs.push({
-			id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-			taskId,
-			text,
-			timestamp: Date.now(),
-		});
-		broadcast(wsClients, projectId, {
-			type: "pending_messages",
-			projectId,
-			messages: msgs,
-		});
-	}
-
-	/** Pending clarifications per project — clarify() calls waiting for user answers. */
-	interface PendingClarification {
-		id: string;
-		taskId: string;
-		question: string;
-		timestamp: number;
-	}
-	const pendingClarifications = new Map<string, PendingClarification[]>();
-
-	function getPendingClarifications(projectId: string): PendingClarification[] {
-		if (!pendingClarifications.has(projectId))
-			pendingClarifications.set(projectId, []);
-		return pendingClarifications.get(projectId) as PendingClarification[];
-	}
-
-	function addPendingClarification(
-		projectId: string,
-		taskId: string,
-		question: string,
-	): PendingClarification {
-		const clarifications = getPendingClarifications(projectId);
-		const entry: PendingClarification = {
-			id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-			taskId,
-			question,
-			timestamp: Date.now(),
-		};
-		clarifications.push(entry);
-		broadcast(wsClients, projectId, {
-			type: "pending_clarifications",
-			projectId,
-			clarifications,
-		});
-		return entry;
-	}
-
-	function removePendingClarification(
-		projectId: string,
-		taskId: string,
-		clarificationId?: string,
-	): void {
-		const clarifications = getPendingClarifications(projectId);
-		const idx = clarificationId
-			? clarifications.findIndex((c) => c.id === clarificationId)
-			: clarifications.findIndex((c) => c.taskId === taskId);
-		if (idx !== -1) {
-			clarifications.splice(idx, 1);
-			broadcast(wsClients, projectId, {
-				type: "pending_clarifications",
-				projectId,
-				clarifications,
-			});
-		}
-	}
-
-	function eventsPath(projectId: string): string {
-		return join(config.dataDir, "events", `${projectId}.json`);
-	}
-
-	async function loadEventHistory(
-		projectId: string,
-	): Promise<Record<string, unknown>[]> {
-		const path = eventsPath(projectId);
-		try {
-			const raw = await readFile(path, "utf-8");
-			const events = JSON.parse(raw) as Record<string, unknown>[];
-			eventHistory.set(projectId, events);
-			return events;
-		} catch {
-			const events: Record<string, unknown>[] = [];
-			eventHistory.set(projectId, events);
-			return events;
-		}
-	}
-
-	async function flushEvents(): Promise<void> {
-		const dirty = [...eventsDirty];
-		eventsDirty.clear();
-		const eventsDir = join(config.dataDir, "events");
-		await mkdir(eventsDir, { recursive: true });
-		for (const projectId of dirty) {
-			const history = eventHistory.get(projectId);
-			if (history) {
-				try {
-					await writeFile(
-						eventsPath(projectId),
-						JSON.stringify(history),
-						"utf-8",
-					);
-				} catch {
-					/* non-fatal */
-				}
-			}
-		}
-	}
-
-	function scheduleEventFlush(projectId: string): void {
-		eventsDirty.add(projectId);
-		if (!eventFlushTimer) {
-			eventFlushTimer = setTimeout(async () => {
-				eventFlushTimer = null;
-				await flushEvents();
-			}, 2000); // batch writes every 2s
-		}
-	}
-
-	function getEventHistory(projectId: string): Record<string, unknown>[] {
-		if (!eventHistory.has(projectId)) eventHistory.set(projectId, []);
-		return eventHistory.get(projectId) as Record<string, unknown>[];
-	}
-
-	/** Broadcast a tree update to all subscribers of a project. */
-	function broadcastTreeUpdate(projectId: string, tracker: TaskTracker) {
-		broadcast(wsClients, projectId, {
-			type: "tree_updated",
-			nodes: tracker.allNodes(),
-			rootNodeId: tracker.rootNodeId,
-		});
-	}
-
-	/** Broadcast an agent event to subscribers and store in history. */
-	function broadcastEvent(projectId: string, event: Record<string, unknown>) {
-		// Store in history (skip tree_updated and text_delta — too granular for persistence)
-		if (
-			event.type !== "tree_updated" &&
-			!(event.type === "agent_event" && event.eventType === "text_delta")
-		) {
-			const history = getEventHistory(projectId);
-			history.push({ ...event, timestamp: Date.now() });
-			if (history.length > MAX_EVENT_HISTORY) {
-				history.splice(0, history.length - MAX_EVENT_HISTORY);
-			}
-			scheduleEventFlush(projectId);
-		}
-		broadcast(wsClients, projectId, event);
-
-		// Agent consumed all queued messages — clear every pending indicator for this project
-		if (event.type === "agent_event" && event.eventType === "queue_message") {
-			pendingMessages.delete(projectId);
-			broadcast(wsClients, projectId, {
-				type: "pending_messages",
-				projectId,
-				messages: [],
-			});
-		}
-
-		// Track clarification_requested events for Web UI display
-		if (
-			event.type === "clarification_requested" &&
-			typeof event.taskId === "string" &&
-			typeof event.question === "string"
-		) {
-			addPendingClarification(projectId, event.taskId, event.question);
-		}
-	}
-
-	/**
-	 * Stop a running agent and clean up all associated state.
-	 * Single path for all stop operations (explicit stop, restart, project delete).
-	 *
-	 * @param opts.clearAutoResume - Set true for explicit stops (user stop, project delete).
-	 *   Leave false for restart (autoResume should persist).
-	 * @param opts.keepPendingMessages - Set true during restart so pending user messages
-	 *   survive for the new session to consume.
-	 */
-	async function stopAgent(
-		projectId: string,
-		opts?: { clearAutoResume?: boolean; keepPendingMessages?: boolean },
-	): Promise<void> {
-		const session = activeSessions.get(projectId);
-		if (!session) return;
-
-		// Save session for future resume
-		const tracker = trackers.get(projectId);
-		if (tracker && session.sessionId) {
-			tracker.orchestratorSessionId = session.sessionId;
-			if (opts?.clearAutoResume) {
-				tracker.autoResume = false;
-			}
-			await tracker.save();
-		}
-
-		session.stop();
-		activeSessions.delete(projectId);
-
-		// Clear pending state
-		if (!opts?.keepPendingMessages) {
-			pendingMessages.delete(projectId);
-			broadcast(wsClients, projectId, {
-				type: "pending_messages",
-				projectId,
-				messages: [],
-			});
-		}
-		pendingClarifications.delete(projectId);
-		broadcast(wsClients, projectId, {
-			type: "pending_clarifications",
-			projectId,
-			clarifications: [],
-		});
-
-		const rootNodeId = tracker?.rootNodeId;
-		broadcastEvent(projectId, {
-			type: "agent_stopped",
-			...(rootNodeId ? { taskId: rootNodeId } : {}),
-		});
-	}
-
-	/**
-	 * Prune old session files, keeping only the most recent N.
-	 * Used by autoResumeProjects (startup) and POST /sessions/prune.
-	 */
-	async function pruneSessionFiles(
-		projectId: string,
-		keepCount: number,
-	): Promise<{ pruned: number; remaining: number }> {
-		const sessionsDir = join(config.dataDir, "sessions", projectId);
-		try {
-			const files = await readdir(sessionsDir).catch(() => []);
-			const jsonFiles = files.filter((f) => f.endsWith(".json"));
-
-			if (jsonFiles.length <= keepCount) {
-				return { pruned: 0, remaining: jsonFiles.length };
-			}
-
-			const withMtime = await Promise.all(
-				jsonFiles.map(async (f) => ({
-					name: f,
-					mtime: (await stat(join(sessionsDir, f))).mtimeMs,
-				})),
-			);
-			withMtime.sort((a, b) => b.mtime - a.mtime);
-
-			const toDelete = withMtime.slice(keepCount);
-			await Promise.all(toDelete.map((f) => unlink(join(sessionsDir, f.name))));
-
-			return { pruned: toDelete.length, remaining: keepCount };
-		} catch {
-			return { pruned: 0, remaining: 0 };
-		}
-	}
-
-	/** Read project files and format as pre-read context for the agent. */
-	function readProjectMemory(projectPath: string): string {
-		const parts: string[] = [];
-
-		parts.push(
-			"The following files have been pre-read for you. Do NOT re-read them unless you need to check for updates.",
-		);
-
-		// Read CLAUDE.md for project architecture context
-		try {
-			const claudeMd = readFileSync(join(projectPath, "CLAUDE.md"), "utf-8");
-			if (claudeMd) parts.push(`[read_file: CLAUDE.md]\n${claudeMd}`);
-		} catch {
-			// No CLAUDE.md, that's fine
-		}
-
-		// Read .opengraft/memory.md for agent-specific memory
-		try {
-			const memory = readFileSync(
-				join(projectPath, ".opengraft", "memory.md"),
-				"utf-8",
-			);
-			if (memory) parts.push(`[read_file: .opengraft/memory.md]\n${memory}`);
-		} catch {
-			// No memory file, that's fine
-		}
-
-		return parts.join("\n\n");
-	}
-
-	/** Get or create a TaskTracker for a project. */
-	async function getTracker(projectId: string): Promise<TaskTracker> {
-		let tracker = trackers.get(projectId);
-		if (!tracker) {
-			const treePath = join(config.dataDir, "projects", projectId, "tree.json");
-			tracker = new TaskTracker(treePath);
-			await tracker.load();
-			trackers.set(projectId, tracker);
-		}
-		return tracker;
-	}
-
-	/** Resolve the effective config for a project: global + repo + local. */
-	async function resolveProjectConfig(
-		projectPath: string,
-		projectId: string,
-	): Promise<OpenGraftConfig> {
-		const repoConfig = await loadProjectRepoConfig(projectPath);
-		const localConfig = await loadProjectLocalConfig(config.dataDir, projectId);
-		return resolveConfig(globalConfig, repoConfig, localConfig);
-	}
-
-	/** Create a provider for a project using resolved config. */
-	function getProjectProvider(effectiveConfig: OpenGraftConfig): AgentProvider {
-		// If a provider was explicitly injected (e.g. tests), use it
-		if (config.agentProvider) return config.agentProvider;
-		return createProviderFromConfig(effectiveConfig);
-	}
-
-	// --- Shared handlers (used by both REST routes and WS messages) ---
-
-	/** Start orchestration for a project. Used by POST /orchestrate/agent and WS orchestrate. */
-	async function handleOrchestrate(
-		projectId: string,
-		prompt: string,
-		opts: { resume?: boolean; model?: string; childModel?: string },
-	): Promise<{ ok: boolean; error?: string; status?: number }> {
-		if (!startupReady) {
-			return {
-				ok: false,
-				error: "Server starting up, please wait...",
-				status: 503,
-			};
-		}
-		const project = pm.get(projectId);
-		if (!project) {
-			return { ok: false, error: "Project not found", status: 404 };
-		}
-		if (activeSessions.has(projectId) || restartingProjects.has(projectId)) {
-			return {
-				ok: false,
-				error: "Agent already running for this project",
-				status: 409,
-			};
-		}
-		await getTracker(projectId);
-		await launchAgent(project, { prompt, ...opts });
-		return { ok: true };
-	}
-
-	/** Inject a user message into a running agent. Used by POST /message and WS inject_message. */
-	function handleInjectMessage(
-		projectId: string,
-		message: string,
-		images?: QueueImage[],
-	): { ok: boolean; error?: string; status?: number; sessionId?: string } {
-		const session = activeSessions.get(projectId);
-		if (!session) {
-			return {
-				ok: false,
-				error: "No active session for this project",
-				status: 404,
-			};
-		}
-		try {
-			const imgs = images?.length ? images : undefined;
-			session.queue.enqueue({ source: "user", content: message, images: imgs });
-		} catch {
-			return { ok: false, error: "Queue closed", status: 409 };
-		}
-		addPendingMessage(projectId, null, message);
-		return { ok: true, sessionId: session.sessionId };
-	}
-
-	/** Answer a pending clarification. Used by POST /clarify and WS clarify_response. */
-	function handleClarifyResponse(
-		projectId: string,
-		taskId: string,
-		answer: string,
-		clarificationId?: string,
-	): { ok: boolean; error?: string; status?: number } {
-		const session = activeSessions.get(projectId);
-		if (!session) {
-			return {
-				ok: false,
-				error: "No active session for this project",
-				status: 404,
-			};
-		}
-		try {
-			session.queue.enqueue({ source: "clarify_response", answer });
-		} catch {
-			return { ok: false, error: "Queue closed", status: 409 };
-		}
-		removePendingClarification(projectId, taskId, clarificationId);
-		broadcastEvent(projectId, {
-			type: "clarification_answered",
-			taskId,
-			answer,
-		});
-		return { ok: true };
-	}
 
 	// Health
 	app.get("/health", async (c) => {
@@ -597,8 +81,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		};
 
 		if (c.req.query("check_model") === "true") {
-			const authGroup = resolveAuthGroup(globalConfig);
-			const modelName = globalConfig.model ?? "claude-sonnet-4-6";
+			const authGroup = resolveAuthGroup(ctx.globalConfig);
+			const modelName = ctx.globalConfig.model ?? "claude-sonnet-4-6";
 
 			const apiKey = authGroup?.anthropicApiKey;
 			const oauthToken = authGroup?.claudeOauthToken;
@@ -646,12 +130,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Version
 	app.get("/version", async (c) => {
-		const projects = pm.list();
+		const projects = ctx.pm.list();
 		const projectCount = projects.length;
 
 		let nodeCount = 0;
 		for (const project of projects) {
-			const tracker = await getTracker(project.id);
+			const tracker = await getTracker(ctx, project.id);
 			nodeCount += tracker.allNodes().length;
 		}
 
@@ -665,7 +149,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Stats
 	app.get("/stats", async (c) => {
-		const projects = pm.list();
+		const projects = ctx.pm.list();
 		const taskCounts = {
 			pending: 0,
 			in_progress: 0,
@@ -676,7 +160,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		};
 
 		for (const project of projects) {
-			const tracker = await getTracker(project.id);
+			const tracker = await getTracker(ctx, project.id);
 			for (const node of tracker.allNodes()) {
 				taskCounts[node.status]++;
 			}
@@ -684,7 +168,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 		const response: StatsResponse = {
 			uptime: Math.floor((Date.now() - startTime) / 1000),
-			requestCount,
+			requestCount: ctx.requestCount,
 			projectCount: projects.length,
 			taskCounts,
 		};
@@ -701,1199 +185,30 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ restarting: true });
 	});
 
-	// Projects CRUD
-	app.post("/projects", async (c) => {
-		const body = await c.req.json<{ path: string }>();
-		if (!body.path) {
-			return c.json({ error: "path is required" }, 400);
-		}
-		try {
-			const project = await pm.init(body.path);
-			return c.json(project, 201);
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error";
-			return c.json({ error: message }, 409);
-		}
-	});
-
-	app.get("/projects", (c) => {
-		return c.json(pm.list());
-	});
-
-	app.get("/projects/:id", (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		return c.json(project);
-	});
-
-	app.delete("/projects/:id", async (c) => {
-		const projectId = c.req.param("id");
-		await stopAgent(projectId, { clearAutoResume: true });
-		try {
-			await pm.delete(projectId);
-			// Clean up all in-memory state for this project
-			trackers.delete(projectId);
-			pendingMessages.delete(projectId);
-			pendingClarifications.delete(projectId);
-			eventHistory.delete(projectId);
-			return c.json({ ok: true });
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error";
-			return c.json({ error: message }, 404);
-		}
-	});
-
-	// Event history
-	app.get("/projects/:id/events", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const events = eventHistory.has(project.id)
-			? (eventHistory.get(project.id) as Record<string, unknown>[])
-			: await loadEventHistory(project.id);
-		return c.json({ events });
-	});
-
-	// Pending messages
-	app.get("/projects/:id/pending-messages", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		return c.json({ messages: getPendingMessages(project.id) });
-	});
-
-	// Pending clarifications
-	app.get("/projects/:id/clarifications", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		return c.json({ clarifications: getPendingClarifications(project.id) });
-	});
-
-	// Task tree
-	app.get("/projects/:id/tasks", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const tracker = await getTracker(project.id);
-		return c.json({
-			nodes: tracker.allNodes(),
-		});
-	});
-
-	app.post("/projects/:id/tasks", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const body = await c.req.json<{
-			title: string;
-			description: string;
-			parentId?: string;
-			budgetUsd?: number;
-		}>();
-		if (!body.title) {
-			return c.json({ error: "title is required" }, 400);
-		}
-
-		const tracker = await getTracker(project.id);
-		const opts =
-			body.budgetUsd !== undefined ? { budgetUsd: body.budgetUsd } : undefined;
-		try {
-			// Default to root node as parent if no parentId specified
-			const effectiveParentId = body.parentId ?? tracker.rootNodeId;
-			const node = effectiveParentId
-				? tracker.addChild(
-						effectiveParentId,
-						body.title,
-						body.description ?? "",
-						opts,
-					)
-				: tracker.addTask(body.title, body.description ?? "", opts);
-			await tracker.save();
-			broadcastTreeUpdate(project.id, tracker);
-			return c.json(node, 201);
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error";
-			return c.json({ error: message }, 409);
-		}
-	});
-
-	app.patch("/projects/:id/tasks/:nodeId", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const tracker = await getTracker(project.id);
-		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
-		if (!node) {
-			return c.json({ error: "Task not found" }, 404);
-		}
-		const body = await c.req.json<{
-			status?: TaskStatus;
-			branch?: string;
-			title?: string;
-			description?: string;
-			draft?: boolean;
-		}>();
-		if (body.status) {
-			tracker.updateStatus(nodeId, body.status);
-		}
-		if (body.branch) {
-			tracker.assignBranch(nodeId, body.branch);
-		}
-		if (body.title) {
-			tracker.updateTitle(node.id, body.title);
-		}
-		if (body.description !== undefined) {
-			tracker.updateDescription(node.id, body.description);
-		}
-		if (body.draft !== undefined) {
-			tracker.updateDraft(node.id, body.draft);
-		}
-		await tracker.save();
-		broadcastTreeUpdate(project.id, tracker);
-		return c.json(tracker.get(nodeId));
-	});
-
-	app.patch("/projects/:id/tasks/:nodeId/reorder", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const tracker = await getTracker(project.id);
-		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
-		if (!node) {
-			return c.json({ error: "Task not found" }, 404);
-		}
-		const body = await c.req.json<{ children: string[] }>();
-		if (!Array.isArray(body.children)) {
-			return c.json({ error: "children must be an array of task IDs" }, 400);
-		}
-		try {
-			tracker.reorderChildren(nodeId, body.children);
-		} catch (e) {
-			return c.json(
-				{ error: e instanceof Error ? e.message : "Unknown error" },
-				400,
-			);
-		}
-		await tracker.save();
-		broadcastTreeUpdate(project.id, tracker);
-		return c.json({ ok: true });
-	});
-
-	async function runChildAgentInBackground(
-		project: { id: string; path: string },
-		tracker: TaskTracker,
-		nodeId: string,
-		prompt: string,
-		_model?: string,
-	): Promise<void> {
-		const node = tracker.get(nodeId);
-		if (!node?.worktreePath) return;
-		const childQueue = new MessageQueue();
-		globalAgentQueues.set(nodeId, childQueue);
-		try {
-			const wtRoot = join(project.path, ".worktrees");
-			const wm = new WorktreeManager(project.path, wtRoot);
-			const costAccumulator = new CostAccumulator();
-			const doneRef: {
-				done: null | { status: "passed" | "failed"; summary: string };
-			} = { done: null };
-			const effectiveCfg = await resolveProjectConfig(project.path, project.id);
-			const provider = getProjectProvider(effectiveCfg);
-
-			const { toolDefs, hasRunningChildren } = createOrchestratorTools(
-				{
-					tracker,
-					provider,
-					worktrees: wm,
-					projectPath: node.worktreePath as string,
-					repoPath: project.path,
-					currentTaskId: nodeId,
-					depth: 1,
-					queue: childQueue,
-					doneRef,
-					defaultBudgetUsd: effectiveCfg.budgetUsd,
-					clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
-					maxDepth: effectiveCfg.maxDepth,
-					onTaskEvent: (event) => {
-						broadcastEvent(project.id, event);
-						broadcastTreeUpdate(project.id, tracker);
-					},
-					broadcastTreeUpdate: () => broadcastTreeUpdate(project.id, tracker),
-				},
-				costAccumulator,
-			);
-
-			const session = provider.startSession({
-				prompt,
-				cwd: node.worktreePath as string,
-				systemPrompt: TASK_SYSTEM_PROMPT,
-				resumeSessionId: node.sessionId ?? undefined,
-				model: effectiveCfg.model,
-				mcpToolDefs: { opengraft: toolDefs },
-				queue: childQueue,
-				doneRef,
-				hasRunningChildren,
-			});
-
-			let result = await session.events.next();
-			while (!result.done) {
-				const { type: eventType, ...eventData } = result.value;
-				broadcastEvent(project.id, {
-					type: "agent_event",
-					taskId: nodeId,
-					eventType,
-					...eventData,
-				});
-				result = await session.events.next();
-			}
-			const agentResult = result.value;
-
-			if (agentResult.sessionId) {
-				tracker.assignSession(nodeId, agentResult.sessionId);
-			}
-			// Use doneRef if available; fall back to agentResult.success
-			const didPass = doneRef.done
-				? doneRef.done.status === "passed"
-				: agentResult.success;
-			const newStatus = didPass ? "passed" : "failed";
-			tracker.updateStatus(nodeId, newStatus);
-			await tracker.save();
-			broadcastEvent(project.id, {
-				type: "task_completed",
-				taskId: nodeId,
-				title: node.title,
-				success: didPass,
-			});
-			broadcastTreeUpdate(project.id, tracker);
-		} catch (e) {
-			tracker.updateStatus(nodeId, "stuck");
-			await tracker.save();
-			broadcastEvent(project.id, {
-				type: "error",
-				taskId: nodeId,
-				message: `Continue failed: ${e instanceof Error ? e.message : String(e)}`,
-			});
-			broadcastTreeUpdate(project.id, tracker);
-		} finally {
-			globalAgentQueues.delete(nodeId);
-			childQueue.close();
-		}
-	}
-
-	app.post("/projects/:id/tasks/:nodeId/continue", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const tracker = await getTracker(project.id);
-		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
-		if (!node) {
-			return c.json({ error: "Task not found" }, 404);
-		}
-		if (node.status !== "failed" && node.status !== "stuck") {
-			return c.json(
-				{ error: `Cannot continue task with status: ${node.status}` },
-				400,
-			);
-		}
-		const body = await c.req
-			.json<{ message?: string; model?: string }>()
-			.catch(() => ({ message: undefined, model: undefined }));
-		if (body.message) {
-			tracker.setMessage(nodeId, body.message);
-		}
-
-		// If the task has a worktree, re-run the agent immediately
-		if (node.worktreePath) {
-			tracker.updateStatus(nodeId, "in_progress");
-			await tracker.save();
-
-			broadcastEvent(project.id, {
-				type: "task_started",
-				taskId: nodeId,
-				title: node.title,
-			});
-			broadcastTreeUpdate(project.id, tracker);
-
-			// If we have a session, the agent already has full context in its history.
-			// Just send the user's message (or a simple continue instruction).
-			// If no session, include full task context since it's a fresh start.
-			const branchReminder = node.branch
-				? `\n\nReminder: you are on branch \`${node.branch}\`. Do NOT switch branches.`
-				: "";
-			let continuePrompt: string;
-			if (node.sessionId) {
-				continuePrompt = body.message
-					? `${body.message}${branchReminder}`
-					: `Continue working. Pick up where you left off and complete the task.${branchReminder}`;
-			} else {
-				const memory = readProjectMemory(project.path);
-				continuePrompt = body.message
-					? `${body.message}\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}${branchReminder}`
-					: `Continue working on this task.\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}${branchReminder}`;
-			}
-
-			// Run async — return immediately so UI updates
-			runChildAgentInBackground(
-				project,
-				tracker,
-				nodeId,
-				continuePrompt,
-				body.model,
-			);
-
-			return c.json(tracker.get(nodeId));
-		}
-
-		// No worktree — just reset to pending
-		tracker.updateStatus(nodeId, "pending");
-		await tracker.save();
-		return c.json(tracker.get(nodeId));
-	});
-
-	app.delete("/projects/:id/tasks/:nodeId", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const tracker = await getTracker(project.id);
-		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
-		if (!node) {
-			return c.json({ error: "Task not found" }, 404);
-		}
-
-		// Clean up worktrees for this node and all descendants
-		const nodesToRemove = collectDescendants(tracker, nodeId);
-		for (const n of nodesToRemove) {
-			if (n.worktreePath) {
-				try {
-					const proc = Bun.spawn(
-						["git", "worktree", "remove", "--force", n.worktreePath],
-						{ cwd: project.path, stdout: "pipe", stderr: "pipe" },
-					);
-					await proc.exited;
-				} catch {
-					/* worktree may already be gone */
-				}
-				if (n.branch) {
-					try {
-						const proc = Bun.spawn(["git", "branch", "-D", n.branch], {
-							cwd: project.path,
-							stdout: "pipe",
-							stderr: "pipe",
-						});
-						await proc.exited;
-					} catch {
-						/* branch may already be gone */
-					}
-				}
-			}
-		}
-
-		tracker.remove(nodeId);
-		await tracker.save();
-		broadcastTreeUpdate(project.id, tracker);
-		return c.json({ ok: true });
-	});
-
-	// Git log for a task branch
-	app.get("/projects/:id/tasks/:nodeId/gitlog", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const tracker = await getTracker(project.id);
-		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
-		if (!node) {
-			return c.json({ error: "Task not found" }, 404);
-		}
-		if (!node.worktreePath || !node.branch) {
-			return c.json({ commits: [] });
-		}
-		try {
-			const proc = Bun.spawn(["git", "log", "--oneline", "-20", node.branch], {
-				cwd: project.path,
-				stdout: "pipe",
-				stderr: "pipe",
-			});
-			await proc.exited;
-			const output = await new Response(proc.stdout).text();
-			const commits = output
-				.trim()
-				.split("\n")
-				.filter((line) => line.trim())
-				.map((line) => {
-					const spaceIdx = line.indexOf(" ");
-					return {
-						hash: spaceIdx >= 0 ? line.slice(0, spaceIdx) : line,
-						message: spaceIdx >= 0 ? line.slice(spaceIdx + 1) : "",
-					};
-				});
-			return c.json({ commits });
-		} catch {
-			return c.json({ commits: [] });
-		}
-	});
-
-	// Conversation history for a task (from session file)
-	app.get("/projects/:id/tasks/:nodeId/conversation", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) return c.json({ error: "Project not found" }, 404);
-		const tracker = await getTracker(project.id);
-		const node = tracker.get(c.req.param("nodeId"));
-		if (!node) return c.json({ error: "Task not found" }, 404);
-		if (!node.sessionId) return c.json({ messages: [] });
-		const sessionPath = join(
-			config.dataDir,
-			"sessions",
-			project.id,
-			`${node.sessionId}.json`,
-		);
-		try {
-			const raw = await readFile(sessionPath, "utf-8");
-			const params = JSON.parse(raw) as Array<{
-				role: string;
-				content: unknown;
-			}>;
-			const messages = params.slice(-100).map((msg) => {
-				let content = "";
-				let hasToolUse = false;
-				const toolNames: string[] = [];
-				if (typeof msg.content === "string") {
-					content = msg.content;
-				} else if (Array.isArray(msg.content)) {
-					for (const block of msg.content as Array<{
-						type: string;
-						text?: string;
-						name?: string;
-					}>) {
-						if (block.type === "text" && block.text)
-							content += (content ? "\n" : "") + block.text;
-						else if (block.type === "tool_use" && block.name) {
-							hasToolUse = true;
-							toolNames.push(block.name);
-						}
-					}
-				}
-				return {
-					role: msg.role,
-					content,
-					hasToolUse,
-					...(toolNames.length ? { toolNames } : {}),
-				};
-			});
-			return c.json({ messages });
-		} catch {
-			return c.json({ messages: [] });
-		}
-	});
-
-	/**
-	 * Launch an agent for a project. Returns immediately.
-	 * The agent runs in the background; observe via WebSocket.
-	 * Uses startSession() for message injection support.
-	 */
-	async function launchAgent(
-		project: { id: string; path: string },
-		opts: {
-			prompt: string;
-			resume?: boolean;
-			model?: string;
-			childModel?: string;
-		},
-	) {
-		const tracker = trackers.get(project.id);
-		if (!tracker) return;
-
-		// Resolve effective config: global + repo + local
-		const effectiveCfg = await resolveProjectConfig(project.path, project.id);
-		const provider = getProjectProvider(effectiveCfg);
-
-		// Priority: API param > resolved config
-		const effectiveModel = opts.model ?? effectiveCfg.model;
-		const effectiveChildModel = opts.childModel ?? effectiveCfg.childModel;
-
-		// Ensure root node exists for the orchestrator
-		const rootNode = tracker.ensureRootNode("Orchestrator", opts.prompt);
-		const rootNodeId = rootNode.id;
-		tracker.updateStatus(rootNodeId, "in_progress");
-
-		// Mark project for auto-resume on daemon restart
-		tracker.autoResume = true;
-		tracker.save().catch(() => {});
-
-		broadcastEvent(project.id, {
-			type: "orchestration_started",
-			taskId: rootNodeId,
-			prompt: opts.prompt,
-			provider: provider.name,
-			model: effectiveModel ?? "claude-sonnet-4-6",
-		});
-		broadcastTreeUpdate(project.id, tracker);
-
-		const wtRoot = join(project.path, ".worktrees");
-		const wm = new WorktreeManager(project.path, wtRoot);
-		const costAccumulator = new CostAccumulator();
-		const queue = new MessageQueue();
-		const doneRef: {
-			done: null | { status: "passed" | "failed"; summary: string };
-		} = { done: null };
-
-		const { toolDefs, hasRunningChildren } = createOrchestratorTools(
-			{
-				tracker,
-				provider,
-				worktrees: wm,
-				projectPath: project.path,
-				repoPath: project.path,
-				currentTaskId: rootNodeId,
-				depth: 0,
-				childModel: effectiveChildModel,
-				queue,
-				doneRef,
-				defaultBudgetUsd: effectiveCfg.budgetUsd,
-				clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
-				maxDepth: effectiveCfg.maxDepth,
-				onTaskEvent: (event) => {
-					broadcastEvent(project.id, event);
-					broadcastTreeUpdate(project.id, tracker);
-				},
-				broadcastTreeUpdate: () => broadcastTreeUpdate(project.id, tracker),
-			},
-			costAccumulator,
-		);
-
-		// Auto-resume: if we have a previous session, always resume it
-		const hasSession = Boolean(tracker.orchestratorSessionId);
-		const shouldResume = opts.resume || hasSession;
-
-		const memory = readProjectMemory(project.path);
-		const prompt = shouldResume
-			? (opts.prompt ??
-				"Continue where you left off. Check the task tree and proceed.")
-			: memory
-				? `${memory}\n\n---\n\n${opts.prompt}`
-				: opts.prompt;
-
-		const resumeSessionId = shouldResume
-			? (tracker.orchestratorSessionId ?? undefined)
-			: undefined;
-
-		// Use startSession for message injection support
-		const session = provider.startSession({
-			prompt,
-			cwd: project.path,
-			projectPath: project.path,
-			sessionsDir: join(config.dataDir, "sessions", project.id),
-			systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
-			mcpToolDefs: { opengraft: toolDefs },
-			resumeSessionId,
-			model: effectiveModel,
-			queue,
-			doneRef,
-			hasRunningChildren,
-		});
-
-		activeSessions.set(project.id, session);
-
-		// Fire-and-forget: consume events in background
-		(async () => {
-			let caughtError = false;
-			try {
-				let result = await session.events.next();
-				while (!result.done) {
-					const { type: eventType, ...eventData } = result.value;
-					broadcastEvent(project.id, {
-						type: "agent_event",
-						taskId: rootNodeId,
-						eventType,
-						...eventData,
-					});
-					result = await session.events.next();
-				}
-				const finalResult = result.value;
-
-				if (finalResult.sessionId) {
-					tracker.orchestratorSessionId = finalResult.sessionId;
-					await tracker.save();
-				}
-
-				// Update root node status based on result
-				const didPass = doneRef.done
-					? doneRef.done.status === "passed"
-					: finalResult.success;
-				tracker.updateStatus(rootNodeId, didPass ? "passed" : "failed");
-
-				const totalCostUsd =
-					(finalResult.costUsd ?? 0) + costAccumulator.totalCostUsd;
-				broadcastEvent(project.id, {
-					type: "orchestration_completed",
-					taskId: rootNodeId,
-					success: didPass,
-					costUsd: totalCostUsd,
-					turns: finalResult.turns,
-					inputTokens: finalResult.inputTokens,
-					cacheCreationTokens: finalResult.cacheCreationTokens,
-					cacheReadTokens: finalResult.cacheReadTokens,
-					outputTokens: finalResult.outputTokens,
-					childCosts: {
-						totalCostUsd: costAccumulator.totalCostUsd,
-						totalTurns: costAccumulator.totalTurns,
-						taskCount: costAccumulator.taskCount,
-					},
-				});
-				broadcastTreeUpdate(project.id, tracker);
-
-				// Clear auto-resume on normal completion (not during restart)
-				if (activeSessions.get(project.id) === session) {
-					tracker.autoResume = false;
-				}
-			} catch (e) {
-				caughtError = true;
-				const message = e instanceof Error ? e.message : "Unknown error";
-				tracker.updateStatus(rootNodeId, "failed");
-				broadcastEvent(project.id, {
-					type: "error",
-					taskId: rootNodeId,
-					message: `Agent failed: ${message}`,
-				});
-			} finally {
-				// Always preserve the orchestrator session for future resume,
-				// regardless of how it exited (success, failure, or crash).
-				try {
-					await tracker.save();
-				} catch {
-					// Don't let save failure prevent cleanup
-				}
-				session.stop();
-				// Only clean up if this session is still the active one.
-				// During restart, a new session replaces us — don't clobber it.
-				if (activeSessions.get(project.id) === session) {
-					activeSessions.delete(project.id);
-					// On error, broadcast agent_stopped so the UI knows to clear
-					// the running state. (Normal completions already broadcast
-					// orchestration_completed which handles this.)
-					if (caughtError) {
-						broadcastEvent(project.id, {
-							type: "agent_stopped",
-							taskId: rootNodeId,
-						});
-					}
-				}
-				broadcastTreeUpdate(project.id, tracker);
-			}
-		})();
-	}
-
-	// Agent-driven orchestration: fire-and-forget, observe via WebSocket
-	app.post("/projects/:id/orchestrate/agent", async (c) => {
-		const body = await c.req.json<{
-			prompt: string;
-			resume?: boolean;
-			model?: string;
-			childModel?: string;
-		}>();
-		if (!body.prompt && !body.resume) {
-			return c.json({ error: "prompt is required" }, 400);
-		}
-
-		const result = await handleOrchestrate(
-			c.req.param("id"),
-			body.prompt,
-			body,
-		);
-		if (!result.ok) {
-			return c.json({ error: result.error }, result.status as 404);
-		}
-		return c.json({ status: "running", projectId: c.req.param("id") });
-	});
-
-	// Start agent by project path (auto-creates project if needed)
-	app.post("/agents/start", async (c) => {
-		if (!startupReady) {
-			return c.json({ error: "Server starting up, please wait..." }, 503);
-		}
-		const body = await c.req.json<{
-			path: string;
-			prompt: string;
-			model?: string;
-			childModel?: string;
-		}>();
-		if (!body.path) {
-			return c.json({ error: "path is required" }, 400);
-		}
-		if (!body.prompt) {
-			return c.json({ error: "prompt is required" }, 400);
-		}
-
-		const project = await pm.ensureProject(body.path);
-
-		if (activeSessions.has(project.id) || restartingProjects.has(project.id)) {
-			return c.json({ error: "Agent already running for this project" }, 409);
-		}
-
-		await getTracker(project.id);
-		await launchAgent(project, body);
-		return c.json({ status: "running", projectId: project.id });
-	});
-
-	// Global config
-	app.get("/config/global", async (c) => {
-		return c.json(globalConfig);
-	});
-
-	app.patch("/config/global", async (c) => {
-		const partial = (await c.req.json()) as Partial<OpenGraftConfig>;
-		// Merge scalar fields, union map fields
-		for (const [k, v] of Object.entries(partial)) {
-			if (v === null || v === undefined) {
-				delete (globalConfig as Record<string, unknown>)[k];
-			} else {
-				(globalConfig as Record<string, unknown>)[k] = v;
-			}
-		}
-		await saveGlobalConfig(globalConfig, config.globalConfigPath);
-		return c.json(globalConfig);
-	});
-
-	// Project repo config (stored in <project>/.opengraft/config.json)
-	app.get("/projects/:id/config/repo", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) return c.json({ error: "Project not found" }, 404);
-		const cfg = await loadProjectRepoConfig(project.path);
-		return c.json(cfg);
-	});
-
-	app.patch("/projects/:id/config/repo", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) return c.json({ error: "Project not found" }, 404);
-		const partial = (await c.req.json()) as Partial<OpenGraftConfig>;
-		const existing = await loadProjectRepoConfig(project.path);
-		const merged = { ...existing };
-		for (const [k, v] of Object.entries(partial)) {
-			if (v === null || v === undefined) {
-				delete (merged as Record<string, unknown>)[k];
-			} else {
-				(merged as Record<string, unknown>)[k] = v;
-			}
-		}
-		await saveProjectRepoConfig(project.path, merged);
-		return c.json(merged);
-	});
-
-	// All three config layers + resolved for a project
-	app.get("/projects/:id/config/all", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) return c.json({ error: "Project not found" }, 404);
-		const [repoConfig, localConfig] = await Promise.all([
-			loadProjectRepoConfig(project.path),
-			loadProjectLocalConfig(config.dataDir, project.id),
-		]);
-		const resolved = resolveConfig(globalConfig, repoConfig, localConfig);
-		return c.json({
-			global: globalConfig,
-			repo: repoConfig,
-			local: localConfig,
-			resolved,
-		});
-	});
-
-	// Project local config (stored in dataDir/projects/<id>/config.json)
-	app.get("/projects/:id/config", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) return c.json({ error: "Project not found" }, 404);
-		const cfg = await loadProjectLocalConfig(config.dataDir, project.id);
-		return c.json(cfg);
-	});
-
-	app.patch("/projects/:id/config", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) return c.json({ error: "Project not found" }, 404);
-		const partial = (await c.req.json()) as Partial<OpenGraftConfig>;
-		const existing = await loadProjectLocalConfig(config.dataDir, project.id);
-		const merged = { ...existing };
-		for (const [k, v] of Object.entries(partial)) {
-			if (v === null || v === undefined) {
-				delete (merged as Record<string, unknown>)[k];
-			} else {
-				(merged as Record<string, unknown>)[k] = v;
-			}
-		}
-		await saveProjectLocalConfig(config.dataDir, project.id, merged);
-		return c.json(merged);
-	});
-
-	app.get("/projects/:id/agent", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const session = activeSessions.get(project.id);
-		const effectiveCfg = await resolveProjectConfig(project.path, project.id);
-		const provider = getProjectProvider(effectiveCfg);
-		const model = effectiveCfg.model ?? "claude-sonnet-4-6";
-		return c.json({
-			running: !!session,
-			sessionId: session?.sessionId ?? null,
-			provider: provider.name,
-			model,
-		});
-	});
-
-	// Stop a running agent
-	app.post("/projects/:id/stop", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		if (!activeSessions.has(project.id)) {
-			// No active session — reset any orphaned in_progress root node
-			// so the UI can reconcile its running state.
-			const tracker = trackers.get(project.id);
-			if (tracker?.rootNodeId) {
-				const rootNode = tracker.get(tracker.rootNodeId);
-				if (rootNode && rootNode.status === "in_progress") {
-					tracker.updateStatus(tracker.rootNodeId, "failed");
-					await tracker.save();
-					broadcastTreeUpdate(project.id, tracker);
-				}
-			}
-			return c.json({ error: "No active agent for this project" }, 404);
-		}
-		await stopAgent(project.id, { clearAutoResume: true });
-		return c.json({ ok: true });
-	});
-
-	// Trigger manual compaction on a running session
-	app.post("/projects/:id/compact", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const session = activeSessions.get(project.id);
-		if (!session) {
-			return c.json({ error: "No active agent for this project" }, 404);
-		}
-		session.queue.enqueue({ source: "compact" });
-		return c.json({ compacting: true });
-	});
-
-	// Restart orchestrator: stop current session, relaunch with resume:true
-	app.post("/projects/:id/restart", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		if (restartingProjects.has(project.id)) {
-			return c.json({ error: "Restart already in progress" }, 409);
-		}
-		if (!activeSessions.has(project.id)) {
-			return c.json({ error: "No active agent to restart" }, 404);
-		}
-
-		restartingProjects.add(project.id);
-		try {
-			// Keep pending messages so the restarted agent can consume them
-			await stopAgent(project.id, { keepPendingMessages: true });
-
-			// Relaunch with resume to pick up new config
-			await launchAgent(project, {
-				prompt:
-					"Orchestrator restarted to pick up new config. Continue where you left off.",
-				resume: true,
-			});
-			return c.json({ ok: true });
-		} finally {
-			restartingProjects.delete(project.id);
-		}
-	});
-
-	// Clear session history for a project (useful when starting fresh after restart)
-	app.post("/projects/:id/sessions/clear", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) return c.json({ error: "Project not found" }, 404);
-		if (activeSessions.has(project.id)) {
-			return c.json(
-				{
-					error:
-						"Cannot clear sessions while agent is running. Stop the agent first.",
-				},
-				409,
-			);
-		}
-		const sessionsDir = join(config.dataDir, "sessions", project.id);
-		await rm(sessionsDir, { recursive: true, force: true });
-		await mkdir(sessionsDir, { recursive: true });
-		// Also clear event history and disable auto-resume
-		eventHistory.delete(project.id);
-		try {
-			await rm(eventsPath(project.id));
-		} catch {
-			/* ok */
-		}
-		const tracker = trackers.get(project.id);
-		if (tracker) {
-			tracker.autoResume = false;
-			tracker.orchestratorSessionId = null;
-			await tracker.save();
-		}
-		return c.json({ cleared: true });
-	});
-
-	// Prune old session files (keep only the most recent N)
-	app.post("/projects/:id/sessions/prune", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) return c.json({ error: "Project not found" }, 404);
-
-		const body = await c.req
-			.json<{ keepCount?: number }>()
-			.catch(() => ({}) as { keepCount?: number });
-		const keepCount = body?.keepCount ?? 10;
-
-		const result = await pruneSessionFiles(project.id, keepCount);
-		return c.json(result);
-	});
-
-	// Inject a message into a running agent
-	app.post("/projects/:id/message", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const body = await c.req.json<{
-			message: string;
-			images?: QueueImage[];
-		}>();
-		if (!body.message) {
-			return c.json({ error: "message is required" }, 400);
-		}
-
-		const result = handleInjectMessage(project.id, body.message, body.images);
-		if (!result.ok) {
-			return c.json({ error: result.error }, result.status as 404);
-		}
-		return c.json({ ok: true, sessionId: result.sessionId });
-	});
-
-	// Inject a message into a specific running child agent's queue
-	app.post("/projects/:id/tasks/:nodeId/message", async (c) => {
-		const project = pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const nodeId = c.req.param("nodeId");
-		const body = await c.req.json<{ content: string }>();
-		if (!body.content) {
-			return c.json({ error: "content is required" }, 400);
-		}
-
-		const queue = globalAgentQueues.get(nodeId);
-		if (!queue) {
-			return c.json({ error: "No active agent for this task" }, 404);
-		}
-
-		try {
-			queue.enqueue({ source: "user", content: body.content });
-		} catch {
-			return c.json({ error: "Queue closed" }, 409);
-		}
-		addPendingMessage(project.id, nodeId, body.content);
-		return c.json({ ok: true, taskId: nodeId });
-	});
-
-	// Respond to a pending clarification request
-	app.post("/projects/:id/clarify", async (c) => {
-		const projectId = c.req.param("id");
-		const body = await c.req.json<{
-			taskId: string;
-			answer: string;
-			clarificationId?: string;
-		}>();
-		if (!body.taskId || !body.answer) {
-			return c.json({ error: "taskId and answer are required" }, 400);
-		}
-
-		const result = handleClarifyResponse(
-			projectId,
-			body.taskId,
-			body.answer,
-			body.clarificationId,
-		);
-		if (!result.ok) {
-			return c.json({ error: result.error }, result.status as 404);
-		}
-		return c.json({ ok: true });
-	});
-
-	// WebSocket endpoint for real-time updates
-	app.get(
-		"/ws",
-		upgradeWebSocket((_c) => {
-			const client: WSClient = {
-				ws: null as unknown as WSContext,
-				projectId: null,
-			};
-
-			return {
-				onOpen(_evt, ws) {
-					client.ws = ws;
-					wsClients.add(client);
-				},
-				async onMessage(evt, ws) {
-					try {
-						const msg = JSON.parse(
-							typeof evt.data === "string" ? evt.data : "",
-						) as {
-							type: string;
-							projectId?: string;
-							prompt?: string;
-							model?: string;
-							childModel?: string;
-							taskId?: string;
-							answer?: string;
-							images?: QueueImage[];
-						};
-
-						if (msg.type === "subscribe" && msg.projectId) {
-							client.projectId = msg.projectId;
-							// Send current tree immediately
-							let tracker = trackers.get(msg.projectId);
-							if (!tracker) {
-								// Load tracker if not in memory yet
-								try {
-									tracker = await getTracker(msg.projectId);
-								} catch {
-									/* project data not found — ok */
-								}
-							}
-							if (tracker) {
-								ws.send(
-									JSON.stringify({
-										type: "tree_updated",
-										nodes: tracker.allNodes(),
-									}),
-								);
-							}
-							// Send event history so client has full context (load from disk if needed)
-							let history = eventHistory.get(msg.projectId);
-							if (!history) {
-								history = await loadEventHistory(msg.projectId);
-							}
-							if (history.length > 0) {
-								ws.send(
-									JSON.stringify({
-										type: "event_history",
-										events: history,
-									}),
-								);
-							}
-							// Send current pending messages
-							const pending = getPendingMessages(msg.projectId);
-							if (pending.length > 0) {
-								ws.send(
-									JSON.stringify({
-										type: "pending_messages",
-										projectId: msg.projectId,
-										messages: pending,
-									}),
-								);
-							}
-							// Send current pending clarifications
-							const clarifications = getPendingClarifications(msg.projectId);
-							if (clarifications.length > 0) {
-								ws.send(
-									JSON.stringify({
-										type: "pending_clarifications",
-										projectId: msg.projectId,
-										clarifications,
-									}),
-								);
-							}
-						}
-
-						if (msg.type === "orchestrate" && msg.projectId && msg.prompt) {
-							const result = await handleOrchestrate(
-								msg.projectId,
-								msg.prompt,
-								{ model: msg.model, childModel: msg.childModel },
-							);
-							if (!result.ok) {
-								ws.send(
-									JSON.stringify({ type: "error", message: result.error }),
-								);
-							}
-						}
-
-						if (
-							msg.type === "clarify_response" &&
-							msg.projectId &&
-							msg.taskId &&
-							msg.answer
-						) {
-							// Errors silently ignored for WS clarify (matches previous behavior)
-							handleClarifyResponse(msg.projectId, msg.taskId, msg.answer);
-						}
-
-						if (msg.type === "inject_message" && msg.projectId && msg.prompt) {
-							const result = handleInjectMessage(
-								msg.projectId,
-								msg.prompt,
-								msg.images,
-							);
-							if (result.ok) {
-								broadcastEvent(msg.projectId, {
-									type: "message_injected",
-									message: msg.prompt,
-								});
-							} else {
-								ws.send(
-									JSON.stringify({ type: "error", message: result.error }),
-								);
-							}
-						}
-					} catch {
-						/* ignore parse errors */
-					}
-				},
-				onClose() {
-					wsClients.delete(client);
-				},
-			};
-		}),
-	);
+	// Register all route groups
+	registerProjectRoutes(app, ctx);
+	registerTaskRoutes(app, ctx);
+	registerConfigRoutes(app, ctx);
+	registerAgentRoutes(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
+	registerWebSocketRoute(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
 
 	// Static file serving for the web UI (fallback for non-Bun environments)
 	app.use("/web/*", serveStatic({ root: "./" }));
 
 	/** Auto-resume orchestrations that were running before daemon restart. */
 	async function autoResumeProjects(): Promise<void> {
-		const sessionKeep = globalConfig.sessionKeep ?? 5;
-		const projects = pm.list();
+		const sessionKeep = ctx.globalConfig.sessionKeep ?? 5;
+		const projects = ctx.pm.list();
 		for (const project of projects) {
 			// Auto-prune old session files to prevent unbounded disk growth
-			const result = await pruneSessionFiles(project.id, sessionKeep);
+			const result = await pruneSessionFiles(ctx, project.id, sessionKeep);
 			if (result.pruned > 0) {
 				console.log(
 					`Auto-pruned ${result.pruned} old session(s) for ${project.name}`,
 				);
 			}
 
-			const tracker = await getTracker(project.id);
+			const tracker = await getTracker(ctx, project.id);
 			if (tracker.autoResume && tracker.orchestratorSessionId) {
 				// Reset orphaned in_progress tasks — their agent sessions died with the daemon
 				// Skip the root node — it will be re-activated by launchAgent
@@ -1907,15 +222,20 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				if (orphanCount > 0) await tracker.save();
 
 				// Load event history from disk so UI can show previous logs
-				await loadEventHistory(project.id);
+				await loadEventHistory(ctx, project.id);
 				console.log(
 					`Auto-resuming orchestration for ${project.name} (${project.id.slice(0, 8)})`,
 				);
 				const resumePrompt = `Continue where you left off. The daemon restarted.${orphanCount > 0 ? ` Note: ${orphanCount} in_progress task(s) were reset to failed.` : ""} Check the task tree and proceed.`;
-				await launchAgent(project, {
-					prompt: resumePrompt,
-					resume: true,
-				});
+				await launchAgent(
+					ctx,
+					project,
+					{
+						prompt: resumePrompt,
+						resume: true,
+					},
+					ORCHESTRATOR_SYSTEM_PROMPT,
+				);
 			}
 		}
 	}
@@ -1923,31 +243,31 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	/** Graceful shutdown: save all active session IDs and flush events. */
 	async function shutdown(): Promise<void> {
 		// Stop all agents — don't clear autoResume so they resume on next start
-		const projectIds = [...activeSessions.keys()];
+		const projectIds = [...ctx.activeSessions.keys()];
 		for (const projectId of projectIds) {
-			await stopAgent(projectId);
+			await stopAgent(ctx, projectId);
 		}
-		await flushEvents();
+		await flushEvents(ctx);
 	}
 
 	function markReady() {
-		startupReady = true;
+		ctx.startupReady = true;
 	}
 
 	async function loadConfig() {
-		globalConfig = await loadGlobalConfig(config.globalConfigPath);
+		ctx.globalConfig = await loadGlobalConfig(ctx.config.globalConfigPath);
 	}
 
 	return {
 		app,
-		pm,
-		wsClients,
+		pm: ctx.pm,
+		wsClients: ctx.wsClients,
 		autoResumeProjects,
 		shutdown,
-		getTracker,
+		getTracker: (projectId: string) => getTracker(ctx, projectId),
 		markReady,
 		loadConfig,
-		getConfig: () => globalConfig,
+		getConfig: () => ctx.globalConfig,
 	};
 }
 
