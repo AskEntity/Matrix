@@ -30,6 +30,8 @@ export interface TaskNode {
 	budgetUsd?: number;
 	/** Draft tasks can be created and edited but not executed. */
 	draft?: boolean;
+	/** Optional color label for visual categorization. */
+	color?: string;
 	createdAt: string;
 	updatedAt: string;
 }

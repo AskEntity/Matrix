@@ -431,6 +431,12 @@ function TaskNodeView({
 					<span
 						className={`og-task-status-dot ${statusDotClass(node.status)}`}
 					/>
+					{node.color && (
+						<span
+							className="og-task-color-dot"
+							style={{ backgroundColor: node.color }}
+						/>
+					)}
 					<span className="og-task-title">{node.title}</span>
 					{node.draft && <span className="og-task-draft-badge">draft</span>}
 					{node.branch && (

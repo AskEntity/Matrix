@@ -107,9 +107,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - Provider re-exports from `./tools/index.ts` for backward compatibility.
 - `readProjectMemory(path, includeHeaders?)` in daemon/helpers.ts — single function for CLAUDE.md + memory.md reading. Agent-tools.ts imports with `includeHeaders=false`.
 
-## Inline Task Creation & Trash Drop Zone
+## Task UI Features
 
-- **Inline task creation**: `isCreating` state in App.tsx controls visibility of inline input in TaskTree. IME-safe with composingRef. On blur with text, confirms; on blur without text, cancels.
-- **Trash drop zone**: Appears at bottom of TaskTree only during active drag. Uses dataTransfer text/plain (task ID set in existing drag logic) to identify dropped task.
-- **CSS specificity**: Use `.og-task-node.og-inline-create` (double class) instead of `!important` to override border-left-color — Biome rejects `!important`.
-- **Biome a11y**: Drop-only zones (no click/keyboard) need `biome-ignore lint/a11y/noStaticElementInteractions` comment.
+- **Color labels**: `color?: string` on TaskNode. 7-color palette in TaskDetail. Color dot in TaskTree row. PATCH + agent tools support.
+- **Inline task creation**: `isCreating` state -> inline input in TaskTree. IME-safe. Blur with text confirms, without cancels.
+- **Trash drop zone**: Appears during drag at TaskTree bottom. Uses dataTransfer for task ID.
+- **CSS**: Use double-class selectors instead of `!important` (Biome rejects it). Always `type="button"` on buttons.

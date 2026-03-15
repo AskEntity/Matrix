@@ -569,6 +569,61 @@ select {
 	font-style: italic;
 }
 
+.og-task-color-dot {
+	flex-shrink: 0;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+}
+
+.og-color-picker {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	flex-wrap: wrap;
+}
+
+.og-color-swatch {
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	border: 2px solid transparent;
+	cursor: pointer;
+	padding: 0;
+	transition:
+		border-color var(--t-fast),
+		transform var(--t-fast);
+}
+
+.og-color-swatch:hover {
+	transform: scale(1.15);
+}
+
+.og-color-swatch.selected {
+	border-color: var(--text-primary);
+}
+
+.og-color-clear {
+	background: none;
+	border: 1px solid var(--border);
+	color: var(--text-muted);
+	font-size: 10px;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	line-height: 1;
+}
+
+.og-color-clear:hover {
+	color: var(--text-primary);
+	border-color: var(--text-muted);
+}
+
 .og-tree-toggle {
 	background: none;
 	border: none;
