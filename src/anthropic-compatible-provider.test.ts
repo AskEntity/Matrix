@@ -728,12 +728,15 @@ describe("executeBashWithTimeout", () => {
 		expect(result.content).toContain("Background ID: bg-");
 		expect(result.isError).toBe(false);
 
-		// Wait for background process to complete and notify
+		// Wait for background process to complete and notify (metadata only, no stdout/stderr)
 		const msg = await queue.wait();
 		expect(msg.source).toBe("background_complete");
 		if (msg.source === "background_complete") {
 			expect(msg.exitCode).toBe(0);
-			expect(msg.stdout).toContain("bg-test");
+			expect(msg.durationMs).toBeGreaterThanOrEqual(0);
+			// stdout/stderr no longer included in queue messages
+			expect(msg.stdout).toBeUndefined();
+			expect(msg.stderr).toBeUndefined();
 		}
 
 		cleanupSessionBackgroundProcesses(sessionId);
@@ -757,13 +760,15 @@ describe("executeBashWithTimeout", () => {
 		// Verify it's tracked as running
 		expect(getRunningBackgroundCount(sessionId)).toBe(1);
 
-		// Wait for completion notification — this takes ~5s
+		// Wait for completion notification — this takes ~5s (metadata only, no stdout/stderr)
 		const msg = await queue.wait();
 		expect(msg.source).toBe("background_complete");
 		if (msg.source === "background_complete") {
 			expect(msg.exitCode).toBe(0);
-			expect(msg.stdout).toContain("done-slow");
 			expect(msg.durationMs).toBeGreaterThan(100);
+			// stdout/stderr no longer included in queue messages
+			expect(msg.stdout).toBeUndefined();
+			expect(msg.stderr).toBeUndefined();
 		}
 
 		// Should no longer be running
@@ -944,7 +949,7 @@ describe("executeBashWithTimeout", () => {
 		cleanupSessionBackgroundProcesses(sessionId);
 	});
 
-	test("getBackgroundStatus returns output for completed process", () => {
+	test("getBackgroundStatus returns metadata for completed process", () => {
 		const sessionId = "test-status-done";
 		backgroundProcesses.set(
 			sessionId,
@@ -955,13 +960,13 @@ describe("executeBashWithTimeout", () => {
 						id: "bg-fin",
 						command: "echo hello",
 						startTime: Date.now() - 2000,
-						stdout: "hello\n",
+						stdout: "",
 						stderr: "",
 						exitCode: 0,
 						status: "completed",
 						kill: null,
-						stdoutPath: null,
-						stderrPath: null,
+						stdoutPath: "/tmp/opengraft-bg/exec-test.stdout",
+						stderrPath: "/tmp/opengraft-bg/exec-test.stderr",
 					},
 				],
 			]),
@@ -970,7 +975,8 @@ describe("executeBashWithTimeout", () => {
 		const status = getBackgroundStatus(sessionId, "bg-fin");
 		expect(status).toContain("completed");
 		expect(status).toContain("Exit code: 0");
-		expect(status).toContain("hello");
+		expect(status).toContain("stdout file:");
+		expect(status).toContain("Process completed");
 		expect(status).not.toContain("still running");
 		cleanupSessionBackgroundProcesses(sessionId);
 	});

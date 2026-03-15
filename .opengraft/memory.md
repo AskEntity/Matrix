@@ -182,3 +182,12 @@ Daemon (Hono: HTTP + WS on :7433)
 - `getToolCardTitle()` for bash: when `bg_action` is present in toolArgs, shows `bg kill: <bgId>` or `bg status: <bgId>` instead of `$ ignored`.
 - `formatArgs()` accepts optional `excludeKeys?: Set<string>` parameter. For bash bg_action calls, `command` key is excluded from displayed args.
 - `bashBgExcludeKeys()` helper returns the exclude set when toolName is "bash" and bg_action is present.
+
+## Background Process Completion Simplification (March 2026)
+
+- `background_complete` queue messages now contain metadata only (commandId, command, exitCode, durationMs). stdout/stderr fields are optional and no longer included.
+- Background process temp files are NOT cleaned up on completion — they persist until session ends via `cleanupSessionBackgroundProcesses()`. Agent reads output via `read_file` at any granularity.
+- `getBackgroundStatus()` returns metadata + file paths only, no stdout/stderr content. Works for both running and completed processes.
+- `killBackgroundProcess()` no longer reads output or cleans up files. Returns metadata + file paths.
+- Foreground commands with large output (>50KB) return a 5KB preview + file path instead of full content. Files preserved for `read_file` access.
+- `formatQueueMessage()` and `toRawMessage()` for background_complete no longer include output content.

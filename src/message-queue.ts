@@ -29,9 +29,11 @@ export type QueueMessage =
 			commandId: string;
 			command: string;
 			exitCode: number | null;
-			stdout: string;
-			stderr: string;
 			durationMs: number;
+			/** @deprecated No longer included — use read_file on output files instead. */
+			stdout?: string;
+			/** @deprecated No longer included — use read_file on output files instead. */
+			stderr?: string;
 	  }
 	| { source: "compact" };
 
