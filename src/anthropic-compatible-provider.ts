@@ -1754,11 +1754,17 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {
 				try {
-					perfLog("API call start");
+					perfLog(
+						`API call start (messages: ${messages.length}, compactionPending: ${compactionPending}, manualCompact: ${manualCompactRequested})`,
+					);
+					const tStream0 = Date.now();
 					const stream = this.useOAuth
 						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
 							(this.client.beta.messages as any).stream(createParams)
 						: this.client.messages.stream(createParams);
+					const tStreamDt = Date.now() - tStream0;
+					if (tStreamDt > 10)
+						perfLog(`stream() construction took ${tStreamDt}ms`);
 
 					// Stream text deltas to UI (throttled to ~12 yields/sec)
 					let textBuffer = "";
