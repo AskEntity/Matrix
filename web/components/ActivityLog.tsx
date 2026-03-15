@@ -127,7 +127,7 @@ export function ActivityLog({
 
 		// Track which tool_result indices have been consumed by pairing
 		const consumedResults = new Set<number>();
-		// Track yield tool_use indices consumed when their result arrives
+		// Track tool_use indices to hide (e.g. yield entries)
 		const consumedUseEntries = new Set<number>();
 
 		// For each tool_use, scan ahead to find its matching tool_result
@@ -146,22 +146,24 @@ export function ActivityLog({
 			return -1;
 		};
 
-		// Pre-scan: for each yield tool_result, find its matching tool_use and
-		// mark the tool_use as consumed. The tool_result will render standalone
-		// as "Resume from yield", replacing the loading card.
+		// Pre-scan: hide completed yield pairs (tool_use + tool_result).
+		// Only an unmatched yield tool_use at the end (agent currently waiting) stays visible.
 		for (let j = 0; j < visible.length; j++) {
 			const entry = visible[j];
-			if (!entry || entry.type !== "tool_result") continue;
+			if (!entry) continue;
 			if (getToolName(entry) !== "mcp__opengraft__yield") continue;
-			// Scan backwards to find the matching yield tool_use
-			for (let k = j - 1; k >= 0; k--) {
-				const candidate = visible[k];
-				if (!candidate || candidate.type !== "tool_use") continue;
-				if (candidate.taskId !== entry.taskId) continue;
-				if (consumedUseEntries.has(k)) continue;
-				if (getToolName(candidate) === "mcp__opengraft__yield") {
-					consumedUseEntries.add(k);
-					break;
+			if (entry.type === "tool_result") {
+				consumedResults.add(j);
+				// Also consume the matching tool_use
+				for (let k = j - 1; k >= 0; k--) {
+					const candidate = visible[k];
+					if (!candidate || candidate.type !== "tool_use") continue;
+					if (candidate.taskId !== entry.taskId) continue;
+					if (consumedUseEntries.has(k)) continue;
+					if (getToolName(candidate) === "mcp__opengraft__yield") {
+						consumedUseEntries.add(k);
+						break;
+					}
 				}
 			}
 		}
@@ -205,27 +207,6 @@ export function ActivityLog({
 
 			result.push({ kind: "single", entry: cur });
 			i += 1;
-		}
-
-		// Post-process: only keep the latest yield/resume entry
-		let foundLatestYield = false;
-		for (let j = result.length - 1; j >= 0; j--) {
-			const item = result[j];
-			const entry =
-				item?.kind === "single"
-					? item.entry
-					: item?.kind === "tool_card"
-						? item.useEntry
-						: null;
-			if (!entry) continue;
-			const name = entry.toolName ?? "";
-			if (name.includes("yield")) {
-				if (foundLatestYield) {
-					result.splice(j, 1); // remove earlier yield entries
-				} else {
-					foundLatestYield = true; // keep this one
-				}
-			}
 		}
 
 		return result;
