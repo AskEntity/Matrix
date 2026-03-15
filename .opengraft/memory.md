@@ -319,3 +319,11 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - `tracker.save()` in finally block must be wrapped in try/catch — otherwise save failure prevents `activeSessions.delete()`
 - Use `caughtError` flag to only broadcast `agent_stopped` on error path (success already sends `orchestration_completed`)
 - `broadcastTreeUpdate` should be called in finally block to update UI tree after any exit path
+
+## User Image Display in Activity Log
+- LogEntry has optional `images?: { base64: string; mediaType: string }[]` field
+- `createLogEntry` accepts optional `images` param (6th arg after structured)
+- `addLog` in App.tsx also extended with images param (8th arg)
+- Images saved via `lastSubmittedImagesRef` on submit, consumed by orchestration_started handler
+- For inject messages (while running), user_prompt log created directly in handleSubmit with images
+- ToolCard renders thumbnails in `.og-user-images` container after prompt text

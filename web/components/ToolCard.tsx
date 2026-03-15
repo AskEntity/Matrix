@@ -791,6 +791,18 @@ export function LogEntryView({
 				<span className="og-log-time">{entry.time}</span>
 				<div className="og-user-prompt-bubble">
 					<span className="og-user-prompt-text">{entry.text}</span>
+					{entry.images && entry.images.length > 0 && (
+						<div className="og-user-images">
+							{entry.images.map((img) => (
+								<img
+									key={img.base64.slice(-32)}
+									src={`data:${img.mediaType};base64,${img.base64}`}
+									alt="attached"
+									className="og-user-image-thumb"
+								/>
+							))}
+						</div>
+					)}
 				</div>
 			</div>
 		);

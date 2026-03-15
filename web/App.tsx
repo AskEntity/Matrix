@@ -139,6 +139,9 @@ function AppInner() {
 	const [attachedImages, setAttachedImages] = useState<
 		{ base64: string; mediaType: string }[]
 	>([]);
+	const lastSubmittedImagesRef = useRef<
+		{ base64: string; mediaType: string }[] | undefined
+	>(undefined);
 	const [compacting, setCompacting] = useState(false);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
@@ -190,8 +193,9 @@ function AppInner() {
 			taskId?: string,
 			checkpoint?: string,
 			structured?: StructuredFields,
+			images?: { base64: string; mediaType: string }[],
 		) => {
-			const entry = createLogEntry(type, text, taskId, structured);
+			const entry = createLogEntry(type, text, taskId, structured, images);
 			if (checkpoint) entry.checkpoint = checkpoint;
 			setLogs((prev) => [...prev, entry]);
 		},
@@ -375,8 +379,18 @@ function AppInner() {
 				case "orchestration_started": {
 					const startRootId = msg.taskId as string | undefined;
 					if (startRootId) setRootNodeId(startRootId);
-					if (msg.prompt)
-						addLog("user_prompt", msg.prompt as string, startRootId);
+					if (msg.prompt) {
+						const imgs = lastSubmittedImagesRef.current;
+						lastSubmittedImagesRef.current = undefined;
+						addLog(
+							"user_prompt",
+							msg.prompt as string,
+							startRootId,
+							undefined,
+							undefined,
+							imgs,
+						);
+					}
 					addLog("lifecycle", "Orchestration started", startRootId);
 					setRunning(true);
 					if (msg.provider) setAgentProvider(msg.provider as string);
@@ -575,10 +589,19 @@ function AppInner() {
 		e.preventDefault();
 		if (!prompt.trim() || !projectId) return;
 		const images = attachedImages.length > 0 ? attachedImages : undefined;
+		lastSubmittedImagesRef.current = images;
 		try {
 			if (running) {
 				if (targetNodeId) await sendMessageToTask(targetNodeId, prompt.trim());
 				else await sendMessage(prompt.trim(), images);
+				addLog(
+					"user_prompt",
+					prompt.trim(),
+					undefined,
+					undefined,
+					undefined,
+					images,
+				);
 			} else {
 				await start({ prompt: prompt.trim() });
 			}
