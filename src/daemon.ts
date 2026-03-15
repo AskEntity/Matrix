@@ -1272,7 +1272,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			cwd: project.path,
 			projectPath: project.path,
 			sessionsDir: join(config.dataDir, "sessions", project.id),
-			systemPrompt: `${ORCHESTRATOR_SYSTEM_PROMPT}\n\n${ORCHESTRATION_KNOWLEDGE}`,
+			systemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
 			mcpToolDefs: { opengraft: toolDefs },
 			resumeSessionId,
 			model: effectiveModel,
