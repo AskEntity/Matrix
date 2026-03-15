@@ -1398,6 +1398,10 @@ export function addMessagesCacheControl(
  * Uses the Messages API with tool use for a lightweight, controllable agent loop.
  * No Claude Code subprocess — direct API calls with custom tool execution.
  */
+function perfLog(label: string) {
+	console.log(`[PERF ${new Date().toISOString()}] ${label}`);
+}
+
 export class AnthropicCompatibleProvider implements AgentProvider {
 	readonly name = "anthropic";
 	private client: Anthropic;
@@ -1575,6 +1579,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
 		while (true) {
+			perfLog("loop iteration start");
 			// Check abort signal
 			if (request.signal?.aborted) {
 				yield { type: "status", message: "Aborted" };
@@ -1606,11 +1611,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				const checkpoint = extractCheckpoint(responseText);
 
 				try {
+					perfLog("buildCompactedContext start");
 					const compactedContent = await buildCompactedContext(
 						taskContext,
 						checkpoint,
 						cwd,
 					);
+					perfLog(`buildCompactedContext done (${compactedContent.length} chars)`);
 					const oldTokens = preCompactTokenCount;
 					messages.length = 0;
 					const userContent = cwd
@@ -1666,12 +1673,14 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					estimatedInputTokens >= lazyCountThreshold
 				) {
 					if (!manualCompactRequested) {
+						perfLog(`countTokens start (messages: ${messages.length})`);
 						const result = await this.client.messages.countTokens({
 							model,
 							system: [{ type: "text", text: request.systemPrompt ?? "" }],
 							messages,
 							tools: allTools,
 						});
+						perfLog(`countTokens done: ${result.input_tokens}`);
 						tokenCount = result.input_tokens;
 						isEstimated = false;
 					}
@@ -1726,9 +1735,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			// Cache control: add a cache breakpoint at the second-to-last user message
 			// (i.e. the last user turn before the current one), so that accumulated
 			// conversation history is cached between turns.
+			const tCache0 = Date.now();
 			const messagesWithCache: MessageParam[] =
 				addMessagesCacheControl(messages);
+			const tCacheDt = Date.now() - tCache0;
+			if (tCacheDt > 10) perfLog(`addMessagesCacheControl took ${tCacheDt}ms`);
 
+			const tParams0 = Date.now();
 			const createParams = {
 				model,
 				max_tokens: DEFAULT_MAX_TOKENS,
@@ -1736,9 +1749,12 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				messages: messagesWithCache,
 				tools: toolsWithCache,
 			};
+			const tParamsDt = Date.now() - tParams0;
+			if (tParamsDt > 10) perfLog(`createParams construction took ${tParamsDt}ms`);
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {
 				try {
+					perfLog("API call start");
 					const stream = this.useOAuth
 						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
 							(this.client.beta.messages as any).stream(createParams)
@@ -1773,7 +1789,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							content: textBuffer,
 						};
 					}
+					perfLog("stream iteration done");
 					response = await stream.finalMessage();
+					perfLog("finalMessage done");
 					break;
 				} catch (e) {
 					const isTransient =
@@ -2069,9 +2087,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			// Persist after tool results too (captures full turn)
 			this.sessionHistory.set(sessionId, [...messages]);
 			if (sessionsDir) {
+				const tPersist0 = Date.now();
+				const persistJson = JSON.stringify(messages);
+				const tPersistDt = Date.now() - tPersist0;
+				if (tPersistDt > 10) perfLog(`session persist stringify took ${tPersistDt}ms (${messages.length} msgs, ${persistJson.length} bytes)`);
 				writeFile(
 					join(sessionsDir, `${sessionId}.json`),
-					JSON.stringify(messages),
+					persistJson,
 					"utf-8",
 				).catch(() => {});
 			}
@@ -2116,9 +2138,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		if (sessionsDir) {
 			try {
 				await mkdir(sessionsDir, { recursive: true });
+				const tFinal0 = Date.now();
+				const finalJson = JSON.stringify(finalMessages);
+				const tFinalDt = Date.now() - tFinal0;
+				if (tFinalDt > 10) perfLog(`final persist stringify took ${tFinalDt}ms (${finalMessages.length} msgs, ${finalJson.length} bytes)`);
 				await writeFile(
 					join(sessionsDir, `${sessionId}.json`),
-					JSON.stringify(finalMessages),
+					finalJson,
 					"utf-8",
 				);
 			} catch {

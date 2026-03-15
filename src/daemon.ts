@@ -70,7 +70,10 @@ function broadcast(
 	projectId: string,
 	event: Record<string, unknown>,
 ) {
+	const tBc0 = Date.now();
 	const msg = JSON.stringify(event);
+	const tBcDt = Date.now() - tBc0;
+	if (tBcDt > 50) console.log(`[PERF ${new Date().toISOString()}] broadcast stringify took ${tBcDt}ms (type=${event.type})`);
 	for (const client of clients) {
 		if (client.projectId === projectId) {
 			try {
@@ -325,6 +328,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	/** Broadcast an agent event to subscribers and store in history. */
 	function broadcastEvent(projectId: string, event: Record<string, unknown>) {
+		const tBe0 = Date.now();
 		// Store in history (skip tree_updated and text_delta — too granular for persistence)
 		if (
 			event.type !== "tree_updated" &&
@@ -338,6 +342,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			scheduleEventFlush(projectId);
 		}
 		broadcast(wsClients, projectId, event);
+		const tBeDt = Date.now() - tBe0;
+		if (tBeDt > 50) console.log(`[PERF ${new Date().toISOString()}] broadcastEvent took ${tBeDt}ms (type=${event.type}, eventType=${event.eventType ?? "n/a"})`);
 
 		// Agent consumed all queued messages — clear every pending indicator for this project
 		if (event.type === "agent_event" && event.eventType === "queue_message") {
@@ -1756,12 +1762,13 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								history = await loadEventHistory(msg.projectId);
 							}
 							if (history.length > 0) {
-								ws.send(
-									JSON.stringify({
-										type: "event_history",
-										events: history,
-									}),
-								);
+								const tHist0 = Date.now();
+								const histPayload = JSON.stringify({
+									type: "event_history",
+									events: history,
+								});
+								ws.send(histPayload);
+								console.log(`[PERF ${new Date().toISOString()}] event_history send: ${history.length} events, ${histPayload.length} bytes, ${Date.now() - tHist0}ms`);
 							}
 							// Send current pending messages
 							const pending = getPendingMessages(msg.projectId);
