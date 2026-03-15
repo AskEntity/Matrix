@@ -119,3 +119,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - `childMap` in TaskTree must preserve parent.children order (not arbitrary Map insertion order from filtering).
 - HTML5 DnD: use `setTimeout` for `setDragState` in `onDragStart` so the drag image renders before opacity change.
 - Drop indicator uses midpoint check (clientY vs rect midY) to determine before/after insertion.
+
+## App.tsx Refactoring Pattern
+
+- Extracted WS handler to `web/ws-handler.ts` via `createWSHandler(deps)` — takes state setters as a deps object, returns a handler function. Used with `useMemo` in App.tsx.
+- Extracted action handlers to `web/handlers.ts` via `createActionHandlers(deps)` — called on each render (not memoized) since handlers read current state values. Returns an object of handler functions.
+- Both use a deps interface pattern to pass component state/setters as parameters.
