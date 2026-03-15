@@ -121,3 +121,8 @@ Daemon (Hono: HTTP + WS on :7433)
 
 ## Debug Logging
 - Temporary `[PERF]` debug logging was added and later removed (compact lockup investigation). If re-adding, use a `perfLog()` helper with `[PERF <ISO timestamp>]` prefix for easy grep.
+
+## Yield Card Display in Activity Log
+- Completed yield pairs (tool_use + tool_result) are hidden in ActivityLog.tsx mergedVisible computation.
+- Only pending yield tool_use entries (agent currently waiting) remain visible as "⏸ Yield" cards.
+- The queue_message events already render the actual messages the agent received, so showing "Resume from yield" cards was redundant and caused ordering issues (queue_message appeared before tool_result).
