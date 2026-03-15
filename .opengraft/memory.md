@@ -104,3 +104,8 @@ Daemon (Hono: HTTP + WS on :7433)
 - read_file: detects png/jpg/jpeg/gif/webp (NOT svg), returns base64.
 - User paste: AppFooter handles clipboard images, 5MB limit.
 - MCP yield tool: returns images as `{ type: "image", data, mimeType }`.
+
+## Auto-scroll Fix: MutationObserver vs ResizeObserver
+- ResizeObserver on scroll container only fires when the container itself resizes (e.g. window resize), NOT when inner content grows from streaming text_delta.
+- MutationObserver with `{ childList: true, subtree: true, characterData: true }` correctly detects DOM text node changes from in-place content updates.
+- The `visible.length` useEffect handles new entries; MutationObserver handles in-place text growth of existing entries.
