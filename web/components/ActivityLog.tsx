@@ -111,9 +111,7 @@ export function ActivityLog({
 	const { t } = useLocale();
 
 	// Merge tool_use + tool_result into combined entries for rendering.
-	// Uses structured toolName field when available, falls back to text parsing.
-	// Handles parallel tool calls (A_use, B_use, A_result, B_result) by scanning
-	// ahead to find matching tool_result by toolName.
+	// Pairs tool_use → tool_result by unique toolUseId.
 	const mergedVisible = useMemo(() => {
 		const result: Array<
 			| { kind: "single"; entry: LogEntry }
@@ -129,34 +127,23 @@ export function ActivityLog({
 			return entry.toolName ?? "";
 		};
 
-		// --- ID-based + FIFO pairing ---
-		// Primary: match tool_use → tool_result by toolUseId (unique per call).
-		// Fallback: FIFO queue per (toolName, taskId) for legacy events without IDs.
+		// --- ID-based pairing ---
+		// Match tool_use → tool_result by toolUseId (unique per call).
 		const paired = new Map<number, number>(); // useIdx → resultIdx
 		const pairedResults = new Set<number>(); // result indices already consumed
 
 		// Index tool_use entries by toolUseId for O(1) lookup
 		const useByToolUseId = new Map<string, number>();
-		// FIFO queues for fallback matching (keyed by "toolName\0taskId")
-		const useQueues = new Map<string, number[]>();
 		// Indices to hide: yield pairs
 		const hiddenIndices = new Set<number>();
 
-		// First pass: register all tool_use entries
+		// First pass: register all tool_use entries by toolUseId
 		for (let j = 0; j < visible.length; j++) {
 			const entry = visible[j];
 			if (!entry || entry.type !== "tool_use") continue;
 			if (entry.toolUseId) {
 				useByToolUseId.set(entry.toolUseId, j);
 			}
-			const name = getToolName(entry);
-			const key = `${name}\0${entry.taskId ?? ""}`;
-			let q = useQueues.get(key);
-			if (!q) {
-				q = [];
-				useQueues.set(key, q);
-			}
-			q.push(j);
 		}
 
 		// Second pass: match tool_result entries to tool_use entries
@@ -164,36 +151,13 @@ export function ActivityLog({
 			const entry = visible[j];
 			if (!entry || entry.type !== "tool_result") continue;
 
-			let useIdx: number | undefined;
-
-			// Primary: match by toolUseId
+			// Match by toolUseId
 			if (entry.toolUseId) {
-				useIdx = useByToolUseId.get(entry.toolUseId);
-			}
-
-			// Fallback: FIFO by (toolName, taskId)
-			if (useIdx === undefined) {
-				const name = getToolName(entry);
-				const key = `${name}\0${entry.taskId ?? ""}`;
-				const q = useQueues.get(key);
-				if (q && q.length > 0) {
-					useIdx = q.shift();
+				const useIdx = useByToolUseId.get(entry.toolUseId);
+				if (useIdx !== undefined) {
+					paired.set(useIdx, j);
+					pairedResults.add(j);
 				}
-			}
-
-			if (useIdx !== undefined) {
-				// Remove from FIFO queue if matched by ID (to keep queue in sync)
-				if (entry.toolUseId) {
-					const name = getToolName(entry);
-					const key = `${name}\0${entry.taskId ?? ""}`;
-					const q = useQueues.get(key);
-					if (q) {
-						const idx = q.indexOf(useIdx);
-						if (idx !== -1) q.splice(idx, 1);
-					}
-				}
-				paired.set(useIdx, j);
-				pairedResults.add(j);
 			}
 		}
 
