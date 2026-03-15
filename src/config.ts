@@ -42,14 +42,19 @@ async function readJsonConfig(path: string): Promise<OpenGraftConfig> {
 	}
 }
 
-export async function loadGlobalConfig(): Promise<OpenGraftConfig> {
-	return readJsonConfig(globalConfigPath());
+export async function loadGlobalConfig(
+	path?: string,
+): Promise<OpenGraftConfig> {
+	return readJsonConfig(path ?? globalConfigPath());
 }
 
-export async function saveGlobalConfig(config: OpenGraftConfig): Promise<void> {
-	const path = globalConfigPath();
-	await mkdir(dirname(path), { recursive: true });
-	await writeFile(path, JSON.stringify(config, null, "\t"), "utf-8");
+export async function saveGlobalConfig(
+	config: OpenGraftConfig,
+	path?: string,
+): Promise<void> {
+	const resolvedPath = path ?? globalConfigPath();
+	await mkdir(dirname(resolvedPath), { recursive: true });
+	await writeFile(resolvedPath, JSON.stringify(config, null, "\t"), "utf-8");
 }
 
 export async function loadProjectRepoConfig(

@@ -124,3 +124,4 @@ Daemon (Hono: HTTP + WS on :7433)
 - AuthGroupsSection/McpServersSection now accept `draft + onDraftChange` instead of calling `updateGlobal/updateRepo/updateLocal` directly — this is critical for the tab-level Save to capture auth group and MCP changes.
 - `settings.revert` i18n key added to both en and zh.
 - CSS: `.og-settings-tab-actions` for Save/Revert bar, `.og-settings-dirty` for the asterisk indicator.
+\n## Test Isolation: globalConfigPath in DaemonConfig\n- saveGlobalConfig/loadGlobalConfig in config.ts now accept optional path param. No path = defaults to ~/.opengraft/config.json.\n- DaemonConfig has globalConfigPath?: string. daemon.ts loadConfig() and PATCH /config/global use config.globalConfigPath when provided.\n- Tests calling PATCH /config/global must pass globalConfigPath: join(dataDir, 'config.json') to createApp to avoid writing to real user config.
