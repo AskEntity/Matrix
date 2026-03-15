@@ -4,6 +4,7 @@ import {
 	createOrchestratorTools,
 	TASK_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
+import { DEFAULT_MODEL } from "../config.ts";
 import type { QueueImage } from "../message-queue.ts";
 import { globalAgentQueues, MessageQueue } from "../message-queue.ts";
 import type { TaskTracker } from "../task-tracker.ts";
@@ -229,7 +230,7 @@ export async function launchAgent(
 		taskId: rootNodeId,
 		prompt: opts.prompt,
 		provider: provider.name,
-		model: effectiveModel ?? "claude-sonnet-4-6",
+		model: effectiveModel ?? DEFAULT_MODEL,
 	});
 	broadcastTreeUpdate(ctx, project.id, tracker);
 

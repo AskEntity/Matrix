@@ -1,6 +1,7 @@
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Hono } from "hono";
+import { DEFAULT_MODEL } from "../../config.ts";
 import type { QueueImage } from "../../message-queue.ts";
 import {
 	handleClarifyResponse,
@@ -93,7 +94,7 @@ export function registerAgentRoutes(
 			project.id,
 		);
 		const provider = getProjectProvider(ctx, effectiveCfg);
-		const model = effectiveCfg.model ?? "claude-sonnet-4-6";
+		const model = effectiveCfg.model ?? DEFAULT_MODEL;
 		return c.json({
 			running: !!session,
 			sessionId: session?.sessionId ?? null,
