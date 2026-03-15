@@ -119,6 +119,8 @@ Do NOT use any tools. Respond with ONLY the checkpoint in <summary>...</summary>
 
 Write the checkpoint with these sections IN ORDER. Every section is required.
 
+Write ALL sections in the same language as the user has been communicating. If the user's messages are in Chinese, write the entire checkpoint in Chinese.
+
 ## 1. User Requests (MOST CRITICAL)
 Chronological list of EVERY user message or parent instruction received during this session.
 For each, include:
@@ -138,11 +140,11 @@ What has been built, tested, committed, and merged — with key architectural an
 Include specific file paths and function names. Note WHY decisions were made, not just what.
 
 ## 4. Task Tree State
-Snapshot of the current task tree. For each task include:
+List ALL tasks ever created in this session, including those already completed and deleted from the tree. For each task include:
 - Task ID, title, status (pending/in_progress/passed/failed/draft)
 - Branch name (if applicable)
 - Whether it has been merged into the parent branch
-Group by: running → failed → pending → passed/merged.
+Group by: Running → Failed → Pending → Draft → Completed+Merged (list with what was accomplished). Completed/merged tasks are gone from the live tree but their work is on main — record them here for continuity.
 
 ## 5. Rejected Approaches
 What was tried and DIDN'T work. For each failure:
