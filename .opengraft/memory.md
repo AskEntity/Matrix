@@ -209,3 +209,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - **Model coverage expanded**: Added gpt-4.1/mini/nano, gpt-4-turbo, o1/o1-mini/o1-pro, o4-mini with correct pricing and context windows. GPT-4.1 family gets 1M+ context window (1,047,576 tokens).
 - **Prefix match bug fix**: Both `getModelPricing()` and `getContextWindow()` now sort keys by length (longest first) before prefix matching, preventing e.g. "gpt-4.1" from matching before "gpt-4.1-mini" for dated model names like "gpt-4.1-mini-2025-04-14".
 - **Feature parity confirmed**: Both providers use same shared `executeTool`, same `TOOLS` array, same `mcpToolDefs` handling pattern (mcp__serverName__toolName), same compaction flow. Key differences are by design: Anthropic uses `countTokens` API for precise token counting vs OpenAI uses estimated counts; Anthropic uses SDK streaming vs OpenAI uses non-streaming raw fetch.
+## Agent Lifecycle Deduplication (March 2026)
+
+- `createAgentContext()`: Shared helper that resolves project config, creates provider, connects MCP servers, and builds orchestrator tools. Used by both `launchAgent` and `runChildAgentInBackground`.
+- `consumeAgentEvents()`: Shared event loop that drains an `AsyncGenerator<AgentEvent, AgentResult>` and calls `onEvent` for each event. Returns the final `AgentResult`.
+- `mcpManager` is passed into `createAgentContext` via opts so callers own the instance for cleanup in `finally` blocks.
+- `childModel` resolution: `createAgentContext` falls back to `effectiveCfg.childModel` when `opts.childModel` is undefined. Callers pass API-level overrides if any.

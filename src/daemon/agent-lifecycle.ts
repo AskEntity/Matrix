@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { AgentEvent } from "../agent-provider.ts";
 import {
 	CostAccumulator,
 	createOrchestratorTools,
@@ -10,6 +11,7 @@ import type { QueueImage } from "../message-queue.ts";
 import { globalAgentQueues, MessageQueue } from "../message-queue.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
+import type { AgentResult } from "../types.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
 import {
@@ -25,6 +27,118 @@ import {
 	readProjectMemory,
 	resolveProjectConfig,
 } from "./helpers.ts";
+
+// ---------------------------------------------------------------------------
+// Shared helpers — extracted from launchAgent / runChildAgentInBackground
+// ---------------------------------------------------------------------------
+
+/** Config + tools bundle produced by createAgentContext(). */
+interface AgentContextResult {
+	provider: ReturnType<typeof getProjectProvider>;
+	effectiveCfg: Awaited<ReturnType<typeof resolveProjectConfig>>;
+	costAccumulator: CostAccumulator;
+	mcpManager: McpClientManager;
+	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic is not narrowable here
+	mcpToolDefs: Record<string, ToolDefinition<any>[]>;
+	hasRunningChildren?: () => boolean;
+}
+
+/**
+ * Resolve project config, create a provider, connect external MCP servers,
+ * and build orchestrator tools. Shared setup for both launchAgent and
+ * runChildAgentInBackground.
+ */
+async function createAgentContext(
+	ctx: DaemonContext,
+	project: { id: string; path: string },
+	opts: {
+		tracker: TaskTracker;
+		projectPath: string;
+		currentTaskId: string;
+		depth: number;
+		queue: MessageQueue;
+		doneRef: { done: null | { status: "passed" | "failed"; summary: string } };
+		childModel?: string;
+		mcpManager?: McpClientManager;
+	},
+): Promise<AgentContextResult> {
+	const effectiveCfg = await resolveProjectConfig(
+		ctx,
+		project.path,
+		project.id,
+	);
+	const provider = getProjectProvider(ctx, effectiveCfg);
+
+	const mcpManager = opts.mcpManager ?? new McpClientManager();
+	if (
+		effectiveCfg.mcpServers &&
+		Object.keys(effectiveCfg.mcpServers).length > 0
+	) {
+		await mcpManager.connectAll(effectiveCfg.mcpServers);
+	}
+
+	const wtRoot = join(project.path, ".worktrees");
+	const wm = new WorktreeManager(project.path, wtRoot);
+	const costAccumulator = new CostAccumulator();
+
+	const { toolDefs, hasRunningChildren } = createOrchestratorTools(
+		{
+			tracker: opts.tracker,
+			provider,
+			worktrees: wm,
+			projectPath: opts.projectPath,
+			repoPath: project.path,
+			currentTaskId: opts.currentTaskId,
+			depth: opts.depth,
+			childModel: opts.childModel ?? effectiveCfg.childModel,
+			queue: opts.queue,
+			doneRef: opts.doneRef,
+			defaultBudgetUsd: effectiveCfg.budgetUsd,
+			clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
+			maxDepth: effectiveCfg.maxDepth,
+			onTaskEvent: (event) => {
+				broadcastEvent(ctx, project.id, event);
+				broadcastTreeUpdate(ctx, project.id, opts.tracker);
+			},
+			broadcastTreeUpdate: () =>
+				broadcastTreeUpdate(ctx, project.id, opts.tracker),
+		},
+		costAccumulator,
+	);
+
+	const mcpToolDefs: Record<string, ToolDefinition[]> = {
+		opengraft: toolDefs,
+		...mcpManager.getToolDefs(),
+	};
+
+	return {
+		provider,
+		effectiveCfg,
+		costAccumulator,
+		mcpManager,
+		mcpToolDefs,
+		hasRunningChildren,
+	};
+}
+
+/**
+ * Consume all events from a session's async generator, broadcasting each one.
+ * Returns the final AgentResult when the generator is done.
+ */
+async function consumeAgentEvents(
+	events: AsyncGenerator<AgentEvent, AgentResult>,
+	onEvent: (eventType: string, eventData: Record<string, unknown>) => void,
+): Promise<AgentResult> {
+	let result = await events.next();
+	while (!result.done) {
+		const { type: eventType, ...eventData } = result.value;
+		onEvent(eventType, eventData as Record<string, unknown>);
+		result = await events.next();
+	}
+	return result.value;
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Stop a running agent and clean up all associated state.
@@ -93,82 +207,43 @@ export async function runChildAgentInBackground(
 	const childQueue = new MessageQueue();
 	globalAgentQueues.set(nodeId, childQueue);
 	const mcpManager = new McpClientManager();
+	const doneRef: {
+		done: null | { status: "passed" | "failed"; summary: string };
+	} = { done: null };
 	try {
-		const wtRoot = join(project.path, ".worktrees");
-		const wm = new WorktreeManager(project.path, wtRoot);
-		const costAccumulator = new CostAccumulator();
-		const doneRef: {
-			done: null | { status: "passed" | "failed"; summary: string };
-		} = { done: null };
-		const effectiveCfg = await resolveProjectConfig(
-			ctx,
-			project.path,
-			project.id,
-		);
-		const provider = getProjectProvider(ctx, effectiveCfg);
+		const agentCtx = await createAgentContext(ctx, project, {
+			tracker,
+			projectPath: node.worktreePath as string,
+			currentTaskId: nodeId,
+			depth: 1,
+			queue: childQueue,
+			doneRef,
+			mcpManager,
+		});
 
-		// Connect to external MCP servers if configured
-		if (
-			effectiveCfg.mcpServers &&
-			Object.keys(effectiveCfg.mcpServers).length > 0
-		) {
-			await mcpManager.connectAll(effectiveCfg.mcpServers);
-		}
-
-		const { toolDefs, hasRunningChildren } = createOrchestratorTools(
-			{
-				tracker,
-				provider,
-				worktrees: wm,
-				projectPath: node.worktreePath as string,
-				repoPath: project.path,
-				currentTaskId: nodeId,
-				depth: 1,
-				queue: childQueue,
-				doneRef,
-				defaultBudgetUsd: effectiveCfg.budgetUsd,
-				clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
-				maxDepth: effectiveCfg.maxDepth,
-				onTaskEvent: (event) => {
-					broadcastEvent(ctx, project.id, event);
-					broadcastTreeUpdate(ctx, project.id, tracker);
-				},
-				broadcastTreeUpdate: () =>
-					broadcastTreeUpdate(ctx, project.id, tracker),
-			},
-			costAccumulator,
-		);
-
-		// Merge opengraft tools with external MCP server tools
-		const mcpToolDefs: Record<string, ToolDefinition[]> = {
-			opengraft: toolDefs,
-			...mcpManager.getToolDefs(),
-		};
-
-		const session = provider.startSession({
+		const session = agentCtx.provider.startSession({
 			prompt,
 			cwd: node.worktreePath as string,
 			systemPrompt: TASK_SYSTEM_PROMPT,
 			resumeSessionId: node.sessionId ?? undefined,
-			model: effectiveCfg.model,
-			mcpToolDefs,
+			model: agentCtx.effectiveCfg.model,
+			mcpToolDefs: agentCtx.mcpToolDefs,
 			queue: childQueue,
 			doneRef,
-			hasRunningChildren,
+			hasRunningChildren: agentCtx.hasRunningChildren,
 		});
 
-		let result = await session.events.next();
-		while (!result.done) {
-			const { type: eventType, ...eventData } = result.value;
-			broadcastEvent(ctx, project.id, {
-				type: "agent_event",
-				taskId: nodeId,
-				eventType,
-				...eventData,
-			});
-			result = await session.events.next();
-		}
-		const agentResult = result.value;
+		const agentResult = await consumeAgentEvents(
+			session.events,
+			(eventType, eventData) => {
+				broadcastEvent(ctx, project.id, {
+					type: "agent_event",
+					taskId: nodeId,
+					eventType,
+					...eventData,
+				});
+			},
+		);
 
 		if (agentResult.sessionId) {
 			tracker.assignSession(nodeId, agentResult.sessionId);
@@ -222,18 +297,6 @@ export async function launchAgent(
 	const tracker = ctx.trackers.get(project.id);
 	if (!tracker) return;
 
-	// Resolve effective config: global + repo + local
-	const effectiveCfg = await resolveProjectConfig(
-		ctx,
-		project.path,
-		project.id,
-	);
-	const provider = getProjectProvider(ctx, effectiveCfg);
-
-	// Priority: API param > resolved config
-	const effectiveModel = opts.model ?? effectiveCfg.model;
-	const effectiveChildModel = opts.childModel ?? effectiveCfg.childModel;
-
 	// Ensure root node exists for the orchestrator
 	const rootNode = tracker.ensureRootNode("Orchestrator", opts.prompt);
 	const rootNodeId = rootNode.id;
@@ -243,61 +306,34 @@ export async function launchAgent(
 	tracker.autoResume = true;
 	tracker.save().catch(() => {});
 
-	broadcastEvent(ctx, project.id, {
-		type: "orchestration_started",
-		taskId: rootNodeId,
-		prompt: opts.prompt,
-		provider: provider.name,
-		model: effectiveModel ?? DEFAULT_MODEL,
-	});
-	broadcastTreeUpdate(ctx, project.id, tracker);
-
-	const wtRoot = join(project.path, ".worktrees");
-	const wm = new WorktreeManager(project.path, wtRoot);
-	const costAccumulator = new CostAccumulator();
 	const queue = new MessageQueue();
 	const doneRef: {
 		done: null | { status: "passed" | "failed"; summary: string };
 	} = { done: null };
 	const mcpManager = new McpClientManager();
 
-	// Connect to external MCP servers if configured
-	if (
-		effectiveCfg.mcpServers &&
-		Object.keys(effectiveCfg.mcpServers).length > 0
-	) {
-		await mcpManager.connectAll(effectiveCfg.mcpServers);
-	}
+	const agentCtx = await createAgentContext(ctx, project, {
+		tracker,
+		projectPath: project.path,
+		currentTaskId: rootNodeId,
+		depth: 0,
+		childModel: opts.childModel,
+		queue,
+		doneRef,
+		mcpManager,
+	});
 
-	const { toolDefs, hasRunningChildren } = createOrchestratorTools(
-		{
-			tracker,
-			provider,
-			worktrees: wm,
-			projectPath: project.path,
-			repoPath: project.path,
-			currentTaskId: rootNodeId,
-			depth: 0,
-			childModel: effectiveChildModel,
-			queue,
-			doneRef,
-			defaultBudgetUsd: effectiveCfg.budgetUsd,
-			clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
-			maxDepth: effectiveCfg.maxDepth,
-			onTaskEvent: (event) => {
-				broadcastEvent(ctx, project.id, event);
-				broadcastTreeUpdate(ctx, project.id, tracker);
-			},
-			broadcastTreeUpdate: () => broadcastTreeUpdate(ctx, project.id, tracker),
-		},
-		costAccumulator,
-	);
+	// Priority: API param > resolved config
+	const effectiveModel = opts.model ?? agentCtx.effectiveCfg.model;
 
-	// Merge opengraft tools with external MCP server tools
-	const mcpToolDefs: Record<string, ToolDefinition[]> = {
-		opengraft: toolDefs,
-		...mcpManager.getToolDefs(),
-	};
+	broadcastEvent(ctx, project.id, {
+		type: "orchestration_started",
+		taskId: rootNodeId,
+		prompt: opts.prompt,
+		provider: agentCtx.provider.name,
+		model: effectiveModel ?? DEFAULT_MODEL,
+	});
+	broadcastTreeUpdate(ctx, project.id, tracker);
 
 	// Auto-resume: if we have a previous session, always resume it
 	const hasSession = Boolean(tracker.orchestratorSessionId);
@@ -315,19 +351,18 @@ export async function launchAgent(
 		? (tracker.orchestratorSessionId ?? undefined)
 		: undefined;
 
-	// Use startSession for message injection support
-	const session = provider.startSession({
+	const session = agentCtx.provider.startSession({
 		prompt,
 		cwd: project.path,
 		projectPath: project.path,
 		sessionsDir: join(ctx.config.dataDir, "sessions", project.id),
 		systemPrompt: orchestratorSystemPrompt,
-		mcpToolDefs,
+		mcpToolDefs: agentCtx.mcpToolDefs,
 		resumeSessionId,
 		model: effectiveModel,
 		queue,
 		doneRef,
-		hasRunningChildren,
+		hasRunningChildren: agentCtx.hasRunningChildren,
 	});
 
 	ctx.activeSessions.set(project.id, session);
@@ -336,18 +371,17 @@ export async function launchAgent(
 	(async () => {
 		let caughtError = false;
 		try {
-			let result = await session.events.next();
-			while (!result.done) {
-				const { type: eventType, ...eventData } = result.value;
-				broadcastEvent(ctx, project.id, {
-					type: "agent_event",
-					taskId: rootNodeId,
-					eventType,
-					...eventData,
-				});
-				result = await session.events.next();
-			}
-			const finalResult = result.value;
+			const finalResult = await consumeAgentEvents(
+				session.events,
+				(eventType, eventData) => {
+					broadcastEvent(ctx, project.id, {
+						type: "agent_event",
+						taskId: rootNodeId,
+						eventType,
+						...eventData,
+					});
+				},
+			);
 
 			if (finalResult.sessionId) {
 				tracker.orchestratorSessionId = finalResult.sessionId;
@@ -361,7 +395,7 @@ export async function launchAgent(
 			tracker.updateStatus(rootNodeId, didPass ? "passed" : "failed");
 
 			const totalCostUsd =
-				(finalResult.costUsd ?? 0) + costAccumulator.totalCostUsd;
+				(finalResult.costUsd ?? 0) + agentCtx.costAccumulator.totalCostUsd;
 			broadcastEvent(ctx, project.id, {
 				type: "orchestration_completed",
 				taskId: rootNodeId,
@@ -373,9 +407,9 @@ export async function launchAgent(
 				cacheReadTokens: finalResult.cacheReadTokens,
 				outputTokens: finalResult.outputTokens,
 				childCosts: {
-					totalCostUsd: costAccumulator.totalCostUsd,
-					totalTurns: costAccumulator.totalTurns,
-					taskCount: costAccumulator.taskCount,
+					totalCostUsd: agentCtx.costAccumulator.totalCostUsd,
+					totalTurns: agentCtx.costAccumulator.totalTurns,
+					taskCount: agentCtx.costAccumulator.taskCount,
 				},
 			});
 			broadcastTreeUpdate(ctx, project.id, tracker);
