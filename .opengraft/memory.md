@@ -389,3 +389,8 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - Emit `compact_started` immediately when compact signal detected in implicit yield path and cancellation point — gives instant UI feedback
 - Short context guard (messages.length <= 4): emit status + compact_started + compact with savedTokens=0, then reset and continue — completes the Compressing... cycle even with no actual compaction
 - Both anthropic-compatible-provider.ts and openai-compatible-provider.ts have the same pattern
+
+## CHECKPOINT_SYSTEM_PROMPT Removed
+- Dead code from old separate-API-call compaction approach — safely deleted
+- Only SUMMARIZATION_INSTRUCTION remains, used by both Anthropic and OpenAI providers via import
+- In-context compaction flow: inject as user message → model responds with <summary> tags → extractCheckpoint() parses
