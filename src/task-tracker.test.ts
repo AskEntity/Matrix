@@ -303,4 +303,41 @@ describe("TaskTracker", () => {
 		expect(root2.id).toBe(root.id);
 		expect(tracker2.getChildren(root2.id)).toHaveLength(1);
 	});
+
+	test("reorderChildren reorders children of a parent", () => {
+		const parent = tracker.addTask("App", "desc");
+		const c1 = tracker.addChild(parent.id, "A", "a");
+		const c2 = tracker.addChild(parent.id, "B", "b");
+		const c3 = tracker.addChild(parent.id, "C", "c");
+
+		expect(parent.children).toEqual([c1.id, c2.id, c3.id]);
+
+		tracker.reorderChildren(parent.id, [c3.id, c1.id, c2.id]);
+		expect(parent.children).toEqual([c3.id, c1.id, c2.id]);
+	});
+
+	test("reorderChildren throws for unknown parent", () => {
+		expect(() => tracker.reorderChildren("nonexistent", [])).toThrow(
+			"Parent node not found",
+		);
+	});
+
+	test("reorderChildren throws for mismatched children", () => {
+		const parent = tracker.addTask("App", "desc");
+		const c1 = tracker.addChild(parent.id, "A", "a");
+		tracker.addChild(parent.id, "B", "b");
+
+		// Missing a child
+		expect(() => tracker.reorderChildren(parent.id, [c1.id])).toThrow(
+			"orderedChildIds must contain exactly the current children",
+		);
+
+		// Extra unknown child
+		expect(() =>
+			tracker.reorderChildren(parent.id, [c1.id, "unknown-id"]),
+		).toThrow();
+
+		// Duplicates
+		expect(() => tracker.reorderChildren(parent.id, [c1.id, c1.id])).toThrow();
+	});
 });

@@ -402,6 +402,18 @@ select {
 	background: rgba(56, 139, 253, 0.18);
 }
 
+.og-task-node.og-task-dragging {
+	opacity: 0.4;
+}
+
+.og-drop-indicator {
+	height: 2px;
+	background: var(--accent);
+	border-radius: 1px;
+	margin-right: 12px;
+	pointer-events: none;
+}
+
 .og-task-row {
 	display: flex;
 	align-items: center;

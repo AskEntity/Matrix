@@ -4,18 +4,34 @@ import { useLocale } from "../i18n.ts";
 import { IconChevron, IconHexagon } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
 
+interface DragState {
+	/** ID of the node being dragged */
+	dragId: string;
+	/** Parent ID of the dragged node */
+	parentId: string;
+}
+
+interface DropIndicator {
+	/** Parent whose children list we're reordering */
+	parentId: string;
+	/** Insert before this child index (children.length = insert at end) */
+	index: number;
+}
+
 export function TaskTree({
 	nodes,
 	selectedTaskId,
 	rootNodeId,
 	onSelect,
 	running,
+	onReorder,
 }: {
 	nodes: TaskNode[];
 	selectedTaskId: string | null;
 	rootNodeId: string | null;
 	onSelect: (id: string | null) => void;
 	running: boolean;
+	onReorder?: (parentId: string, children: string[]) => Promise<void>;
 }) {
 	// Root node's children are the visible top-level tasks
 	const rootNode = useMemo(
@@ -24,19 +40,27 @@ export function TaskTree({
 	);
 	const roots = useMemo(() => {
 		if (rootNode) {
-			// Show children of root node as top-level tasks
-			const childIds = new Set(rootNode.children);
-			return nodes.filter((n) => childIds.has(n.id));
+			// Show children of root node as top-level tasks, preserving order
+			const childOrder = rootNode.children;
+			const nodeById = new Map(nodes.map((n) => [n.id, n]));
+			return childOrder
+				.map((id) => nodeById.get(id))
+				.filter((n): n is TaskNode => n !== undefined);
 		}
 		// Fallback: show all nodes without a parent
 		return nodes.filter((n) => !n.parentId);
 	}, [nodes, rootNode]);
+
 	const childMap = useMemo(() => {
 		const map = new Map<string, TaskNode[]>();
+		const nodeById = new Map(nodes.map((n) => [n.id, n]));
+		// Build children lists preserving the parent's children order
 		for (const n of nodes) {
-			if (n.parentId) {
-				if (!map.has(n.parentId)) map.set(n.parentId, []);
-				map.get(n.parentId)?.push(n);
+			if (n.children.length > 0) {
+				const ordered = n.children
+					.map((id) => nodeById.get(id))
+					.filter((c): c is TaskNode => c !== undefined);
+				map.set(n.id, ordered);
 			}
 		}
 		return map;
@@ -80,12 +104,105 @@ export function TaskTree({
 		return matched;
 	}, [nodes, taskFilter, nodeMap]);
 
+	// --- Drag-and-drop state ---
+	const [dragState, setDragState] = useState<DragState | null>(null);
+	const [dropIndicator, setDropIndicator] = useState<DropIndicator | null>(
+		null,
+	);
+
+	const handleDragStart = useCallback(
+		(nodeId: string, parentId: string, e: React.DragEvent) => {
+			e.dataTransfer.effectAllowed = "move";
+			e.dataTransfer.setData("text/plain", nodeId);
+			// Use setTimeout so the dragged element renders before we set state
+			setTimeout(() => setDragState({ dragId: nodeId, parentId }), 0);
+		},
+		[],
+	);
+
+	const handleDragOver = useCallback(
+		(
+			targetNodeId: string,
+			targetParentId: string,
+			siblingIds: string[],
+			e: React.DragEvent,
+		) => {
+			if (!dragState) return;
+			// Only allow reorder within the same parent
+			if (dragState.parentId !== targetParentId) return;
+			if (dragState.dragId === targetNodeId) {
+				e.preventDefault();
+				e.dataTransfer.dropEffect = "move";
+				return;
+			}
+
+			e.preventDefault();
+			e.dataTransfer.dropEffect = "move";
+
+			// Determine if we should insert before or after based on cursor position
+			const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+			const midY = rect.top + rect.height / 2;
+			const targetIndex = siblingIds.indexOf(targetNodeId);
+			const insertIndex = e.clientY < midY ? targetIndex : targetIndex + 1;
+
+			setDropIndicator({ parentId: targetParentId, index: insertIndex });
+		},
+		[dragState],
+	);
+
+	const handleDragEnd = useCallback(() => {
+		setDragState(null);
+		setDropIndicator(null);
+	}, []);
+
+	const handleDrop = useCallback(
+		(targetParentId: string, siblingIds: string[], e: React.DragEvent) => {
+			e.preventDefault();
+			if (!dragState || !dropIndicator || !onReorder) {
+				handleDragEnd();
+				return;
+			}
+			if (dragState.parentId !== targetParentId) {
+				handleDragEnd();
+				return;
+			}
+
+			// Compute new order
+			const oldOrder = [...siblingIds];
+			const dragIndex = oldOrder.indexOf(dragState.dragId);
+			if (dragIndex === -1) {
+				handleDragEnd();
+				return;
+			}
+
+			// Remove dragged item
+			oldOrder.splice(dragIndex, 1);
+			// Adjust insert index if needed
+			let insertAt = dropIndicator.index;
+			if (insertAt > dragIndex) insertAt--;
+			// Insert at new position
+			oldOrder.splice(insertAt, 0, dragState.dragId);
+
+			// Only call API if order actually changed
+			if (oldOrder.join(",") !== siblingIds.join(",")) {
+				onReorder(targetParentId, oldOrder);
+			}
+
+			handleDragEnd();
+		},
+		[dragState, dropIndicator, onReorder, handleDragEnd],
+	);
+
 	const { t } = useLocale();
 	const isOrchestratorSelected =
 		!selectedTaskId || selectedTaskId === rootNodeId;
 	const filteredRoots = matchingIds
 		? roots.filter((r) => matchingIds.has(r.id))
 		: roots;
+
+	// Parent ID for top-level tasks (roots)
+	const topLevelParentId = rootNodeId ?? "";
+	const topLevelSiblingIds = roots.map((r) => r.id);
 
 	return (
 		<div className="og-task-tree">
@@ -122,7 +239,7 @@ export function TaskTree({
 
 			{roots.length > 0 && <div className="og-sidebar-divider" />}
 
-			{filteredRoots.map((root) => (
+			{filteredRoots.map((root, i) => (
 				<TaskNodeView
 					key={root.id}
 					node={root}
@@ -134,6 +251,15 @@ export function TaskTree({
 					collapsed={collapsed}
 					toggleCollapse={toggleCollapse}
 					matchingIds={matchingIds}
+					dragState={dragState}
+					dropIndicator={dropIndicator}
+					parentId={topLevelParentId}
+					siblingIds={topLevelSiblingIds}
+					siblingIndex={i}
+					onDragStart={handleDragStart}
+					onDragOver={handleDragOver}
+					onDragEnd={handleDragEnd}
+					onDrop={handleDrop}
 				/>
 			))}
 
@@ -174,6 +300,15 @@ function TaskNodeView({
 	collapsed,
 	toggleCollapse,
 	matchingIds,
+	dragState,
+	dropIndicator,
+	parentId,
+	siblingIds,
+	siblingIndex,
+	onDragStart,
+	onDragOver,
+	onDragEnd,
+	onDrop,
 }: {
 	node: TaskNode;
 	childMap: Map<string, TaskNode[]>;
@@ -184,6 +319,24 @@ function TaskNodeView({
 	collapsed: Set<string>;
 	toggleCollapse: (id: string) => void;
 	matchingIds: Set<string> | null;
+	dragState: DragState | null;
+	dropIndicator: DropIndicator | null;
+	parentId: string;
+	siblingIds: string[];
+	siblingIndex: number;
+	onDragStart: (nodeId: string, parentId: string, e: React.DragEvent) => void;
+	onDragOver: (
+		targetNodeId: string,
+		targetParentId: string,
+		siblingIds: string[],
+		e: React.DragEvent,
+	) => void;
+	onDragEnd: () => void;
+	onDrop: (
+		targetParentId: string,
+		siblingIds: string[],
+		e: React.DragEvent,
+	) => void;
 }) {
 	const isSelected = node.id === selectedTaskId;
 	const allChildren = childMap.get(node.id) ?? [];
@@ -195,11 +348,39 @@ function TaskNodeView({
 	// When filter is active, force-expand all ancestor nodes
 	const isCollapsed = matchingIds ? false : collapsed.has(node.id);
 
+	const isDragging = dragState?.dragId === node.id;
+	// Show indicator before this node
+	const showIndicatorBefore =
+		dropIndicator &&
+		dropIndicator.parentId === parentId &&
+		dropIndicator.index === siblingIndex &&
+		dragState?.parentId === parentId;
+	// Show indicator after this node (only for last item)
+	const showIndicatorAfter =
+		dropIndicator &&
+		dropIndicator.parentId === parentId &&
+		dropIndicator.index === siblingIds.length &&
+		siblingIndex === siblingIds.length - 1 &&
+		dragState?.parentId === parentId;
+
+	const childSiblingIds = children.map((c) => c.id);
+
 	return (
 		<>
+			{showIndicatorBefore && (
+				<div
+					className="og-drop-indicator"
+					style={{ marginLeft: `${12 + depth * 10}px` }}
+				/>
+			)}
 			<button
 				type="button"
-				className={`og-task-node${isSelected ? " selected" : ""}${node.draft ? " og-task-draft" : ""}`}
+				className={`og-task-node${isSelected ? " selected" : ""}${node.draft ? " og-task-draft" : ""}${isDragging ? " og-task-dragging" : ""}`}
+				draggable
+				onDragStart={(e) => onDragStart(node.id, parentId, e)}
+				onDragOver={(e) => onDragOver(node.id, parentId, siblingIds, e)}
+				onDragEnd={onDragEnd}
+				onDrop={(e) => onDrop(parentId, siblingIds, e)}
 				onClick={(e) => {
 					e.stopPropagation();
 					onSelect(isSelected ? rootNodeId : node.id);
@@ -236,8 +417,14 @@ function TaskNodeView({
 					)}
 				</div>
 			</button>
+			{showIndicatorAfter && (
+				<div
+					className="og-drop-indicator"
+					style={{ marginLeft: `${12 + depth * 10}px` }}
+				/>
+			)}
 			{!isCollapsed &&
-				children.map((child) => (
+				children.map((child, i) => (
 					<TaskNodeView
 						key={child.id}
 						node={child}
@@ -249,6 +436,15 @@ function TaskNodeView({
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}
 						matchingIds={matchingIds}
+						dragState={dragState}
+						dropIndicator={dropIndicator}
+						parentId={node.id}
+						siblingIds={childSiblingIds}
+						siblingIndex={i}
+						onDragStart={onDragStart}
+						onDragOver={onDragOver}
+						onDragEnd={onDragEnd}
+						onDrop={onDrop}
 					/>
 				))}
 		</>

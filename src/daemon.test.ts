@@ -827,6 +827,109 @@ describe("daemon tasks API", () => {
 
 		await rm(localDataDir, { recursive: true });
 	});
+
+	test("PATCH /tasks/:nodeId/reorder reorders children", async () => {
+		// Create a parent task
+		const parentRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Parent", description: "" }),
+		});
+		const parent = (await parentRes.json()) as TaskNode;
+
+		// Create children
+		const c1Res = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Child A",
+				description: "",
+				parentId: parent.id,
+			}),
+		});
+		const c1 = (await c1Res.json()) as TaskNode;
+
+		const c2Res = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Child B",
+				description: "",
+				parentId: parent.id,
+			}),
+		});
+		const c2 = (await c2Res.json()) as TaskNode;
+
+		const c3Res = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Child C",
+				description: "",
+				parentId: parent.id,
+			}),
+		});
+		const c3 = (await c3Res.json()) as TaskNode;
+
+		// Reorder: reverse order
+		const reorderRes = await app.request(
+			`/projects/${projectId}/tasks/${parent.id}/reorder`,
+			{
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ children: [c3.id, c2.id, c1.id] }),
+			},
+		);
+		expect(reorderRes.status).toBe(200);
+
+		// Verify order via GET /tasks
+		const tasksRes = await app.request(`/projects/${projectId}/tasks`);
+		const { nodes } = (await tasksRes.json()) as { nodes: TaskNode[] };
+		const updatedParent = nodes.find((n) => n.id === parent.id);
+		expect(updatedParent?.children).toEqual([c3.id, c2.id, c1.id]);
+	});
+
+	test("PATCH /tasks/:nodeId/reorder returns 400 for invalid children", async () => {
+		const parentRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Parent", description: "" }),
+		});
+		const parent = (await parentRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Child",
+				description: "",
+				parentId: parent.id,
+			}),
+		});
+
+		// Wrong children list
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${parent.id}/reorder`,
+			{
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ children: ["unknown-id"] }),
+			},
+		);
+		expect(res.status).toBe(400);
+	});
+
+	test("PATCH /tasks/:nodeId/reorder returns 404 for unknown task", async () => {
+		const res = await app.request(
+			`/projects/${projectId}/tasks/nonexistent-task-id/reorder`,
+			{
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ children: [] }),
+			},
+		);
+		expect(res.status).toBe(404);
+	});
 });
 
 describe("GET /projects/:id/events", () => {

@@ -225,6 +225,32 @@ export class TaskTracker {
 		return Array.from(this.nodes.values());
 	}
 
+	/** Reorder children of a parent node. orderedChildIds must be the same set as current children. */
+	reorderChildren(parentId: string, orderedChildIds: string[]): void {
+		const parent = this.nodes.get(parentId);
+		if (!parent) throw new Error(`Parent node not found: ${parentId}`);
+
+		const currentSet = new Set(parent.children);
+		const newSet = new Set(orderedChildIds);
+
+		if (
+			currentSet.size !== newSet.size ||
+			orderedChildIds.length !== newSet.size
+		) {
+			throw new Error(
+				"orderedChildIds must contain exactly the current children (no duplicates)",
+			);
+		}
+		for (const id of orderedChildIds) {
+			if (!currentSet.has(id)) {
+				throw new Error(`orderedChildIds contains unknown child: ${id}`);
+			}
+		}
+
+		parent.children = [...orderedChildIds];
+		parent.updatedAt = new Date().toISOString();
+	}
+
 	/** Remove a node and all its descendants. */
 	remove(nodeId: string): void {
 		const node = this.nodes.get(nodeId);

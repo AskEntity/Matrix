@@ -863,6 +863,34 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json(tracker.get(nodeId));
 	});
 
+	app.patch("/projects/:id/tasks/:nodeId/reorder", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const tracker = await getTracker(project.id);
+		const nodeId = c.req.param("nodeId");
+		const node = tracker.get(nodeId);
+		if (!node) {
+			return c.json({ error: "Task not found" }, 404);
+		}
+		const body = await c.req.json<{ children: string[] }>();
+		if (!Array.isArray(body.children)) {
+			return c.json({ error: "children must be an array of task IDs" }, 400);
+		}
+		try {
+			tracker.reorderChildren(nodeId, body.children);
+		} catch (e) {
+			return c.json(
+				{ error: e instanceof Error ? e.message : "Unknown error" },
+				400,
+			);
+		}
+		await tracker.save();
+		broadcastTreeUpdate(project.id, tracker);
+		return c.json({ ok: true });
+	});
+
 	async function runChildAgentInBackground(
 		project: { id: string; path: string },
 		tracker: TaskTracker,
