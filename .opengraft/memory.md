@@ -37,7 +37,8 @@ Daemon (Hono: HTTP + WS on :7433)
 
 | File | Purpose |
 |------|---------|
-| src/daemon.ts | HTTP server, routes, WS, ORCHESTRATOR_SYSTEM_PROMPT |
+| src/daemon.ts | Hono app setup, route registration, ORCHESTRATOR_SYSTEM_PROMPT (~405 lines) |
+| src/daemon/ | Extracted modules: context, event-system, helpers, agent-lifecycle, routes/ |
 | src/agent-tools.ts | MCP tools (10), system prompts, ORCHESTRATION_KNOWLEDGE |
 | src/agent-provider.ts | AgentProvider interface, AgentEvent, AgentSession types |
 | src/tool-definition.ts | ToolDefinition type, tool() factory, CallToolResult |
@@ -47,7 +48,9 @@ Daemon (Hono: HTTP + WS on :7433)
 | src/task-tracker.ts | Task tree CRUD, JSON persistence, ensureRootNode |
 | src/worktree-manager.ts | Git worktree lifecycle |
 | src/message-queue.ts | MessageQueue + globalAgentQueues |
-| web/App.tsx | Web UI main component, WS event handling |
+| web/App.tsx | Web UI main component (~650 lines, extracted WS/handlers) |
+| web/ws-handler.ts | WebSocket event handler (createWSHandler) |
+| web/handlers.ts | Action handlers (createActionHandlers) |
 | web/components/ | 14+ modular components (ActivityLog, ToolCard, SettingsPanel, etc.) |
 
 ## Config System
