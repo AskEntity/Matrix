@@ -119,17 +119,15 @@ Do NOT use any tools. Respond with ONLY the checkpoint in <summary>...</summary>
 
 Write the checkpoint with these sections IN ORDER. Every section is required.
 
-Write ALL sections in the same language as the user has been communicating. If the user's messages are in Chinese, write the entire checkpoint in Chinese.
+Write ALL sections in the same language as the user has been communicating.
 
 ## 1. User Requests (MOST CRITICAL)
-Chronological list of EVERY user message or parent instruction received during this session.
-For each, include:
-- The request (verbatim quote or close paraphrase — do NOT summarize away detail)
-- What action was taken: tasks created (with IDs), decisions made, code written
-- The outcome: completed, in progress, blocked, or deferred
-
-This is the highest-value section. The resuming agent has NO access to previous messages.
-If a user request is lost here, it will never be addressed. Be thorough.
+Chronological timeline of every user message or parent instruction received, with the tasks created/completed in response to each. For each entry:
+- The message (verbatim or close paraphrase)
+- Tasks created in response (IDs, titles)
+- Tasks completed/merged in response (what was accomplished)
+- Decisions made or deferred
+This creates a complete narrative thread. The resuming agent has NO access to previous messages — this is the only record.
 
 ## 2. Current Phase
 What the agent is doing RIGHT NOW: planning / implementing / testing / debugging / reviewing / orchestrating / done
@@ -140,11 +138,7 @@ What has been built, tested, committed, and merged — with key architectural an
 Include specific file paths and function names. Note WHY decisions were made, not just what.
 
 ## 4. Task Tree State
-List ALL tasks ever created in this session, including those already completed and deleted from the tree. For each task include:
-- Task ID, title, status (pending/in_progress/passed/failed/draft)
-- Branch name (if applicable)
-- Whether it has been merged into the parent branch
-Group by: Running → Failed → Pending → Draft → Completed+Merged (list with what was accomplished). Completed/merged tasks are gone from the live tree but their work is on main — record them here for continuity.
+Current live task tree. Only tasks that currently exist (pending/in_progress/failed/draft). For each: ID, title, status, branch. Omit completed/merged tasks (they're recorded in Section 1's timeline). Group: Running → Failed → Pending → Draft.
 
 ## 5. Rejected Approaches
 What was tried and DIDN'T work. For each failure:
