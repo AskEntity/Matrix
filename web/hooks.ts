@@ -232,7 +232,14 @@ export function useAgent(projectId: string) {
 		const res = await fetch(`/projects/${projectId}/stop`, {
 			method: "POST",
 		});
-		if (!res.ok) throw new Error((await res.json()).error);
+		if (!res.ok) {
+			// 404 means session already gone — reset UI running state to match.
+			if (res.status === 404) {
+				setRunning(false);
+				return;
+			}
+			throw new Error((await res.json()).error);
+		}
 		setRunning(false);
 	}, [projectId]);
 

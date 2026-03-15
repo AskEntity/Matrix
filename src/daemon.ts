@@ -1534,6 +1534,17 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "Project not found" }, 404);
 		}
 		if (!activeSessions.has(project.id)) {
+			// No active session — reset any orphaned in_progress root node
+			// so the UI can reconcile its running state.
+			const tracker = trackers.get(project.id);
+			if (tracker?.rootNodeId) {
+				const rootNode = tracker.get(tracker.rootNodeId);
+				if (rootNode && rootNode.status === "in_progress") {
+					tracker.updateStatus(tracker.rootNodeId, "failed");
+					await tracker.save();
+					broadcastTreeUpdate(project.id, tracker);
+				}
+			}
 			return c.json({ error: "No active agent for this project" }, 404);
 		}
 		await stopAgent(project.id, { clearAutoResume: true });
