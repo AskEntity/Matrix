@@ -440,7 +440,7 @@ export async function executeBashWithTimeout(
 		})();
 
 		return {
-			content: `Command backgrounded immediately.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nUse read_file on the output files for partial output. Results will be delivered when complete.`,
+			content: `Command backgrounded immediately.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nUse read_file on the output files for partial output. Results will be delivered when complete.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}`,
 			isError: false,
 		};
 	}
@@ -559,7 +559,7 @@ export async function executeBashWithTimeout(
 	}
 
 	return {
-		content: `Command moved to background after ${foregroundTimeout}ms.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nUse read_file on the output files for partial output. Full results delivered on completion.${partialStdout ? `\n\nPartial stdout so far:\n${partialStdout.slice(0, 5000)}` : ""}`,
+		content: `Command moved to background after ${foregroundTimeout}ms.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nUse read_file on the output files for partial output. Full results delivered on completion.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialStdout ? `\n\nPartial stdout so far:\n${partialStdout.slice(0, 5000)}` : ""}`,
 		isError: false,
 	};
 }
