@@ -298,3 +298,10 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - ActivityLog backward compat: root filter shows both entries tagged with rootNodeId AND untagged entries (old sessions)
 - TaskTree shows root node's children as top-level tasks, not the root node itself
 
+
+## Compact Button & Compacting State
+- Compact trigger button moved OUTSIDE TokenUsageBadge span, to the LEFT as a standalone `.og-compact-trigger-btn`
+- TokenUsageBadge returns a fragment (`<>...</>`) to render button + badge as siblings
+- `compacting` state in App.tsx: set true on compact click, cleared on compact event / orchestration_completed / agent_stopped
+- ActivityLog shows "Compressing..." with shimmer animation when `compacting=true`, "Thinking..." otherwise
+- CSS: `.og-compressing-dots` uses animated gradient text (background-clip: text) for shimmer effect
