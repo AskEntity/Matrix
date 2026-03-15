@@ -421,6 +421,55 @@ select {
 	pointer-events: none;
 }
 
+/* Inline create row */
+.og-task-node.og-inline-create {
+	border-left-color: var(--accent);
+}
+
+.og-inline-create-input {
+	flex: 1;
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--border);
+	color: var(--text-primary);
+	font-size: 12px;
+	font-family: inherit;
+	padding: 2px 0;
+	outline: none;
+}
+
+.og-inline-create-input:focus {
+	border-bottom-color: var(--accent);
+}
+
+.og-inline-create-input::placeholder {
+	color: var(--text-faint);
+}
+
+/* Trash drop zone */
+.og-trash-drop-zone {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	margin: 8px 10px;
+	padding: 10px;
+	border: 1px dashed var(--border);
+	border-radius: 6px;
+	color: var(--text-faint);
+	font-size: 11px;
+	transition:
+		background var(--t-fast),
+		border-color var(--t-fast),
+		color var(--t-fast);
+}
+
+.og-trash-drop-zone.og-trash-over {
+	background: rgba(248, 81, 73, 0.1);
+	border-color: #f85149;
+	color: #f85149;
+}
+
 .og-task-row {
 	display: flex;
 	align-items: center;
@@ -525,6 +574,61 @@ select {
 	padding: 0 4px;
 	border-radius: var(--radius-sm);
 	font-style: italic;
+}
+
+.og-task-color-dot {
+	flex-shrink: 0;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+}
+
+.og-color-picker {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	flex-wrap: wrap;
+}
+
+.og-color-swatch {
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	border: 2px solid transparent;
+	cursor: pointer;
+	padding: 0;
+	transition:
+		border-color var(--t-fast),
+		transform var(--t-fast);
+}
+
+.og-color-swatch:hover {
+	transform: scale(1.15);
+}
+
+.og-color-swatch.selected {
+	border-color: var(--text-primary);
+}
+
+.og-color-clear {
+	background: none;
+	border: 1px solid var(--border);
+	color: var(--text-muted);
+	font-size: 10px;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 0;
+	line-height: 1;
+}
+
+.og-color-clear:hover {
+	color: var(--text-primary);
+	border-color: var(--text-muted);
 }
 
 .og-tree-toggle {

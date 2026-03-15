@@ -1,7 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconChevron, IconHexagon } from "./icons.tsx";
+import { IconChevron, IconHexagon, IconTrash } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
 
 interface DragState {
@@ -28,6 +28,10 @@ export function TaskTree({
 	running,
 	onReorder,
 	onReparent,
+	isCreating,
+	onCreateTask,
+	onCancelCreate,
+	onDeleteTask,
 }: {
 	nodes: TaskNode[];
 	selectedTaskId: string | null;
@@ -36,6 +40,10 @@ export function TaskTree({
 	running: boolean;
 	onReorder?: (parentId: string, children: string[]) => Promise<void>;
 	onReparent?: (nodeId: string, newParentId: string) => Promise<void>;
+	isCreating?: boolean;
+	onCreateTask?: (title: string) => void;
+	onCancelCreate?: () => void;
+	onDeleteTask?: (taskId: string) => void;
 }) {
 	// Root node's children are the visible top-level tasks
 	const rootNode = useMemo(
@@ -359,6 +367,22 @@ export function TaskTree({
 					{t("tasks.noMatch")} "{taskFilter}"
 				</div>
 			)}
+
+			{/* Inline task creation row */}
+			{isCreating && (
+				<InlineCreateRow
+					onConfirm={(title) => onCreateTask?.(title)}
+					onCancel={() => onCancelCreate?.()}
+				/>
+			)}
+
+			{/* Trash drop zone — visible only while dragging */}
+			{dragState && onDeleteTask && (
+				<TrashDropZone
+					onDrop={(taskId) => onDeleteTask(taskId)}
+					onDragEnd={handleDragEnd}
+				/>
+			)}
 		</div>
 	);
 }
@@ -484,6 +508,12 @@ function TaskNodeView({
 					<span
 						className={`og-task-status-dot ${statusDotClass(node.status)}`}
 					/>
+					{node.color && (
+						<span
+							className="og-task-color-dot"
+							style={{ backgroundColor: node.color }}
+						/>
+					)}
 					<span className="og-task-title">{node.title}</span>
 					{node.draft && <span className="og-task-draft-badge">draft</span>}
 					{node.branch && (
@@ -526,5 +556,101 @@ function TaskNodeView({
 					/>
 				))}
 		</>
+	);
+}
+
+// ── Inline creation input ────────────────────────────────────────────────
+
+function InlineCreateRow({
+	onConfirm,
+	onCancel,
+}: {
+	onConfirm: (title: string) => void;
+	onCancel: () => void;
+}) {
+	const [value, setValue] = useState("");
+	const inputRef = useRef<HTMLInputElement>(null);
+	const composingRef = useRef(false);
+	const { t } = useLocale();
+
+	// Auto-focus when mounted
+	const setRef = useCallback((el: HTMLInputElement | null) => {
+		(inputRef as React.MutableRefObject<HTMLInputElement | null>).current = el;
+		el?.focus();
+	}, []);
+
+	return (
+		<div className="og-task-node og-inline-create">
+			<div className="og-task-row" style={{ paddingLeft: "22px" }}>
+				<span className="og-tree-toggle-placeholder" />
+				<span className="og-task-status-dot dot-pending" />
+				<input
+					ref={setRef}
+					type="text"
+					className="og-inline-create-input"
+					placeholder={t("prompt.taskTitle")}
+					value={value}
+					onChange={(e) => setValue(e.target.value)}
+					onCompositionStart={() => {
+						composingRef.current = true;
+					}}
+					onCompositionEnd={() => {
+						composingRef.current = false;
+					}}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" && !composingRef.current) {
+							e.preventDefault();
+							const trimmed = value.trim();
+							if (trimmed) onConfirm(trimmed);
+						} else if (e.key === "Escape") {
+							e.preventDefault();
+							onCancel();
+						}
+					}}
+					onBlur={() => {
+						// If they click away without entering, cancel
+						const trimmed = value.trim();
+						if (trimmed) onConfirm(trimmed);
+						else onCancel();
+					}}
+				/>
+			</div>
+		</div>
+	);
+}
+
+// ── Trash drop zone ──────────────────────────────────────────────────────
+
+function TrashDropZone({
+	onDrop,
+	onDragEnd,
+}: {
+	onDrop: (taskId: string) => void;
+	onDragEnd: () => void;
+}) {
+	const [isOver, setIsOver] = useState(false);
+	const { t } = useLocale();
+
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: drop target for drag-and-drop
+		<div
+			className={`og-trash-drop-zone${isOver ? " og-trash-over" : ""}`}
+			onDragOver={(e) => {
+				e.preventDefault();
+				e.dataTransfer.dropEffect = "move";
+				setIsOver(true);
+			}}
+			onDragLeave={() => setIsOver(false)}
+			onDrop={(e) => {
+				e.preventDefault();
+				const taskId = e.dataTransfer.getData("text/plain");
+				if (taskId) onDrop(taskId);
+				setIsOver(false);
+				onDragEnd();
+			}}
+		>
+			<IconTrash size={14} />
+			<span>{t("tasks.dropToDelete")}</span>
+		</div>
 	);
 }

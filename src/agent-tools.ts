@@ -626,6 +626,12 @@ export function createOrchestratorTools(
 					.describe(
 						"If true, creates the task as a draft. Draft tasks can be edited but not executed.",
 					),
+				color: z
+					.string()
+					.optional()
+					.describe(
+						"Optional color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex like '#ff5733').",
+					),
 			},
 			async (args) => {
 				try {
@@ -665,6 +671,9 @@ export function createOrchestratorTools(
 								args.description,
 								Object.keys(opts).length > 0 ? opts : undefined,
 							);
+					if (args.color) {
+						tracker.updateColor(node.id, args.color);
+					}
 					await tracker.save();
 					broadcastTreeUpdate?.();
 					return {
@@ -702,6 +711,12 @@ export function createOrchestratorTools(
 					.optional()
 					.describe(
 						"New parent task ID. Moves the task under this parent (reparent).",
+					),
+				color: z
+					.string()
+					.optional()
+					.describe(
+						"Color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex).",
 					),
 			},
 			async (args) => {
@@ -751,6 +766,9 @@ export function createOrchestratorTools(
 					}
 					if (args.draft !== undefined) {
 						tracker.updateDraft(args.taskId, args.draft);
+					}
+					if (args.color !== undefined) {
+						tracker.updateColor(args.taskId, args.color || null);
 					}
 					await tracker.save();
 					broadcastTreeUpdate?.();

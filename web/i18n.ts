@@ -48,6 +48,7 @@ const en: Translations = {
 	"tasks.addTask": "Add task",
 	"tasks.refresh": "Refresh",
 	"tasks.clearFilter": "Clear filter",
+	"tasks.dropToDelete": "Drop to delete",
 
 	// Orchestrator
 	"orch.label": "Orchestrator",
@@ -84,6 +85,7 @@ const en: Translations = {
 	"detail.title": "Task Details",
 	"detail.details": "Details",
 	"detail.status": "Status",
+	"detail.color": "Color",
 	"detail.branch": "Branch",
 	"detail.worktree": "Worktree",
 	"detail.updated": "Updated",
@@ -312,6 +314,7 @@ const zh: Translations = {
 	"tasks.addTask": "添加任务",
 	"tasks.refresh": "刷新",
 	"tasks.clearFilter": "清除筛选",
+	"tasks.dropToDelete": "拖放以删除",
 
 	// Orchestrator
 	"orch.label": "编排器",
@@ -348,6 +351,7 @@ const zh: Translations = {
 	"detail.title": "任务详情",
 	"detail.details": "详情",
 	"detail.status": "状态",
+	"detail.color": "颜色",
 	"detail.branch": "分支",
 	"detail.worktree": "工作树",
 	"detail.updated": "更新时间",

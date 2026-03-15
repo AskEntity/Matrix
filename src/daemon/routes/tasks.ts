@@ -85,6 +85,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			description?: string;
 			draft?: boolean;
 			parentId?: string;
+			color?: string | null;
 		}>();
 		if (body.parentId !== undefined) {
 			try {
@@ -108,6 +109,9 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 		if (body.draft !== undefined) {
 			tracker.updateDraft(node.id, body.draft);
+		}
+		if (body.color !== undefined) {
+			tracker.updateColor(node.id, body.color);
 		}
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
