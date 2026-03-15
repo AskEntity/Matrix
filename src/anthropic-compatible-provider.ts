@@ -1442,9 +1442,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	/** Persisted conversation histories keyed by session ID. */
 	private sessionHistory = new Map<string, MessageParam[]>();
 
-	constructor(model?: string) {
-		const apiKey = process.env.ANTHROPIC_API_KEY;
-		const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+	constructor(model?: string, opts?: { apiKey?: string; oauthToken?: string }) {
+		const apiKey = opts?.apiKey ?? process.env.ANTHROPIC_API_KEY;
+		const oauthToken = opts?.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN;
 		this.useOAuth = Boolean(oauthToken && !apiKey);
 		if (this.useOAuth) {
 			this.client = new Anthropic({
@@ -1453,6 +1453,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					"anthropic-beta": "oauth-2025-04-20",
 				},
 			});
+		} else if (apiKey) {
+			this.client = new Anthropic({ apiKey });
 		} else {
 			this.client = new Anthropic();
 		}

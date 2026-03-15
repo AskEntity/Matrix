@@ -346,13 +346,9 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 - resolveAuthGroup: looks up by name or falls back to defaultAuth. Returns null if not found.
 - Existing project-config.ts handles the old per-project config; new config.ts is the unified three-layer system.
 
-## CLI Config Commands (config layer 4)
-- `og config` now shows resolved three-layer config (global + repo + local via daemon API)
-- `og config set <key> <value> --global|--project` writes to global or repo config directly (no daemon needed)
-- `og config set <key> <value>` (no flag) still goes through daemon API for backward compat
-- `og config auth add/list/remove` manages auth groups (defaults to global config)
-- `saveProjectRepoConfig()` added to config.ts for writing to `<project>/.opengraft/config.json`
-- `findProjectPath()` walks up from cwd to find `.git` directory for project root
-- Plist simplified: only PATH and HOME forwarded as env vars (API keys now in config.json)
-- claude-code provider deprecated: `OG_PROVIDER=claude-code` now warns and falls back to anthropic
-
+## Unified Config System
+- Three-layer config: global (~/.opengraft/config.json) > repo (.opengraft/config.json) > local (per-project)
+- Auth groups: named provider+credentials combos, referenced by defaultAuth/childAuth
+- Providers created from config, not env vars. Constructors accept optional `opts` for API keys
+- CLI: `og config set/get`, `og config auth add/list/remove`
+- claude-code provider deprecated, fallback to anthropic

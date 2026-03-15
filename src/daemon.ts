@@ -22,14 +22,24 @@ import {
 	TASK_SYSTEM_PROMPT,
 } from "./agent-tools.ts";
 import { AnthropicCompatibleProvider } from "./anthropic-compatible-provider.ts";
-// claude-code provider is deprecated — falling back to AnthropicCompatibleProvider
+// claude-code provider is deprecated — use config-driven provider selection
+import {
+	type AuthGroup,
+	loadGlobalConfig,
+	loadProjectLocalConfig,
+	loadProjectRepoConfig,
+	type OpenGraftConfig,
+	resolveAuthGroup,
+	resolveConfig,
+	saveGlobalConfig,
+	saveProjectLocalConfig,
+} from "./config.ts";
 import {
 	globalAgentQueues,
 	MessageQueue,
 	type QueueImage,
 } from "./message-queue.ts";
 import { OpenAICompatibleProvider } from "./openai-compatible-provider.ts";
-import { loadProjectConfig, mergeProjectConfig } from "./project-config.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type {
@@ -74,40 +84,41 @@ const startTime = Date.now();
 
 export interface DaemonConfig {
 	dataDir: string;
-	agentProvider: AgentProvider;
+	agentProvider?: AgentProvider;
 }
 
-/** Resolve the effective model: OG_MODEL > ANTHROPIC_MODEL > OPENAI_MODEL > undefined (provider uses its default) */
-function resolveDefaultModel(): string | undefined {
-	return (
-		process.env.OG_MODEL ??
-		process.env.ANTHROPIC_MODEL ??
-		process.env.OPENAI_MODEL ??
-		undefined
-	);
+/** Create an AgentProvider from an AuthGroup and model. */
+function createProviderFromAuth(
+	authGroup: AuthGroup,
+	model?: string,
+): AgentProvider {
+	if (authGroup.provider === "anthropic") {
+		return new AnthropicCompatibleProvider(model, {
+			apiKey: authGroup.anthropicApiKey,
+			oauthToken: authGroup.claudeOauthToken,
+		});
+	}
+	return new OpenAICompatibleProvider(model, {
+		apiKey: authGroup.openaiApiKey,
+		baseUrl: authGroup.openaiBaseUrl,
+	});
 }
 
-function defaultProvider(): AgentProvider {
-	const provider = process.env.OG_PROVIDER;
-	if (provider === "openai")
-		return new OpenAICompatibleProvider(resolveDefaultModel());
-	if (provider === "anthropic" || provider === "direct")
-		return new AnthropicCompatibleProvider(resolveDefaultModel());
-	if (provider === "claude-code") {
-		console.warn(
-			'WARNING: claude-code provider is deprecated. Use provider "anthropic" instead.',
-		);
-		return new AnthropicCompatibleProvider(resolveDefaultModel());
+/** Create a provider from resolved config. Falls back to env-var-based providers. */
+function createProviderFromConfig(
+	effectiveConfig: OpenGraftConfig,
+): AgentProvider {
+	const authGroup = resolveAuthGroup(effectiveConfig);
+	if (authGroup) {
+		return createProviderFromAuth(authGroup, effectiveConfig.model);
 	}
 
-	// Auto-detect from model name
-	const model = resolveDefaultModel();
+	// Fallback: auto-detect from model name
+	const model = effectiveConfig.model;
 	if (model && /^(gpt-|o1-|o3-|o4-|deepseek-)/.test(model)) {
 		return new OpenAICompatibleProvider(model);
 	}
-
-	// Default: Anthropic API
-	return new AnthropicCompatibleProvider(resolveDefaultModel());
+	return new AnthropicCompatibleProvider(model);
 }
 
 /** Collect a node and all its descendants. */
@@ -123,7 +134,6 @@ function collectDescendants(tracker: TaskTracker, nodeId: string): TaskNode[] {
 
 const defaultConfig: DaemonConfig = {
 	dataDir: join(homedir(), ".opengraft"),
-	agentProvider: defaultProvider(),
 };
 
 export function createApp(config: DaemonConfig = defaultConfig) {
@@ -143,6 +153,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	const app = new Hono();
 	let requestCount = 0;
 	let startupReady = false;
+	let globalConfig: OpenGraftConfig = {};
 	app.use("*", async (_c, next) => {
 		requestCount++;
 		await next();
@@ -474,6 +485,23 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return tracker;
 	}
 
+	/** Resolve the effective config for a project: global + repo + local. */
+	async function resolveProjectConfig(
+		projectPath: string,
+		projectId: string,
+	): Promise<OpenGraftConfig> {
+		const repoConfig = await loadProjectRepoConfig(projectPath);
+		const localConfig = await loadProjectLocalConfig(config.dataDir, projectId);
+		return resolveConfig(globalConfig, repoConfig, localConfig);
+	}
+
+	/** Create a provider for a project using resolved config. */
+	function getProjectProvider(effectiveConfig: OpenGraftConfig): AgentProvider {
+		// If a provider was explicitly injected (e.g. tests), use it
+		if (config.agentProvider) return config.agentProvider;
+		return createProviderFromConfig(effectiveConfig);
+	}
+
 	// --- Shared handlers (used by both REST routes and WS messages) ---
 
 	/** Start orchestration for a project. Used by POST /orchestrate/agent and WS orchestrate. */
@@ -567,9 +595,14 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		};
 
 		if (c.req.query("check_model") === "true") {
-			const modelName = resolveDefaultModel() ?? "claude-sonnet-4-6";
-			const apiKey = process.env.ANTHROPIC_API_KEY;
-			const oauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			const authGroup = resolveAuthGroup(globalConfig);
+			const modelName = globalConfig.model ?? "claude-sonnet-4-6";
+
+			// Determine auth method from config, fall back to env vars
+			const apiKey =
+				authGroup?.anthropicApiKey ?? process.env.ANTHROPIC_API_KEY;
+			const oauthToken =
+				authGroup?.claudeOauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN;
 			const useOAuth = Boolean(oauthToken && !apiKey);
 
 			let client: Anthropic;
@@ -580,6 +613,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						"anthropic-beta": "oauth-2025-04-20",
 					},
 				});
+			} else if (apiKey) {
+				client = new Anthropic({ apiKey });
 			} else {
 				client = new Anthropic();
 			}
@@ -847,13 +882,14 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			const doneRef: {
 				done: null | { status: "passed" | "failed"; summary: string };
 			} = { done: null };
-			const continueCfg = await loadProjectConfig(config.dataDir, project.id);
+			const effectiveCfg = await resolveProjectConfig(project.path, project.id);
+			const provider = getProjectProvider(effectiveCfg);
 
 			const { mcpServer, toolDefs, hasRunningChildren } =
 				createOrchestratorTools(
 					{
 						tracker,
-						provider: config.agentProvider,
+						provider,
 						worktrees: wm,
 						projectPath: node.worktreePath as string,
 						repoPath: project.path,
@@ -861,9 +897,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						depth: 1,
 						queue: childQueue,
 						doneRef,
-						defaultBudgetUsd: continueCfg.budgetUsd,
-						clarifyTimeoutMs: continueCfg.clarifyTimeoutMs,
-						maxDepth: continueCfg.maxDepth,
+						defaultBudgetUsd: effectiveCfg.budgetUsd,
+						clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
+						maxDepth: effectiveCfg.maxDepth,
 						onTaskEvent: (event) => {
 							broadcastEvent(project.id, event);
 							broadcastTreeUpdate(project.id, tracker);
@@ -873,12 +909,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					costAccumulator,
 				);
 
-			const session = config.agentProvider.startSession({
+			const session = provider.startSession({
 				prompt,
 				cwd: node.worktreePath as string,
 				systemPrompt: TASK_SYSTEM_PROMPT,
 				resumeSessionId: node.sessionId ?? undefined,
-				model: continueCfg.model ?? resolveDefaultModel() ?? undefined,
+				model: effectiveCfg.model,
 				mcpServers: { opengraft: mcpServer },
 				mcpToolDefs: { opengraft: toolDefs },
 				queue: childQueue,
@@ -1159,16 +1195,13 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const tracker = trackers.get(project.id);
 		if (!tracker) return;
 
-		// Load project config for model override (set via settings UI)
-		const projectCfg = await loadProjectConfig(config.dataDir, project.id);
-		// Priority: API param > project config > env var
-		const effectiveModel =
-			opts.model ?? projectCfg.model ?? resolveDefaultModel() ?? undefined;
-		const effectiveChildModel =
-			opts.childModel ??
-			projectCfg.childModel ??
-			resolveDefaultModel() ??
-			undefined;
+		// Resolve effective config: global + repo + local
+		const effectiveCfg = await resolveProjectConfig(project.path, project.id);
+		const provider = getProjectProvider(effectiveCfg);
+
+		// Priority: API param > resolved config
+		const effectiveModel = opts.model ?? effectiveCfg.model;
+		const effectiveChildModel = opts.childModel ?? effectiveCfg.childModel;
 
 		// Ensure root node exists for the orchestrator
 		const rootNode = tracker.ensureRootNode("Orchestrator", opts.prompt);
@@ -1183,8 +1216,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			type: "orchestration_started",
 			taskId: rootNodeId,
 			prompt: opts.prompt,
-			provider: config.agentProvider.name,
-			model: effectiveModel ?? resolveDefaultModel() ?? "claude-sonnet-4-6",
+			provider: provider.name,
+			model: effectiveModel ?? "claude-sonnet-4-6",
 		});
 		broadcastTreeUpdate(project.id, tracker);
 
@@ -1199,7 +1232,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const { mcpServer, toolDefs, hasRunningChildren } = createOrchestratorTools(
 			{
 				tracker,
-				provider: config.agentProvider,
+				provider,
 				worktrees: wm,
 				projectPath: project.path,
 				repoPath: project.path,
@@ -1208,9 +1241,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				childModel: effectiveChildModel,
 				queue,
 				doneRef,
-				defaultBudgetUsd: projectCfg.budgetUsd,
-				clarifyTimeoutMs: projectCfg.clarifyTimeoutMs,
-				maxDepth: projectCfg.maxDepth,
+				defaultBudgetUsd: effectiveCfg.budgetUsd,
+				clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
+				maxDepth: effectiveCfg.maxDepth,
 				onTaskEvent: (event) => {
 					broadcastEvent(project.id, event);
 					broadcastTreeUpdate(project.id, tracker);
@@ -1237,7 +1270,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			: undefined;
 
 		// Use startSession for message injection support
-		const session = config.agentProvider.startSession({
+		const session = provider.startSession({
 			prompt,
 			cwd: project.path,
 			projectPath: project.path,
@@ -1395,23 +1428,55 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		return c.json({ status: "running", projectId: project.id });
 	});
 
-	// Project config CRUD
+	// Global config
+	app.get("/config/global", async (c) => {
+		return c.json(globalConfig);
+	});
+
+	app.patch("/config/global", async (c) => {
+		const partial = (await c.req.json()) as Partial<OpenGraftConfig>;
+		// Merge scalar fields, union map fields
+		for (const [k, v] of Object.entries(partial)) {
+			if (v === null || v === undefined) {
+				delete (globalConfig as Record<string, unknown>)[k];
+			} else {
+				(globalConfig as Record<string, unknown>)[k] = v;
+			}
+		}
+		await saveGlobalConfig(globalConfig);
+		return c.json(globalConfig);
+	});
+
+	// Project repo config (stored in <project>/.opengraft/config.json)
+	app.get("/projects/:id/config/repo", async (c) => {
+		const project = pm.get(c.req.param("id"));
+		if (!project) return c.json({ error: "Project not found" }, 404);
+		const cfg = await loadProjectRepoConfig(project.path);
+		return c.json(cfg);
+	});
+
+	// Project local config (stored in dataDir/projects/<id>/config.json)
 	app.get("/projects/:id/config", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) return c.json({ error: "Project not found" }, 404);
-		const cfg = await loadProjectConfig(config.dataDir, project.id);
+		const cfg = await loadProjectLocalConfig(config.dataDir, project.id);
 		return c.json(cfg);
 	});
 
 	app.patch("/projects/:id/config", async (c) => {
 		const project = pm.get(c.req.param("id"));
 		if (!project) return c.json({ error: "Project not found" }, 404);
-		const partial = await c.req.json();
-		const merged = await mergeProjectConfig(
-			config.dataDir,
-			project.id,
-			partial,
-		);
+		const partial = (await c.req.json()) as Partial<OpenGraftConfig>;
+		const existing = await loadProjectLocalConfig(config.dataDir, project.id);
+		const merged = { ...existing };
+		for (const [k, v] of Object.entries(partial)) {
+			if (v === null || v === undefined) {
+				delete (merged as Record<string, unknown>)[k];
+			} else {
+				(merged as Record<string, unknown>)[k] = v;
+			}
+		}
+		await saveProjectLocalConfig(config.dataDir, project.id, merged);
 		return c.json(merged);
 	});
 
@@ -1421,13 +1486,13 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			return c.json({ error: "Project not found" }, 404);
 		}
 		const session = activeSessions.get(project.id);
-		const projectCfg = await loadProjectConfig(config.dataDir, project.id);
-		const model =
-			projectCfg.model ?? resolveDefaultModel() ?? "claude-sonnet-4-6";
+		const effectiveCfg = await resolveProjectConfig(project.path, project.id);
+		const provider = getProjectProvider(effectiveCfg);
+		const model = effectiveCfg.model ?? "claude-sonnet-4-6";
 		return c.json({
 			running: !!session,
 			sessionId: session?.sessionId ?? null,
-			provider: config.agentProvider.name,
+			provider: provider.name,
 			model,
 		});
 	});
@@ -1800,6 +1865,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		startupReady = true;
 	}
 
+	async function loadConfig() {
+		globalConfig = await loadGlobalConfig();
+	}
+
 	return {
 		app,
 		pm,
@@ -1808,6 +1877,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		shutdown,
 		getTracker,
 		markReady,
+		loadConfig,
 	};
 }
 
@@ -1901,11 +1971,12 @@ if (import.meta.main) {
 		// Port is free, proceed
 	}
 
-	const { app, pm, autoResumeProjects, shutdown, markReady } = createApp();
+	const { app, pm, autoResumeProjects, shutdown, markReady, loadConfig } =
+		createApp();
 	await pm.load();
+	await loadConfig();
 	console.log(`OpenGraft daemon listening on http://localhost:${port}`);
 	console.log(`Web UI: http://localhost:${port}/`);
-	console.log(`Provider: ${defaultConfig.agentProvider.name}`);
 
 	// Use Bun's HTML import for the web UI (auto-bundles TSX/CSS)
 	const webIndex = await import("../web/index.html");
