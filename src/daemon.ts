@@ -235,11 +235,26 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				if (orphanCount > 0) await tracker.save();
 
 				// Load event history from disk so UI can show previous logs
-				await loadEventHistory(ctx, project.id);
+				const events = await loadEventHistory(ctx, project.id);
+
+				// Extract recent error events so the agent knows what went wrong
+				const errorMessages = events
+					.filter(
+						(e) =>
+							e.type === "error" ||
+							(e.type === "agent_event" && e.eventType === "error"),
+					)
+					.slice(-5)
+					.map((e) => String(e.message ?? "Unknown error"));
+
 				console.log(
 					`Auto-resuming orchestration for ${project.name} (${project.id.slice(0, 8)})`,
 				);
-				const resumePrompt = `Continue where you left off. The daemon restarted.${orphanCount > 0 ? ` Note: ${orphanCount} in_progress task(s) were reset to failed.` : ""} Check the task tree and proceed.`;
+				const errorSection =
+					errorMessages.length > 0
+						? `\n\nPrevious session encountered these errors:\n${errorMessages.map((m) => `- ${m}`).join("\n")}`
+						: "";
+				const resumePrompt = `Continue where you left off. The daemon restarted.${orphanCount > 0 ? ` Note: ${orphanCount} in_progress task(s) were reset to failed.` : ""}${errorSection}\n\nCheck the task tree and proceed.`;
 				await launchAgent(
 					ctx,
 					project,
