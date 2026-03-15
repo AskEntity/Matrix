@@ -38,6 +38,17 @@ const _pkg = JSON.parse(
 ) as { version: string };
 const VERSION = _pkg.version;
 
+// Capture git commit hash once at startup for traceability.
+let GIT_HASH = "unknown";
+try {
+	const result = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"]);
+	if (result.exitCode === 0) {
+		GIT_HASH = new TextDecoder().decode(result.stdout).trim();
+	}
+} catch {
+	// git not available or not a git repo — keep "unknown"
+}
+
 const startTime = Date.now();
 
 const defaultConfig: DaemonConfig = {
@@ -77,6 +88,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		const response: HealthResponse = {
 			status: "ok",
 			version: VERSION,
+			gitHash: GIT_HASH,
 			uptime: Date.now() - startTime,
 		};
 
@@ -141,6 +153,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 		const response: VersionResponse = {
 			version: VERSION,
+			gitHash: GIT_HASH,
 			nodeCount,
 			projectCount,
 		};
@@ -372,7 +385,9 @@ if (import.meta.main) {
 	} catch {
 		// Port is free, proceed
 	}
-	console.log(`OpenGraft daemon listening on http://localhost:${port}`);
+	console.log(
+		`OpenGraft daemon v${VERSION} (${GIT_HASH}) listening on http://localhost:${port}`,
+	);
 	console.log(`Web UI: http://localhost:${port}/`);
 
 	// Use Bun's HTML import for the web UI (auto-bundles TSX/CSS)
