@@ -207,7 +207,7 @@ function TaskNodeView({
 			>
 				<div
 					className="og-task-row"
-					style={{ paddingLeft: `${12 + depth * 16}px` }}
+					style={{ paddingLeft: `${12 + depth * 10}px` }}
 				>
 					{hasChildren ? (
 						<button
