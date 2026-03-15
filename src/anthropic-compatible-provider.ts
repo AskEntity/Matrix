@@ -119,8 +119,6 @@ Do NOT use any tools. Respond with ONLY the checkpoint in <summary>...</summary>
 
 Write the checkpoint with these sections IN ORDER. Every section is required.
 
-Write ALL sections in the same language as the user has been communicating.
-
 ## 1. User Requests (MOST CRITICAL)
 Chronological timeline of every user message or parent instruction received, with the tasks created/completed in response to each. For each entry:
 - The message (verbatim or close paraphrase)
