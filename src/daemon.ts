@@ -114,12 +114,8 @@ function createProviderFromConfig(
 		return createProviderFromAuth(authGroup, effectiveConfig.model);
 	}
 
-	// Fallback: auto-detect from model name
-	const model = effectiveConfig.model;
-	if (model && /^(gpt-|o1-|o3-|o4-|deepseek-)/.test(model)) {
-		return new OpenAICompatibleProvider(model);
-	}
-	return new AnthropicCompatibleProvider(model);
+	// No auth group configured — fallback to Anthropic with env vars for backward compat
+	return new AnthropicCompatibleProvider(effectiveConfig.model);
 }
 
 /** Collect a node and all its descendants. */
