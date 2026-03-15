@@ -66,7 +66,7 @@ export function formatQueueMessage(msg: QueueMessage): string {
 		case "child_report":
 			return `<child_report from="${msg.title}" id="${msg.taskId}">${msg.content}</child_report>`;
 		case "background_complete":
-			return `<background_complete command="${msg.command}" id="${msg.commandId}" exit="${msg.exitCode}" duration="${msg.durationMs}ms">stdout:\n${msg.stdout}\nstderr:\n${msg.stderr}</background_complete>`;
+			return `<background_complete command="${msg.command}" id="${msg.commandId}" exit="${msg.exitCode}" duration="${msg.durationMs}ms">Command completed. Use bg_action="status" with background_id="${msg.commandId}" or read_file on output files to see results.</background_complete>`;
 		case "compact":
 			return "<compact>Manual compaction requested</compact>";
 	}
@@ -97,7 +97,7 @@ export function toRawMessage(msg: QueueMessage): {
 		case "background_complete":
 			return {
 				source: msg.source,
-				content: `Command "${msg.command}" (${msg.commandId}): exit=${msg.exitCode}, duration=${msg.durationMs}ms\nstdout:\n${msg.stdout}\nstderr:\n${msg.stderr}`,
+				content: `Command "${msg.command}" (${msg.commandId}): exit=${msg.exitCode}, duration=${msg.durationMs}ms. Use read_file on output files to see results.`,
 			};
 		case "compact":
 			return { source: msg.source, content: "Manual compaction requested" };
