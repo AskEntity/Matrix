@@ -84,7 +84,16 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			title?: string;
 			description?: string;
 			draft?: boolean;
+			parentId?: string;
 		}>();
+		if (body.parentId !== undefined) {
+			try {
+				tracker.reparent(node.id, body.parentId);
+			} catch (e) {
+				const message = e instanceof Error ? e.message : "Unknown error";
+				return c.json({ error: message }, 400);
+			}
+		}
 		if (body.status) {
 			tracker.updateStatus(nodeId, body.status);
 		}

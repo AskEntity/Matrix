@@ -570,6 +570,90 @@ describe("daemon tasks API", () => {
 		expect(updated.title).toBe("Task"); // title unchanged
 	});
 
+	test("PATCH /tasks/:nodeId reparents task with parentId", async () => {
+		// Create two parents
+		const p1Res = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Parent 1", description: "" }),
+		});
+		const p1 = (await p1Res.json()) as TaskNode;
+
+		const p2Res = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Parent 2", description: "" }),
+		});
+		const p2 = (await p2Res.json()) as TaskNode;
+
+		// Create a child under parent 1
+		const childRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Child",
+				description: "",
+				parentId: p1.id,
+			}),
+		});
+		const child = (await childRes.json()) as TaskNode;
+		expect(child.parentId).toBe(p1.id);
+
+		// Reparent child under parent 2
+		const patchRes = await app.request(
+			`/projects/${projectId}/tasks/${child.id}`,
+			{
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ parentId: p2.id }),
+			},
+		);
+		expect(patchRes.status).toBe(200);
+		const updated = (await patchRes.json()) as TaskNode;
+		expect(updated.parentId).toBe(p2.id);
+
+		// Verify tree structure
+		const treeRes = await app.request(`/projects/${projectId}/tasks`);
+		const tree = (await treeRes.json()) as { nodes: TaskNode[] };
+		const updatedP1 = tree.nodes.find((n) => n.id === p1.id);
+		const updatedP2 = tree.nodes.find((n) => n.id === p2.id);
+		expect(updatedP1?.children).not.toContain(child.id);
+		expect(updatedP2?.children).toContain(child.id);
+	});
+
+	test("PATCH /tasks/:nodeId reparent returns 400 for circular dependency", async () => {
+		const parentRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Parent", description: "" }),
+		});
+		const parent = (await parentRes.json()) as TaskNode;
+
+		const childRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Child",
+				description: "",
+				parentId: parent.id,
+			}),
+		});
+		const child = (await childRes.json()) as TaskNode;
+
+		// Try to reparent parent under child (circular)
+		const patchRes = await app.request(
+			`/projects/${projectId}/tasks/${parent.id}`,
+			{
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ parentId: child.id }),
+			},
+		);
+		expect(patchRes.status).toBe(400);
+		const body = (await patchRes.json()) as { error: string };
+		expect(body.error).toContain("descendant");
+	});
+
 	test("DELETE /tasks/:nodeId removes task", async () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",

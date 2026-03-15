@@ -311,6 +311,18 @@ export function useAgent(projectId: string) {
 		[projectId],
 	);
 
+	const reparentTask = useCallback(
+		async (nodeId: string, newParentId: string) => {
+			const res = await fetch(`/projects/${projectId}/tasks/${nodeId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ parentId: newParentId }),
+			});
+			if (!res.ok) throw new Error((await res.json()).error);
+		},
+		[projectId],
+	);
+
 	return {
 		running,
 		setRunning,
@@ -327,6 +339,7 @@ export function useAgent(projectId: string) {
 		sendMessage,
 		sendMessageToTask,
 		reorderTasks,
+		reparentTask,
 	};
 }
 

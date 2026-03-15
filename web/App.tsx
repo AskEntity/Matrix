@@ -164,6 +164,7 @@ function AppInner() {
 		sendMessage,
 		sendMessageToTask,
 		reorderTasks,
+		reparentTask,
 	} = useAgent(projectId);
 	const {
 		layers,
@@ -580,6 +581,7 @@ function AppInner() {
 						onSelect={setSelectedTaskId}
 						running={running}
 						onReorder={reorderTasks}
+						onReparent={reparentTask}
 					/>
 				</aside>
 
