@@ -49,6 +49,7 @@ const en: Translations = {
 	"tasks.refresh": "Refresh",
 	"tasks.clearFilter": "Clear filter",
 	"tasks.dropToDelete": "Drop to delete",
+	"tasks.moveToRoot": "↑ Move to root level",
 
 	// Orchestrator
 	"orch.label": "Orchestrator",
@@ -238,6 +239,7 @@ const en: Translations = {
 	"log.taskDone": "Done:",
 	"log.treeCount": "{count} tasks",
 	"log.treeEmpty": "Empty tree",
+	"log.treeUpdated": "Task tree updated by user",
 	"log.statusUpdate": "Status → {status}:",
 	"log.messageSent": "Message sent",
 	"log.reportSent": "Reported to parent",
@@ -315,6 +317,7 @@ const zh: Translations = {
 	"tasks.refresh": "刷新",
 	"tasks.clearFilter": "清除筛选",
 	"tasks.dropToDelete": "拖放以删除",
+	"tasks.moveToRoot": "↑ 移至顶层",
 
 	// Orchestrator
 	"orch.label": "编排器",
@@ -502,6 +505,7 @@ const zh: Translations = {
 	"log.taskDone": "完成：",
 	"log.treeCount": "{count} 个任务",
 	"log.treeEmpty": "空任务树",
+	"log.treeUpdated": "用户修改了任务树",
 	"log.statusUpdate": "状态 → {status}：",
 	"log.messageSent": "消息已发送",
 	"log.reportSent": "已上报父任务",

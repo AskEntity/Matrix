@@ -446,6 +446,29 @@ select {
 	color: var(--text-faint);
 }
 
+/* Root drop zone (reparent to root) */
+.og-root-drop-zone {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin: 4px 10px;
+	padding: 6px;
+	border: 1px dashed var(--border);
+	border-radius: 5px;
+	color: var(--text-faint);
+	font-size: 11px;
+	transition:
+		background var(--t-fast),
+		border-color var(--t-fast),
+		color var(--t-fast);
+}
+
+.og-root-drop-zone.og-root-drop-over {
+	background: rgba(56, 139, 253, 0.1);
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
 /* Trash drop zone */
 .og-trash-drop-zone {
 	display: flex;
@@ -1546,6 +1569,15 @@ button.og-tool-card-header:hover {
 
 .og-tool-card-mcp .og-tool-card-name {
 	color: rgba(137, 87, 229, 0.9);
+}
+
+.og-tool-card-system {
+	border-color: rgba(63, 185, 80, 0.3);
+	background: rgba(63, 185, 80, 0.05);
+}
+
+.og-tool-card-system .og-tool-card-name {
+	color: rgba(63, 185, 80, 0.9);
 }
 
 .og-tool-card-loading {
