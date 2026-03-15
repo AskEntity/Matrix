@@ -159,3 +159,12 @@ Daemon (Hono: HTTP + WS on :7433)
 - Integration in `agent-lifecycle.ts`: both `launchAgent` and `runChildAgentInBackground` create `McpClientManager`, `connectAll()` from config, merge tool defs, and `disconnectAll()` in finally/cleanup.
 - `connectAll()` uses `Promise.allSettled` — individual server failures don't block others. Failed servers are logged but not added to the map.
 - Tool handler closure captures `serverName` and `tool.name`, calls `mcpManager.callTool()` which returns `CallToolResult` directly — compatible with both providers.
+## Background Process Management
+
+- ALL bash commands use file-based stdout/stderr redirection (`Bun.file(path)` to `/tmp/opengraft-bg/`). Consistent approach — no piped output.
+- `BackgroundProcess` interface has `kill: (() => void) | null`, `stdoutPath`, `stderrPath` fields.
+- Agent can `read_file` on output file paths for partial output while process is running.
+- `bg_action` parameter on bash tool: `kill` terminates process + returns final output, `status` returns metadata + file paths (running) or stored output (completed).
+- `timeout` parameter removed from bash tool schema. Internal 600s safety timeout hardcoded in executor.ts.
+- Temp files cleaned up on completion, kill, or session cleanup.
+- CWD tracking only applies to foreground-completed commands. Backgrounded commands never update CWD.
