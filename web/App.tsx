@@ -217,22 +217,26 @@ function AppInner() {
 	}, [theme]);
 
 	useEffect(() => {
+		const currentProject = projects.find((p) => p.id === projectId);
+		const projectName = currentProject?.name ?? "";
+		const base = `OpenGraft${projectName ? ` — ${projectName}` : ""}`;
+
 		const childNodes = rootNodeId
 			? nodes.filter((n) => n.id !== rootNodeId)
 			: nodes;
 		const total = childNodes.length;
 		if (total === 0) {
-			document.title = "OpenGraft";
+			document.title = base;
 			return;
 		}
 		const passed = childNodes.filter((n) => n.status === "passed").length;
 		const failed = childNodes.filter(
 			(n) => n.status === "failed" || n.status === "stuck",
 		).length;
-		if (failed > 0) document.title = `[!${failed}] OpenGraft`;
-		else if (passed === total) document.title = "[✓] OpenGraft";
-		else document.title = `[${passed}/${total}] OpenGraft`;
-	}, [nodes, rootNodeId]);
+		if (failed > 0) document.title = `${base} [!${failed}]`;
+		else if (passed === total) document.title = `${base} [✓]`;
+		else document.title = `${base} [${passed}/${total}]`;
+	}, [nodes, rootNodeId, projects, projectId]);
 
 	const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
 		e.preventDefault();
