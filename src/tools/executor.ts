@@ -81,10 +81,9 @@ export async function executeTool(
 			}
 
 			const command = input.command as string;
-			const hardTimeout = 600000; // 10 min safety timeout (not exposed to agent)
-			const foregroundTimeout = Math.min(
-				Math.max((input.foreground_timeout as number) ?? 120000, 0),
-				hardTimeout,
+			const foregroundTimeout = Math.max(
+				(input.foreground_timeout as number) ?? 120000,
+				0,
 			);
 
 			// Warn about running background commands
@@ -99,7 +98,6 @@ export async function executeTool(
 					cwd,
 					fallbackCwd,
 					foregroundTimeout,
-					hardTimeout,
 					sessionId,
 					queue,
 				);
