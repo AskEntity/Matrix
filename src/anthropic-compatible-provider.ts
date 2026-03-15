@@ -466,6 +466,28 @@ export async function jsSearch(opts: {
 		files = Array.from(g.scanSync({ cwd: absSearchPath, onlyFiles: true }));
 	}
 
+	// Filter out common noisy directories (only matters for directory scans, not single files)
+	if (!pathStat?.isFile()) {
+		const SKIP_DIRS = [
+			"node_modules/",
+			".git/",
+			"dist/",
+			"out/",
+			".worktrees/",
+			".cache/",
+			"coverage/",
+			".next/",
+			"build/",
+		];
+		files = files.filter(
+			(f) =>
+				!SKIP_DIRS.some(
+					(prefix) =>
+						f.startsWith(prefix) || f.includes(`/${prefix.slice(0, -1)}/`),
+				),
+		);
+	}
+
 	// Sort for deterministic output
 	files.sort();
 
