@@ -170,6 +170,22 @@ export async function stopAgent(
 	session.stop();
 	ctx.activeSessions.delete(projectId);
 
+	// Cascade stop to all in-progress child agents
+	if (tracker) {
+		const rootNodeId = tracker.rootNodeId;
+		for (const node of tracker.allNodes()) {
+			if (node.status === "in_progress" && node.id !== rootNodeId) {
+				const childQueue = globalAgentQueues.get(node.id);
+				if (childQueue) {
+					childQueue.close();
+				}
+				tracker.updateStatus(node.id, "failed");
+			}
+		}
+		await tracker.save();
+		broadcastTreeUpdate(ctx, projectId, tracker);
+	}
+
 	// Clear pending state
 	if (!opts?.keepPendingMessages) {
 		ctx.pendingMessages.delete(projectId);

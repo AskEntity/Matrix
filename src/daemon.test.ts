@@ -1689,6 +1689,128 @@ describe("POST /projects/:id/stop", () => {
 		});
 		expect(res.status).toBe(404);
 	});
+
+	test("stopping agent cascades to child agent queues and marks them failed", async () => {
+		// Create a long-running provider so the agent stays alive
+		const longRunningProvider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					await new Promise((resolve) => setTimeout(resolve, 10000));
+					return { success: true, output: "" };
+				}
+				return {
+					sessionId: "mock-session",
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const localDataDir = await mkdtemp(join(tmpdir(), "og-stop-cascade-"));
+		const {
+			app: localApp,
+			pm: localPm,
+			markReady: localMarkReady,
+			getTracker: localGetTracker,
+		} = createApp({
+			dataDir: localDataDir,
+			agentProvider: longRunningProvider,
+		});
+		await localPm.load();
+		localMarkReady();
+
+		// Create a project
+		const projRes = await localApp.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "cascade-proj") }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		// Start an agent
+		const orchRes = await localApp.request(
+			`/projects/${project.id}/orchestrate/agent`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ prompt: "do something" }),
+			},
+		);
+		expect(orchRes.status).toBe(200);
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Get the tracker and create a child task simulating in_progress child agent
+		const tracker = await localGetTracker(project.id);
+		const childTask = await localApp.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Child agent task",
+				description: "Running child",
+				parentId: tracker.rootNodeId,
+			}),
+		});
+		const child = (await childTask.json()) as TaskNode;
+
+		// Mark child as in_progress
+		await localApp.request(`/projects/${project.id}/tasks/${child.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "in_progress" }),
+		});
+
+		// Register a queue for the child in globalAgentQueues (simulating runChildAgentInBackground)
+		const childQueue = new MessageQueue();
+		globalAgentQueues.set(child.id, childQueue);
+
+		// Verify queue is open
+		let queueClosed = false;
+		try {
+			childQueue.enqueue({ source: "compact" });
+			childQueue.drain(); // clear it
+		} catch {
+			queueClosed = true;
+		}
+		expect(queueClosed).toBe(false);
+
+		// Stop the agent
+		const stopRes = await localApp.request(`/projects/${project.id}/stop`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(stopRes.status).toBe(200);
+
+		// Verify: child queue is now closed
+		let closedAfterStop = false;
+		try {
+			childQueue.enqueue({ source: "compact" });
+		} catch {
+			closedAfterStop = true;
+		}
+		expect(closedAfterStop).toBe(true);
+
+		// Verify: child task status is now "failed"
+		const tasksRes = await localApp.request(`/projects/${project.id}/tasks`);
+		const { nodes } = (await tasksRes.json()) as { nodes: TaskNode[] };
+		const updatedChild = nodes.find((n) => n.id === child.id);
+		expect(updatedChild?.status).toBe("failed");
+
+		// Clean up
+		globalAgentQueues.delete(child.id);
+		await rm(localDataDir, { recursive: true });
+	});
 });
 
 describe("POST /projects/:id/orchestrate/agent", () => {
