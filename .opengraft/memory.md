@@ -39,7 +39,8 @@ Daemon (Hono: HTTP + WS on :7433)
 | src/daemon.ts | Hono app setup, route registration, ORCHESTRATOR_SYSTEM_PROMPT (~405 lines) |
 | src/daemon/ | Extracted modules: context, event-system, helpers, agent-lifecycle, routes/ |
 | src/agent-tools.ts | MCP tools (10), system prompts, ORCHESTRATION_KNOWLEDGE |
-| src/anthropic-compatible-provider.ts | Anthropic API provider, built-in tools, compaction |
+| src/anthropic-compatible-provider.ts | Anthropic API provider, compaction (~1200 lines) |
+| src/tools/ | Extracted: definitions, search, bash, executor |
 | src/openai-compatible-provider.ts | OpenAI-compatible API provider (raw fetch) |
 | src/config.ts | Config system, auth groups, DEFAULT_MODEL constant |
 | src/task-tracker.ts | Task tree CRUD, JSON persistence |
