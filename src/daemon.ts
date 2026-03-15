@@ -1251,6 +1251,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 		// Fire-and-forget: consume events in background
 		(async () => {
+			let caughtError = false;
 			try {
 				let result = await session.events.next();
 				while (!result.done) {
@@ -1301,6 +1302,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					tracker.autoResume = false;
 				}
 			} catch (e) {
+				caughtError = true;
 				const message = e instanceof Error ? e.message : "Unknown error";
 				tracker.updateStatus(rootNodeId, "failed");
 				broadcastEvent(project.id, {
@@ -1311,13 +1313,27 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			} finally {
 				// Always preserve the orchestrator session for future resume,
 				// regardless of how it exited (success, failure, or crash).
-				await tracker.save();
+				try {
+					await tracker.save();
+				} catch {
+					// Don't let save failure prevent cleanup
+				}
 				session.stop();
 				// Only clean up if this session is still the active one.
 				// During restart, a new session replaces us — don't clobber it.
 				if (activeSessions.get(project.id) === session) {
 					activeSessions.delete(project.id);
+					// On error, broadcast agent_stopped so the UI knows to clear
+					// the running state. (Normal completions already broadcast
+					// orchestration_completed which handles this.)
+					if (caughtError) {
+						broadcastEvent(project.id, {
+							type: "agent_stopped",
+							taskId: rootNodeId,
+						});
+					}
 				}
+				broadcastTreeUpdate(project.id, tracker);
 			}
 		})();
 	}
