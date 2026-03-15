@@ -1,10 +1,5 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-	createSdkMcpServer,
-	type SdkMcpToolDefinition,
-	tool,
-} from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import {
@@ -13,6 +8,7 @@ import {
 	type QueueMessage,
 } from "./message-queue.ts";
 import type { TaskTracker } from "./task-tracker.ts";
+import { type ToolDefinition, tool } from "./tool-definition.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
 
 /**
@@ -479,13 +475,11 @@ export class CostAccumulator {
 	}
 }
 
-/** Result of createOrchestratorTools — MCP server + raw tool definitions. */
+/** Result of createOrchestratorTools — raw tool definitions for provider forwarding. */
 export interface OrchestratorToolsResult {
-	/** MCP server config for Claude Code provider. */
-	mcpServer: ReturnType<typeof createSdkMcpServer>;
-	/** Raw tool definitions for AnthropicCompatibleProvider forwarding. */
-	// biome-ignore lint/suspicious/noExplicitAny: SdkMcpToolDefinition generic is not narrowable here
-	toolDefs: SdkMcpToolDefinition<any>[];
+	/** Raw tool definitions for provider forwarding. */
+	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic is not narrowable here
+	toolDefs: ToolDefinition<any>[];
 	/** Returns true if this agent has running children (childQueues is non-empty). */
 	hasRunningChildren?: () => boolean;
 }
@@ -549,7 +543,6 @@ export function createOrchestratorTools(
 			} = { done: null };
 			const {
 				toolDefs: childToolDefs,
-				mcpServer: childMcpServer,
 				hasRunningChildren: childHasRunningChildren,
 			} = createOrchestratorTools(
 				{
@@ -573,7 +566,6 @@ export function createOrchestratorTools(
 				childCosts,
 			);
 			request.mcpToolDefs = { opengraft: childToolDefs };
-			request.mcpServers = { opengraft: childMcpServer };
 			request.doneRef = childDoneRef;
 			request.hasRunningChildren = childHasRunningChildren;
 		}
@@ -1473,14 +1465,7 @@ export function createOrchestratorTools(
 		),
 	];
 
-	const mcpServer = createSdkMcpServer({
-		name: "opengraft",
-		version: "0.1.0",
-		tools: toolDefs,
-	});
-
 	return {
-		mcpServer,
 		toolDefs,
 		hasRunningChildren: () => childQueues.size > 0,
 	};

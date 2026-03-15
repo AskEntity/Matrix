@@ -639,7 +639,6 @@ describe("daemon tasks API", () => {
 	test("POST /tasks/:nodeId/continue uses startSession with MCP tools when task has worktree", async () => {
 		// Track what startSession receives
 		let startSessionCalled = false;
-		let receivedMcpServers = false;
 		let receivedMcpToolDefs = false;
 		let receivedQueue = false;
 		let receivedDoneRef = false;
@@ -653,9 +652,6 @@ describe("daemon tasks API", () => {
 			},
 			startSession(req) {
 				startSessionCalled = true;
-				if (req.mcpServers && "opengraft" in req.mcpServers) {
-					receivedMcpServers = true;
-				}
 				if (req.mcpToolDefs && "opengraft" in req.mcpToolDefs) {
 					receivedMcpToolDefs = true;
 				}
@@ -742,7 +738,6 @@ describe("daemon tasks API", () => {
 		await new Promise((r) => setTimeout(r, 100));
 
 		expect(startSessionCalled).toBe(true);
-		expect(receivedMcpServers).toBe(true);
 		expect(receivedMcpToolDefs).toBe(true);
 		expect(receivedQueue).toBe(true);
 		expect(receivedDoneRef).toBe(true);
@@ -1163,13 +1158,13 @@ describe("daemon orchestrate/agent API", () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "og-orchagent-"));
 		const dataDir = await mkdtemp(join(tmpdir(), "og-oadata-"));
 
-		// Mock provider that verifies mcpServers was passed
-		let receivedMcpServers = false;
+		// Mock provider that verifies mcpToolDefs was passed
+		let receivedMcpToolDefs = false;
 		const agentProvider: AgentProvider = {
 			name: "mock",
 			execute: async (req) => {
-				if (req.mcpServers && "opengraft" in req.mcpServers) {
-					receivedMcpServers = true;
+				if (req.mcpToolDefs && "opengraft" in req.mcpToolDefs) {
+					receivedMcpToolDefs = true;
 				}
 				return { success: true, output: "orchestrated" };
 			},
@@ -1178,8 +1173,8 @@ describe("daemon orchestrate/agent API", () => {
 				return { success: true, output: "" };
 			},
 			startSession(req) {
-				if (req.mcpServers && "opengraft" in req.mcpServers) {
-					receivedMcpServers = true;
+				if (req.mcpToolDefs && "opengraft" in req.mcpToolDefs) {
+					receivedMcpToolDefs = true;
 				}
 				const queue = req.queue ?? new MessageQueue();
 				// biome-ignore lint/correctness/useYield: mock session never streams
@@ -1222,7 +1217,7 @@ describe("daemon orchestrate/agent API", () => {
 
 		// Wait briefly for the background agent to complete
 		await new Promise((r) => setTimeout(r, 100));
-		expect(receivedMcpServers).toBe(true);
+		expect(receivedMcpToolDefs).toBe(true);
 
 		await rm(tempDir, { recursive: true });
 		await rm(dataDir, { recursive: true });

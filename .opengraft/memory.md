@@ -135,4 +135,8 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Compact Pending Indicator
 - `pendingCompact` state in App.tsx, set true on compact click, cleared on `compact_started`, `agent_stopped`, and `orchestration_completed` events
 - Rendered as `og-pending-chip` in AppFooter alongside pending message chips
-- i18n keys: `footer.compactPending` (en: "Compact pending…", zh: "压缩等待中…")
+
+## SDK Removal
+- `@anthropic-ai/claude-agent-sdk` removed. Own `ToolDefinition` type and `tool()` factory in `src/tool-definition.ts`.
+- `CallToolResult` imported from `@modelcontextprotocol/sdk/types.js`.
+- `AgentRequest.mcpServers` removed (dead code). `mcpToolDefs` remains for provider tool forwarding.

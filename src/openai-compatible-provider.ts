@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 import type {
 	AgentEvent,
 	AgentProvider,
@@ -19,6 +18,7 @@ import {
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
+import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 
 /** Extract image_url parts from queue messages for OpenAI format. */
@@ -434,8 +434,8 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		// Build tool list: built-in tools (converted) + MCP tools
 		const builtinTools = convertToolsToOpenAI(TOOLS);
 		const allTools: OpenAITool[] = [...builtinTools];
-		// biome-ignore lint/suspicious/noExplicitAny: SdkMcpToolDefinition generic varies
-		const mcpHandlers = new Map<string, SdkMcpToolDefinition<any>>();
+		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+		const mcpHandlers = new Map<string, ToolDefinition<any>>();
 
 		if (request.mcpToolDefs) {
 			for (const [serverName, defs] of Object.entries(request.mcpToolDefs)) {
