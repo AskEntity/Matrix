@@ -203,3 +203,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - TASK_COLORS in TaskDetail.tsx changed from generic color names (Red, Blue, etc.) to named categories: Bug, Feature, Refactor, Optimization, Research, Chore.
 - `resolveColor()` in agent-tools.ts converts named colors (red, blue, green, yellow, purple, orange, gray) to hex values. Agent tools accept both named colors and raw hex.
 - Color picker uses `og-color-category` class (pill-shaped buttons with swatch + label) instead of standalone `og-color-swatch` circles.
+## OpenAI Provider Audit (March 2026)
+
+- **Import cleanup**: OpenAI provider now imports `TOOLS`, `executeTool`, `cleanupSessionBackgroundProcesses` directly from `./tools/index.ts` instead of through anthropic-compatible-provider re-exports. Compaction-specific imports (`buildCompactedContext`, `extractCheckpoint`, `SUMMARIZATION_INSTRUCTION`, `zodShapeToJsonSchema`) remain from anthropic-compatible-provider.ts where they are defined.
+- **Model coverage expanded**: Added gpt-4.1/mini/nano, gpt-4-turbo, o1/o1-mini/o1-pro, o4-mini with correct pricing and context windows. GPT-4.1 family gets 1M+ context window (1,047,576 tokens).
+- **Prefix match bug fix**: Both `getModelPricing()` and `getContextWindow()` now sort keys by length (longest first) before prefix matching, preventing e.g. "gpt-4.1" from matching before "gpt-4.1-mini" for dated model names like "gpt-4.1-mini-2025-04-14".
+- **Feature parity confirmed**: Both providers use same shared `executeTool`, same `TOOLS` array, same `mcpToolDefs` handling pattern (mcp__serverName__toolName), same compaction flow. Key differences are by design: Anthropic uses `countTokens` API for precise token counting vs OpenAI uses estimated counts; Anthropic uses SDK streaming vs OpenAI uses non-streaming raw fetch.
