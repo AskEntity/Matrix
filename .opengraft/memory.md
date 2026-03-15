@@ -152,3 +152,9 @@ Pattern: All modules receive a `DaemonContext` object instead of capturing state
 
 - React ErrorBoundary requires `override` keyword on `state`, `componentDidCatch`, and `render` when `noImplicitOverride` is enabled in tsconfig.
 - Placed inside `LocaleProvider` but outside `AppInner` so locale context is available if the fallback UI ever needs i18n.
+
+## Shared Types (Frontend/Backend)
+
+- `web/hooks.ts` re-exports `TaskNode` and `TaskStatus` from `../src/types.ts` — all web code imports from `hooks.ts`.
+- `StatusBadge.tsx` uses `TaskStatus` instead of `string` for type safety.
+- Bun bundler handles cross-directory imports (`../src/types.ts` from `web/`) without issues.
