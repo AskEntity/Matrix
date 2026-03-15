@@ -11,7 +11,6 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TOOLS } from "./anthropic-compatible-provider.ts";
 import {
 	clearContextWindowCache,
 	convertToolsToOpenAI,
@@ -20,6 +19,7 @@ import {
 	getModelPricing,
 	OpenAICompatibleProvider,
 } from "./openai-compatible-provider.ts";
+import { TOOLS } from "./tools/index.ts";
 
 // ── Pricing ──
 
@@ -42,6 +42,36 @@ describe("getModelPricing", () => {
 		expect(p.outputPer1M).toBe(40);
 	});
 
+	test("returns o1 pricing", () => {
+		const p = getModelPricing("o1");
+		expect(p.inputPer1M).toBe(15);
+		expect(p.outputPer1M).toBe(60);
+	});
+
+	test("returns o4-mini pricing", () => {
+		const p = getModelPricing("o4-mini");
+		expect(p.inputPer1M).toBe(1.1);
+		expect(p.outputPer1M).toBe(4.4);
+	});
+
+	test("returns gpt-4-turbo pricing", () => {
+		const p = getModelPricing("gpt-4-turbo");
+		expect(p.inputPer1M).toBe(10);
+		expect(p.outputPer1M).toBe(30);
+	});
+
+	test("returns gpt-4.1 pricing", () => {
+		const p = getModelPricing("gpt-4.1");
+		expect(p.inputPer1M).toBe(2.0);
+		expect(p.outputPer1M).toBe(8.0);
+	});
+
+	test("returns gpt-4.1-mini pricing", () => {
+		const p = getModelPricing("gpt-4.1-mini");
+		expect(p.inputPer1M).toBe(0.4);
+		expect(p.outputPer1M).toBe(1.6);
+	});
+
 	test("returns deepseek-chat pricing", () => {
 		const p = getModelPricing("deepseek-chat");
 		expect(p.inputPer1M).toBe(0.14);
@@ -50,6 +80,12 @@ describe("getModelPricing", () => {
 	test("prefix match for dated model names", () => {
 		const p = getModelPricing("gpt-4o-2024-08-06");
 		expect(p.inputPer1M).toBe(2.5);
+	});
+
+	test("prefix match prefers longest key (gpt-4.1-mini over gpt-4.1)", () => {
+		const p = getModelPricing("gpt-4.1-mini-2025-04-14");
+		expect(p.inputPer1M).toBe(0.4);
+		expect(p.outputPer1M).toBe(1.6);
 	});
 
 	test("defaults to gpt-4o for unknown models", () => {
@@ -68,6 +104,30 @@ describe("getContextWindow", () => {
 
 	test("returns 200k for o3", () => {
 		expect(getContextWindow("o3")).toBe(200_000);
+	});
+
+	test("returns 200k for o1", () => {
+		expect(getContextWindow("o1")).toBe(200_000);
+	});
+
+	test("returns 200k for o4-mini", () => {
+		expect(getContextWindow("o4-mini")).toBe(200_000);
+	});
+
+	test("returns 128k for gpt-4-turbo", () => {
+		expect(getContextWindow("gpt-4-turbo")).toBe(128_000);
+	});
+
+	test("returns 1M+ for gpt-4.1", () => {
+		expect(getContextWindow("gpt-4.1")).toBe(1_047_576);
+	});
+
+	test("returns 1M+ for gpt-4.1-mini", () => {
+		expect(getContextWindow("gpt-4.1-mini")).toBe(1_047_576);
+	});
+
+	test("returns 1M+ for gpt-4.1-nano", () => {
+		expect(getContextWindow("gpt-4.1-nano")).toBe(1_047_576);
 	});
 
 	test("returns 64k for deepseek-chat", () => {

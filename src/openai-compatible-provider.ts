@@ -10,15 +10,17 @@ import type {
 import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
 import {
 	buildCompactedContext,
-	cleanupSessionBackgroundProcesses,
-	executeTool,
 	extractCheckpoint,
 	SUMMARIZATION_INSTRUCTION,
-	TOOLS,
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
+import {
+	cleanupSessionBackgroundProcesses,
+	executeTool,
+	TOOLS,
+} from "./tools/index.ts";
 import type { AgentResult } from "./types.ts";
 
 /** Extract image_url parts from queue messages for OpenAI format. */
@@ -105,19 +107,45 @@ const OPENAI_PRICING: Record<
 	string,
 	{ inputPer1M: number; outputPer1M: number }
 > = {
+	// GPT-4.1 family
+	"gpt-4.1": { inputPer1M: 2.0, outputPer1M: 8.0 },
+	"gpt-4.1-mini": { inputPer1M: 0.4, outputPer1M: 1.6 },
+	"gpt-4.1-nano": { inputPer1M: 0.1, outputPer1M: 0.4 },
+	// GPT-4o family
 	"gpt-4o": { inputPer1M: 2.5, outputPer1M: 10 },
 	"gpt-4o-mini": { inputPer1M: 0.15, outputPer1M: 0.6 },
+	// GPT-4 Turbo
+	"gpt-4-turbo": { inputPer1M: 10, outputPer1M: 30 },
+	// o-series reasoning models
 	o3: { inputPer1M: 10, outputPer1M: 40 },
 	"o3-mini": { inputPer1M: 1.1, outputPer1M: 4.4 },
+	"o4-mini": { inputPer1M: 1.1, outputPer1M: 4.4 },
+	o1: { inputPer1M: 15, outputPer1M: 60 },
+	"o1-mini": { inputPer1M: 3, outputPer1M: 12 },
+	"o1-pro": { inputPer1M: 150, outputPer1M: 600 },
+	// DeepSeek
 	"deepseek-chat": { inputPer1M: 0.14, outputPer1M: 0.28 },
 	"deepseek-reasoner": { inputPer1M: 0.55, outputPer1M: 2.19 },
 };
 
 const CONTEXT_WINDOWS: Record<string, number> = {
+	// GPT-4.1 family — 1M context
+	"gpt-4.1": 1_047_576,
+	"gpt-4.1-mini": 1_047_576,
+	"gpt-4.1-nano": 1_047_576,
+	// GPT-4o family
 	"gpt-4o": 128_000,
 	"gpt-4o-mini": 128_000,
+	// GPT-4 Turbo
+	"gpt-4-turbo": 128_000,
+	// o-series reasoning models
 	o3: 200_000,
 	"o3-mini": 200_000,
+	"o4-mini": 200_000,
+	o1: 200_000,
+	"o1-mini": 128_000,
+	"o1-pro": 200_000,
+	// DeepSeek
 	"deepseek-chat": 64_000,
 	"deepseek-reasoner": 64_000,
 };
@@ -205,9 +233,13 @@ export function getModelPricing(model: string): {
 } {
 	// Exact match first
 	if (OPENAI_PRICING[model]) return OPENAI_PRICING[model];
-	// Prefix match (e.g. "gpt-4o-2024-08-06" → "gpt-4o")
-	for (const [key, pricing] of Object.entries(OPENAI_PRICING)) {
-		if (model.startsWith(key)) return pricing;
+	// Prefix match — longest key first to avoid "gpt-4.1" matching before "gpt-4.1-mini"
+	const sortedKeys = Object.keys(OPENAI_PRICING).sort(
+		(a, b) => b.length - a.length,
+	);
+	for (const key of sortedKeys) {
+		const pricing = OPENAI_PRICING[key];
+		if (model.startsWith(key) && pricing) return pricing;
 	}
 	// Default to gpt-4o pricing
 	return OPENAI_PRICING["gpt-4o"] as {
@@ -219,8 +251,13 @@ export function getModelPricing(model: string): {
 /** @internal Exported for testing */
 export function getContextWindow(model: string): number {
 	if (CONTEXT_WINDOWS[model]) return CONTEXT_WINDOWS[model];
-	for (const [key, window] of Object.entries(CONTEXT_WINDOWS)) {
-		if (model.startsWith(key)) return window;
+	// Prefix match — longest key first to avoid "gpt-4.1" matching before "gpt-4.1-mini"
+	const sortedKeys = Object.keys(CONTEXT_WINDOWS).sort(
+		(a, b) => b.length - a.length,
+	);
+	for (const key of sortedKeys) {
+		const window = CONTEXT_WINDOWS[key];
+		if (model.startsWith(key) && window) return window;
 	}
 	return DEFAULT_CONTEXT_WINDOW;
 }
