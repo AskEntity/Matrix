@@ -229,3 +229,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - **task_completed summary**: Both agent-tools.ts and agent-lifecycle.ts now include `output` (done() summary) in task_completed events. ws-handler.ts renders the summary in the log entry text. child_complete queue_message was already suppressed (the `continue` existed before).
 - **execute_tasks title**: `getToolCardTitle` for execute_tasks now handles `toolArgs.tasks` as either array (live events) or JSON string (event_history), fixing garbled title display.
 
+
+## Stop Agent Cascade Fix (March 2026)
+
+- `stopAgent()` now cascades stop to all in-progress child agents by closing their `MessageQueue` from `globalAgentQueues` and setting their status to `failed`.
+- The queue close causes the child's `runChildAgentInBackground` catch block to fire (sets `stuck`), but since `stopAgent` already set `failed`, the final state is acceptable either way — both are terminal.
+- Order matters: close queues AND update status in stopAgent before the child's catch block races to set `stuck`.
