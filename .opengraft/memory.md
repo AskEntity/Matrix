@@ -334,3 +334,8 @@ Model env: `OG_MODEL` > `ANTHROPIC_MODEL` > `OPENAI_MODEL`
 ## User Message Position
 - User messages appear at agent-received time (via rawMessages), not send time
 - Pending chip provides immediate feedback
+
+## compact_started Event
+- New AgentEvent type `compact_started` emitted by both providers right before summarization instruction is pushed
+- UI handles it to set compacting state via event instead of onClick hack
+- Flow: compact signal → provider picks up → emits compact_started → UI shows "Compressing..." → compaction runs → emits compact → UI clears

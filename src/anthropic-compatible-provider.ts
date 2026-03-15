@@ -1715,6 +1715,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					manualCompactRequested ||
 					(!isEstimated && tokenCount > compressThreshold)
 				) {
+					yield { type: "compact_started" };
 					yield {
 						type: "status",
 						message: manualCompactRequested

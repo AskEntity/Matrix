@@ -321,6 +321,9 @@ function AppInner() {
 							},
 						}));
 						break;
+					} else if (et === "compact_started") {
+						setCompacting(true);
+						break;
 					} else if (et === "compact") {
 						text = `Context compacted (saved ~${msg.savedTokens} tokens)`;
 						addLog(
@@ -970,14 +973,7 @@ function AppInner() {
 											inputTokens={usage.inputTokens}
 											contextWindow={usage.contextWindow}
 											estimated={usage.estimated}
-											onCompact={
-												running
-													? () => {
-															setCompacting(true);
-															compact();
-														}
-													: undefined
-											}
+											onCompact={running ? () => compact() : undefined}
 										/>
 									) : null;
 								})()}
