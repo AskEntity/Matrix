@@ -165,7 +165,6 @@ function AppInner() {
 		stop,
 		checkStatus,
 		compact,
-		continueTask,
 		deleteTask,
 		sendMessage,
 		sendMessageToTask,
@@ -201,6 +200,9 @@ function AppInner() {
 
 	const isSelectedTaskRunning =
 		running && (isOrchestratorNode || selectedNode?.status === "in_progress");
+
+	// Note: 'running' state is still tracked for the "Thinking..." indicator in ActivityLog
+	// and for the Pause button visibility. It does NOT affect the core messaging flow.
 
 	const addLog = useCallback(
 		(
@@ -449,7 +451,6 @@ function AppInner() {
 		handleStop,
 		handleClarifySubmit,
 		handleClearSessions,
-		handleContinueTask,
 		handleDeleteTask,
 		handlePauseTask,
 		handleAddProject,
@@ -460,7 +461,6 @@ function AppInner() {
 		handleDeleteTaskByDrag,
 	} = createActionHandlers({
 		projectId,
-		running,
 		selectedTaskId,
 		rootNodeId,
 		selectedNode,
@@ -496,7 +496,6 @@ function AppInner() {
 		stop,
 		sendMessage,
 		sendMessageToTask,
-		continueTask,
 		deleteTask,
 		initProject,
 		deleteProject,
@@ -607,7 +606,6 @@ function AppInner() {
 						selectedTaskId={selectedTaskId}
 						rootNodeId={rootNodeId}
 						onSelect={setSelectedTaskId}
-						running={running}
 						onReorder={reorderTasks}
 						onReparent={reparentTask}
 						isCreating={isCreatingTask}
@@ -655,7 +653,6 @@ function AppInner() {
 							<TaskDetail
 								node={selectedNode}
 								projectId={projectId}
-								onContinue={handleContinueTask}
 								onDelete={handleDeleteTask}
 								onPause={handlePauseTask}
 							/>
@@ -744,7 +741,6 @@ function AppInner() {
 			</main>
 
 			<AppFooter
-				running={running}
 				projectId={projectId}
 				prompt={prompt}
 				targetNodeId={targetNodeId}

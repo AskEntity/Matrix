@@ -25,7 +25,6 @@ export function TaskTree({
 	selectedTaskId,
 	rootNodeId,
 	onSelect,
-	running,
 	onReorder,
 	onReparent,
 	isCreating,
@@ -37,7 +36,6 @@ export function TaskTree({
 	selectedTaskId: string | null;
 	rootNodeId: string | null;
 	onSelect: (id: string | null) => void;
-	running: boolean;
 	onReorder?: (parentId: string, children: string[]) => Promise<void>;
 	onReparent?: (nodeId: string, newParentId: string) => Promise<void>;
 	isCreating?: boolean;
@@ -348,11 +346,6 @@ export function TaskTree({
 					<IconHexagon size={14} />
 				</span>
 				<span className="og-orch-label">{t("orch.label")}</span>
-				<span className={`og-orch-badge ${running ? "running" : "idle"}`}>
-					{running
-						? t("status.running").toLowerCase()
-						: t("status.idle").toLowerCase()}
-				</span>
 			</button>
 
 			{/* Root-level drop zone — visible only during drag for reparenting to root */}
@@ -398,16 +391,10 @@ export function TaskTree({
 					<span className="og-empty-icon">
 						<IconHexagon size={24} />
 					</span>
-					{running ? (
-						<span>{t("tasks.agentWorking")}</span>
-					) : (
-						<>
-							<span>{t("tasks.noTasks")}</span>
-							<span style={{ color: "var(--text-faint)", fontSize: "11px" }}>
-								{t("tasks.startAgent")}
-							</span>
-						</>
-					)}
+					<span>{t("tasks.noTasks")}</span>
+					<span style={{ color: "var(--text-faint)", fontSize: "11px" }}>
+						{t("tasks.sendMessage")}
+					</span>
 				</div>
 			)}
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { ConversationHistory } from "./ConversationHistory.tsx";
-import { IconPause, IconRepeat, IconTrash } from "./icons.tsx";
+import { IconPause, IconTrash } from "./icons.tsx";
 import { StatusBadge, statusDotClass } from "./StatusBadge.tsx";
 
 const TASK_COLORS = [
@@ -43,23 +43,16 @@ function formatRunningDuration(dateStr: string | null | undefined): string {
 export function TaskDetail({
 	node,
 	projectId,
-	onContinue,
 	onDelete,
 	onPause,
 }: {
 	node: TaskNode;
 	projectId: string;
-	onContinue: (msg?: string) => void;
 	onDelete: () => void;
 	onPause?: () => void;
 }) {
 	const { t } = useLocale();
-	const [continueMsg, setContinueMsg] = useState("");
 	const [showHistory, setShowHistory] = useState(false);
-	const canContinue =
-		node.status === "failed" ||
-		node.status === "stuck" ||
-		node.status === "closed";
 	const isPending = node.status === "pending";
 	const isRunning = node.status === "in_progress" || node.status === "testing";
 	const [editingTitle, setEditingTitle] = useState(false);
@@ -263,7 +256,7 @@ export function TaskDetail({
 					<div className="og-detail-field">
 						<div className="og-detail-label">
 							{node.status === "in_progress"
-								? t("detail.running")
+								? t("detail.elapsed")
 								: node.status === "pending"
 									? t("detail.waiting")
 									: t("detail.age")}
@@ -297,28 +290,6 @@ export function TaskDetail({
 			</div>
 
 			<div className="og-detail-actions">
-				{canContinue && (
-					<form
-						className="og-continue-form"
-						onSubmit={(e) => {
-							e.preventDefault();
-							onContinue(continueMsg || undefined);
-							setContinueMsg("");
-						}}
-					>
-						<input
-							type="text"
-							className="og-continue-input"
-							value={continueMsg}
-							onChange={(e) => setContinueMsg(e.target.value)}
-							placeholder={t("detail.retryPlaceholder")}
-						/>
-						<button type="submit" className="og-btn og-btn-warning og-btn-sm">
-							<IconRepeat size={12} />
-							{t("detail.continue")}
-						</button>
-					</form>
-				)}
 				{isRunning && onPause && (
 					<button
 						type="button"

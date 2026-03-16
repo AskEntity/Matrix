@@ -290,6 +290,10 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 
 ## POST /tasks/:nodeId/message Auto-Launch
 
-- `ensureChildAgentRunning()` in `agent-lifecycle.ts` is the shared helper for auto-launching child agents. It creates worktree if needed, sets status to in_progress, and calls `runChildAgentInBackground`.
-- The REST POST message endpoint uses this helper (fire-and-forget with `.catch()` for error broadcast).
-- The MCP `send_message_to_child` uses a different code path (`executeChildStreaming` inline) — not unified yet.
+- `ensureChildAgentRunning()` shared helper in `agent-lifecycle.ts`. Creates worktree, sets in_progress, calls `runChildAgentInBackground`.
+
+## Legacy Lifecycle UI Removal
+
+- Removed Idle/Running state display, Continue form, running-gated UI. Stop → "Pause" (ghost styling).
+- `running` state still tracked for Thinking indicator + Pause button visibility.
+- i18n: removed 15+ legacy keys, added orch.pause, tasks.sendMessage.

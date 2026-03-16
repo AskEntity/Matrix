@@ -1,6 +1,6 @@
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconHexagon, IconStop, IconTrash } from "./icons.tsx";
+import { IconHexagon, IconPause, IconTrash } from "./icons.tsx";
 
 export function OrchestratorDetail({
 	running,
@@ -58,22 +58,6 @@ export function OrchestratorDetail({
 				</div>
 			</div>
 			<div className="og-stats-row">
-				<div className="og-stat-card">
-					<span className="og-stat-label">{t("orch.state")}</span>
-					<span
-						className={`og-stat-value ${running ? "running" : ""}`}
-						style={{ fontSize: "14px" }}
-					>
-						{running ? (
-							<span className="og-running-indicator">
-								<span className="og-spinner" />
-								{t("status.running")}
-							</span>
-						) : (
-							t("status.idle")
-						)}
-					</span>
-				</div>
 				{provider && (
 					<div className="og-stat-card">
 						<span className="og-stat-label">{t("orch.provider")}</span>
@@ -189,30 +173,35 @@ export function OrchestratorDetail({
 					</div>
 				</div>
 			)}
-			{running && onStop && (
-				<div style={{ marginTop: "12px" }}>
+			<div
+				style={{
+					marginTop: "12px",
+					display: "flex",
+					gap: "8px",
+					alignItems: "center",
+				}}
+			>
+				{running && onStop && (
 					<button
 						type="button"
-						className="og-btn og-btn-sm og-btn-danger"
+						className="og-btn og-btn-sm og-btn-ghost"
 						onClick={onStop}
 					>
-						<IconStop size={12} />
-						{t("orch.stop")}
+						<IconPause size={12} />
+						{t("orch.pause")}
 					</button>
-				</div>
-			)}
-			{!running && onClearSessions && (
-				<div style={{ marginTop: "12px" }}>
+				)}
+				{onClearSessions && (
 					<button
 						type="button"
-						className="og-btn og-btn-sm og-btn-danger"
+						className="og-btn og-btn-sm og-btn-ghost"
 						onClick={onClearSessions}
 					>
 						<IconTrash size={12} />
 						{t("orch.clearSessions")}
 					</button>
-				</div>
-			)}
+				)}
+			</div>
 		</div>
 	);
 }
