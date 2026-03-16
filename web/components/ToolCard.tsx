@@ -529,6 +529,9 @@ export function ToolCard({
 		titleOnly ? false : totalContent.length <= 200,
 	);
 
+	// Suppress done() tool_result card — task_completed card replaces it
+	if (toolName === "mcp__opengraft__done") return null;
+
 	const taskLabel = null;
 
 	// Try structured MCP rendering (skip for title-only cards)
@@ -702,6 +705,8 @@ export function LogEntryView({
 	// Standalone tool_use (not merged with result) — show as a card too
 	if (entry.type === "tool_use") {
 		const toolName = entry.toolName ?? "";
+		// Suppress done() tool_use card — task_completed card replaces it
+		if (toolName === "mcp__opengraft__done") return null;
 		const toolArgs = entry.toolArgs;
 		const argsStr = formatArgs(toolArgs, bashBgExcludeKeys(toolName, toolArgs));
 		const isMcp = toolName.startsWith("mcp__opengraft__");
@@ -737,6 +742,8 @@ export function LogEntryView({
 	// Standalone tool_result (not merged) — show as a card
 	if (entry.type === "tool_result") {
 		const toolName = entry.toolName ?? "";
+		// Suppress done() tool_result card — task_completed card replaces it
+		if (toolName === "mcp__opengraft__done") return null;
 		const content = entry.toolResult ?? entry.text;
 		const isErr = entry.isError ?? false;
 		const isOk = !isErr;
@@ -778,19 +785,8 @@ export function LogEntryView({
 		);
 	}
 
-	// task_started / task_completed — card-like rendering
-	if (entry.type === "task_started" || entry.type === "task_completed") {
-		const isPassed =
-			entry.text.startsWith("✓") || entry.text.includes(" passed");
-		const icon = entry.type === "task_started" ? "▶ " : "";
-		const statusClass =
-			entry.type === "task_started"
-				? "og-tool-card-pending"
-				: isPassed
-					? "og-tool-card-ok"
-					: "og-tool-card-err";
-		const isLong = entry.text.length > 80;
-		const headerText = isLong ? `${entry.text.slice(0, 80)}…` : entry.text;
+	// task_started — card-like rendering
+	if (entry.type === "task_started") {
 		return (
 			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{entry.time}</span>
@@ -799,16 +795,50 @@ export function LogEntryView({
 						{taskLabel}
 					</span>
 				)}
-				<div className={`og-tool-card ${statusClass}`}>
-					{isLong ? (
+				<div className="og-tool-card og-tool-card-pending">
+					<div className="og-tool-card-header">
+						<span className="og-tool-card-name">▶ {entry.text}</span>
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	// task_completed — styled card with green/red border, badge, collapsible output
+	if (entry.type === "task_completed") {
+		const meta = entry.meta as
+			| { title?: string; success?: boolean; output?: string }
+			| undefined;
+		const title = meta?.title ?? "";
+		const success = meta?.success ?? entry.text.startsWith("✓");
+		const output = meta?.output ?? "";
+		const hasOutput = output.length > 0;
+		const borderClass = success
+			? "og-tool-card-done-passed"
+			: "og-tool-card-done-failed";
+
+		return (
+			<div className="og-log-entry og-event-tool_card">
+				<span className="og-log-time">{entry.time}</span>
+				{taskLabel && (
+					<span className="og-log-badge" title={entry.taskId}>
+						{taskLabel}
+					</span>
+				)}
+				<div className={`og-tool-card ${borderClass}`}>
+					{hasOutput ? (
 						<button
 							type="button"
 							className="og-tool-card-header"
 							onClick={() => setExpanded(!expanded)}
 						>
 							<span className="og-tool-card-name">
-								{icon}
-								{headerText}
+								{success ? "✓" : "✗"} {title}
+							</span>
+							<span
+								className={`og-mcp-done-status ${success ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
+							>
+								{success ? "Passed" : "Failed"}
 							</span>
 							<span className="og-tool-card-toggle">
 								<IconChevron size={10} expanded={expanded} />
@@ -817,14 +847,18 @@ export function LogEntryView({
 					) : (
 						<div className="og-tool-card-header">
 							<span className="og-tool-card-name">
-								{icon}
-								{entry.text}
+								{success ? "✓" : "✗"} {title}
+							</span>
+							<span
+								className={`og-mcp-done-status ${success ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
+							>
+								{success ? "Passed" : "Failed"}
 							</span>
 						</div>
 					)}
-					{expanded && isLong && (
+					{expanded && hasOutput && (
 						<div className="og-tool-card-body">
-							<div className="og-tool-card-result">{entry.text}</div>
+							<div className="og-tool-card-result">{output}</div>
 						</div>
 					)}
 				</div>

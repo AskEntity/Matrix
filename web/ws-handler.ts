@@ -407,12 +407,34 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				const completedText = output
 					? `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}\n${output}`
 					: `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
+				const completedMeta = {
+					title: msg.title as string,
+					success: msg.success as boolean,
+					output,
+				};
 				const completedParentId =
 					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
-				// Only add to parent's log — the child already has the done() tool card
+				// Add to both child and parent logs
+				entries.push(
+					createLogEntry(
+						"task_completed",
+						completedText,
+						msg.taskId as string,
+						undefined,
+						undefined,
+						completedMeta,
+					),
+				);
 				if (completedParentId)
 					entries.push(
-						createLogEntry("task_completed", completedText, completedParentId),
+						createLogEntry(
+							"task_completed",
+							completedText,
+							completedParentId,
+							undefined,
+							undefined,
+							completedMeta,
+						),
 					);
 				return true;
 			}
@@ -723,11 +745,33 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				const completedText = output
 					? `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}\n${output}`
 					: `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
+				const completedMeta = {
+					title: msg.title as string,
+					success: msg.success as boolean,
+					output,
+				};
 				const completedParentId =
 					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
-				// Only add to parent's log — the child already has the done() tool card
+				// Add to both child and parent logs
+				addLog(
+					"task_completed",
+					completedText,
+					msg.taskId as string,
+					undefined,
+					undefined,
+					undefined,
+					completedMeta,
+				);
 				if (completedParentId)
-					addLog("task_completed", completedText, completedParentId);
+					addLog(
+						"task_completed",
+						completedText,
+						completedParentId,
+						undefined,
+						undefined,
+						undefined,
+						completedMeta,
+					);
 				break;
 			}
 			case "error":

@@ -213,3 +213,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - After Phase 3, provider.stream() is infinite (runLoop yields on end_turn instead of exiting). executeChildStreaming must detect when the child calls done() and close the childQueue to exit the stream.
 - Detection: check for `tool_result` events where `tool === "done"`, then verify tracker status is passed/failed. Close childQueue and drain remaining events until generator returns.
 - Post-completion status logic: done() already sets tracker status. The caller now checks tracker before falling back to result.success, preventing status overwrites.
+
+## Task Completion Card Styling
+
+- `done()` tool_use/tool_result cards suppressed in ToolCard (return null after hooks to avoid hook-at-top-level lint error).
+- `task_completed` events now added to both child and parent logs via `createLogEntry` with `meta: { title, success, output }`.
+- `task_completed` card styled with `og-tool-card-done-passed/failed` CSS classes: 3px left border, green/red coloring, Passed/Failed badge, collapsible output.
