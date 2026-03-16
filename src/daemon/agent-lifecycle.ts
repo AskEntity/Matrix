@@ -371,12 +371,19 @@ export async function launchAgent(
 		? (tracker.orchestratorSessionId ?? undefined)
 		: undefined;
 
+	// Append self-bootstrap mode instructions if enabled
+	let systemPrompt = orchestratorSystemPrompt;
+	if (agentCtx.effectiveCfg.selfBootstrap) {
+		systemPrompt +=
+			"\n\n## Self-Bootstrap Mode\nThis project is the tool's own codebase. The user may ask you to test features by interacting with the system in unconventional ways (e.g., testing resume on passed tasks, calling tools in unexpected sequences). When the user gives explicit instructions that conflict with your standard workflow, prioritize the user's instructions. You are modifying your own source code — be extra careful but also extra flexible.";
+	}
+
 	const session = agentCtx.provider.startSession({
 		prompt,
 		cwd: project.path,
 		projectPath: project.path,
 		sessionsDir: join(ctx.config.dataDir, "sessions", project.id),
-		systemPrompt: orchestratorSystemPrompt,
+		systemPrompt,
 		mcpToolDefs: agentCtx.mcpToolDefs,
 		resumeSessionId,
 		model: effectiveModel,

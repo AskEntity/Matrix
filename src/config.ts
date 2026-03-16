@@ -28,6 +28,7 @@ export interface OpenGraftConfig {
 	mcpServers?: Record<string, McpServerConfig>;
 	port?: number;
 	sessionKeep?: number;
+	selfBootstrap?: boolean;
 }
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -115,6 +116,7 @@ export function resolveConfig(
 		"clarifyTimeoutMs",
 		"port",
 		"sessionKeep",
+		"selfBootstrap",
 	] as const;
 
 	for (const key of scalarKeys) {

@@ -153,3 +153,11 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Clear Sessions Fix
 
 - `rootNodeId` must be included in WS subscribe `tree_updated` and REST `/tasks` response. Without it, TaskTree can't identify root after event history is cleared.
+
+
+## Self-Bootstrap Mode
+
+- `selfBootstrap?: boolean` in `OpenGraftConfig` — treated as a scalar in `resolveConfig` (local > repo > global).
+- When true, `launchAgent()` appends a "Self-Bootstrap Mode" section to the orchestrator system prompt (not the constant, just the runtime copy).
+- `SettingBoolField` component added to `SettingsPanel.tsx` for boolean config fields with inherited state display.
+- The `??` operator correctly handles `false` (only skips `null`/`undefined`), so boolean config fields work without special handling in `resolveConfig`.
