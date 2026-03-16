@@ -334,7 +334,6 @@ export class TaskTracker {
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
 		node.branch = null;
 		node.worktreePath = null;
-		node.sessionId = null;
 		node.cleaned = true;
 		node.updatedAt = new Date().toISOString();
 	}
