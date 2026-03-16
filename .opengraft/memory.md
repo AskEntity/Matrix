@@ -351,3 +351,10 @@ Messages are ALWAYS delivered regardless of agent state. The system guarantees: 
 - Session cost removed. Only total cost (sum of node.costUsd).
 - Queue card detail truncation: `og-tool-card-detail` with ellipsis. Card names max-width 50%.
 - Pause shows when active, Clear Sessions when idle.
+
+
+## Compact Event Deduplication
+
+- `compact_started` must be emitted exactly ONCE per compaction — at the pre-call compression step only.
+- Queue drain locations (implicit yield, cancellation point) should only set `manualCompactRequested = true` without yielding `compact_started`.
+- Yield tool should NOT emit `compact_started` when re-enqueuing compact messages — the provider emits it at the canonical location.

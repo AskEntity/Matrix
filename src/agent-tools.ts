@@ -991,12 +991,6 @@ export function createOrchestratorTools(
 						const compactMsgs = all.filter((m) => m.source === "compact");
 						all = all.filter((m) => m.source !== "compact");
 						if (compactMsgs.length > 0) {
-							// Emit compact_started immediately so UI shows "Compressing..." without waiting for the next API cycle
-							emit({
-								type: "agent_event",
-								taskId: currentTaskId ?? undefined,
-								eventType: "compact_started",
-							});
 							for (const cm of compactMsgs) {
 								deps.queue.enqueue(cm);
 							}
