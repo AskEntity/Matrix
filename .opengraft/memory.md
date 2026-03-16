@@ -408,3 +408,24 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - `RunChildCoreParams.childQueues` field removed. `runChildCore` only registers/cleans up in `globalAgentQueues`.
 - `OrchestratorToolsDeps.childQueues` field removed.
 - Node.js single-threaded guarantee: check-then-launch is atomic (no await between `globalAgentQueues.get()` and `globalAgentQueues.set()` in the sync portion of both ensureChildAgentRunning and send_message_to_child).
+
+
+## REST/MCP Architecture Audit (unified interfaces)
+
+### Divergences Found & Fixed
+1. **REST DELETE missing cleanup**: REST `DELETE /tasks/:id` did not close running agent queues (from `globalAgentQueues`) or delete session files. MCP `delete_task` did both. Fixed: REST delete now closes queues and deletes session files for all descendant tasks.
+
+2. **Queue close ordering**: All queue cleanup now follows delete-from-registry-first pattern: `globalAgentQueues.delete(id)` THEN `queue.close()`. This ensures callers see "no queue" instead of "closed queue." Applied to: `stopAgent`, `close_task`, `delete_task`, `reset_task`, REST delete.
+
+3. **Closed queue fallthrough**: REST `/tasks/:nodeId/message` previously returned 409 when queue was closed. Now falls through to persist path — message is always delivered regardless of queue state. MCP `send_message_to_child` similarly falls through to launch path if queue closed.
+
+4. **Missing task_started event**: `ensureChildAgentRunning` (used by REST message auto-launch) did not emit `task_started` broadcast event. Fixed.
+
+5. **Missing parent notification on child launch**: When a child task is launched from REST endpoints (message or continue), the parent agent was not waking-notified. Fixed: `ensureChildAgentRunning` and `continue` endpoint now send `child_report` waking messages to parent queue.
+
+### Intentional Divergences (kept)
+- `editedBy`: REST uses "user", MCP uses "agent" — correct by design
+- Scope validation: MCP tools validate agent can only modify descendants. REST has no scope validation (user can modify anything) — correct by design
+- `notifyAgentOfTreeChange`: Only called from REST routes (user-initiated). MCP operations don't need it since the agent made the change itself
+- Color resolve: MCP resolves named colors to hex. REST passes through raw values. Both are correct.
+- `create_task` default parent: REST defaults to root node. MCP defaults to current task. Both are correct for their contexts.
