@@ -10,7 +10,6 @@ import type { TaskNode, TaskStatus } from "./types.ts";
  */
 export class TaskTracker {
 	private nodes: Map<string, TaskNode> = new Map();
-	private _autoResume = false;
 	private _rootNodeId: string | null = null;
 
 	constructor(private readonly treePath: string) {}
@@ -22,9 +21,7 @@ export class TaskTracker {
 			const data = JSON.parse(raw) as {
 				rootNodeId?: string | null;
 				nodes: TaskNode[];
-				autoResume?: boolean;
 			};
-			this._autoResume = data.autoResume ?? false;
 			this._rootNodeId = data.rootNodeId ?? null;
 			for (const node of data.nodes) {
 				// Backward compat: old nodes may lack failCount
@@ -39,20 +36,10 @@ export class TaskTracker {
 		const dir = dirname(this.treePath);
 		await mkdir(dir, { recursive: true });
 		const data = {
-			autoResume: this._autoResume,
 			rootNodeId: this._rootNodeId,
 			nodes: Array.from(this.nodes.values()),
 		};
 		await writeFile(this.treePath, JSON.stringify(data, null, "\t"), "utf-8");
-	}
-
-	/** Whether this project should auto-resume orchestration on daemon restart. */
-	get autoResume(): boolean {
-		return this._autoResume;
-	}
-
-	set autoResume(value: boolean) {
-		this._autoResume = value;
 	}
 
 	/** Get the root node ID (the orchestrator's node). */

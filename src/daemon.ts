@@ -222,7 +222,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			}
 
 			const tracker = await getTracker(ctx, project.id);
-			if (tracker.autoResume && tracker.rootNodeId) {
+			const rootNode = tracker.rootNodeId
+				? tracker.get(tracker.rootNodeId)
+				: null;
+			if (rootNode && rootNode.status === "in_progress") {
 				// Reset orphaned in_progress tasks — their agent sessions died with the daemon
 				// Skip the root node — it will be re-activated by launchAgent
 				let orphanCount = 0;
@@ -270,7 +273,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	/** Graceful shutdown: save all active session IDs and flush events. */
 	async function shutdown(): Promise<void> {
-		// Stop all agents — don't clear autoResume so they resume on next start
+		// Stop all agents — their root nodes stay in_progress so they resume on next start
 		const projectIds = [...ctx.activeSessions.keys()];
 		for (const projectId of projectIds) {
 			await stopAgent(ctx, projectId);

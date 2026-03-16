@@ -195,3 +195,12 @@ Daemon (Hono: HTTP + WS on :7433)
 - `OrchestratorToolsDeps.doneRef` field removed from agent-tools.
 - `agent-lifecycle.ts` checks task status from tracker (set by done() tool) instead of doneRef. If agent exits without calling done(), status stays as-is or defaults to "passed".
 - Tests updated: done tool tests verify tracker status updates instead of doneRef mutation. OpenAI runLoop test stops session to exit yield mode.
+
+## autoResume Flag Removal (Phase 4a)
+
+- `autoResume` flag fully removed from TaskTracker (property, getter, setter, serialization).
+- `autoResumeProjects()` now checks root node status === "in_progress" instead of `tracker.autoResume`.
+- `clearAutoResume` option removed from `stopAgent()`.
+- Stop semantics: queue closed → agent loop exits → completion handler sets status to "passed" → no auto-resume on restart.
+- Daemon crash: status stays "in_progress" → auto-resume on restart.
+- Old tree.json files with `autoResume` field are backward-compatible (field is simply ignored on load).

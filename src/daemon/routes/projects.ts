@@ -39,7 +39,7 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 
 	app.delete("/projects/:id", async (c) => {
 		const projectId = c.req.param("id");
-		await stopAgent(ctx, projectId, { clearAutoResume: true });
+		await stopAgent(ctx, projectId);
 		try {
 			await ctx.pm.delete(projectId);
 

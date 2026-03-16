@@ -122,7 +122,7 @@ export function registerAgentRoutes(
 			}
 			return c.json({ error: "No active agent for this project" }, 404);
 		}
-		await stopAgent(ctx, project.id, { clearAutoResume: true });
+		await stopAgent(ctx, project.id);
 		return c.json({ ok: true });
 	});
 
@@ -242,7 +242,7 @@ export function registerAgentRoutes(
 		const sessionsDir = join(ctx.config.dataDir, "sessions", project.id);
 		await rm(sessionsDir, { recursive: true, force: true });
 		await mkdir(sessionsDir, { recursive: true });
-		// Also clear event history and disable auto-resume
+		// Also clear event history
 		ctx.eventHistory.delete(project.id);
 		try {
 			await rm(eventsPath(ctx, project.id));
@@ -251,8 +251,6 @@ export function registerAgentRoutes(
 		}
 		const tracker = ctx.trackers.get(project.id);
 		if (tracker) {
-			tracker.autoResume = false;
-			await tracker.save();
 			// Broadcast tree so connected WS clients re-render with current nodes
 			broadcastTreeUpdate(ctx, project.id, tracker);
 		}

@@ -147,24 +147,18 @@ async function consumeAgentEvents(
  * Stop a running agent and clean up all associated state.
  * Single path for all stop operations (explicit stop, restart, project delete).
  *
- * @param opts.clearAutoResume - Set true for explicit stops (user stop, project delete).
- *   Leave false for restart (autoResume should persist).
  * @param opts.keepPendingMessages - Set true during restart so pending user messages
  *   survive for the new session to consume.
  */
 export async function stopAgent(
 	ctx: DaemonContext,
 	projectId: string,
-	opts?: { clearAutoResume?: boolean; keepPendingMessages?: boolean },
+	opts?: { keepPendingMessages?: boolean },
 ): Promise<void> {
 	const session = ctx.activeSessions.get(projectId);
 	if (!session) return;
 
 	const tracker = ctx.trackers.get(projectId);
-	if (tracker && opts?.clearAutoResume) {
-		tracker.autoResume = false;
-		await tracker.save();
-	}
 
 	session.stop();
 	ctx.activeSessions.delete(projectId);
@@ -317,9 +311,6 @@ export async function launchAgent(
 	const rootNode = tracker.ensureRootNode("Orchestrator", opts.prompt);
 	const rootNodeId = rootNode.id;
 	tracker.updateStatus(rootNodeId, "in_progress");
-
-	// Mark project for auto-resume on daemon restart
-	tracker.autoResume = true;
 	tracker.save().catch(() => {});
 
 	const queue = new MessageQueue();
@@ -427,11 +418,6 @@ export async function launchAgent(
 				},
 			});
 			broadcastTreeUpdate(ctx, project.id, tracker);
-
-			// Clear auto-resume on normal completion (not during restart)
-			if (ctx.activeSessions.get(project.id) === session) {
-				tracker.autoResume = false;
-			}
 		} catch (e) {
 			caughtError = true;
 			const message = e instanceof Error ? e.message : "Unknown error";
