@@ -347,9 +347,14 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				return true;
 			}
 			case "orchestration_started": {
-				// No log entry — sessions are persistent, lifecycle cards are noise.
-				// Still push the user prompt if present.
+				// No log entry for normal starts — sessions are persistent, lifecycle cards are noise.
+				// Still push the user prompt if present, and show a subtle indicator on resume.
 				const startRootId = msg.taskId as string | undefined;
+				if (msg.resume) {
+					entries.push(
+						createLogEntry("lifecycle", "↻ Session resumed", startRootId),
+					);
+				}
 				if (msg.prompt) {
 					entries.push(
 						createLogEntry("user_prompt", msg.prompt as string, startRootId),
@@ -651,10 +656,13 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				break;
 			}
 			case "orchestration_started": {
-				// No log entry — sessions are persistent, lifecycle cards are noise.
-				// Still show the user prompt if present.
+				// No log entry for normal starts — sessions are persistent, lifecycle cards are noise.
+				// Show a subtle indicator on resume, and the user prompt if present.
 				const startRootId = msg.taskId as string | undefined;
 				if (startRootId) setRootNodeId(startRootId);
+				if (msg.resume) {
+					addLog("lifecycle", "↻ Session resumed", startRootId);
+				}
 				if (msg.prompt) {
 					const imgs = lastSubmittedImagesRef.current;
 					lastSubmittedImagesRef.current = undefined;

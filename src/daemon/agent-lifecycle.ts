@@ -366,6 +366,7 @@ export async function launchAgent(
 	broadcastEvent(ctx, project.id, {
 		type: "orchestration_started",
 		taskId: rootNodeId,
+		resume: opts.resume ?? false,
 		// Don't include prompt when resuming — the user message is already in the
 		// queue and will appear as a queue_message event. Including it here would
 		// cause the message to display twice in the UI.
