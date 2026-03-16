@@ -429,3 +429,13 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - `notifyAgentOfTreeChange`: Only called from REST routes (user-initiated). MCP operations don't need it since the agent made the change itself
 - Color resolve: MCP resolves named colors to hex. REST passes through raw values. Both are correct.
 - `create_task` default parent: REST defaults to root node. MCP defaults to current task. Both are correct for their contexts.
+
+
+## Lifecycle Integration Tests
+
+- `src/lifecycle.test.ts` — 52 tests covering message delivery, queue state, globalAgentQueues consistency, parent chain notifications, orchestrator routing, persistent queue, stop cascading, clarify routing, and delete-before-close ordering.
+- Mock providers: `createInstantProvider()` (immediate exit), `createLongRunningProvider()` (blocks on queue.wait), `createRecordingProvider()` (records all messages).
+- POST /tasks doesn't accept `status` param — use PATCH to set draft/failed/etc after creation.
+- POST /orchestrate/agent returns `{ status: "running", projectId }` for all success cases (even enqueue-while-running).
+- Audit changed task message endpoint: closed queue catch falls through to persist path (no 409) — graceful degradation.
+- Audit ordering: `globalAgentQueues.delete()` BEFORE `queue.close()` in all cleanup paths — prevents stale closed queue from being retrieved by concurrent callers.
