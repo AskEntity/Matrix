@@ -18,7 +18,6 @@ function makeNode(overrides: Partial<TaskNode> & { id: string }): TaskNode {
 		branch: null,
 		parentId: null,
 		children: [],
-		sessionId: null,
 		worktreePath: null,
 		message: null,
 		failCount: 0,

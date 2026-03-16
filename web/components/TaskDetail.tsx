@@ -326,7 +326,7 @@ export function TaskDetail({
 						{t("detail.pause")}
 					</button>
 				)}
-				{node.sessionId && (
+				{node.status !== "pending" && (
 					<button
 						type="button"
 						className={`og-btn og-btn-sm ${showHistory ? "og-btn-active" : "og-btn-ghost"}`}
@@ -345,7 +345,7 @@ export function TaskDetail({
 				</button>
 			</div>
 
-			{showHistory && node.sessionId && (
+			{showHistory && node.status !== "pending" && (
 				<ConversationHistory projectId={projectId} nodeId={node.id} />
 			)}
 		</div>

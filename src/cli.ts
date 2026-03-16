@@ -786,17 +786,11 @@ async function handleAgent(args: string[]): Promise<void> {
 	}
 	const body = (await res.json()) as {
 		running: boolean;
-		sessionId: string | null;
 	};
 	if (body.running) {
 		console.log("Agent is RUNNING");
-		if (body.sessionId) console.log(`Session: ${body.sessionId.slice(0, 8)}`);
 	} else {
 		console.log("Agent is IDLE");
-		if (body.sessionId)
-			console.log(
-				`Last session: ${body.sessionId.slice(0, 8)} (saved, can resume)`,
-			);
 	}
 }
 

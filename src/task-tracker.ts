@@ -10,7 +10,6 @@ import type { TaskNode, TaskStatus } from "./types.ts";
  */
 export class TaskTracker {
 	private nodes: Map<string, TaskNode> = new Map();
-	private _orchestratorSessionId: string | null = null;
 	private _autoResume = false;
 	private _rootNodeId: string | null = null;
 
@@ -23,10 +22,8 @@ export class TaskTracker {
 			const data = JSON.parse(raw) as {
 				rootNodeId?: string | null;
 				nodes: TaskNode[];
-				orchestratorSessionId?: string | null;
 				autoResume?: boolean;
 			};
-			this._orchestratorSessionId = data.orchestratorSessionId ?? null;
 			this._autoResume = data.autoResume ?? false;
 			this._rootNodeId = data.rootNodeId ?? null;
 			for (const node of data.nodes) {
@@ -42,22 +39,11 @@ export class TaskTracker {
 		const dir = dirname(this.treePath);
 		await mkdir(dir, { recursive: true });
 		const data = {
-			orchestratorSessionId: this._orchestratorSessionId,
 			autoResume: this._autoResume,
 			rootNodeId: this._rootNodeId,
 			nodes: Array.from(this.nodes.values()),
 		};
 		await writeFile(this.treePath, JSON.stringify(data, null, "\t"), "utf-8");
-	}
-
-	/** Get the orchestrator agent's session ID (for resuming). */
-	get orchestratorSessionId(): string | null {
-		return this._orchestratorSessionId;
-	}
-
-	/** Store the orchestrator agent's session ID. */
-	set orchestratorSessionId(id: string | null) {
-		this._orchestratorSessionId = id;
 	}
 
 	/** Whether this project should auto-resume orchestration on daemon restart. */
@@ -151,14 +137,6 @@ export class TaskTracker {
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
 		node.branch = branch;
 		node.worktreePath = worktreePath;
-		node.updatedAt = new Date().toISOString();
-	}
-
-	/** Store the agent session ID for later resume. */
-	assignSession(nodeId: string, sessionId: string): void {
-		const node = this.nodes.get(nodeId);
-		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		node.sessionId = sessionId;
 		node.updatedAt = new Date().toISOString();
 	}
 
@@ -400,7 +378,6 @@ export class TaskTracker {
 			branch: null,
 			parentId,
 			children: [],
-			sessionId: null,
 			worktreePath: null,
 			message: null,
 			failCount: 0,

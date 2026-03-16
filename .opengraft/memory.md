@@ -166,3 +166,14 @@ Daemon (Hono: HTTP + WS on :7433)
 
 - `selfBootstrap?: boolean` in config. When true, `launchAgent()` appends "Self-Bootstrap Mode" section to orchestrator system prompt.
 - `SettingBoolField` toggle in Settings UI. Boolean scalars work with `??` in `resolveConfig`.
+
+## sessionId = taskId Unification (Phase 2a)
+
+- `sessionId` removed from `TaskNode` type entirely. Session file is always `<nodeId>.json`.
+- `orchestratorSessionId` removed from `TaskTracker`. Orchestrator session = `rootNodeId`.
+- `assignSession()` method removed. `resumeSessionId` always set to `node.id` (children) or `rootNodeId` (orchestrator).
+- Providers still use `sessionId` internally (for session history maps and file naming) — this is fine, callers just always pass `resumeSessionId: nodeId`.
+- `AgentResult.sessionId` kept but unused by callers — providers still return it.
+- Conversation history endpoint uses `node.id` instead of `node.sessionId` to find session file.
+- Web UI shows conversation button for non-pending tasks (was gated on `node.sessionId`).
+- Clean break: old session files with random UUID names won't be found. Acceptable.
