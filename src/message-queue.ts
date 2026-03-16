@@ -31,6 +31,12 @@ export type QueueMessage =
 			requestReply?: boolean;
 	  }
 	| {
+			source: "cross_project";
+			fromProjectId: string;
+			fromProjectName: string;
+			content: string;
+	  }
+	| {
 			source: "background_complete";
 			commandId: string;
 			command: string;

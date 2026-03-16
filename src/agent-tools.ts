@@ -1,11 +1,16 @@
 import { z } from "zod";
-import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
+import type {
+	AgentProvider,
+	AgentRequest,
+	AgentSession,
+} from "./agent-provider.ts";
 import { readProjectMemory } from "./daemon/helpers.ts";
 import {
 	globalAgentQueues,
 	MessageQueue,
 	type QueueMessage,
 } from "./message-queue.ts";
+import type { ProjectManager } from "./project-manager.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
@@ -81,6 +86,8 @@ export function formatQueueMessage(msg: QueueMessage): string {
 			return `<clarify_response>${msg.answer}</clarify_response>`;
 		case "child_report":
 			return `<child_report from="${msg.title}" id="${msg.taskId}">${msg.content}${msg.requestReply ? "\n[Reply requested]" : ""}</child_report>`;
+		case "cross_project":
+			return `<cross_project from="${msg.fromProjectName}" projectId="${msg.fromProjectId}">${msg.content}</cross_project>`;
 		case "background_complete":
 			return `<background_complete command="${msg.command}" id="${msg.commandId}" exit="${msg.exitCode}" duration="${msg.durationMs}ms">Command completed. Use bg_action="status" with background_id="${msg.commandId}" or read_file on output files to see results.</background_complete>`;
 		case "compact":
@@ -109,6 +116,11 @@ export function toRawMessage(msg: QueueMessage): {
 			return {
 				source: msg.source,
 				content: `From child "${msg.title}" (${msg.taskId}): ${msg.content}`,
+			};
+		case "cross_project":
+			return {
+				source: msg.source,
+				content: `From project "${msg.fromProjectName}" (${msg.fromProjectId}): ${msg.content}`,
 			};
 		case "background_complete":
 			return {
@@ -152,6 +164,11 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   Use this to keep the parent informed about important intermediate progress or issues.
   When to call: after completing major milestones, or when you discover something that affects siblings.
   Don't call it for every small action — only significant events worth surfacing.
+- list_projects: List all registered projects with their IDs, names, paths, and active agent status.
+  Use this to discover other projects before sending cross-project messages.
+- send_message_to_project: Send a message to the orchestrator of another project.
+  The target project must have an active agent running. The message arrives as a cross_project
+  message in the target orchestrator's queue (visible via yield()).
 
 ## Draft Tasks
 - Create tasks with \`draft: true\` to quickly capture ideas, requirements, and half-formed thoughts.
@@ -480,6 +497,12 @@ export interface OrchestratorToolsDeps {
 	clarifyTimeoutMs?: number;
 	/** Maximum recursive depth for spawning child agents. Defaults to 3. */
 	maxDepth?: number;
+	/** Project manager for cross-project communication. Only needed at depth 0. */
+	projectManager?: ProjectManager;
+	/** Active sessions map for cross-project message delivery. Only needed at depth 0. */
+	activeSessions?: Map<string, AgentSession>;
+	/** Current project ID — used as sender identity for cross-project messages. */
+	currentProjectId?: string;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -1598,6 +1621,125 @@ export function createOrchestratorTools(
 					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						isError: true,
+					};
+				}
+			},
+		),
+
+		tool(
+			"list_projects",
+			"List all registered projects with their IDs, names, and paths. " +
+				"Use this to discover other projects before sending cross-project messages.",
+			{},
+			async () => {
+				if (!deps.projectManager) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "Cross-project tools are not available at this depth.",
+							},
+						],
+						isError: true,
+					};
+				}
+				const projects = deps.projectManager.list().map((p) => ({
+					id: p.id,
+					name: p.name,
+					path: p.path,
+					hasActiveAgent: deps.activeSessions?.has(p.id) ?? false,
+				}));
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify(projects, null, 2),
+						},
+					],
+				};
+			},
+		),
+
+		tool(
+			"send_message_to_project",
+			"Send a message to the orchestrator of another project. " +
+				"The message appears in the target project's orchestrator queue as a cross_project message. " +
+				"The target project must have an active agent running.",
+			{
+				projectId: z.string().describe("ID of the target project"),
+				message: z.string().describe("Message content to send"),
+			},
+			async (args) => {
+				if (!deps.projectManager || !deps.activeSessions) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "Cross-project tools are not available at this depth.",
+							},
+						],
+						isError: true,
+					};
+				}
+
+				const targetProject = deps.projectManager.get(args.projectId);
+				if (!targetProject) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: Project "${args.projectId}" not found.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				const targetSession = deps.activeSessions.get(args.projectId);
+				if (!targetSession) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: No active agent running for project "${targetProject.name}" (${args.projectId}).`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				// Determine sender identity
+				const senderProject = deps.currentProjectId
+					? deps.projectManager.get(deps.currentProjectId)
+					: undefined;
+				const fromProjectId = deps.currentProjectId ?? "unknown";
+				const fromProjectName = senderProject?.name ?? "unknown";
+
+				try {
+					targetSession.queue.enqueue({
+						source: "cross_project",
+						fromProjectId,
+						fromProjectName,
+						content: args.message,
+					});
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Message sent to project "${targetProject.name}" (${args.projectId}).`,
+							},
+						],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error sending message: ${message}`,
+							},
+						],
 						isError: true,
 					};
 				}
