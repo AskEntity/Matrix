@@ -81,11 +81,11 @@ function notifyAgentOfTreeChange(
 		title,
 	});
 
-	// Queue message for agent awareness (source: "system" so it's not rendered as user bubble)
+	// Non-waking queue message for agent awareness — picked up on next drain(), doesn't interrupt yield
 	const session = ctx.activeSessions.get(projectId);
 	if (session) {
 		try {
-			session.queue.enqueue({
+			session.queue.enqueueQuiet({
 				source: "system",
 				content:
 					"[TREE UPDATED] The task tree was modified by the user via the Web UI. Call get_tree to see the latest state.",

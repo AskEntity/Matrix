@@ -314,3 +314,8 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - TaskDetail.tsx title and description are now always editable (click-to-edit) regardless of task status. No `isPending`/`isEditable` gate.
 - The `isRunning` variable is kept for the running hint display inside the description button.
 - Textarea `rows={8}` + CSS `min-height: 120px` prevents shrinkage when editing long descriptions.
+
+## enqueueQuiet — Non-Waking Queue Messages
+
+- `MessageQueue.enqueueQuiet(msg)` pushes to the messages array without resolving a pending waiter. The message is picked up on the next `drain()` or `wait()` call that finds pending messages.
+- Used by `notifyAgentOfTreeChange()` in `src/daemon/routes/tasks.ts` so tree mutations (create/update/reorder/delete) do NOT wake agents from yield. Messages accumulate quietly and are delivered alongside the next waking event.
