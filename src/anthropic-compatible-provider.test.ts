@@ -1236,7 +1236,7 @@ describe("SUMMARIZATION_INSTRUCTION", () => {
 });
 
 describe("zodShapeToJsonSchema", () => {
-	test("converts nested object in array (execute_tasks schema)", async () => {
+	test("converts nested object in array schema", async () => {
 		const { z } = await import("zod");
 		const shape = {
 			tasks: z

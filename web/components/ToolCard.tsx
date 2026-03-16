@@ -34,6 +34,7 @@ export function formatMcpToolResult(
 			return null;
 		}
 		case "execute_tasks": {
+			// Legacy: execute_tasks was removed but old event history may reference it
 			if (json && Array.isArray(json.tasks)) {
 				const tasks = json.tasks as Array<{ title?: string }>;
 				const names = tasks.map((tk) => tk.title ?? "?").join(", ");

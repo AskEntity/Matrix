@@ -177,3 +177,11 @@ Daemon (Hono: HTTP + WS on :7433)
 - `delete_task`: full removal (worktree + session file + node).
 - `reset_task`: removes worktree + session file, keeps node, status → pending.
 - `sessionsDir` added to `OrchestratorToolsDeps`. `cleanNode()` and `cleaned` field removed.
+
+## execute_tasks Removal (Phase 2c)
+
+- `execute_tasks` MCP tool removed. `send_message_to_child` is now the universal way to start/wake/continue child tasks.
+- `send_message_to_child` auto-creates worktree and launches agent if not running. If agent is running, enqueues message.
+- Legacy `execute_tasks` rendering kept in ToolCard.tsx for old event history compatibility.
+- The agent spawn logic (executeChildStreaming, fire-and-forget async, child_complete enqueue) moved into send_message_to_child handler.
+- Resume detection: if task status is failed/stuck/passed, treat as resume (session history provides context). Otherwise, build full task prompt.
