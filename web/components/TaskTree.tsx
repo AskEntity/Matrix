@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconChevron, IconHexagon, IconTrash } from "./icons.tsx";
+import { IconChevron, IconEyeOff, IconHexagon, IconTrash } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
 
 interface DragState {
@@ -98,26 +98,53 @@ export function TaskTree({
 	}, []);
 
 	const [taskFilter, setTaskFilter] = useState("");
+	const [hideCompleted, setHideCompleted] = useState(false);
+
+	/** Set of node IDs that should be hidden because they (or an ancestor) are completed */
+	const completedIds = useMemo((): Set<string> | null => {
+		if (!hideCompleted) return null;
+		const hidden = new Set<string>();
+		// First pass: mark completed nodes
+		for (const node of nodes) {
+			if (node.status === "closed" || node.status === "passed") {
+				hidden.add(node.id);
+			}
+		}
+		// Second pass: mark all descendants of completed nodes
+		const addDescendants = (id: string) => {
+			const children = nodes.filter((n) => n.parentId === id);
+			for (const child of children) {
+				hidden.add(child.id);
+				addDescendants(child.id);
+			}
+		};
+		for (const id of [...hidden]) {
+			addDescendants(id);
+		}
+		return hidden;
+	}, [nodes, hideCompleted]);
 
 	const matchingIds = useMemo((): Set<string> | null => {
 		const trimmed = taskFilter.trim();
-		if (!trimmed) return null; // null = show all
-		const lower = trimmed.toLowerCase();
+		if (!trimmed && !completedIds) return null; // null = show all
 		const matched = new Set<string>();
+		const lower = trimmed.toLowerCase();
 		for (const node of nodes) {
-			if (node.title.toLowerCase().includes(lower)) {
-				// Include this node AND all its ancestors
-				let current: TaskNode | undefined = node;
-				while (current) {
+			// Skip completed nodes when hiding
+			if (completedIds?.has(node.id)) continue;
+			// Apply text filter if present
+			if (trimmed && !node.title.toLowerCase().includes(lower)) continue;
+			// Include this node AND all its ancestors
+			let current: TaskNode | undefined = node;
+			while (current) {
+				if (!completedIds?.has(current.id)) {
 					matched.add(current.id);
-					current = current.parentId
-						? nodeMap.get(current.parentId)
-						: undefined;
 				}
+				current = current.parentId ? nodeMap.get(current.parentId) : undefined;
 			}
 		}
 		return matched;
-	}, [nodes, taskFilter, nodeMap]);
+	}, [nodes, taskFilter, nodeMap, completedIds]);
 
 	// --- Drag-and-drop state ---
 	const [dragState, setDragState] = useState<DragState | null>(null);
@@ -298,6 +325,14 @@ export function TaskTree({
 					value={taskFilter}
 					onChange={(e) => setTaskFilter(e.target.value)}
 				/>
+				<button
+					type="button"
+					className={`og-hide-completed-btn${hideCompleted ? " active" : ""}`}
+					onClick={() => setHideCompleted((v) => !v)}
+					title={t("tasks.hideCompleted")}
+				>
+					<IconEyeOff size={12} />
+				</button>
 			</div>
 
 			{/* Orchestrator row */}
