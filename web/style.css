@@ -975,6 +975,7 @@ select {
 	outline: none;
 	font-family: inherit;
 	box-sizing: border-box;
+	min-height: 120px;
 }
 
 .og-running-hint {
