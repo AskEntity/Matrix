@@ -100,6 +100,7 @@ async function createAgentContext(
 			projectManager: opts.depth === 0 ? ctx.pm : undefined,
 			activeSessions: opts.depth === 0 ? ctx.activeSessions : undefined,
 			currentProjectId: project.id,
+			sessionsDir: join(ctx.config.dataDir, "sessions", project.id),
 			onTaskEvent: (event) => {
 				broadcastEvent(ctx, project.id, event);
 				broadcastTreeUpdate(ctx, project.id, opts.tracker);

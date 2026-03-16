@@ -167,13 +167,13 @@ Daemon (Hono: HTTP + WS on :7433)
 - `selfBootstrap?: boolean` in config. When true, `launchAgent()` appends "Self-Bootstrap Mode" section to orchestrator system prompt.
 - `SettingBoolField` toggle in Settings UI. Boolean scalars work with `??` in `resolveConfig`.
 
-## sessionId = taskId Unification (Phase 2a)
+## sessionId = taskId
 
-- `sessionId` removed from `TaskNode` type entirely. Session file is always `<nodeId>.json`.
-- `orchestratorSessionId` removed from `TaskTracker`. Orchestrator session = `rootNodeId`.
-- `assignSession()` method removed. `resumeSessionId` always set to `node.id` (children) or `rootNodeId` (orchestrator).
-- Providers still use `sessionId` internally (for session history maps and file naming) — this is fine, callers just always pass `resumeSessionId: nodeId`.
-- `AgentResult.sessionId` kept but unused by callers — providers still return it.
-- Conversation history endpoint uses `node.id` instead of `node.sessionId` to find session file.
-- Web UI shows conversation button for non-pending tasks (was gated on `node.sessionId`).
-- Clean break: old session files with random UUID names won't be found. Acceptable.
+- `sessionId` removed from TaskNode. Session file = `<nodeId>.json`. `resumeSessionId` always = `node.id` or `rootNodeId`.
+
+## Task Resource Operations
+
+- `close_task`: removes worktree only. Node + session preserved.
+- `delete_task`: full removal (worktree + session file + node).
+- `reset_task`: removes worktree + session file, keeps node, status → pending.
+- `sessionsDir` added to `OrchestratorToolsDeps`. `cleanNode()` and `cleaned` field removed.

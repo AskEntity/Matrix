@@ -262,8 +262,8 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			return c.json(tracker.get(nodeId));
 		}
 
-		// Passed + cleaned task: re-create worktree from main branch and launch agent
-		if (node.status === "passed" && node.cleaned) {
+		// Passed task with no worktree (closed): re-create worktree from main and launch agent
+		if (node.status === "passed" && !node.worktreePath) {
 			try {
 				const wtRoot = join(project.path, ".worktrees");
 				const wm = new WorktreeManager(project.path, wtRoot);
@@ -274,7 +274,6 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 					.slice(0, 30);
 				const wt = await wm.create(nodeId, slug);
 				tracker.assignWorktree(nodeId, wt.branch, wt.path);
-				node.cleaned = false;
 				tracker.updateStatus(nodeId, "in_progress");
 				await tracker.save();
 

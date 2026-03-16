@@ -2384,7 +2384,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.error).toBe("Cannot continue task with status: pending");
 	});
 
-	test("resets passed task without worktree to pending", async () => {
+	test("continues passed task without worktree — re-creates worktree and launches agent", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -2404,7 +2404,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as TaskNode;
-		expect(body.status).toBe("pending");
+		expect(body.status).toBe("in_progress");
 	});
 
 	test("returns 400 for task with status in_progress", async () => {
