@@ -76,11 +76,11 @@ export function formatQueueMessage(msg: QueueMessage): string {
 		case "user":
 			return `<user_message>${msg.content}</user_message>`;
 		case "parent_update":
-			return `<parent_update>${msg.content}</parent_update>`;
+			return `<parent_update>${msg.content}${msg.requestReply ? "\n[Reply requested]" : ""}</parent_update>`;
 		case "clarify_response":
 			return `<clarify_response>${msg.answer}</clarify_response>`;
 		case "child_report":
-			return `<child_report from="${msg.title}" id="${msg.taskId}">${msg.content}</child_report>`;
+			return `<child_report from="${msg.title}" id="${msg.taskId}">${msg.content}${msg.requestReply ? "\n[Reply requested]" : ""}</child_report>`;
 		case "background_complete":
 			return `<background_complete command="${msg.command}" id="${msg.commandId}" exit="${msg.exitCode}" duration="${msg.durationMs}ms">Command completed. Use bg_action="status" with background_id="${msg.commandId}" or read_file on output files to see results.</background_complete>`;
 		case "compact":
@@ -1332,6 +1332,12 @@ export function createOrchestratorTools(
 			{
 				taskId: z.string().describe("ID of the running child task to message"),
 				message: z.string().describe("Message content to send"),
+				requestReply: z
+					.boolean()
+					.optional()
+					.describe(
+						"If true, signals to the child that a reply (via report_to_parent) is expected.",
+					),
 			},
 			async (args) => {
 				const childQueue = childQueues.get(args.taskId);
@@ -1350,6 +1356,7 @@ export function createOrchestratorTools(
 					childQueue.enqueue({
 						source: "parent_update",
 						content: args.message,
+						...(args.requestReply ? { requestReply: true } : {}),
 					});
 					return {
 						content: [
@@ -1487,6 +1494,12 @@ export function createOrchestratorTools(
 				message: z
 					.string()
 					.describe("The message content to send to the parent agent"),
+				requestReply: z
+					.boolean()
+					.optional()
+					.describe(
+						"If true, signals to the parent that a reply (via send_message_to_child) is expected.",
+					),
 			},
 			async (args) => {
 				if (!deps.parentQueue) {
@@ -1510,6 +1523,7 @@ export function createOrchestratorTools(
 						taskId: currentTaskId ?? "unknown",
 						title: taskTitle,
 						content: args.message,
+						...(args.requestReply ? { requestReply: true } : {}),
 					});
 					return {
 						content: [
