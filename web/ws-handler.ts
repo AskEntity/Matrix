@@ -1,5 +1,4 @@
 import type React from "react";
-import { formatTokenCount } from "./components/TokenUsageBadge.tsx";
 import { createLogEntry, type LogEntry, type TaskNode } from "./hooks.ts";
 
 type StructuredFields = {
@@ -348,47 +347,22 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				return true;
 			}
 			case "orchestration_started": {
+				// No log entry — sessions are persistent, lifecycle cards are noise.
+				// Still push the user prompt if present.
 				const startRootId = msg.taskId as string | undefined;
 				if (msg.prompt) {
 					entries.push(
 						createLogEntry("user_prompt", msg.prompt as string, startRootId),
 					);
 				}
-				entries.push(
-					createLogEntry("lifecycle", "Orchestration started", startRootId),
-				);
-				return false; // also has setRunning, setAgentProvider, etc.
+				return false; // side effects only (setRunning, setAgentProvider, etc.)
 			}
-			case "orchestration_completed": {
-				const costStr = msg.costUsd
-					? ` · ${(msg.costUsd as number).toFixed(3)}`
-					: "";
-				const hasTokens =
-					msg.inputTokens !== undefined ||
-					msg.cacheCreationTokens !== undefined ||
-					msg.cacheReadTokens !== undefined ||
-					msg.outputTokens !== undefined;
-				const tokenStr = hasTokens
-					? ` · ${formatTokenCount((msg.inputTokens as number) ?? 0)} in · ${formatTokenCount((msg.cacheCreationTokens as number) ?? 0)} write · ${formatTokenCount((msg.cacheReadTokens as number) ?? 0)} read · ${formatTokenCount((msg.outputTokens as number) ?? 0)} out`
-					: "";
-				entries.push(
-					createLogEntry(
-						"lifecycle",
-						`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${costStr}${tokenStr}`,
-						msg.taskId as string | undefined,
-					),
-				);
-				return false; // also has setLastCostUsd, setRunning, etc.
-			}
+			case "orchestration_completed":
+				// No log entry — side effects only (cost/token stats).
+				return false;
 			case "agent_stopped":
-				entries.push(
-					createLogEntry(
-						"lifecycle",
-						"Agent stopped",
-						msg.taskId as string | undefined,
-					),
-				);
-				return false; // also has setRunning, setPendingCompact
+				// No log entry — side effects only (setRunning, setPendingCompact).
+				return false;
 			case "task_started": {
 				const instruction = msg.message
 					? `\n${t("lifecycle.instructions")} ${msg.message}`
@@ -677,6 +651,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				break;
 			}
 			case "orchestration_started": {
+				// No log entry — sessions are persistent, lifecycle cards are noise.
+				// Still show the user prompt if present.
 				const startRootId = msg.taskId as string | undefined;
 				if (startRootId) setRootNodeId(startRootId);
 				if (msg.prompt) {
@@ -691,24 +667,13 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						imgs,
 					);
 				}
-				addLog("lifecycle", "Orchestration started", startRootId);
 				setRunning(true);
 				if (msg.provider) setAgentProvider(msg.provider as string);
 				if (msg.model) setAgentModel(msg.model as string);
 				break;
 			}
 			case "orchestration_completed": {
-				const costStr = msg.costUsd
-					? ` · ${(msg.costUsd as number).toFixed(3)}`
-					: "";
-				const hasTokens =
-					msg.inputTokens !== undefined ||
-					msg.cacheCreationTokens !== undefined ||
-					msg.cacheReadTokens !== undefined ||
-					msg.outputTokens !== undefined;
-				const tokenStr = hasTokens
-					? ` · ${formatTokenCount((msg.inputTokens as number) ?? 0)} in · ${formatTokenCount((msg.cacheCreationTokens as number) ?? 0)} write · ${formatTokenCount((msg.cacheReadTokens as number) ?? 0)} read · ${formatTokenCount((msg.outputTokens as number) ?? 0)} out`
-					: "";
+				// No log entry — side effects only (cost/token stats).
 				if (msg.costUsd !== undefined) setLastCostUsd(msg.costUsd as number);
 				if (msg.turns !== undefined) setLastTurns(msg.turns as number);
 				if (msg.inputTokens !== undefined)
@@ -719,18 +684,13 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					setLastCacheReadTokens(msg.cacheReadTokens as number);
 				if (msg.outputTokens !== undefined)
 					setLastOutputTokens(msg.outputTokens as number);
-				addLog(
-					"lifecycle",
-					`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${costStr}${tokenStr}`,
-					msg.taskId as string | undefined,
-				);
 				// Re-check actual agent status — auto-resume may have restarted it
 				checkAgentStatus();
 				setPendingCompact(false);
 				break;
 			}
 			case "agent_stopped":
-				addLog("lifecycle", "Agent stopped", msg.taskId as string | undefined);
+				// No log entry — side effects only.
 				// Re-check actual agent status — auto-resume may have restarted it
 				checkAgentStatus();
 				setPendingCompact(false);
