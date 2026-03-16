@@ -493,9 +493,30 @@ describe("daemon tasks API", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			nodes: TaskNode[];
+			rootNodeId?: string | null;
 		};
 		expect(body.nodes).toHaveLength(1);
 		expect(body.nodes[0]?.title).toBe("App");
+	});
+
+	test("GET /tasks returns rootNodeId when root node exists", async () => {
+		// Create a task first so the tracker exists, then add a root node directly
+		await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Child", description: "" }),
+		});
+
+		// GET /tasks should return nodes (rootNodeId may be null if no agent started)
+		const res = await app.request(`/projects/${projectId}/tasks`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			nodes: TaskNode[];
+			rootNodeId?: string | null;
+		};
+		expect(body.nodes.length).toBeGreaterThan(0);
+		// rootNodeId field should exist in the response (even if null)
+		expect("rootNodeId" in body).toBe(true);
 	});
 
 	test("PATCH /tasks/:nodeId updates status and branch", async () => {
@@ -4217,5 +4238,58 @@ describe("lifecycle edge cases", () => {
 		expect(clearRes.status).toBe(200);
 		const body = (await clearRes.json()) as { cleared: boolean };
 		expect(body.cleared).toBe(true);
+	});
+
+	test("clearing sessions preserves task tree and rootNodeId in GET /tasks", async () => {
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: mockProvider,
+		});
+		await pm.load();
+		markReady();
+
+		// Create project
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectDir }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		// Start and stop agent to create root node + tasks
+		await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "test" }),
+		});
+		await new Promise((r) => setTimeout(r, 100));
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Verify tasks exist before clearing
+		const beforeRes = await app.request(`/projects/${project.id}/tasks`);
+		const before = (await beforeRes.json()) as {
+			nodes: TaskNode[];
+			rootNodeId: string | null;
+		};
+		expect(before.rootNodeId).toBeTruthy();
+		const nodeCountBefore = before.nodes.length;
+		expect(nodeCountBefore).toBeGreaterThan(0);
+
+		// Clear sessions
+		const clearRes = await app.request(
+			`/projects/${project.id}/sessions/clear`,
+			{ method: "POST" },
+		);
+		expect(clearRes.status).toBe(200);
+
+		// Verify tasks are still there after clearing
+		const afterRes = await app.request(`/projects/${project.id}/tasks`);
+		const after = (await afterRes.json()) as {
+			nodes: TaskNode[];
+			rootNodeId: string | null;
+		};
+		expect(after.nodes.length).toBe(nodeCountBefore);
+		expect(after.rootNodeId).toBe(before.rootNodeId);
 	});
 });

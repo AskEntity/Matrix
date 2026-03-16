@@ -148,7 +148,10 @@ export function useProjects() {
 
 // --- useTasks ---
 
-export function useTasks(projectId: string) {
+export function useTasks(
+	projectId: string,
+	setRootNodeId?: React.Dispatch<React.SetStateAction<string | null>>,
+) {
 	const [nodes, setNodes] = useState<TaskNode[]>([]);
 
 	const refresh = useCallback(async () => {
@@ -160,10 +163,13 @@ export function useTasks(projectId: string) {
 			const res = await fetch(`/projects/${projectId}/tasks`);
 			const data = await res.json();
 			setNodes(data.nodes || []);
+			if (data.rootNodeId && setRootNodeId) {
+				setRootNodeId(data.rootNodeId);
+			}
 		} catch {
 			/* ignore */
 		}
-	}, [projectId]);
+	}, [projectId, setRootNodeId]);
 
 	useEffect(() => {
 		refresh();

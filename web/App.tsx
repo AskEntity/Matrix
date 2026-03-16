@@ -149,7 +149,11 @@ function AppInner() {
 	>(undefined);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
-	const { nodes, refresh: refreshTasks, updateFromWS } = useTasks(projectId);
+	const {
+		nodes,
+		refresh: refreshTasks,
+		updateFromWS,
+	} = useTasks(projectId, setRootNodeId);
 	const {
 		running,
 		setRunning,

@@ -58,6 +58,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const tracker = await getTracker(ctx, project.id);
 		return c.json({
 			nodes: tracker.allNodes(),
+			rootNodeId: tracker.rootNodeId,
 		});
 	});
 

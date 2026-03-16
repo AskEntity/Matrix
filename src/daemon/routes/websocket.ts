@@ -65,6 +65,7 @@ export function registerWebSocketRoute(
 									JSON.stringify({
 										type: "tree_updated",
 										nodes: tracker.allNodes(),
+										rootNodeId: tracker.rootNodeId,
 									}),
 								);
 							}
