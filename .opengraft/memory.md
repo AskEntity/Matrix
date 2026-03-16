@@ -357,3 +357,9 @@ Messages are ALWAYS delivered regardless of agent state. The system guarantees: 
 
 - `compact_started` emitted exactly ONCE per compaction — at the pre-call compression step only. Queue drains set `manualCompactRequested = true` without yielding.
 - Pending compact entries: `checkpoint = undefined`. Completed: `checkpoint` is a string (even empty). Dedup uses `=== undefined`, NOT `!e.checkpoint` (empty string is falsy → breaks dedup).
+
+## Compact Live Display Fix
+
+- Root cause: `compact_started` live handler used `setLogs` with dedup logic that scanned for existing pending entries. The dedup returned `prev` (no change) if a pending entry existed, but this check ran on every invocation and could suppress entries incorrectly.
+- Fix: replaced with simple `addLog()` call, matching all other event types. Backend already emits exactly one `compact_started` per compaction so dedup is unnecessary.
+- The `compact` completion handler still uses `setLogs` for in-place update (replacing "Compressing context..." with completion text + checkpoint). This is correct.
