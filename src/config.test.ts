@@ -122,6 +122,20 @@ describe("resolveConfig", () => {
 			mcpServers: { git: { command: "mcp-git" } },
 		});
 	});
+
+	test("selfBootstrap boolean resolves with local > repo > global priority", () => {
+		const global: OpenGraftConfig = { selfBootstrap: false };
+		const repo: OpenGraftConfig = { selfBootstrap: true };
+		const local: OpenGraftConfig = {};
+
+		// repo wins over global when local is empty
+		const result = resolveConfig(global, repo, local);
+		expect(result.selfBootstrap).toBe(true);
+
+		// local wins over repo
+		const result2 = resolveConfig(global, repo, { selfBootstrap: false });
+		expect(result2.selfBootstrap).toBe(false);
+	});
 });
 
 describe("resolveAuthGroup", () => {

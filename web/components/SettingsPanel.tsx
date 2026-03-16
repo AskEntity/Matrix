@@ -114,6 +114,46 @@ function SettingNumberField({
 	);
 }
 
+function SettingBoolField({
+	label,
+	field,
+	tab,
+	layers,
+	draft,
+	onDraftChange,
+}: {
+	label: string;
+	field: string;
+	tab: ActiveTab;
+	layers: ThreeLayerConfig;
+	draft: Record<string, unknown>;
+	onDraftChange: (patch: Record<string, unknown>) => void;
+}) {
+	const inherited = inheritedValue(layers, tab, field);
+	const value = draft[field] as boolean | undefined;
+
+	// Three states: undefined (inherit), true, false
+	// Checkbox: checked = true, unchecked but set = false, indeterminate = inherit
+	const isSet = value !== undefined;
+	const checked = isSet ? value : inherited === "true";
+
+	return (
+		<div className="og-settings-field">
+			<span className="og-settings-label">{label}</span>
+			<label className="og-settings-toggle">
+				<input
+					type="checkbox"
+					checked={checked}
+					onChange={(e) => onDraftChange({ [field]: e.target.checked })}
+				/>
+				{!isSet && tab !== "global" && (
+					<span className="og-settings-inherited-hint">(inherited)</span>
+				)}
+			</label>
+		</div>
+	);
+}
+
 // ---- Models & Auth Section (shared across all tabs) ----
 
 function ModelsAuthSection({
@@ -824,6 +864,14 @@ function ProjectTab({
 					placeholder={t("settings.noTimeout")}
 					min={0}
 					step={1000}
+					tab={tab}
+					layers={layers}
+					draft={draft}
+					onDraftChange={onDraftChange}
+				/>
+				<SettingBoolField
+					label={t("settings.selfBootstrap")}
+					field="selfBootstrap"
 					tab={tab}
 					layers={layers}
 					draft={draft}

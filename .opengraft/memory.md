@@ -160,6 +160,9 @@ Daemon (Hono: HTTP + WS on :7433)
 
 ## Event Persistence
 
-- Anthropic provider now yields consolidated `{ type: "text" }` after streaming (OpenAI already did).
-- `flushEvents()` called in stopAgent(), runChildAgentInBackground finally, launchAgent finally.
-- Web UI deduplicates live `text` events against text_delta-accumulated entries.
+- Anthropic provider yields consolidated `{ type: "text" }` after streaming. `flushEvents()` on agent stop.
+
+## Self-Bootstrap Mode
+
+- `selfBootstrap?: boolean` in config. When true, `launchAgent()` appends "Self-Bootstrap Mode" section to orchestrator system prompt.
+- `SettingBoolField` toggle in Settings UI. Boolean scalars work with `??` in `resolveConfig`.
