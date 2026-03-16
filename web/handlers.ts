@@ -37,7 +37,6 @@ export interface ActionHandlerDeps {
 		React.SetStateAction<{ base64: string; mediaType: string }[]>
 	>;
 	setLogs: React.Dispatch<React.SetStateAction<LogEntry[]>>;
-	setLastCostUsd: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastTurns: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastInputTokens: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastCacheCreationTokens: React.Dispatch<
@@ -90,7 +89,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		setPrompt,
 		setAttachedImages,
 		setLogs,
-		setLastCostUsd,
 		setLastTurns,
 		setLastInputTokens,
 		setLastCacheCreationTokens,
@@ -198,7 +196,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				method: "POST",
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
-			setLastCostUsd(null);
 			setLastTurns(null);
 			setLastInputTokens(null);
 			setLastCacheCreationTokens(null);

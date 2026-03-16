@@ -99,7 +99,6 @@ function AppInner() {
 	);
 	const [rootNodeId, setRootNodeId] = useState<string | null>(null);
 	const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
-	const [lastCostUsd, setLastCostUsd] = useState<number | null>(null);
 	const [lastTurns, setLastTurns] = useState<number | null>(null);
 	const [lastInputTokens, setLastInputTokens] = useState<number | null>(null);
 	const [lastCacheCreationTokens, setLastCacheCreationTokens] = useState<
@@ -324,7 +323,6 @@ function AppInner() {
 				setPendingCompact,
 				setPendingMessages,
 				setPendingClarifications,
-				setLastCostUsd,
 				setLastTurns,
 				setLastInputTokens,
 				setLastCacheCreationTokens,
@@ -479,7 +477,6 @@ function AppInner() {
 		setPrompt,
 		setAttachedImages,
 		setLogs,
-		setLastCostUsd,
 		setLastTurns,
 		setLastInputTokens,
 		setLastCacheCreationTokens,
@@ -640,7 +637,6 @@ function AppInner() {
 								isRootActive={rootNodeId ? activeAgents.has(rootNodeId) : false}
 								nodes={nodes}
 								rootNodeId={rootNodeId}
-								costUsd={lastCostUsd}
 								totalCost={totalCost}
 								turns={lastTurns}
 								inputTokens={lastInputTokens}

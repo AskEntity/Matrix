@@ -364,3 +364,9 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - `createQueueEntry()` in ws-handler.ts passes images as 5th param to `createLogEntry` (the `images` param, after `structured`).
 - Both `collectEntries` (event_history replay) and `handleWS` (live events) rawMessages type casts need the images field.
 - `addLog` in handleWS queue_message handler must pass `entry.images` (6th parameter) to preserve images through to the log entry.
+
+## Session Cost Removal
+
+- `lastCostUsd`/`setLastCostUsd` fully removed from App.tsx, ws-handler.ts, handlers.ts. `costUsd` prop removed from OrchestratorDetail.
+- `orch.session` i18n key removed (en + zh). Only `orch.totalCost` (sum of all node.costUsd) remains.
+- `orchestration_completed` WS event still carries token stats (turns, input/output/cache tokens) but session cost is no longer displayed.
