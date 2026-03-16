@@ -113,3 +113,11 @@ Daemon (Hono: HTTP + WS on :7433)
 - `editedBy?: "user" | "agent"` on TaskNode. REST mutations inject `[TREE UPDATED]` message.
 - `reparent(nodeId, newParentId)` with circular dep validation. `reorderChildren()` for ordering.
 - `reorder_tasks` MCP tool with scope validation (currentTaskId + isDescendantOf).
+
+## Cross-Project Communication
+
+- New MCP tools: `list_projects` and `send_message_to_project` for orchestrator-to-orchestrator messaging across projects.
+- `cross_project` added to QueueMessage source types in message-queue.ts.
+- Cross-project tools only available at depth 0 (top-level orchestrator). Child agents get "not available at this depth" error.
+- `OrchestratorToolsDeps` accepts optional `projectManager`, `activeSessions`, and `currentProjectId` — only passed at depth 0 from agent-lifecycle.ts.
+- Target project must have an active agent running for message delivery.

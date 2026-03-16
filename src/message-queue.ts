@@ -25,6 +25,12 @@ export type QueueMessage =
 	| { source: "clarify_response"; answer: string }
 	| { source: "child_report"; taskId: string; title: string; content: string }
 	| {
+			source: "cross_project";
+			fromProjectId: string;
+			fromProjectName: string;
+			content: string;
+	  }
+	| {
 			source: "background_complete";
 			commandId: string;
 			command: string;

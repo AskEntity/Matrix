@@ -96,6 +96,9 @@ async function createAgentContext(
 			defaultBudgetUsd: effectiveCfg.budgetUsd,
 			clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
 			maxDepth: effectiveCfg.maxDepth,
+			projectManager: opts.depth === 0 ? ctx.pm : undefined,
+			activeSessions: opts.depth === 0 ? ctx.activeSessions : undefined,
+			currentProjectId: project.id,
 			onTaskEvent: (event) => {
 				broadcastEvent(ctx, project.id, event);
 				broadcastTreeUpdate(ctx, project.id, opts.tracker);

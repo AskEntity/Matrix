@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { buildTaskPrompt, isDescendantOf, slugify } from "./agent-tools.ts";
+import {
+	buildTaskPrompt,
+	formatQueueMessage,
+	isDescendantOf,
+	slugify,
+	toRawMessage,
+} from "./agent-tools.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { TaskNode } from "./types.ts";
 
@@ -232,5 +238,36 @@ describe("isDescendantOf", () => {
 	test("returns false for self", () => {
 		const tracker = makeTracker([makeNode({ id: "self" })]);
 		expect(isDescendantOf(tracker, "self", "self")).toBe(false);
+	});
+});
+
+describe("formatQueueMessage", () => {
+	test("formats cross_project message as XML", () => {
+		const result = formatQueueMessage({
+			source: "cross_project",
+			fromProjectId: "proj-123",
+			fromProjectName: "MyProject",
+			content: "Hello from another project",
+		});
+		expect(result).toContain("<cross_project");
+		expect(result).toContain('from="MyProject"');
+		expect(result).toContain('projectId="proj-123"');
+		expect(result).toContain("Hello from another project");
+		expect(result).toContain("</cross_project>");
+	});
+});
+
+describe("toRawMessage", () => {
+	test("converts cross_project message to raw format", () => {
+		const result = toRawMessage({
+			source: "cross_project",
+			fromProjectId: "proj-456",
+			fromProjectName: "OtherProject",
+			content: "Status update",
+		});
+		expect(result.source).toBe("cross_project");
+		expect(result.content).toContain("OtherProject");
+		expect(result.content).toContain("proj-456");
+		expect(result.content).toContain("Status update");
 	});
 });
