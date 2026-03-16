@@ -273,3 +273,11 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 
 - `draft` is a TaskStatus value, not a boolean. Draft tasks have `status: "draft"`.
 - Migration: `load()` converts old `draft: true` boolean to `status: "draft"`.
+
+
+## Suppressed Lifecycle Cards
+
+- `orchestration_started`, `orchestration_completed`, and `agent_stopped` events no longer render log entries (cards) in the Web UI.
+- Side effects (setRunning, cost/token stats, checkAgentStatus, etc.) are preserved — only the `addLog`/`entries.push` calls were removed.
+- Backend still broadcasts these events for internal bookkeeping (CLI `status` command still renders them).
+- The `formatTokenCount` import was removed from ws-handler.ts since it was only used in the deleted orchestration_completed card formatting.
