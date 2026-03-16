@@ -498,8 +498,6 @@ export interface OrchestratorToolsDeps {
 	queue?: MessageQueue;
 	/** Registry of child agent queues for send_message_to_child. Managed internally. */
 	childQueues?: Map<string, MessageQueue>;
-	/** Mutable ref shared between done tool and runLoop — when done tool is called, sets the result here. */
-	doneRef?: { done: null | { status: "passed" | "failed"; summary: string } };
 	/** Parent's queue — used by report_to_parent to send messages UP. Null for top-level orchestrator. */
 	parentQueue?: MessageQueue;
 	/** Default budget per task from project config. undefined = unlimited. */
@@ -575,7 +573,6 @@ export function createOrchestratorTools(
 	const costs = costAccumulator ?? new CostAccumulator();
 	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
 	const childQueues = deps.childQueues ?? new Map<string, MessageQueue>();
-	const doneRef = deps.doneRef ?? null;
 	/** Count of outstanding clarify() calls that have not yet received a clarify_response. */
 	let pendingClarifications = 0;
 
@@ -604,9 +601,6 @@ export function createOrchestratorTools(
 		// Give children MCP tools if we haven't hit max depth
 		if (depth < maxDepth && !request.mcpToolDefs) {
 			const childCosts = new CostAccumulator();
-			const childDoneRef: {
-				done: null | { status: "passed" | "failed"; summary: string };
-			} = { done: null };
 			const {
 				toolDefs: childToolDefs,
 				hasRunningChildren: childHasRunningChildren,
@@ -623,7 +617,6 @@ export function createOrchestratorTools(
 					childModel,
 					queue: childQueue,
 					parentQueue: deps.queue,
-					doneRef: childDoneRef,
 					broadcastTreeUpdate,
 					defaultBudgetUsd: deps.defaultBudgetUsd,
 					maxDepth: deps.maxDepth,
@@ -633,7 +626,6 @@ export function createOrchestratorTools(
 				childCosts,
 			);
 			request.mcpToolDefs = { opengraft: childToolDefs };
-			request.doneRef = childDoneRef;
 			request.hasRunningChildren = childHasRunningChildren;
 		}
 
@@ -1813,14 +1805,31 @@ export function createOrchestratorTools(
 					),
 			},
 			async (args) => {
-				if (doneRef) {
-					doneRef.done = { status: args.status, summary: args.summary };
+				// Update task status in the tree
+				if (currentTaskId) {
+					tracker.updateStatus(
+						currentTaskId,
+						args.status === "passed" ? "passed" : "failed",
+					);
+					await tracker.save();
+					broadcastTreeUpdate?.();
 				}
+
+				// Broadcast task_completed event
+				const node = currentTaskId ? tracker.get(currentTaskId) : null;
+				emit({
+					type: "task_completed",
+					taskId: currentTaskId ?? "orchestrator",
+					title: node?.title ?? "unknown",
+					success: args.status === "passed",
+					output: args.summary.slice(0, 500),
+				});
+
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: `Task marked as ${args.status}. ${args.status === "passed" ? "Good work!" : "Returning to parent for guidance."}`,
+							text: `Task marked as ${args.status}. Entering idle state.`,
 						},
 					],
 				};

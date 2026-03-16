@@ -327,7 +327,8 @@ describe("runLoop integration", () => {
 					},
 				);
 			}
-			// Shouldn't reach here but return a stop response just in case
+			// Second call: model responds with stop (after done tool result)
+			// This enters implicit yield; the queue will be closed by session.stop()
 			return new Response(
 				JSON.stringify({
 					id: "chatcmpl-2",
@@ -353,19 +354,12 @@ describe("runLoop integration", () => {
 		}) as unknown as typeof fetch;
 
 		try {
-			const doneRef: {
-				done: null | { status: "passed" | "failed"; summary: string };
-			} = {
-				done: null,
-			};
-
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const session = provider.startSession({
 				prompt: "Do something",
 				cwd: tmpDir,
 				systemPrompt: "You are a helpful agent.",
 				sessionsDir: join(tmpDir, "sessions"),
-				doneRef,
 				mcpToolDefs: {
 					opengraft: [
 						{
@@ -386,12 +380,13 @@ describe("runLoop integration", () => {
 								},
 							},
 							handler: async (input: Record<string, unknown>) => {
-								doneRef.done = {
-									status: input.status as "passed" | "failed",
-									summary: input.summary as string,
-								};
 								return {
-									content: [{ type: "text", text: "Done signal received" }],
+									content: [
+										{
+											type: "text",
+											text: `Task marked as ${input.status}. Entering idle state.`,
+										},
+									],
 								};
 							},
 						},
@@ -400,17 +395,30 @@ describe("runLoop integration", () => {
 			});
 
 			const events: Array<{ type: string }> = [];
-			let result = await session.events.next();
-			while (!result.done) {
-				events.push(result.value);
-				result = await session.events.next();
-			}
 
-			const agentResult = result.value as AgentResult;
+			// Consume events but stop the session when we see the idle status
+			// (after done() tool is called and model responds with end_turn,
+			// the loop enters yield mode — we stop it to exit cleanly)
+			const consumePromise = (async () => {
+				let result = await session.events.next();
+				while (!result.done) {
+					events.push(result.value);
+					// When the agent enters idle state, stop the session to exit the loop
+					if (
+						result.value.type === "status" &&
+						(result.value as { message: string }).message.includes("idle state")
+					) {
+						session.stop();
+					}
+					result = await session.events.next();
+				}
+				return result.value as AgentResult;
+			})();
+
+			const agentResult = await consumePromise;
 			expect(agentResult.success).toBe(true);
-			expect(agentResult.output).toBe("Task completed");
 			expect(agentResult.costUsd).toBeGreaterThan(0);
-			expect(agentResult.turns).toBe(1);
+			expect(agentResult.turns).toBeGreaterThanOrEqual(1);
 
 			// Verify we got the expected events
 			const textEvents = events.filter((e) => e.type === "text");
@@ -430,7 +438,7 @@ describe("runLoop integration", () => {
 		}
 	});
 
-	test("handles stop finish_reason without tool calls", async () => {
+	test("handles stop finish_reason without tool calls (no queue = exit)", async () => {
 		const originalKey = process.env.OPENAI_API_KEY;
 		const originalBase = process.env.OPENAI_BASE_URL;
 		const originalFetch = globalThis.fetch;
@@ -481,6 +489,7 @@ describe("runLoop integration", () => {
 		}) as unknown as typeof fetch;
 
 		try {
+			// execute() doesn't pass a queue, so on end_turn the provider exits
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const result = await provider.execute({
 				prompt: "Say hello",

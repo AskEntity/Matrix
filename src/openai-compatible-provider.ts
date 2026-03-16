@@ -679,73 +679,64 @@ export class OpenAICompatibleProvider implements AgentProvider {
 
 			const toolCalls = assistantMsg.tool_calls ?? [];
 
-			// If no tool calls, handle end of turn
+			// If no tool calls, handle end of turn — enter implicit yield
 			if (toolCalls.length === 0 || choice.finish_reason === "stop") {
-				if (request.doneRef?.done) {
-					// Race condition guard: if a user message arrived between done() and loop exit,
-					// reset done state and continue so the agent can process it
-					if (queue && queue.pending > 0) {
-						request.doneRef.done = null;
-					} else {
-						break;
-					}
-				}
-
-				// Implicit yield: if agent has running children, wait for messages
-				if (request.hasRunningChildren?.() && queue) {
+				if (!queue) {
+					// No queue — cannot yield, just exit
 					yield {
 						type: "status",
-						message:
-							"Agent ended turn with running children — implicit yield (waiting for messages)",
+						message: "Agent ended turn (no queue for yield)",
 					};
-					try {
-						const first = await queue.wait();
-						const rest = queue.drain();
-						const all = [first, ...rest];
-						if (all.some((m) => m.source === "compact")) {
-							manualCompactRequested = true;
-							yield { type: "compact_started" };
-						}
-						const nonCompact = all.filter((m) => m.source !== "compact");
-						if (nonCompact.length === 0) {
-							continue;
-						}
-						const formatted = nonCompact.map(formatQueueMessage).join("\n");
-						yield {
-							type: "queue_message",
-							messages: formatted,
-							rawMessages: nonCompact.map(toRawMessage),
-						};
-						const imageParts = extractQueueImageParts(nonCompact);
-						if (imageParts.length > 0) {
-							messages.push({
-								role: "user",
-								content: [
-									{
-										type: "text" as const,
-										text: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
-									},
-									...imageParts,
-								],
-							});
-						} else {
-							messages.push({
-								role: "user",
-								content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
-							});
-						}
-						continue;
-					} catch {
-						// Queue closed — fall through
-					}
+					break;
 				}
 
 				yield {
 					type: "status",
 					message:
-						"Warning: agent ended without calling done() — treating as success",
+						"Agent ended turn — entering idle state (waiting for messages)",
 				};
-				break;
+
+				try {
+					const first = await queue.wait();
+					const rest = queue.drain();
+					const all = [first, ...rest];
+					if (all.some((m) => m.source === "compact")) {
+						manualCompactRequested = true;
+						yield { type: "compact_started" };
+					}
+					const nonCompact = all.filter((m) => m.source !== "compact");
+					if (nonCompact.length === 0) {
+						continue;
+					}
+					const formatted = nonCompact.map(formatQueueMessage).join("\n");
+					yield {
+						type: "queue_message",
+						messages: formatted,
+						rawMessages: nonCompact.map(toRawMessage),
+					};
+					const imageParts = extractQueueImageParts(nonCompact);
+					if (imageParts.length > 0) {
+						messages.push({
+							role: "user",
+							content: [
+								{
+									type: "text" as const,
+									text: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+								},
+								...imageParts,
+							],
+						});
+					} else {
+						messages.push({
+							role: "user",
+							content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+						});
+					}
+					continue;
+				} catch {
+					// Queue closed — normal exit path (stop was called)
+					break;
+				}
 			}
 
 			// Emit tool_use events
@@ -924,8 +915,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			const lastToolMsg = messages[messages.length - 1];
 			if (
 				lastToolMsg?.role === "tool" &&
-				typeof lastToolMsg.content === "string" &&
-				!request.doneRef?.done
+				typeof lastToolMsg.content === "string"
 			) {
 				lastToolMsg.content +=
 					"\n\n[CRITICAL: If your work is complete, call done() with status 'passed' or 'failed'. Do NOT stop without calling done().]";
@@ -997,16 +987,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					yield { type: "status", message: warning };
 				}
 			}
-
-			if (request.doneRef?.done) {
-				// Race condition guard: if a user message arrived while tools were executing,
-				// reset done state and continue so the agent can process it
-				if (queue && queue.pending > 0) {
-					request.doneRef.done = null;
-				} else {
-					break;
-				}
-			}
 		}
 
 		// Persist final conversation history
@@ -1030,10 +1010,9 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			(totalInputTokens * inputPer1M) / 1_000_000 +
 			(totalOutputTokens * outputPer1M) / 1_000_000;
 
-		const doneResult = request.doneRef?.done;
 		return {
-			success: doneResult ? doneResult.status === "passed" : true,
-			output: doneResult ? doneResult.summary : lastText,
+			success: true,
+			output: lastText,
 			costUsd,
 			turns,
 			sessionId,
