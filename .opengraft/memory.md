@@ -357,3 +357,10 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - ActivityLog thinking indicator: per-agent — only shows when the viewed agent is active.
 - OrchestratorDetail: Pause button shows when root is active (`isRootActive`). Clear Sessions only shows when NO agents are active (`!running`).
 - TaskDetail: Pause button shows when task is active (`isActive` prop). Falls back to status check if prop not provided.
+
+## User Image Pipeline Fix
+
+- `toRawMessage()` in agent-tools.ts must include `images` for user source messages — without it, images sent via queue (yield path) are dropped before reaching frontend.
+- `createQueueEntry()` in ws-handler.ts passes images as 5th param to `createLogEntry` (the `images` param, after `structured`).
+- Both `collectEntries` (event_history replay) and `handleWS` (live events) rawMessages type casts need the images field.
+- `addLog` in handleWS queue_message handler must pass `entry.images` (6th parameter) to preserve images through to the log entry.
