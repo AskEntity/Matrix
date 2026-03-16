@@ -144,3 +144,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - `web/ws-handler.ts` handles `tree_mutation` events in both `collectEntries` and `handleWS` to create `tree_mutation` log entries.
 - `web/components/ToolCard.tsx` renders `tree_mutation` entries as green system cards with structured action detail.
 - No `[TREE UPDATED]` string matching in the rendering pipeline — routing is source/event-type-based.
+
+## Clear Sessions Bug Fix
+
+- **Root cause**: After clearing sessions, `rootNodeId` was lost because: (1) event history containing `orchestration_started` events (which set `rootNodeId`) was deleted, (2) the WS subscribe handler sent `tree_updated` without `rootNodeId`, and (3) the REST `/tasks` endpoint didn't return `rootNodeId`. Without `rootNodeId`, the TaskTree fallback logic couldn't display the tree (root node filtered as parent-of-others, children filtered as having-parentId).
+- **Fix**: (1) Include `rootNodeId` in WS subscribe `tree_updated` message (websocket.ts), (2) broadcast `tree_updated` after clearing sessions (agent.ts), (3) include `rootNodeId` in REST `/tasks` response (tasks.ts), (4) pass `setRootNodeId` to `useTasks` hook so initial REST fetch also sets it (hooks.ts, App.tsx).
+- **Key insight**: The WS subscribe handler was inconsistent with `broadcastTreeUpdate()` — it was missing `rootNodeId`. This was a latent bug that only manifested when event history was cleared.

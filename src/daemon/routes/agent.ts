@@ -255,6 +255,8 @@ export function registerAgentRoutes(
 			tracker.autoResume = false;
 			tracker.orchestratorSessionId = null;
 			await tracker.save();
+			// Broadcast tree so connected WS clients re-render with current nodes
+			broadcastTreeUpdate(ctx, project.id, tracker);
 		}
 		return c.json({ cleared: true });
 	});
