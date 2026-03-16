@@ -297,3 +297,14 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - Removed Idle/Running state display, Continue form, running-gated UI. Stop → "Pause" (ghost styling).
 - `running` state still tracked for Thinking indicator + Pause button visibility.
 - i18n: removed 15+ legacy keys, added orch.pause, tasks.sendMessage.
+
+## Unified Child Agent Launching (runChildCore)
+
+- `runChildCore()` in `src/daemon/agent-lifecycle.ts` is the shared child agent lifecycle for both MCP (`send_message_to_child`) and daemon (REST endpoints) code paths.
+- Handles: queue setup (create/register in `globalAgentQueues`), persisted message loading, event streaming via `provider.stream()` with done() detection, and queue cleanup in `finally`.
+- `executeChildStreaming` in `agent-tools.ts` is now a thin wrapper: sets up MCP tools (if depth < maxDepth) then delegates to `runChildCore`.
+- `runChildAgentInBackground` in `agent-lifecycle.ts` uses `runChildCore` with daemon callbacks (`broadcastEvent`).
+- When caller needs MCP tools that close over the queue, create the queue first, pass to both `createOrchestratorTools` and `runChildCore` via `queue` param.
+- Tests now check `provider.stream()` instead of `provider.startSession()` for child agents (since `runChildCore` uses `stream()`).
+- `consumeAgentEvents()` still exists for `launchAgent` (orchestrator root). Only child agents use `runChildCore`.
+
