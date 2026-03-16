@@ -153,3 +153,8 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Clear Sessions Fix
 
 - `rootNodeId` must be included in WS subscribe `tree_updated` and REST `/tasks` response. Without it, TaskTree can't identify root after event history is cleared.
+
+## Child Agent Session Persistence
+
+- `runChildAgentInBackground` now passes `sessionsDir` to `startSession`, matching `launchAgent` behavior.
+- Both use `join(ctx.config.dataDir, "sessions", project.id)` — child sessions go to same dir as orchestrator, differentiated by sessionId.
