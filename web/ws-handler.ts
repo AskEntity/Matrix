@@ -25,6 +25,8 @@ export interface WSHandlerDeps {
 	updateFromWS: (nodes: TaskNode[]) => void;
 	setRootNodeId: React.Dispatch<React.SetStateAction<string | null>>;
 	setRunning: (running: boolean) => void;
+	/** Re-check actual agent status from backend (GET /projects/:id/agent). */
+	checkAgentStatus: () => void;
 	setAgentProvider: (provider: string) => void;
 	setAgentModel: (model: string) => void;
 	setLogs: React.Dispatch<React.SetStateAction<LogEntry[]>>;
@@ -68,6 +70,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		updateFromWS,
 		setRootNodeId,
 		setRunning,
+		checkAgentStatus,
 		setAgentProvider,
 		setAgentModel,
 		setLogs,
@@ -505,11 +508,13 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					setLastCacheReadTokens(msg.cacheReadTokens as number);
 				if (msg.outputTokens !== undefined)
 					setLastOutputTokens(msg.outputTokens as number);
-				setRunning(false);
+				// Re-check actual agent status — auto-resume may have restarted it
+				checkAgentStatus();
 				setPendingCompact(false);
 				break;
 			case "agent_stopped":
-				setRunning(false);
+				// Re-check actual agent status — auto-resume may have restarted it
+				checkAgentStatus();
 				setPendingCompact(false);
 				break;
 		}
@@ -719,13 +724,15 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					`Orchestration ${msg.success ? "completed ✓" : "failed ✗"}${costStr}${tokenStr}`,
 					msg.taskId as string | undefined,
 				);
-				setRunning(false);
+				// Re-check actual agent status — auto-resume may have restarted it
+				checkAgentStatus();
 				setPendingCompact(false);
 				break;
 			}
 			case "agent_stopped":
 				addLog("lifecycle", "Agent stopped", msg.taskId as string | undefined);
-				setRunning(false);
+				// Re-check actual agent status — auto-resume may have restarted it
+				checkAgentStatus();
 				setPendingCompact(false);
 				break;
 			case "task_started": {

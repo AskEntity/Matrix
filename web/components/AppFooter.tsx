@@ -2,7 +2,7 @@ import type React from "react";
 import { useEffect, useRef } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconClose, IconPlay, IconSend } from "./icons.tsx";
+import { IconClose, IconSend } from "./icons.tsx";
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
@@ -243,25 +243,14 @@ export function AppFooter({
 					disabled={!projectId}
 				/>
 				<div className="og-footer-controls">
-					{running ? (
-						<button
-							type="submit"
-							className="og-btn-run"
-							disabled={!projectId || !prompt.trim()}
-						>
-							<IconSend size={13} />
-							{t("footer.send")}
-						</button>
-					) : (
-						<button
-							type="submit"
-							className="og-btn-run"
-							disabled={!projectId || !prompt.trim()}
-						>
-							<IconPlay size={13} />
-							{t("footer.run")}
-						</button>
-					)}
+					<button
+						type="submit"
+						className="og-btn-run"
+						disabled={!projectId || !prompt.trim()}
+					>
+						<IconSend size={13} />
+						{t("footer.send")}
+					</button>
 				</div>
 			</form>
 		</footer>

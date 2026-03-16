@@ -39,6 +39,7 @@ let logIdCounter = 0;
 export function useWebSocket(
 	projectId: string,
 	onMessage: (msg: Record<string, unknown>) => void,
+	onConnect?: () => void,
 ) {
 	const wsRef = useRef<WebSocket | null>(null);
 	const [connected, setConnected] = useState(false);
@@ -60,6 +61,7 @@ export function useWebSocket(
 				if (projectId) {
 					ws.send(JSON.stringify({ type: "subscribe", projectId }));
 				}
+				onConnect?.();
 			};
 
 			ws.onmessage = (evt) => {
@@ -88,7 +90,7 @@ export function useWebSocket(
 			stopped = true;
 			wsRef.current?.close();
 		};
-	}, [projectId, onMessage]);
+	}, [projectId, onMessage, onConnect]);
 
 	// Subscribe when projectId changes
 	useEffect(() => {
