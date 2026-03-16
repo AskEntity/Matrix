@@ -1273,13 +1273,15 @@ export function createOrchestratorTools(
 								tracker.updateStatus(nodeRef.id, newStatus);
 							}
 							await tracker.save();
-							emit({
-								type: "task_completed",
-								taskId: nodeRef.id,
-								title: nodeRef.title,
-								success,
-								output: result.output.slice(0, 500),
-							});
+							if (!doneWasCalled) {
+								emit({
+									type: "task_completed",
+									taskId: nodeRef.id,
+									title: nodeRef.title,
+									success,
+									output: result.output.slice(0, 500),
+								});
+							}
 
 							// Enqueue child_complete message to parent's queue
 							if (deps.queue) {
