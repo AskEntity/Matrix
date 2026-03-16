@@ -211,6 +211,43 @@ export async function stopAgent(
 	await flushEvents(ctx);
 }
 
+/**
+ * Ensure a child task has a worktree and a running agent.
+ * Creates the worktree if needed, sets status to in_progress, and launches
+ * the agent via runChildAgentInBackground. Shared by the REST message
+ * endpoint and any other daemon-level code that needs to auto-launch a child.
+ */
+export async function ensureChildAgentRunning(
+	ctx: DaemonContext,
+	project: { id: string; path: string },
+	tracker: TaskTracker,
+	nodeId: string,
+	prompt: string,
+	model?: string,
+): Promise<void> {
+	const node = tracker.get(nodeId);
+	if (!node) return;
+
+	// Create worktree if the task doesn't have one yet
+	if (!node.worktreePath) {
+		const wtRoot = join(project.path, ".worktrees");
+		const wm = new WorktreeManager(project.path, wtRoot);
+		const slug = node.title
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-|-$/g, "")
+			.slice(0, 30);
+		const wt = await wm.create(node.id, slug);
+		tracker.assignWorktree(node.id, wt.branch, wt.path);
+	}
+
+	tracker.updateStatus(nodeId, "in_progress");
+	await tracker.save();
+	broadcastTreeUpdate(ctx, project.id, tracker);
+
+	await runChildAgentInBackground(ctx, project, tracker, nodeId, prompt, model);
+}
+
 /** Run a child agent in the background for a specific task node. */
 export async function runChildAgentInBackground(
 	ctx: DaemonContext,
