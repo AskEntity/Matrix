@@ -20,6 +20,7 @@ import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
 import { createActionHandlers } from "./handlers.ts";
 
 import {
+	type CreateLogEntryOpts,
 	createLogEntry,
 	type LogEntry,
 	type TaskNode,
@@ -29,14 +30,6 @@ import {
 	useThreeLayerConfig,
 	useWebSocket,
 } from "./hooks.ts";
-
-type StructuredFields = {
-	toolName?: string;
-	toolUseId?: string;
-	toolArgs?: Record<string, unknown>;
-	toolResult?: string;
-	isError?: boolean;
-};
 
 import { LocaleProvider, useLocale } from "./i18n.ts";
 import { applyTheme, themes } from "./themes.ts";
@@ -201,29 +194,9 @@ function AppInner() {
 		? activeAgents.has(viewedTaskId)
 		: false;
 
-	const addLog = useCallback(
-		(
-			type: string,
-			text: string,
-			taskId?: string,
-			checkpoint?: string,
-			structured?: StructuredFields,
-			images?: { base64: string; mediaType: string }[],
-			meta?: Record<string, unknown>,
-		) => {
-			const entry = createLogEntry(
-				type,
-				text,
-				taskId,
-				structured,
-				images,
-				meta,
-			);
-			if (checkpoint) entry.checkpoint = checkpoint;
-			setLogs((prev) => [...prev, entry]);
-		},
-		[],
-	);
+	const addLog = useCallback((opts: CreateLogEntryOpts) => {
+		setLogs((prev) => [...prev, createLogEntry(opts)]);
+	}, []);
 
 	// ── Effects ──────────────────────────────────────────────────────────────
 
@@ -308,7 +281,6 @@ function AppInner() {
 	const handleWS = useMemo(
 		() =>
 			createWSHandler({
-				addLog,
 				updateFromWS,
 				setRootNodeId,
 				setActiveAgents,
@@ -329,7 +301,6 @@ function AppInner() {
 				t,
 			}),
 		[
-			addLog,
 			updateFromWS,
 			setActiveAgents,
 			checkStatus,
@@ -545,9 +516,9 @@ function AppInner() {
 					onRestart={async () => {
 						try {
 							await fetch("/restart-daemon", { method: "POST" });
-							addLog("lifecycle", "Daemon restarting…");
+							addLog({ type: "lifecycle", text: "Daemon restarting…" });
 						} catch {
-							addLog("lifecycle", "Daemon restarting…");
+							addLog({ type: "lifecycle", text: "Daemon restarting…" });
 						}
 					}}
 				/>

@@ -1,12 +1,12 @@
 import type React from "react";
-import type { LogEntry, Project, TaskNode } from "./hooks.ts";
+import type {
+	CreateLogEntryOpts,
+	LogEntry,
+	Project,
+	TaskNode,
+} from "./hooks.ts";
 
-type AddLogFn = (
-	type: string,
-	text: string,
-	taskId?: string,
-	checkpoint?: string,
-) => void;
+type AddLogFn = (opts: CreateLogEntryOpts) => void;
 
 export interface ActionHandlerDeps {
 	projectId: string;
@@ -138,7 +138,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setAttachedImages([]);
 			localStorage.removeItem("og-prompt-draft");
 		} catch (err) {
-			addLog("error", (err as Error).message);
+			addLog({ type: "error", text: (err as Error).message });
 		}
 	}
 
@@ -146,7 +146,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		try {
 			await stop();
 		} catch (err) {
-			addLog("error", (err as Error).message);
+			addLog({ type: "error", text: (err as Error).message });
 		}
 	}
 
@@ -170,7 +170,10 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			});
 			if (!res.ok) {
 				const body = (await res.json()) as { error: string };
-				addLog("error", `Failed to answer clarification: ${body.error}`);
+				addLog({
+					type: "error",
+					text: `Failed to answer clarification: ${body.error}`,
+				});
 				return;
 			}
 			setClarifyAnswers((prev) => {
@@ -179,7 +182,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				return next;
 			});
 		} catch (err) {
-			addLog("error", (err as Error).message);
+			addLog({ type: "error", text: (err as Error).message });
 		}
 	}
 
@@ -196,9 +199,9 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setLastCacheReadTokens(null);
 			setLastOutputTokens(null);
 			setLogs([]);
-			addLog("lifecycle", "Session history cleared");
+			addLog({ type: "lifecycle", text: "Session history cleared" });
 		} catch (err) {
-			addLog("error", (err as Error).message);
+			addLog({ type: "error", text: (err as Error).message });
 		}
 	}
 
@@ -208,11 +211,11 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			return;
 		try {
 			await deleteTask(selectedTaskId);
-			addLog("lifecycle", `Deleted: ${selectedNode.title}`);
+			addLog({ type: "lifecycle", text: `Deleted: ${selectedNode.title}` });
 			setSelectedTaskId(rootNodeId);
 			await refreshTasks();
 		} catch (err) {
-			addLog("error", (err as Error).message);
+			addLog({ type: "error", text: (err as Error).message });
 		}
 	}
 
@@ -224,7 +227,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				"PAUSED by user. Please call yield() and wait for further instructions before continuing.",
 			);
 		} catch (err) {
-			addLog("error", (err as Error).message);
+			addLog({ type: "error", text: (err as Error).message });
 		}
 	}
 
@@ -242,7 +245,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setNewProjectPath("");
 			setShowAddProject(false);
 		} catch (err) {
-			addLog("error", (err as Error).message);
+			addLog({ type: "error", text: (err as Error).message });
 		} finally {
 			setCreatingProject(false);
 		}
@@ -262,7 +265,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setRootNodeId(null);
 			setLogs([]);
 		} catch (err) {
-			addLog("error", (err as Error).message);
+			addLog({ type: "error", text: (err as Error).message });
 		}
 	}
 
@@ -286,7 +289,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				throw new Error(((await res.json()) as { error: string }).error);
 			await refreshTasks();
 		} catch (err) {
-			addLog("error", (err as Error).message);
+			addLog({ type: "error", text: (err as Error).message });
 		}
 	}
 
@@ -298,11 +301,14 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		if (!projectId) return;
 		try {
 			await deleteTask(taskId);
-			addLog("lifecycle", `${t("lifecycle.deleted")} ${taskId}`);
+			addLog({
+				type: "lifecycle",
+				text: `${t("lifecycle.deleted")} ${taskId}`,
+			});
 			if (selectedTaskId === taskId) setSelectedTaskId(rootNodeId);
 			await refreshTasks();
 		} catch (err) {
-			addLog("error", (err as Error).message);
+			addLog({ type: "error", text: (err as Error).message });
 		}
 	}
 

@@ -368,38 +368,36 @@ export function useAgent(projectId: string) {
 
 // --- Log helpers ---
 
-export function createLogEntry(
-	type: string,
-	text: string,
-	taskId?: string,
-	structured?: {
-		toolName?: string;
-		toolUseId?: string;
-		toolArgs?: Record<string, unknown>;
-		toolResult?: string;
-		isError?: boolean;
-	},
-	images?: { base64: string; mediaType: string }[],
-	meta?: Record<string, unknown>,
-): LogEntry {
+export interface CreateLogEntryOpts {
+	type: string;
+	text: string;
+	taskId?: string;
+	checkpoint?: string;
+	toolName?: string;
+	toolUseId?: string;
+	toolArgs?: Record<string, unknown>;
+	toolResult?: string;
+	isError?: boolean;
+	images?: { base64: string; mediaType: string }[];
+	meta?: Record<string, unknown>;
+}
+
+export function createLogEntry(opts: CreateLogEntryOpts): LogEntry {
 	const entry: LogEntry = {
 		id: logIdCounter++,
 		time: new Date().toLocaleTimeString(),
-		type,
-		text,
-		taskId,
+		type: opts.type,
+		text: opts.text,
+		taskId: opts.taskId,
 	};
-	if (structured) {
-		if (structured.toolName !== undefined) entry.toolName = structured.toolName;
-		if (structured.toolUseId !== undefined)
-			entry.toolUseId = structured.toolUseId;
-		if (structured.toolArgs !== undefined) entry.toolArgs = structured.toolArgs;
-		if (structured.toolResult !== undefined)
-			entry.toolResult = structured.toolResult;
-		if (structured.isError !== undefined) entry.isError = structured.isError;
-	}
-	if (images && images.length > 0) entry.images = images;
-	if (meta) entry.meta = meta;
+	if (opts.checkpoint !== undefined) entry.checkpoint = opts.checkpoint;
+	if (opts.toolName !== undefined) entry.toolName = opts.toolName;
+	if (opts.toolUseId !== undefined) entry.toolUseId = opts.toolUseId;
+	if (opts.toolArgs !== undefined) entry.toolArgs = opts.toolArgs;
+	if (opts.toolResult !== undefined) entry.toolResult = opts.toolResult;
+	if (opts.isError !== undefined) entry.isError = opts.isError;
+	if (opts.images && opts.images.length > 0) entry.images = opts.images;
+	if (opts.meta) entry.meta = opts.meta;
 	return entry;
 }
 
