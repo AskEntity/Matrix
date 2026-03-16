@@ -143,9 +143,6 @@ function AppInner() {
 	const [attachedImages, setAttachedImages] = useState<
 		{ base64: string; mediaType: string }[]
 	>([]);
-	const lastSubmittedImagesRef = useRef<
-		{ base64: string; mediaType: string }[] | undefined
-	>(undefined);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
 	const {
@@ -328,7 +325,6 @@ function AppInner() {
 				setLastCacheCreationTokens,
 				setLastCacheReadTokens,
 				setLastOutputTokens,
-				lastSubmittedImagesRef,
 				nodeMapRef,
 				t,
 			}),
@@ -472,7 +468,6 @@ function AppInner() {
 		newProjectPath,
 		creatingProject,
 		projects,
-		lastSubmittedImagesRef,
 		addLog,
 		setPrompt,
 		setAttachedImages,

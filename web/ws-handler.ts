@@ -55,9 +55,6 @@ export interface WSHandlerDeps {
 	>;
 	setLastCacheReadTokens: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastOutputTokens: React.Dispatch<React.SetStateAction<number | null>>;
-	lastSubmittedImagesRef: React.MutableRefObject<
-		{ base64: string; mediaType: string }[] | undefined
-	>;
 	nodeMapRef: React.MutableRefObject<Map<string, TaskNode>>;
 	t: (key: string, params?: Record<string, string>) => string;
 }
@@ -81,7 +78,6 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		setLastCacheCreationTokens,
 		setLastCacheReadTokens,
 		setLastOutputTokens,
-		lastSubmittedImagesRef,
 		nodeMapRef,
 		t,
 	} = deps;
@@ -676,22 +672,13 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						for (const rm of rawMessages) {
 							const entry = createQueueEntry(rm, taskId);
 							if (entry) {
-								// Attach pending images to user_prompt entries
-								let imgs: { base64: string; mediaType: string }[] | undefined;
-								if (
-									entry.type === "user_prompt" &&
-									lastSubmittedImagesRef.current
-								) {
-									imgs = lastSubmittedImagesRef.current;
-									lastSubmittedImagesRef.current = undefined;
-								}
 								addLog(
 									entry.type,
 									entry.text,
 									entry.taskId,
 									undefined,
 									undefined,
-									entry.images ?? imgs,
+									entry.images,
 									entry.meta,
 								);
 							}
@@ -725,16 +712,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					addLog("lifecycle", "↻ Session resumed", startRootId);
 				}
 				if (msg.prompt) {
-					const imgs = lastSubmittedImagesRef.current;
-					lastSubmittedImagesRef.current = undefined;
-					addLog(
-						"user_prompt",
-						msg.prompt as string,
-						startRootId,
-						undefined,
-						undefined,
-						imgs,
-					);
+					addLog("user_prompt", msg.prompt as string, startRootId);
 				}
 				if (msg.provider) setAgentProvider(msg.provider as string);
 				if (msg.model) setAgentModel(msg.model as string);

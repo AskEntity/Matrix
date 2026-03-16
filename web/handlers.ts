@@ -27,9 +27,6 @@ export interface ActionHandlerDeps {
 	newProjectPath: string;
 	creatingProject: boolean;
 	projects: Project[];
-	lastSubmittedImagesRef: React.MutableRefObject<
-		{ base64: string; mediaType: string }[] | undefined
-	>;
 
 	addLog: AddLogFn;
 	setPrompt: React.Dispatch<React.SetStateAction<string>>;
@@ -84,7 +81,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		newProjectPath,
 		creatingProject,
 		projects,
-		lastSubmittedImagesRef,
 		addLog,
 		setPrompt,
 		setAttachedImages,
@@ -125,7 +121,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				// Unified path: always try sendMessage first (handles active and no-session).
 				// Falls back to start() only if sendMessage returns 404 (no project).
 				try {
-					lastSubmittedImagesRef.current = images;
 					await sendMessage(prompt.trim(), images);
 				} catch (msgErr) {
 					// sendMessage failed — likely no session exists yet. Start a new one.
@@ -133,7 +128,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 						(msgErr as Error).message?.includes("not found") ||
 						(msgErr as Error).message?.includes("No active session")
 					) {
-						lastSubmittedImagesRef.current = images;
 						await start({ prompt: prompt.trim() });
 					} else {
 						throw msgErr;
