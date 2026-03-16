@@ -207,3 +207,9 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Queue Cleanup in Task Resource Operations
 
 - `close_task`, `delete_task`, and `reset_task` now close the running agent queue (from both `childQueues` and `globalAgentQueues`) before removing worktree/session resources. This prevents orphaned agents from running without a worktree.
+
+## Task Completion Card Styling
+
+- `done()` tool_use/tool_result cards suppressed in ToolCard (return null after hooks to avoid hook-at-top-level lint error).
+- `task_completed` events now added to both child and parent logs via `createLogEntry` with `meta: { title, success, output }`.
+- `task_completed` card styled with `og-tool-card-done-passed/failed` CSS classes: 3px left border, green/red coloring, Passed/Failed badge, collapsible output.
