@@ -156,5 +156,10 @@ Daemon (Hono: HTTP + WS on :7433)
 
 ## Child Agent Session Persistence
 
-- `runChildAgentInBackground` now passes `sessionsDir` to `startSession`, matching `launchAgent` behavior.
-- Both use `join(ctx.config.dataDir, "sessions", project.id)` — child sessions go to same dir as orchestrator, differentiated by sessionId.
+- `runChildAgentInBackground` passes `sessionsDir` to `startSession`. Same dir as orchestrator, differentiated by sessionId.
+
+## Event Persistence
+
+- Anthropic provider now yields consolidated `{ type: "text" }` after streaming (OpenAI already did).
+- `flushEvents()` called in stopAgent(), runChildAgentInBackground finally, launchAgent finally.
+- Web UI deduplicates live `text` events against text_delta-accumulated entries.
