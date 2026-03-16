@@ -230,3 +230,8 @@ Daemon (Hono: HTTP + WS on :7433)
 - Frontend: `.og-task-closed` class adds opacity 0.5 + strikethrough title. Status dot/badge use gray color.
 - i18n: "Closed" (en) / "已关闭" (zh).
 - StatsResponse.taskCounts includes `closed: number`.
+
+## Bash CWD Fallback Chain
+
+- CWD fallback in `executeBashWithTimeout`: checks `existsSync(cwd)` → tries `fallbackCwd` (if exists) → `process.cwd()` as last resort.
+- The `effectiveCwd !== cwd` check in `parseResult` adds a warning message and sets `newCwd` so the tracked CWD gets updated.
