@@ -153,3 +153,9 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Clear Sessions Fix
 
 - `rootNodeId` must be included in WS subscribe `tree_updated` and REST `/tasks` response. Without it, TaskTree can't identify root after event history is cleared.
+
+## Event Persistence Fix
+
+- **text_delta events are NOT persisted** — broadcastEvent explicitly skips them (too granular). The Anthropic provider only emitted text_delta during streaming with no consolidated `text` event after. Fix: yield `{ type: "text", content: block.text }` after streaming completes (line ~882 in anthropic-compatible-provider.ts). OpenAI provider already did this correctly.
+- **flushEvents on agent stop**: Events are batched every 2s via scheduleEventFlush. Added `await flushEvents(ctx)` in stopAgent(), runChildAgentInBackground finally block, and launchAgent finally block to prevent data loss during shutdown.
+- **Web UI dedup**: Live `text` events replace the existing text_delta-accumulated entry (same taskId) to avoid duplicates. During replay from persisted history, text_delta events dont exist so `text` events create entries normally.

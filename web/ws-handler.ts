@@ -540,7 +540,25 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					}
 					break;
 				} else if (et === "text") {
-					text = (msg.content as string) || "";
+					// Consolidated text event — replace the text_delta-accumulated entry
+					// if one exists (avoids duplicates during live streaming)
+					const fullText = (msg.content as string) || "";
+					const textTaskId = msg.taskId as string | undefined;
+					if (fullText) {
+						setLogs((prev) => {
+							for (let i = prev.length - 1; i >= 0; i--) {
+								const e = prev[i];
+								if (e && e.type === "text" && e.taskId === textTaskId) {
+									const updated = [...prev];
+									updated[i] = { ...e, text: fullText };
+									return updated;
+								}
+								if (e && e.taskId === textTaskId && e.type !== "text") break;
+							}
+							return [...prev, createLogEntry("text", fullText, textTaskId)];
+						});
+					}
+					break;
 				} else if (et === "error") {
 					text = (msg.message as string) || "";
 				} else if (et === "usage") {

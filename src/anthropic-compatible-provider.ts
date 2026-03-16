@@ -879,7 +879,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			for (const block of response.content) {
 				if (block.type === "text") {
 					lastText = block.text;
-					// Text already streamed via throttled text_delta events
+					// Yield consolidated text event for persistence (text_delta is not persisted)
+					if (!compactionPending && block.text) {
+						yield { type: "text" as const, content: block.text };
+					}
 				} else if (block.type === "tool_use") {
 					if (!compactionPending) {
 						toolUses.push(block);
