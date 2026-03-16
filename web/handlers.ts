@@ -10,7 +10,6 @@ type AddLogFn = (
 
 export interface ActionHandlerDeps {
 	projectId: string;
-	running: boolean;
 	selectedTaskId: string | null;
 	rootNodeId: string | null;
 	selectedNode: TaskNode | null;
@@ -64,7 +63,6 @@ export interface ActionHandlerDeps {
 		images?: { base64: string; mediaType: string }[],
 	) => Promise<void>;
 	sendMessageToTask: (taskId: string, msg: string) => Promise<void>;
-	continueTask: (taskId: string, msg?: string) => Promise<void>;
 	deleteTask: (taskId: string) => Promise<void>;
 	initProject: (path: string) => Promise<{ id: string }>;
 	deleteProject: (id: string) => Promise<void>;
@@ -75,7 +73,6 @@ export interface ActionHandlerDeps {
 export function createActionHandlers(deps: ActionHandlerDeps) {
 	const {
 		projectId,
-		// running — no longer needed: handleSubmit always tries sendMessage first
 		selectedTaskId,
 		rootNodeId,
 		selectedNode,
@@ -111,7 +108,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		stop,
 		sendMessage,
 		sendMessageToTask,
-		continueTask,
 		deleteTask,
 		initProject,
 		deleteProject,
@@ -128,7 +124,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				// Sending to a specific child task
 				await sendMessageToTask(targetNodeId, prompt.trim());
 			} else {
-				// Unified path: always try sendMessage first (handles running, idle, and no-session).
+				// Unified path: always try sendMessage first (handles active and no-session).
 				// Falls back to start() only if sendMessage returns 404 (no project).
 				try {
 					lastSubmittedImagesRef.current = images;
@@ -210,21 +206,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setLastOutputTokens(null);
 			setLogs([]);
 			addLog("lifecycle", "Session history cleared");
-		} catch (err) {
-			addLog("error", (err as Error).message);
-		}
-	}
-
-	async function handleContinueTask(msg?: string) {
-		if (!selectedTaskId) return;
-		try {
-			await continueTask(selectedTaskId, msg);
-			addLog(
-				"task_started",
-				`↳ Continued: ${selectedNode?.title}`,
-				selectedTaskId,
-			);
-			await refreshTasks();
 		} catch (err) {
 			addLog("error", (err as Error).message);
 		}
@@ -339,7 +320,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		handleStop,
 		handleClarifySubmit,
 		handleClearSessions,
-		handleContinueTask,
 		handleDeleteTask,
 		handlePauseTask,
 		handleAddProject,

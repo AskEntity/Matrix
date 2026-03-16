@@ -7,7 +7,6 @@ import { IconClose, IconSend } from "./icons.tsx";
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
 export function AppFooter({
-	running,
 	projectId,
 	prompt,
 	targetNodeId,
@@ -25,7 +24,6 @@ export function AppFooter({
 	onClarifySubmit,
 	onClarifyAnswerChange,
 }: {
-	running: boolean;
 	projectId: string;
 	prompt: string;
 	targetNodeId: string | null;
@@ -247,9 +245,7 @@ export function AppFooter({
 							? t("footer.messageToTask", {
 									task: nodeMap.get(targetNodeId)?.title ?? "task",
 								})
-							: running
-								? t("footer.sendMessage")
-								: t("footer.describeBuild")
+							: t("footer.sendMessage")
 					}
 					disabled={!projectId}
 				/>

@@ -287,3 +287,16 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 
 - `targetNodeId` effect in App.tsx previously gated on `node?.status === "in_progress"` — only in-progress tasks got the "Sending to:" banner.
 - Fixed: always set `targetNodeId = selectedTaskId` for non-root tasks. Backend handles routing via persistent queue + auto-resume.
+
+## Legacy Lifecycle UI Removal
+
+- Removed "State: Idle/Running" card from OrchestratorDetail — sessions are always alive.
+- Changed Stop button to "Pause" with `og-btn-ghost` styling (less prominent escape hatch).
+- Clear Sessions button always visible now (not gated on `!running`).
+- Removed Continue form (input + button) from TaskDetail — bottom message input handles resume.
+- Removed `running` prop from TaskTree and orchestrator badge (was showing "running"/"idle").
+- Removed `running` prop from AppFooter — placeholder always shows "Send a message…".
+- Removed `handleContinueTask` and `continueTask` from handlers/App (bottom input handles this).
+- `running` state still tracked internally for ActivityLog "Thinking..." indicator and Pause button visibility.
+- i18n: removed status.running, status.idle, orch.state, orch.stop, detail.stop, detail.resume, detail.continue, detail.retryPlaceholder, footer.describeBuild, footer.run, lifecycle.started, lifecycle.stopped, lifecycle.continued, tasks.startAgent, tasks.agentWorking.
+- i18n: added orch.pause, tasks.sendMessage. Changed detail.running→detail.elapsed.
