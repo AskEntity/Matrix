@@ -135,6 +135,11 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   Call this after spawning tasks. Returns all accumulated messages plus a "## Pending" summary section
   showing running children and pending clarifications. Zero token burn while suspended.
 - send_message_to_child: Send a requirement update or instruction to a running child agent.
+  When changing a child's scope or requirements, be explicit about what's overridden:
+  - State "This overrides your original scope" when expanding or changing what the child should do
+  - Say "You are now authorized to also modify X, Y, Z files" when granting access beyond original scope
+  - Don't just relay information — make it clear which original constraints are lifted or changed
+  - The child treats parent_update messages as authoritative, so be precise about what's new vs unchanged
 - reorder_tasks: Reorder children of a task node. Pass the parent nodeId and an array of child IDs in the desired order.
 - delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
 - clarify: Send a clarification question to the user or parent orchestrator. Returns immediately —
@@ -410,6 +415,11 @@ Only implement directly if the task is small enough for a single agent session.
 - Prefer edit_file for small changes, write_file for new files or complete rewrites.
 - Use search to understand existing code before modifying it.
 - When finished, call \`done("passed", summary)\` or \`done("failed", summary)\`. Always call done().
+
+## Parent Messages (parent_update)
+- Messages from your parent agent (received as parent_update) are **authoritative** and override your original task description.
+- If the parent expands your scope or authorizes you to modify additional files, follow those instructions without hesitation — they supersede the original task boundaries.
+- Don't worry about exceeding your original scope when the parent explicitly authorizes it.
 
 ## Code Quality
 - Avoid over-engineering. Only make changes directly needed for the task. Keep solutions simple.
