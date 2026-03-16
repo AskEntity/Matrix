@@ -235,3 +235,8 @@ Daemon (Hono: HTTP + WS on :7433)
 
 - CWD fallback in `executeBashWithTimeout`: checks `existsSync(cwd)` → tries `fallbackCwd` (if exists) → `process.cwd()` as last resort.
 - The `effectiveCwd !== cwd` check in `parseResult` adds a warning message and sets `newCwd` so the tracked CWD gets updated.
+
+## ToolCard MCP Tool Coverage
+
+All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard`, `formatMcpToolResult`, and i18n keys (en + zh).
+Simple tools (close_task, reset_task, reorder_tasks, list_projects) are title-only cards. send_message_to_project is title-only for short messages.

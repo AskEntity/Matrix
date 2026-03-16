@@ -70,6 +70,24 @@ export function formatMcpToolResult(
 			return t("log.messageSent");
 		case "report_to_parent":
 			return t("log.reportSent");
+		case "close_task": {
+			if (json && typeof json.title === "string") {
+				return `${t("log.closedTask")} – Task: "${json.title}"`;
+			}
+			return null;
+		}
+		case "reset_task": {
+			if (json && typeof json.title === "string") {
+				return `${t("log.resetTask")} – Task: "${json.title}"`;
+			}
+			return null;
+		}
+		case "reorder_tasks":
+			return t("log.reorderedTasks");
+		case "list_projects":
+			return t("log.listedProjects");
+		case "send_message_to_project":
+			return t("log.messageSentToProject");
 		case "clarify":
 			return t("log.clarifyAsked");
 		case "yield":
@@ -286,6 +304,32 @@ export function getToolCardTitle(
 				}
 				return "→ Message Child";
 			}
+			case "close_task": {
+				const taskId = getArg(toolArgs, "taskId");
+				if (taskId) {
+					const title = nodeMap?.get(taskId)?.title;
+					return `– Close: ${title ?? taskId.slice(0, 8)}`;
+				}
+				return "– Close Task";
+			}
+			case "reset_task": {
+				const taskId = getArg(toolArgs, "taskId");
+				if (taskId) {
+					const title = nodeMap?.get(taskId)?.title;
+					return `↺ Reset: ${title ?? taskId.slice(0, 8)}`;
+				}
+				return "↺ Reset Task";
+			}
+			case "reorder_tasks":
+				return "↕ Reorder tasks";
+			case "list_projects":
+				return "📋 List projects";
+			case "send_message_to_project": {
+				const projectId = getArg(toolArgs, "projectId");
+				return projectId
+					? `🌐 Message to ${projectId}`
+					: "🌐 Message to project";
+			}
 			case "report_to_parent":
 				return "← Report to Parent";
 			case "clarify": {
@@ -315,8 +359,16 @@ export function isTitleOnlyCard(
 		case "yield":
 		case "delete_task":
 		case "update_task":
+		case "close_task":
+		case "reset_task":
+		case "reorder_tasks":
+		case "list_projects":
 			return true;
 		case "report_to_parent": {
+			const msg = getArg(toolArgs, "message");
+			return !msg || msg.length <= 80;
+		}
+		case "send_message_to_project": {
 			const msg = getArg(toolArgs, "message");
 			return !msg || msg.length <= 80;
 		}
