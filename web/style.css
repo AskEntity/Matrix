@@ -570,6 +570,10 @@ select {
 	background: var(--color-stuck);
 	animation: dot-blink 1s step-end infinite;
 }
+.status-dot-draft {
+	background: var(--color-pending);
+	opacity: 0.5;
+}
 .status-dot-closed {
 	background: var(--color-closed);
 	opacity: 0.5;
@@ -1137,6 +1141,12 @@ select {
 	background: currentColor;
 }
 
+.og-status-badge.draft {
+	background: var(--bg-pending);
+	color: var(--color-pending);
+	border-color: var(--border);
+	opacity: 0.7;
+}
 .og-status-badge.pending {
 	background: var(--bg-pending);
 	color: var(--color-pending);

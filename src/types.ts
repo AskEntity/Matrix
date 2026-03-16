@@ -1,5 +1,6 @@
-/** Task status follows the lifecycle: pending → in_progress → testing → passed | failed | stuck | closed */
+/** Task status follows the lifecycle: draft → pending → in_progress → testing → passed | failed | stuck | closed */
 export type TaskStatus =
+	| "draft"
 	| "pending"
 	| "in_progress"
 	| "testing"
@@ -27,8 +28,6 @@ export interface TaskNode {
 	costUsd?: number;
 	/** Maximum cost in USD this task is allowed to spend. */
 	budgetUsd?: number;
-	/** Draft tasks can be created and edited but not executed. */
-	draft?: boolean;
 	/** Who last modified this node: 'user' (REST/CLI) or 'agent' (MCP tools). */
 	editedBy?: "user" | "agent";
 	/** Optional color label for visual categorization. */
@@ -97,6 +96,7 @@ export interface StatsResponse {
 	requestCount: number;
 	projectCount: number;
 	taskCounts: {
+		draft: number;
 		pending: number;
 		in_progress: number;
 		testing: number;

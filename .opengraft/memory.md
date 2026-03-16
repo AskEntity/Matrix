@@ -265,9 +265,11 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - `checkAgentStatus` added to `WSHandlerDeps` interface in ws-handler.ts.
 
 
-## Message Target Banner Enhancement
+## Message Target Banner
 
-- AppFooter.tsx `og-message-target` banner now shows whenever `targetNodeId` is set (not just when running).
-- Added X button (`og-message-target-clear`) to cancel targeting — resets to root node.
-- `onClearTarget` callback added to AppFooter props, wired in App.tsx to `setTargetNodeId(null)` + `setSelectedTaskId(rootNodeId)`.
-- Placeholder text also shows task-targeted message whenever `targetNodeId` is set.
+- AppFooter `og-message-target` banner shows when `targetNodeId` is set. X button clears targeting.
+
+## Draft as TaskStatus
+
+- `draft` is a TaskStatus value, not a boolean. Draft tasks have `status: "draft"`.
+- Migration: `load()` converts old `draft: true` boolean to `status: "draft"`.

@@ -20,12 +20,17 @@ export class TaskTracker {
 			const raw = await readFile(this.treePath, "utf-8");
 			const data = JSON.parse(raw) as {
 				rootNodeId?: string | null;
-				nodes: TaskNode[];
+				nodes: (TaskNode & { draft?: boolean })[];
 			};
 			this._rootNodeId = data.rootNodeId ?? null;
 			for (const node of data.nodes) {
 				// Backward compat: old nodes may lack failCount
 				if (node.failCount === undefined) node.failCount = 0;
+				// Migration: convert old draft boolean to status="draft"
+				if (node.draft) {
+					node.status = "draft";
+					delete node.draft;
+				}
 				this.nodes.set(node.id, node);
 			}
 		}
@@ -323,23 +328,6 @@ export class TaskTracker {
 		node.updatedAt = new Date().toISOString();
 	}
 
-	/** Update the draft flag on a task node. */
-	updateDraft(
-		nodeId: string,
-		draft: boolean,
-		editedBy?: "user" | "agent",
-	): void {
-		const node = this.nodes.get(nodeId);
-		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		if (draft) {
-			node.draft = true;
-		} else {
-			delete node.draft;
-		}
-		if (editedBy) node.editedBy = editedBy;
-		node.updatedAt = new Date().toISOString();
-	}
-
 	private createNode(
 		title: string,
 		description: string,
@@ -351,7 +339,7 @@ export class TaskTracker {
 			id: crypto.randomUUID(),
 			title,
 			description,
-			status: "pending",
+			status: opts?.draft ? "draft" : "pending",
 			branch: null,
 			parentId,
 			children: [],
@@ -359,7 +347,6 @@ export class TaskTracker {
 			message: null,
 			failCount: 0,
 			...(opts?.budgetUsd !== undefined ? { budgetUsd: opts.budgetUsd } : {}),
-			...(opts?.draft ? { draft: true } : {}),
 			...(opts?.editedBy ? { editedBy: opts.editedBy } : {}),
 			createdAt: now,
 			updatedAt: now,

@@ -164,6 +164,7 @@ describe("daemon stats", () => {
 		expect(body.requestCount).toBeGreaterThan(0);
 		expect(body.projectCount).toBe(0);
 		expect(body.taskCounts).toEqual({
+			draft: 0,
 			pending: 0,
 			in_progress: 0,
 			testing: 0,

@@ -197,42 +197,81 @@ describe("TaskTracker", () => {
 		expect(tracker2.get(task.id)?.budgetUsd).toBe(2.0);
 	});
 
-	test("addTask accepts draft option", () => {
+	test("addTask accepts draft option and sets status to draft", () => {
 		const task = tracker.addTask("Draft task", "desc", { draft: true });
-		expect(task.draft).toBe(true);
+		expect(task.status).toBe("draft");
 	});
 
-	test("addChild accepts draft option", () => {
+	test("addChild accepts draft option and sets status to draft", () => {
 		const parent = tracker.addTask("Parent", "desc");
 		const child = tracker.addChild(parent.id, "Child", "desc", {
 			draft: true,
 		});
-		expect(child.draft).toBe(true);
+		expect(child.status).toBe("draft");
 	});
 
-	test("draft is undefined when not provided", () => {
+	test("status is pending when draft not provided", () => {
 		const task = tracker.addTask("No draft", "desc");
-		expect(task.draft).toBeUndefined();
+		expect(task.status).toBe("pending");
 	});
 
-	test("updateDraft sets and unsets draft flag", () => {
+	test("updateStatus toggles between draft and pending", () => {
 		const task = tracker.addTask("Toggle draft", "desc");
-		expect(task.draft).toBeUndefined();
+		expect(task.status).toBe("pending");
 
-		tracker.updateDraft(task.id, true);
-		expect(tracker.get(task.id)?.draft).toBe(true);
+		tracker.updateStatus(task.id, "draft");
+		expect(tracker.get(task.id)?.status).toBe("draft");
 
-		tracker.updateDraft(task.id, false);
-		expect(tracker.get(task.id)?.draft).toBeUndefined();
+		tracker.updateStatus(task.id, "pending");
+		expect(tracker.get(task.id)?.status).toBe("pending");
 	});
 
-	test("draft persists across save/load", async () => {
+	test("draft status persists across save/load", async () => {
 		const task = tracker.addTask("Draft persist", "desc", { draft: true });
 		await tracker.save();
 
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
-		expect(tracker2.get(task.id)?.draft).toBe(true);
+		expect(tracker2.get(task.id)?.status).toBe("draft");
+	});
+
+	test("migration: old draft boolean converted to status=draft on load", async () => {
+		// Simulate old tree format with draft: true boolean
+		const nodeId = crypto.randomUUID();
+		const now = new Date().toISOString();
+		const oldFormatData = {
+			rootNodeId: null,
+			nodes: [
+				{
+					id: nodeId,
+					title: "Old draft task",
+					description: "desc",
+					status: "pending",
+					branch: null,
+					parentId: null,
+					children: [],
+					worktreePath: null,
+					message: null,
+					failCount: 0,
+					draft: true,
+					createdAt: now,
+					updatedAt: now,
+				},
+			],
+		};
+		const { writeFile: wf } = await import("node:fs/promises");
+		await wf(
+			join(tempDir, "migration-tree.json"),
+			JSON.stringify(oldFormatData),
+		);
+
+		const tracker2 = new TaskTracker(join(tempDir, "migration-tree.json"));
+		await tracker2.load();
+		const loaded = tracker2.get(nodeId);
+		expect(loaded?.status).toBe("draft");
+		expect(
+			(loaded as unknown as Record<string, unknown>).draft,
+		).toBeUndefined();
 	});
 
 	test("ensureRootNode creates root node", () => {
