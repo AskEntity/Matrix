@@ -144,3 +144,12 @@ Daemon (Hono: HTTP + WS on :7433)
 - `web/ws-handler.ts` handles `tree_mutation` events in both `collectEntries` and `handleWS` to create `tree_mutation` log entries.
 - `web/components/ToolCard.tsx` renders `tree_mutation` entries as green system cards with structured action detail.
 - No `[TREE UPDATED]` string matching in the rendering pipeline — routing is source/event-type-based.
+
+## Structural Queue Message Cards
+
+- Queue messages (`parent_update`, `child_report`, `background_complete`, `cross_project`) now render as distinct card types with different accent colors instead of generic `queue_message` entries with string prefixes.
+- `LogEntry.meta?: Record<string, unknown>` carries structured data parsed from the `toRawMessage` content strings.
+- `createQueueEntry()` helper in ws-handler.ts centralizes the parsing logic for both `collectEntries` and `handleWS` paths.
+- Content strings from `toRawMessage` are parsed with regex to extract structured fields (child title, exit code, duration, project name, etc.) into meta.
+- CSS card classes: `og-tool-card-parent` (purple), `og-tool-card-child-report` (blue), `og-tool-card-bg-complete` (gray), `og-tool-card-cross-project` (orange).
+- `QueueMessageCard` component in ToolCard.tsx is a reusable card renderer shared by parent_update, child_report, and cross_project entries.

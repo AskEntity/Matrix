@@ -28,6 +28,8 @@ export interface LogEntry {
 	toolResult?: string;
 	isError?: boolean;
 	images?: { base64: string; mediaType: string }[];
+	/** Structured metadata for queue message cards (parent_update, child_report, etc.) */
+	meta?: Record<string, unknown>;
 }
 
 let logIdCounter = 0;
@@ -359,6 +361,7 @@ export function createLogEntry(
 		isError?: boolean;
 	},
 	images?: { base64: string; mediaType: string }[],
+	meta?: Record<string, unknown>,
 ): LogEntry {
 	const entry: LogEntry = {
 		id: logIdCounter++,
@@ -377,6 +380,7 @@ export function createLogEntry(
 		if (structured.isError !== undefined) entry.isError = structured.isError;
 	}
 	if (images && images.length > 0) entry.images = images;
+	if (meta) entry.meta = meta;
 	return entry;
 }
 

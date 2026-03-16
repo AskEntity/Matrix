@@ -206,8 +206,16 @@ function AppInner() {
 			checkpoint?: string,
 			structured?: StructuredFields,
 			images?: { base64: string; mediaType: string }[],
+			meta?: Record<string, unknown>,
 		) => {
-			const entry = createLogEntry(type, text, taskId, structured, images);
+			const entry = createLogEntry(
+				type,
+				text,
+				taskId,
+				structured,
+				images,
+				meta,
+			);
 			if (checkpoint) entry.checkpoint = checkpoint;
 			setLogs((prev) => [...prev, entry]);
 		},

@@ -17,6 +17,7 @@ type AddLogFn = (
 	checkpoint?: string,
 	structured?: StructuredFields,
 	images?: { base64: string; mediaType: string }[],
+	meta?: Record<string, unknown>,
 ) => void;
 
 export interface WSHandlerDeps {
@@ -84,6 +85,96 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		nodeMapRef,
 		t,
 	} = deps;
+
+	/**
+	 * Convert a raw queue message into a typed LogEntry with structured meta.
+	 * Returns null for messages that should be skipped (child_complete, system).
+	 */
+	function createQueueEntry(
+		rm: { source: string; content: string },
+		taskId?: string,
+	): LogEntry | null {
+		if (rm.source === "child_complete" || rm.source === "system") return null;
+		if (rm.source === "user") {
+			return createLogEntry("user_prompt", rm.content, taskId);
+		}
+		if (rm.source === "parent_update") {
+			return createLogEntry(
+				"parent_update",
+				rm.content,
+				taskId,
+				undefined,
+				undefined,
+				{ source: "parent_update" },
+			);
+		}
+		if (rm.source === "child_report") {
+			// Content format: From child "title" (taskId): message
+			const childMatch = /^From child "([^"]*)" \(([^)]*)\): ([\s\S]*)$/.exec(
+				rm.content,
+			);
+			return createLogEntry(
+				"child_report",
+				childMatch ? (childMatch[3] ?? rm.content) : rm.content,
+				taskId,
+				undefined,
+				undefined,
+				{
+					source: "child_report",
+					childTitle: childMatch?.[1] ?? undefined,
+					childTaskId: childMatch?.[2] ?? undefined,
+				},
+			);
+		}
+		if (rm.source === "background_complete") {
+			// Content format: Command "cmd" (id): exit=N, duration=Nms. ...
+			const bgMatch =
+				/^Command "([^"]*)" \(([^)]*)\): exit=([^,]*), duration=(\d+)ms/.exec(
+					rm.content,
+				);
+			return createLogEntry(
+				"background_complete",
+				rm.content,
+				taskId,
+				undefined,
+				undefined,
+				{
+					source: "background_complete",
+					command: bgMatch?.[1] ?? undefined,
+					commandId: bgMatch?.[2] ?? undefined,
+					exitCode: bgMatch?.[3] ?? undefined,
+					durationMs: bgMatch?.[4] ?? undefined,
+				},
+			);
+		}
+		if (rm.source === "cross_project") {
+			// Content format: From project "name" (id): message
+			const cpMatch = /^From project "([^"]*)" \(([^)]*)\): ([\s\S]*)$/.exec(
+				rm.content,
+			);
+			return createLogEntry(
+				"cross_project",
+				cpMatch ? (cpMatch[3] ?? rm.content) : rm.content,
+				taskId,
+				undefined,
+				undefined,
+				{
+					source: "cross_project",
+					projectName: cpMatch?.[1] ?? undefined,
+					projectId: cpMatch?.[2] ?? undefined,
+				},
+			);
+		}
+		// Generic fallback — still use queue_message type
+		return createLogEntry(
+			"queue_message",
+			rm.content,
+			taskId,
+			undefined,
+			undefined,
+			{ source: rm.source },
+		);
+	}
 
 	/**
 	 * Pure entry-building function: converts an event into LogEntry items
@@ -221,45 +312,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						| undefined;
 					if (rawMessages && rawMessages.length > 0) {
 						for (const rm of rawMessages) {
-							if (rm.source === "child_complete") continue;
-							if (rm.source === "system") continue;
-							if (rm.source === "user") {
-								entries.push(createLogEntry("user_prompt", rm.content, taskId));
-								continue;
-							}
-							if (rm.source === "parent_update") {
-								entries.push(
-									createLogEntry(
-										"queue_message",
-										`← From Parent: ${rm.content}`,
-										taskId,
-									),
-								);
-							} else if (rm.source === "child_report") {
-								entries.push(
-									createLogEntry(
-										"queue_message",
-										`↑ Child Report: ${rm.content}`,
-										taskId,
-									),
-								);
-							} else if (rm.source === "background_complete") {
-								entries.push(
-									createLogEntry(
-										"queue_message",
-										`⚙ Background Complete: ${rm.content}`,
-										taskId,
-									),
-								);
-							} else {
-								entries.push(
-									createLogEntry(
-										"queue_message",
-										`[${rm.source}] ${rm.content}`,
-										taskId,
-									),
-								);
-							}
+							const entry = createQueueEntry(rm, taskId);
+							if (entry) entries.push(entry);
 						}
 					} else {
 						const raw = (msg.messages as string) || "";
@@ -547,28 +601,17 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						| undefined;
 					if (rawMessages && rawMessages.length > 0) {
 						for (const rm of rawMessages) {
-							if (rm.source === "child_complete") continue;
-							if (rm.source === "system") continue;
-							if (rm.source === "user") {
-								addLog("user_prompt", rm.content, taskId);
-								continue;
-							}
-							if (rm.source === "parent_update") {
-								addLog("queue_message", `← From Parent: ${rm.content}`, taskId);
-							} else if (rm.source === "child_report") {
+							const entry = createQueueEntry(rm, taskId);
+							if (entry) {
 								addLog(
-									"queue_message",
-									`↑ Child Report: ${rm.content}`,
-									taskId,
+									entry.type,
+									entry.text,
+									entry.taskId,
+									undefined,
+									undefined,
+									undefined,
+									entry.meta,
 								);
-							} else if (rm.source === "background_complete") {
-								addLog(
-									"queue_message",
-									`⚙ Background Complete: ${rm.content}`,
-									taskId,
-								);
-							} else {
-								addLog("queue_message", `[${rm.source}] ${rm.content}`, taskId);
 							}
 						}
 					} else {
