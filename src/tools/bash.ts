@@ -233,7 +233,12 @@ export async function executeBashWithTimeout(
 	// Fall back if tracked CWD no longer exists
 	let effectiveCwd = cwd;
 	if (!existsSync(cwd)) {
-		effectiveCwd = fallbackCwd ?? cwd;
+		if (fallbackCwd && existsSync(fallbackCwd)) {
+			effectiveCwd = fallbackCwd;
+		} else {
+			// Last resort: use process working directory
+			effectiveCwd = process.cwd();
+		}
 	}
 
 	const cdWrapper = `cd() { local t="${"$"}{1:-${"$"}HOME}"; local r; r=${"$"}(builtin cd "${"$"}t" 2>/dev/null && pwd); if [ "${"$"}(pwd)" = "${"$"}r" ]; then echo "bash: cd: ${"$"}(pwd): already in this directory" >&2; return 1; fi; builtin cd "${"$"}t"; }; `;
