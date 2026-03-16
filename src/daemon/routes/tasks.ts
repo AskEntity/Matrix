@@ -5,7 +5,10 @@ import { globalAgentQueues } from "../../message-queue.ts";
 import { persistMessage } from "../../persistent-queue.ts";
 import type { TaskStatus } from "../../types.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
-import { runChildAgentInBackground } from "../agent-lifecycle.ts";
+import {
+	ensureChildAgentRunning,
+	runChildAgentInBackground,
+} from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
 import {
 	addPendingMessage,
@@ -544,22 +547,22 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		await persistMessage(ctx.config.dataDir, project.id, nodeId, msg);
 		addPendingMessage(ctx, project.id, nodeId, body.content);
 
-		// Auto-launch agent for this task if it has a worktree
-		if (node?.worktreePath) {
-			tracker.updateStatus(nodeId, "in_progress");
-			await tracker.save();
-			broadcastTreeUpdate(ctx, project.id, tracker);
-
-			const branchReminder = node.branch
-				? `\nYou are on branch \`${node.branch}\`. Do NOT switch branches.`
-				: "";
-			runChildAgentInBackground(
+		// Auto-launch agent for this task (creates worktree if needed).
+		// Fire-and-forget — errors are broadcast as events, not thrown to the caller.
+		if (node) {
+			ensureChildAgentRunning(
 				ctx,
 				project,
 				tracker,
 				nodeId,
-				`${body.content}${branchReminder}`,
-			);
+				body.content,
+			).catch((e) => {
+				broadcastEvent(ctx, project.id, {
+					type: "error",
+					taskId: nodeId,
+					message: `Auto-launch failed: ${e instanceof Error ? e.message : String(e)}`,
+				});
+			});
 		}
 
 		// Notify parent chain that user sent a message to this task

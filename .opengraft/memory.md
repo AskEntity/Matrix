@@ -287,3 +287,9 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 
 - `targetNodeId` effect in App.tsx previously gated on `node?.status === "in_progress"` — only in-progress tasks got the "Sending to:" banner.
 - Fixed: always set `targetNodeId = selectedTaskId` for non-root tasks. Backend handles routing via persistent queue + auto-resume.
+
+## POST /tasks/:nodeId/message Auto-Launch
+
+- `ensureChildAgentRunning()` in `agent-lifecycle.ts` is the shared helper for auto-launching child agents. It creates worktree if needed, sets status to in_progress, and calls `runChildAgentInBackground`.
+- The REST POST message endpoint uses this helper (fire-and-forget with `.catch()` for error broadcast).
+- The MCP `send_message_to_child` uses a different code path (`executeChildStreaming` inline) — not unified yet.
