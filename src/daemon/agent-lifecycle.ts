@@ -558,8 +558,12 @@ export function handleClarifyResponse(
 			status: 404,
 		};
 	}
+	// Route the response to the correct agent's queue:
+	// - If taskId has a queue in globalAgentQueues, it's a child agent → route there
+	// - Otherwise, fall back to session.queue (the orchestrator)
+	const targetQueue = globalAgentQueues.get(taskId) ?? session.queue;
 	try {
-		session.queue.enqueue({ source: "clarify_response", answer });
+		targetQueue.enqueue({ source: "clarify_response", answer });
 	} catch {
 		return { ok: false, error: "Queue closed", status: 409 };
 	}

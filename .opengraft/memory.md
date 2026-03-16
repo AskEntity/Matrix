@@ -121,3 +121,7 @@ Daemon (Hono: HTTP + WS on :7433)
 - Cross-project tools only available at depth 0 (top-level orchestrator). Child agents get "not available at this depth" error.
 - `OrchestratorToolsDeps` accepts optional `projectManager`, `activeSessions`, and `currentProjectId` — only passed at depth 0 from agent-lifecycle.ts.
 - Target project must have an active agent running for message delivery.
+
+## Clarify Response Routing
+
+- `handleClarifyResponse` routes via `globalAgentQueues.get(taskId) ?? session.queue` — child clarifications go to child, orchestrator clarifications go to orchestrator.
