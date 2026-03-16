@@ -354,9 +354,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					: `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
 				const completedParentId =
 					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
-				entries.push(
-					createLogEntry("task_completed", completedText, msg.taskId as string),
-				);
+				// Only add to parent's log — the child already has the done() tool card
 				if (completedParentId)
 					entries.push(
 						createLogEntry("task_completed", completedText, completedParentId),
@@ -657,7 +655,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					: `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
 				const completedParentId =
 					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
-				addLog("task_completed", completedText, msg.taskId as string);
+				// Only add to parent's log — the child already has the done() tool card
 				if (completedParentId)
 					addLog("task_completed", completedText, completedParentId);
 				break;
