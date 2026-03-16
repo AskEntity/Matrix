@@ -434,8 +434,9 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 ## Lifecycle Integration Tests
 
 - `src/lifecycle.test.ts` — 52 tests covering message delivery, queue state, globalAgentQueues consistency, parent chain notifications, orchestrator routing, persistent queue, stop cascading, clarify routing, and delete-before-close ordering.
-- Mock providers: `createInstantProvider()` (immediate exit), `createLongRunningProvider()` (blocks on queue.wait), `createRecordingProvider()` (records all messages).
-- POST /tasks doesn't accept `status` param — use PATCH to set draft/failed/etc after creation.
-- POST /orchestrate/agent returns `{ status: "running", projectId }` for all success cases (even enqueue-while-running).
-- Audit changed task message endpoint: closed queue catch falls through to persist path (no 409) — graceful degradation.
-- Audit ordering: `globalAgentQueues.delete()` BEFORE `queue.close()` in all cleanup paths — prevents stale closed queue from being retrieved by concurrent callers.
+- Audit ordering: `globalAgentQueues.delete()` BEFORE `queue.close()` in all cleanup paths.
+
+## Queue Message Card Detail Truncation
+
+- `og-tool-card-detail` base style: `overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1`.
+- Queue card name variants get `max-width: 50%; flex-shrink: 1` so long task titles truncate.

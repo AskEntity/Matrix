@@ -1662,6 +1662,14 @@ button.og-tool-card-header:hover {
 	white-space: nowrap;
 }
 
+.og-tool-card-detail {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+	flex: 1;
+}
+
 .og-tool-card-mcp .og-tool-card-name {
 	color: rgba(137, 87, 229, 0.9);
 }
@@ -1689,6 +1697,10 @@ button.og-tool-card-header:hover {
 
 .og-tool-card-parent .og-tool-card-name {
 	color: rgba(137, 87, 229, 0.9);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 50%;
+	flex-shrink: 1;
 }
 
 .og-tool-card-parent .og-tool-card-detail {
@@ -1704,6 +1716,10 @@ button.og-tool-card-header:hover {
 
 .og-tool-card-child-report .og-tool-card-name {
 	color: rgba(56, 139, 253, 0.9);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 50%;
+	flex-shrink: 1;
 }
 
 .og-tool-card-child-report .og-tool-card-detail {
@@ -1734,6 +1750,10 @@ button.og-tool-card-header:hover {
 
 .og-tool-card-cross-project .og-tool-card-name {
 	color: rgba(227, 153, 44, 0.9);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 50%;
+	flex-shrink: 1;
 }
 
 .og-tool-card-cross-project .og-tool-card-detail {

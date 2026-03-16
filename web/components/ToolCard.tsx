@@ -713,7 +713,7 @@ function QueueMessageCard({
 				)}
 				{expanded && isLong && (
 					<div className="og-tool-card-body">
-						<div className="og-tool-card-result">{entry.text}</div>
+						<div className="og-tool-card-result">{entry.text.trim()}</div>
 					</div>
 				)}
 			</div>
