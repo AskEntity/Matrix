@@ -490,7 +490,7 @@ function TaskNodeView({
 			)}
 			<button
 				type="button"
-				className={`og-task-node${isSelected ? " selected" : ""}${node.draft ? " og-task-draft" : ""}${isDragging ? " og-task-dragging" : ""}${isReparentTarget ? " og-reparent-target" : ""}`}
+				className={`og-task-node${isSelected ? " selected" : ""}${node.draft ? " og-task-draft" : ""}${isDragging ? " og-task-dragging" : ""}${isReparentTarget ? " og-reparent-target" : ""}${node.status === "closed" ? " og-task-closed" : ""}`}
 				draggable
 				onDragStart={(e) => onDragStart(node.id, parentId, e)}
 				onDragOver={(e) => onDragOver(node.id, parentId, siblingIds, e)}

@@ -214,7 +214,8 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		if (
 			node.status !== "failed" &&
 			node.status !== "stuck" &&
-			node.status !== "passed"
+			node.status !== "passed" &&
+			node.status !== "closed"
 		) {
 			return c.json(
 				{ error: `Cannot continue task with status: ${node.status}` },
@@ -262,8 +263,11 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			return c.json(tracker.get(nodeId));
 		}
 
-		// Passed task with no worktree (closed): re-create worktree from main and launch agent
-		if (node.status === "passed" && !node.worktreePath) {
+		// Passed/closed task with no worktree: re-create worktree from main and launch agent
+		if (
+			(node.status === "passed" || node.status === "closed") &&
+			!node.worktreePath
+		) {
 			try {
 				const wtRoot = join(project.path, ".worktrees");
 				const wm = new WorktreeManager(project.path, wtRoot);

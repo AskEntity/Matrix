@@ -81,6 +81,7 @@ const en: Translations = {
 	"status.passed": "Passed",
 	"status.failed": "Failed",
 	"status.stuck": "Stuck",
+	"status.closed": "Closed",
 
 	// Task Detail
 	"detail.title": "Task Details",
@@ -359,6 +360,7 @@ const zh: Translations = {
 	"status.passed": "通过",
 	"status.failed": "失败",
 	"status.stuck": "卡住",
+	"status.closed": "已关闭",
 
 	// Task Detail
 	"detail.title": "任务详情",

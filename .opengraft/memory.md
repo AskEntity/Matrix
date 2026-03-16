@@ -219,3 +219,14 @@ Daemon (Hono: HTTP + WS on :7433)
 - `done()` tool_use/tool_result cards suppressed in ToolCard (return null after hooks to avoid hook-at-top-level lint error).
 - `task_completed` events now added to both child and parent logs via `createLogEntry` with `meta: { title, success, output }`.
 - `task_completed` card styled with `og-tool-card-done-passed/failed` CSS classes: 3px left border, green/red coloring, Passed/Failed badge, collapsible output.
+
+## Closed Task Status
+
+- `"closed"` added as 7th TaskStatus. Lifecycle: pending → in_progress → testing → passed/failed/stuck → closed.
+- `close_task` MCP tool now sets status to `"closed"` after removing worktree.
+- `send_message_to_child` treats closed like passed/failed/stuck (hasExistingSession = true, resumes).
+- `continue` endpoint allows closed tasks — re-creates worktree from main (same as passed without worktree).
+- `update_task` MCP tool z.enum includes "closed".
+- Frontend: `.og-task-closed` class adds opacity 0.5 + strikethrough title. Status dot/badge use gray color.
+- i18n: "Closed" (en) / "已关闭" (zh).
+- StatsResponse.taskCounts includes `closed: number`.

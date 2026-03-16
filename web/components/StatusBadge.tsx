@@ -9,6 +9,7 @@ export function statusDotClass(status: TaskStatus): string {
 		passed: "status-dot-passed",
 		failed: "status-dot-failed",
 		stuck: "status-dot-stuck",
+		closed: "status-dot-closed",
 	};
 	return map[status];
 }

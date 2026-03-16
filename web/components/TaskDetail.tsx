@@ -56,7 +56,10 @@ export function TaskDetail({
 	const { t } = useLocale();
 	const [continueMsg, setContinueMsg] = useState("");
 	const [showHistory, setShowHistory] = useState(false);
-	const canContinue = node.status === "failed" || node.status === "stuck";
+	const canContinue =
+		node.status === "failed" ||
+		node.status === "stuck" ||
+		node.status === "closed";
 	const isPending = node.status === "pending";
 	const isRunning = node.status === "in_progress" || node.status === "testing";
 	const [editingTitle, setEditingTitle] = useState(false);
