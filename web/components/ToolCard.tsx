@@ -602,6 +602,65 @@ export function ToolCard({
 	);
 }
 
+/** Reusable card for parent_update, child_report, cross_project messages */
+function QueueMessageCard({
+	entry,
+	icon,
+	label,
+	cardClass,
+	taskLabel,
+}: {
+	entry: LogEntry;
+	icon: string;
+	label: string;
+	cardClass: string;
+	taskLabel: string | null;
+}) {
+	const [expanded, setExpanded] = useState(false);
+	const isLong = entry.text.length > 100 || entry.text.includes("\n");
+	const headerText =
+		entry.text.length > 100
+			? `${entry.text.slice(0, 100)}…`
+			: (entry.text.split("\n")[0] ?? entry.text);
+	const header = `${icon ? `${icon} ` : ""}${label}`;
+
+	return (
+		<div className="og-log-entry og-event-tool_card">
+			<span className="og-log-time">{entry.time}</span>
+			{taskLabel && (
+				<span className="og-log-badge" title={entry.taskId}>
+					{taskLabel}
+				</span>
+			)}
+			<div className={`og-tool-card ${cardClass}`}>
+				{isLong ? (
+					<button
+						type="button"
+						className="og-tool-card-header"
+						onClick={() => setExpanded(!expanded)}
+					>
+						<span className="og-tool-card-name">{header}</span>
+						<span className="og-tool-card-detail">{headerText}</span>
+						<span className="og-tool-card-toggle">
+							<IconChevron size={10} expanded={expanded} />
+						</span>
+					</button>
+				) : (
+					<div className="og-tool-card-header">
+						<span className="og-tool-card-name">{header}</span>
+						<span className="og-tool-card-detail">{entry.text}</span>
+					</div>
+				)}
+				{expanded && isLong && (
+					<div className="og-tool-card-body">
+						<div className="og-tool-card-result">{entry.text}</div>
+					</div>
+				)}
+			</div>
+		</div>
+	);
+}
+
 export function LogEntryView({
 	entry,
 	nodeMap,
@@ -786,7 +845,77 @@ export function LogEntryView({
 		);
 	}
 
+	if (entry.type === "parent_update") {
+		return (
+			<QueueMessageCard
+				entry={entry}
+				icon="←"
+				label="Parent"
+				cardClass="og-tool-card-parent"
+				taskLabel={taskLabel}
+			/>
+		);
+	}
+
+	if (entry.type === "child_report") {
+		const childTitle = (entry.meta?.childTitle as string) ?? "";
+		const label = childTitle ? `↑ from ${childTitle}` : "↑ Child Report";
+		return (
+			<QueueMessageCard
+				entry={entry}
+				icon=""
+				label={label}
+				cardClass="og-tool-card-child-report"
+				taskLabel={taskLabel}
+			/>
+		);
+	}
+
+	if (entry.type === "background_complete") {
+		const command = (entry.meta?.command as string) ?? "";
+		const exitCode = (entry.meta?.exitCode as string) ?? "";
+		const durationMs = (entry.meta?.durationMs as string) ?? "";
+		const cmdDisplay =
+			command.length > 50 ? `${command.slice(0, 50)}…` : command;
+		const detail = [
+			exitCode !== "" ? `exit ${exitCode}` : "",
+			durationMs ? `${durationMs}ms` : "",
+		]
+			.filter(Boolean)
+			.join(" · ");
+		return (
+			<div className="og-log-entry og-event-tool_card">
+				<span className="og-log-time">{entry.time}</span>
+				<div className="og-tool-card og-tool-card-bg-complete">
+					<div className="og-tool-card-header">
+						<span className="og-tool-card-name">
+							⚙ Background Complete{cmdDisplay ? `: ${cmdDisplay}` : ""}
+						</span>
+						{detail && <span className="og-tool-card-detail">{detail}</span>}
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	if (entry.type === "cross_project") {
+		const projectName = (entry.meta?.projectName as string) ?? "";
+		const label = projectName ? `🌐 from ${projectName}` : "🌐 Cross-Project";
+		return (
+			<QueueMessageCard
+				entry={entry}
+				icon=""
+				label={label}
+				cardClass="og-tool-card-cross-project"
+				taskLabel={taskLabel}
+			/>
+		);
+	}
+
 	if (entry.type === "queue_message") {
+		const sourceLabel = entry.meta?.source
+			? `[${entry.meta.source as string}]`
+			: "";
 		const isLong = entry.text.length > 100 || entry.text.includes("\n");
 		const headerText =
 			entry.text.length > 100
@@ -808,7 +937,9 @@ export function LogEntryView({
 								className="og-tool-card-header"
 								onClick={() => setExpanded(!expanded)}
 							>
-								<span className="og-tool-card-name">{headerText}</span>
+								<span className="og-tool-card-name">
+									{sourceLabel} {headerText}
+								</span>
 								<span className="og-tool-card-toggle">
 									<IconChevron size={10} expanded={expanded} />
 								</span>
@@ -821,7 +952,9 @@ export function LogEntryView({
 						</>
 					) : (
 						<div className="og-tool-card-header">
-							<span className="og-tool-card-name">{entry.text}</span>
+							<span className="og-tool-card-name">
+								{sourceLabel} {headerText}
+							</span>
 						</div>
 					)}
 				</div>
