@@ -230,3 +230,12 @@ Daemon (Hono: HTTP + WS on :7433)
 - Frontend: `.og-task-closed` class adds opacity 0.5 + strikethrough title. Status dot/badge use gray color.
 - i18n: "Closed" (en) / "已关闭" (zh).
 - StatsResponse.taskCounts includes `closed: number`.
+
+## Persistent Message Queue (Phase 4b)
+
+- `src/persistent-queue.ts`: `persistMessage()`, `loadPersistedMessages()`, `clearPersistedMessages()` — write-through JSON at `<dataDir>/messages/<projectId>/<taskId>.json`.
+- Messages persist to disk when no active agent queue exists. On agent launch, persisted messages are loaded into the queue and file is cleared.
+- `handleInjectMessage` and `handleClarifyResponse` changed from sync to async — they now persist messages when no active session, then auto-resume orchestrator (inject) or just persist (clarify).
+- `send_message_to_child` Case 2 persists a `parent_update` message before launching child. `executeChildStreaming` loads persisted messages into new child queue.
+- `OrchestratorToolsDeps.dataDir` added — needed for persistent queue access in agent-tools.ts.
+- Tests updated: "returns 404 when no queue" → "persists message when no queue"; "returns 404 when no active session (clarify)" → "persists clarify_response when no active session".

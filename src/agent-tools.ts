@@ -12,6 +12,11 @@ import {
 	MessageQueue,
 	type QueueMessage,
 } from "./message-queue.ts";
+import {
+	clearPersistedMessages,
+	loadPersistedMessages,
+	persistMessage,
+} from "./persistent-queue.ts";
 import type { ProjectManager } from "./project-manager.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
@@ -514,6 +519,8 @@ export interface OrchestratorToolsDeps {
 	currentProjectId?: string;
 	/** Directory containing session files for this project (<dataDir>/sessions/<projectId>). */
 	sessionsDir?: string;
+	/** Data directory root (~/.opengraft). Used for persistent message queue. */
+	dataDir?: string;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -598,6 +605,25 @@ export function createOrchestratorTools(
 		globalAgentQueues.set(taskId, childQueue);
 		request.queue = childQueue;
 
+		// Load any persisted messages from disk and enqueue them
+		if (deps.dataDir && deps.currentProjectId) {
+			const persisted = await loadPersistedMessages(
+				deps.dataDir,
+				deps.currentProjectId,
+				taskId,
+			);
+			for (const msg of persisted) {
+				childQueue.enqueue(msg);
+			}
+			if (persisted.length > 0) {
+				await clearPersistedMessages(
+					deps.dataDir,
+					deps.currentProjectId,
+					taskId,
+				);
+			}
+		}
+
 		// Give children MCP tools if we haven't hit max depth
 		if (depth < maxDepth && !request.mcpToolDefs) {
 			const childCosts = new CostAccumulator();
@@ -622,6 +648,8 @@ export function createOrchestratorTools(
 					maxDepth: deps.maxDepth,
 					clarifyTimeoutMs: deps.clarifyTimeoutMs,
 					sessionsDir: deps.sessionsDir,
+					dataDir: deps.dataDir,
+					currentProjectId: deps.currentProjectId,
 				},
 				childCosts,
 			);
@@ -1208,6 +1236,15 @@ export function createOrchestratorTools(
 						// New start — build full task prompt
 						const taskPrompt = buildTaskPrompt(node, tracker, memory);
 						prompt = `${args.message}\n\n${taskPrompt}`;
+					}
+
+					// Persist message to disk so it survives if launch fails or daemon crashes
+					if (deps.dataDir && deps.currentProjectId) {
+						await persistMessage(deps.dataDir, deps.currentProjectId, node.id, {
+							source: "parent_update",
+							content: args.message,
+							...(args.requestReply ? { requestReply: true } : {}),
+						});
 					}
 
 					tracker.updateStatus(node.id, "in_progress");

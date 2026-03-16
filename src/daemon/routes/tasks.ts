@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { globalAgentQueues } from "../../message-queue.ts";
+import { persistMessage } from "../../persistent-queue.ts";
 import type { TaskStatus } from "../../types.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import { runChildAgentInBackground } from "../agent-lifecycle.ts";
@@ -478,16 +479,41 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 
 		const queue = globalAgentQueues.get(nodeId);
-		if (!queue) {
-			return c.json({ error: "No active agent for this task" }, 404);
+		if (queue) {
+			try {
+				queue.enqueue({ source: "user", content: body.content });
+			} catch {
+				return c.json({ error: "Queue closed" }, 409);
+			}
+			addPendingMessage(ctx, project.id, nodeId, body.content);
+			return c.json({ ok: true, taskId: nodeId });
 		}
 
-		try {
-			queue.enqueue({ source: "user", content: body.content });
-		} catch {
-			return c.json({ error: "Queue closed" }, 409);
-		}
+		// No active agent — persist message to disk
+		const msg = { source: "user" as const, content: body.content };
+		await persistMessage(ctx.config.dataDir, project.id, nodeId, msg);
 		addPendingMessage(ctx, project.id, nodeId, body.content);
-		return c.json({ ok: true, taskId: nodeId });
+
+		// Auto-launch agent for this task if it has a worktree
+		const tracker = await getTracker(ctx, project.id);
+		const node = tracker.get(nodeId);
+		if (node?.worktreePath) {
+			tracker.updateStatus(nodeId, "in_progress");
+			await tracker.save();
+			broadcastTreeUpdate(ctx, project.id, tracker);
+
+			const branchReminder = node.branch
+				? `\nYou are on branch \`${node.branch}\`. Do NOT switch branches.`
+				: "";
+			runChildAgentInBackground(
+				ctx,
+				project,
+				tracker,
+				nodeId,
+				`${body.content}${branchReminder}`,
+			);
+		}
+
+		return c.json({ ok: true, taskId: nodeId, persisted: true });
 	});
 }

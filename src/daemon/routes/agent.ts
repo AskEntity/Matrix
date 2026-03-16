@@ -189,11 +189,12 @@ export function registerAgentRoutes(
 			return c.json({ error: "message is required" }, 400);
 		}
 
-		const result = handleInjectMessage(
+		const result = await handleInjectMessage(
 			ctx,
 			project.id,
 			body.message,
 			body.images,
+			orchestratorSystemPrompt,
 		);
 		if (!result.ok) {
 			return c.json({ error: result.error }, result.status as 404);
@@ -213,7 +214,7 @@ export function registerAgentRoutes(
 			return c.json({ error: "taskId and answer are required" }, 400);
 		}
 
-		const result = handleClarifyResponse(
+		const result = await handleClarifyResponse(
 			ctx,
 			projectId,
 			body.taskId,

@@ -131,15 +131,21 @@ export function registerWebSocketRoute(
 							msg.answer
 						) {
 							// Errors silently ignored for WS clarify (matches previous behavior)
-							handleClarifyResponse(ctx, msg.projectId, msg.taskId, msg.answer);
+							await handleClarifyResponse(
+								ctx,
+								msg.projectId,
+								msg.taskId,
+								msg.answer,
+							);
 						}
 
 						if (msg.type === "inject_message" && msg.projectId && msg.prompt) {
-							const result = handleInjectMessage(
+							const result = await handleInjectMessage(
 								ctx,
 								msg.projectId,
 								msg.prompt,
 								msg.images,
+								orchestratorSystemPrompt,
 							);
 							if (result.ok) {
 								broadcastEvent(ctx, msg.projectId, {
