@@ -195,3 +195,7 @@ Daemon (Hono: HTTP + WS on :7433)
 - `OrchestratorToolsDeps.doneRef` field removed from agent-tools.
 - `agent-lifecycle.ts` checks task status from tracker (set by done() tool) instead of doneRef. If agent exits without calling done(), status stays as-is or defaults to "passed".
 - Tests updated: done tool tests verify tracker status updates instead of doneRef mutation. OpenAI runLoop test stops session to exit yield mode.
+
+## Queue Cleanup in Task Resource Operations
+
+- `close_task`, `delete_task`, and `reset_task` now close the running agent queue (from both `childQueues` and `globalAgentQueues`) before removing worktree/session resources. This prevents orphaned agents from running without a worktree.
