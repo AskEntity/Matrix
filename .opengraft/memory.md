@@ -230,3 +230,8 @@ Daemon (Hono: HTTP + WS on :7433)
 - Frontend: `.og-task-closed` class adds opacity 0.5 + strikethrough title. Status dot/badge use gray color.
 - i18n: "Closed" (en) / "已关闭" (zh).
 - StatsResponse.taskCounts includes `closed: number`.
+
+## ToolCard MCP Tool Coverage
+
+All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard`, `formatMcpToolResult`, and i18n keys (en + zh).
+Simple tools (close_task, reset_task, reorder_tasks, list_projects) are title-only cards. send_message_to_project is title-only for short messages.
