@@ -246,6 +246,11 @@ const en: Translations = {
 	// MCP tool result labels
 	"log.createdTask": "Created task:",
 	"log.deletedTask": "Deleted task:",
+	"log.closedTask": "Closed task:",
+	"log.resetTask": "Reset task:",
+	"log.reorderedTasks": "Reordered tasks",
+	"log.listedProjects": "Listed projects",
+	"log.messageSentToProject": "Message sent to project",
 	"log.executingTasks": "Executing",
 	"log.taskDone": "Done:",
 	"log.treeCount": "{count} tasks",
@@ -522,6 +527,11 @@ const zh: Translations = {
 	// MCP tool result labels
 	"log.createdTask": "创建了任务：",
 	"log.deletedTask": "删除了任务：",
+	"log.closedTask": "关闭了任务：",
+	"log.resetTask": "重置了任务：",
+	"log.reorderedTasks": "重新排列了任务",
+	"log.listedProjects": "列出了项目",
+	"log.messageSentToProject": "消息已发送到项目",
 	"log.executingTasks": "正在执行",
 	"log.taskDone": "完成：",
 	"log.treeCount": "{count} 个任务",
