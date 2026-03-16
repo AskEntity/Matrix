@@ -376,3 +376,9 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - Yield tool_use (pending) renders a calm gray card (`og-tool-card-yield-waiting`) with "⏸ Waiting..." text — no spinner, no pulse animation. Other tools keep the loading treatment.
 - `.og-spinner` needs `display: inline-block` since it's a `<span>` — without it, width/height are ignored on inline elements, causing vertical stretching.
 - `.og-tool-card-status.pending` needs `display: inline-flex; align-items: center` to properly center the spinner.
+
+## lastSubmittedImagesRef Removal
+
+- `lastSubmittedImagesRef` was a frontend hack in App.tsx to attach images to user_prompt log entries before the backend queue carried images.
+- Now removed: images flow through toRawMessage → rawMessages → createQueueEntry → entry.images.
+- The `orchestration_started` event does NOT include images (only `prompt` string). Initial prompt images arrive via the queue_message event path.
