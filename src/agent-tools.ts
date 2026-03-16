@@ -644,7 +644,11 @@ export function createOrchestratorTools(
 				queue: childQueue,
 				sessionRequest: request,
 				onEvent: (eventType, eventData) => {
-					emit({ type: "agent_event", taskId, eventType, ...eventData });
+					if (eventType === "agent_idle" || eventType === "agent_active") {
+						emit({ type: eventType, taskId });
+					} else {
+						emit({ type: "agent_event", taskId, eventType, ...eventData });
+					}
 				},
 				childQueues,
 				persistedMessages:
@@ -661,7 +665,11 @@ export function createOrchestratorTools(
 			taskId,
 			sessionRequest: request,
 			onEvent: (eventType, eventData) => {
-				emit({ type: "agent_event", taskId, eventType, ...eventData });
+				if (eventType === "agent_idle" || eventType === "agent_active") {
+					emit({ type: eventType, taskId });
+				} else {
+					emit({ type: "agent_event", taskId, eventType, ...eventData });
+				}
 			},
 			childQueues,
 			persistedMessages:
@@ -927,6 +935,15 @@ export function createOrchestratorTools(
 					// the only messages, we silently wait again instead of returning
 					// a spurious "Resume from yield" to the UI.
 					while (true) {
+						// Emit agent_idle before waiting
+						if (currentTaskId) {
+							deps.queue.idle = true;
+							emit({
+								type: "agent_idle",
+								taskId: currentTaskId,
+							});
+						}
+
 						// Use timeout when there are pending clarifications and clarifyTimeoutMs is set
 						const timeoutMs =
 							pendingClarifications > 0 ? deps.clarifyTimeoutMs : undefined;
@@ -990,6 +1007,15 @@ export function createOrchestratorTools(
 						// If we have real messages, break out and return them
 						if (all.length > 0) break;
 						// Otherwise only compact signals arrived — loop and wait again
+					}
+
+					// Emit agent_active after resuming from wait
+					if (currentTaskId) {
+						deps.queue.idle = false;
+						emit({
+							type: "agent_active",
+							taskId: currentTaskId,
+						});
 					}
 
 					// Format messages for the agent

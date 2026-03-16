@@ -62,6 +62,9 @@ export class MessageQueue {
 	} | null = null;
 	private closed = false;
 
+	/** Whether this agent is currently idle (waiting for messages). */
+	idle = false;
+
 	/** Add a message to the queue. If someone is waiting via wait(), resolve them immediately. */
 	enqueue(msg: QueueMessage): void {
 		if (this.closed) {

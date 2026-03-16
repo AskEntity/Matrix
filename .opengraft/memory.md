@@ -336,3 +336,12 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - Non-waking messages do NOT need persistence — they are informational, agent gets fresh tree state on restart
 - Persistence handled by `persistent-queue.ts` for important waking messages only (user messages, clarify_response)
 
+## Agent Idle/Active Events
+
+- `agent_idle` and `agent_active` are top-level broadcast events (not nested under `agent_event`). Format: `{ type: "agent_idle"|"agent_active", taskId: "..." }`.
+- Emitted from 3 places: yield tool (agent-tools.ts), Anthropic provider implicit yield, OpenAI provider implicit yield.
+- `MessageQueue.idle` flag tracks current state for REST endpoint queries.
+- Provider yields bare `{ type: "agent_idle" }` (no taskId) — consumers add taskId via `onEvent` callbacks.
+- `broadcastEvent` skips persisting these events (transient like text_delta).
+- `GET /projects/:id/agent/status` returns `{ idle: string[], active: string[] }` for initial state on page load. Checks both `globalAgentQueues` and `activeSessions` for root.
+
