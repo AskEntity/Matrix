@@ -698,6 +698,49 @@ describe("daemon tasks API", () => {
 		expect(body.nodes).toHaveLength(0);
 	});
 
+	test("DELETE /tasks/:nodeId closes running agent queues", async () => {
+		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Parent", description: "" }),
+		});
+		const root = (await rootRes.json()) as TaskNode;
+
+		const childRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Running child",
+				description: "",
+				parentId: root.id,
+			}),
+		});
+		const child = (await childRes.json()) as TaskNode;
+
+		// Register a queue for the child (simulating a running agent)
+		const childQueue = new MessageQueue();
+		globalAgentQueues.set(child.id, childQueue);
+
+		// Delete the parent — should cascade and close child queue
+		const delRes = await app.request(
+			`/projects/${projectId}/tasks/${root.id}`,
+			{ method: "DELETE" },
+		);
+		expect(delRes.status).toBe(200);
+
+		// Queue should be closed
+		let closedAfterDelete = false;
+		try {
+			childQueue.enqueue({ source: "compact" });
+		} catch {
+			closedAfterDelete = true;
+		}
+		expect(closedAfterDelete).toBe(true);
+
+		// Queue should be removed from global registry
+		expect(globalAgentQueues.has(child.id)).toBe(false);
+	});
+
 	test("POST /tasks/:nodeId/continue resets failed task to pending", async () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
@@ -1203,7 +1246,7 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		expect(res.status).toBe(404);
 	});
 
-	test("returns 409 when queue is closed", async () => {
+	test("falls through to persist when queue is closed (no 409)", async () => {
 		const { app, pm } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
@@ -1222,7 +1265,15 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 				body: JSON.stringify({ content: "ping" }),
 			},
 		);
-		expect(res.status).toBe(409);
+		// Closed queue falls through to persist path — message is always delivered
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			ok: boolean;
+			taskId: string;
+			persisted: boolean;
+		};
+		expect(body.ok).toBe(true);
+		expect(body.persisted).toBe(true);
 
 		globalAgentQueues.delete(taskId);
 	});

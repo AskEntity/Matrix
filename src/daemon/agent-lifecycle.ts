@@ -290,6 +290,7 @@ export async function stopAgent(
 			if (node.status === "in_progress" && node.id !== rootNodeId) {
 				const childQueue = globalAgentQueues.get(node.id);
 				if (childQueue) {
+					globalAgentQueues.delete(node.id);
 					childQueue.close();
 				}
 				tracker.updateStatus(node.id, "failed");
@@ -345,8 +346,12 @@ export async function ensureChildAgentRunning(
 	// Guard: if agent is already running, just enqueue the message
 	const existingQueue = globalAgentQueues.get(nodeId);
 	if (existingQueue) {
-		existingQueue.enqueue({ source: "user", content: prompt });
-		return;
+		try {
+			existingQueue.enqueue({ source: "user", content: prompt });
+			return;
+		} catch {
+			// Queue was closed between get() and enqueue() — fall through to launch a new agent
+		}
 	}
 
 	// Create worktree if the task doesn't have one yet
@@ -364,7 +369,31 @@ export async function ensureChildAgentRunning(
 
 	tracker.updateStatus(nodeId, "in_progress");
 	await tracker.save();
+
+	broadcastEvent(ctx, project.id, {
+		type: "task_started",
+		taskId: nodeId,
+		title: node.title,
+	});
 	broadcastTreeUpdate(ctx, project.id, tracker);
+
+	// Notify parent agent (waking) that a child has been launched.
+	// This is a user-initiated action, so the parent needs to know.
+	if (node.parentId) {
+		const parentQueue = globalAgentQueues.get(node.parentId);
+		if (parentQueue) {
+			try {
+				parentQueue.enqueue({
+					source: "child_report",
+					taskId: nodeId,
+					title: node.title,
+					content: `Child task "${node.title}" (${nodeId}) was started by the user.`,
+				});
+			} catch {
+				/* queue may be closed */
+			}
+		}
+	}
 
 	await runChildAgentInBackground(ctx, project, tracker, nodeId, prompt, model);
 }

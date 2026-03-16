@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { globalAgentQueues } from "../../message-queue.ts";
@@ -279,6 +279,25 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			tracker.setMessage(nodeId, body.message);
 		}
 
+		/** Notify parent agent (waking) that a child was continued by the user. */
+		const notifyParentOfContinue = () => {
+			if (node.parentId) {
+				const parentQueue = globalAgentQueues.get(node.parentId);
+				if (parentQueue) {
+					try {
+						parentQueue.enqueue({
+							source: "child_report",
+							taskId: nodeId,
+							title: node.title,
+							content: `User continued child task "${node.title}" (${nodeId}).`,
+						});
+					} catch {
+						/* queue may be closed */
+					}
+				}
+			}
+		};
+
 		// If the task has a worktree, re-run the agent immediately
 		if (node.worktreePath) {
 			tracker.updateStatus(nodeId, "in_progress");
@@ -290,6 +309,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				title: node.title,
 			});
 			broadcastTreeUpdate(ctx, project.id, tracker);
+			notifyParentOfContinue();
 
 			// sessionId = nodeId: the provider loads session history from <nodeId>.json.
 			// If history exists, the agent has full context. If not, include task details.
@@ -337,6 +357,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 					title: node.title,
 				});
 				broadcastTreeUpdate(ctx, project.id, tracker);
+				notifyParentOfContinue();
 
 				const memory = readProjectMemory(project.path);
 				const branchReminder = `\n\nYou are on branch \`${wt.branch}\`. Do NOT switch branches.`;
@@ -381,9 +402,20 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			return c.json({ error: "Task not found" }, 404);
 		}
 
-		// Clean up worktrees for this node and all descendants
+		// Clean up all resources for this node and all descendants
 		const nodesToRemove = collectDescendants(tracker, nodeId);
+		const sessionsDir = join(ctx.config.dataDir, "sessions", project.id);
+
 		for (const n of nodesToRemove) {
+			// Close running agent queue (must happen before close() to match
+			// the "globalAgentQueues only contains live queues" invariant)
+			const activeQueue = globalAgentQueues.get(n.id);
+			if (activeQueue) {
+				globalAgentQueues.delete(n.id);
+				activeQueue.close();
+			}
+
+			// Remove worktree + branch
 			if (n.worktreePath) {
 				try {
 					const proc = Bun.spawn(
@@ -407,6 +439,9 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 					}
 				}
 			}
+
+			// Delete session file
+			await unlink(join(sessionsDir, `${n.id}.json`)).catch(() => {});
 		}
 
 		// Clear persisted messages for all removed tasks
@@ -542,13 +577,13 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		if (queue) {
 			try {
 				queue.enqueue({ source: "user", content: body.content });
+				addPendingMessage(ctx, project.id, nodeId, body.content);
+				// Notify parent chain that user sent a message to this task
+				await notifyParentChain(ctx, project.id, nodeId, taskTitle);
+				return c.json({ ok: true, taskId: nodeId });
 			} catch {
-				return c.json({ error: "Queue closed" }, 409);
+				// Queue was closed between get() and enqueue() — fall through to persist path
 			}
-			addPendingMessage(ctx, project.id, nodeId, body.content);
-			// Notify parent chain that user sent a message to this task
-			await notifyParentChain(ctx, project.id, nodeId, taskTitle);
-			return c.json({ ok: true, taskId: nodeId });
 		}
 
 		// No active agent — persist message to disk

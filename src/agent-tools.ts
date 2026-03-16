@@ -1192,17 +1192,8 @@ export function createOrchestratorTools(
 								},
 							],
 						};
-					} catch (e) {
-						const message = e instanceof Error ? e.message : "Unknown error";
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `Error sending message: ${message}`,
-								},
-							],
-							isError: true,
-						};
+					} catch {
+						// Queue was closed between get() and enqueue() — fall through to launch
 					}
 				}
 
@@ -1438,10 +1429,11 @@ export function createOrchestratorTools(
 
 				try {
 					// Close running agent if active
+					// Delete from registry first so callers see "no queue" not "closed queue"
 					const activeQueueClose = globalAgentQueues.get(args.taskId);
 					if (activeQueueClose) {
-						activeQueueClose.close();
 						globalAgentQueues.delete(args.taskId);
+						activeQueueClose.close();
 					}
 
 					// Clean up worktree + branch if they exist
@@ -1511,10 +1503,11 @@ export function createOrchestratorTools(
 
 				try {
 					// Close running agent if active
+					// Delete from registry first so callers see "no queue" not "closed queue"
 					const activeQueueDelete = globalAgentQueues.get(args.taskId);
 					if (activeQueueDelete) {
-						activeQueueDelete.close();
 						globalAgentQueues.delete(args.taskId);
+						activeQueueDelete.close();
 					}
 
 					// Clean up worktree + branch if they exist
@@ -1604,10 +1597,11 @@ export function createOrchestratorTools(
 
 				try {
 					// Close running agent if active
+					// Delete from registry first so callers see "no queue" not "closed queue"
 					const activeQueueReset = globalAgentQueues.get(args.taskId);
 					if (activeQueueReset) {
-						activeQueueReset.close();
 						globalAgentQueues.delete(args.taskId);
+						activeQueueReset.close();
 					}
 
 					// Clean up worktree + branch if they exist
