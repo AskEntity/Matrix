@@ -933,7 +933,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					const all = [first, ...rest];
 					if (all.some((m) => m.source === "compact")) {
 						manualCompactRequested = true;
-						yield { type: "compact_started" };
 					}
 					const nonCompact = all.filter((m) => m.source !== "compact");
 					if (nonCompact.length === 0) {
@@ -1095,7 +1094,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				const queueMsgs = queue.drain();
 				if (queueMsgs.some((m) => m.source === "compact")) {
 					manualCompactRequested = true;
-					yield { type: "compact_started" };
 				}
 				const nonCompactMsgs = queueMsgs.filter((m) => m.source !== "compact");
 				if (nonCompactMsgs.length > 0) {
