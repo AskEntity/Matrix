@@ -409,12 +409,19 @@ export async function runChildAgentInBackground(
 				hasRunningChildren: agentCtx.hasRunningChildren,
 			},
 			onEvent: (eventType, eventData) => {
-				broadcastEvent(ctx, project.id, {
-					type: "agent_event",
-					taskId: nodeId,
-					eventType,
-					...eventData,
-				});
+				if (eventType === "agent_idle" || eventType === "agent_active") {
+					broadcastEvent(ctx, project.id, {
+						type: eventType,
+						taskId: nodeId,
+					});
+				} else {
+					broadcastEvent(ctx, project.id, {
+						type: "agent_event",
+						taskId: nodeId,
+						eventType,
+						...eventData,
+					});
+				}
 			},
 			persistedMessages: {
 				dataDir: ctx.config.dataDir,
@@ -565,12 +572,19 @@ export async function launchAgent(
 			const finalResult = await consumeAgentEvents(
 				session.events,
 				(eventType, eventData) => {
-					broadcastEvent(ctx, project.id, {
-						type: "agent_event",
-						taskId: rootNodeId,
-						eventType,
-						...eventData,
-					});
+					if (eventType === "agent_idle" || eventType === "agent_active") {
+						broadcastEvent(ctx, project.id, {
+							type: eventType,
+							taskId: rootNodeId,
+						});
+					} else {
+						broadcastEvent(ctx, project.id, {
+							type: "agent_event",
+							taskId: rootNodeId,
+							eventType,
+							...eventData,
+						});
+					}
 				},
 			);
 

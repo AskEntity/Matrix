@@ -319,3 +319,14 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 
 - `MessageQueue.enqueueQuiet(msg)` pushes to the messages array without resolving a pending waiter. The message is picked up on the next `drain()` or `wait()` call that finds pending messages.
 - Used by `notifyAgentOfTreeChange()` in `src/daemon/routes/tasks.ts` so tree mutations (create/update/reorder/delete) do NOT wake agents from yield. Messages accumulate quietly and are delivered alongside the next waking event.
+
+
+## Agent Idle/Active Events
+
+- `agent_idle` and `agent_active` are top-level broadcast events (not nested under `agent_event`). Format: `{ type: "agent_idle"|"agent_active", taskId: "..." }`.
+- Emitted from 3 places: yield tool (agent-tools.ts), Anthropic provider implicit yield, OpenAI provider implicit yield.
+- `MessageQueue.idle` flag tracks current state for REST endpoint queries.
+- Provider yields bare `{ type: "agent_idle" }` (no taskId) — consumers add taskId via `onEvent` callbacks.
+- `broadcastEvent` skips persisting these events (transient like text_delta).
+- `GET /projects/:id/agent/status` returns `{ idle: string[], active: string[] }` for initial state on page load. Checks both `globalAgentQueues` and `activeSessions` for root.
+
