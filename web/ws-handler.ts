@@ -622,21 +622,11 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					break;
 				} else if (et === "compact_started") {
 					setPendingCompact(false);
-					setLogs((prev) => {
-						for (let i = prev.length - 1; i >= 0; i--) {
-							const e = prev[i];
-							if (e && e.type === "compact" && e.checkpoint === undefined) {
-								return prev;
-							}
-						}
-						const entry = createLogEntry(
-							"compact",
-							"Compressing context...",
-							msg.taskId as string | undefined,
-						);
-						// Leave checkpoint as undefined — distinguishes pending from completed
-						return [...prev, entry];
-					});
+					addLog(
+						"compact",
+						"Compressing context...",
+						msg.taskId as string | undefined,
+					);
 					break;
 				} else if (et === "compact") {
 					const compactText = `Context compacted (saved ~${msg.savedTokens} tokens)`;
