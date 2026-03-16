@@ -393,11 +393,17 @@ export async function launchAgent(
 			// done() tool now updates status directly in the tracker.
 			// If agent exited without calling done(), check current status.
 			const rootAfterRun = tracker.get(rootNodeId);
-			const didPass = rootAfterRun?.status === "passed" || finalResult.success;
-			if (!rootAfterRun || rootAfterRun.status === "in_progress") {
-				// Agent exited without calling done() — treat as success
+			const wasStopped = ctx.activeSessions.get(project.id) !== session;
+			if (
+				!wasStopped &&
+				(!rootAfterRun || rootAfterRun.status === "in_progress")
+			) {
+				// Agent exited on its own without calling done() — treat as success
 				tracker.updateStatus(rootNodeId, "passed");
 			}
+			// If stopped externally (user Stop), leave status as-is (in_progress = will auto-resume)
+			const currentRoot = tracker.get(rootNodeId);
+			const didPass = currentRoot?.status === "passed" || finalResult.success;
 
 			const totalCostUsd =
 				(finalResult.costUsd ?? 0) + agentCtx.costAccumulator.totalCostUsd;

@@ -204,3 +204,5 @@ Daemon (Hono: HTTP + WS on :7433)
 - Stop semantics: queue closed → agent loop exits → completion handler sets status to "passed" → no auto-resume on restart.
 - Daemon crash: status stays "in_progress" → auto-resume on restart.
 - Old tree.json files with `autoResume` field are backward-compatible (field is simply ignored on load).
+- Stop semantics updated: Stop = pause (root stays in_progress → will auto-resume on restart). Only done() changes status to passed/failed.
+- Detection: completion handler checks `ctx.activeSessions.get(project.id) !== session` to know if agent was stopped externally vs exited on its own.
