@@ -364,9 +364,15 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - `createQueueEntry()` in ws-handler.ts passes images as 5th param to `createLogEntry` (the `images` param, after `structured`).
 - Both `collectEntries` (event_history replay) and `handleWS` (live events) rawMessages type casts need the images field.
 - `addLog` in handleWS queue_message handler must pass `entry.images` (6th parameter) to preserve images through to the log entry.
+- Frontend also checks `lastSubmittedImagesRef.current` in queue_message handler for user_prompt entries.
 
 ## Session Cost Removal
 
 - `lastCostUsd`/`setLastCostUsd` fully removed from App.tsx, ws-handler.ts, handlers.ts. `costUsd` prop removed from OrchestratorDetail.
 - `orch.session` i18n key removed (en + zh). Only `orch.totalCost` (sum of all node.costUsd) remains.
-- `orchestration_completed` WS event still carries token stats (turns, input/output/cache tokens) but session cost is no longer displayed.
+
+## Yield Pending Card Fix
+
+- Yield tool_use (pending) renders a calm gray card (`og-tool-card-yield-waiting`) with "⏸ Waiting..." text — no spinner, no pulse animation. Other tools keep the loading treatment.
+- `.og-spinner` needs `display: inline-block` since it's a `<span>` — without it, width/height are ignored on inline elements, causing vertical stretching.
+- `.og-tool-card-status.pending` needs `display: inline-flex; align-items: center` to properly center the spinner.

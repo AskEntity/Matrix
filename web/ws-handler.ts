@@ -676,13 +676,22 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						for (const rm of rawMessages) {
 							const entry = createQueueEntry(rm, taskId);
 							if (entry) {
+								// Attach pending images to user_prompt entries
+								let imgs: { base64: string; mediaType: string }[] | undefined;
+								if (
+									entry.type === "user_prompt" &&
+									lastSubmittedImagesRef.current
+								) {
+									imgs = lastSubmittedImagesRef.current;
+									lastSubmittedImagesRef.current = undefined;
+								}
 								addLog(
 									entry.type,
 									entry.text,
 									entry.taskId,
 									undefined,
 									undefined,
-									entry.images,
+									entry.images ?? imgs,
 									entry.meta,
 								);
 							}

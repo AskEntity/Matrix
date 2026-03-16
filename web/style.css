@@ -1750,6 +1750,18 @@ button.og-tool-card-header:hover {
 	animation: og-pulse 1.5s ease-in-out infinite;
 }
 
+/* Yield waiting card — calm idle state, no busy animation */
+.og-tool-card-yield-waiting {
+	border-color: rgba(139, 148, 158, 0.2);
+	background: rgba(139, 148, 158, 0.03);
+	border-left-color: var(--text-faint);
+}
+
+.og-tool-card-yield-waiting .og-tool-card-name {
+	color: var(--text-faint);
+	font-weight: 500;
+}
+
 @keyframes og-pulse {
 	0%,
 	100% {
@@ -1775,6 +1787,8 @@ button.og-tool-card-header:hover {
 }
 
 .og-tool-card-status.pending {
+	display: inline-flex;
+	align-items: center;
 	color: var(--text-faint);
 }
 
@@ -2362,6 +2376,7 @@ button.og-tool-card-header:hover {
 }
 
 .og-spinner {
+	display: inline-block;
 	width: 10px;
 	height: 10px;
 	border: 2px solid rgba(56, 139, 253, 0.3);
