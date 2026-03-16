@@ -273,3 +273,11 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 
 - `draft` is a TaskStatus value, not a boolean. Draft tasks have `status: "draft"`.
 - Migration: `load()` converts old `draft: true` boolean to `status: "draft"`.
+
+## User Message Double-Display Fix
+
+- **Root cause**: When `handleInjectMessage` auto-resumed an idle agent, the user message appeared twice: (1) from `orchestration_started` event (which included the message as `prompt`), and (2) from `queue_message` event (when the agent picked up the persisted message from the queue).
+- **Fix**: Two changes in `agent-lifecycle.ts`:
+  1. `launchAgent()`: `orchestration_started` event now omits `prompt` when `opts.resume` is true, since the message is already in the queue.
+  2. `handleInjectMessage()`: auto-resume uses a generic resume prompt instead of the user message, since the real message is persisted and delivered via queue.
+- **Side benefit**: The restart endpoint and auto-resume also benefit — synthetic prompts like "Orchestrator restarted..." no longer show as user prompts in the UI.
