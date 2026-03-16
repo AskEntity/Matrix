@@ -207,3 +207,9 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Queue Cleanup in Task Resource Operations
 
 - `close_task`, `delete_task`, and `reset_task` now close the running agent queue (from both `childQueues` and `globalAgentQueues`) before removing worktree/session resources. This prevents orphaned agents from running without a worktree.
+
+## executeChildStreaming done() Detection
+
+- After Phase 3, provider.stream() is infinite (runLoop yields on end_turn instead of exiting). executeChildStreaming must detect when the child calls done() and close the childQueue to exit the stream.
+- Detection: check for `tool_result` events where `tool === "done"`, then verify tracker status is passed/failed. Close childQueue and drain remaining events until generator returns.
+- Post-completion status logic: done() already sets tracker status. The caller now checks tracker before falling back to result.success, preventing status overwrites.
