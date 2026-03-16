@@ -200,17 +200,18 @@ export function useAgent(projectId: string) {
 			return;
 		}
 		try {
+			// Fetch per-agent idle/active status
+			const statusRes = await fetch(`/projects/${projectId}/agent/status`);
+			if (statusRes.ok) {
+				const statusData = (await statusRes.json()) as {
+					idle: string[];
+					active: string[];
+				};
+				setActiveAgents(new Set(statusData.active));
+			}
+			// Fetch provider/model from legacy endpoint
 			const res = await fetch(`/projects/${projectId}/agent`);
 			const data = await res.json();
-			// If backend returns activeAgents list, use it; otherwise fall back to running boolean
-			if (data.activeAgents && Array.isArray(data.activeAgents)) {
-				setActiveAgents(new Set(data.activeAgents as string[]));
-			} else if (data.running && data.rootNodeId) {
-				// Fallback: if running but no per-agent data, assume root is active
-				setActiveAgents(new Set([data.rootNodeId as string]));
-			} else if (!data.running) {
-				setActiveAgents(new Set());
-			}
 			if (data.provider) setProvider(data.provider);
 			if (data.model) setModel(data.model);
 		} catch {

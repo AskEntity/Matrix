@@ -924,7 +924,11 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				};
 
 				try {
+					queue.idle = true;
+					yield { type: "agent_idle" };
 					const first = await queue.wait();
+					queue.idle = false;
+					yield { type: "agent_active" };
 					const rest = queue.drain();
 					const all = [first, ...rest];
 					if (all.some((m) => m.source === "compact")) {
@@ -963,6 +967,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					}
 					continue;
 				} catch {
+					queue.idle = false;
 					// Queue closed — normal exit path (stop was called)
 					break;
 				}

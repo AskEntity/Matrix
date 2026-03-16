@@ -230,7 +230,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		try {
 			await sendMessageToTask(
 				selectedTaskId,
-				"⏸ PAUSED by user. Please call yield() and wait for further instructions before continuing.",
+				"PAUSED by user. Please call yield() and wait for further instructions before continuing.",
 			);
 		} catch (err) {
 			addLog("error", (err as Error).message);

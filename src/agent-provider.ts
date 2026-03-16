@@ -69,7 +69,9 @@ export type AgentEvent =
 			compressThreshold: number;
 			contextWindow: number;
 			estimated?: boolean;
-	  };
+	  }
+	| { type: "agent_idle" }
+	| { type: "agent_active" };
 
 /** Handle to a running agent session that supports message injection. */
 export interface AgentSession {

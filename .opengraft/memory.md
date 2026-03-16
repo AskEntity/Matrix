@@ -321,12 +321,37 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - Used by `notifyAgentOfTreeChange()` in `src/daemon/routes/tasks.ts` so tree mutations (create/update/reorder/delete) do NOT wake agents from yield. Messages accumulate quietly and are delivered alongside the next waking event.
 
 
+## Queue Message System Audit & Unification
+
+### Message Format Standards
+- All queue messages use XML tags via `formatQueueMessage()` — consistent pattern
+- `requestReply` on parent_update/child_report: XML attribute `requestReply="true"` on tag (not `[Reply requested]` text inside body)
+- Clarify timeout: `<clarify_timeout duration="Xms">` XML tag in synthesized answer (not `[TIMEOUT]` prefix)
+- Tree mutation notifications: structured content with action detail (not `[TREE UPDATED]` prefix) — these get wrapped in `<system_notification>` by formatQueueMessage
+- Pause message: plain text via sendMessageToTask (user source, no emoji prefix)
+
+### Queue Architecture
+- Waking messages (via `enqueue`): user, child_complete, parent_update, clarify_response, child_report, cross_project, background_complete, compact
+- Non-waking messages (via `enqueueQuiet`): system/tree_mutation only
+- `drainMerged()` deduplicates consecutive system messages into "Tree updated N times" summary
+- Non-waking messages do NOT need persistence — they are informational, agent gets fresh tree state on restart
+- Persistence handled by `persistent-queue.ts` for important waking messages only (user messages, clarify_response)
+
+## Agent Idle/Active Events
+
+- `agent_idle` and `agent_active` are top-level broadcast events (not nested under `agent_event`). Format: `{ type: "agent_idle"|"agent_active", taskId: "..." }`.
+- Emitted from 3 places: yield tool (agent-tools.ts), Anthropic provider implicit yield, OpenAI provider implicit yield.
+- `MessageQueue.idle` flag tracks current state for REST endpoint queries.
+- Provider yields bare `{ type: "agent_idle" }` (no taskId) — consumers add taskId via `onEvent` callbacks.
+- `broadcastEvent` skips persisting these events (transient like text_delta).
+- `GET /projects/:id/agent/status` returns `{ idle: string[], active: string[] }` for initial state on page load. Checks both `globalAgentQueues` and `activeSessions` for root.
+
 ## Per-Agent Active/Idle State (Frontend)
 
 - Global `running: boolean` replaced with `activeAgents: Set<string>` in `useAgent` hook. `running` is now derived: `activeAgents.size > 0`.
 - `setRunning` removed from WSHandlerDeps — replaced with `setActiveAgents: React.Dispatch<React.SetStateAction<Set<string>>>`.
 - WS events handled: `agent_active` (add to set), `agent_idle` (remove from set), `orchestration_started` (add root), `orchestration_completed`/`agent_stopped` (remove + checkAgentStatus fallback).
-- `checkStatus` in useAgent populates `activeAgents` from backend: prefers `data.activeAgents` array, falls back to `data.rootNodeId` if `data.running`, or empty set.
+- `checkStatus` in useAgent fetches `GET /projects/:id/agent/status` for `{ idle, active }` arrays, falls back to legacy `GET /projects/:id/agent` running boolean.
 - Components receive `activeAgents` (TaskTree) or `isActive` (ActivityLog, TaskDetail, OrchestratorDetail) instead of global `running`.
 - TaskTree spinner: `activeAgents?.has(node.id)` instead of `node.status === "in_progress"`. Handles root and child uniformly.
 - ActivityLog thinking indicator: per-agent — only shows when the viewed agent is active.

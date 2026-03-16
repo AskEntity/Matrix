@@ -333,4 +333,71 @@ describe("MessageQueue", () => {
 		q.enqueueQuiet({ source: "system", content: "b" });
 		expect(q.pending).toBe(2);
 	});
+
+	test("drainMerged returns empty array on empty queue", () => {
+		const q = new MessageQueue();
+		expect(q.drainMerged()).toEqual([]);
+	});
+
+	test("drainMerged passes through single message unchanged", () => {
+		const q = new MessageQueue();
+		q.enqueue({ source: "system", content: "tree updated" });
+		const msgs = q.drainMerged();
+		expect(msgs).toHaveLength(1);
+		expect(msgs[0]).toEqual({ source: "system", content: "tree updated" });
+	});
+
+	test("drainMerged merges consecutive system messages", () => {
+		const q = new MessageQueue();
+		q.enqueueQuiet({ source: "system", content: "tree updated: task A" });
+		q.enqueueQuiet({ source: "system", content: "tree updated: task B" });
+		q.enqueueQuiet({ source: "system", content: "tree updated: task C" });
+
+		const msgs = q.drainMerged();
+		expect(msgs).toHaveLength(1);
+		expect(msgs[0]?.source).toBe("system");
+		expect(
+			(msgs[0] as { source: "system"; content: string }).content,
+		).toContain("3 times");
+	});
+
+	test("drainMerged preserves non-system messages in order", () => {
+		const q = new MessageQueue();
+		q.enqueue({ source: "user", content: "hello" });
+		q.enqueue({ source: "user", content: "world" });
+
+		const msgs = q.drainMerged();
+		expect(msgs).toHaveLength(2);
+		expect(msgs[0]).toEqual({ source: "user", content: "hello" });
+		expect(msgs[1]).toEqual({ source: "user", content: "world" });
+	});
+
+	test("drainMerged merges system messages between non-system messages", () => {
+		const q = new MessageQueue();
+		q.enqueueQuiet({ source: "system", content: "update 1" });
+		q.enqueueQuiet({ source: "system", content: "update 2" });
+		q.enqueue({ source: "user", content: "hello" });
+		q.enqueueQuiet({ source: "system", content: "update 3" });
+
+		const msgs = q.drainMerged();
+		expect(msgs).toHaveLength(3);
+		// First: merged system messages
+		expect(msgs[0]?.source).toBe("system");
+		expect(
+			(msgs[0] as { source: "system"; content: string }).content,
+		).toContain("2 times");
+		// Second: user message
+		expect(msgs[1]).toEqual({ source: "user", content: "hello" });
+		// Third: single system message passes through
+		expect(msgs[2]).toEqual({ source: "system", content: "update 3" });
+	});
+
+	test("drainMerged clears the queue", () => {
+		const q = new MessageQueue();
+		q.enqueue({ source: "system", content: "a" });
+		q.enqueue({ source: "system", content: "b" });
+		q.drainMerged();
+		expect(q.pending).toBe(0);
+		expect(q.drainMerged()).toEqual([]);
+	});
 });

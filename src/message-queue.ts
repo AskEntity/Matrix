@@ -62,6 +62,9 @@ export class MessageQueue {
 	} | null = null;
 	private closed = false;
 
+	/** Whether this agent is currently idle (waiting for messages). */
+	idle = false;
+
 	/** Add a message to the queue. If someone is waiting via wait(), resolve them immediately. */
 	enqueue(msg: QueueMessage): void {
 		if (this.closed) {
@@ -90,6 +93,45 @@ export class MessageQueue {
 		const msgs = this.messages;
 		this.messages = [];
 		return msgs;
+	}
+
+	/**
+	 * Drain with deduplication: merges consecutive system messages with similar content
+	 * into a single summary. Non-system messages pass through unchanged.
+	 */
+	drainMerged(): QueueMessage[] {
+		const msgs = this.drain();
+		if (msgs.length <= 1) return msgs;
+
+		const result: QueueMessage[] = [];
+		const systemMessages: Array<Extract<QueueMessage, { source: "system" }>> =
+			[];
+
+		const flushSystem = () => {
+			if (systemMessages.length === 0) return;
+			if (systemMessages.length === 1) {
+				result.push(...systemMessages);
+			} else {
+				// Merge multiple system messages into one summary
+				result.push({
+					source: "system",
+					content: `Tree updated ${systemMessages.length} times. Call get_tree to see the latest state.`,
+				});
+			}
+			systemMessages.length = 0;
+		};
+
+		for (const msg of msgs) {
+			if (msg.source === "system") {
+				systemMessages.push(msg);
+			} else {
+				flushSystem();
+				result.push(msg);
+			}
+		}
+		flushSystem();
+
+		return result;
 	}
 
 	/** Block until at least one message arrives. If messages already pending, resolve immediately. */

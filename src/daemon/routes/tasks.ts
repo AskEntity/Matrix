@@ -87,8 +87,7 @@ function notifyAgentOfTreeChange(
 		try {
 			session.queue.enqueueQuiet({
 				source: "system",
-				content:
-					"[TREE UPDATED] The task tree was modified by the user via the Web UI. Call get_tree to see the latest state.",
+				content: `Tree ${action.replace("task_", "")}${title ? `: "${title}"` : ""} (${nodeId}). Call get_tree to see the latest state.`,
 			});
 		} catch {
 			/* queue may be closed */

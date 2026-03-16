@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Hono } from "hono";
 import { DEFAULT_MODEL } from "../../config.ts";
 import type { QueueImage } from "../../message-queue.ts";
+import { globalAgentQueues } from "../../message-queue.ts";
 import {
 	handleClarifyResponse,
 	handleInjectMessage,
@@ -111,6 +112,42 @@ export function registerAgentRoutes(
 			provider: provider.name,
 			model,
 		});
+	});
+
+	// Agent idle/active status for all tasks in a project
+	app.get("/projects/:id/agent/status", async (c) => {
+		const project = ctx.pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const idle: string[] = [];
+		const active: string[] = [];
+		const tracker = ctx.trackers.get(project.id);
+		if (tracker) {
+			for (const node of tracker.allNodes()) {
+				const queue = globalAgentQueues.get(node.id);
+				if (queue) {
+					if (queue.idle) {
+						idle.push(node.id);
+					} else {
+						active.push(node.id);
+					}
+				}
+			}
+			// Also check the root/orchestrator session
+			const session = ctx.activeSessions.get(project.id);
+			if (session && tracker.rootNodeId) {
+				const rootId = tracker.rootNodeId;
+				if (!active.includes(rootId) && !idle.includes(rootId)) {
+					if (session.queue.idle) {
+						idle.push(rootId);
+					} else {
+						active.push(rootId);
+					}
+				}
+			}
+		}
+		return c.json({ idle, active });
 	});
 
 	// Stop a running agent

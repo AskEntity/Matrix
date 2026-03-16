@@ -85,11 +85,11 @@ export function formatQueueMessage(msg: QueueMessage): string {
 		case "user":
 			return `<user_message>${msg.content}</user_message>`;
 		case "parent_update":
-			return `<parent_update>${msg.content}${msg.requestReply ? "\n[Reply requested]" : ""}</parent_update>`;
+			return `<parent_update${msg.requestReply ? ' requestReply="true"' : ""}>${msg.content}</parent_update>`;
 		case "clarify_response":
 			return `<clarify_response>${msg.answer}</clarify_response>`;
 		case "child_report":
-			return `<child_report from="${msg.title}" id="${msg.taskId}">${msg.content}${msg.requestReply ? "\n[Reply requested]" : ""}</child_report>`;
+			return `<child_report from="${msg.title}" id="${msg.taskId}"${msg.requestReply ? ' requestReply="true"' : ""}>${msg.content}</child_report>`;
 		case "cross_project":
 			return `<cross_project from="${msg.fromProjectName}" projectId="${msg.fromProjectId}">${msg.content}</cross_project>`;
 		case "background_complete":
@@ -644,7 +644,11 @@ export function createOrchestratorTools(
 				queue: childQueue,
 				sessionRequest: request,
 				onEvent: (eventType, eventData) => {
-					emit({ type: "agent_event", taskId, eventType, ...eventData });
+					if (eventType === "agent_idle" || eventType === "agent_active") {
+						emit({ type: eventType, taskId });
+					} else {
+						emit({ type: "agent_event", taskId, eventType, ...eventData });
+					}
 				},
 				childQueues,
 				persistedMessages:
@@ -661,7 +665,11 @@ export function createOrchestratorTools(
 			taskId,
 			sessionRequest: request,
 			onEvent: (eventType, eventData) => {
-				emit({ type: "agent_event", taskId, eventType, ...eventData });
+				if (eventType === "agent_idle" || eventType === "agent_active") {
+					emit({ type: eventType, taskId });
+				} else {
+					emit({ type: "agent_event", taskId, eventType, ...eventData });
+				}
 			},
 			childQueues,
 			persistedMessages:
@@ -927,6 +935,15 @@ export function createOrchestratorTools(
 					// the only messages, we silently wait again instead of returning
 					// a spurious "Resume from yield" to the UI.
 					while (true) {
+						// Emit agent_idle before waiting
+						if (currentTaskId) {
+							deps.queue.idle = true;
+							emit({
+								type: "agent_idle",
+								taskId: currentTaskId,
+							});
+						}
+
 						// Use timeout when there are pending clarifications and clarifyTimeoutMs is set
 						const timeoutMs =
 							pendingClarifications > 0 ? deps.clarifyTimeoutMs : undefined;
@@ -934,7 +951,7 @@ export function createOrchestratorTools(
 
 						if (result === "timeout") {
 							// Timeout fired — synthesize a clarify_response for all pending clarifications
-							const timeoutMsg = `[TIMEOUT] No response received within ${timeoutMs}ms. Proceed with your best judgement.`;
+							const timeoutMsg = `<clarify_timeout duration="${timeoutMs}ms">No response received. Proceed with your best judgement.</clarify_timeout>`;
 							// Emit clarification_timeout event so the UI knows
 							emit({
 								type: "clarification_timeout",
@@ -951,10 +968,10 @@ export function createOrchestratorTools(
 							);
 							pendingClarifications = 0;
 							// Also drain any real messages that may have arrived simultaneously
-							all = [...synthesized, ...deps.queue.drain()];
+							all = [...synthesized, ...deps.queue.drainMerged()];
 						} else {
 							// Got a real message — drain any additional messages that accumulated
-							const rest = deps.queue.drain();
+							const rest = deps.queue.drainMerged();
 							all = [result, ...rest];
 
 							// Track clarify_response messages — each one resolves a pending clarification
@@ -990,6 +1007,15 @@ export function createOrchestratorTools(
 						// If we have real messages, break out and return them
 						if (all.length > 0) break;
 						// Otherwise only compact signals arrived — loop and wait again
+					}
+
+					// Emit agent_active after resuming from wait
+					if (currentTaskId) {
+						deps.queue.idle = false;
+						emit({
+							type: "agent_active",
+							taskId: currentTaskId,
+						});
 					}
 
 					// Format messages for the agent
