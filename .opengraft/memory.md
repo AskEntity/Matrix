@@ -358,3 +358,10 @@ Messages are ALWAYS delivered regardless of agent state. The system guarantees: 
 - `compact_started` must be emitted exactly ONCE per compaction — at the pre-call compression step only.
 - Queue drain locations (implicit yield, cancellation point) should only set `manualCompactRequested = true` without yielding `compact_started`.
 - Yield tool should NOT emit `compact_started` when re-enqueuing compact messages — the provider emits it at the canonical location.
+
+
+## Compact Display Fix
+
+- Bug: `compact_started` log entry not appearing in live WS handler. Root cause: dedup check used `!e.checkpoint` (falsy check), but `checkpoint = ""` is also falsy. If a previous compaction completed with an empty checkpoint (e.g., `<summary></summary>` or "Context too short"), the entry stayed falsy-checkpointed forever, causing all future compact_started events to hit the dedup bail-out.
+- Fix: Changed `!e.checkpoint` → `e.checkpoint === undefined` in all 4 locations (compact_started dedup in collectEntries + handleWS, compact update-search in collectEntries + handleWS). Stopped setting `entry.checkpoint = ""` on compact_started entries — leave as undefined to distinguish pending (undefined) from completed (any string, including empty).
+- UI rendering already handles undefined checkpoint correctly (`entry.checkpoint ? ...` treats both undefined and "" as falsy for loading state display).
