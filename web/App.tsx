@@ -313,6 +313,7 @@ function AppInner() {
 				updateFromWS,
 				setRootNodeId,
 				setRunning,
+				checkAgentStatus: checkStatus,
 				setAgentProvider,
 				setAgentModel,
 				setLogs,
@@ -330,10 +331,18 @@ function AppInner() {
 				nodeMapRef,
 				t,
 			}),
-		[addLog, updateFromWS, setRunning, setAgentProvider, setAgentModel, t],
+		[
+			addLog,
+			updateFromWS,
+			setRunning,
+			checkStatus,
+			setAgentProvider,
+			setAgentModel,
+			t,
+		],
 	);
 
-	const { connected } = useWebSocket(projectId, handleWS);
+	const { connected } = useWebSocket(projectId, handleWS, checkStatus);
 
 	useEffect(() => {
 		if (projects.length === 0) return;

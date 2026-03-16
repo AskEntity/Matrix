@@ -256,3 +256,10 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 
 - `handleOrchestrate` enqueues to running session instead of 409. `handleInjectMessage` launches new agent if no rootNodeId.
 - Frontend `handleSubmit` tries `sendMessage()` first, falls back to `start()` only if no session exists.
+
+## Running State Detection Fix
+
+- `orchestration_completed` and `agent_stopped` WS events no longer unconditionally `setRunning(false)`. Instead they call `checkAgentStatus()` which does `GET /projects/:id/agent` to get actual running state. This handles auto-resume correctly — if agent was restarted, UI picks up `running=true`.
+- `useWebSocket` accepts optional `onConnect` callback — used to call `checkStatus()` on WS connect/reconnect so running state syncs after daemon restart.
+- AppFooter always shows "Send" button (never "Run") since `handleSubmit` uses unified path: tries `sendMessage` (POST /message) first, falls back to `start` (POST /orchestrate/agent) only if no session exists.
+- `checkAgentStatus` added to `WSHandlerDeps` interface in ws-handler.ts.
