@@ -113,3 +113,26 @@ Daemon (Hono: HTTP + WS on :7433)
 - `editedBy?: "user" | "agent"` on TaskNode. REST mutations inject `[TREE UPDATED]` message.
 - `reparent(nodeId, newParentId)` with circular dep validation. `reorderChildren()` for ordering.
 - `reorder_tasks` MCP tool with scope validation (currentTaskId + isDescendantOf).
+
+## Cross-Project Communication
+
+- `list_projects` and `send_message_to_project` tools (depth 0 only). `cross_project` QueueMessage source.
+
+## Clarify Response Routing
+
+- `handleClarifyResponse` routes via `globalAgentQueues.get(taskId) ?? session.queue`.
+
+## Persistent Sub-Orchestrators
+
+- `delete_task` splits: passed tasks get worktree/branch cleaned (`cleaned: true`) but node stays in tree. Non-passed tasks fully removed.
+- `TaskTracker.cleanNode(id)` clears branch/worktreePath/sessionId, sets `cleaned: true`.
+- REST `DELETE /tasks/:id` still fully removes (user-initiated).
+
+## Resuming Passed Tasks
+
+- POST /tasks/:nodeId/continue accepts passed tasks. execute_tasks allows resume/reset for passed.
+- For cleaned tasks, continue re-creates worktree from main via WorktreeManager.create().
+
+## Duplicate Card Fix
+
+- `task_completed` suppressed in child log (parent only). `done()` MCP card enhanced with task title lookup.

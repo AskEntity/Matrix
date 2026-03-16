@@ -1338,6 +1338,311 @@ describe("POST /projects/:id/clarify", () => {
 		const body = (await res.json()) as { error: string };
 		expect(body.error).toBe("No active session for this project");
 	});
+
+	test("routes clarify_response to orchestrator queue when taskId is root", async () => {
+		// Create a long-running provider so the agent stays alive
+		const longRunningProvider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					await new Promise((resolve) => setTimeout(resolve, 10000));
+					return { success: true, output: "" };
+				}
+				return {
+					sessionId: "mock-session",
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const localDataDir = await mkdtemp(join(tmpdir(), "og-clarify-route-"));
+		const {
+			app: localApp,
+			pm: localPm,
+			markReady: localMarkReady,
+			getTracker: localGetTracker,
+		} = createApp({
+			dataDir: localDataDir,
+			agentProvider: longRunningProvider,
+		});
+		await localPm.load();
+		localMarkReady();
+
+		// Create project and start agent
+		const projRes = await localApp.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "clarify-route-proj") }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		const orchRes = await localApp.request(
+			`/projects/${project.id}/orchestrate/agent`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ prompt: "test clarify routing" }),
+			},
+		);
+		expect(orchRes.status).toBe(200);
+		await new Promise((r) => setTimeout(r, 100));
+
+		const tracker = await localGetTracker(project.id);
+		const rootNodeId = tracker.rootNodeId;
+		expect(rootNodeId).toBeTruthy();
+
+		// Post clarify response with the root taskId — should go to orchestrator's queue
+		const clarifyRes = await localApp.request(
+			`/projects/${project.id}/clarify`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					taskId: rootNodeId,
+					answer: "The answer for orchestrator",
+				}),
+			},
+		);
+		expect(clarifyRes.status).toBe(200);
+
+		// Stop agent to clean up
+		await localApp.request(`/projects/${project.id}/stop`, {
+			method: "POST",
+		});
+		await rm(localDataDir, { recursive: true });
+	});
+
+	test("routes clarify_response to child queue when taskId is a child agent", async () => {
+		// Create a long-running provider so the agent stays alive
+		const longRunningProvider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					await new Promise((resolve) => setTimeout(resolve, 10000));
+					return { success: true, output: "" };
+				}
+				return {
+					sessionId: "mock-session",
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const localDataDir = await mkdtemp(
+			join(tmpdir(), "og-clarify-child-route-"),
+		);
+		const {
+			app: localApp,
+			pm: localPm,
+			markReady: localMarkReady,
+			getTracker: localGetTracker,
+		} = createApp({
+			dataDir: localDataDir,
+			agentProvider: longRunningProvider,
+		});
+		await localPm.load();
+		localMarkReady();
+
+		// Create project and start agent
+		const projRes = await localApp.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				path: join(tempDir, "clarify-child-route-proj"),
+			}),
+		});
+		const project = (await projRes.json()) as Project;
+
+		const orchRes = await localApp.request(
+			`/projects/${project.id}/orchestrate/agent`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ prompt: "test child clarify routing" }),
+			},
+		);
+		expect(orchRes.status).toBe(200);
+		await new Promise((r) => setTimeout(r, 100));
+
+		const tracker = await localGetTracker(project.id);
+		const rootNodeId = tracker.rootNodeId;
+		expect(rootNodeId).toBeTruthy();
+
+		// Create a child task
+		const childRes = await localApp.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Child agent",
+				description: "A child task",
+				parentId: rootNodeId,
+			}),
+		});
+		const child = (await childRes.json()) as TaskNode;
+
+		// Register a queue for the child in globalAgentQueues (simulating runChildAgentInBackground)
+		const childQueue = new MessageQueue();
+		globalAgentQueues.set(child.id, childQueue);
+
+		try {
+			// Post clarify response with the child's taskId
+			const clarifyRes = await localApp.request(
+				`/projects/${project.id}/clarify`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						taskId: child.id,
+						answer: "The answer for child agent",
+					}),
+				},
+			);
+			expect(clarifyRes.status).toBe(200);
+
+			// Verify the message arrived in the child's queue, NOT the orchestrator's
+			const childMessages = childQueue.drain();
+			expect(childMessages).toHaveLength(1);
+			expect(childMessages[0]?.source).toBe("clarify_response");
+			expect(
+				childMessages[0]?.source === "clarify_response"
+					? childMessages[0].answer
+					: "",
+			).toBe("The answer for child agent");
+		} finally {
+			globalAgentQueues.delete(child.id);
+			await localApp.request(`/projects/${project.id}/stop`, {
+				method: "POST",
+			});
+			await rm(localDataDir, { recursive: true });
+		}
+	});
+
+	test("returns 409 when child queue is closed", async () => {
+		// Create a long-running provider so the agent stays alive
+		const longRunningProvider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					await new Promise((resolve) => setTimeout(resolve, 10000));
+					return { success: true, output: "" };
+				}
+				return {
+					sessionId: "mock-session",
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const localDataDir = await mkdtemp(
+			join(tmpdir(), "og-clarify-closed-queue-"),
+		);
+		const {
+			app: localApp,
+			pm: localPm,
+			markReady: localMarkReady,
+			getTracker: localGetTracker,
+		} = createApp({
+			dataDir: localDataDir,
+			agentProvider: longRunningProvider,
+		});
+		await localPm.load();
+		localMarkReady();
+
+		// Create project and start agent
+		const projRes = await localApp.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				path: join(tempDir, "clarify-closed-queue-proj"),
+			}),
+		});
+		const project = (await projRes.json()) as Project;
+
+		const orchRes = await localApp.request(
+			`/projects/${project.id}/orchestrate/agent`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ prompt: "test closed queue" }),
+			},
+		);
+		expect(orchRes.status).toBe(200);
+		await new Promise((r) => setTimeout(r, 100));
+
+		const tracker = await localGetTracker(project.id);
+
+		// Create a child task with a CLOSED queue
+		const childRes = await localApp.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Dead child",
+				description: "A child whose queue is closed",
+				parentId: tracker.rootNodeId,
+			}),
+		});
+		const child = (await childRes.json()) as TaskNode;
+
+		const closedQueue = new MessageQueue();
+		closedQueue.close();
+		globalAgentQueues.set(child.id, closedQueue);
+
+		try {
+			const clarifyRes = await localApp.request(
+				`/projects/${project.id}/clarify`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						taskId: child.id,
+						answer: "This should fail",
+					}),
+				},
+			);
+			expect(clarifyRes.status).toBe(409);
+			const body = (await clarifyRes.json()) as { error: string };
+			expect(body.error).toBe("Queue closed");
+		} finally {
+			globalAgentQueues.delete(child.id);
+			await localApp.request(`/projects/${project.id}/stop`, {
+				method: "POST",
+			});
+			await rm(localDataDir, { recursive: true });
+		}
+	});
 });
 
 describe("daemon orchestrate/agent API", () => {
@@ -2060,7 +2365,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.error).toBe("Cannot continue task with status: pending");
 	});
 
-	test("returns 400 for task with status passed", async () => {
+	test("resets passed task without worktree to pending", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -2078,9 +2383,9 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 			`/projects/${projectId}/tasks/${task.id}/continue`,
 			{ method: "POST" },
 		);
-		expect(res.status).toBe(400);
-		const body = (await res.json()) as { error: string };
-		expect(body.error).toBe("Cannot continue task with status: passed");
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as TaskNode;
+		expect(body.status).toBe("pending");
 	});
 
 	test("returns 400 for task with status in_progress", async () => {
@@ -2277,6 +2582,75 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 
 		// Queue should be cleaned up after completion
 		expect(globalAgentQueues.has(task.id)).toBe(false);
+	});
+
+	test("sets status to in_progress for passed task with worktree", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Passed WT task",
+				description: "finished work",
+			}),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "passed" }),
+		});
+
+		// Inject worktreePath directly into the tracker
+		const tracker = await getTracker(projectId);
+		tracker.assignWorktree(
+			task.id,
+			"og/fake/passed-branch",
+			join(tempDir, "cont-proj"),
+		);
+		await tracker.save();
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "Add one more feature" }),
+			},
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as TaskNode;
+		expect(body.status).toBe("in_progress");
+
+		// Wait for background agent to finish
+		await new Promise((r) => setTimeout(r, 150));
+	});
+
+	test("stores message when continuing passed task", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Passed msg task", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "passed" }),
+		});
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "Add tests for edge cases" }),
+			},
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as TaskNode;
+		expect(body.message).toBe("Add tests for edge cases");
 	});
 });
 

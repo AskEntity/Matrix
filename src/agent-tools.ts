@@ -1,11 +1,16 @@
 import { z } from "zod";
-import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
+import type {
+	AgentProvider,
+	AgentRequest,
+	AgentSession,
+} from "./agent-provider.ts";
 import { readProjectMemory } from "./daemon/helpers.ts";
 import {
 	globalAgentQueues,
 	MessageQueue,
 	type QueueMessage,
 } from "./message-queue.ts";
+import type { ProjectManager } from "./project-manager.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
@@ -76,11 +81,13 @@ export function formatQueueMessage(msg: QueueMessage): string {
 		case "user":
 			return `<user_message>${msg.content}</user_message>`;
 		case "parent_update":
-			return `<parent_update>${msg.content}</parent_update>`;
+			return `<parent_update>${msg.content}${msg.requestReply ? "\n[Reply requested]" : ""}</parent_update>`;
 		case "clarify_response":
 			return `<clarify_response>${msg.answer}</clarify_response>`;
 		case "child_report":
-			return `<child_report from="${msg.title}" id="${msg.taskId}">${msg.content}</child_report>`;
+			return `<child_report from="${msg.title}" id="${msg.taskId}">${msg.content}${msg.requestReply ? "\n[Reply requested]" : ""}</child_report>`;
+		case "cross_project":
+			return `<cross_project from="${msg.fromProjectName}" projectId="${msg.fromProjectId}">${msg.content}</cross_project>`;
 		case "background_complete":
 			return `<background_complete command="${msg.command}" id="${msg.commandId}" exit="${msg.exitCode}" duration="${msg.durationMs}ms">Command completed. Use bg_action="status" with background_id="${msg.commandId}" or read_file on output files to see results.</background_complete>`;
 		case "system":
@@ -114,6 +121,11 @@ export function toRawMessage(msg: QueueMessage): {
 				source: msg.source,
 				content: `From child "${msg.title}" (${msg.taskId}): ${msg.content}`,
 			};
+		case "cross_project":
+			return {
+				source: msg.source,
+				content: `From project "${msg.fromProjectName}" (${msg.fromProjectId}): ${msg.content}`,
+			};
 		case "background_complete":
 			return {
 				source: msg.source,
@@ -139,8 +151,13 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   Call this after spawning tasks. Returns all accumulated messages plus a "## Pending" summary section
   showing running children and pending clarifications. Zero token burn while suspended.
 - send_message_to_child: Send a requirement update or instruction to a running child agent.
+  When changing a child's scope or requirements, be explicit about what's overridden:
+  - State "This overrides your original scope" when expanding or changing what the child should do
+  - Say "You are now authorized to also modify X, Y, Z files" when granting access beyond original scope
+  - Don't just relay information — make it clear which original constraints are lifted or changed
+  - The child treats parent_update messages as authoritative, so be precise about what's new vs unchanged
 - reorder_tasks: Reorder children of a task node. Pass the parent nodeId and an array of child IDs in the desired order.
-- delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
+- delete_task: Clean up a child's worktree + branch after merging. Passed tasks stay in the tree (preserves history). Non-passed tasks are fully removed.
 - clarify: Send a clarification question to the user or parent orchestrator. Returns immediately —
   you can continue doing other work that doesn't need the answer, then call yield() when ready
   to wait for the clarify_response.
@@ -151,6 +168,11 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   Use this to keep the parent informed about important intermediate progress or issues.
   When to call: after completing major milestones, or when you discover something that affects siblings.
   Don't call it for every small action — only significant events worth surfacing.
+- list_projects: List all registered projects with their IDs, names, paths, and active agent status.
+  Use this to discover other projects before sending cross-project messages.
+- send_message_to_project: Send a message to the orchestrator of another project.
+  The target project must have an active agent running. The message arrives as a cross_project
+  message in the target orchestrator's queue (visible via yield()).
 
 ## Draft Tasks
 - Create tasks with \`draft: true\` to quickly capture ideas, requirements, and half-formed thoughts.
@@ -184,7 +206,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
    - ## Pending section: shows which children are still running and how many clarifications are outstanding
 7. When a child passes, merge its branch:
    a. Merge via bash: \`git merge --no-ff <child-branch> -m "Merge task: <title>"\`
-   b. Call delete_task(taskId) to clean up the child's worktree, branch, and task node
+   b. Call delete_task(taskId) to clean up the child's worktree and branch (passed tasks remain in tree for history)
 8. If a child fails: read the failure summary carefully. Decide:
    - "resume" with specific instructions addressing the failure (child keeps progress)
    - "reset" to start fresh with a different approach
@@ -209,7 +231,7 @@ If you're unsure about a requirement, use \`clarify\` to ask (returns immediatel
 If you encounter problems you can't overcome, call done("failed", ...) — failing early is better than spinning.
 
 ### Parent Handling of Child Results
-- **passed** → \`git merge --no-ff <branch>\` → \`delete_task\` → verify tests on your branch
+- **passed** → \`git merge --no-ff <branch>\` → \`delete_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
 - **failed** → Read the child's failure summary carefully. The quality of your resume/reset decision
   directly affects whether the next attempt succeeds:
   - \`resume\`: Give SPECIFIC instructions addressing the failure. Don't just say "try again" —
@@ -222,7 +244,7 @@ If you encounter problems you can't overcome, call done("failed", ...) — faili
 - Use \`git merge --no-ff <branch> -m "Merge task: <title>"\` from YOUR working directory
 - If merge conflicts occur: resolve them with edit_file. This is expected with parallel work.
 - If conflicts are too complex: merge the larger/more complex feature first, then reset and re-spawn the simpler one.
-- After successful merge: ALWAYS call delete_task to clean up worktree + branch + node
+- After successful merge: ALWAYS call delete_task to clean up worktree + branch (passed tasks stay in tree)
 - After merging a child, if other children are still running, send them a message via
   send_message_to_child to sync with main: "Main updated — run \`git merge main\`
   to stay in sync and reduce merge conflicts."
@@ -259,7 +281,7 @@ Commit the curated memory as a standalone commit after all task merges are done.
 - Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
 - Keep the tree shallow: 2-3 levels max
 - Each leaf task should be independently executable by a single agent session
-- ALWAYS merge and delete_task each passed child before moving on
+- ALWAYS merge and delete_task each passed child before moving on (passed tasks remain visible in tree)
 
 ## Parallelization Strategy
 - Sibling tasks run in PARALLEL. Split by sub-feature so each has a clear scope.
@@ -302,7 +324,7 @@ When yield() returns with a user message, you MUST take concrete action before y
 When deciding your next action, follow this priority order:
 0. **Just resumed from compaction?** → Read checkpoint, call get_tree, then follow priorities below
 1. **Failed children** → Analyze output, execute_tasks with "resume" (give instructions) or "reset"
-2. **Passed children not yet merged** → Merge branch, delete_task, verify tests
+2. **Passed children not yet merged** → Merge branch, delete_task (cleans resources, keeps node), verify tests
 3. **Pending children ready to start** → execute_tasks to spawn them
 4. **All children done** → Run full test suite, verify integration, update memory
 5. **Everything complete** → Call done("passed", summary)
@@ -415,6 +437,11 @@ Only implement directly if the task is small enough for a single agent session.
 - Use search to understand existing code before modifying it.
 - When finished, call \`done("passed", summary)\` or \`done("failed", summary)\`. Always call done().
 
+## Parent Messages (parent_update)
+- Messages from your parent agent (received as parent_update) are **authoritative** and override your original task description.
+- If the parent expands your scope or authorizes you to modify additional files, follow those instructions without hesitation — they supersede the original task boundaries.
+- Don't worry about exceeding your original scope when the parent explicitly authorizes it.
+
 ## Code Quality
 - Avoid over-engineering. Only make changes directly needed for the task. Keep solutions simple.
   Don't add features, refactor code, or make "improvements" beyond what was asked.
@@ -474,6 +501,12 @@ export interface OrchestratorToolsDeps {
 	clarifyTimeoutMs?: number;
 	/** Maximum recursive depth for spawning child agents. Defaults to 3. */
 	maxDepth?: number;
+	/** Project manager for cross-project communication. Only needed at depth 0. */
+	projectManager?: ProjectManager;
+	/** Active sessions map for cross-project message delivery. Only needed at depth 0. */
+	activeSessions?: Map<string, AgentSession>;
+	/** Current project ID — used as sender identity for cross-project messages. */
+	currentProjectId?: string;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -951,7 +984,8 @@ export function createOrchestratorTools(
 					if (
 						(mode === "resume" || mode === "reset") &&
 						node.status !== "failed" &&
-						node.status !== "stuck"
+						node.status !== "stuck" &&
+						node.status !== "passed"
 					) {
 						errors.push({
 							taskId: node.id,
@@ -971,11 +1005,12 @@ export function createOrchestratorTools(
 							node.sessionId = null;
 						}
 
-						// Create worktree if needed (new or reset)
+						// Create worktree if needed (new, reset, or cleaned passed task)
 						if (!node.worktreePath) {
 							const slug = slugify(node.title);
 							const wt = await worktrees.create(node.id, slug, baseBranch);
 							tracker.assignWorktree(node.id, wt.branch, wt.path);
+							if (node.cleaned) node.cleaned = false;
 						}
 
 						tracker.updateStatus(node.id, "in_progress");
@@ -1326,6 +1361,12 @@ export function createOrchestratorTools(
 			{
 				taskId: z.string().describe("ID of the running child task to message"),
 				message: z.string().describe("Message content to send"),
+				requestReply: z
+					.boolean()
+					.optional()
+					.describe(
+						"If true, signals to the child that a reply (via report_to_parent) is expected.",
+					),
 			},
 			async (args) => {
 				const childQueue = childQueues.get(args.taskId);
@@ -1344,6 +1385,7 @@ export function createOrchestratorTools(
 					childQueue.enqueue({
 						source: "parent_update",
 						content: args.message,
+						...(args.requestReply ? { requestReply: true } : {}),
 					});
 					return {
 						content: [
@@ -1372,8 +1414,8 @@ export function createOrchestratorTools(
 			"delete_task",
 			"Delete a child task and clean up its resources (worktree + branch). " +
 				"Call this AFTER you have already merged the child's branch yourself. " +
-				"This removes the worktree directory, deletes the git branch, " +
-				"and removes the task node from the tree.",
+				"For passed tasks: cleans up worktree/branch but keeps the task node in the tree (preserves activity history). " +
+				"For non-passed tasks: removes the worktree, branch, and task node entirely.",
 			{
 				taskId: z.string().describe("ID of the task to delete"),
 			},
@@ -1398,8 +1440,14 @@ export function createOrchestratorTools(
 						await worktrees.remove(node.id, slug);
 					}
 
-					// Remove task from tree
-					tracker.remove(node.id);
+					if (node.status === "passed") {
+						// Passed tasks: keep node in tree for history, just clean resources
+						tracker.cleanNode(node.id);
+					} else {
+						// Non-passed tasks: remove entirely
+						tracker.remove(node.id);
+					}
+
 					await tracker.save();
 					broadcastTreeUpdate?.();
 
@@ -1409,7 +1457,8 @@ export function createOrchestratorTools(
 								type: "text" as const,
 								text: JSON.stringify(
 									{
-										deleted: true,
+										deleted: node.status !== "passed",
+										cleaned: node.status === "passed",
 										taskId: node.id,
 										title: node.title,
 									},
@@ -1481,6 +1530,12 @@ export function createOrchestratorTools(
 				message: z
 					.string()
 					.describe("The message content to send to the parent agent"),
+				requestReply: z
+					.boolean()
+					.optional()
+					.describe(
+						"If true, signals to the parent that a reply (via send_message_to_child) is expected.",
+					),
 			},
 			async (args) => {
 				if (!deps.parentQueue) {
@@ -1504,6 +1559,7 @@ export function createOrchestratorTools(
 						taskId: currentTaskId ?? "unknown",
 						title: taskTitle,
 						content: args.message,
+						...(args.requestReply ? { requestReply: true } : {}),
 					});
 					return {
 						content: [
@@ -1578,6 +1634,125 @@ export function createOrchestratorTools(
 					const message = e instanceof Error ? e.message : "Unknown error";
 					return {
 						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						isError: true,
+					};
+				}
+			},
+		),
+
+		tool(
+			"list_projects",
+			"List all registered projects with their IDs, names, and paths. " +
+				"Use this to discover other projects before sending cross-project messages.",
+			{},
+			async () => {
+				if (!deps.projectManager) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "Cross-project tools are not available at this depth.",
+							},
+						],
+						isError: true,
+					};
+				}
+				const projects = deps.projectManager.list().map((p) => ({
+					id: p.id,
+					name: p.name,
+					path: p.path,
+					hasActiveAgent: deps.activeSessions?.has(p.id) ?? false,
+				}));
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify(projects, null, 2),
+						},
+					],
+				};
+			},
+		),
+
+		tool(
+			"send_message_to_project",
+			"Send a message to the orchestrator of another project. " +
+				"The message appears in the target project's orchestrator queue as a cross_project message. " +
+				"The target project must have an active agent running.",
+			{
+				projectId: z.string().describe("ID of the target project"),
+				message: z.string().describe("Message content to send"),
+			},
+			async (args) => {
+				if (!deps.projectManager || !deps.activeSessions) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "Cross-project tools are not available at this depth.",
+							},
+						],
+						isError: true,
+					};
+				}
+
+				const targetProject = deps.projectManager.get(args.projectId);
+				if (!targetProject) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: Project "${args.projectId}" not found.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				const targetSession = deps.activeSessions.get(args.projectId);
+				if (!targetSession) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: No active agent running for project "${targetProject.name}" (${args.projectId}).`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				// Determine sender identity
+				const senderProject = deps.currentProjectId
+					? deps.projectManager.get(deps.currentProjectId)
+					: undefined;
+				const fromProjectId = deps.currentProjectId ?? "unknown";
+				const fromProjectName = senderProject?.name ?? "unknown";
+
+				try {
+					targetSession.queue.enqueue({
+						source: "cross_project",
+						fromProjectId,
+						fromProjectName,
+						content: args.message,
+					});
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Message sent to project "${targetProject.name}" (${args.projectId}).`,
+							},
+						],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error sending message: ${message}`,
+							},
+						],
 						isError: true,
 					};
 				}

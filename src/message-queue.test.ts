@@ -161,6 +161,38 @@ describe("MessageQueue", () => {
 		expect(q.drain()).toEqual([msg]);
 	});
 
+	test("parent_update with requestReply flag", () => {
+		const q = new MessageQueue();
+		const msg: QueueMessage = {
+			source: "parent_update",
+			content: "What is the status?",
+			requestReply: true,
+		};
+		q.enqueue(msg);
+		const drained = q.drain();
+		expect(drained).toEqual([msg]);
+		expect(
+			drained[0]?.source === "parent_update" && drained[0].requestReply,
+		).toBe(true);
+	});
+
+	test("child_report with requestReply flag", () => {
+		const q = new MessageQueue();
+		const msg: QueueMessage = {
+			source: "child_report",
+			taskId: "task-1",
+			title: "Auth",
+			content: "Need help",
+			requestReply: true,
+		};
+		q.enqueue(msg);
+		const drained = q.drain();
+		expect(drained).toEqual([msg]);
+		expect(
+			drained[0]?.source === "child_report" && drained[0].requestReply,
+		).toBe(true);
+	});
+
 	test("different message types: clarify_response", () => {
 		const q = new MessageQueue();
 		const msg: QueueMessage = {

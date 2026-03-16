@@ -1719,6 +1719,13 @@ button.og-tool-card-header:hover {
 	word-break: break-word;
 }
 
+.og-mcp-done-title {
+	font-weight: 600;
+	font-size: 12px;
+	color: var(--text-secondary);
+	margin-bottom: 2px;
+}
+
 .og-mcp-done-status {
 	font-weight: 700;
 	font-size: 12px;

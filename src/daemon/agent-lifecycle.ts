@@ -96,6 +96,9 @@ async function createAgentContext(
 			defaultBudgetUsd: effectiveCfg.budgetUsd,
 			clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
 			maxDepth: effectiveCfg.maxDepth,
+			projectManager: opts.depth === 0 ? ctx.pm : undefined,
+			activeSessions: opts.depth === 0 ? ctx.activeSessions : undefined,
+			currentProjectId: project.id,
 			onTaskEvent: (event) => {
 				broadcastEvent(ctx, project.id, event);
 				broadcastTreeUpdate(ctx, project.id, opts.tracker);
@@ -555,8 +558,12 @@ export function handleClarifyResponse(
 			status: 404,
 		};
 	}
+	// Route the response to the correct agent's queue:
+	// - If taskId has a queue in globalAgentQueues, it's a child agent → route there
+	// - Otherwise, fall back to session.queue (the orchestrator)
+	const targetQueue = globalAgentQueues.get(taskId) ?? session.queue;
 	try {
-		session.queue.enqueue({ source: "clarify_response", answer });
+		targetQueue.enqueue({ source: "clarify_response", answer });
 	} catch {
 		return { ok: false, error: "Queue closed", status: 409 };
 	}

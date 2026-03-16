@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Hono } from "hono";
 import { globalAgentQueues } from "../../message-queue.ts";
 import type { TaskStatus } from "../../types.ts";
+import { WorktreeManager } from "../../worktree-manager.ts";
 import { runChildAgentInBackground } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
 import {
@@ -209,7 +210,11 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		if (!node) {
 			return c.json({ error: "Task not found" }, 404);
 		}
-		if (node.status !== "failed" && node.status !== "stuck") {
+		if (
+			node.status !== "failed" &&
+			node.status !== "stuck" &&
+			node.status !== "passed"
+		) {
 			return c.json(
 				{ error: `Cannot continue task with status: ${node.status}` },
 				400,
@@ -263,6 +268,54 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			);
 
 			return c.json(tracker.get(nodeId));
+		}
+
+		// Passed + cleaned task: re-create worktree from main branch and launch agent
+		if (node.status === "passed" && node.cleaned) {
+			try {
+				const wtRoot = join(project.path, ".worktrees");
+				const wm = new WorktreeManager(project.path, wtRoot);
+				const slug = node.title
+					.toLowerCase()
+					.replace(/[^a-z0-9]+/g, "-")
+					.replace(/^-|-$/g, "")
+					.slice(0, 30);
+				const wt = await wm.create(nodeId, slug);
+				tracker.assignWorktree(nodeId, wt.branch, wt.path);
+				node.cleaned = false;
+				tracker.updateStatus(nodeId, "in_progress");
+				await tracker.save();
+
+				broadcastEvent(ctx, project.id, {
+					type: "task_started",
+					taskId: nodeId,
+					title: node.title,
+				});
+				broadcastTreeUpdate(ctx, project.id, tracker);
+
+				const memory = readProjectMemory(project.path);
+				const branchReminder = `\n\nYou are on branch \`${wt.branch}\`. Do NOT switch branches.`;
+				const continuePrompt = body.message
+					? `${body.message}\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}${branchReminder}`
+					: `Continue working on this task.\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}${branchReminder}`;
+
+				runChildAgentInBackground(
+					ctx,
+					project,
+					tracker,
+					nodeId,
+					continuePrompt,
+					body.model,
+				);
+
+				return c.json(tracker.get(nodeId));
+			} catch (e) {
+				const message = e instanceof Error ? e.message : String(e);
+				return c.json(
+					{ error: `Failed to re-create worktree: ${message}` },
+					500,
+				);
+			}
 		}
 
 		// No worktree — just reset to pending
