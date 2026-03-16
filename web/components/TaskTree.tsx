@@ -24,6 +24,7 @@ export function TaskTree({
 	nodes,
 	selectedTaskId,
 	rootNodeId,
+	activeAgents,
 	onSelect,
 	onReorder,
 	onReparent,
@@ -35,6 +36,7 @@ export function TaskTree({
 	nodes: TaskNode[];
 	selectedTaskId: string | null;
 	rootNodeId: string | null;
+	activeAgents?: Set<string>;
 	onSelect: (id: string | null) => void;
 	onReorder?: (parentId: string, children: string[]) => Promise<void>;
 	onReparent?: (nodeId: string, newParentId: string) => Promise<void>;
@@ -369,6 +371,7 @@ export function TaskTree({
 					depth={1}
 					selectedTaskId={selectedTaskId}
 					rootNodeId={rootNodeId}
+					activeAgents={activeAgents}
 					onSelect={onSelect}
 					collapsed={collapsed}
 					toggleCollapse={toggleCollapse}
@@ -429,6 +432,7 @@ function TaskNodeView({
 	depth,
 	selectedTaskId,
 	rootNodeId,
+	activeAgents,
 	onSelect,
 	collapsed,
 	toggleCollapse,
@@ -449,6 +453,7 @@ function TaskNodeView({
 	depth: number;
 	selectedTaskId: string | null;
 	rootNodeId: string | null;
+	activeAgents?: Set<string>;
 	onSelect: (id: string | null) => void;
 	collapsed: Set<string>;
 	toggleCollapse: (id: string) => void;
@@ -551,9 +556,7 @@ function TaskNodeView({
 						/>
 					)}
 					<span className="og-task-title">{node.title}</span>
-					{node.status === "in_progress" && (
-						<span className="og-task-spinner" />
-					)}
+					{activeAgents?.has(node.id) && <span className="og-task-spinner" />}
 					{node.status === "draft" && (
 						<span className="og-task-draft-badge">draft</span>
 					)}
@@ -580,6 +583,7 @@ function TaskNodeView({
 						depth={depth + 1}
 						selectedTaskId={selectedTaskId}
 						rootNodeId={rootNodeId}
+						activeAgents={activeAgents}
 						onSelect={onSelect}
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}

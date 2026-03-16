@@ -319,3 +319,16 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 
 - `MessageQueue.enqueueQuiet(msg)` pushes to the messages array without resolving a pending waiter. The message is picked up on the next `drain()` or `wait()` call that finds pending messages.
 - Used by `notifyAgentOfTreeChange()` in `src/daemon/routes/tasks.ts` so tree mutations (create/update/reorder/delete) do NOT wake agents from yield. Messages accumulate quietly and are delivered alongside the next waking event.
+
+
+## Per-Agent Active/Idle State (Frontend)
+
+- Global `running: boolean` replaced with `activeAgents: Set<string>` in `useAgent` hook. `running` is now derived: `activeAgents.size > 0`.
+- `setRunning` removed from WSHandlerDeps — replaced with `setActiveAgents: React.Dispatch<React.SetStateAction<Set<string>>>`.
+- WS events handled: `agent_active` (add to set), `agent_idle` (remove from set), `orchestration_started` (add root), `orchestration_completed`/`agent_stopped` (remove + checkAgentStatus fallback).
+- `checkStatus` in useAgent populates `activeAgents` from backend: prefers `data.activeAgents` array, falls back to `data.rootNodeId` if `data.running`, or empty set.
+- Components receive `activeAgents` (TaskTree) or `isActive` (ActivityLog, TaskDetail, OrchestratorDetail) instead of global `running`.
+- TaskTree spinner: `activeAgents?.has(node.id)` instead of `node.status === "in_progress"`. Handles root and child uniformly.
+- ActivityLog thinking indicator: per-agent — only shows when the viewed agent is active.
+- OrchestratorDetail: Pause button shows when root is active (`isRootActive`). Clear Sessions only shows when NO agents are active (`!running`).
+- TaskDetail: Pause button shows when task is active (`isActive` prop). Falls back to status check if prop not provided.
