@@ -376,3 +376,11 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - Yield tool_use (pending) renders a calm gray card (`og-tool-card-yield-waiting`) with "⏸ Waiting..." text — no spinner, no pulse animation. Other tools keep the loading treatment.
 - `.og-spinner` needs `display: inline-block` since it's a `<span>` — without it, width/height are ignored on inline elements, causing vertical stretching.
 - `.og-tool-card-status.pending` needs `display: inline-flex; align-items: center` to properly center the spinner.
+
+## Persisted Message Cleanup on Task Deletion
+
+- `clearPersistedMessages` must be called for deleted/reset tasks. Messages follow session lifecycle: cleared when session is cleared (delete, reset), kept when session is kept (close).
+- REST DELETE handler uses `collectDescendants` to get all descendant nodes, then clears persisted messages for each before `tracker.remove()`.
+- MCP `delete_task` collects descendant IDs inline (since `collectDescendants` is a daemon helper not available in agent-tools), then clears messages for all before removing from tracker.
+- MCP `reset_task` clears persisted messages for the single task being reset.
+- MCP `close_task` does NOT clear persisted messages (session is preserved).
