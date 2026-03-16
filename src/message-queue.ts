@@ -21,9 +21,15 @@ export type QueueMessage =
 			success: boolean;
 			output: string;
 	  }
-	| { source: "parent_update"; content: string }
+	| { source: "parent_update"; content: string; requestReply?: boolean }
 	| { source: "clarify_response"; answer: string }
-	| { source: "child_report"; taskId: string; title: string; content: string }
+	| {
+			source: "child_report";
+			taskId: string;
+			title: string;
+			content: string;
+			requestReply?: boolean;
+	  }
 	| {
 			source: "background_complete";
 			commandId: string;

@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { buildTaskPrompt, isDescendantOf, slugify } from "./agent-tools.ts";
+import {
+	buildTaskPrompt,
+	formatQueueMessage,
+	isDescendantOf,
+	slugify,
+} from "./agent-tools.ts";
+import type { QueueMessage } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { TaskNode } from "./types.ts";
 
@@ -232,5 +238,83 @@ describe("isDescendantOf", () => {
 	test("returns false for self", () => {
 		const tracker = makeTracker([makeNode({ id: "self" })]);
 		expect(isDescendantOf(tracker, "self", "self")).toBe(false);
+	});
+});
+
+describe("formatQueueMessage", () => {
+	test("parent_update without requestReply", () => {
+		const msg: QueueMessage = {
+			source: "parent_update",
+			content: "Priority changed",
+		};
+		const result = formatQueueMessage(msg);
+		expect(result).toBe("<parent_update>Priority changed</parent_update>");
+		expect(result).not.toContain("[Reply requested]");
+	});
+
+	test("parent_update with requestReply=true appends hint", () => {
+		const msg: QueueMessage = {
+			source: "parent_update",
+			content: "What is the status?",
+			requestReply: true,
+		};
+		const result = formatQueueMessage(msg);
+		expect(result).toBe(
+			"<parent_update>What is the status?\n[Reply requested]</parent_update>",
+		);
+	});
+
+	test("parent_update with requestReply=false does not append hint", () => {
+		const msg: QueueMessage = {
+			source: "parent_update",
+			content: "FYI update",
+			requestReply: false,
+		};
+		const result = formatQueueMessage(msg);
+		expect(result).toBe("<parent_update>FYI update</parent_update>");
+		expect(result).not.toContain("[Reply requested]");
+	});
+
+	test("child_report without requestReply", () => {
+		const msg: QueueMessage = {
+			source: "child_report",
+			taskId: "task-1",
+			title: "Auth Module",
+			content: "50% done",
+		};
+		const result = formatQueueMessage(msg);
+		expect(result).toBe(
+			'<child_report from="Auth Module" id="task-1">50% done</child_report>',
+		);
+		expect(result).not.toContain("[Reply requested]");
+	});
+
+	test("child_report with requestReply=true appends hint", () => {
+		const msg: QueueMessage = {
+			source: "child_report",
+			taskId: "task-2",
+			title: "DB Module",
+			content: "Need clarification on schema",
+			requestReply: true,
+		};
+		const result = formatQueueMessage(msg);
+		expect(result).toBe(
+			'<child_report from="DB Module" id="task-2">Need clarification on schema\n[Reply requested]</child_report>',
+		);
+	});
+
+	test("child_report with requestReply=false does not append hint", () => {
+		const msg: QueueMessage = {
+			source: "child_report",
+			taskId: "task-3",
+			title: "UI",
+			content: "All good",
+			requestReply: false,
+		};
+		const result = formatQueueMessage(msg);
+		expect(result).toBe(
+			'<child_report from="UI" id="task-3">All good</child_report>',
+		);
+		expect(result).not.toContain("[Reply requested]");
 	});
 });
