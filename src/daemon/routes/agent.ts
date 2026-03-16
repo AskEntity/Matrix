@@ -97,7 +97,6 @@ export function registerAgentRoutes(
 		const model = effectiveCfg.model ?? DEFAULT_MODEL;
 		return c.json({
 			running: !!session,
-			sessionId: session?.sessionId ?? null,
 			provider: provider.name,
 			model,
 		});
@@ -199,7 +198,7 @@ export function registerAgentRoutes(
 		if (!result.ok) {
 			return c.json({ error: result.error }, result.status as 404);
 		}
-		return c.json({ ok: true, sessionId: result.sessionId });
+		return c.json({ ok: true });
 	});
 
 	// Respond to a pending clarification request
@@ -253,7 +252,6 @@ export function registerAgentRoutes(
 		const tracker = ctx.trackers.get(project.id);
 		if (tracker) {
 			tracker.autoResume = false;
-			tracker.orchestratorSessionId = null;
 			await tracker.save();
 			// Broadcast tree so connected WS clients re-render with current nodes
 			broadcastTreeUpdate(ctx, project.id, tracker);

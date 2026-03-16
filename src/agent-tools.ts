@@ -1002,7 +1002,6 @@ export function createOrchestratorTools(
 							await worktrees.remove(node.id, slug);
 							node.worktreePath = null;
 							node.branch = null;
-							node.sessionId = null;
 						}
 
 						// Create worktree if needed (new, reset, or cleaned passed task)
@@ -1035,7 +1034,7 @@ export function createOrchestratorTools(
 							? `\n\nYou are on branch \`${node.branch}\`. Do NOT switch branches.`
 							: "";
 
-						if (mode === "resume" && node.sessionId) {
+						if (mode === "resume") {
 							prompt = taskSpec.message
 								? `${taskSpec.message}${branchReminder}`
 								: `Continue working. Pick up where you left off.${branchReminder}`;
@@ -1051,8 +1050,7 @@ export function createOrchestratorTools(
 							prompt,
 							cwd: node.worktreePath as string,
 							systemPrompt: TASK_SYSTEM_PROMPT,
-							resumeSessionId:
-								mode === "resume" ? (node.sessionId ?? undefined) : undefined,
+							resumeSessionId: node.id,
 							model: childModel,
 							budgetUsd: node.budgetUsd,
 						};
@@ -1067,9 +1065,6 @@ export function createOrchestratorTools(
 									nodeRef.worktreePath as string,
 								);
 
-								if (result.sessionId) {
-									tracker.assignSession(nodeRef.id, result.sessionId);
-								}
 								costs.add(result.costUsd, result.turns);
 								if (result.costUsd) {
 									tracker.updateCost(nodeRef.id, result.costUsd);

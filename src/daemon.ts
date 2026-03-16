@@ -222,7 +222,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			}
 
 			const tracker = await getTracker(ctx, project.id);
-			if (tracker.autoResume && tracker.orchestratorSessionId) {
+			if (tracker.autoResume && tracker.rootNodeId) {
 				// Reset orphaned in_progress tasks — their agent sessions died with the daemon
 				// Skip the root node — it will be re-activated by launchAgent
 				let orphanCount = 0;

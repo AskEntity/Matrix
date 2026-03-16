@@ -240,23 +240,14 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			});
 			broadcastTreeUpdate(ctx, project.id, tracker);
 
-			// If we have a session, the agent already has full context in its history.
-			// Just send the user's message (or a simple continue instruction).
-			// If no session, include full task context since it's a fresh start.
+			// sessionId = nodeId: the provider loads session history from <nodeId>.json.
+			// If history exists, the agent has full context. If not, include task details.
 			const branchReminder = node.branch
 				? `\n\nReminder: you are on branch \`${node.branch}\`. Do NOT switch branches.`
 				: "";
-			let continuePrompt: string;
-			if (node.sessionId) {
-				continuePrompt = body.message
-					? `${body.message}${branchReminder}`
-					: `Continue working. Pick up where you left off and complete the task.${branchReminder}`;
-			} else {
-				const memory = readProjectMemory(project.path);
-				continuePrompt = body.message
-					? `${body.message}\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}${branchReminder}`
-					: `Continue working on this task.\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}${branchReminder}`;
-			}
+			const continuePrompt = body.message
+				? `${body.message}${branchReminder}`
+				: `Continue working. Pick up where you left off and complete the task.${branchReminder}`;
 
 			// Run async — return immediately so UI updates
 			runChildAgentInBackground(
@@ -425,12 +416,12 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const tracker = await getTracker(ctx, project.id);
 		const node = tracker.get(c.req.param("nodeId"));
 		if (!node) return c.json({ error: "Task not found" }, 404);
-		if (!node.sessionId) return c.json({ messages: [] });
+		// sessionId = nodeId: session file is always <nodeId>.json
 		const sessionPath = join(
 			ctx.config.dataDir,
 			"sessions",
 			project.id,
-			`${node.sessionId}.json`,
+			`${node.id}.json`,
 		);
 		try {
 			const raw = await readFile(sessionPath, "utf-8");

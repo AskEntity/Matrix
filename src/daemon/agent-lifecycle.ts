@@ -161,13 +161,9 @@ export async function stopAgent(
 	const session = ctx.activeSessions.get(projectId);
 	if (!session) return;
 
-	// Save session for future resume
 	const tracker = ctx.trackers.get(projectId);
-	if (tracker && session.sessionId) {
-		tracker.orchestratorSessionId = session.sessionId;
-		if (opts?.clearAutoResume) {
-			tracker.autoResume = false;
-		}
+	if (tracker && opts?.clearAutoResume) {
+		tracker.autoResume = false;
 		await tracker.save();
 	}
 
@@ -250,7 +246,7 @@ export async function runChildAgentInBackground(
 			cwd: node.worktreePath as string,
 			sessionsDir,
 			systemPrompt: TASK_SYSTEM_PROMPT,
-			resumeSessionId: node.sessionId ?? undefined,
+			resumeSessionId: nodeId,
 			model: agentCtx.effectiveCfg.model,
 			mcpToolDefs: agentCtx.mcpToolDefs,
 			queue: childQueue,
@@ -270,9 +266,6 @@ export async function runChildAgentInBackground(
 			},
 		);
 
-		if (agentResult.sessionId) {
-			tracker.assignSession(nodeId, agentResult.sessionId);
-		}
 		// Use doneRef if available; fall back to agentResult.success
 		const didPass = doneRef.done
 			? doneRef.done.status === "passed"
@@ -362,9 +355,9 @@ export async function launchAgent(
 	});
 	broadcastTreeUpdate(ctx, project.id, tracker);
 
-	// Auto-resume: if we have a previous session, always resume it
-	const hasSession = Boolean(tracker.orchestratorSessionId);
-	const shouldResume = opts.resume || hasSession;
+	// sessionId = taskId: orchestrator's session is always its rootNodeId.
+	// The provider loads the session file if it exists.
+	const shouldResume = opts.resume;
 
 	const memory = readProjectMemory(project.path);
 	const prompt = shouldResume
@@ -374,9 +367,7 @@ export async function launchAgent(
 			? `${memory}\n\n---\n\n${opts.prompt}`
 			: opts.prompt;
 
-	const resumeSessionId = shouldResume
-		? (tracker.orchestratorSessionId ?? undefined)
-		: undefined;
+	const resumeSessionId = rootNodeId;
 
 	// Append self-bootstrap mode instructions if enabled
 	let systemPrompt = orchestratorSystemPrompt;
@@ -416,11 +407,6 @@ export async function launchAgent(
 					});
 				},
 			);
-
-			if (finalResult.sessionId) {
-				tracker.orchestratorSessionId = finalResult.sessionId;
-				await tracker.save();
-			}
 
 			// Update root node status based on result
 			const didPass = doneRef.done
@@ -462,8 +448,7 @@ export async function launchAgent(
 				message: `Agent failed: ${message}`,
 			});
 		} finally {
-			// Always preserve the orchestrator session for future resume,
-			// regardless of how it exited (success, failure, or crash).
+			// Save tree state regardless of how the agent exited.
 			try {
 				await tracker.save();
 			} catch {
@@ -538,7 +523,7 @@ export function handleInjectMessage(
 	projectId: string,
 	message: string,
 	images?: QueueImage[],
-): { ok: boolean; error?: string; status?: number; sessionId?: string } {
+): { ok: boolean; error?: string; status?: number } {
 	const session = ctx.activeSessions.get(projectId);
 	if (!session) {
 		return {
@@ -554,7 +539,7 @@ export function handleInjectMessage(
 		return { ok: false, error: "Queue closed", status: 409 };
 	}
 	addPendingMessage(ctx, projectId, null, message);
-	return { ok: true, sessionId: session.sessionId };
+	return { ok: true };
 }
 
 /** Answer a pending clarification. Used by POST /clarify and WS clarify_response. */

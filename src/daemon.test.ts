@@ -1963,10 +1963,8 @@ describe("GET /projects/:id/agent", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			running: boolean;
-			sessionId: string | null;
 		};
 		expect(body.running).toBe(false);
-		expect(body.sessionId).toBeNull();
 	});
 });
 
@@ -3433,14 +3431,12 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 	let dataDir: string;
 	let app: ReturnType<typeof createApp>["app"];
 	let projectId: string;
-	let getTracker: ReturnType<typeof createApp>["getTracker"];
 
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "og-conv-"));
 		dataDir = await mkdtemp(join(tmpdir(), "og-conv-data-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
-		getTracker = result.getTracker;
 		await result.pm.load();
 
 		const res = await app.request("/projects", {
@@ -3457,7 +3453,7 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 		await rm(dataDir, { recursive: true });
 	});
 
-	test("returns { messages: [] } for task with no sessionId", async () => {
+	test("returns { messages: [] } for new task with no session file", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -3487,7 +3483,7 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 		expect(res.status).toBe(404);
 	});
 
-	test("returns { messages: [] } for task with sessionId but missing session file", async () => {
+	test("returns { messages: [] } for task with no session file on disk", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -3495,11 +3491,7 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		// Assign a sessionId that doesn't correspond to any file
-		const tracker = await getTracker(projectId);
-		tracker.assignSession(task.id, "nonexistent-session-id");
-		await tracker.save();
-
+		// No session file exists for this task (sessionId = nodeId, but no file on disk)
 		const res = await app.request(
 			`/projects/${projectId}/tasks/${task.id}/conversation`,
 		);
@@ -3516,9 +3508,7 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		const sessionId = "test-session-abc123";
-
-		// Write mock session file
+		// Write mock session file — sessionId = nodeId
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
 		const sessionData = [
@@ -3542,14 +3532,9 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 			},
 		];
 		await writeFile(
-			join(sessionsDir, `${sessionId}.json`),
+			join(sessionsDir, `${task.id}.json`),
 			JSON.stringify(sessionData),
 		);
-
-		// Assign sessionId to task
-		const tracker = await getTracker(projectId);
-		tracker.assignSession(task.id, sessionId);
-		await tracker.save();
 
 		const res = await app.request(
 			`/projects/${projectId}/tasks/${task.id}/conversation`,
@@ -3596,9 +3581,7 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		const sessionId = "big-session-id";
-
-		// Write 110 messages
+		// Write 110 messages — sessionId = nodeId
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
 		const sessionData = Array.from({ length: 110 }, (_, i) => ({
@@ -3606,13 +3589,9 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 			content: `Message ${i}`,
 		}));
 		await writeFile(
-			join(sessionsDir, `${sessionId}.json`),
+			join(sessionsDir, `${task.id}.json`),
 			JSON.stringify(sessionData),
 		);
-
-		const tracker = await getTracker(projectId);
-		tracker.assignSession(task.id, sessionId);
-		await tracker.save();
 
 		const res = await app.request(
 			`/projects/${projectId}/tasks/${task.id}/conversation`,
@@ -3988,7 +3967,6 @@ describe("POST /projects/:id/restart", () => {
 		const agentRes = await app.request(`/projects/${proj.id}/agent`);
 		const agentBody = (await agentRes.json()) as {
 			running: boolean;
-			sessionId: string | null;
 		};
 		expect(agentBody.running).toBe(true);
 
@@ -4060,9 +4038,9 @@ describe("POST /projects/:id/restart", () => {
 		await app.request(`/projects/${proj.id}/restart`, { method: "POST" });
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
-		// Check that session ID was saved in tracker
+		// Root node should still exist (session file is at <rootNodeId>.json)
 		const tracker = await getTracker(proj.id);
-		expect(tracker.orchestratorSessionId).toBe("test-session-1");
+		expect(tracker.rootNodeId).toBeTruthy();
 
 		// Clean up
 		await app.request(`/projects/${proj.id}/stop`, { method: "POST" });

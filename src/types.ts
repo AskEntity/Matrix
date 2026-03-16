@@ -16,8 +16,6 @@ export interface TaskNode {
 	branch: string | null;
 	parentId: string | null;
 	children: string[];
-	/** Agent session ID for resuming conversations. */
-	sessionId: string | null;
 	/** Absolute path to the git worktree for this task. */
 	worktreePath: string | null;
 	/** Optional message to pass when continuing a failed/stuck task. */
