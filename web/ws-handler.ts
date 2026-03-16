@@ -23,7 +23,7 @@ export interface WSHandlerDeps {
 	addLog: AddLogFn;
 	updateFromWS: (nodes: TaskNode[]) => void;
 	setRootNodeId: React.Dispatch<React.SetStateAction<string | null>>;
-	setRunning: (running: boolean) => void;
+	setActiveAgents: React.Dispatch<React.SetStateAction<Set<string>>>;
 	/** Re-check actual agent status from backend (GET /projects/:id/agent). */
 	checkAgentStatus: () => void;
 	setAgentProvider: (provider: string) => void;
@@ -68,7 +68,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		addLog,
 		updateFromWS,
 		setRootNodeId,
-		setRunning,
+		setActiveAgents,
 		checkAgentStatus,
 		setAgentProvider,
 		setAgentModel,
@@ -366,7 +366,11 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				// No log entry — side effects only (cost/token stats).
 				return false;
 			case "agent_stopped":
-				// No log entry — side effects only (setRunning, setPendingCompact).
+				// No log entry — side effects only (activeAgents, setPendingCompact).
+				return false;
+			case "agent_active":
+			case "agent_idle":
+				// No log entry — side effects only (activeAgents set).
 				return false;
 			case "task_started": {
 				const instruction = msg.message
@@ -470,8 +474,10 @@ export function createWSHandler(deps: WSHandlerDeps) {
 			}
 			case "orchestration_started": {
 				const startRootId = msg.taskId as string | undefined;
-				if (startRootId) setRootNodeId(startRootId);
-				setRunning(true);
+				if (startRootId) {
+					setRootNodeId(startRootId);
+					setActiveAgents((prev) => new Set(prev).add(startRootId));
+				}
 				if (msg.provider) setAgentProvider(msg.provider as string);
 				if (msg.model) setAgentModel(msg.model as string);
 				break;
@@ -487,14 +493,42 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					setLastCacheReadTokens(msg.cacheReadTokens as number);
 				if (msg.outputTokens !== undefined)
 					setLastOutputTokens(msg.outputTokens as number);
-				// Re-check actual agent status — auto-resume may have restarted it
+				// Remove this agent from active set, then re-check (auto-resume may restart)
+				if (msg.taskId) {
+					setActiveAgents((prev) => {
+						const next = new Set(prev);
+						next.delete(msg.taskId as string);
+						return next;
+					});
+				}
 				checkAgentStatus();
 				setPendingCompact(false);
 				break;
 			case "agent_stopped":
-				// Re-check actual agent status — auto-resume may have restarted it
+				// Remove this agent from active set, then re-check (auto-resume may restart)
+				if (msg.taskId) {
+					setActiveAgents((prev) => {
+						const next = new Set(prev);
+						next.delete(msg.taskId as string);
+						return next;
+					});
+				}
 				checkAgentStatus();
 				setPendingCompact(false);
+				break;
+			case "agent_active":
+				if (msg.taskId) {
+					setActiveAgents((prev) => new Set(prev).add(msg.taskId as string));
+				}
+				break;
+			case "agent_idle":
+				if (msg.taskId) {
+					setActiveAgents((prev) => {
+						const next = new Set(prev);
+						next.delete(msg.taskId as string);
+						return next;
+					});
+				}
 				break;
 		}
 	}
@@ -659,7 +693,10 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				// No log entry for normal starts — sessions are persistent, lifecycle cards are noise.
 				// Show a subtle indicator on resume, and the user prompt if present.
 				const startRootId = msg.taskId as string | undefined;
-				if (startRootId) setRootNodeId(startRootId);
+				if (startRootId) {
+					setRootNodeId(startRootId);
+					setActiveAgents((prev) => new Set(prev).add(startRootId));
+				}
 				if (msg.resume) {
 					addLog("lifecycle", "↻ Session resumed", startRootId);
 				}
@@ -675,7 +712,6 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						imgs,
 					);
 				}
-				setRunning(true);
 				if (msg.provider) setAgentProvider(msg.provider as string);
 				if (msg.model) setAgentModel(msg.model as string);
 				break;
@@ -692,16 +728,44 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					setLastCacheReadTokens(msg.cacheReadTokens as number);
 				if (msg.outputTokens !== undefined)
 					setLastOutputTokens(msg.outputTokens as number);
-				// Re-check actual agent status — auto-resume may have restarted it
+				// Remove agent from active set, then re-check (auto-resume may restart)
+				if (msg.taskId) {
+					setActiveAgents((prev) => {
+						const next = new Set(prev);
+						next.delete(msg.taskId as string);
+						return next;
+					});
+				}
 				checkAgentStatus();
 				setPendingCompact(false);
 				break;
 			}
 			case "agent_stopped":
 				// No log entry — side effects only.
-				// Re-check actual agent status — auto-resume may have restarted it
+				// Remove agent from active set, then re-check (auto-resume may restart)
+				if (msg.taskId) {
+					setActiveAgents((prev) => {
+						const next = new Set(prev);
+						next.delete(msg.taskId as string);
+						return next;
+					});
+				}
 				checkAgentStatus();
 				setPendingCompact(false);
+				break;
+			case "agent_active":
+				if (msg.taskId) {
+					setActiveAgents((prev) => new Set(prev).add(msg.taskId as string));
+				}
+				break;
+			case "agent_idle":
+				if (msg.taskId) {
+					setActiveAgents((prev) => {
+						const next = new Set(prev);
+						next.delete(msg.taskId as string);
+						return next;
+					});
+				}
 				break;
 			case "task_started": {
 				const instruction = msg.message

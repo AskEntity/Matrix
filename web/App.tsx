@@ -156,7 +156,8 @@ function AppInner() {
 	} = useTasks(projectId, setRootNodeId);
 	const {
 		running,
-		setRunning,
+		activeAgents,
+		setActiveAgents,
 		provider: agentProvider,
 		setProvider: setAgentProvider,
 		model: agentModel,
@@ -198,11 +199,11 @@ function AppInner() {
 			? (nodeMap.get(selectedTaskId) ?? null)
 			: null;
 
-	const isSelectedTaskRunning =
-		running && (isOrchestratorNode || selectedNode?.status === "in_progress");
-
-	// Note: 'running' state is still tracked for the "Thinking..." indicator in ActivityLog
-	// and for the Pause button visibility. It does NOT affect the core messaging flow.
+	// Per-agent active state: check if the currently viewed agent is active
+	const viewedTaskId = isOrchestratorNode ? rootNodeId : selectedTaskId;
+	const isSelectedTaskActive = viewedTaskId
+		? activeAgents.has(viewedTaskId)
+		: false;
 
 	const addLog = useCallback(
 		(
@@ -314,7 +315,7 @@ function AppInner() {
 				addLog,
 				updateFromWS,
 				setRootNodeId,
-				setRunning,
+				setActiveAgents,
 				checkAgentStatus: checkStatus,
 				setAgentProvider,
 				setAgentModel,
@@ -336,7 +337,7 @@ function AppInner() {
 		[
 			addLog,
 			updateFromWS,
-			setRunning,
+			setActiveAgents,
 			checkStatus,
 			setAgentProvider,
 			setAgentModel,
@@ -605,6 +606,7 @@ function AppInner() {
 						nodes={nodes}
 						selectedTaskId={selectedTaskId}
 						rootNodeId={rootNodeId}
+						activeAgents={activeAgents}
 						onSelect={setSelectedTaskId}
 						onReorder={reorderTasks}
 						onReparent={reparentTask}
@@ -635,6 +637,7 @@ function AppInner() {
 						{isOrchestratorNode ? (
 							<OrchestratorDetail
 								running={running}
+								isRootActive={rootNodeId ? activeAgents.has(rootNodeId) : false}
 								nodes={nodes}
 								rootNodeId={rootNodeId}
 								costUsd={lastCostUsd}
@@ -653,6 +656,7 @@ function AppInner() {
 							<TaskDetail
 								node={selectedNode}
 								projectId={projectId}
+								isActive={activeAgents.has(selectedNode.id)}
 								onDelete={handleDeleteTask}
 								onPause={handlePauseTask}
 							/>
@@ -705,7 +709,7 @@ function AppInner() {
 											contextWindow={usage.contextWindow}
 											estimated={usage.estimated}
 											onCompact={
-												running
+												isSelectedTaskActive
 													? () => {
 															setPendingCompact(true);
 															compact();
@@ -734,7 +738,7 @@ function AppInner() {
 							nodeMap={nodeMap}
 							autoScroll={autoScroll}
 							onAutoScrollChange={setAutoScroll}
-							running={isSelectedTaskRunning}
+							isActive={isSelectedTaskActive}
 						/>
 					</div>
 				</section>

@@ -4,6 +4,7 @@ import { IconHexagon, IconPause, IconTrash } from "./icons.tsx";
 
 export function OrchestratorDetail({
 	running,
+	isRootActive,
 	nodes,
 	rootNodeId,
 	costUsd,
@@ -19,6 +20,7 @@ export function OrchestratorDetail({
 	onStop,
 }: {
 	running: boolean;
+	isRootActive: boolean;
 	nodes: TaskNode[];
 	rootNodeId?: string | null;
 	costUsd?: number | null;
@@ -181,7 +183,7 @@ export function OrchestratorDetail({
 					alignItems: "center",
 				}}
 			>
-				{running && onStop && (
+				{isRootActive && onStop && (
 					<button
 						type="button"
 						className="og-btn og-btn-sm og-btn-ghost"
@@ -191,7 +193,7 @@ export function OrchestratorDetail({
 						{t("orch.pause")}
 					</button>
 				)}
-				{onClearSessions && (
+				{!running && onClearSessions && (
 					<button
 						type="button"
 						className="og-btn og-btn-sm og-btn-ghost"

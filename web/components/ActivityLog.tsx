@@ -10,7 +10,7 @@ export function ActivityLog({
 	nodeMap,
 	autoScroll,
 	onAutoScrollChange,
-	running,
+	isActive,
 }: {
 	entries: LogEntry[];
 	filterTaskId: string | null;
@@ -18,7 +18,7 @@ export function ActivityLog({
 	nodeMap: Map<string, TaskNode>;
 	autoScroll: boolean;
 	onAutoScrollChange: (locked: boolean) => void;
-	running: boolean;
+	isActive: boolean;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 	const bottomRef = useRef<HTMLDivElement>(null);
@@ -64,9 +64,9 @@ export function ActivityLog({
 		}
 	}, [visible.length, autoScroll]);
 
-	// Show "Thinking..." when agent is running but no events for 1.5s
+	// Show "Thinking..." when agent is active but no events for 1.5s
 	useEffect(() => {
-		if (!running) {
+		if (!isActive) {
 			setShowThinking(false);
 			return;
 		}
@@ -75,10 +75,10 @@ export function ActivityLog({
 			const lastEntry = currentEntries[currentEntries.length - 1];
 			const hasToolInProgress = lastEntry?.type === "tool_use";
 			const elapsed = Date.now() - lastEventTimeRef.current;
-			setShowThinking(running && !hasToolInProgress && elapsed > 1500);
+			setShowThinking(isActive && !hasToolInProgress && elapsed > 1500);
 		}, 500);
 		return () => clearInterval(id);
-	}, [running]);
+	}, [isActive]);
 
 	useEffect(() => {
 		const el = logRef.current;
@@ -243,7 +243,7 @@ export function ActivityLog({
 						/>
 					),
 				)}
-				{running && (
+				{isActive && (
 					<div
 						className="og-thinking-indicator"
 						style={{ visibility: showThinking ? "visible" : "hidden" }}

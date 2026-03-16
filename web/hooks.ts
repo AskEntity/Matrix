@@ -187,21 +187,31 @@ export function useTasks(
 // --- useAgent ---
 
 export function useAgent(projectId: string) {
-	const [running, setRunning] = useState(false);
+	const [activeAgents, setActiveAgents] = useState<Set<string>>(new Set());
+	const running = activeAgents.size > 0;
 	const [provider, setProvider] = useState<string | null>(null);
 	const [model, setModel] = useState<string | null>(null);
 
 	const checkStatus = useCallback(async () => {
 		if (!projectId) {
-			setRunning(false);
+			setActiveAgents(new Set());
 			setProvider(null);
 			setModel(null);
 			return;
 		}
 		try {
+			// Fetch per-agent idle/active status
+			const statusRes = await fetch(`/projects/${projectId}/agent/status`);
+			if (statusRes.ok) {
+				const statusData = (await statusRes.json()) as {
+					idle: string[];
+					active: string[];
+				};
+				setActiveAgents(new Set(statusData.active));
+			}
+			// Fetch provider/model from legacy endpoint
 			const res = await fetch(`/projects/${projectId}/agent`);
 			const data = await res.json();
-			setRunning(data.running);
 			if (data.provider) setProvider(data.provider);
 			if (data.model) setModel(data.model);
 		} catch {
@@ -221,7 +231,7 @@ export function useAgent(projectId: string) {
 				body: JSON.stringify(opts),
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
-			setRunning(true);
+			// The orchestration_started WS event will add the root to activeAgents
 		},
 		[projectId],
 	);
@@ -233,12 +243,12 @@ export function useAgent(projectId: string) {
 		if (!res.ok) {
 			// 404 means session already gone — reset UI running state to match.
 			if (res.status === 404) {
-				setRunning(false);
+				setActiveAgents(new Set());
 				return;
 			}
 			throw new Error((await res.json()).error);
 		}
-		setRunning(false);
+		// agent_stopped WS event will clear activeAgents via checkStatus
 	}, [projectId]);
 
 	const continueTask = useCallback(
@@ -337,7 +347,8 @@ export function useAgent(projectId: string) {
 
 	return {
 		running,
-		setRunning,
+		activeAgents,
+		setActiveAgents,
 		provider,
 		setProvider,
 		model,

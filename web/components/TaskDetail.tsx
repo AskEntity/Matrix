@@ -43,17 +43,20 @@ function formatRunningDuration(dateStr: string | null | undefined): string {
 export function TaskDetail({
 	node,
 	projectId,
+	isActive,
 	onDelete,
 	onPause,
 }: {
 	node: TaskNode;
 	projectId: string;
+	isActive?: boolean;
 	onDelete: () => void;
 	onPause?: () => void;
 }) {
 	const { t } = useLocale();
 	const [showHistory, setShowHistory] = useState(false);
-	const isRunning = node.status === "in_progress" || node.status === "testing";
+	const isRunning =
+		isActive ?? (node.status === "in_progress" || node.status === "testing");
 	const [editingTitle, setEditingTitle] = useState(false);
 	const [editTitle, setEditTitle] = useState(node.title);
 	const [editingDesc, setEditingDesc] = useState(false);
