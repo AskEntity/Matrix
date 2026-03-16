@@ -222,6 +222,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					if (rawMessages && rawMessages.length > 0) {
 						for (const rm of rawMessages) {
 							if (rm.source === "child_complete") continue;
+							if (rm.source === "system") continue;
 							if (rm.source === "user") {
 								entries.push(createLogEntry("user_prompt", rm.content, taskId));
 								continue;
@@ -370,6 +371,13 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					),
 				);
 				return true;
+			case "tree_mutation": {
+				const action = msg.action as string;
+				const title = (msg.title as string) || "";
+				const mutationText = title ? `${action}: ${title}` : action;
+				entries.push(createLogEntry("tree_mutation", mutationText));
+				return true;
+			}
 			default:
 				return true;
 		}
@@ -540,6 +548,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					if (rawMessages && rawMessages.length > 0) {
 						for (const rm of rawMessages) {
 							if (rm.source === "child_complete") continue;
+							if (rm.source === "system") continue;
 							if (rm.source === "user") {
 								addLog("user_prompt", rm.content, taskId);
 								continue;
@@ -667,6 +676,13 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					msg.taskId as string | undefined,
 				);
 				break;
+			case "tree_mutation": {
+				const action = msg.action as string;
+				const title = (msg.title as string) || "";
+				const mutationText = title ? `${action}: ${title}` : action;
+				addLog("tree_mutation", mutationText);
+				break;
+			}
 			case "event_history": {
 				// Batch all entries at once to avoid intermediate renders where
 				// tool_result entries exist without their matching tool_use,

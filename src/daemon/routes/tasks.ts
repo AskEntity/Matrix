@@ -18,12 +18,27 @@ import {
 } from "../helpers.ts";
 
 /** Notify the running agent (if any) that the task tree was modified by the user. */
-function notifyAgentOfTreeChange(ctx: DaemonContext, projectId: string): void {
+function notifyAgentOfTreeChange(
+	ctx: DaemonContext,
+	projectId: string,
+	action: "task_created" | "task_updated" | "task_reordered" | "task_deleted",
+	nodeId: string,
+	title?: string,
+): void {
+	// Structured WS event for UI rendering
+	broadcastEvent(ctx, projectId, {
+		type: "tree_mutation",
+		action,
+		nodeId,
+		title,
+	});
+
+	// Queue message for agent awareness (source: "system" so it's not rendered as user bubble)
 	const session = ctx.activeSessions.get(projectId);
 	if (session) {
 		try {
 			session.queue.enqueue({
-				source: "user",
+				source: "system",
 				content:
 					"[TREE UPDATED] The task tree was modified by the user via the Web UI. Call get_tree to see the latest state.",
 			});
@@ -77,7 +92,13 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				: tracker.addTask(body.title, body.description ?? "", opts);
 			await tracker.save();
 			broadcastTreeUpdate(ctx, project.id, tracker);
-			notifyAgentOfTreeChange(ctx, project.id);
+			notifyAgentOfTreeChange(
+				ctx,
+				project.id,
+				"task_created",
+				node.id,
+				node.title,
+			);
 			return c.json(node, 201);
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -133,7 +154,13 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyAgentOfTreeChange(ctx, project.id);
+		notifyAgentOfTreeChange(
+			ctx,
+			project.id,
+			"task_updated",
+			nodeId,
+			node.title,
+		);
 		return c.json(tracker.get(nodeId));
 	});
 
@@ -162,7 +189,13 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyAgentOfTreeChange(ctx, project.id);
+		notifyAgentOfTreeChange(
+			ctx,
+			project.id,
+			"task_reordered",
+			nodeId,
+			node.title,
+		);
 		return c.json({ ok: true });
 	});
 
@@ -334,7 +367,13 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		tracker.remove(nodeId);
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyAgentOfTreeChange(ctx, project.id);
+		notifyAgentOfTreeChange(
+			ctx,
+			project.id,
+			"task_deleted",
+			nodeId,
+			node.title,
+		);
 		return c.json({ ok: true });
 	});
 

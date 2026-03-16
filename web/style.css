@@ -1593,6 +1593,12 @@ button.og-tool-card-header:hover {
 	color: rgba(63, 185, 80, 0.9);
 }
 
+.og-tool-card-system .og-tool-card-detail {
+	color: rgba(63, 185, 80, 0.6);
+	font-size: 0.85em;
+	margin-left: 0.5em;
+}
+
 .og-tool-card-loading {
 	border-left-color: var(--color-in-progress);
 }
