@@ -18,6 +18,50 @@ import {
 	readProjectMemory,
 } from "../helpers.ts";
 
+/** Notify each ancestor in the parent chain that the user sent a message to a child task. */
+async function notifyParentChain(
+	ctx: DaemonContext,
+	projectId: string,
+	taskId: string,
+	taskTitle: string,
+): Promise<void> {
+	const tracker = await getTracker(ctx, projectId);
+	const node = tracker.get(taskId);
+	if (!node?.parentId) return;
+
+	let currentId = node.parentId;
+	while (currentId) {
+		const ancestor = tracker.get(currentId);
+		if (!ancestor) break;
+
+		const notification = {
+			source: "child_report" as const,
+			taskId,
+			title: taskTitle,
+			content: `User sent a message to child task '${taskTitle}' (${taskId})`,
+		};
+
+		const ancestorQueue = globalAgentQueues.get(currentId);
+		if (ancestorQueue) {
+			try {
+				ancestorQueue.enqueue(notification);
+			} catch {
+				/* queue may be closed */
+			}
+		} else {
+			await persistMessage(
+				ctx.config.dataDir,
+				projectId,
+				currentId,
+				notification,
+			);
+		}
+
+		if (!ancestor.parentId) break;
+		currentId = ancestor.parentId;
+	}
+}
+
 /** Notify the running agent (if any) that the task tree was modified by the user. */
 function notifyAgentOfTreeChange(
 	ctx: DaemonContext,
@@ -478,6 +522,10 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			return c.json({ error: "content is required" }, 400);
 		}
 
+		const tracker = await getTracker(ctx, project.id);
+		const node = tracker.get(nodeId);
+		const taskTitle = node?.title ?? nodeId;
+
 		const queue = globalAgentQueues.get(nodeId);
 		if (queue) {
 			try {
@@ -486,6 +534,8 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				return c.json({ error: "Queue closed" }, 409);
 			}
 			addPendingMessage(ctx, project.id, nodeId, body.content);
+			// Notify parent chain that user sent a message to this task
+			await notifyParentChain(ctx, project.id, nodeId, taskTitle);
 			return c.json({ ok: true, taskId: nodeId });
 		}
 
@@ -495,8 +545,6 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		addPendingMessage(ctx, project.id, nodeId, body.content);
 
 		// Auto-launch agent for this task if it has a worktree
-		const tracker = await getTracker(ctx, project.id);
-		const node = tracker.get(nodeId);
 		if (node?.worktreePath) {
 			tracker.updateStatus(nodeId, "in_progress");
 			await tracker.save();
@@ -513,6 +561,9 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				`${body.content}${branchReminder}`,
 			);
 		}
+
+		// Notify parent chain that user sent a message to this task
+		await notifyParentChain(ctx, project.id, nodeId, taskTitle);
 
 		return c.json({ ok: true, taskId: nodeId, persisted: true });
 	});
