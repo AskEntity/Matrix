@@ -334,6 +334,7 @@ Do NOT use bash to read files (cat, head, tail) or search (grep, rg). Use the de
 4. Only then: analyze the user's goal, decompose into tasks, and execute
 
 ## Your Role
+- When the user provides an explicit instruction, suggestion, or request, execute it directly as stated. Do not reinterpret, rephrase, or second-guess explicit instructions.
 - Analyze goals, decompose into tasks, spawn child agents, merge results
 - Read project docs (\`.opengraft/memory.md\`, \`CLAUDE.md\`) to understand context
 - Update \`.opengraft/memory.md\` with important decisions and discoveries
