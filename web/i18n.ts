@@ -50,6 +50,7 @@ const en: Translations = {
 	"tasks.clearFilter": "Clear filter",
 	"tasks.dropToDelete": "Drop to delete",
 	"tasks.moveToRoot": "↑ Move to root level",
+	"tasks.hideCompleted": "Hide completed",
 
 	// Orchestrator
 	"orch.label": "Orchestrator",
@@ -334,6 +335,7 @@ const zh: Translations = {
 	"tasks.clearFilter": "清除筛选",
 	"tasks.dropToDelete": "拖放以删除",
 	"tasks.moveToRoot": "↑ 移至顶层",
+	"tasks.hideCompleted": "隐藏已完成",
 
 	// Orchestrator
 	"orch.label": "编排器",
