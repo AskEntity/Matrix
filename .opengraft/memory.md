@@ -127,3 +127,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - `delete_task` splits: passed tasks get worktree/branch cleaned (`cleaned: true`) but node stays in tree. Non-passed tasks fully removed.
 - `TaskTracker.cleanNode(id)` clears branch/worktreePath/sessionId, sets `cleaned: true`.
 - REST `DELETE /tasks/:id` still fully removes (user-initiated).
+
+## Duplicate Card Fix (task_completed)
+- `task_completed` events create log entries for BOTH child taskId and parent taskId in ws-handler.ts (both `collectEntries` and `handleWS` paths)
+- The `done()` MCP tool also creates a tool_use/tool_result pair that renders as a card in the child log
+- Fix: suppress child-side `task_completed` entry (keep parent-side only), enhance `done()` card with task title from nodeMap
+- `McpToolCardBody` accepts optional `taskId` prop to look up task info from nodeMap
