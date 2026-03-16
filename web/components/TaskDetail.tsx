@@ -53,7 +53,6 @@ export function TaskDetail({
 }) {
 	const { t } = useLocale();
 	const [showHistory, setShowHistory] = useState(false);
-	const isPending = node.status === "pending";
 	const isRunning = node.status === "in_progress" || node.status === "testing";
 	const [editingTitle, setEditingTitle] = useState(false);
 	const [editTitle, setEditTitle] = useState(node.title);
@@ -122,7 +121,7 @@ export function TaskDetail({
 							}
 						}}
 					/>
-				) : isPending ? (
+				) : (
 					<button
 						type="button"
 						className="og-editable-title"
@@ -134,8 +133,6 @@ export function TaskDetail({
 					>
 						{node.title}
 					</button>
-				) : (
-					<span>{node.title}</span>
 				)}
 			</div>
 
@@ -152,16 +149,9 @@ export function TaskDetail({
 							setEditingDesc(false);
 						}
 					}}
-					rows={4}
+					rows={8}
 				/>
-			) : isRunning ? (
-				<div className="og-detail-description">
-					{node.description || (
-						<span className="og-text-faint">{t("detail.noDescription")}</span>
-					)}
-					<div className="og-running-hint">{t("detail.runningHint")}</div>
-				</div>
-			) : isPending ? (
+			) : (
 				<button
 					type="button"
 					className="og-detail-description og-editable-desc"
@@ -174,13 +164,10 @@ export function TaskDetail({
 					{node.description || (
 						<span className="og-text-faint">{t("detail.editDescription")}</span>
 					)}
-				</button>
-			) : (
-				<div className="og-detail-description">
-					{node.description || (
-						<span className="og-text-faint">{t("detail.noDescription")}</span>
+					{isRunning && (
+						<div className="og-running-hint">{t("detail.runningHint")}</div>
 					)}
-				</div>
+				</button>
 			)}
 
 			<div className="og-detail-grid">
