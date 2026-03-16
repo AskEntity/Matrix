@@ -429,3 +429,9 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - `notifyAgentOfTreeChange`: Only called from REST routes (user-initiated). MCP operations don't need it since the agent made the change itself
 - Color resolve: MCP resolves named colors to hex. REST passes through raw values. Both are correct.
 - `create_task` default parent: REST defaults to root node. MCP defaults to current task. Both are correct for their contexts.
+
+## Queue Message Card Detail Truncation
+
+- `og-tool-card-detail` base style added: `overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1` — prevents detail text from wrapping and creating tall flex headers.
+- Queue card name variants (parent, child-report, cross-project) get `overflow: hidden; text-overflow: ellipsis; max-width: 50%; flex-shrink: 1` so long task titles in labels like "↑ from Very Long Task Name" truncate instead of pushing detail text off screen.
+- Root cause of empty space: `og-tool-card-header` is `display: flex; align-items: center` — when name (nowrap) consumed all width, detail text wrapped to many lines, making the row tall with centered name appearing to have "empty space" above/below.
