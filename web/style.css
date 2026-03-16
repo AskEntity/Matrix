@@ -2349,6 +2349,29 @@ button.og-tool-card-header:hover {
 	color: var(--text-primary);
 }
 
+.og-message-target-clear {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: none;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--text-secondary);
+	cursor: pointer;
+	flex-shrink: 0;
+	transition:
+		background 0.15s,
+		color 0.15s;
+}
+
+.og-message-target-clear:hover {
+	background: var(--bg-tertiary);
+	color: var(--text-primary);
+}
+
 /* Targeted button variant (active state for "Send messages here") */
 .og-btn-targeted {
 	background: var(--accent-muted);

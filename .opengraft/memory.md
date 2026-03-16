@@ -263,3 +263,11 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - `useWebSocket` accepts optional `onConnect` callback — used to call `checkStatus()` on WS connect/reconnect so running state syncs after daemon restart.
 - AppFooter always shows "Send" button (never "Run") since `handleSubmit` uses unified path: tries `sendMessage` (POST /message) first, falls back to `start` (POST /orchestrate/agent) only if no session exists.
 - `checkAgentStatus` added to `WSHandlerDeps` interface in ws-handler.ts.
+
+
+## Message Target Banner Enhancement
+
+- AppFooter.tsx `og-message-target` banner now shows whenever `targetNodeId` is set (not just when running).
+- Added X button (`og-message-target-clear`) to cancel targeting — resets to root node.
+- `onClearTarget` callback added to AppFooter props, wired in App.tsx to `setTargetNodeId(null)` + `setSelectedTaskId(rootNodeId)`.
+- Placeholder text also shows task-targeted message whenever `targetNodeId` is set.
