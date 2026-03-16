@@ -105,6 +105,7 @@ export function formatQueueMessage(msg: QueueMessage): string {
 export function toRawMessage(msg: QueueMessage): {
 	source: string;
 	content: string;
+	images?: { base64: string; mediaType: string }[];
 } {
 	switch (msg.source) {
 		case "child_complete":
@@ -113,7 +114,11 @@ export function toRawMessage(msg: QueueMessage): {
 				content: `Task "${msg.title}" (${msg.taskId}) ${msg.success ? "passed" : "failed"}: ${msg.output.slice(0, 500)}`,
 			};
 		case "user":
-			return { source: msg.source, content: msg.content };
+			return {
+				source: msg.source,
+				content: msg.content,
+				...(msg.images?.length ? { images: msg.images } : {}),
+			};
 		case "system":
 			return { source: msg.source, content: msg.content };
 		case "parent_update":

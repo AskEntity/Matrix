@@ -93,12 +93,22 @@ export function createWSHandler(deps: WSHandlerDeps) {
 	 * Returns null for messages that should be skipped (child_complete, system).
 	 */
 	function createQueueEntry(
-		rm: { source: string; content: string },
+		rm: {
+			source: string;
+			content: string;
+			images?: { base64: string; mediaType: string }[];
+		},
 		taskId?: string,
 	): LogEntry | null {
 		if (rm.source === "child_complete" || rm.source === "system") return null;
 		if (rm.source === "user") {
-			return createLogEntry("user_prompt", rm.content, taskId);
+			return createLogEntry(
+				"user_prompt",
+				rm.content,
+				taskId,
+				undefined,
+				rm.images,
+			);
 		}
 		if (rm.source === "parent_update") {
 			return createLogEntry(
@@ -310,7 +320,11 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				if (et === "queue_message") {
 					const taskId = msg.taskId as string | undefined;
 					const rawMessages = msg.rawMessages as
-						| Array<{ source: string; content: string }>
+						| Array<{
+								source: string;
+								content: string;
+								images?: { base64: string; mediaType: string }[];
+						  }>
 						| undefined;
 					if (rawMessages && rawMessages.length > 0) {
 						for (const rm of rawMessages) {
@@ -655,7 +669,11 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				} else if (et === "queue_message") {
 					const taskId = msg.taskId as string | undefined;
 					const rawMessages = msg.rawMessages as
-						| Array<{ source: string; content: string }>
+						| Array<{
+								source: string;
+								content: string;
+								images?: { base64: string; mediaType: string }[];
+						  }>
 						| undefined;
 					if (rawMessages && rawMessages.length > 0) {
 						for (const rm of rawMessages) {
@@ -667,7 +685,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 									entry.taskId,
 									undefined,
 									undefined,
-									undefined,
+									entry.images,
 									entry.meta,
 								);
 							}
