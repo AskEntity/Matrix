@@ -766,6 +766,25 @@ export function LogEntryView({
 		const toolArgs = entry.toolArgs;
 		const argsStr = formatArgs(toolArgs, bashBgExcludeKeys(toolName, toolArgs));
 		const isMcp = toolName.startsWith("mcp__opengraft__");
+		const isYield = toolName === "mcp__opengraft__yield";
+		// Yield gets a calm "waiting" card — no spinner/pulse since it's idle, not loading
+		if (isYield) {
+			return (
+				<div className="og-log-entry og-event-tool_card">
+					<span className="og-log-time">{entry.time}</span>
+					{taskLabel && (
+						<span className="og-log-badge" title={entry.taskId}>
+							{taskLabel}
+						</span>
+					)}
+					<div className="og-tool-card og-tool-card-yield-waiting og-tool-card-mcp">
+						<div className="og-tool-card-header">
+							<span className="og-tool-card-name">⏸ {t("tool.waiting")}</span>
+						</div>
+					</div>
+				</div>
+			);
+		}
 		return (
 			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{entry.time}</span>
