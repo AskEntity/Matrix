@@ -490,7 +490,7 @@ function TaskNodeView({
 			)}
 			<button
 				type="button"
-				className={`og-task-node${isSelected ? " selected" : ""}${node.draft ? " og-task-draft" : ""}${isDragging ? " og-task-dragging" : ""}${isReparentTarget ? " og-reparent-target" : ""}${node.status === "closed" ? " og-task-closed" : ""}`}
+				className={`og-task-node${isSelected ? " selected" : ""}${node.status === "draft" ? " og-task-draft" : ""}${isDragging ? " og-task-dragging" : ""}${isReparentTarget ? " og-reparent-target" : ""}${node.status === "closed" ? " og-task-closed" : ""}`}
 				draggable
 				onDragStart={(e) => onDragStart(node.id, parentId, e)}
 				onDragOver={(e) => onDragOver(node.id, parentId, siblingIds, e)}
@@ -529,7 +529,9 @@ function TaskNodeView({
 						/>
 					)}
 					<span className="og-task-title">{node.title}</span>
-					{node.draft && <span className="og-task-draft-badge">draft</span>}
+					{node.status === "draft" && (
+						<span className="og-task-draft-badge">draft</span>
+					)}
 					{node.branch && (
 						<span className="og-task-branch-tag" title={node.branch}>
 							{node.branch.replace("og/", "").split("/").slice(1).join("/") ||

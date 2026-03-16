@@ -150,7 +150,7 @@ export function toRawMessage(msg: QueueMessage): {
 export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "opengraft")
 - get_tree: View the current task tree (always check this first)
 - create_task: Create tasks (omit parentId to create under your own task, or provide parentId for a specific parent)
-- update_task: Update a task's status, title, description, or draft flag
+- update_task: Update a task's status, title, description, or draft state
 - send_message_to_child: The universal way to start, wake, or message a child task.
   Sending a message to a task IS starting it. One call per task for parallel launches.
   Auto-creates worktree and launches agent if not running. If already running, delivers message.
@@ -185,9 +185,9 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   message in the target orchestrator's queue (visible via yield()).
 
 ## Draft Tasks
-- Create tasks with \`draft: true\` to quickly capture ideas, requirements, and half-formed thoughts.
+- Create tasks with \`draft: true\` to quickly capture ideas, requirements, and half-formed thoughts. They get status="draft".
 - Draft tasks cannot be executed — they serve as a scratch pad for future work.
-- Use \`update_task(taskId, { draft: false })\` to mark a draft ready for execution.
+- Use \`update_task(taskId, { draft: false })\` or \`update_task(taskId, { status: "pending" })\` to mark a draft ready for execution.
 - **ALWAYS draft when the user mentions ANY idea, bug, or feature** — even mid-conversation. Don't wait
   for them to say "create a task". If they mention something worth doing, draft it immediately.
 - Better to over-create drafts than to lose an idea. Drafts are cheap, lost context is expensive.
@@ -820,6 +820,7 @@ export function createOrchestratorTools(
 				taskId: z.string().describe("Task node ID"),
 				status: z
 					.enum([
+						"draft",
 						"pending",
 						"in_progress",
 						"testing",
@@ -831,7 +832,12 @@ export function createOrchestratorTools(
 					.describe("New status"),
 				title: z.string().optional().describe("New title"),
 				description: z.string().optional().describe("New description"),
-				draft: z.boolean().optional().describe("Set draft flag"),
+				draft: z
+					.boolean()
+					.optional()
+					.describe(
+						"Set draft flag. true = status becomes 'draft', false = status becomes 'pending'.",
+					),
 				parentId: z
 					.string()
 					.optional()
@@ -892,7 +898,11 @@ export function createOrchestratorTools(
 						tracker.updateDescription(args.taskId, args.description, "agent");
 					}
 					if (args.draft !== undefined) {
-						tracker.updateDraft(args.taskId, args.draft, "agent");
+						tracker.updateStatus(
+							args.taskId,
+							args.draft ? "draft" : "pending",
+							"agent",
+						);
 					}
 					if (args.color !== undefined) {
 						tracker.updateColor(
@@ -1152,7 +1162,7 @@ export function createOrchestratorTools(
 						isError: true,
 					};
 				}
-				if (node.draft) {
+				if (node.status === "draft") {
 					return {
 						content: [
 							{

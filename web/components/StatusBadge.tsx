@@ -3,6 +3,7 @@ import { useLocale } from "../i18n.ts";
 
 export function statusDotClass(status: TaskStatus): string {
 	const map: Record<TaskStatus, string> = {
+		draft: "status-dot-draft",
 		pending: "status-dot-pending",
 		in_progress: "status-dot-in_progress",
 		testing: "status-dot-testing",

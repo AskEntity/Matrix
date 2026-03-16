@@ -263,3 +263,14 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - `useWebSocket` accepts optional `onConnect` callback — used to call `checkStatus()` on WS connect/reconnect so running state syncs after daemon restart.
 - AppFooter always shows "Send" button (never "Run") since `handleSubmit` uses unified path: tries `sendMessage` (POST /message) first, falls back to `start` (POST /orchestrate/agent) only if no session exists.
 - `checkAgentStatus` added to `WSHandlerDeps` interface in ws-handler.ts.
+
+
+## Draft as TaskStatus (not boolean)
+
+- `draft` is a TaskStatus value, not a separate boolean field on TaskNode. Draft tasks have `status: "draft"`.
+- `createNode` sets `status: "draft"` when `opts.draft === true`. No `draft` property on TaskNode.
+- `updateDraft()` method removed from TaskTracker — use `updateStatus(id, "draft")` / `updateStatus(id, "pending")` instead.
+- Migration: `load()` converts old `draft: true` boolean to `status: "draft"` and deletes the boolean field.
+- `StatsResponse.taskCounts` includes `draft: number`.
+- CSS: `.status-dot-draft` and `.og-status-badge.draft` classes added for UI rendering.
+- i18n: "status.draft" = "Draft" (en) / "草稿" (zh).

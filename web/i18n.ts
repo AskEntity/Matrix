@@ -75,6 +75,7 @@ const en: Translations = {
 	// Status
 	"status.running": "Running",
 	"status.idle": "Idle",
+	"status.draft": "Draft",
 	"status.pending": "Pending",
 	"status.in_progress": "In Progress",
 	"status.testing": "Testing",
@@ -359,6 +360,7 @@ const zh: Translations = {
 	// Status
 	"status.running": "运行中",
 	"status.idle": "空闲",
+	"status.draft": "草稿",
 	"status.pending": "等待中",
 	"status.in_progress": "进行中",
 	"status.testing": "测试中",

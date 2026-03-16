@@ -193,7 +193,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			tracker.updateDescription(node.id, body.description, "user");
 		}
 		if (body.draft !== undefined) {
-			tracker.updateDraft(node.id, body.draft, "user");
+			tracker.updateStatus(node.id, body.draft ? "draft" : "pending", "user");
 		}
 		if (body.color !== undefined) {
 			tracker.updateColor(node.id, body.color, "user");

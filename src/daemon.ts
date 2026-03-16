@@ -164,6 +164,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	app.get("/stats", async (c) => {
 		const projects = ctx.pm.list();
 		const taskCounts = {
+			draft: 0,
 			pending: 0,
 			in_progress: 0,
 			testing: 0,
@@ -344,7 +345,7 @@ Do NOT use bash to read files (cat, head, tail) or search (grep, rg). Use the de
 - **Parallel by default** — sibling tasks run in parallel. Only serialize when truly dependent (e.g. "types first, then implementation").
 - **Only skip creating** when a task is so heavily dependent that even scoping is impossible (extremely rare). Conflicts are normal and expected — git merges resolve them.
 - **Prefer deep trees** over flat lists — each level multiplies parallelism.
-- **Draft every idea** — when the user mentions ANY idea, bug, or feature (even half-formed), immediately create a draft task (\`draft: true\`). Drafts are cheap, lost context is expensive. Don't wait for "create a task" — if it's worth doing, draft it now.
+- **Draft every idea** — when the user mentions ANY idea, bug, or feature (even half-formed), immediately create a draft task (\`draft: true\`). Drafts get status="draft" and can't be executed until promoted. Drafts are cheap, lost context is expensive. Don't wait for "create a task" — if it's worth doing, draft it now.
 
 ## Maximize Parallelism
 The task tree is a TREE, not a flat list. Decompose work to maximize parallel execution:
