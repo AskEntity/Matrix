@@ -83,6 +83,8 @@ export function formatQueueMessage(msg: QueueMessage): string {
 			return `<child_report from="${msg.title}" id="${msg.taskId}">${msg.content}</child_report>`;
 		case "background_complete":
 			return `<background_complete command="${msg.command}" id="${msg.commandId}" exit="${msg.exitCode}" duration="${msg.durationMs}ms">Command completed. Use bg_action="status" with background_id="${msg.commandId}" or read_file on output files to see results.</background_complete>`;
+		case "system":
+			return `<system_notification>${msg.content}</system_notification>`;
 		case "compact":
 			return "<compact>Manual compaction requested</compact>";
 	}
@@ -100,6 +102,8 @@ export function toRawMessage(msg: QueueMessage): {
 				content: `Task "${msg.title}" (${msg.taskId}) ${msg.success ? "passed" : "failed"}: ${msg.output.slice(0, 500)}`,
 			};
 		case "user":
+			return { source: msg.source, content: msg.content };
+		case "system":
 			return { source: msg.source, content: msg.content };
 		case "parent_update":
 			return { source: msg.source, content: msg.content };

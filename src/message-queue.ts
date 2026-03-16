@@ -14,6 +14,7 @@ export interface QueueImage {
 /** Message types that can flow through the queue. */
 export type QueueMessage =
 	| { source: "user"; content: string; images?: QueueImage[] }
+	| { source: "system"; content: string }
 	| {
 			source: "child_complete";
 			taskId: string;
