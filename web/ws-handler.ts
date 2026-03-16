@@ -282,7 +282,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						"Compressing context...",
 						msg.taskId as string | undefined,
 					);
-					entry.checkpoint = "";
+					// Leave checkpoint as undefined — the "compact" event will set it.
+					// Using undefined (not "") lets us distinguish pending from completed-with-empty-checkpoint.
 					entries.push(entry);
 					return false; // also has setPendingCompact side effect
 				}
@@ -294,7 +295,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					let updated = false;
 					for (let i = entries.length - 1; i >= 0; i--) {
 						const e = entries[i];
-						if (e && e.type === "compact" && !e.checkpoint) {
+						if (e && e.type === "compact" && e.checkpoint === undefined) {
 							entries[i] = {
 								...e,
 								text: compactText,
@@ -624,7 +625,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					setLogs((prev) => {
 						for (let i = prev.length - 1; i >= 0; i--) {
 							const e = prev[i];
-							if (e && e.type === "compact" && !e.checkpoint) {
+							if (e && e.type === "compact" && e.checkpoint === undefined) {
 								return prev;
 							}
 						}
@@ -633,7 +634,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 							"Compressing context...",
 							msg.taskId as string | undefined,
 						);
-						entry.checkpoint = "";
+						// Leave checkpoint as undefined — distinguishes pending from completed
 						return [...prev, entry];
 					});
 					break;
@@ -644,7 +645,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					setLogs((prev) => {
 						for (let i = prev.length - 1; i >= 0; i--) {
 							const e = prev[i];
-							if (e && e.type === "compact" && !e.checkpoint) {
+							if (e && e.type === "compact" && e.checkpoint === undefined) {
 								const updated = [...prev];
 								updated[i] = {
 									...e,
