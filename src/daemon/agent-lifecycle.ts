@@ -366,7 +366,10 @@ export async function launchAgent(
 	broadcastEvent(ctx, project.id, {
 		type: "orchestration_started",
 		taskId: rootNodeId,
-		prompt: opts.prompt,
+		// Don't include prompt when resuming — the user message is already in the
+		// queue and will appear as a queue_message event. Including it here would
+		// cause the message to display twice in the UI.
+		prompt: opts.resume ? undefined : opts.prompt,
 		provider: agentCtx.provider.name,
 		model: effectiveModel ?? DEFAULT_MODEL,
 	});
@@ -605,12 +608,15 @@ export async function handleInjectMessage(
 	await persistMessage(ctx.config.dataDir, projectId, rootNodeId, msg);
 	addPendingMessage(ctx, projectId, null, message);
 
-	// Auto-resume the orchestrator if we have the system prompt
+	// Auto-resume the orchestrator if we have the system prompt.
+	// Don't pass the user message as prompt — it's already persisted in the queue
+	// and will be delivered as a queue_message. Passing it as prompt would cause
+	// the message to appear twice: once from orchestration_started and once from queue_message.
 	if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
 		await launchAgent(
 			ctx,
 			project,
-			{ prompt: message, resume: true },
+			{ prompt: "User sent a new message. Resuming.", resume: true },
 			orchestratorSystemPrompt,
 		);
 	}
