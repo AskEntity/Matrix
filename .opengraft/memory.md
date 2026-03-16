@@ -357,3 +357,9 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - ActivityLog thinking indicator: per-agent — only shows when the viewed agent is active.
 - OrchestratorDetail: Pause button shows when root is active (`isRootActive`). Clear Sessions only shows when NO agents are active (`!running`).
 - TaskDetail: Pause button shows when task is active (`isActive` prop). Falls back to status check if prop not provided.
+
+## Session Cost Removal
+
+- `lastCostUsd`/`setLastCostUsd` fully removed from App.tsx, ws-handler.ts, handlers.ts. `costUsd` prop removed from OrchestratorDetail.
+- `orch.session` i18n key removed (en + zh). Only `orch.totalCost` (sum of all node.costUsd) remains.
+- `orchestration_completed` WS event still carries token stats (turns, input/output/cache tokens) but session cost is no longer displayed.

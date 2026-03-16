@@ -48,7 +48,6 @@ export interface WSHandlerDeps {
 			{ id: string; taskId: string; question: string; timestamp: number }[]
 		>
 	>;
-	setLastCostUsd: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastTurns: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastInputTokens: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastCacheCreationTokens: React.Dispatch<
@@ -77,7 +76,6 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		setPendingCompact,
 		setPendingMessages,
 		setPendingClarifications,
-		setLastCostUsd,
 		setLastTurns,
 		setLastInputTokens,
 		setLastCacheCreationTokens,
@@ -483,7 +481,6 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				break;
 			}
 			case "orchestration_completed":
-				if (msg.costUsd !== undefined) setLastCostUsd(msg.costUsd as number);
 				if (msg.turns !== undefined) setLastTurns(msg.turns as number);
 				if (msg.inputTokens !== undefined)
 					setLastInputTokens(msg.inputTokens as number);
@@ -717,8 +714,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				break;
 			}
 			case "orchestration_completed": {
-				// No log entry — side effects only (cost/token stats).
-				if (msg.costUsd !== undefined) setLastCostUsd(msg.costUsd as number);
+				// No log entry — side effects only (token stats).
 				if (msg.turns !== undefined) setLastTurns(msg.turns as number);
 				if (msg.inputTokens !== undefined)
 					setLastInputTokens(msg.inputTokens as number);

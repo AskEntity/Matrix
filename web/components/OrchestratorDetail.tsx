@@ -7,7 +7,6 @@ export function OrchestratorDetail({
 	isRootActive,
 	nodes,
 	rootNodeId,
-	costUsd,
 	totalCost,
 	turns,
 	inputTokens,
@@ -23,7 +22,6 @@ export function OrchestratorDetail({
 	isRootActive: boolean;
 	nodes: TaskNode[];
 	rootNodeId?: string | null;
-	costUsd?: number | null;
 	totalCost?: number | null;
 	turns?: number | null;
 	inputTokens?: number | null;
@@ -123,12 +121,6 @@ export function OrchestratorDetail({
 						>
 							{failed}
 						</span>
-					</div>
-				)}
-				{costUsd != null && (
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.session")}</span>
-						<span className="og-stat-value">${costUsd.toFixed(3)}</span>
 					</div>
 				)}
 				{totalCost != null && totalCost > 0 && (
