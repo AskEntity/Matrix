@@ -136,3 +136,11 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Duplicate Card Fix
 
 - `task_completed` suppressed in child log (parent only). `done()` MCP card enhanced with task title lookup.
+
+## Tree Mutation Events
+
+- `notifyAgentOfTreeChange()` in `src/daemon/routes/tasks.ts` broadcasts a structured `tree_mutation` event (via `broadcastEvent`) with `action` (task_created/updated/reordered/deleted), `nodeId`, and `title`.
+- Agent queue message uses `source: "system"` (not "user") — ws-handler skips it (UI is driven by the event, not the queue message).
+- `web/ws-handler.ts` handles `tree_mutation` events in both `collectEntries` and `handleWS` to create `tree_mutation` log entries.
+- `web/components/ToolCard.tsx` renders `tree_mutation` entries as green system cards with structured action detail.
+- No `[TREE UPDATED]` string matching in the rendering pipeline — routing is source/event-type-based.
