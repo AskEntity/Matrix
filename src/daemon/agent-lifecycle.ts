@@ -9,6 +9,11 @@ import { DEFAULT_MODEL } from "../config.ts";
 import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage } from "../message-queue.ts";
 import { globalAgentQueues, MessageQueue } from "../message-queue.ts";
+import {
+	clearPersistedMessages,
+	loadPersistedMessages,
+	persistMessage,
+} from "../persistent-queue.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
 import type { AgentResult } from "../types.ts";
@@ -99,6 +104,7 @@ async function createAgentContext(
 			activeSessions: opts.depth === 0 ? ctx.activeSessions : undefined,
 			currentProjectId: project.id,
 			sessionsDir: join(ctx.config.dataDir, "sessions", project.id),
+			dataDir: ctx.config.dataDir,
 			onTaskEvent: (event) => {
 				broadcastEvent(ctx, project.id, event);
 				broadcastTreeUpdate(ctx, project.id, opts.tracker);
@@ -218,6 +224,20 @@ export async function runChildAgentInBackground(
 	if (!node?.worktreePath) return;
 	const childQueue = new MessageQueue();
 	globalAgentQueues.set(nodeId, childQueue);
+
+	// Load any persisted messages from disk and enqueue them
+	const persisted = await loadPersistedMessages(
+		ctx.config.dataDir,
+		project.id,
+		nodeId,
+	);
+	for (const msg of persisted) {
+		childQueue.enqueue(msg);
+	}
+	if (persisted.length > 0) {
+		await clearPersistedMessages(ctx.config.dataDir, project.id, nodeId);
+	}
+
 	const mcpManager = new McpClientManager();
 	try {
 		const agentCtx = await createAgentContext(ctx, project, {
@@ -314,6 +334,20 @@ export async function launchAgent(
 	tracker.save().catch(() => {});
 
 	const queue = new MessageQueue();
+
+	// Load any persisted messages from disk and enqueue them
+	const persistedMsgs = await loadPersistedMessages(
+		ctx.config.dataDir,
+		project.id,
+		rootNodeId,
+	);
+	for (const msg of persistedMsgs) {
+		queue.enqueue(msg);
+	}
+	if (persistedMsgs.length > 0) {
+		await clearPersistedMessages(ctx.config.dataDir, project.id, rootNodeId);
+	}
+
 	const mcpManager = new McpClientManager();
 
 	const agentCtx = await createAgentContext(ctx, project, {
@@ -504,55 +538,108 @@ export async function handleOrchestrate(
 }
 
 /** Inject a user message into a running agent. Used by POST /message and WS inject_message. */
-export function handleInjectMessage(
+export async function handleInjectMessage(
 	ctx: DaemonContext,
 	projectId: string,
 	message: string,
 	images?: QueueImage[],
-): { ok: boolean; error?: string; status?: number } {
+	orchestratorSystemPrompt?: string,
+): Promise<{ ok: boolean; error?: string; status?: number }> {
 	const session = ctx.activeSessions.get(projectId);
-	if (!session) {
+	if (session) {
+		try {
+			const imgs = images?.length ? images : undefined;
+			session.queue.enqueue({
+				source: "user",
+				content: message,
+				images: imgs,
+			});
+		} catch {
+			return { ok: false, error: "Queue closed", status: 409 };
+		}
+		addPendingMessage(ctx, projectId, null, message);
+		return { ok: true };
+	}
+
+	// No active session — persist message to disk and auto-resume
+	const project = ctx.pm.get(projectId);
+	if (!project) {
+		return { ok: false, error: "Project not found", status: 404 };
+	}
+
+	const tracker = await getTracker(ctx, projectId);
+	const rootNodeId = tracker.rootNodeId;
+	if (!rootNodeId) {
 		return {
 			ok: false,
 			error: "No active session for this project",
 			status: 404,
 		};
 	}
-	try {
-		const imgs = images?.length ? images : undefined;
-		session.queue.enqueue({ source: "user", content: message, images: imgs });
-	} catch {
-		return { ok: false, error: "Queue closed", status: 409 };
-	}
+
+	const msg = {
+		source: "user" as const,
+		content: message,
+		...(images?.length ? { images } : {}),
+	};
+	await persistMessage(ctx.config.dataDir, projectId, rootNodeId, msg);
 	addPendingMessage(ctx, projectId, null, message);
+
+	// Auto-resume the orchestrator if we have the system prompt
+	if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
+		await launchAgent(
+			ctx,
+			project,
+			{ prompt: message, resume: true },
+			orchestratorSystemPrompt,
+		);
+	}
+
 	return { ok: true };
 }
 
 /** Answer a pending clarification. Used by POST /clarify and WS clarify_response. */
-export function handleClarifyResponse(
+export async function handleClarifyResponse(
 	ctx: DaemonContext,
 	projectId: string,
 	taskId: string,
 	answer: string,
 	clarificationId?: string,
-): { ok: boolean; error?: string; status?: number } {
+): Promise<{ ok: boolean; error?: string; status?: number }> {
 	const session = ctx.activeSessions.get(projectId);
-	if (!session) {
+	if (session) {
+		// Route the response to the correct agent's queue:
+		// - If taskId has a queue in globalAgentQueues, it's a child agent → route there
+		// - Otherwise, fall back to session.queue (the orchestrator)
+		const targetQueue = globalAgentQueues.get(taskId) ?? session.queue;
+		try {
+			targetQueue.enqueue({ source: "clarify_response", answer });
+		} catch {
+			return { ok: false, error: "Queue closed", status: 409 };
+		}
+		removePendingClarification(ctx, projectId, taskId, clarificationId);
+		broadcastEvent(ctx, projectId, {
+			type: "clarification_answered",
+			taskId,
+			answer,
+		});
+		return { ok: true };
+	}
+
+	// No active session — persist the clarify_response to disk
+	const project = ctx.pm.get(projectId);
+	if (!project) {
 		return {
 			ok: false,
 			error: "No active session for this project",
 			status: 404,
 		};
 	}
-	// Route the response to the correct agent's queue:
-	// - If taskId has a queue in globalAgentQueues, it's a child agent → route there
-	// - Otherwise, fall back to session.queue (the orchestrator)
-	const targetQueue = globalAgentQueues.get(taskId) ?? session.queue;
-	try {
-		targetQueue.enqueue({ source: "clarify_response", answer });
-	} catch {
-		return { ok: false, error: "Queue closed", status: 409 };
-	}
+
+	await persistMessage(ctx.config.dataDir, projectId, taskId, {
+		source: "clarify_response",
+		answer,
+	});
 	removePendingClarification(ctx, projectId, taskId, clarificationId);
 	broadcastEvent(ctx, projectId, {
 		type: "clarification_answered",

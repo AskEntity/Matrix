@@ -234,9 +234,14 @@ Daemon (Hono: HTTP + WS on :7433)
 ## Bash CWD Fallback Chain
 
 - CWD fallback in `executeBashWithTimeout`: checks `existsSync(cwd)` → tries `fallbackCwd` (if exists) → `process.cwd()` as last resort.
-- The `effectiveCwd !== cwd` check in `parseResult` adds a warning message and sets `newCwd` so the tracked CWD gets updated.
 
 ## ToolCard MCP Tool Coverage
 
 All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard`, `formatMcpToolResult`, and i18n keys (en + zh).
-Simple tools (close_task, reset_task, reorder_tasks, list_projects) are title-only cards. send_message_to_project is title-only for short messages.
+
+## Persistent Message Queue (Phase 4b)
+
+- `src/persistent-queue.ts`: `persistMessage()`, `loadPersistedMessages()`, `clearPersistedMessages()` — write-through JSON at `<dataDir>/messages/<projectId>/<taskId>.json`.
+- Messages persist when no active agent queue. On launch, persisted messages loaded into queue and file cleared.
+- `handleInjectMessage` and `handleClarifyResponse` async — persist + auto-resume when no active session.
+- `OrchestratorToolsDeps.dataDir` added for persistent queue access.

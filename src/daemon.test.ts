@@ -1112,7 +1112,7 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		await rm(dataDir, { recursive: true });
 	});
 
-	test("returns 404 when no queue registered for task", async () => {
+	test("persists message when no queue registered for task", async () => {
 		const { app, pm } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
@@ -1126,9 +1126,14 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 				body: JSON.stringify({ content: "hello" }),
 			},
 		);
-		expect(res.status).toBe(404);
-		const body = (await res.json()) as { error: string };
-		expect(body.error).toBe("No active agent for this task");
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			ok: boolean;
+			taskId: string;
+			persisted: boolean;
+		};
+		expect(body.ok).toBe(true);
+		expect(body.persisted).toBe(true);
 	});
 
 	test("routes message to registered task queue", async () => {
@@ -1332,15 +1337,15 @@ describe("POST /projects/:id/clarify", () => {
 		expect(body.error).toBe("taskId and answer are required");
 	});
 
-	test("returns 404 when no active session", async () => {
+	test("persists clarify_response when no active session", async () => {
 		const res = await app.request(`/projects/${projectId}/clarify`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ taskId: "some-task-id", answer: "yes" }),
 		});
-		expect(res.status).toBe(404);
-		const body = (await res.json()) as { error: string };
-		expect(body.error).toBe("No active session for this project");
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { ok: boolean };
+		expect(body.ok).toBe(true);
 	});
 
 	test("returns 404 for unknown project (no session)", async () => {
