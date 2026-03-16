@@ -6,17 +6,14 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
+import { runChildCore } from "./daemon/agent-lifecycle.ts";
 import { readProjectMemory } from "./daemon/helpers.ts";
 import {
 	globalAgentQueues,
 	MessageQueue,
 	type QueueMessage,
 } from "./message-queue.ts";
-import {
-	clearPersistedMessages,
-	loadPersistedMessages,
-	persistMessage,
-} from "./persistent-queue.ts";
+import { persistMessage } from "./persistent-queue.ts";
 import type { ProjectManager } from "./project-manager.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
@@ -593,7 +590,7 @@ export function createOrchestratorTools(
 	/**
 	 * Execute a child agent with streaming, forwarding events tagged with taskId.
 	 * If depth < maxDepth, the child also receives MCP tools for recursive spawning.
-	 * Returns the child's queue so the parent can send messages to it.
+	 * Delegates to runChildCore() for queue management, event streaming, and done() detection.
 	 */
 	async function executeChildStreaming(
 		request: AgentRequest,
@@ -606,33 +603,10 @@ export function createOrchestratorTools(
 		turns?: number;
 		sessionId?: string;
 	}> {
-		// Create a queue for this child agent
-		const childQueue = new MessageQueue();
-		childQueues.set(taskId, childQueue);
-		globalAgentQueues.set(taskId, childQueue);
-		request.queue = childQueue;
-
-		// Load any persisted messages from disk and enqueue them
-		if (deps.dataDir && deps.currentProjectId) {
-			const persisted = await loadPersistedMessages(
-				deps.dataDir,
-				deps.currentProjectId,
-				taskId,
-			);
-			for (const msg of persisted) {
-				childQueue.enqueue(msg);
-			}
-			if (persisted.length > 0) {
-				await clearPersistedMessages(
-					deps.dataDir,
-					deps.currentProjectId,
-					taskId,
-				);
-			}
-		}
-
 		// Give children MCP tools if we haven't hit max depth
 		if (depth < maxDepth && !request.mcpToolDefs) {
+			// Create the queue first so MCP tools close over the correct queue
+			const childQueue = new MessageQueue();
 			const childCosts = new CostAccumulator();
 			const {
 				toolDefs: childToolDefs,
@@ -662,45 +636,39 @@ export function createOrchestratorTools(
 			);
 			request.mcpToolDefs = { opengraft: childToolDefs };
 			request.hasRunningChildren = childHasRunningChildren;
+
+			return runChildCore({
+				provider,
+				tracker,
+				taskId,
+				queue: childQueue,
+				sessionRequest: request,
+				onEvent: (eventType, eventData) => {
+					emit({ type: "agent_event", taskId, eventType, ...eventData });
+				},
+				childQueues,
+				persistedMessages:
+					deps.dataDir && deps.currentProjectId
+						? { dataDir: deps.dataDir, projectId: deps.currentProjectId }
+						: undefined,
+			});
 		}
 
-		try {
-			const stream = provider.stream(request);
-			let result = await stream.next();
-			while (!result.done) {
-				const { type: eventType, ...eventData } = result.value;
+		// No MCP tools needed (max depth reached or already set)
+		return runChildCore({
+			provider,
+			tracker,
+			taskId,
+			sessionRequest: request,
+			onEvent: (eventType, eventData) => {
 				emit({ type: "agent_event", taskId, eventType, ...eventData });
-
-				// When the child calls done(), its status is updated in the tracker
-				// but the run loop enters yield mode (queue.wait()) instead of exiting.
-				// Detect done() completion and close the queue so the run loop exits.
-				if (
-					eventType === "tool_result" &&
-					"tool" in eventData &&
-					eventData.tool === "mcp__opengraft__done"
-				) {
-					const nodeStatus = tracker.get(taskId)?.status;
-					if (nodeStatus === "passed" || nodeStatus === "failed") {
-						childQueue.close();
-						// Drain remaining events until the generator exits
-						result = await stream.next();
-						while (!result.done) {
-							const { type: et, ...ed } = result.value;
-							emit({ type: "agent_event", taskId, eventType: et, ...ed });
-							result = await stream.next();
-						}
-						return result.value;
-					}
-				}
-
-				result = await stream.next();
-			}
-			return result.value;
-		} finally {
-			childQueues.delete(taskId);
-			globalAgentQueues.delete(taskId);
-			childQueue.close();
-		}
+			},
+			childQueues,
+			persistedMessages:
+				deps.dataDir && deps.currentProjectId
+					? { dataDir: deps.dataDir, projectId: deps.currentProjectId }
+					: undefined,
+		});
 	}
 
 	const toolDefs = [

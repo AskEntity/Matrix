@@ -1,5 +1,9 @@
 import { join } from "node:path";
-import type { AgentEvent } from "../agent-provider.ts";
+import type {
+	AgentEvent,
+	AgentProvider,
+	AgentRequest,
+} from "../agent-provider.ts";
 import {
 	CostAccumulator,
 	createOrchestratorTools,
@@ -148,6 +152,121 @@ async function consumeAgentEvents(
 }
 
 // ---------------------------------------------------------------------------
+// runChildCore — shared child agent lifecycle for both MCP and daemon paths
+// ---------------------------------------------------------------------------
+
+/** Parameters for runChildCore(). */
+export interface RunChildCoreParams {
+	/** The agent provider to use for streaming. */
+	provider: AgentProvider;
+	/** Task tracker for status checks (done() detection). */
+	tracker: TaskTracker;
+	/** Task node ID for the child agent. */
+	taskId: string;
+	/** Pre-created MessageQueue for the child. If omitted, a new one is created. */
+	queue?: MessageQueue;
+	/** Full AgentRequest to pass to provider.stream(). Queue will be set on the request. */
+	sessionRequest: AgentRequest;
+	/** Event callback — called for each agent event. */
+	onEvent: (eventType: string, eventData: Record<string, unknown>) => void;
+	/** Optional map of child queues (from agent-tools.ts closure). Updated on start/finish. */
+	childQueues?: Map<string, MessageQueue>;
+	/** Config for loading persisted messages from disk. Omit to skip. */
+	persistedMessages?: {
+		dataDir: string;
+		projectId: string;
+	};
+}
+
+/**
+ * Shared child agent lifecycle: queue setup → stream events with done() detection → cleanup.
+ *
+ * Used by both:
+ * - `executeChildStreaming` in agent-tools.ts (MCP send_message_to_child)
+ * - `runChildAgentInBackground` in agent-lifecycle.ts (REST endpoints)
+ *
+ * The done() detection closes the child queue when `mcp__opengraft__done` tool_result
+ * is observed and the tracker status is passed/failed, causing the provider run loop
+ * to exit its yield mode.
+ */
+export async function runChildCore(
+	params: RunChildCoreParams,
+): Promise<AgentResult> {
+	const {
+		provider,
+		tracker,
+		taskId,
+		sessionRequest,
+		onEvent,
+		childQueues,
+		persistedMessages,
+	} = params;
+
+	// Use pre-created queue or create a new one
+	const childQueue = params.queue ?? new MessageQueue();
+	if (childQueues) childQueues.set(taskId, childQueue);
+	globalAgentQueues.set(taskId, childQueue);
+	sessionRequest.queue = childQueue;
+
+	// Load any persisted messages from disk and enqueue them
+	if (persistedMessages) {
+		const persisted = await loadPersistedMessages(
+			persistedMessages.dataDir,
+			persistedMessages.projectId,
+			taskId,
+		);
+		for (const msg of persisted) {
+			childQueue.enqueue(msg);
+		}
+		if (persisted.length > 0) {
+			await clearPersistedMessages(
+				persistedMessages.dataDir,
+				persistedMessages.projectId,
+				taskId,
+			);
+		}
+	}
+
+	try {
+		const stream = provider.stream(sessionRequest);
+		let result = await stream.next();
+		while (!result.done) {
+			const { type: eventType, ...eventData } = result.value;
+			onEvent(eventType, eventData as Record<string, unknown>);
+
+			// When the child calls done(), its status is updated in the tracker
+			// but the run loop enters yield mode (queue.wait()) instead of exiting.
+			// Detect done() completion and close the queue so the run loop exits.
+			if (
+				eventType === "tool_result" &&
+				"tool" in eventData &&
+				eventData.tool === "mcp__opengraft__done"
+			) {
+				const nodeStatus = tracker.get(taskId)?.status;
+				if (nodeStatus === "passed" || nodeStatus === "failed") {
+					childQueue.close();
+					// Drain remaining events until the generator exits
+					result = await stream.next();
+					while (!result.done) {
+						const { type: et, ...ed } = result.value;
+						onEvent(et, ed as Record<string, unknown>);
+						result = await stream.next();
+					}
+					return result.value;
+				}
+			}
+
+			result = await stream.next();
+		}
+		return result.value;
+	} finally {
+		if (childQueues) childQueues.delete(taskId);
+		globalAgentQueues.delete(taskId);
+		childQueue.close();
+	}
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Stop a running agent and clean up all associated state.
@@ -259,24 +378,11 @@ export async function runChildAgentInBackground(
 ): Promise<void> {
 	const node = tracker.get(nodeId);
 	if (!node?.worktreePath) return;
-	const childQueue = new MessageQueue();
-	globalAgentQueues.set(nodeId, childQueue);
-
-	// Load any persisted messages from disk and enqueue them
-	const persisted = await loadPersistedMessages(
-		ctx.config.dataDir,
-		project.id,
-		nodeId,
-	);
-	for (const msg of persisted) {
-		childQueue.enqueue(msg);
-	}
-	if (persisted.length > 0) {
-		await clearPersistedMessages(ctx.config.dataDir, project.id, nodeId);
-	}
 
 	const mcpManager = new McpClientManager();
 	try {
+		// Create the queue first — shared between MCP tools and runChildCore
+		const childQueue = new MessageQueue();
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
 			projectPath: node.worktreePath as string,
@@ -287,21 +393,22 @@ export async function runChildAgentInBackground(
 		});
 
 		const sessionsDir = join(ctx.config.dataDir, "sessions", project.id);
-		const session = agentCtx.provider.startSession({
-			prompt,
-			cwd: node.worktreePath as string,
-			sessionsDir,
-			systemPrompt: TASK_SYSTEM_PROMPT,
-			resumeSessionId: nodeId,
-			model: agentCtx.effectiveCfg.model,
-			mcpToolDefs: agentCtx.mcpToolDefs,
+		const agentResult = await runChildCore({
+			provider: agentCtx.provider,
+			tracker,
+			taskId: nodeId,
 			queue: childQueue,
-			hasRunningChildren: agentCtx.hasRunningChildren,
-		});
-
-		const agentResult = await consumeAgentEvents(
-			session.events,
-			(eventType, eventData) => {
+			sessionRequest: {
+				prompt,
+				cwd: node.worktreePath as string,
+				sessionsDir,
+				systemPrompt: TASK_SYSTEM_PROMPT,
+				resumeSessionId: nodeId,
+				model: agentCtx.effectiveCfg.model,
+				mcpToolDefs: agentCtx.mcpToolDefs,
+				hasRunningChildren: agentCtx.hasRunningChildren,
+			},
+			onEvent: (eventType, eventData) => {
 				broadcastEvent(ctx, project.id, {
 					type: "agent_event",
 					taskId: nodeId,
@@ -309,7 +416,11 @@ export async function runChildAgentInBackground(
 					...eventData,
 				});
 			},
-		);
+			persistedMessages: {
+				dataDir: ctx.config.dataDir,
+				projectId: project.id,
+			},
+		});
 
 		// done() tool now updates status directly in the tracker, so just use agentResult
 		// for cost/output reporting. The task status is already set by the done() tool.
@@ -338,8 +449,6 @@ export async function runChildAgentInBackground(
 		});
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} finally {
-		globalAgentQueues.delete(nodeId);
-		childQueue.close();
 		await flushEvents(ctx);
 		await mcpManager.disconnectAll();
 	}

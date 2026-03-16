@@ -744,25 +744,25 @@ describe("daemon tasks API", () => {
 	});
 
 	test("POST /tasks/:nodeId/continue uses startSession with MCP tools when task has worktree", async () => {
-		// Track what startSession receives
-		let startSessionCalled = false;
+		// Track what stream() receives (runChildCore uses provider.stream())
+		let streamCalled = false;
 		let receivedMcpToolDefs = false;
 		let receivedQueue = false;
 		const agentProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({ success: true, output: "" }),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
-			stream: async function* () {
-				return { success: true, output: "" };
-			},
-			startSession(req) {
-				startSessionCalled = true;
+			stream: async function* (req) {
+				streamCalled = true;
 				if (req.mcpToolDefs && "opengraft" in req.mcpToolDefs) {
 					receivedMcpToolDefs = true;
 				}
 				if (req.queue) {
 					receivedQueue = true;
 				}
+				return { success: true, output: "done" };
+			},
+			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
 				// biome-ignore lint/correctness/useYield: mock session never streams
 				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
@@ -839,7 +839,7 @@ describe("daemon tasks API", () => {
 		// Wait briefly for the background agent to start
 		await new Promise((r) => setTimeout(r, 100));
 
-		expect(startSessionCalled).toBe(true);
+		expect(streamCalled).toBe(true);
 		expect(receivedMcpToolDefs).toBe(true);
 		expect(receivedQueue).toBe(true);
 		// Ensure global queue registry is cleaned up after agent completes
@@ -2673,18 +2673,18 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.message).toBe("Add tests for edge cases");
 	});
 
-	test("passes sessionsDir to startSession for child agent persistence", async () => {
+	test("passes sessionsDir to stream for child agent persistence", async () => {
 		let receivedSessionsDir: string | undefined;
 
 		const agentProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({ success: true, output: "" }),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
-			stream: async function* () {
+			stream: async function* (req) {
+				receivedSessionsDir = req.sessionsDir;
 				return { success: true, output: "" };
 			},
 			startSession(req) {
-				receivedSessionsDir = req.sessionsDir;
 				const queue = req.queue ?? new MessageQueue();
 				// biome-ignore lint/correctness/useYield: mock session never streams
 				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
