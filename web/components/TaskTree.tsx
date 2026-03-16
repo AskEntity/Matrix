@@ -529,6 +529,9 @@ function TaskNodeView({
 						/>
 					)}
 					<span className="og-task-title">{node.title}</span>
+					{node.status === "in_progress" && (
+						<span className="og-task-spinner" />
+					)}
 					{node.draft && <span className="og-task-draft-badge">draft</span>}
 					{node.branch && (
 						<span className="og-task-branch-tag" title={node.branch}>
