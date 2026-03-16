@@ -635,6 +635,29 @@ export function createOrchestratorTools(
 			while (!result.done) {
 				const { type: eventType, ...eventData } = result.value;
 				emit({ type: "agent_event", taskId, eventType, ...eventData });
+
+				// When the child calls done(), its status is updated in the tracker
+				// but the run loop enters yield mode (queue.wait()) instead of exiting.
+				// Detect done() completion and close the queue so the run loop exits.
+				if (
+					eventType === "tool_result" &&
+					"tool" in eventData &&
+					eventData.tool === "done"
+				) {
+					const nodeStatus = tracker.get(taskId)?.status;
+					if (nodeStatus === "passed" || nodeStatus === "failed") {
+						childQueue.close();
+						// Drain remaining events until the generator exits
+						result = await stream.next();
+						while (!result.done) {
+							const { type: et, ...ed } = result.value;
+							emit({ type: "agent_event", taskId, eventType: et, ...ed });
+							result = await stream.next();
+						}
+						return result.value;
+					}
+				}
+
 				result = await stream.next();
 			}
 			return result.value;
@@ -1229,21 +1252,32 @@ export function createOrchestratorTools(
 								});
 							}
 
-							let newStatus: "passed" | "failed" | "stuck";
-							if (result.success) {
-								newStatus = "passed";
-								nodeRef.failCount = 0;
-							} else {
-								nodeRef.failCount = (nodeRef.failCount ?? 0) + 1;
-								newStatus = nodeRef.failCount >= 3 ? "stuck" : "failed";
+							// done() already set the tracker status. If the agent exited
+							// without calling done(), fall back to result.success.
+							const currentStatus = tracker.get(nodeRef.id)?.status;
+							const doneWasCalled =
+								currentStatus === "passed" || currentStatus === "failed";
+							const success = doneWasCalled
+								? currentStatus === "passed"
+								: result.success;
+
+							if (!doneWasCalled) {
+								let newStatus: "passed" | "failed" | "stuck";
+								if (result.success) {
+									newStatus = "passed";
+									nodeRef.failCount = 0;
+								} else {
+									nodeRef.failCount = (nodeRef.failCount ?? 0) + 1;
+									newStatus = nodeRef.failCount >= 3 ? "stuck" : "failed";
+								}
+								tracker.updateStatus(nodeRef.id, newStatus);
 							}
-							tracker.updateStatus(nodeRef.id, newStatus);
 							await tracker.save();
 							emit({
 								type: "task_completed",
 								taskId: nodeRef.id,
 								title: nodeRef.title,
-								success: result.success,
+								success,
 								output: result.output.slice(0, 500),
 							});
 
@@ -1254,7 +1288,7 @@ export function createOrchestratorTools(
 										source: "child_complete",
 										taskId: nodeRef.id,
 										title: nodeRef.title,
-										success: result.success,
+										success,
 										output: result.output.slice(0, 2000),
 									});
 								} catch {
