@@ -245,3 +245,10 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - Messages persist when no active agent queue. On launch, persisted messages loaded into queue and file cleared.
 - `handleInjectMessage` and `handleClarifyResponse` async — persist + auto-resume when no active session.
 - `OrchestratorToolsDeps.dataDir` added for persistent queue access.
+
+## Parent Chain Notification on User Message to Task
+
+- POST `/projects/:id/tasks/:nodeId/message` now notifies the parent chain when a user sends a message to any task.
+- `notifyParentChain()` walks up via `parentId`, sending `child_report` messages to each ancestor.
+- Uses `globalAgentQueues` if ancestor has active queue, otherwise `persistMessage` to disk.
+- Source is `child_report` (not `system`) so it wakes idle parent agents.
