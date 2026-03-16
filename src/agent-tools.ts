@@ -1509,9 +1509,9 @@ export function createOrchestratorTools(
 
 					// Delete session file if sessionsDir is available
 					if (deps.sessionsDir && node.id) {
-						await unlink(
-							join(deps.sessionsDir, `${node.id}.json`),
-						).catch(() => {});
+						await unlink(join(deps.sessionsDir, `${node.id}.json`)).catch(
+							() => {},
+						);
 					}
 
 					// Remove node from tree
@@ -1582,9 +1582,9 @@ export function createOrchestratorTools(
 
 					// Delete session file if sessionsDir is available
 					if (deps.sessionsDir) {
-						await unlink(
-							join(deps.sessionsDir, `${node.id}.json`),
-						).catch(() => {});
+						await unlink(join(deps.sessionsDir, `${node.id}.json`)).catch(
+							() => {},
+						);
 					}
 
 					tracker.updateStatus(node.id, "pending");
