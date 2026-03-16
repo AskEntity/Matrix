@@ -34,8 +34,6 @@ export interface TaskNode {
 	editedBy?: "user" | "agent";
 	/** Optional color label for visual categorization. */
 	color?: string;
-	/** Whether the worktree/branch has been cleaned up (node retained for history). */
-	cleaned?: boolean;
 	createdAt: string;
 	updatedAt: string;
 }

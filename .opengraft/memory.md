@@ -166,3 +166,16 @@ Daemon (Hono: HTTP + WS on :7433)
 
 - `selfBootstrap?: boolean` in config. When true, `launchAgent()` appends "Self-Bootstrap Mode" section to orchestrator system prompt.
 - `SettingBoolField` toggle in Settings UI. Boolean scalars work with `??` in `resolveConfig`.
+
+## Phase 2b: close_task + delete_task + reset_task
+
+- Replaced dual-behavior `delete_task` with three clear operations:
+  - `close_task`: removes worktree/branch only, preserves node+session, no status change
+  - `delete_task`: full removal — worktree + session file + node
+  - `reset_task`: removes worktree + session file, keeps node, sets status to pending
+- Removed `cleanNode()` from TaskTracker and `cleaned?: boolean` from TaskNode
+- Added `sessionsDir` to `OrchestratorToolsDeps` — passed from agent-lifecycle.ts as `join(dataDir, "sessions", projectId)`
+- Session file deletion uses `unlink().catch(() => {})` for safe no-op if file missing
+- routes/tasks.ts: changed continue logic from `node.cleaned` to `node.sessionId` check — a passed task with no worktree but with a session ID is treated as "closed" (re-creates worktree from main); a passed task with neither worktree nor sessionId resets to pending
+- close_task directly sets `node.worktreePath = null` and `node.branch = null` on the TaskNode (no tracker method needed)
+

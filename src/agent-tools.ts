@@ -1,3 +1,5 @@
+import { unlink } from "node:fs/promises";
+import { join } from "node:path";
 import { z } from "zod";
 import type {
 	AgentProvider,
@@ -157,7 +159,10 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   - Don't just relay information — make it clear which original constraints are lifted or changed
   - The child treats parent_update messages as authoritative, so be precise about what's new vs unchanged
 - reorder_tasks: Reorder children of a task node. Pass the parent nodeId and an array of child IDs in the desired order.
-- delete_task: Clean up a child's worktree + branch after merging. Passed tasks stay in the tree (preserves history). Non-passed tasks are fully removed.
+- close_task: Clean up a child's worktree + branch after merging. Node and session preserved. No status change.
+  Use after merging a passed child, or to defer a task and reclaim disk space.
+- delete_task: Full removal — deletes worktree, session file, and task node from the tree. Use for abandoned tasks.
+- reset_task: Remove worktree + session file but keep node. Sets status to pending. Use to start over with a different approach.
 - clarify: Send a clarification question to the user or parent orchestrator. Returns immediately —
   you can continue doing other work that doesn't need the answer, then call yield() when ready
   to wait for the clarify_response.
@@ -206,7 +211,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
    - ## Pending section: shows which children are still running and how many clarifications are outstanding
 7. When a child passes, merge its branch:
    a. Merge via bash: \`git merge --no-ff <child-branch> -m "Merge task: <title>"\`
-   b. Call delete_task(taskId) to clean up the child's worktree and branch (passed tasks remain in tree for history)
+   b. Call close_task(taskId) to clean up the child's worktree and branch (node stays in tree for history)
 8. If a child fails: read the failure summary carefully. Decide:
    - "resume" with specific instructions addressing the failure (child keeps progress)
    - "reset" to start fresh with a different approach
@@ -231,7 +236,7 @@ If you're unsure about a requirement, use \`clarify\` to ask (returns immediatel
 If you encounter problems you can't overcome, call done("failed", ...) — failing early is better than spinning.
 
 ### Parent Handling of Child Results
-- **passed** → \`git merge --no-ff <branch>\` → \`delete_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
+- **passed** → \`git merge --no-ff <branch>\` → \`close_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
 - **failed** → Read the child's failure summary carefully. The quality of your resume/reset decision
   directly affects whether the next attempt succeeds:
   - \`resume\`: Give SPECIFIC instructions addressing the failure. Don't just say "try again" —
@@ -244,7 +249,7 @@ If you encounter problems you can't overcome, call done("failed", ...) — faili
 - Use \`git merge --no-ff <branch> -m "Merge task: <title>"\` from YOUR working directory
 - If merge conflicts occur: resolve them with edit_file. This is expected with parallel work.
 - If conflicts are too complex: merge the larger/more complex feature first, then reset and re-spawn the simpler one.
-- After successful merge: ALWAYS call delete_task to clean up worktree + branch (passed tasks stay in tree)
+- After successful merge: ALWAYS call close_task to clean up worktree + branch (node stays in tree)
 - After merging a child, if other children are still running, send them a message via
   send_message_to_child to sync with main: "Main updated — run \`git merge main\`
   to stay in sync and reduce merge conflicts."
@@ -281,7 +286,7 @@ Commit the curated memory as a standalone commit after all task merges are done.
 - Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
 - Keep the tree shallow: 2-3 levels max
 - Each leaf task should be independently executable by a single agent session
-- ALWAYS merge and delete_task each passed child before moving on (passed tasks remain visible in tree)
+- ALWAYS merge and close_task each passed child before moving on (nodes remain visible in tree)
 
 ## Parallelization Strategy
 - Sibling tasks run in PARALLEL. Split by sub-feature so each has a clear scope.
@@ -324,7 +329,7 @@ When yield() returns with a user message, you MUST take concrete action before y
 When deciding your next action, follow this priority order:
 0. **Just resumed from compaction?** → Read checkpoint, call get_tree, then follow priorities below
 1. **Failed children** → Analyze output, execute_tasks with "resume" (give instructions) or "reset"
-2. **Passed children not yet merged** → Merge branch, delete_task (cleans resources, keeps node), verify tests
+2. **Passed children not yet merged** → Merge branch, close_task (cleans resources, keeps node), verify tests
 3. **Pending children ready to start** → execute_tasks to spawn them
 4. **All children done** → Run full test suite, verify integration, update memory
 5. **Everything complete** → Call done("passed", summary)
@@ -507,6 +512,8 @@ export interface OrchestratorToolsDeps {
 	activeSessions?: Map<string, AgentSession>;
 	/** Current project ID — used as sender identity for cross-project messages. */
 	currentProjectId?: string;
+	/** Directory containing session files for this project (<dataDir>/sessions/<projectId>). */
+	sessionsDir?: string;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -619,6 +626,7 @@ export function createOrchestratorTools(
 					defaultBudgetUsd: deps.defaultBudgetUsd,
 					maxDepth: deps.maxDepth,
 					clarifyTimeoutMs: deps.clarifyTimeoutMs,
+					sessionsDir: deps.sessionsDir,
 				},
 				childCosts,
 			);
@@ -1005,12 +1013,11 @@ export function createOrchestratorTools(
 							node.sessionId = null;
 						}
 
-						// Create worktree if needed (new, reset, or cleaned passed task)
+						// Create worktree if needed (new, reset, or closed passed task)
 						if (!node.worktreePath) {
 							const slug = slugify(node.title);
 							const wt = await worktrees.create(node.id, slug, baseBranch);
 							tracker.assignWorktree(node.id, wt.branch, wt.path);
-							if (node.cleaned) node.cleaned = false;
 						}
 
 						tracker.updateStatus(node.id, "in_progress");
@@ -1411,11 +1418,76 @@ export function createOrchestratorTools(
 		),
 
 		tool(
-			"delete_task",
-			"Delete a child task and clean up its resources (worktree + branch). " +
+			"close_task",
+			"Clean up a child task's worktree and branch to reclaim disk space. " +
+				"Node and session are preserved — no status change. " +
 				"Call this AFTER you have already merged the child's branch yourself. " +
-				"For passed tasks: cleans up worktree/branch but keeps the task node in the tree (preserves activity history). " +
-				"For non-passed tasks: removes the worktree, branch, and task node entirely.",
+				"Use for merged tasks or deferred tasks where you want to free resources.",
+			{
+				taskId: z.string().describe("ID of the task to close"),
+			},
+			async (args) => {
+				const node = tracker.get(args.taskId);
+				if (!node) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "Error: Task not found",
+							},
+						],
+						isError: true,
+					};
+				}
+
+				try {
+					// Clean up worktree + branch if they exist
+					if (node.worktreePath && node.branch) {
+						const slug = slugify(node.title);
+						await worktrees.remove(node.id, slug);
+						node.worktreePath = null;
+						node.branch = null;
+						node.updatedAt = new Date().toISOString();
+					}
+
+					await tracker.save();
+					broadcastTreeUpdate?.();
+
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify(
+									{
+										closed: true,
+										taskId: node.id,
+										title: node.title,
+									},
+									null,
+									2,
+								),
+							},
+						],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: ${message}`,
+							},
+						],
+						isError: true,
+					};
+				}
+			},
+		),
+
+		tool(
+			"delete_task",
+			"Fully remove a child task — deletes worktree, session file, and task node from the tree. " +
+				"Use for abandoned tasks you no longer need.",
 			{
 				taskId: z.string().describe("ID of the task to delete"),
 			},
@@ -1440,14 +1512,15 @@ export function createOrchestratorTools(
 						await worktrees.remove(node.id, slug);
 					}
 
-					if (node.status === "passed") {
-						// Passed tasks: keep node in tree for history, just clean resources
-						tracker.cleanNode(node.id);
-					} else {
-						// Non-passed tasks: remove entirely
-						tracker.remove(node.id);
+					// Delete session file if sessionsDir is available
+					if (deps.sessionsDir && node.sessionId) {
+						await unlink(
+							join(deps.sessionsDir, `${node.sessionId}.json`),
+						).catch(() => {});
 					}
 
+					// Remove node from tree
+					tracker.remove(node.id);
 					await tracker.save();
 					broadcastTreeUpdate?.();
 
@@ -1457,8 +1530,80 @@ export function createOrchestratorTools(
 								type: "text" as const,
 								text: JSON.stringify(
 									{
-										deleted: node.status !== "passed",
-										cleaned: node.status === "passed",
+										deleted: true,
+										taskId: node.id,
+										title: node.title,
+									},
+									null,
+									2,
+								),
+							},
+						],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: ${message}`,
+							},
+						],
+						isError: true,
+					};
+				}
+			},
+		),
+
+		tool(
+			"reset_task",
+			"Reset a child task for a fresh start — removes worktree and session file but keeps the node. " +
+				"Sets status to pending. Use when you want to retry with a different approach.",
+			{
+				taskId: z.string().describe("ID of the task to reset"),
+			},
+			async (args) => {
+				const node = tracker.get(args.taskId);
+				if (!node) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "Error: Task not found",
+							},
+						],
+						isError: true,
+					};
+				}
+
+				try {
+					// Clean up worktree + branch if they exist
+					if (node.worktreePath && node.branch) {
+						const slug = slugify(node.title);
+						await worktrees.remove(node.id, slug);
+						node.worktreePath = null;
+						node.branch = null;
+					}
+
+					// Delete session file if sessionsDir is available
+					if (deps.sessionsDir && node.sessionId) {
+						await unlink(
+							join(deps.sessionsDir, `${node.sessionId}.json`),
+						).catch(() => {});
+						node.sessionId = null;
+					}
+
+					tracker.updateStatus(node.id, "pending");
+					await tracker.save();
+					broadcastTreeUpdate?.();
+
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify(
+									{
+										reset: true,
 										taskId: node.id,
 										title: node.title,
 									},

@@ -395,46 +395,4 @@ describe("TaskTracker", () => {
 		// Duplicates
 		expect(() => tracker.reorderChildren(parent.id, [c1.id, c1.id])).toThrow();
 	});
-
-	test("cleanNode clears worktree/branch but preserves sessionId", () => {
-		const parent = tracker.addTask("App", "desc");
-		const child = tracker.addChild(parent.id, "Auth", "auth desc");
-		tracker.assignWorktree(child.id, "feat/auth", "/tmp/worktree");
-		tracker.assignSession(child.id, "session-123");
-		tracker.updateStatus(child.id, "passed");
-
-		tracker.cleanNode(child.id);
-
-		const cleaned = tracker.get(child.id);
-		expect(cleaned).toBeDefined();
-		expect(cleaned?.branch).toBeNull();
-		expect(cleaned?.worktreePath).toBeNull();
-		expect(cleaned?.sessionId).toBe("session-123");
-		expect(cleaned?.cleaned).toBe(true);
-		// Node still exists in tree
-		expect(tracker.getChildren(parent.id)).toHaveLength(1);
-		expect(tracker.allNodes()).toHaveLength(2);
-	});
-
-	test("cleanNode throws for unknown node", () => {
-		expect(() => tracker.cleanNode("nonexistent")).toThrow("Node not found");
-	});
-
-	test("cleanNode persists across save/load", async () => {
-		const parent = tracker.addTask("App", "desc");
-		const child = tracker.addChild(parent.id, "Auth", "auth desc");
-		tracker.assignWorktree(child.id, "feat/auth", "/tmp/worktree");
-		tracker.updateStatus(child.id, "passed");
-		tracker.cleanNode(child.id);
-		await tracker.save();
-
-		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
-		await tracker2.load();
-
-		const loaded = tracker2.get(child.id);
-		expect(loaded?.cleaned).toBe(true);
-		expect(loaded?.branch).toBeNull();
-		expect(loaded?.worktreePath).toBeNull();
-		expect(tracker2.getChildren(parent.id)).toHaveLength(1);
-	});
 });
