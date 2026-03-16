@@ -449,6 +449,13 @@ Only implement directly if the task is small enough for a single agent session.
 - If the parent expands your scope or authorizes you to modify additional files, follow those instructions without hesitation — they supersede the original task boundaries.
 - Don't worry about exceeding your original scope when the parent explicitly authorizes it.
 
+## Communication with Parent
+- When facing complex design decisions, architectural questions, or uncertainty about approach, use report_to_parent(message, requestReply=true) to discuss BEFORE implementing.
+- The parent has broader context about the project and other running tasks — leverage it.
+- Multi-round discussion is encouraged: report_to_parent → yield → receive parent response → proceed.
+- Don't try to solve everything alone. If you're unsure or stuck, ask rather than guess.
+- When the parent sends you a message with requestReply=true, always respond via report_to_parent.
+
 ## Code Quality
 - Avoid over-engineering. Only make changes directly needed for the task. Keep solutions simple.
   Don't add features, refactor code, or make "improvements" beyond what was asked.
