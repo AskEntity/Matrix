@@ -21,6 +21,7 @@ export function AppFooter({
 	onSubmit,
 	onImageAttach,
 	onImageRemove,
+	onClearTarget,
 	onClarifySubmit,
 	onClarifyAnswerChange,
 }: {
@@ -48,6 +49,7 @@ export function AppFooter({
 	onSubmit: (e: React.FormEvent) => void;
 	onImageAttach: (img: { base64: string; mediaType: string }) => void;
 	onImageRemove: (index: number) => void;
+	onClearTarget: () => void;
 	onClarifySubmit: (clarificationId: string) => void;
 	onClarifyAnswerChange: (clarificationId: string, value: string) => void;
 }) {
@@ -158,7 +160,7 @@ export function AppFooter({
 					)
 				);
 			})()}
-			{running && targetNodeId && (
+			{targetNodeId && (
 				<div className="og-message-target">
 					<span className="og-message-target-label">
 						→ {t("target.sendingTo")}{" "}
@@ -166,6 +168,15 @@ export function AppFooter({
 							{nodeMap.get(targetNodeId)?.title ?? targetNodeId.slice(0, 8)}
 						</strong>
 					</span>
+					<button
+						type="button"
+						className="og-message-target-clear"
+						onClick={onClearTarget}
+						aria-label={t("target.sendToOrch")}
+						title={t("target.sendToOrch")}
+					>
+						<IconClose size={10} />
+					</button>
 				</div>
 			)}
 			<form className="og-footer-form" onSubmit={onSubmit}>
@@ -232,7 +243,7 @@ export function AppFooter({
 						}
 					}}
 					placeholder={
-						running && targetNodeId
+						targetNodeId
 							? t("footer.messageToTask", {
 									task: nodeMap.get(targetNodeId)?.title ?? "task",
 								})

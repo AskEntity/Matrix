@@ -759,6 +759,10 @@ function AppInner() {
 				onImageRemove={(index) =>
 					setAttachedImages((prev) => prev.filter((_, i) => i !== index))
 				}
+				onClearTarget={() => {
+					setTargetNodeId(null);
+					setSelectedTaskId(rootNodeId);
+				}}
 				onClarifySubmit={handleClarifySubmit}
 				onClarifyAnswerChange={(clarificationId, value) =>
 					setClarifyAnswers((prev) => ({
