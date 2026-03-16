@@ -387,6 +387,12 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 
 - `clearPersistedMessages` must be called for deleted/reset tasks. Messages follow session lifecycle: cleared when session is cleared (delete, reset), kept when session is kept (close).
 - REST DELETE handler uses `collectDescendants` to get all descendant nodes, then clears persisted messages for each before `tracker.remove()`.
-- MCP `delete_task` collects descendant IDs inline (since `collectDescendants` is a daemon helper not available in agent-tools), then clears messages for all before removing from tracker.
+- MCP `delete_task` collects descendant IDs inline, then clears messages for all before removing from tracker.
 - MCP `reset_task` clears persisted messages for the single task being reset.
 - MCP `close_task` does NOT clear persisted messages (session is preserved).
+
+## Child Task Double-Message Fix (REST endpoint)
+
+- POST `/tasks/:nodeId/message` now uses a generic prompt instead of the user message when calling `ensureChildAgentRunning`.
+- Pattern matches orchestrator fix: message is persisted to disk, delivered via queue. Prompt is generic.
+- The `continue` endpoint does NOT have this bug — it uses `tracker.setMessage()` not `persistMessage()`.
