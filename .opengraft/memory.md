@@ -281,3 +281,9 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 ## User Message Double-Display Fix
 
 - Auto-resume uses generic prompt, not user message. Real message delivered via queue. `orchestration_started` omits `prompt` on resume.
+
+
+## Bottom Input Target Fix
+
+- `targetNodeId` effect in App.tsx previously gated on `node?.status === "in_progress"` — only in-progress tasks got the "Sending to:" banner.
+- Fixed: always set `targetNodeId = selectedTaskId` for non-root tasks. Backend handles routing via persistent queue + auto-resume.
