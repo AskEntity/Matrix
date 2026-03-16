@@ -249,10 +249,10 @@ describe("formatQueueMessage", () => {
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toBe("<parent_update>Priority changed</parent_update>");
-		expect(result).not.toContain("[Reply requested]");
+		expect(result).not.toContain("requestReply");
 	});
 
-	test("parent_update with requestReply=true appends hint", () => {
+	test("parent_update with requestReply=true uses XML attribute", () => {
 		const msg: QueueMessage = {
 			source: "parent_update",
 			content: "What is the status?",
@@ -260,11 +260,11 @@ describe("formatQueueMessage", () => {
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toBe(
-			"<parent_update>What is the status?\n[Reply requested]</parent_update>",
+			'<parent_update requestReply="true">What is the status?</parent_update>',
 		);
 	});
 
-	test("parent_update with requestReply=false does not append hint", () => {
+	test("parent_update with requestReply=false does not have attribute", () => {
 		const msg: QueueMessage = {
 			source: "parent_update",
 			content: "FYI update",
@@ -272,7 +272,7 @@ describe("formatQueueMessage", () => {
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toBe("<parent_update>FYI update</parent_update>");
-		expect(result).not.toContain("[Reply requested]");
+		expect(result).not.toContain("requestReply");
 	});
 
 	test("child_report without requestReply", () => {
@@ -286,10 +286,10 @@ describe("formatQueueMessage", () => {
 		expect(result).toBe(
 			'<child_report from="Auth Module" id="task-1">50% done</child_report>',
 		);
-		expect(result).not.toContain("[Reply requested]");
+		expect(result).not.toContain("requestReply");
 	});
 
-	test("child_report with requestReply=true appends hint", () => {
+	test("child_report with requestReply=true uses XML attribute", () => {
 		const msg: QueueMessage = {
 			source: "child_report",
 			taskId: "task-2",
@@ -299,11 +299,11 @@ describe("formatQueueMessage", () => {
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toBe(
-			'<child_report from="DB Module" id="task-2">Need clarification on schema\n[Reply requested]</child_report>',
+			'<child_report from="DB Module" id="task-2" requestReply="true">Need clarification on schema</child_report>',
 		);
 	});
 
-	test("child_report with requestReply=false does not append hint", () => {
+	test("child_report with requestReply=false does not have attribute", () => {
 		const msg: QueueMessage = {
 			source: "child_report",
 			taskId: "task-3",
@@ -315,7 +315,7 @@ describe("formatQueueMessage", () => {
 		expect(result).toBe(
 			'<child_report from="UI" id="task-3">All good</child_report>',
 		);
-		expect(result).not.toContain("[Reply requested]");
+		expect(result).not.toContain("requestReply");
 	});
 
 	test("formats cross_project message as XML", () => {
