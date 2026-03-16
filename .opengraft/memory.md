@@ -309,134 +309,45 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - `consumeAgentEvents()` still exists for `launchAgent` (orchestrator root). Only child agents use `runChildCore`.
 
 
-## Always-Editable Title/Description
+## Unified Message Queue Architecture
 
-- TaskDetail.tsx title and description are now always editable (click-to-edit) regardless of task status. No `isPending`/`isEditable` gate.
-- The `isRunning` variable is kept for the running hint display inside the description button.
-- Textarea `rows={8}` + CSS `min-height: 120px` prevents shrinkage when editing long descriptions.
+### Core Principle
+Messages are ALWAYS delivered regardless of agent state. The system guarantees: waking messages → agent processes them (active agent enqueues, no agent → persist + launch).
 
-## enqueueQuiet — Non-Waking Queue Messages
+### Single Registry
+`globalAgentQueues` is the SOLE source of truth for running agents. `childQueues` was removed. All code paths (REST, MCP, WS) check `globalAgentQueues`. Queue cleanup: `globalAgentQueues.delete()` BEFORE `queue.close()` — callers see "no queue" not "closed queue."
 
-- `MessageQueue.enqueueQuiet(msg)` pushes to the messages array without resolving a pending waiter. The message is picked up on the next `drain()` or `wait()` call that finds pending messages.
-- Used by `notifyAgentOfTreeChange()` in `src/daemon/routes/tasks.ts` so tree mutations (create/update/reorder/delete) do NOT wake agents from yield. Messages accumulate quietly and are delivered alongside the next waking event.
+### Message Types
+- Waking (via `enqueue`): user, child_complete, parent_update, clarify_response, child_report, cross_project, background_complete, compact
+- Non-waking (via `enqueueQuiet`): system/tree_mutation only. `drainMerged()` deduplicates them.
+- XML format via `formatQueueMessage()`. `requestReply` as XML attribute.
 
+### Message Persistence
+- `persistent-queue.ts`: `persistMessage/loadPersistedMessages/clearPersistedMessages` at `<dataDir>/messages/<projectId>/<taskId>.json`
+- Cleared on: delete_task (all descendants), reset_task. Kept on: close_task.
+- Double-message prevention: persist message + launch with generic prompt (not user message). Agent loads from disk.
 
-## Queue Message System Audit & Unification
+### Agent Idle/Active Events
+- `agent_idle`/`agent_active` top-level broadcast events with taskId. Emitted from yield tool + both provider implicit yields.
+- `MessageQueue.idle` flag for REST queries. `GET /projects/:id/agent/status` returns `{ idle, active }`.
+- Frontend: `activeAgents: Set<string>` replaces `running: boolean`. Spinners/thinking per-agent.
 
-### Message Format Standards
-- All queue messages use XML tags via `formatQueueMessage()` — consistent pattern
-- `requestReply` on parent_update/child_report: XML attribute `requestReply="true"` on tag (not `[Reply requested]` text inside body)
-- Clarify timeout: `<clarify_timeout duration="Xms">` XML tag in synthesized answer (not `[TIMEOUT]` prefix)
-- Tree mutation notifications: structured content with action detail (not `[TREE UPDATED]` prefix) — these get wrapped in `<system_notification>` by formatQueueMessage
-- Pause message: plain text via sendMessageToTask (user source, no emoji prefix)
+### REST/MCP Parity
+- `ensureChildAgentRunning()` checks `globalAgentQueues` first (prevents duplicate agents), emits `task_started`, notifies parent chain.
+- REST DELETE closes queues + deletes session files (matches MCP delete_task).
+- Intentional divergences: `editedBy` (user vs agent), scope validation (MCP only), tree change notifications (REST only).
 
-### Queue Architecture
-- Waking messages (via `enqueue`): user, child_complete, parent_update, clarify_response, child_report, cross_project, background_complete, compact
-- Non-waking messages (via `enqueueQuiet`): system/tree_mutation only
-- `drainMerged()` deduplicates consecutive system messages into "Tree updated N times" summary
-- Non-waking messages do NOT need persistence — they are informational, agent gets fresh tree state on restart
-- Persistence handled by `persistent-queue.ts` for important waking messages only (user messages, clarify_response)
+### Image Pipeline
+- Images flow through: `toRawMessage()` → `rawMessages` → `createQueueEntry()` → `entry.images`. `lastSubmittedImagesRef` removed.
 
-## Agent Idle/Active Events
+### Lifecycle Tests
+- `src/lifecycle.test.ts` — 52 tests covering message delivery, queue state, concurrency, parent notifications, and cleanup ordering.
 
-- `agent_idle` and `agent_active` are top-level broadcast events (not nested under `agent_event`). Format: `{ type: "agent_idle"|"agent_active", taskId: "..." }`.
-- Emitted from 3 places: yield tool (agent-tools.ts), Anthropic provider implicit yield, OpenAI provider implicit yield.
-- `MessageQueue.idle` flag tracks current state for REST endpoint queries.
-- Provider yields bare `{ type: "agent_idle" }` (no taskId) — consumers add taskId via `onEvent` callbacks.
-- `broadcastEvent` skips persisting these events (transient like text_delta).
-- `GET /projects/:id/agent/status` returns `{ idle: string[], active: string[] }` for initial state on page load. Checks both `globalAgentQueues` and `activeSessions` for root.
+## UI Updates (this session)
 
-## Per-Agent Active/Idle State (Frontend)
-
-- Global `running: boolean` replaced with `activeAgents: Set<string>` in `useAgent` hook. `running` is now derived: `activeAgents.size > 0`.
-- `setRunning` removed from WSHandlerDeps — replaced with `setActiveAgents: React.Dispatch<React.SetStateAction<Set<string>>>`.
-- WS events handled: `agent_active` (add to set), `agent_idle` (remove from set), `orchestration_started` (add root), `orchestration_completed`/`agent_stopped` (remove + checkAgentStatus fallback).
-- `checkStatus` in useAgent fetches `GET /projects/:id/agent/status` for `{ idle, active }` arrays, falls back to legacy `GET /projects/:id/agent` running boolean.
-- Components receive `activeAgents` (TaskTree) or `isActive` (ActivityLog, TaskDetail, OrchestratorDetail) instead of global `running`.
-- TaskTree spinner: `activeAgents?.has(node.id)` instead of `node.status === "in_progress"`. Handles root and child uniformly.
-- ActivityLog thinking indicator: per-agent — only shows when the viewed agent is active.
-- OrchestratorDetail: Pause button shows when root is active (`isRootActive`). Clear Sessions only shows when NO agents are active (`!running`).
-- TaskDetail: Pause button shows when task is active (`isActive` prop). Falls back to status check if prop not provided.
-
-## User Image Pipeline Fix
-
-- `toRawMessage()` in agent-tools.ts must include `images` for user source messages — without it, images sent via queue (yield path) are dropped before reaching frontend.
-- `createQueueEntry()` in ws-handler.ts passes images as 5th param to `createLogEntry` (the `images` param, after `structured`).
-- Both `collectEntries` (event_history replay) and `handleWS` (live events) rawMessages type casts need the images field.
-- `addLog` in handleWS queue_message handler must pass `entry.images` (6th parameter) to preserve images through to the log entry.
-- Frontend also checks `lastSubmittedImagesRef.current` in queue_message handler for user_prompt entries.
-
-## Session Cost Removal
-
-- `lastCostUsd`/`setLastCostUsd` fully removed from App.tsx, ws-handler.ts, handlers.ts. `costUsd` prop removed from OrchestratorDetail.
-- `orch.session` i18n key removed (en + zh). Only `orch.totalCost` (sum of all node.costUsd) remains.
-
-## Yield Pending Card Fix
-
-- Yield tool_use (pending) renders a calm gray card (`og-tool-card-yield-waiting`) with "⏸ Waiting..." text — no spinner, no pulse animation. Other tools keep the loading treatment.
-- `.og-spinner` needs `display: inline-block` since it's a `<span>` — without it, width/height are ignored on inline elements, causing vertical stretching.
-- `.og-tool-card-status.pending` needs `display: inline-flex; align-items: center` to properly center the spinner.
-
-## lastSubmittedImagesRef Removal
-
-- `lastSubmittedImagesRef` was a frontend hack in App.tsx to attach images to user_prompt log entries before the backend queue carried images.
-- Now removed: images flow through toRawMessage → rawMessages → createQueueEntry → entry.images.
-- The `orchestration_started` event does NOT include images (only `prompt` string). Initial prompt images arrive via the queue_message event path.
-
-## Persisted Message Cleanup on Task Deletion
-
-- `clearPersistedMessages` must be called for deleted/reset tasks. Messages follow session lifecycle: cleared when session is cleared (delete, reset), kept when session is kept (close).
-- REST DELETE handler uses `collectDescendants` to get all descendant nodes, then clears persisted messages for each before `tracker.remove()`.
-- MCP `delete_task` collects descendant IDs inline, then clears messages for all before removing from tracker.
-- MCP `reset_task` clears persisted messages for the single task being reset.
-- MCP `close_task` does NOT clear persisted messages (session is preserved).
-
-## Child Task Double-Message Fix (REST endpoint)
-
-- POST `/tasks/:nodeId/message` now uses a generic prompt instead of the user message when calling `ensureChildAgentRunning`.
-- Pattern matches orchestrator fix: message is persisted to disk, delivered via queue. Prompt is generic.
-- The `continue` endpoint does NOT have this bug — it uses `tracker.setMessage()` not `persistMessage()`.
-
-## Unified Agent Running Registry (childQueues Removal)
-
-- `childQueues` (local Map in agent-tools.ts closure) completely removed. `globalAgentQueues` is now the single source of truth for all running agent queues.
-- `ensureChildAgentRunning()` now checks `globalAgentQueues.get(nodeId)` at the top — if agent is already running, enqueues the message and returns immediately. This prevents duplicate agent launches.
-- `send_message_to_child` MCP tool checks `globalAgentQueues.get(args.taskId)` instead of the old `childQueues.get(args.taskId)`.
-- `hasRunningChildren()` now checks `globalAgentQueues` for children of `currentTaskId` (via tracker), not `childQueues.size`.
-- Yield tool "Pending" section finds running children by getting `tracker.get(currentTaskId).children` and filtering for those with entries in `globalAgentQueues`.
-- `close_task`, `delete_task`, `reset_task` all simplified to only check/delete from `globalAgentQueues`.
-- `RunChildCoreParams.childQueues` field removed. `runChildCore` only registers/cleans up in `globalAgentQueues`.
-- `OrchestratorToolsDeps.childQueues` field removed.
-- Node.js single-threaded guarantee: check-then-launch is atomic (no await between `globalAgentQueues.get()` and `globalAgentQueues.set()` in the sync portion of both ensureChildAgentRunning and send_message_to_child).
-
-
-## REST/MCP Architecture Audit (unified interfaces)
-
-### Divergences Found & Fixed
-1. **REST DELETE missing cleanup**: REST `DELETE /tasks/:id` did not close running agent queues (from `globalAgentQueues`) or delete session files. MCP `delete_task` did both. Fixed: REST delete now closes queues and deletes session files for all descendant tasks.
-
-2. **Queue close ordering**: All queue cleanup now follows delete-from-registry-first pattern: `globalAgentQueues.delete(id)` THEN `queue.close()`. This ensures callers see "no queue" instead of "closed queue." Applied to: `stopAgent`, `close_task`, `delete_task`, `reset_task`, REST delete.
-
-3. **Closed queue fallthrough**: REST `/tasks/:nodeId/message` previously returned 409 when queue was closed. Now falls through to persist path — message is always delivered regardless of queue state. MCP `send_message_to_child` similarly falls through to launch path if queue closed.
-
-4. **Missing task_started event**: `ensureChildAgentRunning` (used by REST message auto-launch) did not emit `task_started` broadcast event. Fixed.
-
-5. **Missing parent notification on child launch**: When a child task is launched from REST endpoints (message or continue), the parent agent was not waking-notified. Fixed: `ensureChildAgentRunning` and `continue` endpoint now send `child_report` waking messages to parent queue.
-
-### Intentional Divergences (kept)
-- `editedBy`: REST uses "user", MCP uses "agent" — correct by design
-- Scope validation: MCP tools validate agent can only modify descendants. REST has no scope validation (user can modify anything) — correct by design
-- `notifyAgentOfTreeChange`: Only called from REST routes (user-initiated). MCP operations don't need it since the agent made the change itself
-- Color resolve: MCP resolves named colors to hex. REST passes through raw values. Both are correct.
-- `create_task` default parent: REST defaults to root node. MCP defaults to current task. Both are correct for their contexts.
-
-
-## Lifecycle Integration Tests
-
-- `src/lifecycle.test.ts` — 52 tests covering message delivery, queue state, globalAgentQueues consistency, parent chain notifications, orchestrator routing, persistent queue, stop cascading, clarify routing, and delete-before-close ordering.
-- Audit ordering: `globalAgentQueues.delete()` BEFORE `queue.close()` in all cleanup paths.
-
-## Queue Message Card Detail Truncation
-
-- `og-tool-card-detail` base style: `overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1`.
-- Queue card name variants get `max-width: 50%; flex-shrink: 1` so long task titles truncate.
+- Title/description always editable (click-to-edit) regardless of task status.
+- Yield pending card: calm gray `og-tool-card-yield-waiting` with "⏸ Waiting..." — no spinner/pulse.
+- `.og-spinner`: `display: inline-block` (was inline → width/height ignored → stretching).
+- Session cost removed. Only total cost (sum of node.costUsd).
+- Queue card detail truncation: `og-tool-card-detail` with ellipsis. Card names max-width 50%.
+- Pause shows when active, Clear Sessions when idle.
