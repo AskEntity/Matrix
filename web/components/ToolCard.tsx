@@ -323,12 +323,12 @@ export function getToolCardTitle(
 			case "reorder_tasks":
 				return "↕ Reorder tasks";
 			case "list_projects":
-				return "📋 List projects";
+				return "⌕ List projects";
 			case "send_message_to_project": {
 				const projectId = getArg(toolArgs, "projectId");
 				return projectId
-					? `🌐 Message to ${projectId}`
-					: "🌐 Message to project";
+					? `→ Cross-project: ${projectId.slice(0, 8)}…`
+					: "→ Cross-project";
 			}
 			case "report_to_parent":
 				return "← Report to Parent";
@@ -365,10 +365,6 @@ export function isTitleOnlyCard(
 		case "list_projects":
 			return true;
 		case "report_to_parent": {
-			const msg = getArg(toolArgs, "message");
-			return !msg || msg.length <= 80;
-		}
-		case "send_message_to_project": {
 			const msg = getArg(toolArgs, "message");
 			return !msg || msg.length <= 80;
 		}
@@ -548,6 +544,14 @@ function McpToolCardBody({
 					<div className="og-mcp-task-desc">{msg}</div>
 				</div>
 			) : null;
+		}
+		case "send_message_to_project": {
+			const msg = getArg(toolArgs, "message") ?? "";
+			return (
+				<div className="og-mcp-body">
+					{msg && <div className="og-mcp-task-desc">{msg}</div>}
+				</div>
+			);
 		}
 		default:
 			return null;
@@ -987,7 +991,7 @@ export function LogEntryView({
 
 	if (entry.type === "cross_project") {
 		const projectName = (entry.meta?.projectName as string) ?? "";
-		const label = projectName ? `🌐 from ${projectName}` : "🌐 Cross-Project";
+		const label = projectName ? `← from ${projectName}` : "← Cross-Project";
 		return (
 			<QueueMessageCard
 				entry={entry}
