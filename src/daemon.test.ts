@@ -2365,7 +2365,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.error).toBe("Cannot continue task with status: pending");
 	});
 
-	test("returns 400 for task with status passed", async () => {
+	test("resets passed task without worktree to pending", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -2383,9 +2383,9 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 			`/projects/${projectId}/tasks/${task.id}/continue`,
 			{ method: "POST" },
 		);
-		expect(res.status).toBe(400);
-		const body = (await res.json()) as { error: string };
-		expect(body.error).toBe("Cannot continue task with status: passed");
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as TaskNode;
+		expect(body.status).toBe("pending");
 	});
 
 	test("returns 400 for task with status in_progress", async () => {
@@ -2582,6 +2582,75 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 
 		// Queue should be cleaned up after completion
 		expect(globalAgentQueues.has(task.id)).toBe(false);
+	});
+
+	test("sets status to in_progress for passed task with worktree", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Passed WT task",
+				description: "finished work",
+			}),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "passed" }),
+		});
+
+		// Inject worktreePath directly into the tracker
+		const tracker = await getTracker(projectId);
+		tracker.assignWorktree(
+			task.id,
+			"og/fake/passed-branch",
+			join(tempDir, "cont-proj"),
+		);
+		await tracker.save();
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "Add one more feature" }),
+			},
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as TaskNode;
+		expect(body.status).toBe("in_progress");
+
+		// Wait for background agent to finish
+		await new Promise((r) => setTimeout(r, 150));
+	});
+
+	test("stores message when continuing passed task", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Passed msg task", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "passed" }),
+		});
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${task.id}/continue`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "Add tests for edge cases" }),
+			},
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as TaskNode;
+		expect(body.message).toBe("Add tests for edge cases");
 	});
 });
 

@@ -980,7 +980,8 @@ export function createOrchestratorTools(
 					if (
 						(mode === "resume" || mode === "reset") &&
 						node.status !== "failed" &&
-						node.status !== "stuck"
+						node.status !== "stuck" &&
+						node.status !== "passed"
 					) {
 						errors.push({
 							taskId: node.id,
@@ -1000,11 +1001,12 @@ export function createOrchestratorTools(
 							node.sessionId = null;
 						}
 
-						// Create worktree if needed (new or reset)
+						// Create worktree if needed (new, reset, or cleaned passed task)
 						if (!node.worktreePath) {
 							const slug = slugify(node.title);
 							const wt = await worktrees.create(node.id, slug, baseBranch);
 							tracker.assignWorktree(node.id, wt.branch, wt.path);
+							if (node.cleaned) node.cleaned = false;
 						}
 
 						tracker.updateStatus(node.id, "in_progress");

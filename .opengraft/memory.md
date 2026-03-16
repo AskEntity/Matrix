@@ -127,3 +127,10 @@ Daemon (Hono: HTTP + WS on :7433)
 - `delete_task` splits: passed tasks get worktree/branch cleaned (`cleaned: true`) but node stays in tree. Non-passed tasks fully removed.
 - `TaskTracker.cleanNode(id)` clears branch/worktreePath/sessionId, sets `cleaned: true`.
 - REST `DELETE /tasks/:id` still fully removes (user-initiated).
+
+## Resuming Passed Tasks
+
+- POST /tasks/:nodeId/continue now accepts passed tasks (in addition to failed/stuck).
+- execute_tasks MCP tool also accepts resume/reset modes for passed tasks.
+- For cleaned passed tasks (worktree removed by delete_task), the continue endpoint re-creates a worktree from main branch via WorktreeManager.create().
+- The cleaned flag is reset to false when a worktree is re-created.
