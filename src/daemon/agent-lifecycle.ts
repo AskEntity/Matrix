@@ -240,9 +240,11 @@ export async function runChildAgentInBackground(
 			mcpManager,
 		});
 
+		const sessionsDir = join(ctx.config.dataDir, "sessions", project.id);
 		const session = agentCtx.provider.startSession({
 			prompt,
 			cwd: node.worktreePath as string,
+			sessionsDir,
 			systemPrompt: TASK_SYSTEM_PROMPT,
 			resumeSessionId: node.sessionId ?? undefined,
 			model: agentCtx.effectiveCfg.model,

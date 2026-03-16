@@ -2673,6 +2673,93 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const body = (await res.json()) as TaskNode;
 		expect(body.message).toBe("Add tests for edge cases");
 	});
+
+	test("passes sessionsDir to startSession for child agent persistence", async () => {
+		let receivedSessionsDir: string | undefined;
+
+		const agentProvider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				receivedSessionsDir = req.sessionsDir;
+				const queue = req.queue ?? new MessageQueue();
+				// biome-ignore lint/correctness/useYield: mock session never streams
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					return { success: true, output: "done" };
+				}
+				return {
+					sessionId: "mock-session",
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						queue.close();
+					},
+				};
+			},
+		};
+
+		const localDataDir = await mkdtemp(join(tmpdir(), "og-child-sess-"));
+		const {
+			app: localApp,
+			pm: localPm,
+			getTracker: localGetTracker,
+		} = createApp({
+			dataDir: localDataDir,
+			agentProvider,
+		});
+		await localPm.load();
+
+		const projRes = await localApp.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "child-sess-proj") }),
+		});
+		const project = (await projRes.json()) as Project;
+
+		const taskRes = await localApp.request(`/projects/${project.id}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Child task", description: "desc" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		await localApp.request(`/projects/${project.id}/tasks/${task.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "failed" }),
+		});
+
+		const daemonTracker = await localGetTracker(project.id);
+		daemonTracker.assignWorktree(
+			task.id,
+			"og/fake/child-branch",
+			join(tempDir, "child-sess-proj"),
+		);
+		await daemonTracker.save();
+
+		const contRes = await localApp.request(
+			`/projects/${project.id}/tasks/${task.id}/continue`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "Go" }),
+			},
+		);
+		expect(contRes.status).toBe(200);
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		expect(receivedSessionsDir).toBe(
+			join(localDataDir, "sessions", project.id),
+		);
+
+		await rm(localDataDir, { recursive: true });
+	});
 });
 
 describe("GET /projects/:id/pending-messages", () => {
