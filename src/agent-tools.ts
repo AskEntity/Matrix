@@ -642,7 +642,7 @@ export function createOrchestratorTools(
 				if (
 					eventType === "tool_result" &&
 					"tool" in eventData &&
-					eventData.tool === "done"
+					eventData.tool === "mcp__opengraft__done"
 				) {
 					const nodeStatus = tracker.get(taskId)?.status;
 					if (nodeStatus === "passed" || nodeStatus === "failed") {
