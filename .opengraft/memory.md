@@ -363,3 +363,15 @@ Messages are ALWAYS delivered regardless of agent state. The system guarantees: 
 - Root cause: `compact_started` live handler used `setLogs` with dedup logic that scanned for existing pending entries. The dedup returned `prev` (no change) if a pending entry existed, but this check ran on every invocation and could suppress entries incorrectly.
 - Fix: replaced with simple `addLog()` call, matching all other event types. Backend already emits exactly one `compact_started` per compaction so dedup is unnecessary.
 - The `compact` completion handler still uses `setLogs` for in-place update (replacing "Compressing context..." with completion text + checkpoint). This is correct.
+
+## ws-handler Unified Event Processing Refactor
+
+- `processEvent(msg)` returns `{ entries: LogEntry[], updates: UpdateOp[], sideEffects: () => void }` — single source of truth for event→entry conversion.
+- `UpdateOp` type handles in-place mutations: `merge_text` (text_delta), `replace_text` (consolidated text), `complete_compact` (compact completion replaces pending entry).
+- Batch path (event_history): applies entries + updates to accumulator array, defers side effects until after `setLogs`.
+- Live path: pushes entries via `setLogs`, applies updates via `applyUpdateLive` (React state updater), runs side effects immediately.
+- `addLog` removed from `WSHandlerDeps` — ws-handler uses `setLogs` directly for both paths. `addLog` still exists in App.tsx for handlers.ts usage.
+- `createLogEntry` signature changed to single options object (`CreateLogEntryOpts`) — eliminates `undefined` placeholder chains.
+- `statusText.includes("Compress")` hack removed — status events produce no log entries (they are internal).
+- `setPendingCompact(false)` consolidated: only in `compact_started` handler (clears UI pending state) and `orchestration_completed`/`agent_stopped` (cleanup).
+- `NO_SIDE_EFFECTS` sentinel enables efficient identity check to skip empty functions.
