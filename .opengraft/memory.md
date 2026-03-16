@@ -308,3 +308,9 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - Tests now check `provider.stream()` instead of `provider.startSession()` for child agents (since `runChildCore` uses `stream()`).
 - `consumeAgentEvents()` still exists for `launchAgent` (orchestrator root). Only child agents use `runChildCore`.
 
+
+## Always-Editable Title/Description
+
+- TaskDetail.tsx title and description are now always editable (click-to-edit) regardless of task status. No `isPending`/`isEditable` gate.
+- The `isRunning` variable is kept for the running hint display inside the description button.
+- Textarea `rows={8}` + CSS `min-height: 120px` prevents shrinkage when editing long descriptions.
