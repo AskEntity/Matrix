@@ -357,3 +357,10 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - ActivityLog thinking indicator: per-agent — only shows when the viewed agent is active.
 - OrchestratorDetail: Pause button shows when root is active (`isRootActive`). Clear Sessions only shows when NO agents are active (`!running`).
 - TaskDetail: Pause button shows when task is active (`isActive` prop). Falls back to status check if prop not provided.
+
+## Yield Pending Card & Image Fix
+
+- Yield tool_use (pending) renders a calm gray card (`og-tool-card-yield-waiting`) with "⏸ Waiting..." text — no spinner, no pulse animation. Other tools keep the loading treatment.
+- `.og-spinner` needs `display: inline-block` since it's a `<span>` — without it, width/height are ignored on inline elements, causing vertical stretching.
+- `.og-tool-card-status.pending` needs `display: inline-flex; align-items: center` to properly center the spinner.
+- Images in chat: `lastSubmittedImagesRef` is consumed by `orchestration_started` handler, but when messages go via `queue_message` event (sendMessage to running session), that handler was passing `undefined` for images. Fixed by checking `lastSubmittedImagesRef.current` in the queue_message handler for user_prompt entries.
