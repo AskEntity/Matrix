@@ -1800,6 +1800,19 @@ button.og-tool-card-header:hover {
 	color: var(--color-failed);
 }
 
+/* task_completed card — prominent left border */
+.og-tool-card-done-passed {
+	border-color: rgba(63, 185, 80, 0.25);
+	background: rgba(63, 185, 80, 0.04);
+	border-left: 3px solid rgba(63, 185, 80, 0.7);
+}
+
+.og-tool-card-done-failed {
+	border-color: rgba(248, 81, 73, 0.25);
+	background: rgba(248, 81, 73, 0.04);
+	border-left: 3px solid rgba(248, 81, 73, 0.7);
+}
+
 .og-mcp-yield {
 	color: var(--text-muted);
 	font-style: italic;
