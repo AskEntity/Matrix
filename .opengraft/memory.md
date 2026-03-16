@@ -382,3 +382,12 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - `lastSubmittedImagesRef` was a frontend hack in App.tsx to attach images to user_prompt log entries before the backend queue carried images.
 - Now removed: images flow through toRawMessage → rawMessages → createQueueEntry → entry.images.
 - The `orchestration_started` event does NOT include images (only `prompt` string). Initial prompt images arrive via the queue_message event path.
+
+## Child Task Double-Message Fix (REST endpoint)
+
+- POST `/tasks/:nodeId/message` now uses a generic prompt instead of the user message when calling `ensureChildAgentRunning`.
+- Pattern matches orchestrator fix: message is persisted to disk, delivered via queue (runChildCore loads persisted messages). Prompt is generic.
+- For tasks with existing sessions (passed/closed/failed/stuck): "User sent a new message. Resume and check your queue."
+- For new tasks (pending/in_progress): includes task title + description as prompt context.
+- The `continue` endpoint does NOT have this bug — it uses `tracker.setMessage()` not `persistMessage()`, so no duplication.
+- MCP `send_message_to_child` was already fixed separately with the same pattern.

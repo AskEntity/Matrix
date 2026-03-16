@@ -548,13 +548,24 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 
 		// Auto-launch agent for this task (creates worktree if needed).
 		// Fire-and-forget — errors are broadcast as events, not thrown to the caller.
+		// Use a generic prompt — the real user message is already persisted to disk
+		// and will be delivered via the queue (runChildCore loads persisted messages).
+		// Passing the user message as the prompt would cause it to appear twice.
 		if (node) {
+			const hasSession =
+				node.status === "passed" ||
+				node.status === "closed" ||
+				node.status === "failed" ||
+				node.status === "stuck";
+			const genericPrompt = hasSession
+				? "User sent a new message. Resume and check your queue."
+				: `Start working on this task.\n\n## Task: ${node.title}\n${node.description ?? ""}`;
 			ensureChildAgentRunning(
 				ctx,
 				project,
 				tracker,
 				nodeId,
-				body.content,
+				genericPrompt,
 			).catch((e) => {
 				broadcastEvent(ctx, project.id, {
 					type: "error",
