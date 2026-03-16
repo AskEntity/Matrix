@@ -512,8 +512,6 @@ export interface OrchestratorToolsDeps {
 	childModel?: string;
 	/** MessageQueue for the parent agent session (for fire-and-forget results). */
 	queue?: MessageQueue;
-	/** Registry of child agent queues for send_message_to_child. Managed internally. */
-	childQueues?: Map<string, MessageQueue>;
 	/** Parent's queue — used by report_to_parent to send messages UP. Null for top-level orchestrator. */
 	parentQueue?: MessageQueue;
 	/** Default budget per task from project config. undefined = unlimited. */
@@ -562,7 +560,7 @@ export interface OrchestratorToolsResult {
 	/** Raw tool definitions for provider forwarding. */
 	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic is not narrowable here
 	toolDefs: ToolDefinition<any>[];
-	/** Returns true if this agent has running children (childQueues is non-empty). */
+	/** Returns true if this agent has running children (checked via globalAgentQueues). */
 	hasRunningChildren?: () => boolean;
 }
 
@@ -590,7 +588,6 @@ export function createOrchestratorTools(
 	const maxDepth = deps.maxDepth ?? 3;
 	const costs = costAccumulator ?? new CostAccumulator();
 	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
-	const childQueues = deps.childQueues ?? new Map<string, MessageQueue>();
 	/** Count of outstanding clarify() calls that have not yet received a clarify_response. */
 	let pendingClarifications = 0;
 
@@ -657,7 +654,6 @@ export function createOrchestratorTools(
 						emit({ type: "agent_event", taskId, eventType, ...eventData });
 					}
 				},
-				childQueues,
 				persistedMessages:
 					deps.dataDir && deps.currentProjectId
 						? { dataDir: deps.dataDir, projectId: deps.currentProjectId }
@@ -678,7 +674,6 @@ export function createOrchestratorTools(
 					emit({ type: "agent_event", taskId, eventType, ...eventData });
 				}
 			},
-			childQueues,
 			persistedMessages:
 				deps.dataDir && deps.currentProjectId
 					? { dataDir: deps.dataDir, projectId: deps.currentProjectId }
@@ -1048,8 +1043,13 @@ export function createOrchestratorTools(
 							)
 							.map((m) => m.taskId),
 					);
-					const runningChildren = Array.from(childQueues.keys()).filter(
-						(id) => !completedIds.has(id),
+					// Find running children by checking which children of this task
+					// have active queues in globalAgentQueues
+					const myChildren = currentTaskId
+						? (tracker.get(currentTaskId)?.children ?? [])
+						: [];
+					const runningChildren = myChildren.filter(
+						(id) => globalAgentQueues.has(id) && !completedIds.has(id),
 					);
 					const runningChildrenText =
 						runningChildren.length > 0
@@ -1176,7 +1176,7 @@ export function createOrchestratorTools(
 				}
 
 				// Case 1: Agent already running — just enqueue the message
-				const existingQueue = childQueues.get(args.taskId);
+				const existingQueue = globalAgentQueues.get(args.taskId);
 				if (existingQueue) {
 					try {
 						existingQueue.enqueue({
@@ -1438,11 +1438,9 @@ export function createOrchestratorTools(
 
 				try {
 					// Close running agent if active
-					const activeQueueClose =
-						childQueues.get(args.taskId) ?? globalAgentQueues.get(args.taskId);
+					const activeQueueClose = globalAgentQueues.get(args.taskId);
 					if (activeQueueClose) {
 						activeQueueClose.close();
-						childQueues.delete(args.taskId);
 						globalAgentQueues.delete(args.taskId);
 					}
 
@@ -1513,11 +1511,9 @@ export function createOrchestratorTools(
 
 				try {
 					// Close running agent if active
-					const activeQueueDelete =
-						childQueues.get(args.taskId) ?? globalAgentQueues.get(args.taskId);
+					const activeQueueDelete = globalAgentQueues.get(args.taskId);
 					if (activeQueueDelete) {
 						activeQueueDelete.close();
-						childQueues.delete(args.taskId);
 						globalAgentQueues.delete(args.taskId);
 					}
 
@@ -1608,11 +1604,9 @@ export function createOrchestratorTools(
 
 				try {
 					// Close running agent if active
-					const activeQueueReset =
-						childQueues.get(args.taskId) ?? globalAgentQueues.get(args.taskId);
+					const activeQueueReset = globalAgentQueues.get(args.taskId);
 					if (activeQueueReset) {
 						activeQueueReset.close();
-						childQueues.delete(args.taskId);
 						globalAgentQueues.delete(args.taskId);
 					}
 
@@ -2001,7 +1995,13 @@ export function createOrchestratorTools(
 
 	return {
 		toolDefs,
-		hasRunningChildren: () => childQueues.size > 0,
+		hasRunningChildren: () => {
+			// Check if any children of this task have active queues in globalAgentQueues
+			if (!currentTaskId) return false;
+			const myNode = tracker.get(currentTaskId);
+			if (!myNode?.children?.length) return false;
+			return myNode.children.some((id) => globalAgentQueues.has(id));
+		},
 	};
 }
 

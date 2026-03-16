@@ -169,8 +169,6 @@ export interface RunChildCoreParams {
 	sessionRequest: AgentRequest;
 	/** Event callback — called for each agent event. */
 	onEvent: (eventType: string, eventData: Record<string, unknown>) => void;
-	/** Optional map of child queues (from agent-tools.ts closure). Updated on start/finish. */
-	childQueues?: Map<string, MessageQueue>;
 	/** Config for loading persisted messages from disk. Omit to skip. */
 	persistedMessages?: {
 		dataDir: string;
@@ -198,13 +196,11 @@ export async function runChildCore(
 		taskId,
 		sessionRequest,
 		onEvent,
-		childQueues,
 		persistedMessages,
 	} = params;
 
 	// Use pre-created queue or create a new one
 	const childQueue = params.queue ?? new MessageQueue();
-	if (childQueues) childQueues.set(taskId, childQueue);
 	globalAgentQueues.set(taskId, childQueue);
 	sessionRequest.queue = childQueue;
 
@@ -260,7 +256,6 @@ export async function runChildCore(
 		}
 		return result.value;
 	} finally {
-		if (childQueues) childQueues.delete(taskId);
 		globalAgentQueues.delete(taskId);
 		childQueue.close();
 	}
@@ -346,6 +341,13 @@ export async function ensureChildAgentRunning(
 ): Promise<void> {
 	const node = tracker.get(nodeId);
 	if (!node) return;
+
+	// Guard: if agent is already running, just enqueue the message
+	const existingQueue = globalAgentQueues.get(nodeId);
+	if (existingQueue) {
+		existingQueue.enqueue({ source: "user", content: prompt });
+		return;
+	}
 
 	// Create worktree if the task doesn't have one yet
 	if (!node.worktreePath) {

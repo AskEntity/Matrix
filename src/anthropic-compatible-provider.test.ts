@@ -27,7 +27,7 @@ import {
 	truncateSearchOutput,
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
-import { MessageQueue } from "./message-queue.ts";
+import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { AgentResult } from "./types.ts";
 
@@ -1500,7 +1500,7 @@ describe("done tool", () => {
 		expect(hasRunningChildren?.()).toBe(false);
 	});
 
-	test("hasRunningChildren returns true when childQueues has entries", async () => {
+	test("hasRunningChildren returns true when child has queue in globalAgentQueues", async () => {
 		const mockProvider = {
 			name: "mock",
 			execute: async () => ({ success: true, output: "" }),
@@ -1513,8 +1513,13 @@ describe("done tool", () => {
 			},
 		};
 
-		const childQueues = new Map<string, MessageQueue>();
-		childQueues.set("child-1", new MessageQueue());
+		// Create a parent task and a child task
+		const parentId =
+			tracker.rootNodeId ?? tracker.ensureRootNode("Root", "").id;
+		const child = tracker.addChild(parentId, "Child Task", "desc");
+		const childId = child.id;
+		const childQueue = new MessageQueue();
+		globalAgentQueues.set(childId, childQueue);
 
 		const { hasRunningChildren } = createOrchestratorTools({
 			tracker,
@@ -1522,12 +1527,13 @@ describe("done tool", () => {
 			worktrees: {} as never,
 			projectPath: tempDir,
 			repoPath: tempDir,
-			childQueues,
+			currentTaskId: parentId,
 		});
 		expect(hasRunningChildren?.()).toBe(true);
 
 		// Clean up
-		for (const q of childQueues.values()) q.close();
+		globalAgentQueues.delete(childId);
+		childQueue.close();
 	});
 });
 

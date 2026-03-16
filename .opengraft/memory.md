@@ -396,3 +396,15 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - POST `/tasks/:nodeId/message` now uses a generic prompt instead of the user message when calling `ensureChildAgentRunning`.
 - Pattern matches orchestrator fix: message is persisted to disk, delivered via queue. Prompt is generic.
 - The `continue` endpoint does NOT have this bug — it uses `tracker.setMessage()` not `persistMessage()`.
+
+## Unified Agent Running Registry (childQueues Removal)
+
+- `childQueues` (local Map in agent-tools.ts closure) completely removed. `globalAgentQueues` is now the single source of truth for all running agent queues.
+- `ensureChildAgentRunning()` now checks `globalAgentQueues.get(nodeId)` at the top — if agent is already running, enqueues the message and returns immediately. This prevents duplicate agent launches.
+- `send_message_to_child` MCP tool checks `globalAgentQueues.get(args.taskId)` instead of the old `childQueues.get(args.taskId)`.
+- `hasRunningChildren()` now checks `globalAgentQueues` for children of `currentTaskId` (via tracker), not `childQueues.size`.
+- Yield tool "Pending" section finds running children by getting `tracker.get(currentTaskId).children` and filtering for those with entries in `globalAgentQueues`.
+- `close_task`, `delete_task`, `reset_task` all simplified to only check/delete from `globalAgentQueues`.
+- `RunChildCoreParams.childQueues` field removed. `runChildCore` only registers/cleans up in `globalAgentQueues`.
+- `OrchestratorToolsDeps.childQueues` field removed.
+- Node.js single-threaded guarantee: check-then-launch is atomic (no await between `globalAgentQueues.get()` and `globalAgentQueues.set()` in the sync portion of both ensureChildAgentRunning and send_message_to_child).
