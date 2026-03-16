@@ -332,6 +332,7 @@ function McpToolCardBody({
 	isOk,
 	t,
 	nodeMap,
+	taskId,
 }: {
 	toolName: string;
 	toolArgs: Record<string, unknown> | undefined;
@@ -339,6 +340,7 @@ function McpToolCardBody({
 	isOk: boolean;
 	t: (key: string, params?: Record<string, string>) => string;
 	nodeMap?: Map<string, { title?: string }>;
+	taskId?: string;
 }) {
 	const mcpTool = toolName.replace("mcp__opengraft__", "");
 
@@ -421,8 +423,10 @@ function McpToolCardBody({
 			const summary = getArg(toolArgs, "summary");
 			const isPassed =
 				status === "passed" || (isOk && resultContent?.includes("passed"));
+			const taskTitle = taskId ? nodeMap?.get(taskId)?.title : undefined;
 			return (
 				<div className="og-mcp-body">
+					{taskTitle && <div className="og-mcp-done-title">{taskTitle}</div>}
 					<div
 						className={`og-mcp-done-status ${isPassed ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
 					>
@@ -536,6 +540,7 @@ export function ToolCard({
 				resultContent={resultContent}
 				isOk={isOk}
 				t={t}
+				taskId={useEntry.taskId}
 			/>
 		) : null;
 
