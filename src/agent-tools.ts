@@ -964,7 +964,17 @@ export function createOrchestratorTools(
 					}
 
 					// Build ## Pending summary
-					const runningChildren = Array.from(childQueues.keys());
+					const completedIds = new Set(
+						all
+							.filter(
+								(m): m is Extract<QueueMessage, { source: "child_complete" }> =>
+									m.source === "child_complete",
+							)
+							.map((m) => m.taskId),
+					);
+					const runningChildren = Array.from(childQueues.keys()).filter(
+						(id) => !completedIds.has(id),
+					);
 					const runningChildrenText =
 						runningChildren.length > 0
 							? runningChildren
