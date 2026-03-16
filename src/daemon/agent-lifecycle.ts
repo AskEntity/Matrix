@@ -58,7 +58,6 @@ async function createAgentContext(
 		currentTaskId: string;
 		depth: number;
 		queue: MessageQueue;
-		doneRef: { done: null | { status: "passed" | "failed"; summary: string } };
 		childModel?: string;
 		mcpManager?: McpClientManager;
 	},
@@ -93,7 +92,6 @@ async function createAgentContext(
 			depth: opts.depth,
 			childModel: opts.childModel ?? effectiveCfg.childModel,
 			queue: opts.queue,
-			doneRef: opts.doneRef,
 			defaultBudgetUsd: effectiveCfg.budgetUsd,
 			clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
 			maxDepth: effectiveCfg.maxDepth,
@@ -227,9 +225,6 @@ export async function runChildAgentInBackground(
 	const childQueue = new MessageQueue();
 	globalAgentQueues.set(nodeId, childQueue);
 	const mcpManager = new McpClientManager();
-	const doneRef: {
-		done: null | { status: "passed" | "failed"; summary: string };
-	} = { done: null };
 	try {
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
@@ -237,7 +232,6 @@ export async function runChildAgentInBackground(
 			currentTaskId: nodeId,
 			depth: 1,
 			queue: childQueue,
-			doneRef,
 			mcpManager,
 		});
 
@@ -251,7 +245,6 @@ export async function runChildAgentInBackground(
 			model: agentCtx.effectiveCfg.model,
 			mcpToolDefs: agentCtx.mcpToolDefs,
 			queue: childQueue,
-			doneRef,
 			hasRunningChildren: agentCtx.hasRunningChildren,
 		});
 
@@ -267,19 +260,21 @@ export async function runChildAgentInBackground(
 			},
 		);
 
-		// Use doneRef if available; fall back to agentResult.success
-		const didPass = doneRef.done
-			? doneRef.done.status === "passed"
-			: agentResult.success;
-		const newStatus = didPass ? "passed" : "failed";
-		tracker.updateStatus(nodeId, newStatus);
+		// done() tool now updates status directly in the tracker, so just use agentResult
+		// for cost/output reporting. The task status is already set by the done() tool.
+		const currentNode = tracker.get(nodeId);
+		const didPass = currentNode?.status === "passed" || agentResult.success;
+		if (!currentNode || currentNode.status === "in_progress") {
+			// Agent exited without calling done() — treat as success
+			tracker.updateStatus(nodeId, "passed");
+		}
 		await tracker.save();
 		broadcastEvent(ctx, project.id, {
 			type: "task_completed",
 			taskId: nodeId,
 			title: node.title,
 			success: didPass,
-			output: (doneRef.done?.summary ?? agentResult.output ?? "").slice(0, 500),
+			output: (agentResult.output ?? "").slice(0, 500),
 		});
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} catch (e) {
@@ -328,9 +323,6 @@ export async function launchAgent(
 	tracker.save().catch(() => {});
 
 	const queue = new MessageQueue();
-	const doneRef: {
-		done: null | { status: "passed" | "failed"; summary: string };
-	} = { done: null };
 	const mcpManager = new McpClientManager();
 
 	const agentCtx = await createAgentContext(ctx, project, {
@@ -340,7 +332,6 @@ export async function launchAgent(
 		depth: 0,
 		childModel: opts.childModel,
 		queue,
-		doneRef,
 		mcpManager,
 	});
 
@@ -387,7 +378,6 @@ export async function launchAgent(
 		resumeSessionId,
 		model: effectiveModel,
 		queue,
-		doneRef,
 		hasRunningChildren: agentCtx.hasRunningChildren,
 	});
 
@@ -409,11 +399,14 @@ export async function launchAgent(
 				},
 			);
 
-			// Update root node status based on result
-			const didPass = doneRef.done
-				? doneRef.done.status === "passed"
-				: finalResult.success;
-			tracker.updateStatus(rootNodeId, didPass ? "passed" : "failed");
+			// done() tool now updates status directly in the tracker.
+			// If agent exited without calling done(), check current status.
+			const rootAfterRun = tracker.get(rootNodeId);
+			const didPass = rootAfterRun?.status === "passed" || finalResult.success;
+			if (!rootAfterRun || rootAfterRun.status === "in_progress") {
+				// Agent exited without calling done() — treat as success
+				tracker.updateStatus(rootNodeId, "passed");
+			}
 
 			const totalCostUsd =
 				(finalResult.costUsd ?? 0) + agentCtx.costAccumulator.totalCostUsd;

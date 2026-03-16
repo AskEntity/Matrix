@@ -906,77 +906,66 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				continue;
 			}
 
-			// If no tool use, handle end_turn
+			// If no tool use, handle end_turn — enter implicit yield
 			if (response.stop_reason === "end_turn" || toolUses.length === 0) {
-				// Check if done() was called in a previous tool batch
-				if (request.doneRef?.done) {
-					// Race condition guard: if a user message arrived between done() and loop exit,
-					// reset done state and continue so the agent can process it
-					if (queue && queue.pending > 0) {
-						request.doneRef.done = null;
-					} else {
-						break;
-					}
-				}
-
-				// Implicit yield: if agent has running children, wait for messages
-				if (request.hasRunningChildren?.() && queue) {
+				if (!queue) {
+					// No queue — cannot yield, just exit
 					yield {
 						type: "status",
-						message:
-							"Agent ended turn with running children — implicit yield (waiting for messages)",
+						message: "Agent ended turn (no queue for yield)",
 					};
-					try {
-						const first = await queue.wait();
-						const rest = queue.drain();
-						const all = [first, ...rest];
-						if (all.some((m) => m.source === "compact")) {
-							manualCompactRequested = true;
-							yield { type: "compact_started" };
-						}
-						const nonCompact = all.filter((m) => m.source !== "compact");
-						if (nonCompact.length === 0) {
-							// Only compact signal — no messages to inject, just continue to trigger compaction
-							continue;
-						}
-						const formatted = nonCompact.map(formatQueueMessage).join("\n");
-						yield {
-							type: "queue_message",
-							messages: formatted,
-							rawMessages: nonCompact.map(toRawMessage),
-						};
-						// Inject messages as a new user turn and continue the loop
-						const imageBlocks = extractQueueImages(nonCompact);
-						if (imageBlocks.length > 0) {
-							messages.push({
-								role: "user" as const,
-								content: [
-									{
-										type: "text" as const,
-										text: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
-									},
-									...imageBlocks,
-								],
-							});
-						} else {
-							messages.push({
-								role: "user" as const,
-								content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
-							});
-						}
-						continue;
-					} catch {
-						// Queue closed — fall through to normal exit
-					}
+					break;
 				}
 
-				// Default exit — agent stopped without calling done()
 				yield {
 					type: "status",
 					message:
-						"Warning: agent ended without calling done() — treating as success",
+						"Agent ended turn — entering idle state (waiting for messages)",
 				};
-				break;
+
+				try {
+					const first = await queue.wait();
+					const rest = queue.drain();
+					const all = [first, ...rest];
+					if (all.some((m) => m.source === "compact")) {
+						manualCompactRequested = true;
+						yield { type: "compact_started" };
+					}
+					const nonCompact = all.filter((m) => m.source !== "compact");
+					if (nonCompact.length === 0) {
+						// Only compact signal — no messages to inject, just continue to trigger compaction
+						continue;
+					}
+					const formatted = nonCompact.map(formatQueueMessage).join("\n");
+					yield {
+						type: "queue_message",
+						messages: formatted,
+						rawMessages: nonCompact.map(toRawMessage),
+					};
+					// Inject messages as a new user turn and continue the loop
+					const imageBlocks = extractQueueImages(nonCompact);
+					if (imageBlocks.length > 0) {
+						messages.push({
+							role: "user" as const,
+							content: [
+								{
+									type: "text" as const,
+									text: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+								},
+								...imageBlocks,
+							],
+						});
+					} else {
+						messages.push({
+							role: "user" as const,
+							content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+						});
+					}
+					continue;
+				} catch {
+					// Queue closed — normal exit path (stop was called)
+					break;
+				}
 			}
 
 			// Execute tools concurrently
@@ -1172,17 +1161,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					yield { type: "status", message: warning };
 				}
 			}
-
-			// Check if done() was called by a tool in this batch
-			if (request.doneRef?.done) {
-				// Race condition guard: if a user message arrived while tools were executing,
-				// reset done state and continue so the agent can process it
-				if (queue && queue.pending > 0) {
-					request.doneRef.done = null;
-				} else {
-					break;
-				}
-			}
 		}
 
 		// Persist conversation history for future resume (in memory + on disk)
@@ -1211,11 +1189,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			(totalCacheReadTokens * inputPer1M * 0.1) / 1_000_000 +
 			(totalOutputTokens * outputPer1M) / 1_000_000;
 
-		// Use doneRef result if the done() tool was called
-		const doneResult = request.doneRef?.done;
 		return {
-			success: doneResult ? doneResult.status === "passed" : true,
-			output: doneResult ? doneResult.summary : lastText,
+			success: true,
+			output: lastText,
 			costUsd,
 			turns,
 			sessionId,

@@ -185,3 +185,13 @@ Daemon (Hono: HTTP + WS on :7433)
 - Legacy `execute_tasks` rendering kept in ToolCard.tsx for old event history compatibility.
 - The agent spawn logic (executeChildStreaming, fire-and-forget async, child_complete enqueue) moved into send_message_to_child handler.
 - Resume detection: if task status is failed/stuck/passed, treat as resume (session history provides context). Otherwise, build full task prompt.
+
+## Phase 3: done() = yield() internally
+
+- `doneRef` mechanism completely removed from the codebase. No more `{ done: null | { status, summary } }` refs.
+- `done()` MCP tool now: (1) calls `tracker.updateStatus()` directly, (2) saves tree, (3) broadcasts `task_completed` event, (4) returns "Entering idle state" message. It does NOT cause the loop to exit.
+- Provider run loops (both Anthropic and OpenAI) no longer exit on `end_turn`/`stop`. Instead they enter implicit yield mode via `queue.wait()`. Loop exits ONLY when: queue is closed (stop signal) or no queue available.
+- `AgentRequest.doneRef` field removed from agent-provider interface.
+- `OrchestratorToolsDeps.doneRef` field removed from agent-tools.
+- `agent-lifecycle.ts` checks task status from tracker (set by done() tool) instead of doneRef. If agent exits without calling done(), status stays as-is or defaults to "passed".
+- Tests updated: done tool tests verify tracker status updates instead of doneRef mutation. OpenAI runLoop test stops session to exit yield mode.

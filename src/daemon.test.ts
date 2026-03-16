@@ -746,8 +746,6 @@ describe("daemon tasks API", () => {
 		let startSessionCalled = false;
 		let receivedMcpToolDefs = false;
 		let receivedQueue = false;
-		let receivedDoneRef = false;
-
 		const agentProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({ success: true, output: "" }),
@@ -762,9 +760,6 @@ describe("daemon tasks API", () => {
 				}
 				if (req.queue) {
 					receivedQueue = true;
-				}
-				if (req.doneRef) {
-					receivedDoneRef = true;
 				}
 				const queue = req.queue ?? new MessageQueue();
 				// biome-ignore lint/correctness/useYield: mock session never streams
@@ -845,8 +840,6 @@ describe("daemon tasks API", () => {
 		expect(startSessionCalled).toBe(true);
 		expect(receivedMcpToolDefs).toBe(true);
 		expect(receivedQueue).toBe(true);
-		expect(receivedDoneRef).toBe(true);
-
 		// Ensure global queue registry is cleaned up after agent completes
 		await new Promise((r) => setTimeout(r, 50));
 		expect(globalAgentQueues.has(task.id)).toBe(false);

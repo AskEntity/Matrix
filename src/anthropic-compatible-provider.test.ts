@@ -1422,9 +1422,7 @@ describe("done tool", () => {
 	});
 
 	async function invokeDoneTool(
-		doneRef: {
-			done: null | { status: "passed" | "failed"; summary: string };
-		},
+		taskId: string | null,
 		args: { status: "passed" | "failed"; summary: string },
 	) {
 		const mockProvider = {
@@ -1445,7 +1443,7 @@ describe("done tool", () => {
 			worktrees: {} as never,
 			projectPath: tempDir,
 			repoPath: tempDir,
-			doneRef,
+			currentTaskId: taskId,
 		});
 		const doneTool = toolDefs.find((t) => t.name === "done");
 		if (!doneTool) throw new Error("done tool not found");
@@ -1453,36 +1451,30 @@ describe("done tool", () => {
 		return (doneTool as any).handler(args);
 	}
 
-	test("done(passed) sets doneRef to passed", async () => {
-		const doneRef: {
-			done: null | { status: "passed" | "failed"; summary: string };
-		} = { done: null };
-		const result = await invokeDoneTool(doneRef, {
+	test("done(passed) updates task status to passed", async () => {
+		const node = tracker.addTask("Test Task Pass", "description");
+		tracker.updateStatus(node.id, "in_progress");
+		const result = await invokeDoneTool(node.id, {
 			status: "passed",
 			summary: "All tests pass",
 		});
-		expect(doneRef.done).toEqual({
-			status: "passed",
-			summary: "All tests pass",
-		});
+		const updated = tracker.get(node.id);
+		expect(updated?.status).toBe("passed");
 		expect(result.content[0].text).toContain("passed");
-		expect(result.content[0].text).toContain("Good work!");
+		expect(result.content[0].text).toContain("Entering idle state");
 	});
 
-	test("done(failed) sets doneRef to failed", async () => {
-		const doneRef: {
-			done: null | { status: "passed" | "failed"; summary: string };
-		} = { done: null };
-		const result = await invokeDoneTool(doneRef, {
+	test("done(failed) updates task status to failed", async () => {
+		const node = tracker.addTask("Test Task Fail", "description");
+		tracker.updateStatus(node.id, "in_progress");
+		const result = await invokeDoneTool(node.id, {
 			status: "failed",
 			summary: "Cannot resolve type errors",
 		});
-		expect(doneRef.done).toEqual({
-			status: "failed",
-			summary: "Cannot resolve type errors",
-		});
+		const updated = tracker.get(node.id);
+		expect(updated?.status).toBe("failed");
 		expect(result.content[0].text).toContain("failed");
-		expect(result.content[0].text).toContain("Returning to parent");
+		expect(result.content[0].text).toContain("Entering idle state");
 	});
 
 	test("hasRunningChildren returns false when no children", async () => {
