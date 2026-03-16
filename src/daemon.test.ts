@@ -1276,15 +1276,16 @@ describe("POST /projects/:id/message", () => {
 		expect(body.error).toBe("message is required");
 	});
 
-	test("returns 404 when no active session", async () => {
+	test("auto-launches agent when no active session", async () => {
 		const res = await app.request(`/projects/${projectId}/message`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ message: "hello" }),
 		});
-		expect(res.status).toBe(404);
-		const body = (await res.json()) as { error: string };
-		expect(body.error).toBe("No active session for this project");
+		// POST /message now auto-launches the agent when no session exists
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { ok: boolean };
+		expect(body.ok).toBe(true);
 	});
 });
 
@@ -2194,20 +2195,20 @@ describe("POST /projects/:id/orchestrate/agent", () => {
 		expect(body.projectId).toBe(projectId);
 	});
 
-	test("returns 409 when agent already running", async () => {
+	test("enqueues message when agent already running instead of 409", async () => {
 		// Start once
 		await app.request(`/projects/${projectId}/orchestrate/agent`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ prompt: "first run" }),
 		});
-		// Try again immediately — agent is still considered active
+		// Try again immediately — agent is still active, prompt is enqueued as user message
 		const res = await app.request(`/projects/${projectId}/orchestrate/agent`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ prompt: "second run" }),
 		});
-		expect(res.status).toBe(409);
+		expect(res.status).toBe(200);
 	});
 });
 
@@ -3875,13 +3876,15 @@ describe("POST /projects/:id/restart", () => {
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		expect(sessionCount).toBe(2);
 
-		// Trying to start again should fail with 409
+		// Trying to start again enqueues the message (no longer 409)
 		const dupRes = await app.request(`/projects/${proj.id}/orchestrate/agent`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ prompt: "test 3" }),
 		});
-		expect(dupRes.status).toBe(409);
+		expect(dupRes.status).toBe(200);
+		// Still only 2 sessions launched (not 3 — the third prompt was enqueued, not a new session)
+		expect(sessionCount).toBe(2);
 
 		// Clean up
 		await app.request(`/projects/${proj.id}/stop`, { method: "POST" });

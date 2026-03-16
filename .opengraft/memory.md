@@ -245,3 +245,11 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - Messages persist when no active agent queue. On launch, persisted messages loaded into queue and file cleared.
 - `handleInjectMessage` and `handleClarifyResponse` async — persist + auto-resume when no active session.
 - `OrchestratorToolsDeps.dataDir` added for persistent queue access.
+
+## Unified Message Input (POST /orchestrate/agent + POST /message)
+
+- `handleOrchestrate` no longer returns 409 when agent already running. Instead, it enqueues the prompt as a user message to the existing session queue.
+- `handleInjectMessage` handles the "no rootNodeId" case by launching a brand new agent (previously returned 404).
+- `/agents/start` endpoint similarly enqueues to running session instead of 409.
+- Frontend `handleSubmit` always tries `sendMessage()` first. Falls back to `start()` only if sendMessage returns an error indicating no session exists.
+- The `running` boolean in handlers.ts is no longer needed for submit routing — the backend handles all cases.
