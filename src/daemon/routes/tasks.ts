@@ -2,7 +2,10 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { globalAgentQueues } from "../../message-queue.ts";
-import { persistMessage } from "../../persistent-queue.ts";
+import {
+	clearPersistedMessages,
+	persistMessage,
+} from "../../persistent-queue.ts";
 import type { TaskStatus } from "../../types.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
@@ -405,6 +408,13 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				}
 			}
 		}
+
+		// Clear persisted messages for all removed tasks
+		await Promise.all(
+			nodesToRemove.map((n) =>
+				clearPersistedMessages(ctx.config.dataDir, project.id, n.id),
+			),
+		);
 
 		tracker.remove(nodeId);
 		await tracker.save();

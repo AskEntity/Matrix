@@ -13,7 +13,7 @@ import {
 	MessageQueue,
 	type QueueMessage,
 } from "./message-queue.ts";
-import { persistMessage } from "./persistent-queue.ts";
+import { clearPersistedMessages, persistMessage } from "./persistent-queue.ts";
 import type { ProjectManager } from "./project-manager.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
@@ -1534,6 +1534,21 @@ export function createOrchestratorTools(
 						);
 					}
 
+					// Clear persisted messages for this task and all descendants
+					if (deps.dataDir && deps.currentProjectId) {
+						const dd = deps.dataDir;
+						const pid = deps.currentProjectId;
+						const collectIds = (id: string): string[] => {
+							const n = tracker.get(id);
+							if (!n) return [];
+							return [id, ...n.children.flatMap((cid) => collectIds(cid))];
+						};
+						const allIds = collectIds(node.id);
+						await Promise.all(
+							allIds.map((id) => clearPersistedMessages(dd, pid, id)),
+						);
+					}
+
 					// Remove node from tree
 					tracker.remove(node.id);
 					await tracker.save();
@@ -1613,6 +1628,15 @@ export function createOrchestratorTools(
 					if (deps.sessionsDir) {
 						await unlink(join(deps.sessionsDir, `${node.id}.json`)).catch(
 							() => {},
+						);
+					}
+
+					// Clear persisted messages (follows session lifecycle)
+					if (deps.dataDir && deps.currentProjectId) {
+						await clearPersistedMessages(
+							deps.dataDir,
+							deps.currentProjectId,
+							node.id,
 						);
 					}
 
