@@ -29,6 +29,7 @@
 	--color-passed: #3fb950; /* green */
 	--color-failed: #f85149; /* red */
 	--color-stuck: #e3b341; /* orange/amber */
+	--color-closed: #6e7681; /* gray, same as pending */
 
 	/* Accent */
 	--accent: #388bfd;
@@ -42,6 +43,7 @@
 	--bg-passed: rgba(63, 185, 80, 0.1);
 	--bg-failed: rgba(248, 81, 73, 0.1);
 	--bg-stuck: rgba(227, 179, 65, 0.1);
+	--bg-closed: rgba(110, 118, 129, 0.06);
 
 	/* Typography */
 	--font-sans:
@@ -406,6 +408,10 @@ select {
 	opacity: 0.4;
 }
 
+.og-task-node.og-task-closed {
+	opacity: 0.5;
+}
+
 .og-task-node.og-reparent-target {
 	background: rgba(56, 139, 253, 0.15);
 	outline: 1.5px dashed var(--accent);
@@ -530,6 +536,10 @@ select {
 	background: var(--color-stuck);
 	animation: dot-blink 1s step-end infinite;
 }
+.status-dot-closed {
+	background: var(--color-closed);
+	opacity: 0.5;
+}
 
 @keyframes dot-pulse {
 	0%,
@@ -586,6 +596,11 @@ select {
 .og-task-draft .og-task-title {
 	opacity: 0.6;
 	font-style: italic;
+}
+
+.og-task-node.og-task-closed .og-task-title {
+	text-decoration: line-through;
+	color: var(--text-muted);
 }
 
 .og-task-draft-badge {
@@ -1100,6 +1115,11 @@ select {
 	background: var(--bg-stuck);
 	color: var(--color-stuck);
 	border-color: rgba(227, 179, 65, 0.3);
+}
+.og-status-badge.closed {
+	background: var(--bg-closed);
+	color: var(--color-closed);
+	border-color: var(--border);
 }
 .og-status-badge.idle {
 	background: var(--bg-pending);

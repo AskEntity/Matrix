@@ -1,11 +1,12 @@
-/** Task status follows the lifecycle: pending → in_progress → testing → passed | failed | stuck */
+/** Task status follows the lifecycle: pending → in_progress → testing → passed | failed | stuck | closed */
 export type TaskStatus =
 	| "pending"
 	| "in_progress"
 	| "testing"
 	| "passed"
 	| "failed"
-	| "stuck";
+	| "stuck"
+	| "closed";
 
 /** A node in the task tree. Each node maps 1:1 to an agent and a git branch. */
 export interface TaskNode {
@@ -102,5 +103,6 @@ export interface StatsResponse {
 		passed: number;
 		failed: number;
 		stuck: number;
+		closed: number;
 	};
 }

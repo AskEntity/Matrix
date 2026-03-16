@@ -159,7 +159,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   Call this after starting tasks. Returns all accumulated messages plus a "## Pending" summary section
   showing running children and pending clarifications. Zero token burn while suspended.
 - reorder_tasks: Reorder children of a task node. Pass the parent nodeId and an array of child IDs in the desired order.
-- close_task: Clean up a child's worktree + branch after merging. Node and session preserved. No status change.
+- close_task: Clean up a child's worktree + branch after merging. Node and session preserved. Status set to 'closed'.
   Use after merging a passed child, or to defer a task and reclaim disk space.
 - delete_task: Full removal — deletes worktree, session file, and task node from the tree. Use for abandoned tasks.
 - reset_task: Remove worktree + session file but keep node. Sets status to pending. Use to start over with a different approach.
@@ -784,7 +784,14 @@ export function createOrchestratorTools(
 			{
 				taskId: z.string().describe("Task node ID"),
 				status: z
-					.enum(["pending", "in_progress", "testing", "passed", "failed"])
+					.enum([
+						"pending",
+						"in_progress",
+						"testing",
+						"passed",
+						"failed",
+						"closed",
+					])
 					.optional()
 					.describe("New status"),
 				title: z.string().optional().describe("New title"),
@@ -1184,7 +1191,8 @@ export function createOrchestratorTools(
 					const hasExistingSession =
 						node.status === "failed" ||
 						node.status === "stuck" ||
-						node.status === "passed";
+						node.status === "passed" ||
+						node.status === "closed";
 
 					// Build prompt
 					const memory = readProjectMemory(projectPath, false);
@@ -1351,7 +1359,7 @@ export function createOrchestratorTools(
 		tool(
 			"close_task",
 			"Clean up a child task's worktree and branch to reclaim disk space. " +
-				"Node and session are preserved — no status change. " +
+				"Node and session are preserved — status set to 'closed'. " +
 				"Call this AFTER you have already merged the child's branch yourself. " +
 				"Use for merged tasks or deferred tasks where you want to free resources.",
 			{
@@ -1390,6 +1398,7 @@ export function createOrchestratorTools(
 						node.updatedAt = new Date().toISOString();
 					}
 
+					tracker.updateStatus(node.id, "closed");
 					await tracker.save();
 					broadcastTreeUpdate?.();
 

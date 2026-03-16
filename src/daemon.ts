@@ -170,6 +170,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			passed: 0,
 			failed: 0,
 			stuck: 0,
+			closed: 0,
 		};
 
 		for (const project of projects) {

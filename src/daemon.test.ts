@@ -170,6 +170,7 @@ describe("daemon stats", () => {
 			passed: 0,
 			failed: 0,
 			stuck: 0,
+			closed: 0,
 		});
 
 		await rm(dataDir, { recursive: true });
