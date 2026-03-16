@@ -92,6 +92,45 @@ export class MessageQueue {
 		return msgs;
 	}
 
+	/**
+	 * Drain with deduplication: merges consecutive system messages with similar content
+	 * into a single summary. Non-system messages pass through unchanged.
+	 */
+	drainMerged(): QueueMessage[] {
+		const msgs = this.drain();
+		if (msgs.length <= 1) return msgs;
+
+		const result: QueueMessage[] = [];
+		const systemMessages: Array<Extract<QueueMessage, { source: "system" }>> =
+			[];
+
+		const flushSystem = () => {
+			if (systemMessages.length === 0) return;
+			if (systemMessages.length === 1) {
+				result.push(...systemMessages);
+			} else {
+				// Merge multiple system messages into one summary
+				result.push({
+					source: "system",
+					content: `Tree updated ${systemMessages.length} times. Call get_tree to see the latest state.`,
+				});
+			}
+			systemMessages.length = 0;
+		};
+
+		for (const msg of msgs) {
+			if (msg.source === "system") {
+				systemMessages.push(msg);
+			} else {
+				flushSystem();
+				result.push(msg);
+			}
+		}
+		flushSystem();
+
+		return result;
+	}
+
 	/** Block until at least one message arrives. If messages already pending, resolve immediately. */
 	wait(): Promise<QueueMessage> {
 		if (this.closed) {

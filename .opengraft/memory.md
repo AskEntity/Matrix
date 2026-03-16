@@ -319,3 +319,20 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 
 - `MessageQueue.enqueueQuiet(msg)` pushes to the messages array without resolving a pending waiter. The message is picked up on the next `drain()` or `wait()` call that finds pending messages.
 - Used by `notifyAgentOfTreeChange()` in `src/daemon/routes/tasks.ts` so tree mutations (create/update/reorder/delete) do NOT wake agents from yield. Messages accumulate quietly and are delivered alongside the next waking event.
+
+## Queue Message System Audit & Unification
+
+### Message Format Standards
+- All queue messages use XML tags via `formatQueueMessage()` — consistent pattern
+- `requestReply` on parent_update/child_report: XML attribute `requestReply="true"` on tag (not `[Reply requested]` text inside body)
+- Clarify timeout: `<clarify_timeout duration="Xms">` XML tag in synthesized answer (not `[TIMEOUT]` prefix)
+- Tree mutation notifications: structured content with action detail (not `[TREE UPDATED]` prefix) — these get wrapped in `<system_notification>` by formatQueueMessage
+- Pause message: plain text via sendMessageToTask (user source, no emoji prefix)
+
+### Queue Architecture
+- Waking messages (via `enqueue`): user, child_complete, parent_update, clarify_response, child_report, cross_project, background_complete, compact
+- Non-waking messages (via `enqueueQuiet`): system/tree_mutation only
+- `drainMerged()` deduplicates consecutive system messages into "Tree updated N times" summary
+- Non-waking messages do NOT need persistence — they are informational, agent gets fresh tree state on restart
+- Persistence handled by `persistent-queue.ts` for important waking messages only (user messages, clarify_response)
+
