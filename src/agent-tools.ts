@@ -1186,6 +1186,7 @@ export function createOrchestratorTools(
 						resumeSessionId: node.id,
 						model: childModel,
 						budgetUsd: node.budgetUsd,
+						sessionsDir: deps.sessionsDir,
 					};
 
 					const nodeRef = node;
