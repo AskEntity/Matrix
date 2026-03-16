@@ -517,15 +517,24 @@ export async function handleOrchestrate(
 	if (!project) {
 		return { ok: false, error: "Project not found", status: 404 };
 	}
-	if (
-		ctx.activeSessions.has(projectId) ||
-		ctx.restartingProjects.has(projectId)
-	) {
+	if (ctx.restartingProjects.has(projectId)) {
 		return {
 			ok: false,
-			error: "Agent already running for this project",
+			error: "Agent restarting, please wait",
 			status: 409,
 		};
+	}
+
+	// Agent already running — enqueue the prompt as a user message instead of error
+	const existingSession = ctx.activeSessions.get(projectId);
+	if (existingSession) {
+		try {
+			existingSession.queue.enqueue({ source: "user", content: prompt });
+		} catch {
+			return { ok: false, error: "Queue closed", status: 409 };
+		}
+		addPendingMessage(ctx, projectId, null, prompt);
+		return { ok: true };
 	}
 	await getTracker(ctx, projectId);
 	await launchAgent(
@@ -569,7 +578,18 @@ export async function handleInjectMessage(
 
 	const tracker = await getTracker(ctx, projectId);
 	const rootNodeId = tracker.rootNodeId;
+
 	if (!rootNodeId) {
+		// No session at all — launch a brand new agent with this message as the prompt
+		if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
+			await launchAgent(
+				ctx,
+				project,
+				{ prompt: message },
+				orchestratorSystemPrompt,
+			);
+			return { ok: true };
+		}
 		return {
 			ok: false,
 			error: "No active session for this project",

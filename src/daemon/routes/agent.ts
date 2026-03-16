@@ -69,11 +69,22 @@ export function registerAgentRoutes(
 
 		const project = await ctx.pm.ensureProject(body.path);
 
-		if (
-			ctx.activeSessions.has(project.id) ||
-			ctx.restartingProjects.has(project.id)
-		) {
-			return c.json({ error: "Agent already running for this project" }, 409);
+		if (ctx.restartingProjects.has(project.id)) {
+			return c.json({ error: "Agent restarting, please wait" }, 409);
+		}
+
+		// Agent already running — enqueue the prompt as a user message
+		const existingSession = ctx.activeSessions.get(project.id);
+		if (existingSession) {
+			try {
+				existingSession.queue.enqueue({
+					source: "user",
+					content: body.prompt,
+				});
+			} catch {
+				return c.json({ error: "Queue closed" }, 409);
+			}
+			return c.json({ status: "running", projectId: project.id });
 		}
 
 		await getTracker(ctx, project.id);

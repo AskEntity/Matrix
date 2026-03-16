@@ -251,4 +251,8 @@ All 14 MCP tools now have card rendering in `getToolCardTitle`, `isTitleOnlyCard
 - POST `/projects/:id/tasks/:nodeId/message` now notifies the parent chain when a user sends a message to any task.
 - `notifyParentChain()` walks up via `parentId`, sending `child_report` messages to each ancestor.
 - Uses `globalAgentQueues` if ancestor has active queue, otherwise `persistMessage` to disk.
-- Source is `child_report` (not `system`) so it wakes idle parent agents.
+
+## Unified Message Input
+
+- `handleOrchestrate` enqueues to running session instead of 409. `handleInjectMessage` launches new agent if no rootNodeId.
+- Frontend `handleSubmit` tries `sendMessage()` first, falls back to `start()` only if no session exists.

@@ -75,7 +75,7 @@ export interface ActionHandlerDeps {
 export function createActionHandlers(deps: ActionHandlerDeps) {
 	const {
 		projectId,
-		running,
+		// running — no longer needed: handleSubmit always tries sendMessage first
 		selectedTaskId,
 		rootNodeId,
 		selectedNode,
@@ -124,12 +124,27 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		if (!prompt.trim() || !projectId) return;
 		const images = attachedImages.length > 0 ? attachedImages : undefined;
 		try {
-			if (running) {
-				if (targetNodeId) await sendMessageToTask(targetNodeId, prompt.trim());
-				else await sendMessage(prompt.trim(), images);
+			if (targetNodeId) {
+				// Sending to a specific child task
+				await sendMessageToTask(targetNodeId, prompt.trim());
 			} else {
-				lastSubmittedImagesRef.current = images;
-				await start({ prompt: prompt.trim() });
+				// Unified path: always try sendMessage first (handles running, idle, and no-session).
+				// Falls back to start() only if sendMessage returns 404 (no project).
+				try {
+					lastSubmittedImagesRef.current = images;
+					await sendMessage(prompt.trim(), images);
+				} catch (msgErr) {
+					// sendMessage failed — likely no session exists yet. Start a new one.
+					if (
+						(msgErr as Error).message?.includes("not found") ||
+						(msgErr as Error).message?.includes("No active session")
+					) {
+						lastSubmittedImagesRef.current = images;
+						await start({ prompt: prompt.trim() });
+					} else {
+						throw msgErr;
+					}
+				}
 			}
 			setPrompt("");
 			setAttachedImages([]);
