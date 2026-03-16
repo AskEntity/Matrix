@@ -116,12 +116,14 @@ Daemon (Hono: HTTP + WS on :7433)
 
 ## Cross-Project Communication
 
-- New MCP tools: `list_projects` and `send_message_to_project` for orchestrator-to-orchestrator messaging across projects.
-- `cross_project` added to QueueMessage source types in message-queue.ts.
-- Cross-project tools only available at depth 0 (top-level orchestrator). Child agents get "not available at this depth" error.
-- `OrchestratorToolsDeps` accepts optional `projectManager`, `activeSessions`, and `currentProjectId` — only passed at depth 0 from agent-lifecycle.ts.
-- Target project must have an active agent running for message delivery.
+- `list_projects` and `send_message_to_project` tools (depth 0 only). `cross_project` QueueMessage source.
 
 ## Clarify Response Routing
 
-- `handleClarifyResponse` routes via `globalAgentQueues.get(taskId) ?? session.queue` — child clarifications go to child, orchestrator clarifications go to orchestrator.
+- `handleClarifyResponse` routes via `globalAgentQueues.get(taskId) ?? session.queue`.
+
+## Persistent Sub-Orchestrators
+
+- `delete_task` splits: passed tasks get worktree/branch cleaned (`cleaned: true`) but node stays in tree. Non-passed tasks fully removed.
+- `TaskTracker.cleanNode(id)` clears branch/worktreePath/sessionId, sets `cleaned: true`.
+- REST `DELETE /tasks/:id` still fully removes (user-initiated).
