@@ -146,18 +146,18 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 - get_tree: View the current task tree (always check this first)
 - create_task: Create tasks (omit parentId to create under your own task, or provide parentId for a specific parent)
 - update_task: Update a task's status, title, description, or draft flag
-- execute_tasks: Fire-and-forget. Spawns children in background, returns immediately with task IDs.
-  Results arrive via yield() as child_complete messages.
-  Modes: "new" (fresh start), "resume" (continue failed task's session), "reset" (wipe branch, restart)
-- yield: Suspend execution and wait for messages (child completions, user messages, clarify responses).
-  Call this after spawning tasks. Returns all accumulated messages plus a "## Pending" summary section
-  showing running children and pending clarifications. Zero token burn while suspended.
-- send_message_to_child: Send a requirement update or instruction to a running child agent.
+- send_message_to_child: The universal way to start, wake, or message a child task.
+  Sending a message to a task IS starting it. One call per task for parallel launches.
+  Auto-creates worktree and launches agent if not running. If already running, delivers message.
+  The message parameter is the prompt for new tasks, or instructions for running ones.
   When changing a child's scope or requirements, be explicit about what's overridden:
   - State "This overrides your original scope" when expanding or changing what the child should do
   - Say "You are now authorized to also modify X, Y, Z files" when granting access beyond original scope
   - Don't just relay information — make it clear which original constraints are lifted or changed
   - The child treats parent_update messages as authoritative, so be precise about what's new vs unchanged
+- yield: Suspend execution and wait for messages (child completions, user messages, clarify responses).
+  Call this after starting tasks. Returns all accumulated messages plus a "## Pending" summary section
+  showing running children and pending clarifications. Zero token burn while suspended.
 - reorder_tasks: Reorder children of a task node. Pass the parent nodeId and an array of child IDs in the desired order.
 - close_task: Clean up a child's worktree + branch after merging. Node and session preserved. No status change.
   Use after merging a passed child, or to defer a task and reclaim disk space.
@@ -194,7 +194,9 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 2. Create tasks using create_task (omit parentId to create under your own task)
    - Write detailed task descriptions (see "Task Decomposition" in orchestrator system prompt)
    - Sibling tasks run in PARALLEL — plan their scope to minimize merge conflicts
-3. Call execute_tasks to spawn children (returns immediately)
+3. Call send_message_to_child for each task to start it (one call per task, returns immediately)
+   - The message becomes the agent's prompt. Include any extra instructions beyond the task description.
+   - Worktree creation and agent launch happen automatically.
 4. **Do productive work while children run** — you do NOT need to yield() immediately.
    While children are executing, you can:
    - Research the codebase for future tasks
@@ -213,8 +215,8 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
    a. Merge via bash: \`git merge --no-ff <child-branch> -m "Merge task: <title>"\`
    b. Call close_task(taskId) to clean up the child's worktree and branch (node stays in tree for history)
 8. If a child fails: read the failure summary carefully. Decide:
-   - "resume" with specific instructions addressing the failure (child keeps progress)
-   - "reset" to start fresh with a different approach
+   - Send another message to resume with specific instructions addressing the failure
+   - Call reset_task first, then send_message_to_child to start fresh with a different approach
    - Delete and create a new task with different scope if the approach was wrong
 9. After ALL children are merged: run full test suite to verify no regressions
 10. If integration issues surface, create new targeted tasks to fix them
@@ -237,18 +239,18 @@ If you encounter problems you can't overcome, call done("failed", ...) — faili
 
 ### Parent Handling of Child Results
 - **passed** → \`git merge --no-ff <branch>\` → \`close_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
-- **failed** → Read the child's failure summary carefully. The quality of your resume/reset decision
+- **failed** → Read the child's failure summary carefully. The quality of your retry decision
   directly affects whether the next attempt succeeds:
-  - \`resume\`: Give SPECIFIC instructions addressing the failure. Don't just say "try again" —
-    explain what went wrong and how to fix it. The child keeps its progress and your message.
-  - \`reset\`: Use when the approach was fundamentally wrong. Rewrite the task description with
-    a different strategy. The child starts fresh with a clean branch.
+  - **Resume**: Send another \`send_message_to_child\` with SPECIFIC instructions addressing the failure.
+    Don't just say "try again" — explain what went wrong and how to fix it. The child keeps its progress.
+  - **Reset**: Call \`reset_task\` first, then \`send_message_to_child\` to start fresh.
+    Use when the approach was fundamentally wrong.
   - If the failure reveals a scope issue: delete the task and create new tasks with better boundaries.
 
 ### Merge Protocol
 - Use \`git merge --no-ff <branch> -m "Merge task: <title>"\` from YOUR working directory
 - If merge conflicts occur: resolve them with edit_file. This is expected with parallel work.
-- If conflicts are too complex: merge the larger/more complex feature first, then reset and re-spawn the simpler one.
+- If conflicts are too complex: merge the larger/more complex feature first, then reset_task and re-send to the simpler one.
 - After successful merge: ALWAYS call close_task to clean up worktree + branch (node stays in tree)
 - After merging a child, if other children are still running, send them a message via
   send_message_to_child to sync with main: "Main updated — run \`git merge main\`
@@ -282,7 +284,7 @@ After resolving merge conflicts, do a full review of \`.opengraft/memory.md\`:
 Commit the curated memory as a standalone commit after all task merges are done.
 
 ## Orchestration Rules
-- You can only execute your own direct children — no skipping levels
+- You can only start/message your own descendants — no skipping to unrelated tasks
 - Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
 - Keep the tree shallow: 2-3 levels max
 - Each leaf task should be independently executable by a single agent session
@@ -295,11 +297,11 @@ Commit the curated memory as a standalone commit after all task merges are done.
 - When specifying child tasks, tell each child whether its task is independently compilable/testable,
   or whether it depends on sibling outputs (and if so, what to expect).
 - If a merge conflict is too complex to resolve: merge the more complex/larger feature first,
-  then re-spawn the simpler feature with \`mode: "reset"\` so it rebuilds on top of the merged code.
+  then \`reset_task\` + \`send_message_to_child\` the simpler feature so it rebuilds on top of the merged code.
 
 ## Reusable Worker Pattern
 To assign multiple sequential tasks to the same agent without spawning new ones:
-1. Spawn child via execute_tasks with initial task
+1. Start child via send_message_to_child with initial instructions
 2. Child does work → calls report_to_parent("ready for more") → calls yield() to wait
 3. Parent receives child_report via yield() → sends next task via send_message_to_child
 4. Child receives message during yield, does next task, reports again, and yields again
@@ -328,9 +330,9 @@ When yield() returns with a user message, you MUST take concrete action before y
 ## Stimulus Priority (what to do next — check this after EVERY action, including after compaction)
 When deciding your next action, follow this priority order:
 0. **Just resumed from compaction?** → Read checkpoint, call get_tree, then follow priorities below
-1. **Failed children** → Analyze output, execute_tasks with "resume" (give instructions) or "reset"
+1. **Failed children** → Analyze output, send_message_to_child to resume (give instructions) or reset_task first
 2. **Passed children not yet merged** → Merge branch, close_task (cleans resources, keeps node), verify tests
-3. **Pending children ready to start** → execute_tasks to spawn them
+3. **Pending children ready to start** → send_message_to_child to spawn them
 4. **All children done** → Run full test suite, verify integration, update memory
 5. **Everything complete** → Call done("passed", summary)
 
@@ -864,329 +866,6 @@ export function createOrchestratorTools(
 		),
 
 		tool(
-			"execute_tasks",
-			"Execute 1 or more of your direct children tasks in parallel. " +
-				"Each task runs on an isolated git worktree with its own agent. " +
-				"Fire-and-forget: returns immediately after spawning. " +
-				"Call yield() to wait for child_complete messages. " +
-				"For each task, you can provide instructions and a mode:\n" +
-				"- new (default): fresh execution, creates worktree and branch\n" +
-				"- resume: continue from previous session (for failed tasks)\n" +
-				"- reset: wipe the branch and start fresh (for failed tasks)",
-			{
-				tasks: z
-					.array(
-						z.object({
-							taskId: z.string().describe("ID of the child task"),
-							message: z
-								.string()
-								.optional()
-								.describe("Instructions for the agent"),
-							mode: z
-								.enum(["new", "resume", "reset"])
-								.optional()
-								.default("new")
-								.describe(
-									"new=fresh start, resume=continue session, reset=wipe branch and restart",
-								),
-						}),
-					)
-					.describe("Tasks to execute in parallel"),
-			},
-			async (args) => {
-				// Guard: require clean working tree before spawning
-				const gitCheck = await isGitClean(projectPath);
-				if (!gitCheck.clean) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Error: ${gitCheck.message}`,
-							},
-						],
-						isError: true,
-					};
-				}
-
-				if (args.tasks.length === 0) {
-					return {
-						content: [
-							{ type: "text" as const, text: "Error: No tasks specified" },
-						],
-						isError: true,
-					};
-				}
-
-				// Validate: all tasks must be direct children of current agent
-				const myChildren = currentTaskId
-					? tracker.getChildren(currentTaskId)
-					: tracker.getTopLevel();
-				const myChildIds = new Set(myChildren.map((c) => c.id));
-
-				for (const t of args.tasks) {
-					if (!myChildIds.has(t.taskId)) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `Error: Task ${t.taskId} is not your direct child`,
-								},
-							],
-							isError: true,
-						};
-					}
-				}
-
-				// Validate: draft tasks cannot be executed
-				for (const t of args.tasks) {
-					const node = tracker.get(t.taskId);
-					if (node?.draft) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `Error: Task "${node.title}" (${t.taskId}) is a draft and cannot be executed. Remove draft status first.`,
-								},
-							],
-							isError: true,
-						};
-					}
-				}
-
-				// Determine base branch for worktree creation
-				const currentNode = currentTaskId
-					? tracker.get(currentTaskId)
-					: undefined;
-				const baseBranch = currentNode?.branch ?? undefined;
-
-				// Spawn all tasks in background (fire-and-forget)
-				const spawnedTasks: {
-					taskId: string;
-					title: string;
-					branch: string | null;
-				}[] = [];
-				const errors: { taskId: string; title: string; error: string }[] = [];
-
-				for (const taskSpec of args.tasks) {
-					const node = tracker.get(taskSpec.taskId);
-					if (!node) {
-						errors.push({
-							taskId: taskSpec.taskId,
-							title: "?",
-							error: "Task not found",
-						});
-						continue;
-					}
-
-					const mode = taskSpec.mode ?? "new";
-
-					// Validate mode vs status
-					if (mode === "new" && node.status !== "pending") {
-						errors.push({
-							taskId: node.id,
-							title: node.title,
-							error: `Cannot use mode "new" on task with status "${node.status}" — use "resume" or "reset"`,
-						});
-						continue;
-					}
-					if (
-						(mode === "resume" || mode === "reset") &&
-						node.status !== "failed" &&
-						node.status !== "stuck" &&
-						node.status !== "passed"
-					) {
-						errors.push({
-							taskId: node.id,
-							title: node.title,
-							error: `Cannot use mode "${mode}" on task with status "${node.status}"`,
-						});
-						continue;
-					}
-
-					try {
-						// Handle reset: wipe existing worktree/branch and start fresh
-						if (mode === "reset" && node.worktreePath) {
-							const slug = slugify(node.title);
-							await worktrees.remove(node.id, slug);
-							node.worktreePath = null;
-							node.branch = null;
-						}
-
-						// Create worktree if needed (new, reset, or closed passed task)
-						if (!node.worktreePath) {
-							const slug = slugify(node.title);
-							const wt = await worktrees.create(node.id, slug, baseBranch);
-							tracker.assignWorktree(node.id, wt.branch, wt.path);
-						}
-
-						tracker.updateStatus(node.id, "in_progress");
-						await tracker.save();
-						emit({
-							type: "task_started",
-							taskId: node.id,
-							title: node.title,
-							message: taskSpec.message,
-						});
-
-						spawnedTasks.push({
-							taskId: node.id,
-							title: node.title,
-							branch: node.branch,
-						});
-
-						// Build prompt based on mode
-						const memory = readProjectMemory(projectPath, false);
-						let prompt: string;
-						const branchReminder = node.branch
-							? `\n\nYou are on branch \`${node.branch}\`. Do NOT switch branches.`
-							: "";
-
-						if (mode === "resume") {
-							prompt = taskSpec.message
-								? `${taskSpec.message}${branchReminder}`
-								: `Continue working. Pick up where you left off.${branchReminder}`;
-						} else {
-							const taskPrompt = buildTaskPrompt(node, tracker, memory);
-							prompt = taskSpec.message
-								? `${taskSpec.message}\n\n${taskPrompt}`
-								: taskPrompt;
-						}
-
-						// Spawn child in background — don't await
-						const childRequest: AgentRequest = {
-							prompt,
-							cwd: node.worktreePath as string,
-							systemPrompt: TASK_SYSTEM_PROMPT,
-							resumeSessionId: node.id,
-							model: childModel,
-							budgetUsd: node.budgetUsd,
-						};
-
-						// Fire-and-forget: spawn child agent in background
-						const nodeRef = node;
-						(async () => {
-							try {
-								const result = await executeChildStreaming(
-									childRequest,
-									nodeRef.id,
-									nodeRef.worktreePath as string,
-								);
-
-								costs.add(result.costUsd, result.turns);
-								if (result.costUsd) {
-									tracker.updateCost(nodeRef.id, result.costUsd);
-								}
-
-								// Check if task exceeded its budget
-								const updatedNode = tracker.get(nodeRef.id);
-								if (
-									updatedNode?.budgetUsd &&
-									updatedNode.costUsd &&
-									updatedNode.costUsd > updatedNode.budgetUsd
-								) {
-									emit({
-										type: "budget_exceeded",
-										taskId: nodeRef.id,
-										title: nodeRef.title,
-										costUsd: updatedNode.costUsd,
-										budgetUsd: updatedNode.budgetUsd,
-									});
-								}
-
-								let newStatus: "passed" | "failed" | "stuck";
-								if (result.success) {
-									newStatus = "passed";
-									nodeRef.failCount = 0;
-								} else {
-									nodeRef.failCount = (nodeRef.failCount ?? 0) + 1;
-									newStatus = nodeRef.failCount >= 3 ? "stuck" : "failed";
-								}
-								tracker.updateStatus(nodeRef.id, newStatus);
-								await tracker.save();
-								emit({
-									type: "task_completed",
-									taskId: nodeRef.id,
-									title: nodeRef.title,
-									success: result.success,
-									output: result.output.slice(0, 500),
-								});
-
-								// Enqueue child_complete message to parent's queue
-								if (deps.queue) {
-									try {
-										deps.queue.enqueue({
-											source: "child_complete",
-											taskId: nodeRef.id,
-											title: nodeRef.title,
-											success: result.success,
-											output: result.output.slice(0, 2000),
-										});
-									} catch {
-										// Queue may be closed if parent already finished
-									}
-								}
-							} catch (e) {
-								tracker.updateStatus(nodeRef.id, "stuck");
-								await tracker.save();
-								const message =
-									e instanceof Error ? e.message : "Unknown error";
-								emit({
-									type: "task_completed",
-									taskId: nodeRef.id,
-									title: nodeRef.title,
-									success: false,
-									error: message,
-									output: `Error: ${message}`,
-								});
-
-								// Enqueue child_complete (failure) to parent's queue
-								if (deps.queue) {
-									try {
-										deps.queue.enqueue({
-											source: "child_complete",
-											taskId: nodeRef.id,
-											title: nodeRef.title,
-											success: false,
-											output: `Error: ${message}`,
-										});
-									} catch {
-										// Queue may be closed
-									}
-								}
-							}
-						})();
-					} catch (e) {
-						const message = e instanceof Error ? e.message : "Unknown error";
-						errors.push({
-							taskId: node.id,
-							title: node.title,
-							error: message,
-						});
-					}
-				}
-
-				const responseData = {
-					status: "spawned",
-					spawned: spawnedTasks.length,
-					tasks: spawnedTasks,
-					...(errors.length > 0 ? { errors } : {}),
-				};
-
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: JSON.stringify(responseData, null, 2),
-						},
-					],
-					...(errors.length > 0 && spawnedTasks.length === 0
-						? { isError: true }
-						: {}),
-				};
-			},
-		),
-
-		tool(
 			"yield",
 			"Suspend execution and wait for messages (child completions, user messages, etc.). " +
 				"Call this when you have spawned tasks and are waiting for results. " +
@@ -1358,11 +1037,18 @@ export function createOrchestratorTools(
 
 		tool(
 			"send_message_to_child",
-			"Send a message to a running child agent. " +
-				"The message appears in the child's queue as a parent_update.",
+			"Send a message to a child task — starts it if not running. " +
+				"If the task has no worktree, one is auto-created. " +
+				"If no agent is running, one is launched with the message as the prompt. " +
+				"If the agent is already running, the message is delivered to its queue. " +
+				"Call once per task for parallel launches.",
 			{
-				taskId: z.string().describe("ID of the running child task to message"),
-				message: z.string().describe("Message content to send"),
+				taskId: z.string().describe("ID of the child task to message or start"),
+				message: z
+					.string()
+					.describe(
+						"Message content — becomes the prompt for new tasks, or instructions for running ones",
+					),
 				requestReply: z
 					.boolean()
 					.optional()
@@ -1371,29 +1057,242 @@ export function createOrchestratorTools(
 					),
 			},
 			async (args) => {
-				const childQueue = childQueues.get(args.taskId);
-				if (!childQueue) {
+				// Validate: task exists and is a descendant
+				const node = tracker.get(args.taskId);
+				if (!node) {
 					return {
 						content: [
 							{
 								type: "text" as const,
-								text: `Error: No running child with taskId "${args.taskId}". The child may have already completed or not been spawned yet.`,
+								text: `Error: Task "${args.taskId}" not found.`,
 							},
 						],
 						isError: true,
 					};
 				}
-				try {
-					childQueue.enqueue({
-						source: "parent_update",
-						content: args.message,
-						...(args.requestReply ? { requestReply: true } : {}),
-					});
+				if (
+					currentTaskId !== null &&
+					args.taskId !== currentTaskId &&
+					!isDescendantOf(tracker, args.taskId, currentTaskId)
+				) {
 					return {
 						content: [
 							{
 								type: "text" as const,
-								text: `Message sent to child ${args.taskId}`,
+								text: `Error: Task "${args.taskId}" is not your descendant.`,
+							},
+						],
+						isError: true,
+					};
+				}
+				if (node.draft) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: Task "${node.title}" (${args.taskId}) is a draft and cannot be started. Remove draft status first.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				// Case 1: Agent already running — just enqueue the message
+				const existingQueue = childQueues.get(args.taskId);
+				if (existingQueue) {
+					try {
+						existingQueue.enqueue({
+							source: "parent_update",
+							content: args.message,
+							...(args.requestReply ? { requestReply: true } : {}),
+						});
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Message sent to running child "${node.title}" (${args.taskId})`,
+								},
+							],
+						};
+					} catch (e) {
+						const message = e instanceof Error ? e.message : "Unknown error";
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Error sending message: ${message}`,
+								},
+							],
+							isError: true,
+						};
+					}
+				}
+
+				// Case 2: Agent not running — need to launch
+				try {
+					// Guard: require clean working tree before creating worktrees
+					const gitCheck = await isGitClean(projectPath);
+					if (!gitCheck.clean) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Error: ${gitCheck.message}`,
+								},
+							],
+							isError: true,
+						};
+					}
+
+					// Create worktree if needed
+					if (!node.worktreePath) {
+						const currentNode = currentTaskId
+							? tracker.get(currentTaskId)
+							: undefined;
+						const baseBranch = currentNode?.branch ?? undefined;
+						const slug = slugify(node.title);
+						const wt = await worktrees.create(node.id, slug, baseBranch);
+						tracker.assignWorktree(node.id, wt.branch, wt.path);
+					}
+
+					// Determine if this is a resume (has session history) or new start
+					const hasExistingSession =
+						node.status === "failed" ||
+						node.status === "stuck" ||
+						node.status === "passed";
+
+					// Build prompt
+					const memory = readProjectMemory(projectPath, false);
+					const branchReminder = node.branch
+						? `\n\nYou are on branch \`${node.branch}\`. Do NOT switch branches.`
+						: "";
+					let prompt: string;
+
+					if (hasExistingSession) {
+						// Resume — message is the instruction, session history provides context
+						prompt = `${args.message}${branchReminder}`;
+					} else {
+						// New start — build full task prompt
+						const taskPrompt = buildTaskPrompt(node, tracker, memory);
+						prompt = `${args.message}\n\n${taskPrompt}`;
+					}
+
+					tracker.updateStatus(node.id, "in_progress");
+					await tracker.save();
+					emit({
+						type: "task_started",
+						taskId: node.id,
+						title: node.title,
+						message: args.message,
+					});
+
+					// Spawn child agent in background (fire-and-forget)
+					const childRequest: AgentRequest = {
+						prompt,
+						cwd: node.worktreePath as string,
+						systemPrompt: TASK_SYSTEM_PROMPT,
+						resumeSessionId: node.id,
+						model: childModel,
+						budgetUsd: node.budgetUsd,
+					};
+
+					const nodeRef = node;
+					(async () => {
+						try {
+							const result = await executeChildStreaming(
+								childRequest,
+								nodeRef.id,
+								nodeRef.worktreePath as string,
+							);
+
+							costs.add(result.costUsd, result.turns);
+							if (result.costUsd) {
+								tracker.updateCost(nodeRef.id, result.costUsd);
+							}
+
+							// Check if task exceeded its budget
+							const updatedNode = tracker.get(nodeRef.id);
+							if (
+								updatedNode?.budgetUsd &&
+								updatedNode.costUsd &&
+								updatedNode.costUsd > updatedNode.budgetUsd
+							) {
+								emit({
+									type: "budget_exceeded",
+									taskId: nodeRef.id,
+									title: nodeRef.title,
+									costUsd: updatedNode.costUsd,
+									budgetUsd: updatedNode.budgetUsd,
+								});
+							}
+
+							let newStatus: "passed" | "failed" | "stuck";
+							if (result.success) {
+								newStatus = "passed";
+								nodeRef.failCount = 0;
+							} else {
+								nodeRef.failCount = (nodeRef.failCount ?? 0) + 1;
+								newStatus = nodeRef.failCount >= 3 ? "stuck" : "failed";
+							}
+							tracker.updateStatus(nodeRef.id, newStatus);
+							await tracker.save();
+							emit({
+								type: "task_completed",
+								taskId: nodeRef.id,
+								title: nodeRef.title,
+								success: result.success,
+								output: result.output.slice(0, 500),
+							});
+
+							// Enqueue child_complete message to parent's queue
+							if (deps.queue) {
+								try {
+									deps.queue.enqueue({
+										source: "child_complete",
+										taskId: nodeRef.id,
+										title: nodeRef.title,
+										success: result.success,
+										output: result.output.slice(0, 2000),
+									});
+								} catch {
+									// Queue may be closed if parent already finished
+								}
+							}
+						} catch (e) {
+							tracker.updateStatus(nodeRef.id, "stuck");
+							await tracker.save();
+							const message = e instanceof Error ? e.message : "Unknown error";
+							emit({
+								type: "task_completed",
+								taskId: nodeRef.id,
+								title: nodeRef.title,
+								success: false,
+								error: message,
+								output: `Error: ${message}`,
+							});
+
+							// Enqueue child_complete (failure) to parent's queue
+							if (deps.queue) {
+								try {
+									deps.queue.enqueue({
+										source: "child_complete",
+										taskId: nodeRef.id,
+										title: nodeRef.title,
+										success: false,
+										output: `Error: ${message}`,
+									});
+								} catch {
+									// Queue may be closed
+								}
+							}
+						}
+					})();
+
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Started child "${node.title}" (${args.taskId}) on branch ${node.branch}`,
 							},
 						],
 					};
@@ -1403,7 +1302,7 @@ export function createOrchestratorTools(
 						content: [
 							{
 								type: "text" as const,
-								text: `Error sending message: ${message}`,
+								text: `Error starting child: ${message}`,
 							},
 						],
 						isError: true,
