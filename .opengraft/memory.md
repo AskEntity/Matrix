@@ -113,3 +113,8 @@ Daemon (Hono: HTTP + WS on :7433)
 - `editedBy?: "user" | "agent"` on TaskNode. REST mutations inject `[TREE UPDATED]` message.
 - `reparent(nodeId, newParentId)` with circular dep validation. `reorderChildren()` for ordering.
 - `reorder_tasks` MCP tool with scope validation (currentTaskId + isDescendantOf).
+
+## Clarify Response Routing
+
+- **Bug fixed**: `handleClarifyResponse` in `agent-lifecycle.ts` was always routing `clarify_response` to `session.queue` (the orchestrator). Now it checks `globalAgentQueues.get(taskId)` first — if the taskId has a queue there, it routes to the child agent.
+- **Key insight**: `globalAgentQueues` only holds child agent queues (not the orchestrator). So `globalAgentQueues.get(taskId) ?? session.queue` cleanly routes to child or orchestrator.
