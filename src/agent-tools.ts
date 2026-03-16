@@ -1328,6 +1328,15 @@ export function createOrchestratorTools(
 				}
 
 				try {
+					// Close running agent if active
+					const activeQueueClose =
+						childQueues.get(args.taskId) ?? globalAgentQueues.get(args.taskId);
+					if (activeQueueClose) {
+						activeQueueClose.close();
+						childQueues.delete(args.taskId);
+						globalAgentQueues.delete(args.taskId);
+					}
+
 					// Clean up worktree + branch if they exist
 					if (node.worktreePath && node.branch) {
 						const slug = slugify(node.title);
@@ -1393,6 +1402,15 @@ export function createOrchestratorTools(
 				}
 
 				try {
+					// Close running agent if active
+					const activeQueueDelete =
+						childQueues.get(args.taskId) ?? globalAgentQueues.get(args.taskId);
+					if (activeQueueDelete) {
+						activeQueueDelete.close();
+						childQueues.delete(args.taskId);
+						globalAgentQueues.delete(args.taskId);
+					}
+
 					// Clean up worktree + branch if they exist
 					if (node.worktreePath && node.branch) {
 						const slug = slugify(node.title);
@@ -1464,6 +1482,15 @@ export function createOrchestratorTools(
 				}
 
 				try {
+					// Close running agent if active
+					const activeQueueReset =
+						childQueues.get(args.taskId) ?? globalAgentQueues.get(args.taskId);
+					if (activeQueueReset) {
+						activeQueueReset.close();
+						childQueues.delete(args.taskId);
+						globalAgentQueues.delete(args.taskId);
+					}
+
 					// Clean up worktree + branch if they exist
 					if (node.worktreePath && node.branch) {
 						const slug = slugify(node.title);

@@ -201,8 +201,9 @@ Daemon (Hono: HTTP + WS on :7433)
 - `autoResume` flag fully removed from TaskTracker (property, getter, setter, serialization).
 - `autoResumeProjects()` now checks root node status === "in_progress" instead of `tracker.autoResume`.
 - `clearAutoResume` option removed from `stopAgent()`.
-- Stop semantics: queue closed → agent loop exits → completion handler sets status to "passed" → no auto-resume on restart.
+- Stop semantics: Stop = pause (root stays in_progress → will auto-resume on restart). Only done() changes status to passed/failed.
 - Daemon crash: status stays "in_progress" → auto-resume on restart.
-- Old tree.json files with `autoResume` field are backward-compatible (field is simply ignored on load).
-- Stop semantics updated: Stop = pause (root stays in_progress → will auto-resume on restart). Only done() changes status to passed/failed.
-- Detection: completion handler checks `ctx.activeSessions.get(project.id) !== session` to know if agent was stopped externally vs exited on its own.
+
+## Queue Cleanup in Task Resource Operations
+
+- `close_task`, `delete_task`, and `reset_task` now close the running agent queue (from both `childQueues` and `globalAgentQueues`) before removing worktree/session resources. This prevents orphaned agents from running without a worktree.
