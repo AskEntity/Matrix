@@ -328,6 +328,17 @@ export class TaskTracker {
 		this.nodes.delete(nodeId);
 	}
 
+	/** Clean a node's worktree/branch/session info but keep it in the tree. Sets cleaned=true. */
+	cleanNode(nodeId: string): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		node.branch = null;
+		node.worktreePath = null;
+		node.sessionId = null;
+		node.cleaned = true;
+		node.updatedAt = new Date().toISOString();
+	}
+
 	/** Accumulate cost on a task node. */
 	updateCost(nodeId: string, costUsd: number): void {
 		const node = this.get(nodeId);

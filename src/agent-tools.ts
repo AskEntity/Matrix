@@ -136,7 +136,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   showing running children and pending clarifications. Zero token burn while suspended.
 - send_message_to_child: Send a requirement update or instruction to a running child agent.
 - reorder_tasks: Reorder children of a task node. Pass the parent nodeId and an array of child IDs in the desired order.
-- delete_task: Clean up a child's worktree + branch + task node (call AFTER you merge)
+- delete_task: Clean up a child's worktree + branch after merging. Passed tasks stay in the tree (preserves history). Non-passed tasks are fully removed.
 - clarify: Send a clarification question to the user or parent orchestrator. Returns immediately —
   you can continue doing other work that doesn't need the answer, then call yield() when ready
   to wait for the clarify_response.
@@ -180,7 +180,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
    - ## Pending section: shows which children are still running and how many clarifications are outstanding
 7. When a child passes, merge its branch:
    a. Merge via bash: \`git merge --no-ff <child-branch> -m "Merge task: <title>"\`
-   b. Call delete_task(taskId) to clean up the child's worktree, branch, and task node
+   b. Call delete_task(taskId) to clean up the child's worktree and branch (passed tasks remain in tree for history)
 8. If a child fails: read the failure summary carefully. Decide:
    - "resume" with specific instructions addressing the failure (child keeps progress)
    - "reset" to start fresh with a different approach
@@ -205,7 +205,7 @@ If you're unsure about a requirement, use \`clarify\` to ask (returns immediatel
 If you encounter problems you can't overcome, call done("failed", ...) — failing early is better than spinning.
 
 ### Parent Handling of Child Results
-- **passed** → \`git merge --no-ff <branch>\` → \`delete_task\` → verify tests on your branch
+- **passed** → \`git merge --no-ff <branch>\` → \`delete_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
 - **failed** → Read the child's failure summary carefully. The quality of your resume/reset decision
   directly affects whether the next attempt succeeds:
   - \`resume\`: Give SPECIFIC instructions addressing the failure. Don't just say "try again" —
@@ -218,7 +218,7 @@ If you encounter problems you can't overcome, call done("failed", ...) — faili
 - Use \`git merge --no-ff <branch> -m "Merge task: <title>"\` from YOUR working directory
 - If merge conflicts occur: resolve them with edit_file. This is expected with parallel work.
 - If conflicts are too complex: merge the larger/more complex feature first, then reset and re-spawn the simpler one.
-- After successful merge: ALWAYS call delete_task to clean up worktree + branch + node
+- After successful merge: ALWAYS call delete_task to clean up worktree + branch (passed tasks stay in tree)
 - After merging a child, if other children are still running, send them a message via
   send_message_to_child to sync with main: "Main updated — run \`git merge main\`
   to stay in sync and reduce merge conflicts."
@@ -255,7 +255,7 @@ Commit the curated memory as a standalone commit after all task merges are done.
 - Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
 - Keep the tree shallow: 2-3 levels max
 - Each leaf task should be independently executable by a single agent session
-- ALWAYS merge and delete_task each passed child before moving on
+- ALWAYS merge and delete_task each passed child before moving on (passed tasks remain visible in tree)
 
 ## Parallelization Strategy
 - Sibling tasks run in PARALLEL. Split by sub-feature so each has a clear scope.
@@ -298,7 +298,7 @@ When yield() returns with a user message, you MUST take concrete action before y
 When deciding your next action, follow this priority order:
 0. **Just resumed from compaction?** → Read checkpoint, call get_tree, then follow priorities below
 1. **Failed children** → Analyze output, execute_tasks with "resume" (give instructions) or "reset"
-2. **Passed children not yet merged** → Merge branch, delete_task, verify tests
+2. **Passed children not yet merged** → Merge branch, delete_task (cleans resources, keeps node), verify tests
 3. **Pending children ready to start** → execute_tasks to spawn them
 4. **All children done** → Run full test suite, verify integration, update memory
 5. **Everything complete** → Call done("passed", summary)
@@ -1368,8 +1368,8 @@ export function createOrchestratorTools(
 			"delete_task",
 			"Delete a child task and clean up its resources (worktree + branch). " +
 				"Call this AFTER you have already merged the child's branch yourself. " +
-				"This removes the worktree directory, deletes the git branch, " +
-				"and removes the task node from the tree.",
+				"For passed tasks: cleans up worktree/branch but keeps the task node in the tree (preserves activity history). " +
+				"For non-passed tasks: removes the worktree, branch, and task node entirely.",
 			{
 				taskId: z.string().describe("ID of the task to delete"),
 			},
@@ -1394,8 +1394,14 @@ export function createOrchestratorTools(
 						await worktrees.remove(node.id, slug);
 					}
 
-					// Remove task from tree
-					tracker.remove(node.id);
+					if (node.status === "passed") {
+						// Passed tasks: keep node in tree for history, just clean resources
+						tracker.cleanNode(node.id);
+					} else {
+						// Non-passed tasks: remove entirely
+						tracker.remove(node.id);
+					}
+
 					await tracker.save();
 					broadcastTreeUpdate?.();
 
@@ -1405,7 +1411,8 @@ export function createOrchestratorTools(
 								type: "text" as const,
 								text: JSON.stringify(
 									{
-										deleted: true,
+										deleted: node.status !== "passed",
+										cleaned: node.status === "passed",
 										taskId: node.id,
 										title: node.title,
 									},

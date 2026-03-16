@@ -113,3 +113,11 @@ Daemon (Hono: HTTP + WS on :7433)
 - `editedBy?: "user" | "agent"` on TaskNode. REST mutations inject `[TREE UPDATED]` message.
 - `reparent(nodeId, newParentId)` with circular dep validation. `reorderChildren()` for ordering.
 - `reorder_tasks` MCP tool with scope validation (currentTaskId + isDescendantOf).
+
+## Persistent Sub-Orchestrators
+
+- `delete_task` MCP tool now has split behavior: passed tasks get worktree/branch cleaned but node stays in tree (with `cleaned: true`). Non-passed tasks are fully removed as before.
+- `TaskTracker.cleanNode(id)` clears `branch`, `worktreePath`, `sessionId` and sets `cleaned: true`.
+- REST API `DELETE /tasks/:id` still fully removes tasks (user-initiated delete from web UI).
+- Web UI already handles null `branch`/`worktreePath` with conditional rendering, so cleaned tasks render correctly.
+- `ORCHESTRATION_KNOWLEDGE` prompt updated in 6 places to reflect new delete_task behavior.
