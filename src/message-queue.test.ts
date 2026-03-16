@@ -272,4 +272,65 @@ describe("MessageQueue", () => {
 		q.close();
 		await expect(q.waitForMessage(100)).rejects.toThrow("Queue closed");
 	});
+
+	test("enqueueQuiet does not resolve a pending wait()", async () => {
+		const q = new MessageQueue();
+
+		const promise = q.wait();
+		let resolved = false;
+		promise.then(() => {
+			resolved = true;
+		});
+
+		// Quiet enqueue should NOT wake the waiter
+		q.enqueueQuiet({ source: "system", content: "tree changed" });
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(resolved).toBe(false);
+
+		// But the message IS in the queue
+		expect(q.pending).toBe(1);
+
+		// A normal enqueue DOES wake the waiter
+		q.enqueue({ source: "user", content: "hello" });
+		const msg = await promise;
+		expect(msg).toEqual({ source: "user", content: "hello" });
+	});
+
+	test("enqueueQuiet message is included in drain()", () => {
+		const q = new MessageQueue();
+		q.enqueueQuiet({ source: "system", content: "quiet msg" });
+		q.enqueue({ source: "user", content: "normal msg" });
+
+		const msgs = q.drain();
+		expect(msgs).toHaveLength(2);
+		expect(msgs[0]).toEqual({ source: "system", content: "quiet msg" });
+		expect(msgs[1]).toEqual({ source: "user", content: "normal msg" });
+	});
+
+	test("enqueueQuiet message is picked up by wait() when already pending", async () => {
+		const q = new MessageQueue();
+		q.enqueueQuiet({ source: "system", content: "quiet" });
+
+		// wait() checks pending messages first — should resolve immediately
+		const msg = await q.wait();
+		expect(msg).toEqual({ source: "system", content: "quiet" });
+	});
+
+	test("enqueueQuiet throws on closed queue", () => {
+		const q = new MessageQueue();
+		q.close();
+		expect(() => q.enqueueQuiet({ source: "system", content: "nope" })).toThrow(
+			"Queue closed",
+		);
+	});
+
+	test("enqueueQuiet increments pending count", () => {
+		const q = new MessageQueue();
+		expect(q.pending).toBe(0);
+		q.enqueueQuiet({ source: "system", content: "a" });
+		expect(q.pending).toBe(1);
+		q.enqueueQuiet({ source: "system", content: "b" });
+		expect(q.pending).toBe(2);
+	});
 });

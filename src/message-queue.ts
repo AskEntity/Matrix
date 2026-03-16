@@ -77,6 +77,14 @@ export class MessageQueue {
 		}
 	}
 
+	/** Add a message to the queue without waking a pending wait(). Picked up on next drain() or wait() with pending messages. */
+	enqueueQuiet(msg: QueueMessage): void {
+		if (this.closed) {
+			throw new Error("Queue closed");
+		}
+		this.messages.push(msg);
+	}
+
 	/** Take all pending messages and clear the queue. Non-blocking. Returns empty array if nothing pending. */
 	drain(): QueueMessage[] {
 		const msgs = this.messages;
