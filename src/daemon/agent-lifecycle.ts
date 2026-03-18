@@ -5,7 +5,6 @@ import type {
 	AgentRequest,
 } from "../agent-provider.ts";
 import {
-	CostAccumulator,
 	createOrchestratorTools,
 	slugify,
 	TASK_SYSTEM_PROMPT,
@@ -48,7 +47,6 @@ import {
 interface AgentContextResult {
 	provider: ReturnType<typeof getProjectProvider>;
 	effectiveCfg: Awaited<ReturnType<typeof resolveProjectConfig>>;
-	costAccumulator: CostAccumulator;
 	mcpManager: McpClientManager;
 	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic is not narrowable here
 	mcpToolDefs: Record<string, ToolDefinition<any>[]>;
@@ -71,6 +69,8 @@ async function createAgentContext(
 		queue: MessageQueue;
 		childModel?: string;
 		mcpManager?: McpClientManager;
+		/** Parent agent's queue for report_to_parent. Null/undefined for root orchestrator. */
+		parentQueue?: MessageQueue;
 	},
 ): Promise<AgentContextResult> {
 	const effectiveCfg = await resolveProjectConfig(
@@ -90,36 +90,42 @@ async function createAgentContext(
 
 	const wtRoot = join(project.path, ".worktrees");
 	const wm = new WorktreeManager(project.path, wtRoot);
-	const costAccumulator = new CostAccumulator();
 
-	const { toolDefs, hasRunningChildren } = createOrchestratorTools(
-		{
-			tracker: opts.tracker,
-			provider,
-			worktrees: wm,
-			projectPath: opts.projectPath,
-			repoPath: project.path,
-			currentTaskId: opts.currentTaskId,
-			depth: opts.depth,
-			childModel: opts.childModel ?? effectiveCfg.childModel,
-			queue: opts.queue,
-			defaultBudgetUsd: effectiveCfg.budgetUsd,
-			clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
-			maxDepth: effectiveCfg.maxDepth,
-			projectManager: opts.depth === 0 ? ctx.pm : undefined,
-			activeSessions: opts.depth === 0 ? ctx.activeSessions : undefined,
-			currentProjectId: project.id,
-			sessionStore: getSessionStore(ctx, project.id),
-			dataDir: ctx.config.dataDir,
-			onTaskEvent: (event) => {
-				broadcastEvent(ctx, project.id, event);
-				broadcastTreeUpdate(ctx, project.id, opts.tracker);
-			},
-			broadcastTreeUpdate: () =>
-				broadcastTreeUpdate(ctx, project.id, opts.tracker),
+	const { toolDefs, hasRunningChildren } = createOrchestratorTools({
+		tracker: opts.tracker,
+		provider,
+		worktrees: wm,
+		projectPath: opts.projectPath,
+		repoPath: project.path,
+		currentTaskId: opts.currentTaskId,
+		depth: opts.depth,
+		childModel: opts.childModel ?? effectiveCfg.childModel,
+		queue: opts.queue,
+		defaultBudgetUsd: effectiveCfg.budgetUsd,
+		clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
+		maxDepth: effectiveCfg.maxDepth,
+		projectManager: opts.depth === 0 ? ctx.pm : undefined,
+		activeSessions: opts.depth === 0 ? ctx.activeSessions : undefined,
+		currentProjectId: project.id,
+		sessionStore: getSessionStore(ctx, project.id),
+		dataDir: ctx.config.dataDir,
+		onTaskEvent: (event) => {
+			broadcastEvent(ctx, project.id, event);
+			broadcastTreeUpdate(ctx, project.id, opts.tracker);
 		},
-		costAccumulator,
-	);
+		parentQueue: opts.parentQueue,
+		broadcastTreeUpdate: () =>
+			broadcastTreeUpdate(ctx, project.id, opts.tracker),
+		launchChild: async (nodeId: string, prompt: string) => {
+			await runChildAgentInBackground(
+				ctx,
+				project,
+				opts.tracker,
+				nodeId,
+				prompt,
+			);
+		},
+	});
 
 	const mcpToolDefs: Record<string, ToolDefinition[]> = {
 		opengraft: toolDefs,
@@ -129,7 +135,6 @@ async function createAgentContext(
 	return {
 		provider,
 		effectiveCfg,
-		costAccumulator,
 		mcpManager,
 		mcpToolDefs,
 		hasRunningChildren,
@@ -181,9 +186,7 @@ export interface RunChildCoreParams {
 /**
  * Shared child agent lifecycle: queue setup → stream events with done() detection → cleanup.
  *
- * Used by both:
- * - `executeChildStreaming` in agent-tools.ts (MCP send_message_to_child)
- * - `runChildAgentInBackground` in agent-lifecycle.ts (REST endpoints)
+ * Used by `runChildAgentInBackground` for all child agents (both MCP and daemon paths).
  *
  * The done() detection closes the child queue when `mcp__opengraft__done` tool_result
  * is observed and the tracker status is passed/failed, causing the provider run loop
@@ -395,6 +398,43 @@ export async function ensureChildAgentRunning(
 	await runChildAgentInBackground(ctx, project, tracker, nodeId, prompt, model);
 }
 
+/** Compute the depth of a task in the tree by walking up the parentId chain. */
+function computeDepth(tracker: TaskTracker, nodeId: string): number {
+	let depth = 0;
+	let current = tracker.get(nodeId);
+	while (current?.parentId) {
+		depth++;
+		current = tracker.get(current.parentId);
+	}
+	return depth;
+}
+
+/**
+ * Find the parent agent's queue for a given node. Checks globalAgentQueues for
+ * child-of-child, and ctx.activeSessions for child-of-root (root orchestrator).
+ */
+function findParentQueue(
+	ctx: DaemonContext,
+	projectId: string,
+	tracker: TaskTracker,
+	nodeId: string,
+): MessageQueue | undefined {
+	const node = tracker.get(nodeId);
+	if (!node?.parentId) return undefined;
+
+	// Check globalAgentQueues first (child agents)
+	const queue = globalAgentQueues.get(node.parentId);
+	if (queue) return queue;
+
+	// Check activeSessions (root orchestrator)
+	const parent = tracker.get(node.parentId);
+	if (parent && !parent.parentId) {
+		return ctx.activeSessions.get(projectId)?.queue;
+	}
+
+	return undefined;
+}
+
 /** Run a child agent in the background for a specific task node. */
 export async function runChildAgentInBackground(
 	ctx: DaemonContext,
@@ -409,14 +449,19 @@ export async function runChildAgentInBackground(
 
 	const mcpManager = new McpClientManager();
 	try {
+		// Compute depth from the tree and find the parent's queue
+		const depth = computeDepth(tracker, nodeId);
+		const parentQueue = findParentQueue(ctx, project.id, tracker, nodeId);
+
 		// Create the queue first — shared between MCP tools and runChildCore
 		const childQueue = new MessageQueue();
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
 			projectPath: node.worktreePath as string,
 			currentTaskId: nodeId,
-			depth: 1,
+			depth,
 			queue: childQueue,
+			parentQueue,
 			mcpManager,
 		});
 
@@ -456,20 +501,48 @@ export async function runChildAgentInBackground(
 			},
 		});
 
+		// --- Post-completion logic (unified for both MCP and daemon paths) ---
+
+		// Cost reporting
+		if (agentResult.costUsd) {
+			tracker.updateCost(nodeId, agentResult.costUsd);
+		}
+
+		// Budget exceeded check
+		const updatedNode = tracker.get(nodeId);
+		if (
+			updatedNode?.budgetUsd &&
+			updatedNode.costUsd &&
+			updatedNode.costUsd > updatedNode.budgetUsd
+		) {
+			broadcastEvent(ctx, project.id, {
+				type: "budget_exceeded",
+				taskId: nodeId,
+				title: node.title,
+				costUsd: updatedNode.costUsd,
+				budgetUsd: updatedNode.budgetUsd,
+			});
+		}
+
 		// done() tool updates status directly in the tracker AND emits task_completed.
-		// Only emit here if done() wasn't called (agent exited without calling done()).
+		// Only update status here if done() wasn't called (agent exited without calling done()).
 		const currentNode = tracker.get(nodeId);
 		const doneWasCalled =
 			currentNode?.status === "passed" || currentNode?.status === "failed";
-		const didPass = doneWasCalled
+		const success = doneWasCalled
 			? currentNode?.status === "passed"
 			: agentResult.success;
 
 		if (!doneWasCalled) {
-			if (!currentNode || currentNode.status === "in_progress") {
-				// Agent exited without calling done() — treat as success
-				tracker.updateStatus(nodeId, "passed");
+			let newStatus: "passed" | "failed" | "stuck";
+			if (agentResult.success) {
+				newStatus = "passed";
+				node.failCount = 0;
+			} else {
+				node.failCount = (node.failCount ?? 0) + 1;
+				newStatus = node.failCount >= 3 ? "stuck" : "failed";
 			}
+			tracker.updateStatus(nodeId, newStatus);
 		}
 		await tracker.save();
 
@@ -479,19 +552,62 @@ export async function runChildAgentInBackground(
 				type: "task_completed",
 				taskId: nodeId,
 				title: node.title,
-				success: didPass,
+				success,
 				output: (agentResult.output ?? "").slice(0, 500),
 			});
 		}
+
+		// Enqueue child_complete message to parent's queue
+		const completionParentQueue = findParentQueue(
+			ctx,
+			project.id,
+			tracker,
+			nodeId,
+		);
+		if (completionParentQueue) {
+			try {
+				completionParentQueue.enqueue({
+					source: "child_complete",
+					taskId: nodeId,
+					title: node.title,
+					success: success ?? true,
+					output: (agentResult.output ?? "").slice(0, 2000),
+				});
+			} catch {
+				// Queue may be closed if parent already finished
+			}
+		}
+
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} catch (e) {
 		tracker.updateStatus(nodeId, "stuck");
 		await tracker.save();
+		const errorMsg = e instanceof Error ? e.message : String(e);
 		broadcastEvent(ctx, project.id, {
-			type: "error",
+			type: "task_completed",
 			taskId: nodeId,
-			message: `Continue failed: ${e instanceof Error ? e.message : String(e)}`,
+			title: node.title,
+			success: false,
+			error: errorMsg,
+			output: `Error: ${errorMsg}`,
 		});
+
+		// Enqueue child_complete (failure) to parent's queue
+		const errorParentQueue = findParentQueue(ctx, project.id, tracker, nodeId);
+		if (errorParentQueue) {
+			try {
+				errorParentQueue.enqueue({
+					source: "child_complete",
+					taskId: nodeId,
+					title: node.title,
+					success: false,
+					output: `Error: ${errorMsg}`,
+				});
+			} catch {
+				// Queue may be closed
+			}
+		}
+
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} finally {
 		await flushEvents(ctx);
@@ -641,8 +757,16 @@ export async function launchAgent(
 			const currentRoot = tracker.get(rootNodeId);
 			const didPass = currentRoot?.status === "passed" || finalResult.success;
 
-			const totalCostUsd =
-				(finalResult.costUsd ?? 0) + agentCtx.costAccumulator.totalCostUsd;
+			// Sum child costs from the tree (source of truth)
+			const allNodes = tracker.allNodes();
+			const childNodes = allNodes.filter(
+				(n) => n.id !== rootNodeId && n.costUsd,
+			);
+			const childCostUsd = childNodes.reduce(
+				(sum, n) => sum + (n.costUsd ?? 0),
+				0,
+			);
+			const totalCostUsd = (finalResult.costUsd ?? 0) + childCostUsd;
 			broadcastEvent(ctx, project.id, {
 				type: "orchestration_completed",
 				taskId: rootNodeId,
@@ -654,9 +778,9 @@ export async function launchAgent(
 				cacheReadTokens: finalResult.cacheReadTokens,
 				outputTokens: finalResult.outputTokens,
 				childCosts: {
-					totalCostUsd: agentCtx.costAccumulator.totalCostUsd,
-					totalTurns: agentCtx.costAccumulator.totalTurns,
-					taskCount: agentCtx.costAccumulator.taskCount,
+					totalCostUsd: childCostUsd,
+					totalTurns: 0,
+					taskCount: childNodes.length,
 				},
 			});
 			broadcastTreeUpdate(ctx, project.id, tracker);
