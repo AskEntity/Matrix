@@ -559,3 +559,11 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - `AppHeader` has optional `onLogout` prop — renders `IconLogout` button when provided.
 - Admin port (`registerAdminAuthRoutes`) still has its own unguarded registration routes (localhost-only).
 - Auth middleware: no longer blocks `/setup` (removed). `/auth/*` paths always pass through; per-route guards handle enforcement.
+
+
+## Auth Always-On Model (Updated)
+
+- Auth middleware always checks credentials. No `enforced` bypass — `enforced` only controls registration.
+- First-run bypass: if no credentials exist (`!hasCredentials`), middleware passes through and `/auth/status` returns `authenticated: true`. Users must register a passkey before auth takes effect.
+- `/auth/status` returns `enabled: hasCreds` (not `enforced`). `authenticated = validSession || !hasCreds`.
+- "Continue without auth" button removed from LoginPage. Three states: sign-in (has creds), register (!enforced, no creds), lockout message (enforced, no creds).
