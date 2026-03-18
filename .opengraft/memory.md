@@ -401,3 +401,9 @@ Messages are ALWAYS delivered regardless of agent state. The system guarantees: 
 - Providers no longer have `private sessionHistory` Maps — all session state is in SessionStore (cache + disk).
 - `routes/agent.ts` sessions/clear uses `store.clearAll()`. Sessions/prune still uses `pruneSessionFiles()` (works on raw disk).
 - Conversation endpoint (`GET /tasks/:nodeId/conversation`) tries Anthropic format first, then OpenAI format.
+
+## notifyParentChain Root Queue Fix
+
+- Root orchestrator queue is in `ctx.activeSessions.get(projectId)?.queue`, NOT in `globalAgentQueues`.
+- `notifyParentChain` must check both: `globalAgentQueues` for child agents, `activeSessions` for root (no parentId).
+- `createApp` now exposes `activeSessions` for test access.
