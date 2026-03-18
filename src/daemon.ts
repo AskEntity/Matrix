@@ -271,6 +271,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						? `\n\nPrevious session encountered these errors:\n${errorMessages.map((m) => `- ${m}`).join("\n")}`
 						: "";
 				const resumePrompt = `Continue where you left off. The daemon restarted.${orphanCount > 0 ? ` Note: ${orphanCount} in_progress task(s) were reset to failed.` : ""}${errorSection}\n\nCheck the task tree and proceed.`;
+				// Clear error events after injecting them into resume prompt — show once only
+				if (errorMessages.length > 0) {
+					const cleaned = events.filter(
+						(e) =>
+							e.type !== "error" &&
+							!(e.type === "agent_event" && e.eventType === "error"),
+					);
+					ctx.eventHistory.set(project.id, cleaned);
+					ctx.eventsDirty.add(project.id);
+				}
 				await launchAgent(
 					ctx,
 					project,
