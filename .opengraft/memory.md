@@ -76,7 +76,8 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 ## Agent Lifecycle
 
 - `stopAgent()` cascades: closes child queues via `globalAgentQueues`, sets children to `failed`.
-- `done()` sets tracker status + broadcasts `task_completed`. Does NOT exit loop — enters implicit yield via `queue.wait()`.
+- `done()` = explicit yield: sets tracker status, broadcasts `task_completed`, then calls `waitForQueueMessages()` (same as yield()). Blocks the tool handler — provider never makes another API call after done(). Wake messages arrive as done()'s tool_result.
+- `yield()` and `done()` share `waitForQueueMessages()` helper. Both tools = "block and wait for messages." yield() is an explicit tool for AI psychology ("I called a tool, something will happen"). Implicit yield (end_turn) is equivalent but AI is reluctant to use it.
 - Loop exits ONLY when queue is closed (stop signal).
 - Stop = pause (root stays in_progress → auto-resume on restart). Only `done()` changes to passed/failed.
 - `runChildAgentInBackground` handles ALL child lifecycle: queue, streaming, done() detection, cost, completion events.
@@ -146,21 +147,8 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - **Mocking Anthropic SDK**: Create fake stream with `{[Symbol.asyncIterator]: async function*() {...}, finalMessage: () => Promise.resolve(response)}`. Replace `(provider as any).client` with mock object providing `messages.stream` and `messages.countTokens`.
 
 
-## Post-Compaction StrongEvent Verification (Round 2)
+## StrongEvent Verification Results
 
-- Live tested 4 scenarios: echo+tools, fail+resume, implicit yield, rapid messages while idle. All PERFECT MATCH.
-- Orchestrator session: 95/95 completed messages match, 1 in-progress (expected).
+- All tested scenarios (echo+tools, fail+resume, implicit yield, rapid messages, orchestrator self-check) show PERFECT match between StrongEvents and provider messages.
 - **Known acceptable mismatch**: trailing empty `{"role":"assistant","content":[]}` after done() — Anthropic protocol artifact, StrongEvents correctly omit it.
 - **send_message_to_child double-delivery**: message appears both in initial prompt AND as queue_message. Design decision (at-least-once delivery), not a bug.
-- **done() is not a strict state boundary**: queue messages can arrive at the cancellation point during done() tool execution, not just after idle.
-
-
-
-## done() Implicit Yield Fix (March 2026)
-
-- **Problem**: After done() tool was called, the provider would send tool_results back to the API, generating another response. The AI would see "Entering idle state" and waste tokens calling yield() or doing other work.
-- **Fix**: done() handler now calls `waitForQueueMessages()` (shared helper with yield()) after updating tracker status. This blocks the handler until wake messages arrive or queue closes, preventing the provider from making another API call.
-- **Shared helper**: `waitForQueueMessages()` extracted from yield() — handles queue.wait(), compact signal re-enqueue, clarify timeout, idle/active events, formatting, and ## Pending section. Used by both yield() and done().
-- **Wake format**: When woken after done(), prepends `"You previously called done({status}). New messages woke you up:"` before the formatted messages.
-- **Queue closed / no queue**: Returns `"Task marked as {status}. Entering idle state."` (backward-compatible fallback).
-- **Key design**: Fix is entirely in `src/agent-tools.ts` — no provider changes needed. The handler blocks, so the provider naturally waits.
