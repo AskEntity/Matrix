@@ -96,6 +96,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Auth routes (login/logout/status — available on main port)
 	registerAuthRoutes(app, ctx);
+	// Also register admin auth routes (registration) on main port — guarded by middleware
+	// This allows registering passkeys from the remote domain (needed for rpID matching)
+	registerAdminAuthRoutes(app, ctx);
 
 	// Health
 	app.get("/health", async (c) => {
