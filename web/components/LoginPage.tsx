@@ -113,7 +113,7 @@ export function LoginPage({ onAuthenticated, hasCredentials }: LoginPageProps) {
 									});
 									if (!optsRes.ok) throw new Error("Failed to get options");
 									const opts = await optsRes.json();
-									const result = await startRegistration(opts);
+									const result = await startRegistration({ optionsJSON: opts });
 									const verifyRes = await fetch("/auth/register/verify", {
 										method: "POST",
 										headers: { "Content-Type": "application/json" },

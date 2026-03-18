@@ -125,13 +125,13 @@ const s=document.getElementById("status"),rb=document.getElementById("regBtn"),l
 function show(msg,ok){s.textContent=msg;s.className=ok?"ok":"err"}
 rb.onclick=async()=>{rb.disabled=true;try{
 const o=await(await fetch("/auth/register/options",{method:"POST"})).json();
-const r=await startRegistration(o);
+const r=await startRegistration({optionsJSON:o});
 const v=await(await fetch("/auth/register/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(r)})).json();
 show(v.verified?"✅ Registered! Now click Sign In.":"❌ Failed",v.verified);
 }catch(e){show("❌ "+e.message,false)}finally{rb.disabled=false}};
 lb.onclick=async()=>{lb.disabled=true;try{
 const o=await(await fetch("/auth/login/options",{method:"POST"})).json();
-const r=await startAuthentication(o);
+const r=await startAuthentication({optionsJSON:o});
 const v=await(await fetch("/auth/login/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(r)})).json();
 if(v.verified){show("✅ Authenticated! Redirecting...",true);setTimeout(()=>location.href="/",1000)}
 else show("❌ Auth failed",false);
