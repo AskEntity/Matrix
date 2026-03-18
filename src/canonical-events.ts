@@ -1,6 +1,52 @@
 /**
+ * Strongly-typed canonical event — provider-agnostic, one event per action.
+ * Each event represents a single atomic action (no batching).
+ */
+export type StrongEvent =
+	| {
+			type: "user_message";
+			content: string;
+			cwd?: string;
+			isResume?: boolean;
+			ts: number;
+	  }
+	| { type: "assistant_text"; content: string; ts: number }
+	| {
+			type: "tool_call";
+			tool: string;
+			toolCallId: string;
+			input: Record<string, unknown>;
+			ts: number;
+	  }
+	| {
+			type: "tool_result";
+			toolCallId: string;
+			content: string;
+			isError: boolean;
+			images?: Array<{ base64: string; mediaType: string }>;
+			ts: number;
+	  }
+	| {
+			type: "queue_message";
+			source: string;
+			content: string;
+			images?: Array<{ base64: string; mediaType: string }>;
+			ts: number;
+	  }
+	| { type: "compacted_resume"; content: string; cwd?: string; ts: number }
+	| { type: "summarization_request"; instruction: string; ts: number }
+	| { type: "budget_warning"; warning: string; ts: number }
+	| {
+			type: "compact_marker";
+			checkpoint: string;
+			savedTokens: number;
+			ts: number;
+	  };
+
+/**
  * Canonical events recorded alongside provider messages.
  * Uses `unknown[]` instead of Anthropic-specific types for provider-agnostic portability.
+ * @deprecated Use StrongEvent instead — will be removed in Phase 4.
  */
 export type CanonicalEvent =
 	| { type: "user_message"; content: string; cwd?: string; isResume?: boolean }
@@ -131,6 +177,169 @@ export function eventsToOpenAIMessages(events: CanonicalEvent[]): unknown[] {
 				break;
 			case "budget_warning":
 				messages.push({ role: "user", content: event.warning });
+				break;
+		}
+	}
+	return messages;
+}
+
+/**
+ * Reconstruct Anthropic-format messages from strongly-typed canonical events.
+ * Pure function — no side effects or external dependencies.
+ *
+ * Key batching rules:
+ * - assistant_text + consecutive tool_calls → single assistant message
+ * - consecutive tool_results (with optional queue_messages) → single user message
+ * - compact_marker → skipped (readActive handles filtering)
+ */
+export function strongEventsToAnthropicMessages(
+	events: StrongEvent[],
+): unknown[] {
+	const messages: unknown[] = [];
+	let i = 0;
+
+	while (i < events.length) {
+		const event = events[i] as StrongEvent;
+
+		switch (event.type) {
+			case "user_message":
+				messages.push({ role: "user", content: event.content });
+				i++;
+				break;
+
+			case "compacted_resume":
+				messages.push({ role: "user", content: event.content });
+				i++;
+				break;
+
+			case "summarization_request":
+				messages.push({ role: "user", content: event.instruction });
+				i++;
+				break;
+
+			case "budget_warning":
+				messages.push({ role: "user", content: event.warning });
+				i++;
+				break;
+
+			case "assistant_text":
+			case "tool_call": {
+				// Collect assistant_text + consecutive tool_calls into one assistant message
+				const contentBlocks: unknown[] = [];
+
+				// Collect text block(s)
+				while (
+					i < events.length &&
+					(events[i] as StrongEvent).type === "assistant_text"
+				) {
+					const textEvent = events[i] as StrongEvent & {
+						type: "assistant_text";
+					};
+					contentBlocks.push({ type: "text", text: textEvent.content });
+					i++;
+				}
+
+				// Collect tool_call blocks
+				while (
+					i < events.length &&
+					(events[i] as StrongEvent).type === "tool_call"
+				) {
+					const tcEvent = events[i] as StrongEvent & { type: "tool_call" };
+					contentBlocks.push({
+						type: "tool_use",
+						id: tcEvent.toolCallId,
+						name: tcEvent.tool,
+						input: tcEvent.input,
+					});
+					i++;
+				}
+
+				// If only text and no tools, use simple string content
+				if (
+					contentBlocks.length === 1 &&
+					(contentBlocks[0] as { type: string }).type === "text"
+				) {
+					messages.push({
+						role: "assistant",
+						content: (contentBlocks[0] as { text: string }).text,
+					});
+				} else {
+					messages.push({ role: "assistant", content: contentBlocks });
+				}
+				break;
+			}
+
+			case "tool_result":
+			case "queue_message": {
+				// Collect consecutive tool_results and queue_messages into one user message
+				const resultBlocks: unknown[] = [];
+				const imageBlocks: unknown[] = [];
+
+				while (
+					i < events.length &&
+					((events[i] as StrongEvent).type === "tool_result" ||
+						(events[i] as StrongEvent).type === "queue_message")
+				) {
+					const current = events[i] as StrongEvent;
+					if (current.type === "tool_result") {
+						resultBlocks.push({
+							type: "tool_result",
+							tool_use_id: current.toolCallId,
+							content: current.content,
+							is_error: current.isError,
+						});
+						if (current.images) {
+							for (const img of current.images) {
+								imageBlocks.push({
+									type: "image",
+									source: {
+										type: "base64",
+										media_type: img.mediaType,
+										data: img.base64,
+									},
+								});
+							}
+						}
+					} else if (current.type === "queue_message") {
+						const queueText = `[Messages received while you were working:]\n<${current.source}>\n${current.content}\n</${current.source}>`;
+						resultBlocks.push({ type: "text", text: queueText });
+						if (current.images) {
+							for (const img of current.images) {
+								imageBlocks.push({
+									type: "image",
+									source: {
+										type: "base64",
+										media_type: img.mediaType,
+										data: img.base64,
+									},
+								});
+							}
+						}
+					}
+					i++;
+				}
+
+				if (imageBlocks.length > 0) {
+					messages.push({
+						role: "user",
+						content: [
+							...resultBlocks,
+							...imageBlocks,
+							{
+								type: "text",
+								text: `[${imageBlocks.length} image(s) attached by user]`,
+							},
+						],
+					});
+				} else {
+					messages.push({ role: "user", content: resultBlocks });
+				}
+				break;
+			}
+
+			case "compact_marker":
+				// Skip — readActive handles filtering by compact markers
+				i++;
 				break;
 		}
 	}
