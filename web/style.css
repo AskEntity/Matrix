@@ -143,7 +143,8 @@ select {
 	align-items: center;
 	justify-content: space-between;
 	padding: 0 16px;
-	height: var(--header-height);
+	padding-top: env(safe-area-inset-top, 0px);
+	height: calc(var(--header-height) + env(safe-area-inset-top, 0px));
 	border-bottom: 1px solid var(--border);
 	background: var(--bg-surface);
 	flex-shrink: 0;
@@ -2101,6 +2102,7 @@ button.og-tool-card-header:hover {
 .og-footer {
 	border-top: 1px solid var(--border);
 	padding: 10px 16px;
+	padding-bottom: max(10px, env(safe-area-inset-bottom, 10px));
 	background: var(--bg-surface);
 	flex-shrink: 0;
 }
@@ -3312,4 +3314,145 @@ button.og-tool-card-header:hover {
 
 .og-login-status-error {
 	color: var(--og-error);
+}
+
+/* =========================================================
+   Mobile Layout (< 768px) — chat-like: activity log + input
+   ========================================================= */
+
+@media (max-width: 768px) {
+	/* Compact header */
+	.og-header {
+		padding: 0 12px;
+		padding-top: env(safe-area-inset-top, 0px);
+		height: calc(44px + env(safe-area-inset-top, 0px));
+	}
+
+	/* Hide most header-right elements on mobile */
+	.og-header-right {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.og-header-right .og-select,
+	.og-header-right
+		.og-btn-icon:not(.og-hamburger-btn):not([aria-label="Settings"]):not(
+			[title="Settings"]
+		) {
+		display: none;
+	}
+
+	/* Hide project selectors etc from brand area */
+	.og-connection-badge {
+		display: none;
+	}
+
+	/* Main layout: full-screen column, no sidebar shown by default */
+	.og-main {
+		flex-direction: column;
+		position: relative;
+		overflow: hidden;
+	}
+
+	/* Sidebar: slide-in overlay from left */
+	.og-sidebar {
+		position: fixed;
+		top: calc(44px + env(safe-area-inset-top, 0px));
+		left: 0;
+		bottom: 0;
+		width: 85vw;
+		max-width: 320px;
+		z-index: 200;
+		transform: translateX(-100%);
+		transition: transform var(--t-slow);
+		border-right: 1px solid var(--border);
+		box-shadow: var(--shadow-lg);
+		overflow-y: auto;
+	}
+
+	.og-sidebar.og-sidebar-open {
+		transform: translateX(0);
+	}
+
+	/* Overlay backdrop */
+	.og-sidebar-backdrop {
+		display: none;
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.5);
+		z-index: 199;
+	}
+
+	.og-sidebar-backdrop.og-sidebar-open {
+		display: block;
+	}
+
+	/* Content takes full width */
+	.og-content {
+		flex: 1;
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		min-height: 0;
+	}
+
+	/* Hide the detail panel (top split) on mobile */
+	.og-detail-panel {
+		display: none;
+	}
+
+	/* Hide the resize divider */
+	.og-resize-divider {
+		display: none;
+	}
+
+	/* Activity panel takes all remaining space */
+	.og-content .og-activity-panel {
+		flex: 1;
+		min-height: 0;
+	}
+
+	/* Settings panel: full-screen overlay on mobile */
+	.og-settings-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 300;
+	}
+
+	/* Footer: fixed bottom with safe area padding */
+	.og-footer {
+		padding: 8px 12px;
+		padding-bottom: max(8px, env(safe-area-inset-bottom, 8px));
+	}
+
+	/* Hamburger button */
+	.og-hamburger-btn.og-hamburger-btn {
+		display: flex;
+	}
+}
+
+/* Hamburger button: hidden on desktop, shown on mobile via above rule */
+.og-hamburger-btn {
+	display: none;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	background: var(--bg-raised);
+	color: var(--text-secondary);
+	cursor: pointer;
+	flex-shrink: 0;
+	transition:
+		background var(--t-fast),
+		color var(--t-fast);
+}
+
+.og-hamburger-btn:hover {
+	background: var(--bg-overlay);
+	color: var(--text-primary);
 }

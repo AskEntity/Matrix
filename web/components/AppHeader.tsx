@@ -29,6 +29,7 @@ export function AppHeader({
 	onToggleSettings,
 	onThemeChange,
 	onLogout,
+	onToggleSidebar,
 }: {
 	connected: boolean;
 	projects: Project[];
@@ -47,6 +48,7 @@ export function AppHeader({
 	onToggleSettings: () => void;
 	onThemeChange: (theme: string) => void;
 	onLogout?: () => void;
+	onToggleSidebar?: () => void;
 }) {
 	const { locale, setLocale, t } = useLocale();
 	const [versionInfo, setVersionInfo] = useState<string>("");
@@ -67,6 +69,47 @@ export function AppHeader({
 	return (
 		<header className="og-header">
 			<div className="og-header-brand">
+				{onToggleSidebar && (
+					<button
+						type="button"
+						className="og-hamburger-btn"
+						onClick={onToggleSidebar}
+						aria-label="Toggle sidebar"
+					>
+						<svg
+							width="16"
+							height="16"
+							viewBox="0 0 16 16"
+							fill="none"
+							aria-hidden="true"
+						>
+							<rect
+								x="1"
+								y="3"
+								width="14"
+								height="1.5"
+								rx="0.75"
+								fill="currentColor"
+							/>
+							<rect
+								x="1"
+								y="7.25"
+								width="14"
+								height="1.5"
+								rx="0.75"
+								fill="currentColor"
+							/>
+							<rect
+								x="1"
+								y="11.5"
+								width="14"
+								height="1.5"
+								rx="0.75"
+								fill="currentColor"
+							/>
+						</svg>
+					</button>
+				)}
 				<div className="og-logo">
 					<IconHexagon size={14} />
 				</div>
