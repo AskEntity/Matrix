@@ -19,8 +19,6 @@ export interface McpServerConfig {
 export interface WebAuthnConfig {
 	/** Whether passkey auth is required on the main port. Defaults to false. */
 	enforced?: boolean;
-	/** @deprecated Use `enforced` instead. */
-	enabled?: boolean;
 	/** Relying Party display name. Defaults to "OpenGraft". */
 	rpName?: string;
 	/** Relying Party ID (domain). Defaults to request host. */
@@ -178,9 +176,7 @@ export function resolveConfig(
  * `enforced` takes priority. Falls back to deprecated `enabled` for backward compat.
  */
 export function isAuthEnforced(auth?: WebAuthnConfig): boolean {
-	if (auth?.enforced !== undefined) return auth.enforced;
-	if (auth?.enabled !== undefined) return auth.enabled;
-	return false;
+	return auth?.enforced ?? false;
 }
 
 /**
