@@ -763,13 +763,35 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			const systemParts = [request.systemPrompt].filter(Boolean);
 
 			// Cache control: system prompt cached as array of TextBlockParam
-			const systemWithCache: TextBlockParam[] = [
-				{
-					type: "text",
-					text: systemParts.join("\n\n"),
-					cache_control: { type: "ephemeral" },
-				},
-			];
+			// OAuth tokens require the Claude Code identity prefix in the system prompt.
+			const systemText = systemParts.join("\n\n");
+			const systemBlocks: TextBlockParam[] = this.useOAuth
+				? [
+						{
+							type: "text",
+							text: "You are Claude Code, Anthropic's official CLI for Claude.",
+							cache_control: { type: "ephemeral" },
+						},
+						...(systemText
+							? [
+									{
+										type: "text" as const,
+										text: systemText,
+										cache_control: {
+											type: "ephemeral" as const,
+										},
+									},
+								]
+							: []),
+					]
+				: [
+						{
+							type: "text",
+							text: systemText,
+							cache_control: { type: "ephemeral" },
+						},
+					];
+			const systemWithCache: TextBlockParam[] = systemBlocks;
 
 			// Cache control: add cache breakpoint on the last tool definition so the
 			// full tool list is cached across turns.

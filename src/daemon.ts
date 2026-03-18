@@ -118,6 +118,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				model: modelName,
 				messages: [{ role: "user" as const, content: "ping" }],
 				max_tokens: 10,
+				...(useOAuth
+					? {
+							system: [
+								{
+									type: "text" as const,
+									text: "You are Claude Code, Anthropic's official CLI for Claude.",
+								},
+							],
+						}
+					: {}),
 			};
 			const t0 = Date.now();
 			try {
