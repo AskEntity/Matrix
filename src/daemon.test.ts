@@ -4230,8 +4230,34 @@ describe("lifecycle edge cases", () => {
 		expect(clars.clarifications).toEqual([]);
 	});
 
-	test("clearing sessions while agent is running returns 409", async () => {
-		const provider = createLongRunningProvider();
+	test("clearing sessions while agent is running stops agent and succeeds", async () => {
+		let stopCalled = false;
+		const provider: AgentProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" };
+			},
+			startSession(req) {
+				const queue = req.queue ?? new MessageQueue();
+				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+					await new Promise((resolve) => setTimeout(resolve, 10000));
+					return { success: true, output: "" };
+				}
+				return {
+					sessionId: "mock-session",
+					events: events(),
+					queue,
+					sendMessage: async () => {},
+					stop: () => {
+						stopCalled = true;
+						queue.close();
+					},
+				};
+			},
+		};
+
 		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
@@ -4255,23 +4281,16 @@ describe("lifecycle edge cases", () => {
 		});
 		await new Promise((r) => setTimeout(r, 100));
 
-		// Try to clear sessions while running — should be rejected
+		// Clear sessions while running — should stop agent and succeed
 		const clearRes = await app.request(
 			`/projects/${project.id}/sessions/clear`,
 			{ method: "POST" },
 		);
-		expect(clearRes.status).toBe(409);
-		const body = (await clearRes.json()) as { error: string };
-		expect(body.error).toContain(
-			"Cannot clear sessions while agent is running",
-		);
+		expect(clearRes.status).toBe(200);
 
-		// Stop agent for cleanup
-		await app.request(`/projects/${project.id}/stop`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({}),
-		});
+		// Agent should have been stopped as a side effect
+		await new Promise((r) => setTimeout(r, 100));
+		expect(stopCalled).toBe(true);
 	});
 
 	test("deleting project stops running agent", async () => {

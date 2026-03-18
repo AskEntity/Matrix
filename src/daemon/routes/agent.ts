@@ -280,13 +280,7 @@ export function registerAgentRoutes(
 		const project = ctx.pm.get(c.req.param("id"));
 		if (!project) return c.json({ error: "Project not found" }, 404);
 		if (ctx.activeSessions.has(project.id)) {
-			return c.json(
-				{
-					error:
-						"Cannot clear sessions while agent is running. Stop the agent first.",
-				},
-				409,
-			);
+			await stopAgent(ctx, project.id);
 		}
 		const sessionsDir = join(ctx.config.dataDir, "sessions", project.id);
 		await rm(sessionsDir, { recursive: true, force: true });
