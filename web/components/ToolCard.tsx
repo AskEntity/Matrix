@@ -18,15 +18,23 @@ function ToolResultImages({
 					src={`data:${img.mediaType};base64,${img.base64}`}
 					alt="tool result"
 					className="og-tool-result-image"
-					onClick={() =>
-						window.open(`data:${img.mediaType};base64,${img.base64}`, "_blank")
-					}
+					onClick={() => {
+						const binary = atob(img.base64);
+						const bytes = new Uint8Array(binary.length);
+						for (let i = 0; i < binary.length; i++)
+							bytes[i] = binary.charCodeAt(i);
+						const blob = new Blob([bytes], { type: img.mediaType });
+						window.open(URL.createObjectURL(blob), "_blank");
+					}}
 					onKeyDown={(e) => {
-						if (e.key === "Enter" || e.key === " ")
-							window.open(
-								`data:${img.mediaType};base64,${img.base64}`,
-								"_blank",
-							);
+						if (e.key === "Enter" || e.key === " ") {
+							const binary = atob(img.base64);
+							const bytes = new Uint8Array(binary.length);
+							for (let i = 0; i < binary.length; i++)
+								bytes[i] = binary.charCodeAt(i);
+							const blob = new Blob([bytes], { type: img.mediaType });
+							window.open(URL.createObjectURL(blob), "_blank");
+						}
 					}}
 				/>
 			))}

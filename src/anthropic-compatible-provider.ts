@@ -1048,12 +1048,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 								mediaType: string;
 							}> = [];
 							for (const c of parts as Array<Record<string, unknown>>) {
-								console.log("[MCP IMAGE DEBUG] part", {
-									type: c.type,
-									keys: Object.keys(c),
-									hasData: !!c.data,
-									hasMimeType: !!c.mimeType,
-								});
 								if (c.type === "text") {
 									textParts.push((c.text as string) ?? "");
 								} else if (c.type === "image" && c.data) {
@@ -1065,11 +1059,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 									textParts.push(JSON.stringify(c));
 								}
 							}
-							console.log("[MCP IMAGE DEBUG] result", {
-								imagePartsCount: imageParts.length,
-								isImage: imageParts.length > 0,
-								textPartsCount: textParts.length,
-							});
 							return {
 								content: textParts.join("\n"),
 								isError: mcpResult.isError ?? false,
@@ -1124,15 +1113,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					images.push(...exec.mcpImages);
 				} else if (exec.isImage && exec.imageData && exec.mediaType) {
 					images.push({ base64: exec.imageData, mediaType: exec.mediaType });
-				}
-
-				if (images.length > 0) {
-					console.log("[MCP IMAGE DEBUG] yielding tool_result with images", {
-						tool: toolUse.name,
-						imageCount: images.length,
-						firstImageSize: images[0]?.base64.length,
-						firstImageType: images[0]?.mediaType,
-					});
 				}
 
 				yield {
