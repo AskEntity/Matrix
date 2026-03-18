@@ -194,7 +194,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			{ inputTokens: number; contextWindow: number; estimated?: boolean }
 		>
 	>({});
-	const [pendingCompact, setPendingCompact] = useState(false);
 	const [pendingMessages, setPendingMessages] = useState<
 		{ id: string; taskId: string | null; text: string; timestamp: number }[]
 	>([]);
@@ -360,7 +359,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setAgentModel,
 				setLogs,
 				setTokenUsage,
-				setPendingCompact,
 				setPendingMessages,
 				setPendingClarifications,
 				setLastTurns,
@@ -529,6 +527,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		setIsCreatingTask,
 		start,
 		stop,
+		compact,
 		sendMessage,
 		sendMessageToTask,
 		deleteTask,
@@ -767,7 +766,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 											onCompact={
 												isSelectedTaskActive
 													? () => {
-															setPendingCompact(true);
+															addLog({
+																type: "lifecycle",
+																text: "⚡ /compact",
+															});
 															compact();
 														}
 													: undefined
@@ -805,7 +807,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				prompt={prompt}
 				targetNodeId={targetNodeId}
 				nodeMap={nodeMap}
-				pendingCompact={pendingCompact}
 				pendingMessages={pendingMessages}
 				pendingClarifications={pendingClarifications}
 				clarifyAnswers={clarifyAnswers}

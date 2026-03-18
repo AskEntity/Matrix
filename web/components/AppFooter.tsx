@@ -11,7 +11,6 @@ export function AppFooter({
 	prompt,
 	targetNodeId,
 	nodeMap,
-	pendingCompact,
 	pendingMessages,
 	pendingClarifications,
 	clarifyAnswers,
@@ -28,7 +27,6 @@ export function AppFooter({
 	prompt: string;
 	targetNodeId: string | null;
 	nodeMap: Map<string, TaskNode>;
-	pendingCompact: boolean;
 	pendingMessages: {
 		id: string;
 		taskId: string | null;
@@ -139,16 +137,10 @@ export function AppFooter({
 				const filtered = pendingMessages.filter((m) =>
 					targetNodeId ? m.taskId === targetNodeId : m.taskId === null,
 				);
-				const hasChips = filtered.length > 0 || pendingCompact;
 				return (
-					hasChips && (
+					filtered.length > 0 && (
 						<div className="og-pending-messages">
 							<span className="og-pending-label">{t("pending.label")}</span>
-							{pendingCompact && (
-								<span className="og-pending-chip">
-									⏳ {t("footer.compactPending")}
-								</span>
-							)}
 							{filtered.map((m) => (
 								<span key={m.id} className="og-pending-chip">
 									{m.text.length > 30 ? `${m.text.slice(0, 30)}…` : m.text}

@@ -30,7 +30,6 @@ export interface WSHandlerDeps {
 			>
 		>
 	>;
-	setPendingCompact: React.Dispatch<React.SetStateAction<boolean>>;
 	setPendingMessages: React.Dispatch<
 		React.SetStateAction<
 			{ id: string; taskId: string | null; text: string; timestamp: number }[]
@@ -62,7 +61,6 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		setAgentModel,
 		setLogs,
 		setTokenUsage,
-		setPendingCompact,
 		setPendingMessages,
 		setPendingClarifications,
 		setLastTurns,
@@ -246,7 +244,6 @@ export function createWSHandler(deps: WSHandlerDeps) {
 							});
 						}
 						checkAgentStatus();
-						setPendingCompact(false);
 					},
 				};
 
@@ -263,7 +260,6 @@ export function createWSHandler(deps: WSHandlerDeps) {
 							});
 						}
 						checkAgentStatus();
-						setPendingCompact(false);
 					},
 				};
 
@@ -498,9 +494,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						}),
 					],
 					updates: [],
-					sideEffects: () => {
-						setPendingCompact(false);
-					},
+					sideEffects: NO_SIDE_EFFECTS,
 				};
 
 			case "compact":
