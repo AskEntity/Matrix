@@ -45,7 +45,7 @@ export const ADMIN_REGISTRATION_PAGE = `<!DOCTYPE html>
 <div class="card">
   <h1>🔐 OpenGraft Passkey Setup</h1>
   <p class="subtitle">Register a passkey to authenticate remote access</p>
-  <button class="btn btn-primary" id="registerBtn" onclick="doRegister()">
+  <button class="btn btn-primary" id="registerBtn">
     Register Passkey
   </button>
   <div class="status" id="status"></div>
@@ -54,7 +54,7 @@ export const ADMIN_REGISTRATION_PAGE = `<!DOCTYPE html>
 <script type="module">
 import { startRegistration } from "https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@13/dist/bundle/index.js";
 
-window.doRegister = async () => {
+document.getElementById("registerBtn").addEventListener("click", async () => {
   const btn = document.getElementById("registerBtn");
   const status = document.getElementById("status");
   btn.disabled = true;
@@ -92,7 +92,7 @@ window.doRegister = async () => {
   } finally {
     btn.disabled = false;
   }
-};
+});
 
 async function loadCredentials() {
   try {

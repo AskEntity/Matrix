@@ -30,7 +30,7 @@ import {
 	updateCredentialCounter,
 	verifySession,
 } from "../../auth.ts";
-import type { WebAuthnConfig } from "../../config.ts";
+import { isAuthEnforced, type WebAuthnConfig } from "../../config.ts";
 import type { DaemonContext } from "../context.ts";
 
 function getAuthPath(ctx: DaemonContext): string {
@@ -63,13 +63,15 @@ export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
 	// Check auth status
 	app.get("/auth/status", async (c) => {
 		const config = getAuthConfig(ctx);
+		const enforced = isAuthEnforced(config);
 		const authPath = getAuthPath(ctx);
 		const hasCreds = await hasCredentials(authPath);
 		const token = getCookie(c, "og_session") ?? "";
 		const authenticated = token ? await verifySession(authPath, token) : false;
 
 		return c.json({
-			enabled: config.enabled ?? false,
+			enabled: enforced,
+			enforced,
 			hasCredentials: hasCreds,
 			authenticated,
 		});
@@ -292,21 +294,14 @@ export function createAuthMiddleware(ctx: DaemonContext) {
 	return async (c: Context, next: Next) => {
 		const config = getAuthConfig(ctx);
 
-		// Auth disabled — pass through
-		if (!config.enabled) return next();
-
-		// Skip auth for localhost
-		const host = c.req.header("host") ?? "";
-		if (
-			host.startsWith("localhost") ||
-			host.startsWith("127.0.0.1") ||
-			host.startsWith("[::1]")
-		) {
-			return next();
-		}
+		// Auth not enforced — pass through
+		if (!isAuthEnforced(config)) return next();
 
 		// Skip auth endpoints themselves
 		if (c.req.path.startsWith("/auth/")) return next();
+
+		// Allow SPA static assets through so LoginPage can render
+		if (c.req.path === "/" || c.req.path.startsWith("/web/")) return next();
 
 		// Check session cookie
 		const cookieHeader = c.req.header("cookie") ?? "";

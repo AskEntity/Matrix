@@ -480,10 +480,9 @@ if (import.meta.main) {
 				: false,
 	});
 
-	// Start admin server for passkey registration (localhost-only)
-	const authConfig = getConfig().auth;
-	if (authConfig?.enabled) {
-		const adminPort = authConfig.adminPort ?? 7434;
+	// Admin server for passkey management (always runs, localhost-only)
+	{
+		const adminPort = getConfig().auth?.adminPort ?? 7434;
 		Bun.serve({
 			fetch: adminApp.fetch,
 			port: adminPort,
