@@ -73,7 +73,7 @@ export function ActivityLog({
 		const id = setInterval(() => {
 			const currentEntries = entriesRef.current;
 			const lastEntry = currentEntries[currentEntries.length - 1];
-			const hasToolInProgress = lastEntry?.type === "tool_use";
+			const hasToolInProgress = lastEntry?.type === "tool_call";
 			const elapsed = Date.now() - lastEventTimeRef.current;
 			setShowThinking(isActive && !hasToolInProgress && elapsed > 1500);
 		}, 500);
@@ -140,7 +140,7 @@ export function ActivityLog({
 		// First pass: register all tool_use entries by toolUseId
 		for (let j = 0; j < visible.length; j++) {
 			const entry = visible[j];
-			if (!entry || entry.type !== "tool_use") continue;
+			if (!entry || entry.type !== "tool_call") continue;
 			if (entry.toolUseId) {
 				useByToolUseId.set(entry.toolUseId, j);
 			}
@@ -186,7 +186,7 @@ export function ActivityLog({
 			}
 
 			// Hide get_tree tool_use entries (noise); their tool_results still show
-			if (cur.type === "tool_use") {
+			if (cur.type === "tool_call") {
 				const name = getToolName(cur);
 				if (name === "mcp__opengraft__get_tree") {
 					i += 1;

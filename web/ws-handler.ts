@@ -87,7 +87,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		if (rm.source === "child_complete" || rm.source === "system") return null;
 		if (rm.source === "user") {
 			return createLogEntry({
-				type: "user_prompt",
+				type: "user_message",
 				text: rm.content,
 				taskId,
 				images: rm.images,
@@ -202,7 +202,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				if (msg.prompt) {
 					entries.push(
 						createLogEntry({
-							type: "user_prompt",
+							type: "user_message",
 							text: msg.prompt as string,
 							taskId: startRootId,
 						}),
@@ -393,7 +393,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				return {
 					entries: [
 						createLogEntry({
-							type: et,
+							type: "tool_call",
 							text: msg.tool as string,
 							taskId,
 							toolName: msg.tool as string,
@@ -486,10 +486,10 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				return {
 					entries: [
 						createLogEntry({
-							type: "compact",
+							type: "compact_marker",
 							text: "Compressing context...",
 							taskId,
-							// Leave checkpoint undefined — "compact" event will set it.
+							// Leave checkpoint undefined — "compact_marker" event will set it.
 							// undefined (not "") distinguishes pending from completed-with-empty-checkpoint.
 						}),
 					],
@@ -567,36 +567,44 @@ export function createWSHandler(deps: WSHandlerDeps) {
 			case "merge_text": {
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
-					if (e && e.type === "text" && e.taskId === op.taskId) {
+					if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
 						entries[i] = { ...e, text: e.text + op.text };
 						return;
 					}
-					if (e && e.taskId === op.taskId && e.type !== "text") break;
+					if (e && e.taskId === op.taskId && e.type !== "assistant_text") break;
 				}
 				// No existing text entry — create new
 				entries.push(
-					createLogEntry({ type: "text", text: op.text, taskId: op.taskId }),
+					createLogEntry({
+						type: "assistant_text",
+						text: op.text,
+						taskId: op.taskId,
+					}),
 				);
 				break;
 			}
 			case "replace_text": {
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
-					if (e && e.type === "text" && e.taskId === op.taskId) {
+					if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
 						entries[i] = { ...e, text: op.text };
 						return;
 					}
-					if (e && e.taskId === op.taskId && e.type !== "text") break;
+					if (e && e.taskId === op.taskId && e.type !== "assistant_text") break;
 				}
 				entries.push(
-					createLogEntry({ type: "text", text: op.text, taskId: op.taskId }),
+					createLogEntry({
+						type: "assistant_text",
+						text: op.text,
+						taskId: op.taskId,
+					}),
 				);
 				break;
 			}
 			case "complete_compact": {
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
-					if (e && e.type === "compact" && e.checkpoint === undefined) {
+					if (e && e.type === "compact_marker" && e.checkpoint === undefined) {
 						entries[i] = {
 							...e,
 							text: op.text,
@@ -608,7 +616,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				// No pending compact entry — create completed one
 				entries.push(
 					createLogEntry({
-						type: "compact",
+						type: "compact_marker",
 						text: op.text,
 						taskId: op.taskId,
 						checkpoint: op.checkpoint,
@@ -629,37 +637,51 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				case "merge_text": {
 					for (let i = prev.length - 1; i >= 0; i--) {
 						const e = prev[i];
-						if (e && e.type === "text" && e.taskId === op.taskId) {
+						if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
 							const updated = [...prev];
 							updated[i] = { ...e, text: e.text + op.text };
 							return updated;
 						}
-						if (e && e.taskId === op.taskId && e.type !== "text") break;
+						if (e && e.taskId === op.taskId && e.type !== "assistant_text")
+							break;
 					}
 					return [
 						...prev,
-						createLogEntry({ type: "text", text: op.text, taskId: op.taskId }),
+						createLogEntry({
+							type: "assistant_text",
+							text: op.text,
+							taskId: op.taskId,
+						}),
 					];
 				}
 				case "replace_text": {
 					for (let i = prev.length - 1; i >= 0; i--) {
 						const e = prev[i];
-						if (e && e.type === "text" && e.taskId === op.taskId) {
+						if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
 							const updated = [...prev];
 							updated[i] = { ...e, text: op.text };
 							return updated;
 						}
-						if (e && e.taskId === op.taskId && e.type !== "text") break;
+						if (e && e.taskId === op.taskId && e.type !== "assistant_text")
+							break;
 					}
 					return [
 						...prev,
-						createLogEntry({ type: "text", text: op.text, taskId: op.taskId }),
+						createLogEntry({
+							type: "assistant_text",
+							text: op.text,
+							taskId: op.taskId,
+						}),
 					];
 				}
 				case "complete_compact": {
 					for (let i = prev.length - 1; i >= 0; i--) {
 						const e = prev[i];
-						if (e && e.type === "compact" && e.checkpoint === undefined) {
+						if (
+							e &&
+							e.type === "compact_marker" &&
+							e.checkpoint === undefined
+						) {
 							const updated = [...prev];
 							updated[i] = {
 								...e,
@@ -672,7 +694,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					return [
 						...prev,
 						createLogEntry({
-							type: "compact",
+							type: "compact_marker",
 							text: op.text,
 							taskId: op.taskId,
 							checkpoint: op.checkpoint,

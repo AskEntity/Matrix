@@ -762,7 +762,7 @@ export function LogEntryView({
 
 	const { t } = useLocale();
 
-	if (entry.type === "compact") {
+	if (entry.type === "compact_marker") {
 		return (
 			<div className="og-compact-boundary">
 				<div className="og-compact-hint">{t("compact.notVisible")}</div>
@@ -788,7 +788,7 @@ export function LogEntryView({
 	}
 
 	// Standalone tool_use (not merged with result) — show as a card too
-	if (entry.type === "tool_use") {
+	if (entry.type === "tool_call") {
 		const toolName = entry.toolName ?? "";
 		// Suppress done() tool_use card — task_completed card replaces it
 		if (toolName === "mcp__opengraft__done") return null;
@@ -1106,9 +1106,9 @@ export function LogEntryView({
 		);
 	}
 
-	if (entry.type === "user_prompt") {
+	if (entry.type === "user_message") {
 		return (
-			<div className="og-log-entry og-event-user_prompt">
+			<div className="og-log-entry og-event-user_message">
 				<span className="og-log-time">{entry.time}</span>
 				<div className="og-user-prompt-bubble">
 					<span className="og-user-prompt-text">{entry.text}</span>

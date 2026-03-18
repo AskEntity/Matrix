@@ -1495,10 +1495,10 @@ select {
 	color: var(--color-passed);
 }
 
-.og-event-tool_use {
+.og-event-tool_call {
 	border-left-color: rgba(56, 139, 253, 0.3);
 }
-.og-event-tool_use .og-log-text {
+.og-event-tool_call .og-log-text {
 	color: var(--accent-hover);
 	font-weight: 500;
 }
@@ -1508,7 +1508,7 @@ select {
 	font-size: 11px;
 }
 
-.og-event-text .og-log-text {
+.og-event-assistant_text .og-log-text {
 	color: var(--text-primary);
 }
 
@@ -1541,7 +1541,7 @@ select {
 }
 
 /* User prompt bubble */
-.og-event-user_prompt {
+.og-event-user_message {
 	border-left-color: var(--accent);
 	padding-top: 6px;
 	padding-bottom: 6px;
