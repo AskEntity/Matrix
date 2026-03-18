@@ -345,3 +345,180 @@ export function strongEventsToAnthropicMessages(
 	}
 	return messages;
 }
+
+/**
+ * Reconstruct OpenAI-format messages from strongly-typed canonical events.
+ * Pure function — no side effects or external dependencies.
+ *
+ * Key differences from Anthropic converter:
+ * - assistant_text + tool_calls → single message with `content` and `tool_calls` array
+ * - tool_results → individual `{ role: "tool" }` messages (not batched into one user message)
+ * - Images from tool_results → separate `{ role: "user" }` message with image_url parts
+ * - queue_messages between tool_results → appended to last tool result content
+ * - compact_marker → skipped
+ */
+export function strongEventsToOpenAIMessages(events: StrongEvent[]): unknown[] {
+	const messages: unknown[] = [];
+	// Map toolCallId → tool name for resolving tool_result.name
+	const toolNames = new Map<string, string>();
+	let i = 0;
+
+	while (i < events.length) {
+		const event = events[i] as StrongEvent;
+
+		switch (event.type) {
+			case "user_message":
+				messages.push({ role: "user", content: event.content });
+				i++;
+				break;
+
+			case "compacted_resume":
+				messages.push({ role: "user", content: event.content });
+				i++;
+				break;
+
+			case "summarization_request":
+				messages.push({ role: "user", content: event.instruction });
+				i++;
+				break;
+
+			case "budget_warning":
+				messages.push({ role: "user", content: event.warning });
+				i++;
+				break;
+
+			case "assistant_text":
+			case "tool_call": {
+				// Collect assistant_text + consecutive tool_calls into one assistant message
+				let textContent: string | null = null;
+				const toolCalls: Array<{
+					id: string;
+					type: "function";
+					function: { name: string; arguments: string };
+				}> = [];
+
+				// Collect text
+				while (
+					i < events.length &&
+					(events[i] as StrongEvent).type === "assistant_text"
+				) {
+					const textEvent = events[i] as StrongEvent & {
+						type: "assistant_text";
+					};
+					// Concatenate multiple text blocks (rare but possible)
+					textContent =
+						textContent === null
+							? textEvent.content
+							: `${textContent}\n${textEvent.content}`;
+					i++;
+				}
+
+				// Collect tool_calls
+				while (
+					i < events.length &&
+					(events[i] as StrongEvent).type === "tool_call"
+				) {
+					const tcEvent = events[i] as StrongEvent & { type: "tool_call" };
+					toolCalls.push({
+						id: tcEvent.toolCallId,
+						type: "function",
+						function: {
+							name: tcEvent.tool,
+							arguments: JSON.stringify(tcEvent.input),
+						},
+					});
+					// Register tool name for later tool_result resolution
+					toolNames.set(tcEvent.toolCallId, tcEvent.tool);
+					i++;
+				}
+
+				const msg: Record<string, unknown> = {
+					role: "assistant",
+					content: textContent,
+				};
+				if (toolCalls.length > 0) {
+					msg.tool_calls = toolCalls;
+				}
+				messages.push(msg);
+				break;
+			}
+
+			case "tool_result":
+			case "queue_message": {
+				// Process tool_results as individual messages, with queue_messages
+				// appended to the preceding tool result and images collected for a user message
+				const imageResults: Array<{
+					text: string;
+					dataUri: string;
+				}> = [];
+
+				while (
+					i < events.length &&
+					((events[i] as StrongEvent).type === "tool_result" ||
+						(events[i] as StrongEvent).type === "queue_message")
+				) {
+					const current = events[i] as StrongEvent;
+					if (current.type === "tool_result") {
+						const toolName = toolNames.get(current.toolCallId) ?? "unknown";
+						messages.push({
+							role: "tool",
+							tool_call_id: current.toolCallId,
+							name: toolName,
+							content: current.content,
+						});
+						if (current.images) {
+							for (const img of current.images) {
+								imageResults.push({
+									text: "[User-attached image]",
+									dataUri: `data:${img.mediaType};base64,${img.base64}`,
+								});
+							}
+						}
+					} else if (current.type === "queue_message") {
+						// Queue messages at cancellation points are appended to last tool result
+						const lastMsg = messages[messages.length - 1] as
+							| { role: string; content: string }
+							| undefined;
+						if (
+							lastMsg?.role === "tool" &&
+							typeof lastMsg.content === "string"
+						) {
+							lastMsg.content += `\n\n---\n[Messages received while you were working:]\n${current.content}`;
+						}
+						if (current.images) {
+							for (const img of current.images) {
+								imageResults.push({
+									text: "[User-attached image]",
+									dataUri: `data:${img.mediaType};base64,${img.base64}`,
+								});
+							}
+						}
+					}
+					i++;
+				}
+
+				// Inject images as a user message (OpenAI tool results are text-only)
+				if (imageResults.length > 0) {
+					const imageParts: unknown[] = [];
+					for (const img of imageResults) {
+						imageParts.push(
+							{ type: "text", text: img.text },
+							{
+								type: "image_url",
+								image_url: { url: img.dataUri, detail: "auto" },
+							},
+						);
+					}
+					messages.push({ role: "user", content: imageParts });
+				}
+				break;
+			}
+
+			case "compact_marker":
+				// Skip — readActive handles filtering by compact markers
+				i++;
+				break;
+		}
+	}
+	return messages;
+}

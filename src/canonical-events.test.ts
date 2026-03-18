@@ -5,6 +5,7 @@ import {
 	eventsToOpenAIMessages,
 	type StrongEvent,
 	strongEventsToAnthropicMessages,
+	strongEventsToOpenAIMessages,
 } from "./canonical-events.ts";
 
 describe("eventsToAnthropicMessages", () => {
@@ -1060,5 +1061,501 @@ describe("strongEventsToAnthropicMessages", () => {
 		expect(strongEventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "Continue the task" },
 		]);
+	});
+});
+
+describe("strongEventsToOpenAIMessages", () => {
+	test("returns empty array for no events", () => {
+		expect(strongEventsToOpenAIMessages([])).toEqual([]);
+	});
+
+	test("converts user_message", () => {
+		const events: StrongEvent[] = [
+			{ type: "user_message", content: "Hello world", ts: 1000 },
+		];
+		expect(strongEventsToOpenAIMessages(events)).toEqual([
+			{ role: "user", content: "Hello world" },
+		]);
+	});
+
+	test("converts compacted_resume", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "compacted_resume",
+				content: "Checkpoint summary",
+				cwd: "/tmp",
+				ts: 1000,
+			},
+		];
+		expect(strongEventsToOpenAIMessages(events)).toEqual([
+			{ role: "user", content: "Checkpoint summary" },
+		]);
+	});
+
+	test("converts summarization_request", () => {
+		const events: StrongEvent[] = [
+			{ type: "summarization_request", instruction: "Summarize now", ts: 1000 },
+		];
+		expect(strongEventsToOpenAIMessages(events)).toEqual([
+			{ role: "user", content: "Summarize now" },
+		]);
+	});
+
+	test("converts budget_warning", () => {
+		const events: StrongEvent[] = [
+			{ type: "budget_warning", warning: "⚠️ Over budget", ts: 1000 },
+		];
+		expect(strongEventsToOpenAIMessages(events)).toEqual([
+			{ role: "user", content: "⚠️ Over budget" },
+		]);
+	});
+
+	test("converts assistant_text only → content string, no tool_calls", () => {
+		const events: StrongEvent[] = [
+			{ type: "assistant_text", content: "I'll help you.", ts: 1000 },
+		];
+		expect(strongEventsToOpenAIMessages(events)).toEqual([
+			{ role: "assistant", content: "I'll help you." },
+		]);
+	});
+
+	test("converts assistant_text + tool_calls → single message with tool_calls array", () => {
+		const events: StrongEvent[] = [
+			{ type: "assistant_text", content: "Let me check.", ts: 1000 },
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "call_1",
+				input: { command: "ls" },
+				ts: 1001,
+			},
+			{
+				type: "tool_call",
+				tool: "read_file",
+				toolCallId: "call_2",
+				input: { path: "src/main.ts" },
+				ts: 1002,
+			},
+		];
+		expect(strongEventsToOpenAIMessages(events)).toEqual([
+			{
+				role: "assistant",
+				content: "Let me check.",
+				tool_calls: [
+					{
+						id: "call_1",
+						type: "function",
+						function: {
+							name: "bash",
+							arguments: JSON.stringify({ command: "ls" }),
+						},
+					},
+					{
+						id: "call_2",
+						type: "function",
+						function: {
+							name: "read_file",
+							arguments: JSON.stringify({ path: "src/main.ts" }),
+						},
+					},
+				],
+			},
+		]);
+	});
+
+	test("converts tool_calls without assistant_text → null content", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "call_1",
+				input: { command: "echo hi" },
+				ts: 1000,
+			},
+		];
+		expect(strongEventsToOpenAIMessages(events)).toEqual([
+			{
+				role: "assistant",
+				content: null,
+				tool_calls: [
+					{
+						id: "call_1",
+						type: "function",
+						function: {
+							name: "bash",
+							arguments: JSON.stringify({ command: "echo hi" }),
+						},
+					},
+				],
+			},
+		]);
+	});
+
+	test("converts tool_results → individual tool messages with name lookup", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "call_1",
+				input: { command: "ls" },
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "file1.ts\nfile2.ts",
+				isError: false,
+				ts: 1001,
+			},
+		];
+		const messages = strongEventsToOpenAIMessages(events);
+		// First message is the assistant with tool_call
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: null,
+			tool_calls: [
+				{
+					id: "call_1",
+					type: "function",
+					function: {
+						name: "bash",
+						arguments: JSON.stringify({ command: "ls" }),
+					},
+				},
+			],
+		});
+		// Second message is the tool result
+		expect(messages[1]).toEqual({
+			role: "tool",
+			tool_call_id: "call_1",
+			name: "bash",
+			content: "file1.ts\nfile2.ts",
+		});
+	});
+
+	test("tool_result uses 'unknown' when tool_call not found", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "tool_result",
+				toolCallId: "orphan_call",
+				content: "result",
+				isError: false,
+				ts: 1000,
+			},
+		];
+		expect(strongEventsToOpenAIMessages(events)).toEqual([
+			{
+				role: "tool",
+				tool_call_id: "orphan_call",
+				name: "unknown",
+				content: "result",
+			},
+		]);
+	});
+
+	test("tool_results with images → separate user message with image_url parts", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "tool_call",
+				tool: "take_screenshot",
+				toolCallId: "call_1",
+				input: {},
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "screenshot taken",
+				isError: false,
+				images: [{ base64: "abc123", mediaType: "image/png" }],
+				ts: 1001,
+			},
+		];
+		const messages = strongEventsToOpenAIMessages(events);
+		expect(messages).toHaveLength(3); // assistant + tool + user(images)
+		expect(messages[2]).toEqual({
+			role: "user",
+			content: [
+				{ type: "text", text: "[User-attached image]" },
+				{
+					type: "image_url",
+					image_url: {
+						url: "data:image/png;base64,abc123",
+						detail: "auto",
+					},
+				},
+			],
+		});
+	});
+
+	test("queue_message between tool_results appends to last tool content", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "call_1",
+				input: { command: "ls" },
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: "read_file",
+				toolCallId: "call_2",
+				input: { path: "a.ts" },
+				ts: 1001,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "ok",
+				isError: false,
+				ts: 1002,
+			},
+			{
+				type: "queue_message",
+				source: "parent_update",
+				content: "New instructions",
+				ts: 1003,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_2",
+				content: "done",
+				isError: false,
+				ts: 1004,
+			},
+		];
+		const messages = strongEventsToOpenAIMessages(events);
+		// assistant + tool(call_1 with queue appended) + tool(call_2) = 3
+		expect(messages).toHaveLength(3);
+		// Queue message should be appended to the first tool result
+		expect((messages[1] as { content: string }).content).toContain(
+			"New instructions",
+		);
+		expect((messages[1] as { content: string }).content).toContain(
+			"[Messages received while you were working:]",
+		);
+	});
+
+	test("compact_marker is skipped", () => {
+		const events: StrongEvent[] = [
+			{ type: "user_message", content: "hello", ts: 1000 },
+			{
+				type: "compact_marker",
+				checkpoint: "summary",
+				savedTokens: 5000,
+				ts: 2000,
+			},
+			{ type: "compacted_resume", content: "summary", ts: 2001 },
+		];
+		expect(strongEventsToOpenAIMessages(events)).toEqual([
+			{ role: "user", content: "hello" },
+			{ role: "user", content: "summary" },
+		]);
+	});
+
+	test("full conversation: user → assistant+tools → results → assistant", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "user_message",
+				content: "Working directory: /tmp\n\nBuild a feature",
+				cwd: "/tmp",
+				ts: 1000,
+			},
+			{ type: "assistant_text", content: "I'll build that.", ts: 1001 },
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "call_1",
+				input: { command: "echo hi" },
+				ts: 1002,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "hi\n",
+				isError: false,
+				ts: 1003,
+			},
+			{ type: "assistant_text", content: "Done!", ts: 1004 },
+		];
+
+		const messages = strongEventsToOpenAIMessages(events);
+		expect(messages).toHaveLength(4);
+		expect(messages[0]).toEqual({
+			role: "user",
+			content: "Working directory: /tmp\n\nBuild a feature",
+		});
+		expect(messages[1]).toEqual({
+			role: "assistant",
+			content: "I'll build that.",
+			tool_calls: [
+				{
+					id: "call_1",
+					type: "function",
+					function: {
+						name: "bash",
+						arguments: JSON.stringify({ command: "echo hi" }),
+					},
+				},
+			],
+		});
+		expect(messages[2]).toEqual({
+			role: "tool",
+			tool_call_id: "call_1",
+			name: "bash",
+			content: "hi\n",
+		});
+		expect(messages[3]).toEqual({
+			role: "assistant",
+			content: "Done!",
+		});
+	});
+
+	test("handles resume user_message", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "user_message",
+				content: "Continue the task",
+				isResume: true,
+				ts: 1000,
+			},
+		];
+		expect(strongEventsToOpenAIMessages(events)).toEqual([
+			{ role: "user", content: "Continue the task" },
+		]);
+	});
+
+	test("multiple tool_results with images from different tools", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "tool_call",
+				tool: "screenshot1",
+				toolCallId: "call_1",
+				input: {},
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: "screenshot2",
+				toolCallId: "call_2",
+				input: {},
+				ts: 1001,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "shot1",
+				isError: false,
+				images: [{ base64: "img1", mediaType: "image/png" }],
+				ts: 1002,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_2",
+				content: "shot2",
+				isError: false,
+				images: [{ base64: "img2", mediaType: "image/jpeg" }],
+				ts: 1003,
+			},
+		];
+		const messages = strongEventsToOpenAIMessages(events);
+		// assistant + tool_1 + tool_2 + user(images)
+		expect(messages).toHaveLength(4);
+		// Image user message should have both images
+		const imgMsg = messages[3] as { content: unknown[] };
+		expect(imgMsg.content).toHaveLength(4); // 2 text + 2 image_url
+	});
+
+	test("compaction scenario: compacted_resume + continuation", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "compacted_resume",
+				content: "## Checkpoint\n\nCompleted steps 1-3.",
+				cwd: "/tmp",
+				ts: 2000,
+			},
+			{
+				type: "assistant_text",
+				content: "Continuing from checkpoint.",
+				ts: 2001,
+			},
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "call_1",
+				input: { command: "ls" },
+				ts: 2002,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "src/",
+				isError: false,
+				ts: 2003,
+			},
+			{
+				type: "assistant_text",
+				content: "Found the source directory.",
+				ts: 2004,
+			},
+		];
+
+		const messages = strongEventsToOpenAIMessages(events);
+		expect(messages).toHaveLength(4);
+		expect(messages[0]).toEqual({
+			role: "user",
+			content: "## Checkpoint\n\nCompleted steps 1-3.",
+		});
+		expect(messages[1]).toEqual({
+			role: "assistant",
+			content: "Continuing from checkpoint.",
+			tool_calls: [
+				{
+					id: "call_1",
+					type: "function",
+					function: {
+						name: "bash",
+						arguments: JSON.stringify({ command: "ls" }),
+					},
+				},
+			],
+		});
+		expect(messages[2]).toEqual({
+			role: "tool",
+			tool_call_id: "call_1",
+			name: "bash",
+			content: "src/",
+		});
+		expect(messages[3]).toEqual({
+			role: "assistant",
+			content: "Found the source directory.",
+		});
+	});
+
+	test("tool_result with error flag", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "call_1",
+				input: { command: "exit 1" },
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "Command failed with exit code 1",
+				isError: true,
+				ts: 1001,
+			},
+		];
+		const messages = strongEventsToOpenAIMessages(events);
+		expect(messages[1]).toEqual({
+			role: "tool",
+			tool_call_id: "call_1",
+			name: "bash",
+			content: "Command failed with exit code 1",
+		});
 	});
 });
