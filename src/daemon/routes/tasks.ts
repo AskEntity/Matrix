@@ -1,6 +1,7 @@
 import { readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Hono } from "hono";
+import { slugify } from "../../agent-tools.ts";
 import { globalAgentQueues } from "../../message-queue.ts";
 import {
 	clearPersistedMessages,
@@ -341,12 +342,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			try {
 				const wtRoot = join(project.path, ".worktrees");
 				const wm = new WorktreeManager(project.path, wtRoot);
-				const slug = node.title
-					.toLowerCase()
-					.replace(/[^a-z0-9]+/g, "-")
-					.replace(/^-|-$/g, "")
-					.slice(0, 30);
-				const wt = await wm.create(nodeId, slug);
+				const wt = await wm.create(nodeId, slugify(node.title));
 				tracker.assignWorktree(nodeId, wt.branch, wt.path);
 				tracker.updateStatus(nodeId, "in_progress");
 				await tracker.save();

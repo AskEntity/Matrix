@@ -1,5 +1,6 @@
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { pinyin } from "pinyin-pro";
 import { z } from "zod";
 import type {
 	AgentProvider,
@@ -2059,9 +2060,15 @@ export function buildTaskPrompt(
 
 /** @internal Exported for testing */
 export function slugify(title: string): string {
-	return title
+	// Convert CJK characters to pinyin, leaving ASCII untouched
+	const romanized = title.replace(
+		/[\u4e00-\u9fff\u3400-\u4dbf]+/g,
+		(match) => ` ${pinyin(match, { toneType: "none" })} `,
+	);
+	const slug = romanized
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-|-$/g, "")
 		.slice(0, 30);
+	return slug || "task";
 }

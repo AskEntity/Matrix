@@ -7,6 +7,7 @@ import type {
 import {
 	CostAccumulator,
 	createOrchestratorTools,
+	slugify,
 	TASK_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
 import { DEFAULT_MODEL } from "../config.ts";
@@ -358,12 +359,7 @@ export async function ensureChildAgentRunning(
 	if (!node.worktreePath) {
 		const wtRoot = join(project.path, ".worktrees");
 		const wm = new WorktreeManager(project.path, wtRoot);
-		const slug = node.title
-			.toLowerCase()
-			.replace(/[^a-z0-9]+/g, "-")
-			.replace(/^-|-$/g, "")
-			.slice(0, 30);
-		const wt = await wm.create(node.id, slug);
+		const wt = await wm.create(node.id, slugify(node.title));
 		tracker.assignWorktree(node.id, wt.branch, wt.path);
 	}
 
