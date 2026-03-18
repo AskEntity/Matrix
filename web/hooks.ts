@@ -111,7 +111,9 @@ export function useProjects() {
 	const refresh = useCallback(async () => {
 		try {
 			const res = await fetch("/projects");
-			setProjects(await res.json());
+			if (!res.ok) return;
+			const data = await res.json();
+			if (Array.isArray(data)) setProjects(data);
 		} catch {
 			/* ignore */
 		}
