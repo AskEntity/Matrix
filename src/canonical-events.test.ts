@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	type CanonicalEvent,
 	eventsToAnthropicMessages,
+	eventsToOpenAIMessages,
 } from "./canonical-events.ts";
 
 describe("eventsToAnthropicMessages", () => {
@@ -352,6 +353,178 @@ describe("eventsToAnthropicMessages", () => {
 		expect(content[4]).toEqual({
 			type: "text",
 			text: "[2 image(s) attached by user]",
+		});
+	});
+});
+
+describe("eventsToOpenAIMessages", () => {
+	test("returns empty array for no events", () => {
+		expect(eventsToOpenAIMessages([])).toEqual([]);
+	});
+
+	test("converts user_message event", () => {
+		const events: CanonicalEvent[] = [
+			{ type: "user_message", content: "Hello world" },
+		];
+		expect(eventsToOpenAIMessages(events)).toEqual([
+			{ role: "user", content: "Hello world" },
+		]);
+	});
+
+	test("converts compacted_resume event", () => {
+		const events: CanonicalEvent[] = [
+			{
+				type: "compacted_resume",
+				content: "Working directory: /tmp\n\nCheckpoint",
+				cwd: "/tmp",
+			},
+		];
+		expect(eventsToOpenAIMessages(events)).toEqual([
+			{ role: "user", content: "Working directory: /tmp\n\nCheckpoint" },
+		]);
+	});
+
+	test("converts summarization_request event", () => {
+		const events: CanonicalEvent[] = [
+			{ type: "summarization_request", instruction: "Summarize now" },
+		];
+		expect(eventsToOpenAIMessages(events)).toEqual([
+			{ role: "user", content: "Summarize now" },
+		]);
+	});
+
+	test("converts assistant_response — spreads content array", () => {
+		const assistantMsg = {
+			role: "assistant",
+			content: "I'll help",
+			tool_calls: [
+				{
+					id: "call_1",
+					type: "function",
+					function: { name: "bash", arguments: '{"command":"echo hi"}' },
+				},
+			],
+		};
+		const events: CanonicalEvent[] = [
+			{ type: "assistant_response", content: [assistantMsg] },
+		];
+		// Should spread — each item in content becomes a separate message
+		expect(eventsToOpenAIMessages(events)).toEqual([assistantMsg]);
+	});
+
+	test("converts tool_results — spreads results array", () => {
+		const toolMsg1 = {
+			role: "tool",
+			tool_call_id: "call_1",
+			name: "bash",
+			content: "hi\n",
+		};
+		const toolMsg2 = {
+			role: "tool",
+			tool_call_id: "call_2",
+			name: "read_file",
+			content: "file contents",
+		};
+		const events: CanonicalEvent[] = [
+			{ type: "tool_results", results: [toolMsg1, toolMsg2] },
+		];
+		expect(eventsToOpenAIMessages(events)).toEqual([toolMsg1, toolMsg2]);
+	});
+
+	test("converts queue_messages without images", () => {
+		const events: CanonicalEvent[] = [
+			{ type: "queue_messages", formatted: "New task assigned" },
+		];
+		expect(eventsToOpenAIMessages(events)).toEqual([
+			{
+				role: "user",
+				content:
+					"[Messages received while you were idle:]\nNew task assigned\n\nProcess these messages and continue working. Remember to call done() when finished.",
+			},
+		]);
+	});
+
+	test("converts queue_messages with images", () => {
+		const imageBlocks = [
+			{
+				type: "image_url",
+				image_url: { url: "data:image/png;base64,abc", detail: "auto" },
+			},
+		];
+		const events: CanonicalEvent[] = [
+			{
+				type: "queue_messages",
+				formatted: "Check this",
+				hasImages: true,
+				imageBlocks,
+			},
+		];
+		expect(eventsToOpenAIMessages(events)).toEqual([
+			{
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: "[Messages received while you were idle:]\nCheck this\n\nProcess these messages and continue working. Remember to call done() when finished.",
+					},
+					...imageBlocks,
+				],
+			},
+		]);
+	});
+
+	test("converts budget_warning event", () => {
+		const events: CanonicalEvent[] = [
+			{ type: "budget_warning", warning: "⚠️ Budget exceeded" },
+		];
+		expect(eventsToOpenAIMessages(events)).toEqual([
+			{ role: "user", content: "⚠️ Budget exceeded" },
+		]);
+	});
+
+	test("converts a full OpenAI conversation sequence", () => {
+		const assistantMsg = {
+			role: "assistant",
+			content: "Running command.",
+			tool_calls: [
+				{
+					id: "call_1",
+					type: "function",
+					function: { name: "bash", arguments: '{"command":"ls"}' },
+				},
+			],
+		};
+		const toolResult = {
+			role: "tool",
+			tool_call_id: "call_1",
+			name: "bash",
+			content: "file1.ts\nfile2.ts",
+		};
+		const events: CanonicalEvent[] = [
+			{
+				type: "user_message",
+				content: "Working directory: /tmp\n\nList files",
+				cwd: "/tmp",
+			},
+			{ type: "assistant_response", content: [assistantMsg] },
+			{ type: "tool_results", results: [toolResult] },
+			{
+				type: "assistant_response",
+				content: [{ role: "assistant", content: "Found 2 files." }],
+			},
+		];
+
+		const messages = eventsToOpenAIMessages(events);
+		expect(messages).toHaveLength(4);
+		expect(messages[0]).toEqual({
+			role: "user",
+			content: "Working directory: /tmp\n\nList files",
+		});
+		expect(messages[1]).toEqual(assistantMsg);
+		expect(messages[2]).toEqual(toolResult);
+		expect(messages[3]).toEqual({
+			role: "assistant",
+			content: "Found 2 files.",
 		});
 	});
 });

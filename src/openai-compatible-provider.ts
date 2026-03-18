@@ -12,7 +12,10 @@ import {
 	extractCheckpoint,
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
-import type { CanonicalEvent } from "./canonical-events.ts";
+import {
+	type CanonicalEvent,
+	eventsToOpenAIMessages,
+} from "./canonical-events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import {
@@ -940,37 +943,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				}
 			}
 
-			// Record tool results as a single canonical event
-			{
-				const toolResultMsgs: unknown[] = [];
-				for (let i = 0; i < toolCalls.length; i++) {
-					const tc = toolCalls[i] as OpenAIToolCall;
-					const exec = execResults[i] as { content: string };
-					toolResultMsgs.push({
-						role: "tool",
-						tool_call_id: tc.id,
-						name: tc.function.name,
-						content: exec.content,
-					});
-				}
-				if (imageResults.length > 0) {
-					events.push({
-						type: "tool_results",
-						results: toolResultMsgs,
-						hasImages: true,
-						imageBlocks: imageResults.map((img) => ({
-							type: "image_url",
-							image_url: { url: img.dataUri, detail: "auto" },
-						})) as unknown[],
-					});
-				} else {
-					events.push({
-						type: "tool_results",
-						results: toolResultMsgs,
-					});
-				}
-			}
-
 			// Inject images as a user message (OpenAI tool results are text-only)
 			if (imageResults.length > 0) {
 				const imageParts: Array<
@@ -1039,6 +1011,36 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				}
 			}
 
+			// Record tool results (and any post-mutation content) as canonical events.
+			// Done AFTER done() reminder and queue cancellation so events match messages exactly.
+			{
+				// Collect all messages pushed since the assistant response:
+				// tool results (role: "tool"), image user messages, and any queue image messages.
+				const toolAndFollowupMsgs: unknown[] = [];
+				// Walk backwards from end to find all messages after the assistant response
+				for (let j = messages.length - 1; j >= 0; j--) {
+					const msg = messages[j] as OpenAIMessage;
+					if (msg.role === "assistant") break;
+					toolAndFollowupMsgs.unshift(msg);
+				}
+				if (imageResults.length > 0) {
+					events.push({
+						type: "tool_results",
+						results: toolAndFollowupMsgs,
+						hasImages: true,
+						imageBlocks: imageResults.map((img) => ({
+							type: "image_url",
+							image_url: { url: img.dataUri, detail: "auto" },
+						})) as unknown[],
+					});
+				} else {
+					events.push({
+						type: "tool_results",
+						results: toolAndFollowupMsgs,
+					});
+				}
+			}
+
 			// Persist after tool results — fire-and-forget
 			request.sessionStore?.setSync(sessionId, [...messages], "openai");
 			request.sessionStore?.setSync(sessionId, [...events], "events");
@@ -1069,6 +1071,18 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		if (request.sessionStore) {
 			await request.sessionStore.set(sessionId, [...messages], "openai");
 			await request.sessionStore.set(sessionId, [...events], "events");
+		}
+
+		// Deterministic verification: compare reconstructed messages from events
+		if (events.length > 0) {
+			const reconstructed = eventsToOpenAIMessages(events);
+			const match = JSON.stringify(reconstructed) === JSON.stringify(messages);
+			if (!match) {
+				console.error("[EVENTS MISMATCH]", {
+					messagesLen: messages.length,
+					reconstructedLen: reconstructed.length,
+				});
+			}
 		}
 
 		const { inputPer1M, outputPer1M } = getModelPricing(model);
