@@ -456,3 +456,11 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - On resume, existing events loaded from `sessionStore.get(id, "events")`.
 - On compaction, `events.length = 0` mirrors `messages.length = 0` — both reset together.
 - 9 messages.push + 2 initial = 11 events.push total. 1:1 correspondence verified.
+
+
+## child_complete Bubble-Up Fix
+
+- `findParentQueue()` now walks up the parent chain to find the nearest ancestor with an active queue, not just the immediate parent.
+- Returns `{ queue, targetId }` so callers know whether the queue belongs to the immediate parent or an ancestor.
+- Both success and error `child_complete` notifications also persist to the immediate parent (for its eventual resumption) when the notification is delivered to a non-immediate ancestor.
+- Pattern: `if (node.parentId && (!result?.queue || result.targetId !== node.parentId))` — persist to immediate parent unless it already has the queue.
