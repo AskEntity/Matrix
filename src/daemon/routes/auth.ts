@@ -76,10 +76,14 @@ export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
 		const authPath = getAuthPath(ctx);
 		const hasCreds = await hasCredentials(authPath);
 		const token = getCookie(c, "og_session") ?? "";
-		const authenticated = token ? await verifySession(authPath, token) : false;
+		const hasValidSession = token
+			? await verifySession(authPath, token)
+			: false;
+		// Authenticated if: valid session, or no credentials registered yet (first-run)
+		const authenticated = hasValidSession || !hasCreds;
 
 		return c.json({
-			enabled: enforced,
+			enabled: hasCreds,
 			enforced,
 			hasCredentials: hasCreds,
 			authenticated,
@@ -449,16 +453,18 @@ export function registerAdminAuthRoutes(app: Hono, ctx: DaemonContext) {
 
 export function createAuthMiddleware(ctx: DaemonContext) {
 	return async (c: Context, next: Next) => {
-		const config = getAuthConfig(ctx);
-
-		// Auth not enforced — pass through
-		if (!isAuthEnforced(config)) return next();
+		// Auth is ALWAYS checked when credentials exist.
+		// The `enforced` flag only controls whether new passkey registration is allowed.
 
 		// Skip auth endpoints themselves (login, register guards are per-route)
 		if (c.req.path.startsWith("/auth/")) return next();
 
 		// Allow SPA static assets through so LoginPage can render
 		if (c.req.path === "/" || c.req.path.startsWith("/web/")) return next();
+
+		// If no credentials registered yet, pass through (can't authenticate without passkeys)
+		const authPath = getAuthPath(ctx);
+		if (!(await hasCredentials(authPath))) return next();
 
 		// Check session cookie
 		const cookieHeader = c.req.header("cookie") ?? "";
@@ -468,7 +474,6 @@ export function createAuthMiddleware(ctx: DaemonContext) {
 			return c.json({ error: "Unauthorized" }, 401);
 		}
 
-		const authPath = getAuthPath(ctx);
 		const valid = await verifySession(authPath, token);
 		if (!valid) {
 			return c.json({ error: "Unauthorized" }, 401);
