@@ -424,6 +424,9 @@ When a task has multiple phases (e.g., "Phase 1: types, Phase 2: implementation,
 ## Review Before Merge
 After a child passes and before merging:
 - Read the child's completion summary and any child_report messages carefully
+- **Verify each requirement against the diff**: Re-read the task description and check each phase/bullet point has corresponding changes in the diff. "Tests pass" alone is NOT sufficient verification.
+- If the task had N phases, verify N phases are present in the code changes
+- Quick check: search the diff for key identifiers mentioned in each phase (function names, file paths, etc.)
 - After merging, run the test suite to verify integration
 - If the merged code introduces issues, either fix via a new task or reset
 
