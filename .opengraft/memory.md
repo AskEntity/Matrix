@@ -510,3 +510,10 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - `ToolResultImages` component in ToolCard.tsx renders images with click-to-open-full-size.
 - Images always visible outside the expand/collapse toggle (not gated on `expanded` state).
 - CSS: `og-tool-result-images` (flex wrap container) + `og-tool-result-image` (max-height 400px, cursor pointer, border).
+
+
+## MCP Screenshot Image Debug (in progress)
+
+- Debug logging added at 3 points in `src/anthropic-compatible-provider.ts` to trace MCP image pipeline.
+- Pipeline: MCP tool returns `content[]` → parse for `type: "image"` + `data` → yield `images` in `tool_result` event → broadcast via WS → ws-handler extracts `msg.images` → LogEntry.images → ToolResultImages component.
+- Changed parts loop to `Record<string, unknown>` to log all keys. Need to verify chrome-devtools MCP actually returns `type: "image"` (might use a different format like `type: "resource"` or embed base64 differently).
