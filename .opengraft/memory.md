@@ -10,7 +10,7 @@
 ## How to Run Tests
 
 ```bash
-bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/anthropic-compatible-provider.test.ts src/openai-compatible-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts src/config.test.ts
+bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/anthropic-compatible-provider.test.ts src/openai-compatible-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts src/config.test.ts src/canonical-events.test.ts src/event-store.test.ts
 bun run typecheck   # tsc --noEmit
 bun run check       # biome lint + format
 ```
@@ -46,7 +46,8 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 | src/message-queue.ts | MessageQueue + globalAgentQueues |
 | src/persistent-queue.ts | Disk-backed message persistence |
 | src/session-store.ts | SessionStore (cache + disk) for session history |
-| src/canonical-events.ts | CanonicalEvent types + eventsToAnthropicMessages converter |
+| src/canonical-events.ts | StrongEvent types + provider converters (+ legacy CanonicalEvent) |
+| src/event-store.ts | JSONL EventStore — append-only event persistence |
 | src/daemon/routes/auth.ts | WebAuthn/Passkey auth middleware + endpoints |
 | web/App.tsx | Web UI main, WS/handlers |
 | web/ws-handler.ts | WS event processing (processEvent, UpdateOp) |
@@ -112,11 +113,15 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 - SSE stream errors have `APIError.status === undefined`. Retry catches: RateLimitError, APIConnectionError, InternalServerError, status 529, AND status undefined.
 
-## Canonical Events (SessionStore Phase 2-3)
+## Canonical Events (StrongEvent System)
 
-- `CanonicalEvent` types in `src/canonical-events.ts`. Recorded at every `messages.push` in provider.
-- `eventsToAnthropicMessages()` converter verified deterministic for user_message, assistant_response, tool_results.
-- On compaction, `events.length = 0` mirrors `messages.length = 0`.
+- **Two-tier events**: Old `CanonicalEvent` (unknown[], provider-specific) + new `StrongEvent` (strongly-typed, provider-agnostic). Dual-write during migration. Old system to be removed in cleanup phase.
+- **StrongEvent types**: `user_message`, `assistant_text`, `tool_call`, `tool_result`, `queue_message`, `compacted_resume`, `summarization_request`, `budget_warning`, `compact_marker`. Each has `ts: number` timestamp.
+- **EventStore** (`src/event-store.ts`): JSONL append-only. `readActive()` returns events after last `compact_marker`.
+- **Converters**: `strongEventsToAnthropicMessages()` and `strongEventsToOpenAIMessages()` reconstruct provider messages from strong events. Key batching: consecutive assistant_text + tool_call → single assistant message; consecutive tool_result → single user message (Anthropic) or individual tool messages (OpenAI).
+- **Deterministic verification** at end of each provider runLoop. Known mismatch for cancellation-point queue images (not yet captured as separate StrongEvent).
+- **Compaction**: `compact_marker` event replaces `events.length = 0`. Converter skips events before last marker.
+- `AgentRequest.eventStore` + `getEventStore()` in daemon helpers. `DaemonContext.eventStores` map.
 
 ## CF Tunnel
 
@@ -130,53 +135,4 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 ## Slash Commands
 
-- Frontend slash commands (/compact, /clear) are handled in `web/handlers.ts` via `handleSlashCommand()`, intercepted in `handleSubmit` before chat message dispatch.
-- `pendingCompact` state was removed — compact UI feedback comes entirely from WS events (compact_started → compact completion).
-- The compact button in TokenUsageBadge still works as secondary trigger, same code path.
-
-
-## OpenAI Canonical Events
-
-- OpenAI provider now records CanonicalEvent at every messages.push site, matching Anthropic provider pattern.
-- `assistant_response.content` stores `[{...historyMsg}]` — the full OpenAI message object wrapped in an array.
-- `tool_results.results` stores individual `{ role: "tool", tool_call_id, name, content }` messages.
-- `eventsToOpenAIMessages()` spreads assistant_response.content and tool_results.results directly (they are already OpenAI format).
-- Events persist via both `setSync` (mid-loop) and `set` (final), same as Anthropic.
-
-
-## StrongEvent + EventStore (Phase 1)
-
-- `StrongEvent` type added alongside old `CanonicalEvent` (not replacing yet — Phase 4 cleanup).
-- Uses `ts` (not `timestamp`) for brevity in JSONL serialization.
-- `EventStore` in `src/event-store.ts`: JSONL append-only, `readActive()` filters by last `compact_marker`.
-- `strongEventsToAnthropicMessages()`: key batching logic — assistant_text + tool_calls → single assistant message, tool_results + queue_messages → single user message.
-- Standalone `assistant_text` (no tool_calls) uses simple string content. With tool_calls, uses content array.
-- `queue_message` events between `tool_result` events merge into the same user message with XML-tagged text blocks.
-
-
-
-## StrongEvent Integration (Phase 2)
-
-- EventStore recording runs alongside old CanonicalEvent[] recording (dual-write). Old system not removed yet — Phase 4 cleanup.
-- `eventStore.append()` at each `messages.push` site. `eventStore.appendBatch()` for assistant content blocks and tool_results.
-- `assistant_response` → split into individual `assistant_text` + `tool_call` StrongEvents.
-- `tool_results` → split into individual `tool_result` StrongEvents. Content uses `toolResult.content` (from the modified toolResults array, which includes cancellation-appended text).
-- Cancellation-point queue images: added to the last tool_result event's images array (converter collects all images from all tool_results in a batch).
-- Compaction: `compact_marker` event appended to EventStore (replaces conceptual `events.length = 0`). Followed by `compacted_resume` event.
-- Deterministic verification: `strongEventsToAnthropicMessages(eventStore.readActive(sessionId))` compared against `messages` at end of runLoop. Known mismatch for image tool results (converter produces string content + separate image blocks; messages array has array content on tool_result).
-- `AgentRequest.eventStore` field added to `src/agent-provider.ts`.
-- `getEventStore()` helper in `src/daemon/helpers.ts`, same directory as SessionStore (`{dataDir}/sessions/{projectId}`).
-- `DaemonContext.eventStores` map added to `src/daemon/context.ts`.
-
-
-
-
-## StrongEvent Integration (Phase 3 - OpenAI)
-
-- `strongEventsToOpenAIMessages()` converter in `src/canonical-events.ts`.
-- Key differences from Anthropic converter: assistant_text+tool_calls → single message with `content` + `tool_calls` array; tool_results → individual `{ role: "tool" }` messages (not batched); images → separate user message with `image_url` parts.
-- Maintains `toolNames` Map<toolCallId, toolName> for resolving `name` field on tool result messages.
-- Queue messages at cancellation points are appended to last tool_result content (same as messages array).
-- EventStore dual-write added to OpenAI provider alongside old CanonicalEvent[] recording.
-- Deterministic verification at end of runLoop compares `strongEventsToOpenAIMessages(eventStore.readActive(sessionId))` vs `messages`.
-- Known mismatch: cancellation-point queue images (separate user message in messages, not captured as separate StrongEvent). Same pattern as Anthropic provider image mismatch.
+- Frontend slash commands (/compact, /clear) handled in `web/handlers.ts` via `handleSlashCommand()`. `pendingCompact` state removed — WS events drive UI feedback.
