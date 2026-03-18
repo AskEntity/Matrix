@@ -542,3 +542,9 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - Auth middleware exempts `/`, `/web/*`, `/auth/*` so SPA + login endpoints work.
 - `AppHeader` has `onLogout` prop — renders logout button when provided.
 - `resolveOrigin` respects `X-Forwarded-Proto` for reverse proxy (CF Tunnel) compatibility.
+
+## Compaction Checkpoint Improvements
+
+- SUMMARIZATION_INSTRUCTION has 9 sections (was 8): added "Current Working Directory" as section 2.
+- `buildSummarizationInstruction(cwd)` appends actual CWD to the instruction so agents include it in the checkpoint. Both providers use this instead of raw `SUMMARIZATION_INSTRUCTION`.
+- "Rejected Approaches" renamed to "Key Insights & Rejected Approaches" — guidance now emphasizes high-level design principles over one-off API fixes.

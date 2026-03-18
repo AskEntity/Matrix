@@ -11,6 +11,7 @@ import {
 	addMessagesCacheControl,
 	backgroundProcesses,
 	buildCompactedContext,
+	buildSummarizationInstruction,
 	cleanupSessionBackgroundProcesses,
 	executeBashWithTimeout,
 	executeTool,
@@ -1228,10 +1229,28 @@ describe("SUMMARIZATION_INSTRUCTION", () => {
 
 	test("lists required checkpoint sections", () => {
 		expect(SUMMARIZATION_INSTRUCTION).toContain("User Requests");
+		expect(SUMMARIZATION_INSTRUCTION).toContain("Current Working Directory");
 		expect(SUMMARIZATION_INSTRUCTION).toContain("Current Phase");
 		expect(SUMMARIZATION_INSTRUCTION).toContain("Completed Work");
-		expect(SUMMARIZATION_INSTRUCTION).toContain("Rejected Approaches");
+		expect(SUMMARIZATION_INSTRUCTION).toContain(
+			"Key Insights & Rejected Approaches",
+		);
 		expect(SUMMARIZATION_INSTRUCTION).toContain("Next Action");
+	});
+});
+
+describe("buildSummarizationInstruction", () => {
+	test("returns base instruction without cwd", () => {
+		expect(buildSummarizationInstruction()).toBe(SUMMARIZATION_INSTRUCTION);
+		expect(buildSummarizationInstruction(undefined)).toBe(
+			SUMMARIZATION_INSTRUCTION,
+		);
+	});
+
+	test("appends cwd when provided", () => {
+		const result = buildSummarizationInstruction("/path/to/project");
+		expect(result).toContain(SUMMARIZATION_INSTRUCTION);
+		expect(result).toContain("Current working directory: /path/to/project");
 	});
 });
 

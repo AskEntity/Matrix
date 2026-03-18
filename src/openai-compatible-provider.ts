@@ -8,8 +8,8 @@ import type {
 import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
 import {
 	buildCompactedContext,
+	buildSummarizationInstruction,
 	extractCheckpoint,
-	SUMMARIZATION_INSTRUCTION,
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
@@ -575,9 +575,10 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						: `Compressing conversation (est. ${estimatedInputTokens} tokens, threshold: ${compressThreshold})`,
 				};
 				// Inject summarization instruction as a user message instead of making a separate API call
+				const summarizationInstruction = buildSummarizationInstruction(cwd);
 				messages.push({
 					role: "user" as const,
-					content: SUMMARIZATION_INSTRUCTION,
+					content: summarizationInstruction,
 				});
 				compactionPending = true;
 				preCompactTokenCount = estimatedInputTokens;

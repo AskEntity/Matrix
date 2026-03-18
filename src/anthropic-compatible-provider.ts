@@ -124,38 +124,50 @@ Chronological timeline of every user message or parent instruction received, wit
 This creates a complete narrative thread. The resuming agent has NO access to previous messages — this is the only record.
 For resolved requests, state the outcome concisely. Do not carry forward debugging narratives or step-by-step problem-solving details from issues that are fully resolved.
 
-## 2. Current Phase
+## 2. Current Working Directory
+The absolute path of the current working directory. This prevents the resuming agent from trying to cd to the same directory (which errors).
+
+## 3. Current Phase
 What the agent is doing RIGHT NOW: planning / implementing / testing / debugging / reviewing / orchestrating / done
 If debugging: include the exact error message and what has been tried.
 
-## 3. Completed Work
+## 4. Completed Work
 What has been built, tested, committed, and merged — with key architectural and technical decisions.
 Include specific file paths and function names. Note WHY decisions were made, not just what.
 Focus on outcomes and key decisions. Omit debugging journeys and error traces for issues already resolved.
 
-## 4. Task Tree State
+## 5. Task Tree State
 Current live task tree. Only tasks that currently exist (pending/in_progress/failed/draft). For each: ID, title, status, branch. Omit completed/merged tasks (they're recorded in Section 1's timeline). Group: Running → Failed → Pending → Draft.
 
-## 5. Rejected Approaches
-What was tried and DIDN'T work. For each failure:
-- What was attempted (specific approach, file, function)
-- The exact error or reason it failed
-- Why it should NOT be retried
-This prevents the resuming agent from wasting time on known dead ends.
-If truly nothing failed, write "None so far."
+## 6. Key Insights & Rejected Approaches
+Design principles and mental models discovered during this session — especially from failed approaches.
+Focus on HIGH-LEVEL insights that prevent entire CLASSES of bugs, not one-off technical fixes.
 
-## 6. Key Context
+Good examples:
+- "Auth should always be on — 'enforced' only controls registration, not authentication"
+- "MCP and HTTP code paths must share implementation, not duplicate logic"
+- "Cache invariant: all in-memory state is a cache of disk state — destroying and recreating it should be invisible"
+- "Never split by step (types → implementation → tests) — split by module/feature for parallelism"
+
+Bad examples (these belong in code comments, not in the checkpoint):
+- "startRegistration(options) directly doesn't work, need {optionsJSON: options}"
+- "Cookie secure:true doesn't work on HTTP localhost"
+- "CDN path /v3/fonts returns 404, use /v2/fonts instead"
+
+For each insight: state the principle, and briefly note what triggered the discovery.
+If truly nothing was learned, write "None so far."
+
+## 7. Key Context
 Important state and knowledge that is HARD to reconstruct from disk:
-- Architectural decisions and constraints discovered during this session
-- Pitfalls, API quirks, or gotchas encountered
-- Environment or configuration state that affects the work
+- Constraints or invariants that affect the remaining work
+- Environment or configuration state
 - Communication state: pending clarifications, recent messages to/from parent or children
 
-## 7. Pending Work
+## 8. Pending Work
 Numbered list of ALL remaining tasks/steps to complete the goal.
 Be specific: "implement X in file Y", "add test for Z", "merge child branch A".
 
-## 8. Next Action
+## 9. Next Action
 The single, concrete, immediate next step. Start with a verb.
 e.g. "Run bun test src/foo.test.ts to verify the fix" — not "continue testing".
 
@@ -169,6 +181,12 @@ Rules:
 - Aim for thoroughness — lost context is far more expensive than a longer checkpoint
 - Length: use as many tokens as needed for complex sessions. Never truncate mid-thought.
 - On re-compaction, resolved issues need only their resolution noted — not the journey to get there. Retain useful architectural and decision context.]`;
+
+/** Build the full summarization instruction with the current working directory appended. */
+export function buildSummarizationInstruction(cwd?: string): string {
+	if (!cwd) return SUMMARIZATION_INSTRUCTION;
+	return `${SUMMARIZATION_INSTRUCTION}\n\nCurrent working directory: ${cwd}`;
+}
 
 /**
  * Extract checkpoint text from an assistant response that should contain <summary>...</summary> tags.
@@ -765,13 +783,14 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							: `Compressing conversation (${tokenCount} tokens, threshold: ${compressThreshold})`,
 					};
 					// Inject summarization instruction as a user message instead of making a separate API call
+					const summarizationInstruction = buildSummarizationInstruction(cwd);
 					messages.push({
 						role: "user" as const,
-						content: SUMMARIZATION_INSTRUCTION,
+						content: summarizationInstruction,
 					});
 					events.push({
 						type: "summarization_request",
-						instruction: SUMMARIZATION_INSTRUCTION,
+						instruction: summarizationInstruction,
 					});
 					compactionPending = true;
 					preCompactTokenCount = tokenCount;
