@@ -152,3 +152,9 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - All tested scenarios (echo+tools, fail+resume, implicit yield, rapid messages, orchestrator self-check) show PERFECT match between StrongEvents and provider messages.
 - **Known acceptable mismatch**: trailing empty `{"role":"assistant","content":[]}` after done() — Anthropic protocol artifact, StrongEvents correctly omit it.
 - **send_message_to_child double-delivery**: message appears both in initial prompt AND as queue_message. Design decision (at-least-once delivery), not a bug.
+
+## Compaction Checkpoint Refactor (March 2026)
+
+- **Structured checkpoint**: AI writes 7 sections (User Requests, Current Phase, Completed Work, Task Tree State, Key Insights, Key Context, Pending Work). System auto-injects CWD and resume instructions via `extractCheckpoint(responseText, cwd?)`.
+- **Removed from AI prompt**: "Current Working Directory" section (system injects it) and "Next Action" section (redundant with Pending Work).
+- **Resume instruction flow**: `extractCheckpoint` appends "## System Context (auto-generated)" block when cwd provided. `buildCompactedContext` no longer appends its own resume instruction.
