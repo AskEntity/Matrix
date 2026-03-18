@@ -242,12 +242,9 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			ok: boolean;
-			persisted?: boolean;
 			taskId: string;
 		};
 		expect(body.ok).toBe(true);
-		// No queue was registered, so message is persisted
-		expect(body.persisted).toBe(true);
 
 		// Verify the message was persisted to disk
 		const persisted = await loadPersistedMessages(dataDir, project.id, task.id);
@@ -281,8 +278,7 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { ok: boolean; taskId: string };
 		expect(body.ok).toBe(true);
-		// With unified deliverMessage, message is always persisted first
-		expect((body as Record<string, unknown>).persisted).toBe(true);
+		// Queue was active — message delivered directly, NOT persisted to disk
 
 		// Verify the message arrived in the queue
 		const msgs = taskQueue.drain();
@@ -352,10 +348,8 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			ok: boolean;
-			persisted?: boolean;
 		};
 		expect(body.ok).toBe(true);
-		expect(body.persisted).toBe(true);
 
 		// Wait for auto-launch to complete
 		await delay(200);
@@ -377,10 +371,8 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			ok: boolean;
-			persisted?: boolean;
 		};
 		expect(body.ok).toBe(true);
-		expect(body.persisted).toBe(true);
 	});
 
 	test("message to closed task persists to disk", async () => {
@@ -404,10 +396,8 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			ok: boolean;
-			persisted?: boolean;
 		};
 		expect(body.ok).toBe(true);
-		expect(body.persisted).toBe(true);
 	});
 
 	test("message to draft task still delivers (draft status does not block REST endpoint)", async () => {
@@ -434,11 +424,8 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			ok: boolean;
-			persisted?: boolean;
 		};
 		expect(body.ok).toBe(true);
-		// Message persisted since no queue registered
-		expect(body.persisted).toBe(true);
 	});
 
 	test("message to closed queue falls through to persist (graceful handling)", async () => {
@@ -463,10 +450,8 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			ok: boolean;
-			persisted?: boolean;
 		};
 		expect(body.ok).toBe(true);
-		expect(body.persisted).toBe(true);
 
 		globalAgentQueues.delete(task.id);
 	});
@@ -581,8 +566,8 @@ describe("lifecycle: concurrent message sources", () => {
 			"persisted msg",
 		);
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as { persisted?: boolean };
-		expect(body.persisted).toBe(true);
+		const body = (await res.json()) as { ok: boolean };
+		expect(body.ok).toBe(true);
 
 		// Wait for auto-launch to complete
 		await delay(200);
@@ -628,9 +613,9 @@ describe("lifecycle: concurrent message sources", () => {
 				"second message",
 			);
 			expect(res2.status).toBe(200);
-			const body2 = (await res2.json()) as { persisted?: boolean };
-			// With unified deliverMessage, message is always persisted first
-			expect(body2.persisted).toBe(true);
+			const body2 = (await res2.json()) as { ok: boolean };
+			// Queue active — message delivered directly, not persisted
+			expect(body2.ok).toBe(true);
 
 			// Still only one queue
 			expect(globalAgentQueues.get(task.id)).toBe(queue);

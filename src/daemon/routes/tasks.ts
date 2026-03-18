@@ -578,7 +578,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const node = tracker.get(nodeId);
 		const taskTitle = node?.title ?? nodeId;
 
-		// Unified delivery: persist → enqueue (if running) → launch (if not)
+		// Unified delivery: enqueue (if running) or persist + launch (if not)
 		await deliverMessage(ctx, project, nodeId, {
 			source: "user",
 			content: body.content,
@@ -588,6 +588,6 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		// Notify parent chain that user sent a message to this task (REST-only)
 		await notifyParentChain(ctx, project.id, nodeId, taskTitle);
 
-		return c.json({ ok: true, taskId: nodeId, persisted: true });
+		return c.json({ ok: true, taskId: nodeId });
 	});
 }
