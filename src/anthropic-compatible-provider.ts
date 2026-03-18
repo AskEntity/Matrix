@@ -1070,6 +1070,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 								isImage: imageParts.length > 0,
 								imageData: imageParts[0]?.base64,
 								mediaType: imageParts[0]?.mediaType,
+								mcpImages: imageParts,
 							};
 						} catch (e) {
 							return {
@@ -1100,6 +1101,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					isImage?: boolean;
 					imageData?: string;
 					mediaType?: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+					mcpImages?: Array<{ base64: string; mediaType: string }>;
 				};
 
 				// Update cwd if bash tool changed it
@@ -1110,12 +1112,21 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				const text = exec.content;
 				const isError = exec.isError;
 
+				// Collect images for the UI event
+				const images: Array<{ base64: string; mediaType: string }> = [];
+				if (exec.mcpImages?.length) {
+					images.push(...exec.mcpImages);
+				} else if (exec.isImage && exec.imageData && exec.mediaType) {
+					images.push({ base64: exec.imageData, mediaType: exec.mediaType });
+				}
+
 				yield {
 					type: "tool_result",
 					tool: toolUse.name,
 					toolUseId: toolUse.id,
 					content: text.slice(0, 500),
 					isError,
+					...(images.length > 0 ? { images } : {}),
 				};
 
 				if (exec.isImage && exec.imageData && exec.mediaType) {

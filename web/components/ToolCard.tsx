@@ -3,6 +3,37 @@ import type { LogEntry, TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron } from "./icons.tsx";
 
+/** Render inline images from tool results (e.g. MCP screenshots). */
+function ToolResultImages({
+	images,
+}: {
+	images: Array<{ base64: string; mediaType: string }>;
+}) {
+	if (images.length === 0) return null;
+	return (
+		<div className="og-tool-result-images">
+			{images.map((img) => (
+				<img
+					key={img.base64.slice(-32)}
+					src={`data:${img.mediaType};base64,${img.base64}`}
+					alt="tool result"
+					className="og-tool-result-image"
+					onClick={() =>
+						window.open(`data:${img.mediaType};base64,${img.base64}`, "_blank")
+					}
+					onKeyDown={(e) => {
+						if (e.key === "Enter" || e.key === " ")
+							window.open(
+								`data:${img.mediaType};base64,${img.base64}`,
+								"_blank",
+							);
+					}}
+				/>
+			))}
+		</div>
+	);
+}
+
 /** Format MCP tool results as human-readable summaries instead of raw JSON. */
 export function formatMcpToolResult(
 	toolName: string,
@@ -657,6 +688,11 @@ export function ToolCard({
 						)}
 					</div>
 				)}
+				{resultEntry.images && resultEntry.images.length > 0 && (
+					<div className="og-tool-card-body">
+						<ToolResultImages images={resultEntry.images} />
+					</div>
+				)}
 			</div>
 		</div>
 	);
@@ -853,6 +889,11 @@ export function LogEntryView({
 							<div className="og-tool-card-result">
 								{mcpFormatted ?? content}
 							</div>
+						</div>
+					)}
+					{entry.images && entry.images.length > 0 && (
+						<div className="og-tool-card-body">
+							<ToolResultImages images={entry.images} />
 						</div>
 					)}
 				</div>

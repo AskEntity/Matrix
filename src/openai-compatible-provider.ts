@@ -848,12 +848,23 @@ export class OpenAICompatibleProvider implements AgentProvider {
 
 				if (exec.cwd) cwd = exec.cwd;
 
+				// Collect images for the UI event
+				const images: Array<{ base64: string; mediaType: string }> = [];
+				if (exec.mcpImages?.length) {
+					for (const img of exec.mcpImages) {
+						images.push({ base64: img.data, mediaType: img.mediaType });
+					}
+				} else if (exec.isImage && exec.imageData && exec.mediaType) {
+					images.push({ base64: exec.imageData, mediaType: exec.mediaType });
+				}
+
 				yield {
 					type: "tool_result",
 					tool: tc.function.name,
 					toolUseId: tc.id,
 					content: exec.content.slice(0, 500),
 					isError: exec.isError,
+					...(images.length > 0 ? { images } : {}),
 				};
 
 				// OpenAI format: each tool result is a separate message
