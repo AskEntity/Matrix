@@ -16,7 +16,10 @@ import type {
 	AgentSession,
 } from "./agent-provider.ts";
 import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
-import type { CanonicalEvent } from "./canonical-events.ts";
+import {
+	type CanonicalEvent,
+	eventsToAnthropicMessages,
+} from "./canonical-events.ts";
 import { DEFAULT_MODEL } from "./config.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
@@ -1230,6 +1233,18 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		if (request.sessionStore) {
 			await request.sessionStore.set(sessionId, [...messages]);
 			await request.sessionStore.set(sessionId, [...events], "events");
+		}
+
+		// Deterministic verification: compare reconstructed messages from events
+		if (events.length > 0) {
+			const reconstructed = eventsToAnthropicMessages(events);
+			const match = JSON.stringify(reconstructed) === JSON.stringify(messages);
+			if (!match) {
+				console.error("[EVENTS MISMATCH]", {
+					messagesLen: messages.length,
+					reconstructedLen: reconstructed.length,
+				});
+			}
 		}
 
 		const { inputPer1M, outputPer1M } = getModelPricing(model);
