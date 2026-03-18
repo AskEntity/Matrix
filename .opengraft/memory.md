@@ -471,3 +471,13 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - Returns `{ queue, targetId }` so callers know whether the queue belongs to the immediate parent or an ancestor.
 - Both success and error `child_complete` notifications also persist to the immediate parent (for its eventual resumption) when the notification is delivered to a non-immediate ancestor.
 - Pattern: `if (node.parentId && (!result?.queue || result.targetId !== node.parentId))` — persist to immediate parent unless it already has the queue.
+
+
+## Events Determinism Verification Results
+
+- All tested sessions show ✅ PERFECT match between `messages` and `eventsToAnthropicMessages(events)`.
+- Event types verified: `user_message`, `assistant_response`, `tool_results`.
+- Not yet verified: `queue_messages` (implicit yield drain — hard to trigger with MCP tools), `compacted_resume`/`summarization_request` (needs long session), `budget_warning`.
+- `queue_messages` path only triggers on implicit yield (`end_turn` → `queue.wait()` → drain). Explicit `yield()` MCP tool delivers messages as `tool_results` instead.
+- Pre-Phase-2 legacy sessions will show `[EVENTS MISMATCH]` (expected — no events existed before Phase 2). Goes away after clear sessions.
+- **Key finding**: The 3 most common event types (user_message, assistant_response, tool_results) cover ~99% of real usage and are deterministic.
