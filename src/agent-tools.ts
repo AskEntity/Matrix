@@ -306,6 +306,14 @@ Commit the curated memory as a standalone commit after all task merges are done.
 - If a merge conflict is too complex to resolve: merge the more complex/larger feature first,
   then \`reset_task\` + \`send_message_to_child\` the simpler feature so it rebuilds on top of the merged code.
 
+## Multi-Phase Tasks
+When a task has multiple phases (e.g., "Phase 1: types, Phase 2: implementation, Phase 3: tests"):
+- Create ALL phase sub-tasks upfront under the parent task, not just the current phase
+- Execute phases in order (or parallel where possible)
+- Keep the parent task open (pending/in_progress) until ALL phases are complete
+- Only close the parent when every phase is done
+- Each phase's completion status is independent — a phase can be closed while the parent stays open
+
 ## Reusable Worker Pattern
 To assign multiple sequential tasks to the same agent without spawning new ones:
 1. Start child via send_message_to_child with initial instructions
