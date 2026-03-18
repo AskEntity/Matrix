@@ -712,5 +712,207 @@ describe("fetchContextWindowFromAPI", () => {
 	});
 });
 
+// ── Canonical events recording ──
+
+describe("canonical events recording", () => {
+	let tmpDir: string;
+
+	beforeAll(async () => {
+		tmpDir = await mkdtemp(
+			join(tmpdir(), "openai-compatible-provider-events-test-"),
+		);
+	});
+
+	afterAll(async () => {
+		clearContextWindowCache();
+		await rm(tmpDir, { recursive: true, force: true });
+	});
+
+	test("records canonical events alongside messages", async () => {
+		const originalKey = process.env.OPENAI_API_KEY;
+		const originalBase = process.env.OPENAI_BASE_URL;
+		const originalFetch = globalThis.fetch;
+
+		process.env.OPENAI_API_KEY = "test-key";
+		process.env.OPENAI_BASE_URL = "http://localhost:9999";
+
+		let chatCallCount = 0;
+		globalThis.fetch = mock(async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === "string"
+					? url
+					: url instanceof URL
+						? url.toString()
+						: url.url;
+			if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
+				return new Response(
+					JSON.stringify({
+						data: [{ id: "gpt-4o", context_length: 128000 }],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			chatCallCount++;
+			if (chatCallCount === 1) {
+				// First call: assistant calls done()
+				return new Response(
+					JSON.stringify({
+						id: "chatcmpl-1",
+						object: "chat.completion",
+						choices: [
+							{
+								index: 0,
+								message: {
+									role: "assistant",
+									content: "Completing task.",
+									tool_calls: [
+										{
+											id: "call_done",
+											type: "function",
+											function: {
+												name: "mcp__opengraft__done",
+												arguments: JSON.stringify({
+													status: "passed",
+													summary: "Done",
+												}),
+											},
+										},
+									],
+								},
+								finish_reason: "tool_calls",
+							},
+						],
+						usage: {
+							prompt_tokens: 400,
+							completion_tokens: 80,
+							total_tokens: 480,
+						},
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				);
+			}
+			// Second call: stop
+			return new Response(
+				JSON.stringify({
+					id: "chatcmpl-2",
+					object: "chat.completion",
+					choices: [
+						{
+							index: 0,
+							message: { role: "assistant", content: "All done." },
+							finish_reason: "stop",
+						},
+					],
+					usage: {
+						prompt_tokens: 100,
+						completion_tokens: 10,
+						total_tokens: 110,
+					},
+				}),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			);
+		}) as unknown as typeof fetch;
+
+		try {
+			const sessionStore = new SessionStore(join(tmpDir, "sessions-events"));
+			const provider = new OpenAICompatibleProvider("gpt-4o");
+			const session = provider.startSession({
+				prompt: "Do the task",
+				cwd: tmpDir,
+				systemPrompt: "You are a helpful agent.",
+				sessionStore,
+				mcpToolDefs: {
+					opengraft: [
+						{
+							name: "done",
+							description: "Signal completion",
+							inputSchema: {
+								status: {
+									_zod: {
+										def: { type: "string" },
+										bag: { description: "passed or failed" },
+									},
+								},
+								summary: {
+									_zod: {
+										def: { type: "string" },
+										bag: { description: "Summary" },
+									},
+								},
+							},
+							handler: async (input: Record<string, unknown>) => ({
+								content: [
+									{
+										type: "text",
+										text: `Task marked as ${input.status}.`,
+									},
+								],
+							}),
+						},
+					],
+				},
+			});
+
+			// Consume events until idle, then stop
+			const consumePromise = (async () => {
+				let result = await session.events.next();
+				while (!result.done) {
+					if (
+						result.value.type === "status" &&
+						(result.value as { message: string }).message.includes("idle state")
+					) {
+						session.stop();
+					}
+					result = await session.events.next();
+				}
+				return result.value as AgentResult;
+			})();
+
+			await consumePromise;
+
+			// Verify canonical events were persisted
+			const storedEvents = (await sessionStore.get(
+				session.sessionId,
+				"events",
+			)) as Array<{ type: string }> | null;
+			expect(storedEvents).not.toBeNull();
+			expect(storedEvents?.length).toBeGreaterThanOrEqual(3);
+
+			// Should have: user_message, assistant_response (with tool_calls), tool_results, assistant_response (stop)
+			const types = storedEvents?.map((e) => e.type);
+			expect(types?.[0]).toBe("user_message");
+			expect(types).toContain("assistant_response");
+			expect(types).toContain("tool_results");
+
+			// Verify user_message has cwd
+			const userMsg = storedEvents?.[0] as {
+				type: string;
+				content: string;
+				cwd?: string;
+			};
+			expect(userMsg.cwd).toBe(tmpDir);
+			expect(userMsg.content).toContain("Do the task");
+		} finally {
+			clearContextWindowCache();
+			process.env.OPENAI_API_KEY = originalKey ?? "";
+			if (originalBase) {
+				process.env.OPENAI_BASE_URL = originalBase;
+			} else {
+				delete process.env.OPENAI_BASE_URL;
+			}
+			globalThis.fetch = originalFetch;
+		}
+	});
+});
+
 // Import AgentResult for type assertion
 import type { AgentResult } from "./types.ts";

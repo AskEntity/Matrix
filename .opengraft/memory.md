@@ -133,3 +133,12 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - Frontend slash commands (/compact, /clear) are handled in `web/handlers.ts` via `handleSlashCommand()`, intercepted in `handleSubmit` before chat message dispatch.
 - `pendingCompact` state was removed — compact UI feedback comes entirely from WS events (compact_started → compact completion).
 - The compact button in TokenUsageBadge still works as secondary trigger, same code path.
+
+
+## OpenAI Canonical Events
+
+- OpenAI provider now records CanonicalEvent at every messages.push site, matching Anthropic provider pattern.
+- `assistant_response.content` stores `[{...historyMsg}]` — the full OpenAI message object wrapped in an array.
+- `tool_results.results` stores individual `{ role: "tool", tool_call_id, name, content }` messages.
+- `eventsToOpenAIMessages()` spreads assistant_response.content and tool_results.results directly (they are already OpenAI format).
+- Events persist via both `setSync` (mid-loop) and `set` (final), same as Anthropic.
