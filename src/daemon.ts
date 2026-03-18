@@ -100,6 +100,45 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	// This allows registering passkeys from the remote domain (needed for rpID matching)
 	registerAdminAuthRoutes(app, ctx);
 
+	// Passkey setup page — standalone HTML for registration + login
+	app.get("/setup", (c) => {
+		return c.html(`<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenGraft Passkey Setup</title>
+<style>body{font-family:system-ui;background:#1a1a2e;color:#e0e0e0;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0}
+.card{background:#16213e;border-radius:12px;padding:40px;max-width:400px;width:90%;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.3)}
+h1{font-size:1.5em;margin-bottom:.5em}
+.btn{padding:12px 24px;border:none;border-radius:8px;font-size:1em;cursor:pointer;margin:8px;width:80%}
+.register{background:#2ecc71;color:#fff}.login{background:#3498db;color:#fff}
+.btn:disabled{opacity:.5}
+#status{margin-top:16px;padding:10px;border-radius:6px;display:none}
+.ok{background:#1a4731;display:block!important}.err{background:#4a1a1a;display:block!important}
+</style></head><body><div class="card">
+<h1>🔐 OpenGraft Setup</h1>
+<p>Domain: <strong>${"${"}location.hostname}</strong></p>
+<button class="btn register" id="regBtn">Register New Passkey</button>
+<button class="btn login" id="loginBtn">Sign In with Passkey</button>
+<div id="status"></div>
+</div>
+<script type="module">
+import{startRegistration,startAuthentication}from"https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@13/+esm";
+const s=document.getElementById("status"),rb=document.getElementById("regBtn"),lb=document.getElementById("loginBtn");
+function show(msg,ok){s.textContent=msg;s.className=ok?"ok":"err"}
+rb.onclick=async()=>{rb.disabled=true;try{
+const o=await(await fetch("/auth/register/options",{method:"POST"})).json();
+const r=await startRegistration(o);
+const v=await(await fetch("/auth/register/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(r)})).json();
+show(v.verified?"✅ Registered! Now click Sign In.":"❌ Failed",v.verified);
+}catch(e){show("❌ "+e.message,false)}finally{rb.disabled=false}};
+lb.onclick=async()=>{lb.disabled=true;try{
+const o=await(await fetch("/auth/login/options",{method:"POST"})).json();
+const r=await startAuthentication(o);
+const v=await(await fetch("/auth/login/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(r)})).json();
+if(v.verified){show("✅ Authenticated! Redirecting...",true);setTimeout(()=>location.href="/",1000)}
+else show("❌ Auth failed",false);
+}catch(e){show("❌ "+e.message,false)}finally{lb.disabled=false}};
+</script></body></html>`);
+	});
+
 	// Health
 	app.get("/health", async (c) => {
 		const response: HealthResponse = {
