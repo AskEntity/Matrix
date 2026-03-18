@@ -125,7 +125,7 @@ export function LoginPage({
 							{loading ? "Authenticating..." : "Sign in with Passkey"}
 						</button>
 					</>
-				) : (
+				) : !enforced ? (
 					<>
 						<p className="og-login-subtitle">
 							No passkeys registered. Register one to secure access.
@@ -139,15 +139,11 @@ export function LoginPage({
 							{loading ? "Registering..." : "Register Passkey"}
 						</button>
 					</>
-				)}
-				{!enforced && (
-					<button
-						type="button"
-						className="og-login-btn og-login-btn-ghost"
-						onClick={onAuthenticated}
-					>
-						Continue without auth →
-					</button>
+				) : (
+					<p className="og-login-subtitle">
+						No passkeys registered. Disable enforcement to register a new
+						passkey, or use the admin port.
+					</p>
 				)}
 				{status && (
 					<div
