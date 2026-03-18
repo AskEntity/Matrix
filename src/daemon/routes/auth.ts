@@ -54,7 +54,11 @@ function resolveRpName(ctx: DaemonContext): string {
 
 function resolveOrigin(req: Request): string {
 	const url = new URL(req.url);
-	return `${url.protocol}//${url.host}`;
+	// Respect X-Forwarded-Proto from reverse proxies (CF Tunnel, nginx, etc.)
+	const proto =
+		req.headers.get("x-forwarded-proto") ?? url.protocol.replace(":", "");
+	const host = req.headers.get("host") ?? url.host;
+	return `${proto}://${host}`;
 }
 
 // ── Login Routes (Main Port) ───────────────────────────────────────────────
