@@ -578,12 +578,15 @@ describe("strongEventsToAnthropicMessages", () => {
 		]);
 	});
 
-	test("converts assistant_text only → simple string content", () => {
+	test("converts assistant_text only → array content format", () => {
 		const events: StrongEvent[] = [
 			{ type: "assistant_text", content: "I'll help you.", ts: 1000 },
 		];
 		expect(strongEventsToAnthropicMessages(events)).toEqual([
-			{ role: "assistant", content: "I'll help you." },
+			{
+				role: "assistant",
+				content: [{ type: "text", text: "I'll help you." }],
+			},
 		]);
 	});
 
@@ -615,12 +618,14 @@ describe("strongEventsToAnthropicMessages", () => {
 						id: "tc1",
 						name: "bash",
 						input: { command: "ls" },
+						caller: { type: "direct" },
 					},
 					{
 						type: "tool_use",
 						id: "tc2",
 						name: "read_file",
 						input: { path: "src/main.ts" },
+						caller: { type: "direct" },
 					},
 				],
 			},
@@ -646,6 +651,7 @@ describe("strongEventsToAnthropicMessages", () => {
 						id: "tc1",
 						name: "bash",
 						input: { command: "echo hi" },
+						caller: { type: "direct" },
 					},
 				],
 			},
@@ -760,7 +766,7 @@ describe("strongEventsToAnthropicMessages", () => {
 					},
 					{
 						type: "text",
-						text: "[Messages received while you were working:]\n<parent_update>\nNew instructions here\n</parent_update>",
+						text: "[Messages received while you were working:]\nNew instructions here",
 					},
 					{
 						type: "tool_result",
@@ -773,7 +779,7 @@ describe("strongEventsToAnthropicMessages", () => {
 		]);
 	});
 
-	test("standalone queue_message → user message", () => {
+	test("standalone queue_message → user message with idle wrapper", () => {
 		const events: StrongEvent[] = [
 			{
 				type: "queue_message",
@@ -785,12 +791,8 @@ describe("strongEventsToAnthropicMessages", () => {
 		expect(strongEventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "user",
-				content: [
-					{
-						type: "text",
-						text: "[Messages received while you were working:]\n<user>\nPlease check this\n</user>",
-					},
-				],
+				content:
+					"[Messages received while you were idle:]\nPlease check this\n\nProcess these messages and continue working. Remember to call done() when finished.",
 			},
 		]);
 	});
@@ -853,6 +855,7 @@ describe("strongEventsToAnthropicMessages", () => {
 					id: "tu_1",
 					name: "bash",
 					input: { command: "echo hi" },
+					caller: { type: "direct" },
 				},
 			],
 		});
@@ -869,7 +872,7 @@ describe("strongEventsToAnthropicMessages", () => {
 		});
 		expect(messages[3]).toEqual({
 			role: "assistant",
-			content: "Done!",
+			content: [{ type: "text", text: "Done!" }],
 		});
 	});
 
@@ -922,6 +925,7 @@ describe("strongEventsToAnthropicMessages", () => {
 					id: "tc1",
 					name: "bash",
 					input: { command: "ls" },
+					caller: { type: "direct" },
 				},
 			],
 		});
@@ -938,7 +942,7 @@ describe("strongEventsToAnthropicMessages", () => {
 		});
 		expect(messages[3]).toEqual({
 			role: "assistant",
-			content: "Found the source directory.",
+			content: [{ type: "text", text: "Found the source directory." }],
 		});
 	});
 
@@ -1037,8 +1041,12 @@ describe("strongEventsToAnthropicMessages", () => {
 		const messages = strongEventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(1);
 		const content = (messages[0] as { content: unknown[] }).content;
-		// 1 tool_result + 1 text (queue msg) + 1 image + 1 annotation = 4
+		// 1 tool_result + 1 text (queue msg) + 1 image + 1 annotation
 		expect(content).toHaveLength(4);
+		expect(content[1]).toEqual({
+			type: "text",
+			text: "[Messages received while you were working:]\nLook at this",
+		});
 		expect(content[2]).toEqual({
 			type: "image",
 			source: { type: "base64", media_type: "image/png", data: "qimg" },
@@ -1556,6 +1564,179 @@ describe("strongEventsToOpenAIMessages", () => {
 			tool_call_id: "call_1",
 			name: "bash",
 			content: "Command failed with exit code 1",
+		});
+	});
+});
+
+// ── Bug fix regression tests ──
+
+describe("strongEventsToAnthropicMessages — converter bug fixes", () => {
+	test("Bug 1: assistant text-only must use array content format (not bare string)", () => {
+		// The Anthropic provider stores: {role: "assistant", content: [{type: "text", text: "..."}]}
+		// The converter must produce the same array format, not a bare string.
+		const events: StrongEvent[] = [
+			{ type: "user_message", content: "Hello", ts: 1000 },
+			{ type: "assistant_text", content: "Hi there!", ts: 1001 },
+		];
+		const messages = strongEventsToAnthropicMessages(events);
+		expect(messages[1]).toEqual({
+			role: "assistant",
+			content: [{ type: "text", text: "Hi there!" }],
+		});
+	});
+
+	test("Bug 1: multiple assistant_text blocks still produce array format", () => {
+		const events: StrongEvent[] = [
+			{ type: "assistant_text", content: "First paragraph.", ts: 1000 },
+			{ type: "assistant_text", content: "Second paragraph.", ts: 1001 },
+		];
+		const messages = strongEventsToAnthropicMessages(events);
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: [
+				{ type: "text", text: "First paragraph." },
+				{ type: "text", text: "Second paragraph." },
+			],
+		});
+	});
+
+	test("Bug 1: assistant_text + tool_calls still produce array format (unchanged)", () => {
+		const events: StrongEvent[] = [
+			{ type: "assistant_text", content: "Let me check.", ts: 1000 },
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "ls" },
+				ts: 1001,
+			},
+		];
+		const messages = strongEventsToAnthropicMessages(events);
+		// Should still be array format with text + tool_use (including caller)
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: [
+				{ type: "text", text: "Let me check." },
+				{
+					type: "tool_use",
+					id: "tc1",
+					name: "bash",
+					input: { command: "ls" },
+					caller: { type: "direct" },
+				},
+			],
+		});
+	});
+
+	test("Bug 2: standalone queue_message uses idle wrapper and formatted content", () => {
+		// Standalone queue_message events (from implicit yield drain) should:
+		// - Use "[Messages received while you were idle:]" (not "working")
+		// - Include the content as-is (already formatted by formatQueueMessage)
+		// - Include the "Process these messages..." suffix
+		// - Output as string content (not array)
+		const events: StrongEvent[] = [
+			{
+				type: "queue_message",
+				source: "user",
+				content: "<user_message>Hello from user</user_message>",
+				ts: 1000,
+			},
+		];
+		const messages = strongEventsToAnthropicMessages(events);
+		expect(messages[0]).toEqual({
+			role: "user",
+			content:
+				"[Messages received while you were idle:]\n<user_message>Hello from user</user_message>\n\nProcess these messages and continue working. Remember to call done() when finished.",
+		});
+	});
+
+	test("Bug 2: multiple queue_messages are joined and wrapped correctly", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "queue_message",
+				source: "user",
+				content: "<user_message>First message</user_message>",
+				ts: 1000,
+			},
+			{
+				type: "queue_message",
+				source: "parent_update",
+				content: "<parent_update>Second message</parent_update>",
+				ts: 1001,
+			},
+		];
+		const messages = strongEventsToAnthropicMessages(events);
+		expect(messages[0]).toEqual({
+			role: "user",
+			content:
+				"[Messages received while you were idle:]\n<user_message>First message</user_message>\n<parent_update>Second message</parent_update>\n\nProcess these messages and continue working. Remember to call done() when finished.",
+		});
+	});
+
+	test("Bug 2: queue_message with images uses array content format", () => {
+		const events: StrongEvent[] = [
+			{
+				type: "queue_message",
+				source: "user",
+				content: "<user_message>Check this image</user_message>",
+				images: [{ base64: "abc123", mediaType: "image/png" }],
+				ts: 1000,
+			},
+		];
+		const messages = strongEventsToAnthropicMessages(events);
+		expect(messages[0]).toEqual({
+			role: "user",
+			content: [
+				{
+					type: "text",
+					text: "[Messages received while you were idle:]\n<user_message>Check this image</user_message>\n\nProcess these messages and continue working. Remember to call done() when finished.",
+				},
+				{
+					type: "image",
+					source: {
+						type: "base64",
+						media_type: "image/png",
+						data: "abc123",
+					},
+				},
+			],
+		});
+	});
+
+	test("Bug fix: queue_message between tool_results uses working wrapper", () => {
+		// Cancellation-point queue messages (between tool_results) should use
+		// "[Messages received while you were working:]" (existing behavior is correct for this case)
+		const events: StrongEvent[] = [
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "ok",
+				isError: false,
+				ts: 1000,
+			},
+			{
+				type: "queue_message",
+				source: "parent_update",
+				content: "<parent_update>New instructions</parent_update>",
+				ts: 1001,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc2",
+				content: "done",
+				isError: false,
+				ts: 1002,
+			},
+		];
+		const messages = strongEventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(1);
+		const content = (messages[0] as { content: unknown[] }).content;
+		// tool_result + queue text + tool_result
+		expect(content).toHaveLength(3);
+		// The queue text block should use "working" wrapper with content as-is
+		expect(content[1]).toEqual({
+			type: "text",
+			text: "[Messages received while you were working:]\n<parent_update>New instructions</parent_update>",
 		});
 	});
 });

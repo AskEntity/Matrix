@@ -2,12 +2,14 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type Anthropic from "@anthropic-ai/sdk";
 import type {
 	MessageParam,
 	TextBlockParam,
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import { createOrchestratorTools } from "./agent-tools.ts";
 import {
+	AnthropicCompatibleProvider,
 	addMessagesCacheControl,
 	backgroundProcesses,
 	buildCompactedContext,
@@ -28,6 +30,11 @@ import {
 	truncateSearchOutput,
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
+import {
+	type StrongEvent,
+	strongEventsToAnthropicMessages,
+} from "./canonical-events.ts";
+import { EventStore } from "./event-store.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { AgentResult } from "./types.ts";
@@ -1709,5 +1716,848 @@ describe("jsSearch", () => {
 		});
 		expect(result).toContain("const x = 1;");
 		expect(result).toContain("const y = 2;");
+	});
+});
+
+// ── Helpers for mocking Anthropic SDK stream ──
+
+/** Create a mock Anthropic MessageStream that yields events and resolves finalMessage(). */
+function createMockStream(
+	response: Anthropic.Messages.Message,
+	textDeltas?: string[],
+) {
+	const events: Array<{
+		type: string;
+		delta?: { type: string; text?: string };
+	}> = [];
+	if (textDeltas) {
+		for (const text of textDeltas) {
+			events.push({
+				type: "content_block_delta",
+				delta: { type: "text_delta", text },
+			});
+		}
+	}
+	return {
+		[Symbol.asyncIterator]: async function* () {
+			for (const event of events) {
+				yield event;
+			}
+		},
+		finalMessage: () => Promise.resolve(response),
+	};
+}
+
+/** Build an Anthropic response message with text + optional tool_use blocks. */
+function buildAnthropicResponse(opts: {
+	text?: string;
+	toolUses?: Array<{
+		id: string;
+		name: string;
+		input: Record<string, unknown>;
+	}>;
+	stopReason?: "end_turn" | "tool_use";
+}): Anthropic.Messages.Message {
+	const content: Array<
+		| { type: "text"; text: string }
+		| {
+				type: "tool_use";
+				id: string;
+				name: string;
+				input: Record<string, unknown>;
+		  }
+	> = [];
+	if (opts.text !== undefined) {
+		content.push({ type: "text", text: opts.text });
+	}
+	if (opts.toolUses) {
+		for (const tu of opts.toolUses) {
+			content.push({
+				type: "tool_use",
+				id: tu.id,
+				name: tu.name,
+				input: tu.input,
+			});
+		}
+	}
+	return {
+		id: `msg_${Math.random().toString(36).slice(2)}`,
+		type: "message",
+		role: "assistant",
+		model: "claude-sonnet-4-20250514",
+		content,
+		stop_reason: opts.stopReason ?? (opts.toolUses ? "tool_use" : "end_turn"),
+		stop_sequence: null,
+		usage: {
+			input_tokens: 100,
+			output_tokens: 50,
+			cache_creation_input_tokens: 0,
+			cache_read_input_tokens: 0,
+		},
+	} as Anthropic.Messages.Message;
+}
+
+// ── StrongEvent deterministic verification (Anthropic) ──
+
+describe("StrongEvent deterministic verification", () => {
+	let tmpDir: string;
+
+	beforeAll(async () => {
+		tmpDir = await mkdtemp(join(tmpdir(), "og-anthropic-strong-event-verify-"));
+	});
+
+	afterAll(async () => {
+		await rm(tmpDir, { recursive: true, force: true });
+	});
+
+	/** Helper: create a provider with a mocked client */
+	function createMockedProvider(
+		streamFn: (params: unknown) => ReturnType<typeof createMockStream>,
+	) {
+		// Set env so constructor doesn't warn
+		const savedKey = process.env.ANTHROPIC_API_KEY;
+		process.env.ANTHROPIC_API_KEY = "test-key";
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6");
+		process.env.ANTHROPIC_API_KEY = savedKey;
+
+		// Replace the client's messages.stream with our mock
+		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
+		(provider as any).client = {
+			messages: {
+				stream: streamFn,
+				countTokens: async () => ({ input_tokens: 100 }),
+			},
+		};
+		return provider;
+	}
+
+	test("basic conversation: user → assistant text → done", async () => {
+		const testDir = join(tmpDir, "basic");
+		const eventStore = new EventStore(testDir);
+
+		const response = buildAnthropicResponse({
+			text: "Hello! How can I help?",
+			stopReason: "end_turn",
+		});
+		const provider = createMockedProvider(() =>
+			createMockStream(response, ["Hello! How can I help?"]),
+		);
+
+		// No queue → end_turn exits immediately
+		const result = await provider.execute({
+			prompt: "Say hello",
+			cwd: testDir,
+			systemPrompt: "You are helpful.",
+			eventStore,
+		});
+
+		expect(result.success).toBe(true);
+
+		// Read events from EventStore
+		const events = eventStore.readActive(result.sessionId ?? "");
+		expect(events.length).toBeGreaterThanOrEqual(2);
+
+		// Should have: user_message, assistant_text
+		const types = events.map((e) => e.type);
+		expect(types[0]).toBe("user_message");
+		expect(types).toContain("assistant_text");
+
+		// Verify reconstruction matches
+		const reconstructed = strongEventsToAnthropicMessages(events);
+		expect(reconstructed.length).toBeGreaterThanOrEqual(2);
+		expect(reconstructed[0]).toEqual({
+			role: "user",
+			content: `Working directory: ${testDir}\n\nSay hello`,
+		});
+		// Assistant text without tool_use should use array format (matches Anthropic API response.content)
+		expect(reconstructed[1]).toEqual({
+			role: "assistant",
+			content: [{ type: "text", text: "Hello! How can I help?" }],
+		});
+	});
+
+	test("tool calls: user → assistant + tool_use → tool_result → assistant", async () => {
+		const testDir = join(tmpDir, "tool-calls");
+		const eventStore = new EventStore(testDir);
+
+		let callCount = 0;
+		const provider = createMockedProvider(() => {
+			callCount++;
+			if (callCount === 1) {
+				// First call: assistant calls a tool
+				return createMockStream(
+					buildAnthropicResponse({
+						text: "I'll check the files.",
+						toolUses: [
+							{
+								id: "tu_1",
+								name: "mcp__opengraft__done",
+								input: { status: "passed", summary: "All done" },
+							},
+						],
+					}),
+					["I'll check the files."],
+				);
+			}
+			// Second call: after done() tool result, assistant responds with end_turn
+			return createMockStream(
+				buildAnthropicResponse({
+					text: "Task completed.",
+					stopReason: "end_turn",
+				}),
+				["Task completed."],
+			);
+		});
+
+		const session = provider.startSession({
+			prompt: "Do the task",
+			cwd: testDir,
+			systemPrompt: "You are helpful.",
+			eventStore,
+			mcpToolDefs: {
+				opengraft: [
+					{
+						name: "done",
+						description: "Signal completion",
+						inputSchema: {},
+						handler: async (input: Record<string, unknown>) => ({
+							content: [
+								{
+									type: "text",
+									text: `Task marked as ${input.status}. Entering idle state.`,
+								},
+							],
+						}),
+					},
+				],
+			},
+		});
+
+		const consumePromise = (async () => {
+			let result = await session.events.next();
+			while (!result.done) {
+				if (
+					result.value.type === "status" &&
+					(result.value as { message: string }).message.includes("idle state")
+				) {
+					session.stop();
+				}
+				result = await session.events.next();
+			}
+			return result.value as AgentResult;
+		})();
+
+		const agentResult = await consumePromise;
+		expect(agentResult.success).toBe(true);
+
+		const events = eventStore.readActive(agentResult.sessionId ?? "");
+		const types = events.map((e) => e.type);
+		expect(types).toContain("user_message");
+		expect(types).toContain("assistant_text");
+		expect(types).toContain("tool_call");
+		expect(types).toContain("tool_result");
+
+		// Verify tool_call details
+		const toolCall = events.find((e) => e.type === "tool_call");
+		if (toolCall?.type === "tool_call") {
+			expect(toolCall.tool).toBe("mcp__opengraft__done");
+			expect(toolCall.toolCallId).toBe("tu_1");
+		}
+
+		// Verify tool_result details
+		const toolResult = events.find((e) => e.type === "tool_result");
+		if (toolResult?.type === "tool_result") {
+			expect(toolResult.toolCallId).toBe("tu_1");
+			expect(toolResult.content).toContain("Task marked as passed");
+		}
+
+		// Verify reconstruction
+		const reconstructed = strongEventsToAnthropicMessages(events);
+		// Should have: user, assistant+tool_use, tool_result, assistant(end_turn text)
+		expect(reconstructed.length).toBeGreaterThanOrEqual(4);
+
+		// First msg: user
+		expect((reconstructed[0] as { role: string }).role).toBe("user");
+		// Second msg: assistant with text + tool_use
+		const assistantMsg = reconstructed[1] as {
+			role: string;
+			content: unknown[];
+		};
+		expect(assistantMsg.role).toBe("assistant");
+		expect(Array.isArray(assistantMsg.content)).toBe(true);
+		const toolUseBlock = (assistantMsg.content as Array<{ type: string }>).find(
+			(b) => b.type === "tool_use",
+		);
+		expect(toolUseBlock).toBeDefined();
+		// Third msg: user with tool_result
+		const toolResultMsg = reconstructed[2] as {
+			role: string;
+			content: unknown[];
+		};
+		expect(toolResultMsg.role).toBe("user");
+	});
+
+	test("error tool results: isError flag preserved in events", async () => {
+		const testDir = join(tmpDir, "error-tool");
+		const eventStore = new EventStore(testDir);
+
+		let callCount = 0;
+		const provider = createMockedProvider(() => {
+			callCount++;
+			if (callCount === 1) {
+				return createMockStream(
+					buildAnthropicResponse({
+						text: "Running command.",
+						toolUses: [
+							{
+								id: "tu_err",
+								name: "mcp__opengraft__done",
+								input: { status: "failed", summary: "Error" },
+							},
+						],
+					}),
+					["Running command."],
+				);
+			}
+			return createMockStream(
+				buildAnthropicResponse({
+					text: "Acknowledged failure.",
+					stopReason: "end_turn",
+				}),
+				["Acknowledged failure."],
+			);
+		});
+
+		const session = provider.startSession({
+			prompt: "Try something",
+			cwd: testDir,
+			systemPrompt: "You are helpful.",
+			eventStore,
+			mcpToolDefs: {
+				opengraft: [
+					{
+						name: "done",
+						description: "Signal completion",
+						inputSchema: {},
+						handler: async () => ({
+							isError: true,
+							content: [
+								{
+									type: "text",
+									text: "Error: command failed with exit code 1",
+								},
+							],
+						}),
+					},
+				],
+			},
+		});
+
+		const consumePromise = (async () => {
+			let result = await session.events.next();
+			while (!result.done) {
+				if (
+					result.value.type === "status" &&
+					(result.value as { message: string }).message.includes("idle state")
+				) {
+					session.stop();
+				}
+				result = await session.events.next();
+			}
+			return result.value as AgentResult;
+		})();
+
+		const agentResult = await consumePromise;
+		expect(agentResult.success).toBe(true);
+
+		const events = eventStore.readActive(agentResult.sessionId ?? "");
+
+		// Verify error flag is preserved
+		const toolResult = events.find((e) => e.type === "tool_result");
+		expect(toolResult).toBeDefined();
+		if (toolResult?.type === "tool_result") {
+			expect(toolResult.isError).toBe(true);
+			expect(toolResult.content).toContain("Error: command failed");
+		}
+
+		// Verify reconstruction preserves is_error
+		const reconstructed = strongEventsToAnthropicMessages(events);
+		const userMsgWithToolResult = reconstructed.find(
+			(m) =>
+				(m as { role: string }).role === "user" &&
+				Array.isArray((m as { content: unknown }).content),
+		);
+		expect(userMsgWithToolResult).toBeDefined();
+		const toolResultBlock = (
+			(userMsgWithToolResult as { content: unknown[] }).content as Array<{
+				type: string;
+				is_error?: boolean;
+			}>
+		).find((b) => b.type === "tool_result");
+		expect(toolResultBlock?.is_error).toBe(true);
+	});
+
+	test("implicit yield: end_turn → queue.wait → queue drain → continue", async () => {
+		const testDir = join(tmpDir, "implicit-yield");
+		const eventStore = new EventStore(testDir);
+
+		let callCount = 0;
+		const provider = createMockedProvider(() => {
+			callCount++;
+			if (callCount === 1) {
+				// First call: end_turn (no tools) → provider enters queue.wait()
+				return createMockStream(
+					buildAnthropicResponse({
+						text: "I'm done for now.",
+						stopReason: "end_turn",
+					}),
+					["I'm done for now."],
+				);
+			}
+			// Second call: after queue drain, model responds
+			return createMockStream(
+				buildAnthropicResponse({
+					text: "Got your message, continuing.",
+					stopReason: "end_turn",
+				}),
+				["Got your message, continuing."],
+			);
+		});
+
+		const queue = new MessageQueue();
+		const session = provider.startSession({
+			prompt: "Start working",
+			cwd: testDir,
+			systemPrompt: "You are helpful.",
+			eventStore,
+			queue,
+		});
+
+		// Consume events, enqueue a message when idle, then stop on second idle
+		let idleCount = 0;
+		const consumePromise = (async () => {
+			let result = await session.events.next();
+			while (!result.done) {
+				if (result.value.type === "agent_idle") {
+					idleCount++;
+					if (idleCount === 1) {
+						// First idle: inject a message
+						queue.enqueue({
+							source: "user",
+							content: "Here is a new instruction",
+						});
+					} else {
+						// Second idle: stop the session
+						session.stop();
+					}
+				}
+				result = await session.events.next();
+			}
+			return result.value as AgentResult;
+		})();
+
+		const agentResult = await consumePromise;
+		expect(agentResult.success).toBe(true);
+		expect(idleCount).toBe(2);
+
+		const events = eventStore.readActive(agentResult.sessionId ?? "");
+		const types = events.map((e) => e.type);
+
+		// Must have queue_message events
+		expect(types).toContain("queue_message");
+		const queueMsgEvent = events.find((e) => e.type === "queue_message");
+		expect(queueMsgEvent).toBeDefined();
+		if (queueMsgEvent?.type === "queue_message") {
+			expect(queueMsgEvent.source).toBe("user");
+			expect(queueMsgEvent.content).toContain("Here is a new instruction");
+		}
+
+		// Verify reconstruction
+		const reconstructed = strongEventsToAnthropicMessages(events);
+		// Should have: user_msg, assistant(end_turn), queue_message(as user), assistant(continue)
+		expect(reconstructed.length).toBeGreaterThanOrEqual(4);
+
+		// Find the queue message in reconstructed — it becomes a user message with tool_result/text format
+		const queueReconstructed = reconstructed.find((m) => {
+			const content = (m as { role: string; content: unknown }).content;
+			if (Array.isArray(content)) {
+				return content.some(
+					(b: { type?: string; text?: string }) =>
+						b.type === "text" &&
+						b.text?.includes("[Messages received while you were working:]"),
+				);
+			}
+			if (typeof content === "string") {
+				return content.includes("[Messages received while");
+			}
+			return false;
+		});
+		expect(queueReconstructed).toBeDefined();
+	});
+
+	test("multiple parallel tool calls: 3 tool_use blocks → 3 tool_results", async () => {
+		const testDir = join(tmpDir, "parallel-tools");
+		const eventStore = new EventStore(testDir);
+
+		let callCount = 0;
+		const provider = createMockedProvider(() => {
+			callCount++;
+			if (callCount === 1) {
+				return createMockStream(
+					buildAnthropicResponse({
+						text: "I'll run multiple tools.",
+						toolUses: [
+							{
+								id: "tu_a",
+								name: "mcp__test__tool_a",
+								input: { param: "a" },
+							},
+							{
+								id: "tu_b",
+								name: "mcp__test__tool_b",
+								input: { param: "b" },
+							},
+							{
+								id: "tu_c",
+								name: "mcp__test__tool_c",
+								input: { param: "c" },
+							},
+						],
+					}),
+					["I'll run multiple tools."],
+				);
+			}
+			return createMockStream(
+				buildAnthropicResponse({
+					text: "All tools completed.",
+					stopReason: "end_turn",
+				}),
+				["All tools completed."],
+			);
+		});
+
+		const session = provider.startSession({
+			prompt: "Run three tools",
+			cwd: testDir,
+			systemPrompt: "You are helpful.",
+			eventStore,
+			mcpToolDefs: {
+				test: [
+					{
+						name: "tool_a",
+						description: "Tool A",
+						inputSchema: {},
+						handler: async () => ({
+							content: [{ type: "text", text: "Result A" }],
+						}),
+					},
+					{
+						name: "tool_b",
+						description: "Tool B",
+						inputSchema: {},
+						handler: async () => ({
+							content: [{ type: "text", text: "Result B" }],
+						}),
+					},
+					{
+						name: "tool_c",
+						description: "Tool C",
+						inputSchema: {},
+						handler: async () => ({
+							content: [{ type: "text", text: "Result C" }],
+						}),
+					},
+				],
+			},
+		});
+
+		const consumePromise = (async () => {
+			let result = await session.events.next();
+			while (!result.done) {
+				if (
+					result.value.type === "status" &&
+					(result.value as { message: string }).message.includes("idle state")
+				) {
+					session.stop();
+				}
+				result = await session.events.next();
+			}
+			return result.value as AgentResult;
+		})();
+
+		const agentResult = await consumePromise;
+		expect(agentResult.success).toBe(true);
+
+		const events = eventStore.readActive(agentResult.sessionId ?? "");
+		const toolCalls = events.filter((e) => e.type === "tool_call");
+		const toolResults = events.filter((e) => e.type === "tool_result");
+
+		// Should have 3 tool_calls and 3 tool_results
+		expect(toolCalls.length).toBe(3);
+		expect(toolResults.length).toBe(3);
+
+		// Verify each tool_call has matching tool_result
+		for (const tc of toolCalls) {
+			if (tc.type === "tool_call") {
+				const matchingResult = toolResults.find(
+					(tr) => tr.type === "tool_result" && tr.toolCallId === tc.toolCallId,
+				);
+				expect(matchingResult).toBeDefined();
+			}
+		}
+
+		// Verify reconstruction batching
+		const reconstructed = strongEventsToAnthropicMessages(events);
+		// user, assistant(text + 3 tool_uses), user(3 tool_results), assistant(end_turn)
+		expect(reconstructed.length).toBe(4);
+
+		// Verify assistant message has text + 3 tool_use blocks
+		const assistantMsg = reconstructed[1] as {
+			role: string;
+			content: unknown[];
+		};
+		expect(assistantMsg.role).toBe("assistant");
+		expect(Array.isArray(assistantMsg.content)).toBe(true);
+		const toolUseBlocks = (
+			assistantMsg.content as Array<{ type: string }>
+		).filter((b) => b.type === "tool_use");
+		expect(toolUseBlocks.length).toBe(3);
+
+		// Verify user message has 3 tool_result blocks
+		const toolResultMsg = reconstructed[2] as {
+			role: string;
+			content: unknown[];
+		};
+		expect(toolResultMsg.role).toBe("user");
+		const trBlocks = (toolResultMsg.content as Array<{ type: string }>).filter(
+			(b) => b.type === "tool_result",
+		);
+		expect(trBlocks.length).toBe(3);
+	});
+
+	test("compaction: compact_marker event separates pre/post compaction events", async () => {
+		const testDir = join(tmpDir, "compaction");
+		const eventStore = new EventStore(testDir);
+		const sessionId = "test-compaction-session";
+
+		// Manually write pre-compaction events
+		const preEvents: StrongEvent[] = [
+			{
+				type: "user_message",
+				content: "Old message before compaction",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "Old response",
+				ts: 1001,
+			},
+		];
+		eventStore.appendBatch(sessionId, preEvents);
+
+		// Write compact_marker
+		eventStore.append(sessionId, {
+			type: "compact_marker",
+			checkpoint: "Checkpoint: completed old task",
+			savedTokens: 5000,
+			ts: 2000,
+		});
+
+		// Write post-compaction events
+		const postEvents: StrongEvent[] = [
+			{
+				type: "compacted_resume",
+				content: "Resuming from checkpoint",
+				cwd: testDir,
+				ts: 2001,
+			},
+			{
+				type: "assistant_text",
+				content: "Continuing work.",
+				ts: 2002,
+			},
+		];
+		eventStore.appendBatch(sessionId, postEvents);
+
+		// readActive should only return post-marker events
+		const active = eventStore.readActive(sessionId);
+		expect(active.length).toBe(2);
+		expect(active[0]?.type).toBe("compacted_resume");
+		expect(active[1]?.type).toBe("assistant_text");
+
+		// Full read should have all events including marker
+		const all = eventStore.read(sessionId);
+		expect(all.length).toBe(5); // 2 pre + 1 marker + 2 post
+
+		// Reconstruction of active events should be correct
+		const reconstructed = strongEventsToAnthropicMessages(active);
+		expect(reconstructed.length).toBe(2);
+		expect(reconstructed[0]).toEqual({
+			role: "user",
+			content: "Resuming from checkpoint",
+		});
+		expect(reconstructed[1]).toEqual({
+			role: "assistant",
+			content: [{ type: "text", text: "Continuing work." }],
+		});
+	});
+
+	test("budget warnings: budget_warning events reconstruct as user messages", async () => {
+		const testDir = join(tmpDir, "budget");
+		const eventStore = new EventStore(testDir);
+		const sessionId = "test-budget-session";
+
+		// Write a conversation with a budget warning
+		const events: StrongEvent[] = [
+			{
+				type: "user_message",
+				content: "Start working",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "Working on it.",
+				ts: 1001,
+			},
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "echo hi" },
+				ts: 1002,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "hi",
+				isError: false,
+				ts: 1003,
+			},
+			{
+				type: "budget_warning",
+				warning: "⚠️ Budget exceeded (0.50 / 0.40 budget). Call done() now.",
+				ts: 1004,
+			},
+			{
+				type: "assistant_text",
+				content: "Wrapping up.",
+				ts: 1005,
+			},
+		];
+		eventStore.appendBatch(sessionId, events);
+
+		const active = eventStore.readActive(sessionId);
+		const reconstructed = strongEventsToAnthropicMessages(active);
+
+		// Should have: user, assistant+tool, tool_result, budget_warning(user), assistant
+		expect(reconstructed.length).toBe(5);
+		expect((reconstructed[0] as { role: string }).role).toBe("user");
+		expect((reconstructed[1] as { role: string }).role).toBe("assistant");
+		expect((reconstructed[2] as { role: string }).role).toBe("user"); // tool_result
+		// Budget warning becomes a user message
+		expect(reconstructed[3]).toEqual({
+			role: "user",
+			content: "⚠️ Budget exceeded (0.50 / 0.40 budget). Call done() now.",
+		});
+		expect((reconstructed[4] as { role: string }).role).toBe("assistant");
+	});
+
+	test("cancellation point queue drain: messages between tool_call and tool_result", async () => {
+		const testDir = join(tmpDir, "cancellation-point");
+		const eventStore = new EventStore(testDir);
+
+		let callCount = 0;
+		const provider = createMockedProvider(() => {
+			callCount++;
+			if (callCount === 1) {
+				return createMockStream(
+					buildAnthropicResponse({
+						text: "Running a tool.",
+						toolUses: [
+							{
+								id: "tu_cp",
+								name: "mcp__opengraft__done",
+								input: { status: "passed", summary: "Done" },
+							},
+						],
+					}),
+					["Running a tool."],
+				);
+			}
+			return createMockStream(
+				buildAnthropicResponse({
+					text: "Finished.",
+					stopReason: "end_turn",
+				}),
+				["Finished."],
+			);
+		});
+
+		const queue = new MessageQueue();
+		const session = provider.startSession({
+			prompt: "Do task",
+			cwd: testDir,
+			systemPrompt: "You are helpful.",
+			eventStore,
+			queue,
+			mcpToolDefs: {
+				opengraft: [
+					{
+						name: "done",
+						description: "Signal completion",
+						inputSchema: {},
+						handler: async (input: Record<string, unknown>) => {
+							// During tool execution, enqueue a message to simulate cancellation point
+							queue.enqueue({
+								source: "user",
+								content: "Urgent update during tool execution",
+							});
+							return {
+								content: [
+									{
+										type: "text",
+										text: `Task marked as ${input.status}. Entering idle state.`,
+									},
+								],
+							};
+						},
+					},
+				],
+			},
+		});
+
+		const consumePromise = (async () => {
+			let result = await session.events.next();
+			while (!result.done) {
+				if (
+					result.value.type === "status" &&
+					(result.value as { message: string }).message.includes("idle state")
+				) {
+					session.stop();
+				}
+				result = await session.events.next();
+			}
+			return result.value as AgentResult;
+		})();
+
+		const agentResult = await consumePromise;
+		expect(agentResult.success).toBe(true);
+
+		const events = eventStore.readActive(agentResult.sessionId ?? "");
+
+		// The tool_result content should contain the appended cancellation message
+		const toolResult = events.find((e) => e.type === "tool_result");
+		expect(toolResult).toBeDefined();
+		if (toolResult?.type === "tool_result") {
+			expect(toolResult.content).toContain(
+				"Task marked as passed. Entering idle state.",
+			);
+			expect(toolResult.content).toContain(
+				"[Messages received while you were working:]",
+			);
+			expect(toolResult.content).toContain(
+				"Urgent update during tool execution",
+			);
+		}
 	});
 });

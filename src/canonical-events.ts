@@ -250,28 +250,18 @@ export function strongEventsToAnthropicMessages(
 						id: tcEvent.toolCallId,
 						name: tcEvent.tool,
 						input: tcEvent.input,
+						caller: { type: "direct" },
 					});
 					i++;
 				}
 
-				// If only text and no tools, use simple string content
-				if (
-					contentBlocks.length === 1 &&
-					(contentBlocks[0] as { type: string }).type === "text"
-				) {
-					messages.push({
-						role: "assistant",
-						content: (contentBlocks[0] as { text: string }).text,
-					});
-				} else {
-					messages.push({ role: "assistant", content: contentBlocks });
-				}
+				// Always use array content format (matches Anthropic API response.content)
+				messages.push({ role: "assistant", content: contentBlocks });
 				break;
 			}
 
-			case "tool_result":
-			case "queue_message": {
-				// Collect consecutive tool_results and queue_messages into one user message
+			case "tool_result": {
+				// Collect consecutive tool_results (with optional queue_messages for cancellation points) into one user message
 				const resultBlocks: unknown[] = [];
 				const imageBlocks: unknown[] = [];
 
@@ -301,7 +291,8 @@ export function strongEventsToAnthropicMessages(
 							}
 						}
 					} else if (current.type === "queue_message") {
-						const queueText = `[Messages received while you were working:]\n<${current.source}>\n${current.content}\n</${current.source}>`;
+						// Queue messages at cancellation points (between tool_results)
+						const queueText = `[Messages received while you were working:]\n${current.content}`;
 						resultBlocks.push({ type: "text", text: queueText });
 						if (current.images) {
 							for (const img of current.images) {
@@ -333,6 +324,46 @@ export function strongEventsToAnthropicMessages(
 					});
 				} else {
 					messages.push({ role: "user", content: resultBlocks });
+				}
+				break;
+			}
+
+			case "queue_message": {
+				// Standalone queue_messages (from implicit yield / idle drain)
+				// Collect consecutive queue_messages into a single user message
+				const queueContents: string[] = [];
+				const queueImageBlocks: unknown[] = [];
+
+				while (
+					i < events.length &&
+					(events[i] as StrongEvent).type === "queue_message"
+				) {
+					const qm = events[i] as StrongEvent & { type: "queue_message" };
+					queueContents.push(qm.content);
+					if (qm.images) {
+						for (const img of qm.images) {
+							queueImageBlocks.push({
+								type: "image",
+								source: {
+									type: "base64",
+									media_type: img.mediaType,
+									data: img.base64,
+								},
+							});
+						}
+					}
+					i++;
+				}
+
+				const joined = queueContents.join("\n");
+				const idleText = `[Messages received while you were idle:]\n${joined}\n\nProcess these messages and continue working. Remember to call done() when finished.`;
+				if (queueImageBlocks.length > 0) {
+					messages.push({
+						role: "user",
+						content: [{ type: "text", text: idleText }, ...queueImageBlocks],
+					});
+				} else {
+					messages.push({ role: "user", content: idleText });
 				}
 				break;
 			}
@@ -443,8 +474,7 @@ export function strongEventsToOpenAIMessages(events: StrongEvent[]): unknown[] {
 				break;
 			}
 
-			case "tool_result":
-			case "queue_message": {
+			case "tool_result": {
 				// Process tool_results as individual messages, with queue_messages
 				// appended to the preceding tool result and images collected for a user message
 				const imageResults: Array<{
@@ -510,6 +540,50 @@ export function strongEventsToOpenAIMessages(events: StrongEvent[]): unknown[] {
 						);
 					}
 					messages.push({ role: "user", content: imageParts });
+				}
+				break;
+			}
+
+			case "queue_message": {
+				// Standalone queue_messages (from implicit yield / idle drain)
+				const oaiQueueContents: string[] = [];
+				const oaiQueueImageParts: unknown[] = [];
+
+				while (
+					i < events.length &&
+					(events[i] as StrongEvent).type === "queue_message"
+				) {
+					const qm = events[i] as StrongEvent & { type: "queue_message" };
+					oaiQueueContents.push(qm.content);
+					if (qm.images) {
+						for (const img of qm.images) {
+							oaiQueueImageParts.push(
+								{ type: "text", text: "[User-attached image]" },
+								{
+									type: "image_url",
+									image_url: {
+										url: `data:${img.mediaType};base64,${img.base64}`,
+										detail: "auto",
+									},
+								},
+							);
+						}
+					}
+					i++;
+				}
+
+				const oaiJoined = oaiQueueContents.join("\n");
+				const oaiIdleText = `[Messages received while you were idle:]\n${oaiJoined}\n\nProcess these messages and continue working. Remember to call done() when finished.`;
+				if (oaiQueueImageParts.length > 0) {
+					messages.push({
+						role: "user",
+						content: [
+							{ type: "text", text: oaiIdleText },
+							...oaiQueueImageParts,
+						],
+					});
+				} else {
+					messages.push({ role: "user", content: oaiIdleText });
 				}
 				break;
 			}

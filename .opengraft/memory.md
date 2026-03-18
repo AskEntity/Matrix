@@ -136,3 +136,12 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 ## Slash Commands
 
 - Frontend slash commands (/compact, /clear) handled in `web/handlers.ts` via `handleSlashCommand()`. `pendingCompact` state removed — WS events drive UI feedback.
+
+## StrongEvent Converter Fixes (March 2026)
+
+- **Bug 1 (assistant text-only format)**: `strongEventsToAnthropicMessages` must always use array `content` for assistant messages (e.g., `[{type: "text", text: "..."}]`), matching what the Anthropic API returns in `response.content`. Never use bare string for assistant content.
+- **Bug 2 (idle vs working queue wrapper)**: Standalone `queue_message` events (from implicit yield/idle drain) use `[Messages received while you were idle:]` wrapper with `Process these messages...` suffix. Queue messages between tool_results (cancellation point) use `[Messages received while you were working:]` wrapper without suffix.
+- **caller field**: Converter adds `caller: {type: "direct"}` to tool_use blocks to match Anthropic API response format, eliminating need for stripCaller workaround.
+- **OpenAI converter**: Same idle/working distinction applies. Standalone queue_messages produce a user message; cancellation-point queue_messages append to last tool result content.
+- **Mocking Anthropic SDK**: Create fake stream with `{[Symbol.asyncIterator]: async function*() {...}, finalMessage: () => Promise.resolve(response)}`. Replace `(provider as any).client` with mock object providing `messages.stream` and `messages.countTokens`.
+
