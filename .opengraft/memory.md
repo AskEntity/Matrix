@@ -501,3 +501,12 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - REST `POST /tasks/:nodeId/message` response always includes `persisted: true` (since persistence always happens).
 - `notifyParentChain` remains REST-only (not in MCP path).
 - Double-delivery bug fix: `send_message_to_child` no longer includes user message in the launch prompt. Message arrives exactly once via queue drain.
+
+## MCP Tool Result Images
+
+- Both providers now yield `images: Array<{base64, mediaType}>` in `tool_result` events when MCP tools return image content.
+- Anthropic provider: MCP handler returns `mcpImages` (all image parts), not just `imageParts[0]`.
+- ws-handler extracts `msg.images` and passes to `createLogEntry({ images })`. LogEntry already had `images` field.
+- `ToolResultImages` component in ToolCard.tsx renders images with click-to-open-full-size.
+- Images always visible outside the expand/collapse toggle (not gated on `expanded` state).
+- CSS: `og-tool-result-images` (flex wrap container) + `og-tool-result-image` (max-height 400px, cursor pointer, border).
