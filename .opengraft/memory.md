@@ -168,3 +168,15 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - `getEventStore()` helper in `src/daemon/helpers.ts`, same directory as SessionStore (`{dataDir}/sessions/{projectId}`).
 - `DaemonContext.eventStores` map added to `src/daemon/context.ts`.
 
+
+
+
+## StrongEvent Integration (Phase 3 - OpenAI)
+
+- `strongEventsToOpenAIMessages()` converter in `src/canonical-events.ts`.
+- Key differences from Anthropic converter: assistant_text+tool_calls → single message with `content` + `tool_calls` array; tool_results → individual `{ role: "tool" }` messages (not batched); images → separate user message with `image_url` parts.
+- Maintains `toolNames` Map<toolCallId, toolName> for resolving `name` field on tool result messages.
+- Queue messages at cancellation points are appended to last tool_result content (same as messages array).
+- EventStore dual-write added to OpenAI provider alongside old CanonicalEvent[] recording.
+- Deterministic verification at end of runLoop compares `strongEventsToOpenAIMessages(eventStore.readActive(sessionId))` vs `messages`.
+- Known mismatch: cancellation-point queue images (separate user message in messages, not captured as separate StrongEvent). Same pattern as Anthropic provider image mismatch.

@@ -15,6 +15,8 @@ import {
 import {
 	type CanonicalEvent,
 	eventsToOpenAIMessages,
+	type StrongEvent,
+	strongEventsToOpenAIMessages,
 } from "./canonical-events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
@@ -481,6 +483,26 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			});
 		}
 
+		// ── StrongEvent recording via EventStore (dual-write alongside old events) ──
+		const eventStore = request.eventStore;
+		if (eventStore) {
+			if (isResume) {
+				eventStore.append(sessionId, {
+					type: "user_message",
+					content: request.prompt,
+					isResume: true,
+					ts: Date.now(),
+				});
+			} else {
+				eventStore.append(sessionId, {
+					type: "user_message",
+					content: firstUserContent,
+					cwd,
+					ts: Date.now(),
+				});
+			}
+		}
+
 		// Build tool list: built-in tools (converted) + MCP tools
 		const builtinTools = convertToolsToOpenAI(TOOLS);
 		const allTools: OpenAITool[] = [...builtinTools];
@@ -560,10 +582,25 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					});
 					const postCompactChars = userContent.length;
 					const estimatedPostCompactTokens = Math.floor(postCompactChars / 4);
-					const savedTokens = Math.max(
+					const compactSavedTokens = Math.max(
 						0,
 						oldTokens - estimatedPostCompactTokens,
 					);
+					// Append compact_marker + compacted_resume to EventStore
+					if (eventStore) {
+						eventStore.append(sessionId, {
+							type: "compact_marker",
+							checkpoint,
+							savedTokens: compactSavedTokens,
+							ts: Date.now(),
+						});
+						eventStore.append(sessionId, {
+							type: "compacted_resume",
+							content: userContent,
+							cwd,
+							ts: Date.now(),
+						});
+					}
 					estimatedInputTokens = estimatedPostCompactTokens;
 					yield {
 						type: "usage",
@@ -572,7 +609,11 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						contextWindow,
 						estimated: true,
 					};
-					yield { type: "compact", checkpoint, savedTokens };
+					yield {
+						type: "compact",
+						checkpoint,
+						savedTokens: compactSavedTokens,
+					};
 					manualCompactRequested = false;
 				} catch (e) {
 					yield {
@@ -616,6 +657,13 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					type: "summarization_request",
 					instruction: summarizationInstruction,
 				});
+				if (eventStore) {
+					eventStore.append(sessionId, {
+						type: "summarization_request",
+						instruction: summarizationInstruction,
+						ts: Date.now(),
+					});
+				}
 				compactionPending = true;
 				preCompactTokenCount = estimatedInputTokens;
 				// Fall through to the normal API call — the model will generate the checkpoint
@@ -698,6 +746,39 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				type: "assistant_response",
 				content: [{ ...historyMsg }],
 			});
+			// Record individual StrongEvents for each content block
+			if (eventStore) {
+				const strongEvents: StrongEvent[] = [];
+				if (assistantMsg.content) {
+					strongEvents.push({
+						type: "assistant_text",
+						content: assistantMsg.content,
+						ts: Date.now(),
+					});
+				}
+				if (
+					!compactionPending &&
+					assistantMsg.tool_calls &&
+					assistantMsg.tool_calls.length > 0
+				) {
+					for (const tc of assistantMsg.tool_calls) {
+						let parsedInput: Record<string, unknown> = {};
+						try {
+							parsedInput = JSON.parse(tc.function.arguments);
+						} catch {
+							// Keep empty
+						}
+						strongEvents.push({
+							type: "tool_call",
+							tool: tc.function.name,
+							toolCallId: tc.id,
+							input: parsedInput,
+							ts: Date.now(),
+						});
+					}
+				}
+				eventStore.appendBatch(sessionId, strongEvents);
+			}
 
 			// If compaction is pending, skip tool execution and continue to next iteration
 			// where the checkpoint will be extracted and context rebuilt
@@ -772,6 +853,24 @@ export class OpenAICompatibleProvider implements AgentProvider {
 							type: "queue_messages",
 							formatted,
 						});
+					}
+					// Record individual queue_message StrongEvents
+					if (eventStore) {
+						const strongEvents: StrongEvent[] = nonCompact.map((msg) => ({
+							type: "queue_message" as const,
+							source: msg.source,
+							content: formatQueueMessage(msg),
+							...(msg.source === "user" && msg.images?.length
+								? {
+										images: msg.images.map((img) => ({
+											base64: img.base64,
+											mediaType: img.mediaType,
+										})),
+									}
+								: {}),
+							ts: Date.now(),
+						}));
+						eventStore.appendBatch(sessionId, strongEvents);
 					}
 					continue;
 				} catch {
@@ -1040,6 +1139,52 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					});
 				}
 			}
+			// Record individual tool_result StrongEvents
+			if (eventStore) {
+				const strongEvents: StrongEvent[] = [];
+				for (let j = 0; j < toolCalls.length; j++) {
+					const tc = toolCalls[j] as OpenAIToolCall;
+					const exec = execResults[j] as {
+						content: string;
+						isError: boolean;
+						mcpImages?: Array<{ mediaType: string; data: string }>;
+						isImage?: boolean;
+						imageData?: string;
+						mediaType?: string;
+					};
+					// Find the actual tool result message content (includes done() reminder and queue text appended)
+					const toolMsg = messages.find(
+						(m) => m.role === "tool" && m.tool_call_id === tc.id,
+					);
+					const resultContent =
+						toolMsg && typeof toolMsg.content === "string"
+							? toolMsg.content
+							: exec.content;
+					const images: Array<{ base64: string; mediaType: string }> = [];
+					if (exec.mcpImages?.length) {
+						images.push(
+							...exec.mcpImages.map((img) => ({
+								base64: img.data,
+								mediaType: img.mediaType,
+							})),
+						);
+					} else if (exec.isImage && exec.imageData && exec.mediaType) {
+						images.push({
+							base64: exec.imageData,
+							mediaType: exec.mediaType,
+						});
+					}
+					strongEvents.push({
+						type: "tool_result",
+						toolCallId: tc.id,
+						content: resultContent,
+						isError: exec.isError,
+						...(images.length > 0 ? { images } : {}),
+						ts: Date.now(),
+					});
+				}
+				eventStore.appendBatch(sessionId, strongEvents);
+			}
 
 			// Persist after tool results — fire-and-forget
 			request.sessionStore?.setSync(sessionId, [...messages], "openai");
@@ -1057,11 +1202,25 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					const warning = `⚠️ Budget exceeded (${runningCost.toFixed(4)} / ${request.budgetUsd.toFixed(2)} budget). Call done() now.`;
 					messages.push({ role: "user", content: warning });
 					events.push({ type: "budget_warning", warning });
+					if (eventStore) {
+						eventStore.append(sessionId, {
+							type: "budget_warning",
+							warning,
+							ts: Date.now(),
+						});
+					}
 					yield { type: "status", message: warning };
 				} else if (ratio >= 0.8) {
 					const warning = `⚠️ Warning: task has used ${Math.round(ratio * 100)}% of its ${request.budgetUsd.toFixed(2)} budget (${runningCost.toFixed(4)} spent). Wrap up soon.`;
 					messages.push({ role: "user", content: warning });
 					events.push({ type: "budget_warning", warning });
+					if (eventStore) {
+						eventStore.append(sessionId, {
+							type: "budget_warning",
+							warning,
+							ts: Date.now(),
+						});
+					}
 					yield { type: "status", message: warning };
 				}
 			}
@@ -1073,7 +1232,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			await request.sessionStore.set(sessionId, [...events], "events");
 		}
 
-		// Deterministic verification: compare reconstructed messages from events
+		// Deterministic verification: compare reconstructed messages from old CanonicalEvents
 		if (events.length > 0) {
 			const reconstructed = eventsToOpenAIMessages(events);
 			const match = JSON.stringify(reconstructed) === JSON.stringify(messages);
@@ -1082,6 +1241,23 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					messagesLen: messages.length,
 					reconstructedLen: reconstructed.length,
 				});
+			}
+		}
+
+		// Deterministic verification: compare reconstructed messages from StrongEvents
+		if (eventStore) {
+			const activeEvents = eventStore.readActive(sessionId);
+			if (activeEvents.length > 0) {
+				const reconstructed = strongEventsToOpenAIMessages(activeEvents);
+				const match =
+					JSON.stringify(messages) === JSON.stringify(reconstructed);
+				if (!match) {
+					console.error("[STRONG EVENTS MISMATCH]", {
+						messagesLen: messages.length,
+						eventsLen: activeEvents.length,
+						reconstructedLen: reconstructed.length,
+					});
+				}
 			}
 		}
 
