@@ -77,26 +77,39 @@ export function App() {
 function AppInner() {
 	// Auth state — check on mount
 	const [authState, setAuthState] = useState<
-		"loading" | "authenticated" | "needs_login" | "no_credentials"
+		"loading" | "authenticated" | "login"
 	>("loading");
+	const [authInfo, setAuthInfo] = useState<{
+		enforced: boolean;
+		hasCredentials: boolean;
+	}>({ enforced: false, hasCredentials: false });
+
+	const handleLogout = useCallback(async () => {
+		try {
+			await fetch("/auth/logout", { method: "POST" });
+		} catch {
+			// ignore
+		}
+		setAuthState("login");
+	}, []);
 
 	useEffect(() => {
 		fetch("/auth/status")
 			.then((r) => r.json())
 			.then(
 				(data: {
-					enabled?: boolean;
+					enforced?: boolean;
 					hasCredentials?: boolean;
 					authenticated?: boolean;
 				}) => {
-					if (!data.enabled || data.authenticated) {
-						// Auth not enabled or already authenticated
+					setAuthInfo({
+						enforced: data.enforced ?? false,
+						hasCredentials: data.hasCredentials ?? false,
+					});
+					if (data.authenticated) {
 						setAuthState("authenticated");
-					} else if (data.hasCredentials) {
-						setAuthState("needs_login");
 					} else {
-						// Auth enabled but no credentials — show setup notice
-						setAuthState("no_credentials");
+						setAuthState("login");
 					}
 				},
 			)
@@ -117,19 +130,20 @@ function AppInner() {
 		);
 	}
 
-	if (authState === "needs_login" || authState === "no_credentials") {
+	if (authState === "login") {
 		return (
 			<LoginPage
-				hasCredentials={authState === "needs_login"}
+				hasCredentials={authInfo.hasCredentials}
+				enforced={authInfo.enforced}
 				onAuthenticated={() => setAuthState("authenticated")}
 			/>
 		);
 	}
 
-	return <AuthenticatedApp />;
+	return <AuthenticatedApp onLogout={handleLogout} />;
 }
 
-function AuthenticatedApp() {
+function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const { t } = useLocale();
 	const {
 		projects,
@@ -558,6 +572,7 @@ function AuthenticatedApp() {
 				}}
 				onToggleSettings={() => setShowSettings((s) => !s)}
 				onThemeChange={(t) => setThemeState(t as typeof theme)}
+				onLogout={onLogout}
 			/>
 
 			{showSettings && projectId && (

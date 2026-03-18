@@ -548,3 +548,14 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - Auth middleware exempts `/`, `/web/*`, and `/auth/*` so the SPA LoginPage can render.
 - `/auth/status` returns both `enabled` (backward compat) and `enforced` fields.
 - Admin page: inline `onclick` removed, replaced with `addEventListener` in module script to fix ReferenceError.
+
+
+## Auth Endpoint Consolidation
+
+- Registration routes (`/auth/register/*`, `/auth/credentials`) moved from admin-only (`registerAdminAuthRoutes`) to main port (`registerAuthRoutes`) with enforcement guard.
+- Guard logic: `isRegistrationBlocked()` returns true when `isAuthEnforced(config) && hasCredentials(authPath)`. This prevents lockout when enforced=true but no credentials exist.
+- `/setup` standalone HTML page removed. `LoginPage` React component handles both registration and login.
+- `LoginPage` props: `hasCredentials`, `enforced`, `onAuthenticated`. Shows "Continue without auth →" ghost button when not enforced.
+- `AppHeader` has optional `onLogout` prop — renders `IconLogout` button when provided.
+- Admin port (`registerAdminAuthRoutes`) still has its own unguarded registration routes (localhost-only).
+- Auth middleware: no longer blocks `/setup` (removed). `/auth/*` paths always pass through; per-route guards handle enforcement.

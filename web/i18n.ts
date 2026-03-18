@@ -15,6 +15,7 @@ const en: Translations = {
 	"header.title": "OpenGraft",
 	"header.connected": "Connected",
 	"header.disconnected": "Disconnected",
+	"header.logout": "Logout",
 
 	// Projects
 	"project.add": "Add",
@@ -287,6 +288,7 @@ const zh: Translations = {
 	"header.title": "OpenGraft",
 	"header.connected": "已连接",
 	"header.disconnected": "未连接",
+	"header.logout": "登出",
 
 	// Projects
 	"project.add": "添加",

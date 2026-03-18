@@ -6,6 +6,7 @@ import {
 	IconClose,
 	IconGear,
 	IconHexagon,
+	IconLogout,
 	IconPlus,
 	IconTrash,
 } from "./icons.tsx";
@@ -27,6 +28,7 @@ export function AppHeader({
 	onCancelAddProject,
 	onToggleSettings,
 	onThemeChange,
+	onLogout,
 }: {
 	connected: boolean;
 	projects: Project[];
@@ -44,6 +46,7 @@ export function AppHeader({
 	onCancelAddProject: () => void;
 	onToggleSettings: () => void;
 	onThemeChange: (theme: string) => void;
+	onLogout?: () => void;
 }) {
 	const { locale, setLocale, t } = useLocale();
 	const [versionInfo, setVersionInfo] = useState<string>("");
@@ -197,6 +200,17 @@ export function AppHeader({
 					<option value="cute-light">{t("theme.cuteLight")}</option>
 					<option value="cute-dark">{t("theme.cuteDark")}</option>
 				</select>
+				{onLogout && (
+					<button
+						type="button"
+						className="og-btn-icon"
+						title={t("header.logout")}
+						aria-label={t("header.logout")}
+						onClick={onLogout}
+					>
+						<IconLogout size={13} />
+					</button>
+				)}
 			</div>
 		</header>
 	);

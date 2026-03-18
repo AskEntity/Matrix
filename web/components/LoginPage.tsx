@@ -8,9 +8,14 @@ import { useCallback, useState } from "react";
 interface LoginPageProps {
 	onAuthenticated: () => void;
 	hasCredentials: boolean;
+	enforced: boolean;
 }
 
-export function LoginPage({ onAuthenticated, hasCredentials }: LoginPageProps) {
+export function LoginPage({
+	onAuthenticated,
+	hasCredentials,
+	enforced,
+}: LoginPageProps) {
 	const [status, setStatus] = useState("");
 	const [isError, setIsError] = useState(false);
 	const [loading, setLoading] = useState(false);
@@ -74,6 +79,33 @@ export function LoginPage({ onAuthenticated, hasCredentials }: LoginPageProps) {
 		}
 	}, [onAuthenticated]);
 
+	const handleRegister = useCallback(async () => {
+		setLoading(true);
+		setStatus("");
+		try {
+			const { startRegistration } = await import("@simplewebauthn/browser");
+			const optsRes = await fetch("/auth/register/options", {
+				method: "POST",
+			});
+			if (!optsRes.ok) throw new Error("Failed to get options");
+			const opts = await optsRes.json();
+			const result = await startRegistration({ optionsJSON: opts });
+			const verifyRes = await fetch("/auth/register/verify", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(result),
+			});
+			if (!verifyRes.ok) throw new Error("Verification failed");
+			setStatus("Passkey registered! You can now sign in.");
+			setIsError(false);
+		} catch (e) {
+			setStatus(e instanceof Error ? e.message : "Registration failed");
+			setIsError(true);
+		} finally {
+			setLoading(false);
+		}
+	}, []);
+
 	return (
 		<div className="og-login-page">
 			<div className="og-login-card">
@@ -96,46 +128,26 @@ export function LoginPage({ onAuthenticated, hasCredentials }: LoginPageProps) {
 				) : (
 					<>
 						<p className="og-login-subtitle">
-							No passkeys registered yet. Register one to get started.
+							No passkeys registered. Register one to secure access.
 						</p>
 						<button
 							type="button"
 							className="og-login-btn"
-							onClick={async () => {
-								setLoading(true);
-								setStatus("");
-								try {
-									const { startRegistration } = await import(
-										"@simplewebauthn/browser"
-									);
-									const optsRes = await fetch("/auth/register/options", {
-										method: "POST",
-									});
-									if (!optsRes.ok) throw new Error("Failed to get options");
-									const opts = await optsRes.json();
-									const result = await startRegistration({ optionsJSON: opts });
-									const verifyRes = await fetch("/auth/register/verify", {
-										method: "POST",
-										headers: { "Content-Type": "application/json" },
-										body: JSON.stringify(result),
-									});
-									if (!verifyRes.ok) throw new Error("Verification failed");
-									setStatus("Passkey registered! You can now sign in.");
-									setIsError(false);
-								} catch (e) {
-									setStatus(
-										e instanceof Error ? e.message : "Registration failed",
-									);
-									setIsError(true);
-								} finally {
-									setLoading(false);
-								}
-							}}
+							onClick={handleRegister}
 							disabled={loading}
 						>
 							{loading ? "Registering..." : "Register Passkey"}
 						</button>
 					</>
+				)}
+				{!enforced && (
+					<button
+						type="button"
+						className="og-login-btn og-login-btn-ghost"
+						onClick={onAuthenticated}
+					>
+						Continue without auth →
+					</button>
 				)}
 				{status && (
 					<div

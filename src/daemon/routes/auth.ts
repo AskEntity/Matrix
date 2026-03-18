@@ -1,8 +1,13 @@
 /**
  * Auth routes for WebAuthn/Passkey authentication.
  *
- * Login routes (main port): /auth/status, /auth/login/options, /auth/login/verify, /auth/logout
- * Registration routes (admin port): /auth/register/options, /auth/register/verify, /auth/credentials
+ * Main port routes (registerAuthRoutes):
+ *   /auth/status, /auth/login/options, /auth/login/verify, /auth/logout
+ *   /auth/register/options, /auth/register/verify (blocked when enforced)
+ *   /auth/credentials, DELETE /auth/credentials/:id (blocked when enforced)
+ *
+ * Admin port routes (registerAdminAuthRoutes):
+ *   /auth/register/options, /auth/register/verify, /auth/credentials (localhost-only, no guard)
  */
 
 import { join } from "node:path";
@@ -190,6 +195,152 @@ export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
 		});
 		return c.json({ ok: true });
 	});
+
+	// ── Registration routes (blocked when enforced, unless no credentials exist) ──
+
+	/** Registration is allowed when auth is NOT enforced, or when no credentials exist (prevent lockout). */
+	async function isRegistrationBlocked(): Promise<boolean> {
+		if (!isAuthEnforced(getAuthConfig(ctx))) return false;
+		// Allow registration even when enforced if no credentials exist yet (first-time setup)
+		const authPath = getAuthPath(ctx);
+		return hasCredentials(authPath);
+	}
+
+	// List credentials
+	app.get("/auth/credentials", async (c) => {
+		if (await isRegistrationBlocked()) {
+			return c.json(
+				{
+					error:
+						"Registration not available when auth is enforced. Use admin port or disable enforcement.",
+				},
+				403,
+			);
+		}
+		const authPath = getAuthPath(ctx);
+		const creds = await getCredentials(authPath);
+		return c.json({
+			count: creds.length,
+			credentials: creds.map((cr) => ({
+				id: cr.credentialID,
+				createdAt: cr.createdAt,
+			})),
+		});
+	});
+
+	// Generate registration options
+	app.post("/auth/register/options", async (c) => {
+		if (await isRegistrationBlocked()) {
+			return c.json(
+				{
+					error:
+						"Registration not available when auth is enforced. Use admin port or disable enforcement.",
+				},
+				403,
+			);
+		}
+		const authPath = getAuthPath(ctx);
+		const existingCredentials = await getCredentials(authPath);
+
+		const host = c.req.header("host") ?? "localhost";
+		const rpID = resolveRpID(ctx, host);
+		const rpName = resolveRpName(ctx);
+
+		const options = await generateRegistrationOptions({
+			rpName,
+			rpID,
+			userName: "admin",
+			userDisplayName: "OpenGraft Admin",
+			excludeCredentials: existingCredentials.map((c) => ({
+				id: c.credentialID,
+				transports: c.transports,
+			})),
+			authenticatorSelection: {
+				residentKey: "preferred",
+				userVerification: "preferred",
+			},
+			attestationType: "none",
+		});
+
+		// Store challenge for verification
+		storeChallenge(`register:${options.challenge}`, options.challenge);
+
+		return c.json(options);
+	});
+
+	// Verify registration response
+	app.post("/auth/register/verify", async (c) => {
+		if (await isRegistrationBlocked()) {
+			return c.json(
+				{
+					error:
+						"Registration not available when auth is enforced. Use admin port or disable enforcement.",
+				},
+				403,
+			);
+		}
+		const authPath = getAuthPath(ctx);
+		const body = (await c.req.json()) as RegistrationResponseJSON;
+
+		const host = c.req.header("host") ?? "localhost";
+		const rpID = resolveRpID(ctx, host);
+		const origin = resolveOrigin(c.req.raw);
+
+		try {
+			const verification = await verifyRegistrationResponse({
+				response: body,
+				expectedChallenge: (challenge: string) => {
+					const stored = getAndRemoveChallenge(`register:${challenge}`);
+					return stored !== null;
+				},
+				expectedOrigin: origin,
+				expectedRPID: rpID,
+			});
+
+			if (!verification.verified || !verification.registrationInfo) {
+				return c.json({ error: "Verification failed" }, 400);
+			}
+
+			const { credential } = verification.registrationInfo;
+
+			await addCredential(authPath, {
+				credentialID: credential.id,
+				publicKey: uint8ArrayToBase64url(credential.publicKey),
+				counter: credential.counter,
+				transports: credential.transports,
+				createdAt: new Date().toISOString(),
+			});
+
+			return c.json({ verified: true });
+		} catch (err) {
+			return c.json(
+				{
+					error: err instanceof Error ? err.message : "Verification failed",
+				},
+				400,
+			);
+		}
+	});
+
+	// Delete a credential
+	app.delete("/auth/credentials/:id", async (c) => {
+		if (await isRegistrationBlocked()) {
+			return c.json(
+				{
+					error:
+						"Credential management not available when auth is enforced. Use admin port.",
+				},
+				403,
+			);
+		}
+		const authPath = getAuthPath(ctx);
+		const credId = c.req.param("id");
+		const removed = await removeCredential(authPath, credId);
+		if (!removed) {
+			return c.json({ error: "Credential not found" }, 404);
+		}
+		return c.json({ ok: true });
+	});
 }
 
 // ── Registration Routes (Admin Port) ──────────────────────────────────────
@@ -303,7 +454,7 @@ export function createAuthMiddleware(ctx: DaemonContext) {
 		// Auth not enforced — pass through
 		if (!isAuthEnforced(config)) return next();
 
-		// Skip auth endpoints themselves
+		// Skip auth endpoints themselves (login, register guards are per-route)
 		if (c.req.path.startsWith("/auth/")) return next();
 
 		// Allow SPA static assets through so LoginPage can render
