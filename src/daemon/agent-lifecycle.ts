@@ -34,6 +34,7 @@ import {
 } from "./event-system.ts";
 import {
 	getProjectProvider,
+	getSessionStore,
 	getTracker,
 	readProjectMemory,
 	resolveProjectConfig,
@@ -108,7 +109,7 @@ async function createAgentContext(
 			projectManager: opts.depth === 0 ? ctx.pm : undefined,
 			activeSessions: opts.depth === 0 ? ctx.activeSessions : undefined,
 			currentProjectId: project.id,
-			sessionsDir: join(ctx.config.dataDir, "sessions", project.id),
+			sessionStore: getSessionStore(ctx, project.id),
 			dataDir: ctx.config.dataDir,
 			onTaskEvent: (event) => {
 				broadcastEvent(ctx, project.id, event);
@@ -419,7 +420,6 @@ export async function runChildAgentInBackground(
 			mcpManager,
 		});
 
-		const sessionsDir = join(ctx.config.dataDir, "sessions", project.id);
 		const agentResult = await runChildCore({
 			provider: agentCtx.provider,
 			tracker,
@@ -428,7 +428,7 @@ export async function runChildAgentInBackground(
 			sessionRequest: {
 				prompt,
 				cwd: node.worktreePath as string,
-				sessionsDir,
+				sessionStore: getSessionStore(ctx, project.id),
 				systemPrompt: TASK_SYSTEM_PROMPT,
 				resumeSessionId: nodeId,
 				model: agentCtx.effectiveCfg.model,
@@ -581,7 +581,7 @@ export async function launchAgent(
 		prompt,
 		cwd: project.path,
 		projectPath: project.path,
-		sessionsDir: join(ctx.config.dataDir, "sessions", project.id),
+		sessionStore: getSessionStore(ctx, project.id),
 		systemPrompt,
 		mcpToolDefs: agentCtx.mcpToolDefs,
 		resumeSessionId,
@@ -801,12 +801,25 @@ export async function handleInjectMessage(
 	// and will be delivered as a queue_message. Passing it as prompt would cause
 	// the message to appear twice: once from orchestration_started and once from queue_message.
 	if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
-		await launchAgent(
-			ctx,
-			project,
-			{ prompt: "User sent a new message. Resuming.", resume: true },
-			orchestratorSystemPrompt,
-		);
+		const store = getSessionStore(ctx, projectId);
+		const shouldResume = store.hasAny(rootNodeId);
+		if (shouldResume) {
+			await launchAgent(
+				ctx,
+				project,
+				{ prompt: "User sent a new message. Resuming.", resume: true },
+				orchestratorSystemPrompt,
+			);
+		} else {
+			// No session history — clear persisted messages and start fresh
+			await clearPersistedMessages(ctx.config.dataDir, projectId, rootNodeId);
+			await launchAgent(
+				ctx,
+				project,
+				{ prompt: message },
+				orchestratorSystemPrompt,
+			);
+		}
 	}
 
 	return { ok: true };

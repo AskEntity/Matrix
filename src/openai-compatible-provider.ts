@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import type {
 	AgentEvent,
 	AgentProvider,
@@ -289,7 +287,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 	private baseUrl: string;
 	private apiKey: string;
 	private model: string;
-	private sessionHistory = new Map<string, OpenAIMessage[]>();
 
 	constructor(model?: string, opts?: { apiKey?: string; baseUrl?: string }) {
 		this.baseUrl =
@@ -421,7 +418,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 	): AsyncGenerator<AgentEvent, AgentResult> {
 		const model = request.model ?? this.model;
 		let cwd = request.cwd;
-		const sessionsDir = request.sessionsDir;
 
 		// Try to fetch context window from API, fall back to static lookup
 		const apiContextWindow = await fetchContextWindowFromAPI(
@@ -434,21 +430,12 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			contextWindow * (1 - COMPACT_BUFFER_RATIO),
 		);
 
-		// Load session history from disk if not already in memory
-		if (sessionId && sessionsDir && !this.sessionHistory.has(sessionId)) {
-			try {
-				const data = await readFile(
-					join(sessionsDir, `${sessionId}.openai.json`),
-					"utf-8",
-				);
-				const history = JSON.parse(data) as OpenAIMessage[];
-				this.sessionHistory.set(sessionId, history);
-			} catch {
-				// File missing or corrupt — start fresh
-			}
-		}
-
-		const existingHistory = this.sessionHistory.get(sessionId);
+		// Load session history via SessionStore (survives daemon restart)
+		const existingHistory = request.sessionStore
+			? ((await request.sessionStore.get(sessionId, "openai")) as
+					| OpenAIMessage[]
+					| null)
+			: null;
 		const isResume = Boolean(existingHistory);
 
 		const firstUserContent =
@@ -962,15 +949,8 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				}
 			}
 
-			// Persist after tool results
-			this.sessionHistory.set(sessionId, [...messages]);
-			if (sessionsDir) {
-				writeFile(
-					join(sessionsDir, `${sessionId}.openai.json`),
-					JSON.stringify(messages),
-					"utf-8",
-				).catch(() => {});
-			}
+			// Persist after tool results — fire-and-forget
+			request.sessionStore?.setSync(sessionId, [...messages], "openai");
 
 			// Budget check
 			if (request.budgetUsd && request.budgetUsd > 0) {
@@ -993,19 +973,8 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		}
 
 		// Persist final conversation history
-		const finalMessages = [...messages];
-		this.sessionHistory.set(sessionId, finalMessages);
-		if (sessionsDir) {
-			try {
-				await mkdir(sessionsDir, { recursive: true });
-				await writeFile(
-					join(sessionsDir, `${sessionId}.openai.json`),
-					JSON.stringify(finalMessages),
-					"utf-8",
-				);
-			} catch {
-				// Non-fatal
-			}
+		if (request.sessionStore) {
+			await request.sessionStore.set(sessionId, [...messages], "openai");
 		}
 
 		const { inputPer1M, outputPer1M } = getModelPricing(model);

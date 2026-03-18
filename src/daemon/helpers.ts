@@ -12,6 +12,7 @@ import {
 	resolveConfig,
 } from "../config.ts";
 import { OpenAICompatibleProvider } from "../openai-compatible-provider.ts";
+import { SessionStore } from "../session-store.ts";
 import { TaskTracker } from "../task-tracker.ts";
 import type { TaskNode } from "../types.ts";
 import type { DaemonContext } from "./context.ts";
@@ -78,6 +79,19 @@ export async function getTracker(
 		ctx.trackers.set(projectId, tracker);
 	}
 	return tracker;
+}
+
+/** Get or create a SessionStore for a project. */
+export function getSessionStore(
+	ctx: DaemonContext,
+	projectId: string,
+): SessionStore {
+	let store = ctx.sessionStores.get(projectId);
+	if (!store) {
+		store = new SessionStore(join(ctx.config.dataDir, "sessions", projectId));
+		ctx.sessionStores.set(projectId, store);
+	}
+	return store;
 }
 
 /** Resolve the effective config for a project: global + repo + local. */

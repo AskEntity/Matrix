@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
@@ -460,8 +460,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	private client: Anthropic;
 	private model: string;
 	private useOAuth: boolean;
-	/** Persisted conversation histories keyed by session ID. */
-	private sessionHistory = new Map<string, MessageParam[]>();
 
 	constructor(model?: string, opts?: { apiKey?: string; oauthToken?: string }) {
 		const apiKey = opts?.apiKey ?? process.env.ANTHROPIC_API_KEY;
@@ -558,24 +556,11 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			getCompactionThresholds(contextWindow);
 
 		let cwd = request.cwd;
-		const sessionsDir = request.sessionsDir;
 
-		// Load session history from disk if not already in memory (survives daemon restart)
-		if (sessionId && sessionsDir && !this.sessionHistory.has(sessionId)) {
-			try {
-				const data = await readFile(
-					join(sessionsDir, `${sessionId}.json`),
-					"utf-8",
-				);
-				const history = JSON.parse(data) as MessageParam[];
-				this.sessionHistory.set(sessionId, history);
-			} catch {
-				// File missing or corrupt — start fresh (expected for new sessions)
-			}
-		}
-
-		// Restore conversation history if resuming, otherwise start fresh
-		const existingHistory = this.sessionHistory.get(sessionId);
+		// Load session history via SessionStore (survives daemon restart)
+		const existingHistory = request.sessionStore
+			? ((await request.sessionStore.get(sessionId)) as MessageParam[] | null)
+			: null;
 		const isResume = Boolean(existingHistory);
 		// Prepend working directory to the first user message (not on resume turns) so that
 		// the system prompt stays identical across agents in different worktrees, enabling
@@ -1150,15 +1135,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				messages.push({ role: "user", content: toolResults });
 			}
 
-			// Persist after tool results too (captures full turn)
-			this.sessionHistory.set(sessionId, [...messages]);
-			if (sessionsDir) {
-				writeFile(
-					join(sessionsDir, `${sessionId}.json`),
-					JSON.stringify(messages),
-					"utf-8",
-				).catch(() => {});
-			}
+			// Persist after tool results too (captures full turn) — fire-and-forget
+			request.sessionStore?.setSync(sessionId, [...messages]);
 
 			// Budget check: compute running cost and warn the agent if approaching limit
 			if (request.budgetUsd && request.budgetUsd > 0) {
@@ -1188,21 +1166,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			}
 		}
 
-		// Persist conversation history for future resume (in memory + on disk)
-		const finalMessages = [...messages];
-		this.sessionHistory.set(sessionId, finalMessages);
-		// Also write to disk so the history survives daemon restarts
-		if (sessionsDir) {
-			try {
-				await mkdir(sessionsDir, { recursive: true });
-				await writeFile(
-					join(sessionsDir, `${sessionId}.json`),
-					JSON.stringify(finalMessages),
-					"utf-8",
-				);
-			} catch {
-				// Non-fatal: if we can't persist to disk, in-memory history still works
-			}
+		// Persist conversation history for future resume
+		if (request.sessionStore) {
+			await request.sessionStore.set(sessionId, [...messages]);
 		}
 
 		const { inputPer1M, outputPer1M } = getModelPricing(model);

@@ -70,6 +70,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		eventsDirty: new Set<string>(),
 		pendingMessages: new Map<string, PendingMessage[]>(),
 		pendingClarifications: new Map<string, PendingClarification[]>(),
+		sessionStores: new Map(),
 		MAX_EVENT_HISTORY: 5000,
 		requestCount: 0,
 		startupReady: false,

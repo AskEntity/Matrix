@@ -1,4 +1,3 @@
-import { readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { slugify } from "../../agent-tools.ts";
@@ -21,6 +20,7 @@ import {
 } from "../event-system.ts";
 import {
 	collectDescendants,
+	getSessionStore,
 	getTracker,
 	readProjectMemory,
 } from "../helpers.ts";
@@ -400,7 +400,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 
 		// Clean up all resources for this node and all descendants
 		const nodesToRemove = collectDescendants(tracker, nodeId);
-		const sessionsDir = join(ctx.config.dataDir, "sessions", project.id);
+		const store = getSessionStore(ctx, project.id);
 
 		for (const n of nodesToRemove) {
 			// Close running agent queue (must happen before close() to match
@@ -436,8 +436,8 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				}
 			}
 
-			// Delete session file
-			await unlink(join(sessionsDir, `${n.id}.json`)).catch(() => {});
+			// Delete session files (all suffixes — .json, .openai.json, etc.)
+			await store.clear(n.id);
 		}
 
 		// Clear persisted messages for all removed tasks
@@ -507,19 +507,19 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const tracker = await getTracker(ctx, project.id);
 		const node = tracker.get(c.req.param("nodeId"));
 		if (!node) return c.json({ error: "Task not found" }, 404);
-		// sessionId = nodeId: session file is always <nodeId>.json
-		const sessionPath = join(
-			ctx.config.dataDir,
-			"sessions",
-			project.id,
-			`${node.id}.json`,
-		);
+		// Try Anthropic format first (no suffix), then OpenAI format ("openai" suffix)
+		const store = getSessionStore(ctx, project.id);
 		try {
-			const raw = await readFile(sessionPath, "utf-8");
-			const params = JSON.parse(raw) as Array<{
-				role: string;
-				content: unknown;
-			}>;
+			const params =
+				((await store.get(node.id)) as Array<{
+					role: string;
+					content: unknown;
+				}> | null) ??
+				((await store.get(node.id, "openai")) as Array<{
+					role: string;
+					content: unknown;
+				}> | null);
+			if (!params) return c.json({ messages: [] });
 			const messages = params.slice(-100).map((msg) => {
 				let content = "";
 				let hasToolUse = false;

@@ -19,6 +19,7 @@ import {
 	getModelPricing,
 	OpenAICompatibleProvider,
 } from "./openai-compatible-provider.ts";
+import { SessionStore } from "./session-store.ts";
 import { TOOLS } from "./tools/index.ts";
 
 // ── Pricing ──
@@ -359,7 +360,7 @@ describe("runLoop integration", () => {
 				prompt: "Do something",
 				cwd: tmpDir,
 				systemPrompt: "You are a helpful agent.",
-				sessionsDir: join(tmpDir, "sessions"),
+				sessionStore: new SessionStore(join(tmpDir, "sessions")),
 				mcpToolDefs: {
 					opengraft: [
 						{
