@@ -539,3 +539,12 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - `Uint8Array` type: simplewebauthn v13 uses `Uint8Array<ArrayBuffer>` (TS 5.7+). Must construct via `new ArrayBuffer()` + `new Uint8Array(buf)`.
 - Challenge store: in-memory Map with 5-minute TTL, keyed by `login:<challenge>` or `register:<challenge>`.
 
+
+## Auth Config Simplification
+
+- `auth.enforced: boolean` replaces `auth.enabled`. `isAuthEnforced(auth)` handles backward compat.
+- Admin port (7434) always starts, localhost-only. No auth needed.
+- `enforced: true` = passkey required for ALL requests (no localhost bypass).
+- Auth middleware exempts `/`, `/web/*`, and `/auth/*` so the SPA LoginPage can render.
+- `/auth/status` returns both `enabled` (backward compat) and `enforced` fields.
+- Admin page: inline `onclick` removed, replaced with `addEventListener` in module script to fix ReferenceError.
