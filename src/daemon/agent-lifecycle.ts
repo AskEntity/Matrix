@@ -1009,8 +1009,7 @@ export async function handleInjectMessage(
 	// but we need the result to know whether to auto-resume
 	const session = ctx.activeSessions.get(projectId);
 	if (session?.queue) {
-		// Session running — persist + direct enqueue
-		await persistMessage(ctx.config.dataDir, projectId, rootNodeId, msg);
+		// Session running — direct enqueue, no persist needed (cache invariant)
 		try {
 			session.queue.enqueue(msg);
 		} catch {
