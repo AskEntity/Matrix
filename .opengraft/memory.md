@@ -375,3 +375,7 @@ Messages are ALWAYS delivered regardless of agent state. The system guarantees: 
 - `statusText.includes("Compress")` hack removed — status events produce no log entries (they are internal).
 - `setPendingCompact(false)` consolidated: only in `compact_started` handler (clears UI pending state) and `orchestration_completed`/`agent_stopped` (cleanup).
 - `NO_SIDE_EFFECTS` sentinel enables efficient identity check to skip empty functions.
+
+## Clear Sessions Auto-Stop
+
+- `POST /projects/:id/sessions/clear` now calls `stopAgent()` when agent is running instead of returning 409. Aligns with unified lifecycle (agents always running, just idle).
