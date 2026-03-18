@@ -16,6 +16,7 @@ import type {
 	AgentSession,
 } from "./agent-provider.ts";
 import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
+import type { CanonicalEvent } from "./canonical-events.ts";
 import { DEFAULT_MODEL } from "./config.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
@@ -573,6 +574,28 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			? [...existingHistory, { role: "user" as const, content: request.prompt }]
 			: [{ role: "user" as const, content: firstUserContent }];
 
+		// ── Canonical events: provider-agnostic record of each messages.push ──
+		const existingEvents = request.sessionStore
+			? ((await request.sessionStore.get(sessionId, "events")) as
+					| CanonicalEvent[]
+					| null)
+			: null;
+		const events: CanonicalEvent[] = existingEvents ? [...existingEvents] : [];
+		// Record the initial user message (or resume message)
+		if (isResume) {
+			events.push({
+				type: "user_message",
+				content: request.prompt,
+				isResume: true,
+			});
+		} else {
+			events.push({
+				type: "user_message",
+				content: firstUserContent,
+				cwd,
+			});
+		}
+
 		// For context compression: use the original task prompt, not the resume prompt.
 		// On resume, the original prompt is the first user message in history.
 		const taskContext =
@@ -657,12 +680,18 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					);
 					const oldTokens = preCompactTokenCount;
 					messages.length = 0;
+					events.length = 0;
 					const userContent = cwd
 						? `Working directory: ${cwd}\n\n${compactedContent}`
 						: compactedContent;
 					messages.push({
 						role: "user" as const,
 						content: userContent,
+					});
+					events.push({
+						type: "compacted_resume",
+						content: userContent,
+						cwd,
 					});
 					const postCompactChars = userContent.length;
 					const estimatedPostCompactTokens = Math.floor(postCompactChars / 4);
@@ -736,6 +765,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					messages.push({
 						role: "user" as const,
 						content: SUMMARIZATION_INSTRUCTION,
+					});
+					events.push({
+						type: "summarization_request",
+						instruction: SUMMARIZATION_INSTRUCTION,
 					});
 					compactionPending = true;
 					preCompactTokenCount = tokenCount;
@@ -906,6 +939,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 			// Add assistant message to history
 			messages.push({ role: "assistant", content: response.content });
+			events.push({
+				type: "assistant_response",
+				content: response.content as unknown[],
+			});
 
 			// If compaction is pending, skip tool execution and continue to next iteration
 			// where the checkpoint will be extracted and context rebuilt
@@ -965,10 +1002,20 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 								...imageBlocks,
 							],
 						});
+						events.push({
+							type: "queue_messages",
+							formatted,
+							hasImages: true,
+							imageBlocks: imageBlocks as unknown[],
+						});
 					} else {
 						messages.push({
 							role: "user" as const,
 							content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+						});
+						events.push({
+							type: "queue_messages",
+							formatted,
 						});
 					}
 					continue;
@@ -1131,12 +1178,23 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						},
 					],
 				});
+				events.push({
+					type: "tool_results",
+					results: toolResults as unknown[],
+					hasImages: true,
+					imageBlocks: cancellationImages as unknown[],
+				});
 			} else {
 				messages.push({ role: "user", content: toolResults });
+				events.push({
+					type: "tool_results",
+					results: toolResults as unknown[],
+				});
 			}
 
 			// Persist after tool results too (captures full turn) — fire-and-forget
 			request.sessionStore?.setSync(sessionId, [...messages]);
+			request.sessionStore?.setSync(sessionId, [...events], "events");
 
 			// Budget check: compute running cost and warn the agent if approaching limit
 			if (request.budgetUsd && request.budgetUsd > 0) {
@@ -1154,6 +1212,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						role: "user" as const,
 						content: warning,
 					});
+					events.push({ type: "budget_warning", warning });
 					yield { type: "status", message: warning };
 				} else if (ratio >= 0.8) {
 					const warning = `⚠️ Warning: task has used ${Math.round(ratio * 100)}% of its ${request.budgetUsd.toFixed(2)} budget (${runningCost.toFixed(4)} spent). Wrap up soon.`;
@@ -1161,14 +1220,16 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						role: "user" as const,
 						content: warning,
 					});
+					events.push({ type: "budget_warning", warning });
 					yield { type: "status", message: warning };
 				}
 			}
 		}
 
-		// Persist conversation history for future resume
+		// Persist conversation history and canonical events for future resume
 		if (request.sessionStore) {
 			await request.sessionStore.set(sessionId, [...messages]);
+			await request.sessionStore.set(sessionId, [...events], "events");
 		}
 
 		const { inputPer1M, outputPer1M } = getModelPricing(model);

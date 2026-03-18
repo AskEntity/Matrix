@@ -447,3 +447,12 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - `computeDepth()` replaces hardcoded `depth: 1` — walks up `parentId` chain to compute actual tree depth. Enables recursive spawning at correct depth levels.
 - `orchestration_completed` child costs now summed from tree (`tracker.allNodes()`) instead of `CostAccumulator`. This is the source of truth.
 - `parentQueue` wired in `createAgentContext` so daemon-spawned children have working `report_to_parent` MCP tool.
+
+## Canonical Events (SessionStore Phase 2)
+
+- `CanonicalEvent` type in `src/canonical-events.ts` — 7 event types using `unknown[]` for provider portability.
+- Events recorded at every `messages.push` site in Anthropic provider `runLoop`, plus the initial message construction (2 branches: fresh vs resume).
+- Events persisted via `sessionStore.setSync(id, events, "events")` (fire-and-forget mid-loop) and `sessionStore.set(id, events, "events")` (await at exit).
+- On resume, existing events loaded from `sessionStore.get(id, "events")`.
+- On compaction, `events.length = 0` mirrors `messages.length = 0` — both reset together.
+- 9 messages.push + 2 initial = 11 events.push total. 1:1 correspondence verified.
