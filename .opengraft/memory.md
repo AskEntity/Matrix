@@ -145,3 +145,12 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - **OpenAI converter**: Same idle/working distinction applies. Standalone queue_messages produce a user message; cancellation-point queue_messages append to last tool result content.
 - **Mocking Anthropic SDK**: Create fake stream with `{[Symbol.asyncIterator]: async function*() {...}, finalMessage: () => Promise.resolve(response)}`. Replace `(provider as any).client` with mock object providing `messages.stream` and `messages.countTokens`.
 
+
+## Post-Compaction StrongEvent Verification (Round 2)
+
+- Live tested 4 scenarios: echo+tools, fail+resume, implicit yield, rapid messages while idle. All PERFECT MATCH.
+- Orchestrator session: 95/95 completed messages match, 1 in-progress (expected).
+- **Known acceptable mismatch**: trailing empty `{"role":"assistant","content":[]}` after done() — Anthropic protocol artifact, StrongEvents correctly omit it.
+- **send_message_to_child double-delivery**: message appears both in initial prompt AND as queue_message. Design decision (at-least-once delivery), not a bug.
+- **done() is not a strict state boundary**: queue messages can arrive at the cancellation point during done() tool execution, not just after idle.
+
