@@ -401,3 +401,9 @@ Messages are ALWAYS delivered regardless of agent state. The system guarantees: 
 - Providers no longer have `private sessionHistory` Maps — all session state is in SessionStore (cache + disk).
 - `routes/agent.ts` sessions/clear uses `store.clearAll()`. Sessions/prune still uses `pruneSessionFiles()` (works on raw disk).
 - Conversation endpoint (`GET /tasks/:nodeId/conversation`) tries Anthropic format first, then OpenAI format.
+
+## Duplicate task_completed Fix (daemon path)
+
+- `executeChildStreaming` (MCP path in agent-tools.ts) already had `doneWasCalled` guard to skip `task_completed` emission when `done()` was called.
+- `runChildAgentInBackground` (daemon path in agent-lifecycle.ts) was missing this guard — unconditionally emitted `task_completed` after stream, causing duplicates when `done()` already emitted it.
+- Fix: added same `doneWasCalled` check (`status === "passed" || "failed"`) to `runChildAgentInBackground`.
