@@ -456,22 +456,33 @@ export async function runChildAgentInBackground(
 			},
 		});
 
-		// done() tool now updates status directly in the tracker, so just use agentResult
-		// for cost/output reporting. The task status is already set by the done() tool.
+		// done() tool updates status directly in the tracker AND emits task_completed.
+		// Only emit here if done() wasn't called (agent exited without calling done()).
 		const currentNode = tracker.get(nodeId);
-		const didPass = currentNode?.status === "passed" || agentResult.success;
-		if (!currentNode || currentNode.status === "in_progress") {
-			// Agent exited without calling done() — treat as success
-			tracker.updateStatus(nodeId, "passed");
+		const doneWasCalled =
+			currentNode?.status === "passed" || currentNode?.status === "failed";
+		const didPass = doneWasCalled
+			? currentNode?.status === "passed"
+			: agentResult.success;
+
+		if (!doneWasCalled) {
+			if (!currentNode || currentNode.status === "in_progress") {
+				// Agent exited without calling done() — treat as success
+				tracker.updateStatus(nodeId, "passed");
+			}
 		}
 		await tracker.save();
-		broadcastEvent(ctx, project.id, {
-			type: "task_completed",
-			taskId: nodeId,
-			title: node.title,
-			success: didPass,
-			output: (agentResult.output ?? "").slice(0, 500),
-		});
+
+		// Only emit task_completed if done() wasn't called (it already emitted)
+		if (!doneWasCalled) {
+			broadcastEvent(ctx, project.id, {
+				type: "task_completed",
+				taskId: nodeId,
+				title: node.title,
+				success: didPass,
+				output: (agentResult.output ?? "").slice(0, 500),
+			});
+		}
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} catch (e) {
 		tracker.updateStatus(nodeId, "stuck");
