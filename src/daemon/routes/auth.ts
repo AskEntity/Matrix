@@ -151,10 +151,11 @@ export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
 
 			// Create session
 			const token = await createSession(authPath);
+			const isSecure = c.req.url.startsWith("https");
 			setCookie(c, "og_session", token, {
 				httpOnly: true,
-				secure: true,
-				sameSite: "Strict",
+				secure: isSecure,
+				sameSite: isSecure ? "Strict" : "Lax",
 				path: "/",
 				maxAge: 30 * 24 * 60 * 60, // 30 days
 			});
@@ -175,10 +176,11 @@ export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
 		if (token) {
 			await removeSession(authPath, token);
 		}
+		const isSecureLogout = c.req.url.startsWith("https");
 		setCookie(c, "og_session", "", {
 			httpOnly: true,
-			secure: true,
-			sameSite: "Strict",
+			secure: isSecureLogout,
+			sameSite: isSecureLogout ? "Strict" : "Lax",
 			path: "/",
 			maxAge: 0,
 		});
