@@ -9,7 +9,7 @@ import {
 import type { TaskStatus } from "../../types.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
-	ensureChildAgentRunning,
+	deliverMessage,
 	runChildAgentInBackground,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
@@ -578,54 +578,14 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const node = tracker.get(nodeId);
 		const taskTitle = node?.title ?? nodeId;
 
-		const queue = globalAgentQueues.get(nodeId);
-		if (queue) {
-			try {
-				queue.enqueue({ source: "user", content: body.content });
-				addPendingMessage(ctx, project.id, nodeId, body.content);
-				// Notify parent chain that user sent a message to this task
-				await notifyParentChain(ctx, project.id, nodeId, taskTitle);
-				return c.json({ ok: true, taskId: nodeId });
-			} catch {
-				// Queue was closed between get() and enqueue() — fall through to persist path
-			}
-		}
-
-		// No active agent — persist message to disk
-		const msg = { source: "user" as const, content: body.content };
-		await persistMessage(ctx.config.dataDir, project.id, nodeId, msg);
+		// Unified delivery: persist → enqueue (if running) → launch (if not)
+		await deliverMessage(ctx, project, nodeId, {
+			source: "user",
+			content: body.content,
+		});
 		addPendingMessage(ctx, project.id, nodeId, body.content);
 
-		// Auto-launch agent for this task (creates worktree if needed).
-		// Fire-and-forget — errors are broadcast as events, not thrown to the caller.
-		// Use a generic prompt — the real user message is already persisted to disk
-		// and will be delivered via the queue (runChildCore loads persisted messages).
-		// Passing the user message as the prompt would cause it to appear twice.
-		if (node) {
-			const hasSession =
-				node.status === "passed" ||
-				node.status === "closed" ||
-				node.status === "failed" ||
-				node.status === "stuck";
-			const genericPrompt = hasSession
-				? "User sent a new message. Resume and check your queue."
-				: `Start working on this task.\n\n## Task: ${node.title}\n${node.description ?? ""}`;
-			ensureChildAgentRunning(
-				ctx,
-				project,
-				tracker,
-				nodeId,
-				genericPrompt,
-			).catch((e) => {
-				broadcastEvent(ctx, project.id, {
-					type: "error",
-					taskId: nodeId,
-					message: `Auto-launch failed: ${e instanceof Error ? e.message : String(e)}`,
-				});
-			});
-		}
-
-		// Notify parent chain that user sent a message to this task
+		// Notify parent chain that user sent a message to this task (REST-only)
 		await notifyParentChain(ctx, project.id, nodeId, taskTitle);
 
 		return c.json({ ok: true, taskId: nodeId, persisted: true });
