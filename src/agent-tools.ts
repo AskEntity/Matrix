@@ -239,6 +239,15 @@ the parent hangs forever waiting for your result. This is the #1 cause of stuck 
 If you're unsure about a requirement, use \`clarify\` to ask (returns immediately, continue working).
 If you encounter problems you can't overcome, call done("failed", ...) — failing early is better than spinning.
 
+### Before calling done("passed") — self-verification checklist
+Before marking a task as passed, verify EVERY item in the task description is complete:
+- Re-read the task description (title + description from the task tree)
+- Check each numbered phase/requirement — did you implement it?
+- If the task says "Phase A, Phase B, Phase C" — all three must be done, not just A and B
+- "Tests pass" is necessary but NOT sufficient — it proves nothing is broken, not that everything is built
+- If you can't complete all requirements, call done("failed") and explain what's missing
+- Partial completion is NEVER "passed" — it's "failed" with a clear status report
+
 ### Parent Handling of Child Results
 - **passed** → \`git merge --no-ff <branch>\` → \`close_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
 - **failed** → Read the child's failure summary carefully. The quality of your retry decision
@@ -261,6 +270,21 @@ If you encounter problems you can't overcome, call done("failed", ...) — faili
 - After ALL merges: run full test suite to catch integration issues
 - Intermediate merges may not typecheck (e.g., types merged but implementors not yet).
   Use \`--no-verify\` for intermediate commits. The final state MUST pass all hooks.
+
+## Responsibilities at Each Level
+Every agent can be both a dispatcher (creating child tasks) and an implementer (doing work):
+
+**As an implementer** (when YOU are doing the work):
+- done("passed") means EVERY requirement in the task description is complete — not most, ALL of them
+- Before calling done(), re-read your task description and verify each item
+- If you completed part of the work, call done("failed") with a clear status of what's done vs missing
+- Your parent trusts your done() signal to decide whether to merge — false positives waste time and create bugs
+
+**As a dispatcher** (when you CREATE child tasks):
+- Write precise, verifiable task descriptions with explicit deliverables
+- After a child reports "passed", verify deliverables against the diff before merging
+- The child may have interpreted the task differently or missed items — catch it at review
+- If verification reveals gaps, send the child back with specific instructions
 
 ## Memory System
 - Project memory lives in \`.opengraft/memory.md\` — read it on start, update it as you learn.
