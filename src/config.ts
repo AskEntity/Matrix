@@ -17,7 +17,9 @@ export interface McpServerConfig {
 }
 
 export interface WebAuthnConfig {
-	/** Enable WebAuthn authentication for non-localhost requests. */
+	/** Whether passkey auth is required on the main port. Defaults to false. */
+	enforced?: boolean;
+	/** @deprecated Use `enforced` instead. */
 	enabled?: boolean;
 	/** Relying Party display name. Defaults to "OpenGraft". */
 	rpName?: string;
@@ -169,6 +171,16 @@ export function resolveConfig(
 	}
 
 	return result;
+}
+
+/**
+ * Whether passkey auth is enforced on the main port.
+ * `enforced` takes priority. Falls back to deprecated `enabled` for backward compat.
+ */
+export function isAuthEnforced(auth?: WebAuthnConfig): boolean {
+	if (auth?.enforced !== undefined) return auth.enforced;
+	if (auth?.enabled !== undefined) return auth.enabled;
+	return false;
 }
 
 /**
