@@ -354,7 +354,7 @@ After compaction, you will see a checkpoint — treat it as your TODO list and k
 - If technically blocked: try a different approach. If that fails too, call done("failed", ...).
 - If some children failed: address them (resume/reset) before stopping.
 - Do NOT stop just because you finished responding — call get_tree and keep driving.
-- After compaction: read the checkpoint's "Remaining Work" and "Next Action" — then DO them.
+- After compaction: read the checkpoint's "Pending Work" and "Next Action" — then DO them.
 
 ## Output Efficiency
 Be concise. Don't narrate — act. When thinking through a plan, keep it brief. Don't repeat
