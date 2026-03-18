@@ -54,6 +54,7 @@ export interface ActionHandlerDeps {
 
 	start: (opts: { prompt: string }) => Promise<void>;
 	stop: () => Promise<void>;
+	compact: () => Promise<void>;
 	sendMessage: (
 		msg: string,
 		images?: { base64: string; mediaType: string }[],
@@ -100,6 +101,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		setIsCreatingTask,
 		start,
 		stop,
+		compact,
 		sendMessage,
 		sendMessageToTask,
 		deleteTask,
@@ -109,9 +111,55 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		t,
 	} = deps;
 
+	/** Handle slash commands like /compact and /clear. Returns true if handled. */
+	async function handleSlashCommand(command: string): Promise<boolean> {
+		const cmd = command.trim().toLowerCase();
+		if (cmd === "/compact") {
+			addLog({ type: "lifecycle", text: "⚡ /compact" });
+			try {
+				await compact();
+			} catch (err) {
+				addLog({ type: "error", text: (err as Error).message });
+			}
+			return true;
+		}
+		if (cmd === "/clear") {
+			if (!confirm(t("confirm.clearSessions"))) return true;
+			addLog({ type: "lifecycle", text: "⚡ /clear" });
+			try {
+				const res = await fetch(`/projects/${projectId}/sessions/clear`, {
+					method: "POST",
+				});
+				if (!res.ok) throw new Error((await res.json()).error);
+				setLastTurns(null);
+				setLastInputTokens(null);
+				setLastCacheCreationTokens(null);
+				setLastCacheReadTokens(null);
+				setLastOutputTokens(null);
+				setLogs([]);
+				addLog({ type: "lifecycle", text: "Session history cleared" });
+			} catch (err) {
+				addLog({ type: "error", text: (err as Error).message });
+			}
+			return true;
+		}
+		return false;
+	}
+
 	async function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!prompt.trim() || !projectId) return;
+
+		// Check for slash commands before sending as a chat message
+		if (prompt.trim().startsWith("/")) {
+			const handled = await handleSlashCommand(prompt.trim());
+			if (handled) {
+				setPrompt("");
+				localStorage.removeItem("og-prompt-draft");
+				return;
+			}
+		}
+
 		const images = attachedImages.length > 0 ? attachedImages : undefined;
 		try {
 			if (targetNodeId) {
