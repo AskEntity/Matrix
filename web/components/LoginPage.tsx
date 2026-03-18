@@ -94,10 +94,48 @@ export function LoginPage({ onAuthenticated, hasCredentials }: LoginPageProps) {
 						</button>
 					</>
 				) : (
-					<p className="og-login-subtitle">
-						No passkeys registered yet. Use the admin console on localhost to
-						register a passkey.
-					</p>
+					<>
+						<p className="og-login-subtitle">
+							No passkeys registered yet. Register one to get started.
+						</p>
+						<button
+							type="button"
+							className="og-login-btn"
+							onClick={async () => {
+								setLoading(true);
+								setStatus("");
+								try {
+									const { startRegistration } = await import(
+										"@simplewebauthn/browser"
+									);
+									const optsRes = await fetch("/auth/register/options", {
+										method: "POST",
+									});
+									if (!optsRes.ok) throw new Error("Failed to get options");
+									const opts = await optsRes.json();
+									const result = await startRegistration(opts);
+									const verifyRes = await fetch("/auth/register/verify", {
+										method: "POST",
+										headers: { "Content-Type": "application/json" },
+										body: JSON.stringify(result),
+									});
+									if (!verifyRes.ok) throw new Error("Verification failed");
+									setStatus("Passkey registered! You can now sign in.");
+									setIsError(false);
+								} catch (e) {
+									setStatus(
+										e instanceof Error ? e.message : "Registration failed",
+									);
+									setIsError(true);
+								} finally {
+									setLoading(false);
+								}
+							}}
+							disabled={loading}
+						>
+							{loading ? "Registering..." : "Register Passkey"}
+						</button>
+					</>
 				)}
 				{status && (
 					<div
