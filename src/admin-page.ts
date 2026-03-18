@@ -52,7 +52,7 @@ export const ADMIN_REGISTRATION_PAGE = `<!DOCTYPE html>
   <div class="cred-list" id="credList"></div>
 </div>
 <script type="module">
-import { startRegistration } from "https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@13/dist/bundle/index.js";
+import { startRegistration } from "https://cdn.jsdelivr.net/npm/@simplewebauthn/browser@13/+esm";
 
 document.getElementById("registerBtn").addEventListener("click", async () => {
   const btn = document.getElementById("registerBtn");
