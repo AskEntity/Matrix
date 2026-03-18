@@ -564,3 +564,10 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - Anthropic SDK SSE stream errors (overloaded_error, etc.) are thrown as `APIError` with `status: undefined` (not a numeric HTTP code).
 - Our retry logic only checked `status === 529`. Fixed: also check `status === undefined` to catch SSE stream errors.
 - Pattern: `(e instanceof Anthropic.APIError && e.status === undefined)  // SSE stream errors`
+
+## iOS Viewport Height Fix
+
+- `100vh` on iOS Safari includes browser chrome (URL bar + toolbar), making content taller than visible viewport.
+- Fix: use `100dvh` (dynamic viewport height) which accounts for browser chrome.
+- Biome rejects duplicate properties (`height: 100vh; height: 100dvh;`) — use `100dvh` directly (supported Safari 15.4+).
+- Old 640px breakpoint removed — fully superseded by 768px mobile layout.
