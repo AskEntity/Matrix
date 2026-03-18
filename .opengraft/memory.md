@@ -571,3 +571,14 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - Fix: use `100dvh` (dynamic viewport height) which accounts for browser chrome.
 - Biome rejects duplicate properties (`height: 100vh; height: 100dvh;`) — use `100dvh` directly (supported Safari 15.4+).
 - Old 640px breakpoint removed — fully superseded by 768px mobile layout.
+
+## Inline Style vs Media Query Override Pattern
+
+- Inline `style={{ flex: value }}` beats any CSS rule (even with higher specificity). Can't override with media queries.
+- Fix: use CSS custom properties as intermediary. Set `style={{ '--my-var': value } as React.CSSProperties}`, use `flex: var(--my-var)` in base CSS, override with `flex: 1` in media query.
+- The media query's direct `flex: 1` beats the base rule's `flex: var(--my-var)` via normal specificity (no inline style involved).
+
+## Daemon Reload for Web Changes
+
+- `bun --watch` only auto-reloads on src/ changes. Web UI (web/) is bundled via `import("../web/index.html")` at daemon startup — requires full daemon restart.
+- User triggers manual reload. Commits to web/ files do NOT auto-trigger daemon restart.
