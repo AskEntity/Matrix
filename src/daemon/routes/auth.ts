@@ -242,7 +242,7 @@ export function registerAdminAuthRoutes(app: Hono, ctx: DaemonContext) {
 
 		const config = getAuthConfig(ctx);
 		const rpID = config.rpID ?? "localhost";
-		const origin = `${c.req.raw.url.startsWith("https") ? "https" : "http"}://localhost:${config.adminPort ?? 7434}`;
+		const origin = resolveOrigin(c.req.raw);
 
 		try {
 			const verification = await verifyRegistrationResponse({
