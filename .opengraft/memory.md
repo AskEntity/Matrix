@@ -529,41 +529,16 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 ## WebAuthn/Passkey Authentication
 
 - `@simplewebauthn/server` (backend) + `@simplewebauthn/browser` (frontend) for WebAuthn passkey auth.
-- Two-port architecture: main port (7433) requires auth for non-localhost, admin port (7434, localhost-only) for passkey registration.
-- Config: `auth: { enabled, rpName, rpID, adminPort }` in `OpenGraftConfig`. Merged as object in `resolveConfig`.
-- Credentials stored in `~/.opengraft/auth.json` with in-memory cache (`authDataCache`).
-- Sessions: random 64-char hex tokens stored alongside credentials, 30-day TTL.
-- Auth middleware registered before all routes in daemon.ts. Exempts `/auth/*` paths and localhost requests.
-- Frontend: `AppInner` checks `/auth/status` on mount. Shows `LoginPage` when unauthenticated, `AuthenticatedApp` otherwise.
-- Admin page: self-contained HTML served by admin Hono app, uses CDN import of `@simplewebauthn/browser`.
+- Two-port architecture: main port (7433) always requires auth, admin port (7434, localhost-only) for management.
+- Config: `auth: { enforced, rpName, rpID, adminPort }` in `OpenGraftConfig`. `enforced` only controls registration, NOT authentication.
+- Credentials stored in `~/.opengraft/auth.json` with in-memory cache. Sessions: 64-char hex tokens, 30-day TTL.
 - `Uint8Array` type: simplewebauthn v13 uses `Uint8Array<ArrayBuffer>` (TS 5.7+). Must construct via `new ArrayBuffer()` + `new Uint8Array(buf)`.
 - Challenge store: in-memory Map with 5-minute TTL, keyed by `login:<challenge>` or `register:<challenge>`.
-
-
-## Auth Config Simplification
-
-- `auth.enforced: boolean` replaces `auth.enabled`. `isAuthEnforced(auth)` handles backward compat.
-- Admin port (7434) always starts, localhost-only. No auth needed.
-- `enforced: true` = passkey required for ALL requests (no localhost bypass).
-- Auth middleware exempts `/`, `/web/*`, and `/auth/*` so the SPA LoginPage can render.
-- `/auth/status` returns both `enabled` (backward compat) and `enforced` fields.
-- Admin page: inline `onclick` removed, replaced with `addEventListener` in module script to fix ReferenceError.
-
-
-## Auth Endpoint Consolidation
-
-- Registration routes (`/auth/register/*`, `/auth/credentials`) moved from admin-only (`registerAdminAuthRoutes`) to main port (`registerAuthRoutes`) with enforcement guard.
-- Guard logic: `isRegistrationBlocked()` returns true when `isAuthEnforced(config) && hasCredentials(authPath)`. This prevents lockout when enforced=true but no credentials exist.
-- `/setup` standalone HTML page removed. `LoginPage` React component handles both registration and login.
-- `LoginPage` props: `hasCredentials`, `enforced`, `onAuthenticated`. Shows "Continue without auth →" ghost button when not enforced.
-- `AppHeader` has optional `onLogout` prop — renders `IconLogout` button when provided.
-- Admin port (`registerAdminAuthRoutes`) still has its own unguarded registration routes (localhost-only).
-- Auth middleware: no longer blocks `/setup` (removed). `/auth/*` paths always pass through; per-route guards handle enforcement.
-
-
-## Auth Always-On Model (Updated)
-
-- Auth middleware always checks credentials. No `enforced` bypass — `enforced` only controls registration.
-- First-run bypass: if no credentials exist (`!hasCredentials`), middleware passes through and `/auth/status` returns `authenticated: true`. Users must register a passkey before auth takes effect.
-- `/auth/status` returns `enabled: hasCreds` (not `enforced`). `authenticated = validSession || !hasCreds`.
-- "Continue without auth" button removed from LoginPage. Three states: sign-in (has creds), register (!enforced, no creds), lockout message (enforced, no creds).
+- **Auth always on**: Middleware always checks credentials. No bypass. First-run bypass: if no credentials exist, middleware passes through (users must register first).
+- **`enforced` = registration locked**: `enforced: true` blocks new passkey registration. `enforced: false` allows it. Auth is always required regardless.
+- **Guard**: `isRegistrationBlocked()` = `isAuthEnforced(config) && hasCredentials(authPath)`. Prevents lockout when enforced=true but no creds.
+- **LoginPage**: Three states: sign-in (has creds), register (!enforced, no creds), lockout message (enforced, no creds). No "Continue without auth".
+- **`/auth/status`**: Returns `enabled: hasCreds`, `authenticated: validSession || !hasCreds`, `enforced`.
+- Auth middleware exempts `/`, `/web/*`, `/auth/*` so SPA + login endpoints work.
+- `AppHeader` has `onLogout` prop — renders logout button when provided.
+- `resolveOrigin` respects `X-Forwarded-Proto` for reverse proxy (CF Tunnel) compatibility.
