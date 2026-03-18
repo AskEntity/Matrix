@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentEvent, AgentProvider } from "./agent-provider.ts";
+import type {
+	AgentEvent,
+	AgentProvider,
+	AgentSession,
+} from "./agent-provider.ts";
 import { createApp } from "./daemon.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { loadPersistedMessages } from "./persistent-queue.ts";
@@ -984,6 +988,63 @@ describe("lifecycle: parent chain notifications", () => {
 
 		childQueue.close();
 		globalAgentQueues.delete(child.id);
+	});
+
+	test("user message to child notifies root orchestrator via activeSessions queue", async () => {
+		const { app, pm, markReady, activeSessions } = createApp({
+			dataDir,
+			agentProvider: createLongRunningProvider(),
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+
+		// Create root → child hierarchy
+		const root = await createTask(app, project.id, "Root orchestrator");
+		const child = await createTask(app, project.id, "Child task", {
+			parentId: root.id,
+		});
+
+		// Root orchestrator's queue lives in activeSessions (not globalAgentQueues)
+		const rootQueue = new MessageQueue();
+		activeSessions.set(project.id, {
+			sessionId: "test-session",
+			queue: rootQueue,
+			sendMessage: async () => {},
+			stop: () => {},
+			events: (async function* () {
+				yield { type: "text" as const, text: "" };
+				return { success: true } as AgentResult;
+			})(),
+		} as AgentSession);
+
+		// Child has a queue in globalAgentQueues
+		const childQueue = new MessageQueue();
+		globalAgentQueues.set(child.id, childQueue);
+
+		// Send message to child — should notify root via activeSessions
+		const res = await sendTaskMessage(app, project.id, child.id, "hello child");
+		expect(res.status).toBe(200);
+
+		// Child should have the user message
+		const childMsgs = childQueue.drain();
+		expect(childMsgs).toHaveLength(1);
+		expect(childMsgs[0]?.source).toBe("user");
+
+		// Root orchestrator should have a child_report notification via activeSessions queue
+		const rootMsgs = rootQueue.drain();
+		expect(rootMsgs.length).toBeGreaterThanOrEqual(1);
+		const notification = rootMsgs.find((m) => m.source === "child_report");
+		expect(notification).toBeTruthy();
+		expect((notification as { content: string }).content).toContain(
+			"Child task",
+		);
+
+		childQueue.close();
+		rootQueue.close();
+		globalAgentQueues.delete(child.id);
+		activeSessions.delete(project.id);
 	});
 });
 

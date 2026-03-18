@@ -407,3 +407,9 @@ Messages are ALWAYS delivered regardless of agent state. The system guarantees: 
 - `executeChildStreaming` (MCP path in agent-tools.ts) already had `doneWasCalled` guard to skip `task_completed` emission when `done()` was called.
 - `runChildAgentInBackground` (daemon path in agent-lifecycle.ts) was missing this guard — unconditionally emitted `task_completed` after stream, causing duplicates when `done()` already emitted it.
 - Fix: added same `doneWasCalled` check (`status === "passed" || "failed"`) to `runChildAgentInBackground`.
+
+## notifyParentChain Root Queue Fix
+
+- Root orchestrator queue is in `ctx.activeSessions.get(projectId)?.queue`, NOT in `globalAgentQueues`.
+- `notifyParentChain` must check both: `globalAgentQueues` for child agents, `activeSessions` for root (no parentId).
+- `createApp` now exposes `activeSessions` for test access.

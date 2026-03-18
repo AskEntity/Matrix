@@ -306,6 +306,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		app,
 		pm: ctx.pm,
 		wsClients: ctx.wsClients,
+		activeSessions: ctx.activeSessions,
 		autoResumeProjects,
 		shutdown,
 		getTracker: (projectId: string) => getTracker(ctx, projectId),
