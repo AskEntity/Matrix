@@ -176,6 +176,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		() => localStorage.getItem("og-prompt-draft") ?? "",
 	);
 	const [showSettings, setShowSettings] = useState(false);
+	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [splitRatio, setSplitRatio] = useState(0.35);
 	const [isDragging, setIsDragging] = useState(false);
 	const [autoScroll, setAutoScroll] = useState(true);
@@ -573,6 +574,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				onToggleSettings={() => setShowSettings((s) => !s)}
 				onThemeChange={(t) => setThemeState(t as typeof theme)}
 				onLogout={onLogout}
+				onToggleSidebar={() => setSidebarOpen((s) => !s)}
 			/>
 
 			{showSettings && projectId && (
@@ -596,7 +598,13 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			)}
 
 			<main className="og-main">
-				<aside className="og-sidebar">
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop is a visual overlay, not a focusable control */}
+				{/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop is dismissed by Escape key or clicking outside */}
+				<div
+					className={`og-sidebar-backdrop${sidebarOpen ? " og-sidebar-open" : ""}`}
+					onClick={() => setSidebarOpen(false)}
+				/>
+				<aside className={`og-sidebar${sidebarOpen ? " og-sidebar-open" : ""}`}>
 					<div className="og-panel-header">
 						<span className="og-panel-title">{t("tasks.title")}</span>
 						<div className="og-panel-actions">
@@ -641,7 +649,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						selectedTaskId={selectedTaskId}
 						rootNodeId={rootNodeId}
 						activeAgents={activeAgents}
-						onSelect={setSelectedTaskId}
+						onSelect={(id) => {
+							setSelectedTaskId(id);
+							setSidebarOpen(false);
+						}}
 						onReorder={reorderTasks}
 						onReparent={reparentTask}
 						isCreating={isCreatingTask}
