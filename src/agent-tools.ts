@@ -535,6 +535,11 @@ export interface OrchestratorToolsDeps {
 	dataDir?: string;
 	/** Launch a child agent in the background. Daemon provides this via runChildAgentInBackground. */
 	launchChild?: (nodeId: string, prompt: string) => Promise<void>;
+	/**
+	 * Deliver a message to a task: persist → enqueue (if running) → launch (if not).
+	 * Daemon provides this via the deliverMessage function in agent-lifecycle.ts.
+	 */
+	deliverMessage?: (nodeId: string, message: QueueMessage) => Promise<void>;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -1072,46 +1077,21 @@ export function createOrchestratorTools(
 					};
 				}
 
-				// Case 1: Agent already running — just enqueue the message
-				const existingQueue = globalAgentQueues.get(args.taskId);
-				if (existingQueue) {
-					try {
-						existingQueue.enqueue({
-							source: "parent_update",
-							content: args.message,
-							...(args.requestReply ? { requestReply: true } : {}),
-						});
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `Message sent to running child "${node.title}" (${args.taskId})`,
-								},
-							],
-						};
-					} catch {
-						// Queue was closed between get() and enqueue() — fall through to launch
-					}
-				}
-
-				// Case 2: Agent not running — need to launch
 				try {
-					// Guard: require clean working tree before creating worktrees
-					const gitCheck = await isGitClean(projectPath);
-					if (!gitCheck.clean) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `Error: ${gitCheck.message}`,
-								},
-							],
-							isError: true,
-						};
-					}
-
-					// Create worktree if needed
+					// Create worktree if needed (requires clean working tree)
 					if (!node.worktreePath) {
+						const gitCheck = await isGitClean(projectPath);
+						if (!gitCheck.clean) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: `Error: ${gitCheck.message}`,
+									},
+								],
+								isError: true,
+							};
+						}
 						const currentNode = currentTaskId
 							? tracker.get(currentTaskId)
 							: undefined;
@@ -1121,59 +1101,65 @@ export function createOrchestratorTools(
 						tracker.assignWorktree(node.id, wt.branch, wt.path);
 					}
 
-					// Determine if this is a resume (has session history) or new start
-					const hasExistingSession =
-						node.status === "failed" ||
-						node.status === "stuck" ||
-						node.status === "passed" ||
-						node.status === "closed";
+					// Deliver message via unified path: persist → enqueue/launch
+					// The message is NOT included in the launch prompt — it arrives
+					// via queue drain of persisted messages (exactly-once delivery).
+					const queueMessage: QueueMessage = {
+						source: "parent_update",
+						content: args.message,
+						...(args.requestReply ? { requestReply: true } : {}),
+					};
 
-					// Build prompt
-					const memory = readProjectMemory(projectPath, false);
-					const branchReminder = node.branch
-						? `\n\nYou are on branch \`${node.branch}\`. Do NOT switch branches.`
-						: "";
-					let prompt: string;
-
-					if (hasExistingSession) {
-						// Resume — message is the instruction, session history provides context
-						prompt = `${args.message}${branchReminder}`;
+					if (deps.deliverMessage) {
+						await deps.deliverMessage(args.taskId, queueMessage);
 					} else {
-						// New start — build full task prompt
-						const taskPrompt = buildTaskPrompt(node, tracker, memory);
-						prompt = `${args.message}\n\n${taskPrompt}`;
+						// Fallback for non-daemon contexts (tests without full daemon):
+						// direct queue delivery or persist
+						const existingQueue = globalAgentQueues.get(args.taskId);
+						if (existingQueue) {
+							existingQueue.enqueue(queueMessage);
+						} else if (deps.dataDir && deps.currentProjectId) {
+							await persistMessage(
+								deps.dataDir,
+								deps.currentProjectId,
+								node.id,
+								queueMessage,
+							);
+							// Need to launch — fall back to launchChild with generic prompt
+							if (deps.launchChild) {
+								const hasExistingSession =
+									node.status === "failed" ||
+									node.status === "stuck" ||
+									node.status === "passed" ||
+									node.status === "closed";
+								let genericPrompt: string;
+								if (hasExistingSession) {
+									genericPrompt =
+										"New message received. Resume and check your queue.";
+								} else {
+									const memory = readProjectMemory(projectPath, false);
+									genericPrompt = buildTaskPrompt(node, tracker, memory);
+								}
+								tracker.updateStatus(node.id, "in_progress");
+								await tracker.save();
+								emit({
+									type: "task_started",
+									taskId: node.id,
+									title: node.title,
+								});
+								deps.launchChild(node.id, genericPrompt).catch(() => {});
+							}
+						}
 					}
 
-					// Persist message to disk so it survives if launch fails or daemon crashes
-					if (deps.dataDir && deps.currentProjectId) {
-						await persistMessage(deps.dataDir, deps.currentProjectId, node.id, {
-							source: "parent_update",
-							content: args.message,
-							...(args.requestReply ? { requestReply: true } : {}),
-						});
-					}
-
-					tracker.updateStatus(node.id, "in_progress");
-					await tracker.save();
-					emit({
-						type: "task_started",
-						taskId: node.id,
-						title: node.title,
-						message: args.message,
-					});
-
-					// Spawn child agent in background (fire-and-forget) via daemon layer
-					if (deps.launchChild) {
-						deps.launchChild(node.id, prompt).catch(() => {
-							// Error handling is done inside runChildAgentInBackground
-						});
-					}
-
+					const wasRunning = globalAgentQueues.has(args.taskId);
 					return {
 						content: [
 							{
 								type: "text" as const,
-								text: `Started child "${node.title}" (${args.taskId}) on branch ${node.branch}`,
+								text: wasRunning
+									? `Message sent to running child "${node.title}" (${args.taskId})`
+									: `Started child "${node.title}" (${args.taskId}) on branch ${node.branch}`,
 							},
 						],
 					};

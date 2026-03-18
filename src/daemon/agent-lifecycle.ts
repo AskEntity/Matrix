@@ -5,13 +5,14 @@ import type {
 	AgentRequest,
 } from "../agent-provider.ts";
 import {
+	buildTaskPrompt,
 	createOrchestratorTools,
 	slugify,
 	TASK_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
 import { DEFAULT_MODEL } from "../config.ts";
 import { McpClientManager } from "../mcp-client.ts";
-import type { QueueImage } from "../message-queue.ts";
+import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { globalAgentQueues, MessageQueue } from "../message-queue.ts";
 import {
 	clearPersistedMessages,
@@ -124,6 +125,9 @@ async function createAgentContext(
 				nodeId,
 				prompt,
 			);
+		},
+		deliverMessage: async (nodeId: string, message: QueueMessage) => {
+			await deliverMessage(ctx, project, nodeId, message);
 		},
 	});
 
@@ -332,6 +336,65 @@ export async function stopAgent(
 }
 
 /**
+ * Unified message delivery: persist to disk, try direct queue delivery, launch agent if needed.
+ *
+ * This is the SINGLE path for delivering a message to any task (child or root).
+ * Guarantees exactly-once delivery: message is persisted first, then either enqueued
+ * to a running agent's queue or the agent is launched (which loads persisted messages).
+ *
+ * Callers should NOT include the message content in any launch prompt — the agent
+ * will receive it via queue drain of persisted messages.
+ */
+export async function deliverMessage(
+	ctx: DaemonContext,
+	project: { id: string; path: string },
+	nodeId: string,
+	message: QueueMessage,
+): Promise<void> {
+	const tracker = await getTracker(ctx, project.id);
+
+	// 1. Always persist to disk (survives crashes)
+	await persistMessage(ctx.config.dataDir, project.id, nodeId, message);
+
+	// 2. Try direct queue delivery (child agent running)
+	const queue = globalAgentQueues.get(nodeId);
+	if (queue) {
+		try {
+			queue.enqueue(message);
+			return; // Done — agent will process it
+		} catch {
+			// Queue was closed — fall through to launch
+		}
+	}
+
+	// 3. Check activeSessions for root orchestrator
+	const rootNodeId = tracker.rootNodeId;
+	if (rootNodeId === nodeId) {
+		const rootSession = ctx.activeSessions.get(project.id);
+		if (rootSession?.queue) {
+			try {
+				rootSession.queue.enqueue(message);
+				return; // Done — root agent will process it
+			} catch {
+				// Queue was closed — fall through to launch
+			}
+		}
+	}
+
+	// 4. No running agent — launch one (fire-and-forget, errors are broadcast as events)
+	const node = tracker.get(nodeId);
+	if (node) {
+		ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
+			broadcastEvent(ctx, project.id, {
+				type: "error",
+				taskId: nodeId,
+				message: `Auto-launch failed: ${e instanceof Error ? e.message : String(e)}`,
+			});
+		});
+	}
+}
+
+/**
  * Ensure a child task has a worktree and a running agent.
  * Creates the worktree if needed, sets status to in_progress, and launches
  * the agent via runChildAgentInBackground. Shared by the REST message
@@ -342,21 +405,15 @@ export async function ensureChildAgentRunning(
 	project: { id: string; path: string },
 	tracker: TaskTracker,
 	nodeId: string,
-	prompt: string,
 	model?: string,
 ): Promise<void> {
 	const node = tracker.get(nodeId);
 	if (!node) return;
 
-	// Guard: if agent is already running, just enqueue the message
+	// Guard: if agent is already running, do nothing (message was already persisted + enqueued by deliverMessage)
 	const existingQueue = globalAgentQueues.get(nodeId);
 	if (existingQueue) {
-		try {
-			existingQueue.enqueue({ source: "user", content: prompt });
-			return;
-		} catch {
-			// Queue was closed between get() and enqueue() — fall through to launch a new agent
-		}
+		return;
 	}
 
 	// Create worktree if the task doesn't have one yet
@@ -377,25 +434,29 @@ export async function ensureChildAgentRunning(
 	});
 	broadcastTreeUpdate(ctx, project.id, tracker);
 
-	// Notify parent agent (waking) that a child has been launched.
-	// This is a user-initiated action, so the parent needs to know.
-	if (node.parentId) {
-		const parentQueue = globalAgentQueues.get(node.parentId);
-		if (parentQueue) {
-			try {
-				parentQueue.enqueue({
-					source: "child_report",
-					taskId: nodeId,
-					title: node.title,
-					content: `Child task "${node.title}" (${nodeId}) was started by the user.`,
-				});
-			} catch {
-				/* queue may be closed */
-			}
-		}
+	// Build a generic prompt — the real user/parent message is persisted to disk
+	// and will be delivered via queue drain (runChildCore loads persisted messages).
+	const hasExistingSession =
+		node.status === "failed" ||
+		node.status === "stuck" ||
+		node.status === "passed" ||
+		node.status === "closed";
+	let genericPrompt: string;
+	if (hasExistingSession) {
+		genericPrompt = "New message received. Resume and check your queue.";
+	} else {
+		const memory = readProjectMemory(node.worktreePath ?? project.path, false);
+		genericPrompt = buildTaskPrompt(node, tracker, memory);
 	}
 
-	await runChildAgentInBackground(ctx, project, tracker, nodeId, prompt, model);
+	await runChildAgentInBackground(
+		ctx,
+		project,
+		tracker,
+		nodeId,
+		genericPrompt,
+		model,
+	);
 }
 
 /** Compute the depth of a task in the tree by walking up the parentId chain. */
@@ -910,23 +971,6 @@ export async function handleInjectMessage(
 	images?: QueueImage[],
 	orchestratorSystemPrompt?: string,
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
-	const session = ctx.activeSessions.get(projectId);
-	if (session) {
-		try {
-			const imgs = images?.length ? images : undefined;
-			session.queue.enqueue({
-				source: "user",
-				content: message,
-				images: imgs,
-			});
-		} catch {
-			return { ok: false, error: "Queue closed", status: 409 };
-		}
-		addPendingMessage(ctx, projectId, null, message);
-		return { ok: true };
-	}
-
-	// No active session — persist message to disk and auto-resume
 	const project = ctx.pm.get(projectId);
 	if (!project) {
 		return { ok: false, error: "Project not found", status: 404 };
@@ -953,18 +997,37 @@ export async function handleInjectMessage(
 		};
 	}
 
-	const msg = {
-		source: "user" as const,
+	// Use deliverMessage for unified path: persist → enqueue (if running) → launch (if not).
+	// For root orchestrator, deliverMessage checks activeSessions queue.
+	const msg: QueueMessage = {
+		source: "user",
 		content: message,
 		...(images?.length ? { images } : {}),
 	};
+
+	// Check if session is running — deliverMessage handles this,
+	// but we need the result to know whether to auto-resume
+	const session = ctx.activeSessions.get(projectId);
+	if (session?.queue) {
+		// Session running — persist + direct enqueue
+		await persistMessage(ctx.config.dataDir, projectId, rootNodeId, msg);
+		try {
+			session.queue.enqueue(msg);
+		} catch {
+			return { ok: false, error: "Queue closed", status: 409 };
+		}
+		addPendingMessage(ctx, projectId, null, message);
+		return { ok: true };
+	}
+
+	// No active session — persist and auto-resume
 	await persistMessage(ctx.config.dataDir, projectId, rootNodeId, msg);
 	addPendingMessage(ctx, projectId, null, message);
 
 	// Auto-resume the orchestrator if we have the system prompt.
-	// Don't pass the user message as prompt — it's already persisted in the queue
+	// Don't pass the user message as prompt — it's already persisted to disk
 	// and will be delivered as a queue_message. Passing it as prompt would cause
-	// the message to appear twice: once from orchestration_started and once from queue_message.
+	// the message to appear twice.
 	if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
 		const store = getSessionStore(ctx, projectId);
 		const shouldResume = store.hasAny(rootNodeId);

@@ -281,8 +281,8 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { ok: boolean; taskId: string };
 		expect(body.ok).toBe(true);
-		// Should NOT have persisted — delivered directly to queue
-		expect((body as Record<string, unknown>).persisted).toBeUndefined();
+		// With unified deliverMessage, message is always persisted first
+		expect((body as Record<string, unknown>).persisted).toBe(true);
 
 		// Verify the message arrived in the queue
 		const msgs = taskQueue.drain();
@@ -629,8 +629,8 @@ describe("lifecycle: concurrent message sources", () => {
 			);
 			expect(res2.status).toBe(200);
 			const body2 = (await res2.json()) as { persisted?: boolean };
-			// Should NOT be persisted — delivered to existing queue
-			expect(body2.persisted).toBeUndefined();
+			// With unified deliverMessage, message is always persisted first
+			expect(body2.persisted).toBe(true);
 
 			// Still only one queue
 			expect(globalAgentQueues.get(task.id)).toBe(queue);

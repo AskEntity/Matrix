@@ -488,3 +488,16 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - When testing the system by spawning child tasks and expecting them to reach a certain state (e.g., implicit yield, waiting for messages), **sleep at least 20 seconds** before sending follow-up messages.
 - Child agent startup takes ~15 seconds: worktree creation, bun install, provider initialization, API call, response generation.
 - If you send a message too early, it may arrive before the child has entered the expected state (e.g., before implicit yield starts), causing it to be delivered as a prompt batch rather than a queue drain.
+
+## Unified deliverMessage() (Phase 6)
+
+- `deliverMessage(ctx, project, nodeId, message)` in `agent-lifecycle.ts` — single path for all message delivery.
+- Flow: persist to disk → try direct queue delivery → launch agent if needed.
+- Messages are ALWAYS persisted first (at-least-once delivery for crash safety).
+- Launch is fire-and-forget with error broadcast — `deliverMessage` never throws from launch failures.
+- `ensureChildAgentRunning` no longer takes a prompt — builds its own generic prompt (task context + memory, NO user message).
+- Generic prompt: `buildTaskPrompt()` for fresh tasks, "New message received. Resume and check your queue." for resumed tasks.
+- `OrchestratorToolsDeps.deliverMessage` callback — MCP `send_message_to_child` delegates to this instead of inline persist + launch.
+- REST `POST /tasks/:nodeId/message` response always includes `persisted: true` (since persistence always happens).
+- `notifyParentChain` remains REST-only (not in MCP path).
+- Double-delivery bug fix: `send_message_to_child` no longer includes user message in the launch prompt. Message arrives exactly once via queue drain.
