@@ -68,7 +68,7 @@ export function formatMcpToolResult(
 		}
 		case "delete_task": {
 			if (json && typeof json.title === "string") {
-				return `${t("log.deletedTask")} – Task: "${json.title}"`;
+				return `${t("log.deletedTask")} "${json.title}"`;
 			}
 			return null;
 		}
@@ -111,13 +111,13 @@ export function formatMcpToolResult(
 			return t("log.reportSent");
 		case "close_task": {
 			if (json && typeof json.title === "string") {
-				return `${t("log.closedTask")} – Task: "${json.title}"`;
+				return `${t("log.closedTask")} "${json.title}"`;
 			}
 			return null;
 		}
 		case "reset_task": {
 			if (json && typeof json.title === "string") {
-				return `${t("log.resetTask")} – Task: "${json.title}"`;
+				return `${t("log.resetTask")} "${json.title}"`;
 			}
 			return null;
 		}
@@ -217,14 +217,15 @@ export function getToolCardTitle(
 		switch (mcpTool) {
 			case "create_task": {
 				const title = getArg(toolArgs, "title");
-				return title ? `+ Task: ${title}` : "+ Task";
+				return title ? `+ Task Created: ${title}` : "+ Task Created";
 			}
 			case "delete_task": {
 				// Try to get title from result
 				if (resultContent) {
 					try {
 						const json = JSON.parse(resultContent) as Record<string, unknown>;
-						if (typeof json.title === "string") return `– Task: ${json.title}`;
+						if (typeof json.title === "string")
+							return `– Task Deleted: ${json.title}`;
 					} catch {
 						/* ignore */
 					}
@@ -232,9 +233,9 @@ export function getToolCardTitle(
 				const taskId = getArg(toolArgs, "taskId");
 				if (taskId) {
 					const title = nodeMap?.get(taskId)?.title;
-					return `– Task: ${title ?? taskId.slice(0, 8)}`;
+					return `– Task Deleted: ${title ?? taskId.slice(0, 8)}`;
 				}
-				return "– Task";
+				return "– Task Deleted";
 			}
 			case "execute_tasks": {
 				// toolArgs.tasks may be an array (live) or a JSON string (event_history)
@@ -297,10 +298,6 @@ export function getToolCardTitle(
 			case "get_tree":
 				return "Tree";
 			case "update_task": {
-				const status = getArg(toolArgs, "status");
-				const draft = getArg(toolArgs, "draft");
-				const updateTitle = getArg(toolArgs, "title");
-				const updateDesc = getArg(toolArgs, "description");
 				let resolvedTitle = "";
 				if (resultContent) {
 					try {
@@ -315,25 +312,13 @@ export function getToolCardTitle(
 						/* ignore */
 					}
 				}
-				// Build a label from what's being updated
-				const updateLabel = status
-					? status
-					: draft != null
-						? draft === "true"
-							? "draft"
-							: "undraft"
-						: updateTitle
-							? "rename"
-							: updateDesc
-								? "update"
-								: "update_task";
-				if (resolvedTitle) return `${updateLabel} → ${resolvedTitle}`;
+				if (resolvedTitle) return `Task Updated: ${resolvedTitle}`;
 				const taskId = getArg(toolArgs, "taskId");
 				if (taskId) {
 					const resolved = nodeMap?.get(taskId)?.title;
-					return `${updateLabel} → ${resolved ?? taskId.slice(0, 8)}`;
+					return `Task Updated: ${resolved ?? taskId.slice(0, 8)}`;
 				}
-				return updateLabel;
+				return "Task Updated";
 			}
 			case "send_message_to_child": {
 				const taskId = getArg(toolArgs, "taskId");
@@ -347,17 +332,17 @@ export function getToolCardTitle(
 				const taskId = getArg(toolArgs, "taskId");
 				if (taskId) {
 					const title = nodeMap?.get(taskId)?.title;
-					return `– Close: ${title ?? taskId.slice(0, 8)}`;
+					return `– Task Closed: ${title ?? taskId.slice(0, 8)}`;
 				}
-				return "– Close Task";
+				return "– Task Closed";
 			}
 			case "reset_task": {
 				const taskId = getArg(toolArgs, "taskId");
 				if (taskId) {
 					const title = nodeMap?.get(taskId)?.title;
-					return `↺ Reset: ${title ?? taskId.slice(0, 8)}`;
+					return `↺ Task Reset: ${title ?? taskId.slice(0, 8)}`;
 				}
-				return "↺ Reset Task";
+				return "↺ Task Reset";
 			}
 			case "reorder_tasks":
 				return "↕ Reorder tasks";
@@ -543,7 +528,7 @@ function McpToolCardBody({
 				<div className="og-mcp-body">
 					{title ? (
 						<div className="og-mcp-task-title">
-							{t("log.deletedTask")} – "{title}"
+							{t("log.deletedTask")} "{title}"
 						</div>
 					) : (
 						<div className="og-mcp-task-title">
