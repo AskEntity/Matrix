@@ -409,7 +409,10 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					sideEffects: NO_SIDE_EFFECTS,
 				};
 
-			case "tool_result":
+			case "tool_result": {
+				const toolImages = msg.images as
+					| Array<{ base64: string; mediaType: string }>
+					| undefined;
 				return {
 					entries: [
 						createLogEntry({
@@ -420,11 +423,13 @@ export function createWSHandler(deps: WSHandlerDeps) {
 							toolUseId: (msg.toolUseId as string) || undefined,
 							toolResult: (msg.content as string) || "",
 							isError: (msg.isError as boolean) || false,
+							images: toolImages,
 						}),
 					],
 					updates: [],
 					sideEffects: NO_SIDE_EFFECTS,
 				};
+			}
 
 			case "text_delta": {
 				const deltaText = (msg.content as string) || "";
