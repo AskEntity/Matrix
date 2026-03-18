@@ -901,7 +901,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						e instanceof Anthropic.RateLimitError ||
 						e instanceof Anthropic.APIConnectionError ||
 						e instanceof Anthropic.InternalServerError ||
-						(e instanceof Anthropic.APIError && e.status === 529);
+						(e instanceof Anthropic.APIError && e.status === 529) ||
+						// SSE stream errors (overloaded, etc.) have status=undefined
+						(e instanceof Anthropic.APIError && e.status === undefined);
 					if (!isTransient || attempt >= 4) throw e;
 					const delay = Math.min(2000 * 2 ** attempt, 60000);
 					yield {
