@@ -52,11 +52,19 @@ describe("slugify", () => {
 	});
 
 	test("handles empty string", () => {
-		expect(slugify("")).toBe("");
+		expect(slugify("")).toBe("task");
 	});
 
 	test("handles all-special-character input", () => {
-		expect(slugify("!@#$%^&*()")).toBe("");
+		expect(slugify("!@#$%^&*()")).toBe("task");
+	});
+
+	test("converts CJK to pinyin", () => {
+		expect(slugify("测试")).toBe("ce-shi");
+	});
+
+	test("handles mixed CJK and ASCII", () => {
+		expect(slugify("Fix: 修复bug")).toBe("fix-xiu-fu-bug");
 	});
 });
 

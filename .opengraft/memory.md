@@ -379,3 +379,10 @@ Messages are ALWAYS delivered regardless of agent state. The system guarantees: 
 ## Clear Sessions Auto-Stop
 
 - `POST /projects/:id/sessions/clear` now calls `stopAgent()` when agent is running instead of returning 409. Aligns with unified lifecycle (agents always running, just idle).
+
+## pinyin-pro for CJK Slugification
+
+- `pinyin()` with `type: "array"` splits every non-CJK character individually — unusable for mixed titles.
+- Solution: use regex `[\u4e00-\u9fff\u3400-\u4dbf]+` to match CJK runs, convert only those via `pinyin(match, { toneType: "none" })`, wrap with spaces for word boundary separation.
+- This preserves ASCII text while converting CJK to pinyin. Mixed titles like "Fix: 修复bug" → "fix-xiu-fu-bug".
+- Empty/special-char-only slugs now fallback to "task" instead of empty string (prevents invalid branch names).
