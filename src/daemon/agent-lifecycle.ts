@@ -410,26 +410,35 @@ function computeDepth(tracker: TaskTracker, nodeId: string): number {
 }
 
 /**
- * Find the parent agent's queue for a given node. Checks globalAgentQueues for
- * child-of-child, and ctx.activeSessions for child-of-root (root orchestrator).
+ * Find the nearest ancestor with an active queue for a given node.
+ * Walks up the parent chain to bubble through non-running intermediate nodes.
+ * Returns both the queue and the ID of the ancestor it belongs to.
  */
 function findParentQueue(
 	ctx: DaemonContext,
 	projectId: string,
 	tracker: TaskTracker,
 	nodeId: string,
-): MessageQueue | undefined {
+): { queue: MessageQueue; targetId: string } | undefined {
 	const node = tracker.get(nodeId);
 	if (!node?.parentId) return undefined;
 
-	// Check globalAgentQueues first (child agents)
-	const queue = globalAgentQueues.get(node.parentId);
-	if (queue) return queue;
+	let targetId: string | null = node.parentId;
+	while (targetId) {
+		const queue = globalAgentQueues.get(targetId);
+		if (queue) return { queue, targetId };
 
-	// Check activeSessions (root orchestrator)
-	const parent = tracker.get(node.parentId);
-	if (parent && !parent.parentId) {
-		return ctx.activeSessions.get(projectId)?.queue;
+		const ancestor = tracker.get(targetId);
+		if (!ancestor) break;
+
+		// Root orchestrator check — its queue is in activeSessions, not globalAgentQueues
+		if (!ancestor.parentId) {
+			const rootQueue = ctx.activeSessions.get(projectId)?.queue;
+			if (rootQueue) return { queue: rootQueue, targetId };
+			break;
+		}
+
+		targetId = ancestor.parentId;
 	}
 
 	return undefined;
@@ -451,7 +460,7 @@ export async function runChildAgentInBackground(
 	try {
 		// Compute depth from the tree and find the parent's queue
 		const depth = computeDepth(tracker, nodeId);
-		const parentQueue = findParentQueue(ctx, project.id, tracker, nodeId);
+		const parentQueueResult = findParentQueue(ctx, project.id, tracker, nodeId);
 
 		// Create the queue first — shared between MCP tools and runChildCore
 		const childQueue = new MessageQueue();
@@ -461,7 +470,7 @@ export async function runChildAgentInBackground(
 			currentTaskId: nodeId,
 			depth,
 			queue: childQueue,
-			parentQueue,
+			parentQueue: parentQueueResult?.queue,
 			mcpManager,
 		});
 
@@ -557,25 +566,33 @@ export async function runChildAgentInBackground(
 			});
 		}
 
-		// Enqueue child_complete message to parent's queue
-		const completionParentQueue = findParentQueue(
-			ctx,
-			project.id,
-			tracker,
-			nodeId,
-		);
-		if (completionParentQueue) {
+		// Enqueue child_complete message to parent's queue (bubbles up through non-running intermediates)
+		const completionResult = findParentQueue(ctx, project.id, tracker, nodeId);
+		const completionNotification = {
+			source: "child_complete" as const,
+			taskId: nodeId,
+			title: node.title,
+			success: success ?? true,
+			output: (agentResult.output ?? "").slice(0, 2000),
+		};
+		if (completionResult?.queue) {
 			try {
-				completionParentQueue.enqueue({
-					source: "child_complete",
-					taskId: nodeId,
-					title: node.title,
-					success: success ?? true,
-					output: (agentResult.output ?? "").slice(0, 2000),
-				});
+				completionResult.queue.enqueue(completionNotification);
 			} catch {
 				// Queue may be closed if parent already finished
 			}
+		}
+		// Always persist to immediate parent for its eventual resumption
+		if (
+			node.parentId &&
+			(!completionResult?.queue || completionResult.targetId !== node.parentId)
+		) {
+			await persistMessage(
+				ctx.config.dataDir,
+				project.id,
+				node.parentId,
+				completionNotification,
+			);
 		}
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
@@ -592,20 +609,33 @@ export async function runChildAgentInBackground(
 			output: `Error: ${errorMsg}`,
 		});
 
-		// Enqueue child_complete (failure) to parent's queue
-		const errorParentQueue = findParentQueue(ctx, project.id, tracker, nodeId);
-		if (errorParentQueue) {
+		// Enqueue child_complete (failure) to parent's queue (bubbles up through non-running intermediates)
+		const errorResult = findParentQueue(ctx, project.id, tracker, nodeId);
+		const errorNotification = {
+			source: "child_complete" as const,
+			taskId: nodeId,
+			title: node.title,
+			success: false,
+			output: `Error: ${errorMsg}`,
+		};
+		if (errorResult?.queue) {
 			try {
-				errorParentQueue.enqueue({
-					source: "child_complete",
-					taskId: nodeId,
-					title: node.title,
-					success: false,
-					output: `Error: ${errorMsg}`,
-				});
+				errorResult.queue.enqueue(errorNotification);
 			} catch {
 				// Queue may be closed
 			}
+		}
+		// Always persist to immediate parent for its eventual resumption
+		if (
+			node.parentId &&
+			(!errorResult?.queue || errorResult.targetId !== node.parentId)
+		) {
+			await persistMessage(
+				ctx.config.dataDir,
+				project.id,
+				node.parentId,
+				errorNotification,
+			);
 		}
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
