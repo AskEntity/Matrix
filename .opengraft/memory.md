@@ -422,3 +422,16 @@ All in-memory state (queues, session history, provider cache) is a cache of disk
 - **done() closing queue**: pure optimization. Removing it should be indistinguishable from keeping it.
 - **Only non-recoverable case**: interrupting a tool call mid-execution. Tools cannot be replayed; result = "interrupted" error.
 - This invariant should hold across daemon restarts, stop/resume cycles, and clear sessions.
+
+## MCP/REST Code Path Parity (Design Principle)
+
+MCP tools and REST endpoints that do the same thing MUST produce identical observable behavior. The only difference should be the message source (user vs parent_update) and notification additions (REST notifies parent chain).
+
+**Current violations** (fixed or in progress):
+- `child_complete` not sent in daemon path (runChildAgentInBackground) — fixed
+- `doneWasCalled` guard missing in daemon path — fixed
+- `notifyParentChain` missing activeSessions lookup for root — fixed
+
+**Root cause of violations**: Two separate completion handlers — `executeChildStreaming` (MCP, in agent-tools.ts) and `runChildAgentInBackground` (daemon, in agent-lifecycle.ts). Both use `runChildCore` for the streaming loop, but post-completion logic is duplicated.
+
+**Future unification**: `runChildCore` should accept an `onComplete(result, tracker, node)` callback that handles all post-completion logic (task_completed broadcast, child_complete notification, status update, tree update). Both MCP and daemon paths pass the same callback. This eliminates the class of bugs where one path adds logic the other forgets.
