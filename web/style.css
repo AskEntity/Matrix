@@ -3291,6 +3291,14 @@ button.og-tool-card-header:hover {
 	cursor: not-allowed;
 }
 
+.og-login-btn.og-login-btn-ghost {
+	background: transparent;
+	color: var(--text-secondary);
+	border: 1px solid var(--border);
+	margin-top: 0.5rem;
+	font-size: 0.9em;
+}
+
 .og-login-status {
 	margin-top: 1rem;
 	font-size: 0.9rem;
