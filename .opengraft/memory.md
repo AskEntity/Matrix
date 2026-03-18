@@ -456,3 +456,11 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - On resume, existing events loaded from `sessionStore.get(id, "events")`.
 - On compaction, `events.length = 0` mirrors `messages.length = 0` — both reset together.
 - 9 messages.push + 2 initial = 11 events.push total. 1:1 correspondence verified.
+
+## eventsToAnthropicMessages Converter (SessionStore Phase 3)
+
+- `eventsToAnthropicMessages(events)` in `src/canonical-events.ts` — pure function, no dependencies.
+- Key subtlety: `queue_messages` events store raw `formatted` text, but the provider wraps it with `[Messages received while you were idle:]...`. The converter must apply the same wrapper.
+- Key subtlety: `tool_results` with images include a `[N image(s) attached by user]` text block appended by the provider. The converter reconstructs this from `imageBlocks.length`.
+- `user_message` and `compacted_resume` events store content with cwd prefix already baked in — converter uses content directly.
+- Deterministic verification added at end of `runLoop` — `JSON.stringify` comparison of `messages` vs `eventsToAnthropicMessages(events)`. Logs `[EVENTS MISMATCH]` on divergence.
