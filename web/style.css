@@ -3229,3 +3229,79 @@ button.og-tool-card-header:hover {
 		transform: translateY(-3px);
 	}
 }
+
+/* ── Login Page ──────────────────────────────────────────────────────────── */
+
+.og-login-page {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 100vh;
+	background: var(--og-bg);
+}
+
+.og-login-card {
+	background: var(--og-surface);
+	border: 1px solid var(--og-border);
+	border-radius: 12px;
+	padding: 2.5rem;
+	max-width: 400px;
+	width: 100%;
+	text-align: center;
+}
+
+.og-login-icon {
+	font-size: 2.5rem;
+	margin-bottom: 0.75rem;
+}
+
+.og-login-title {
+	font-size: 1.5rem;
+	font-weight: 700;
+	color: var(--og-text);
+	margin-bottom: 0.5rem;
+}
+
+.og-login-subtitle {
+	color: var(--og-text-dim);
+	font-size: 0.9rem;
+	margin-bottom: 1.5rem;
+	line-height: 1.4;
+}
+
+.og-login-btn {
+	display: inline-block;
+	padding: 0.75rem 1.5rem;
+	border-radius: 8px;
+	border: none;
+	font-size: 1rem;
+	font-weight: 600;
+	cursor: pointer;
+	background: var(--og-accent);
+	color: #fff;
+	transition: opacity 0.2s;
+}
+
+.og-login-btn:hover {
+	opacity: 0.85;
+}
+
+.og-login-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.og-login-status {
+	margin-top: 1rem;
+	font-size: 0.9rem;
+	padding: 0.5rem;
+	border-radius: 6px;
+}
+
+.og-login-status-ok {
+	color: var(--og-success);
+}
+
+.og-login-status-error {
+	color: var(--og-error);
+}

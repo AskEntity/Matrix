@@ -4,6 +4,7 @@ import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import { serveStatic, websocket } from "hono/bun";
+import { ADMIN_REGISTRATION_PAGE } from "./admin-page.ts";
 import type { AgentSession } from "./agent-provider.ts";
 import { ORCHESTRATION_KNOWLEDGE } from "./agent-tools.ts";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
@@ -18,6 +19,11 @@ import type {
 import { flushEvents, loadEventHistory } from "./daemon/event-system.ts";
 import { getTracker, pruneSessionFiles } from "./daemon/helpers.ts";
 import { registerAgentRoutes } from "./daemon/routes/agent.ts";
+import {
+	createAuthMiddleware,
+	registerAdminAuthRoutes,
+	registerAuthRoutes,
+} from "./daemon/routes/auth.ts";
 import { registerConfigRoutes } from "./daemon/routes/config.ts";
 import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
@@ -83,6 +89,13 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		ctx.requestCount++;
 		await next();
 	});
+
+	// Auth middleware — must be before all routes
+	const authMiddleware = createAuthMiddleware(ctx);
+	app.use("*", authMiddleware);
+
+	// Auth routes (login/logout/status — available on main port)
+	registerAuthRoutes(app, ctx);
 
 	// Health
 	app.get("/health", async (c) => {
@@ -312,8 +325,18 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		ctx.globalConfig = await loadGlobalConfig(ctx.config.globalConfigPath);
 	}
 
+	// Build admin app for passkey registration (localhost-only)
+	const adminApp = new Hono();
+	adminApp.get("/health", (c) => c.json({ status: "ok", admin: true }));
+	registerAdminAuthRoutes(adminApp, ctx);
+	// Serve a simple registration page
+	adminApp.get("/", (c) => {
+		return c.html(ADMIN_REGISTRATION_PAGE);
+	});
+
 	return {
 		app,
+		adminApp,
 		pm: ctx.pm,
 		wsClients: ctx.wsClients,
 		activeSessions: ctx.activeSessions,
@@ -414,6 +437,7 @@ ${ORCHESTRATION_KNOWLEDGE}`;
 if (import.meta.main) {
 	const {
 		app,
+		adminApp,
 		pm,
 		autoResumeProjects,
 		shutdown,
@@ -455,6 +479,20 @@ if (import.meta.main) {
 				? { hmr: true, console: true }
 				: false,
 	});
+
+	// Start admin server for passkey registration (localhost-only)
+	const authConfig = getConfig().auth;
+	if (authConfig?.enabled) {
+		const adminPort = authConfig.adminPort ?? 7434;
+		Bun.serve({
+			fetch: adminApp.fetch,
+			port: adminPort,
+			hostname: "127.0.0.1", // localhost only
+		});
+		console.log(
+			`Admin server (passkey registration): http://localhost:${adminPort}`,
+		);
+	}
 
 	// Graceful shutdown: save sessions before exit
 	const handleShutdown = async () => {

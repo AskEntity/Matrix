@@ -12,6 +12,7 @@ import {
 	IconPlus,
 	IconRefresh,
 } from "./components/icons.tsx";
+import { LoginPage } from "./components/LoginPage.tsx";
 import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
@@ -74,6 +75,61 @@ export function App() {
 }
 
 function AppInner() {
+	// Auth state — check on mount
+	const [authState, setAuthState] = useState<
+		"loading" | "authenticated" | "needs_login" | "no_credentials"
+	>("loading");
+
+	useEffect(() => {
+		fetch("/auth/status")
+			.then((r) => r.json())
+			.then(
+				(data: {
+					enabled?: boolean;
+					hasCredentials?: boolean;
+					authenticated?: boolean;
+				}) => {
+					if (!data.enabled || data.authenticated) {
+						// Auth not enabled or already authenticated
+						setAuthState("authenticated");
+					} else if (data.hasCredentials) {
+						setAuthState("needs_login");
+					} else {
+						// Auth enabled but no credentials — show setup notice
+						setAuthState("no_credentials");
+					}
+				},
+			)
+			.catch(() => {
+				// If auth endpoint fails, assume no auth needed (backward compatible)
+				setAuthState("authenticated");
+			});
+	}, []);
+
+	if (authState === "loading") {
+		return (
+			<div className="og-login-page">
+				<div className="og-login-card">
+					<div className="og-login-icon">⏳</div>
+					<p className="og-login-subtitle">Loading...</p>
+				</div>
+			</div>
+		);
+	}
+
+	if (authState === "needs_login" || authState === "no_credentials") {
+		return (
+			<LoginPage
+				hasCredentials={authState === "needs_login"}
+				onAuthenticated={() => setAuthState("authenticated")}
+			/>
+		);
+	}
+
+	return <AuthenticatedApp />;
+}
+
+function AuthenticatedApp() {
 	const { t } = useLocale();
 	const {
 		projects,
