@@ -548,3 +548,13 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - SUMMARIZATION_INSTRUCTION has 9 sections (was 8): added "Current Working Directory" as section 2.
 - `buildSummarizationInstruction(cwd)` appends actual CWD to the instruction so agents include it in the checkpoint. Both providers use this instead of raw `SUMMARIZATION_INSTRUCTION`.
 - "Rejected Approaches" renamed to "Key Insights & Rejected Approaches" — guidance now emphasizes high-level design principles over one-off API fixes.
+
+## Mobile Layout (< 768px)
+
+- `viewport-fit=cover` in index.html enables iOS full-screen (no URL bar gap).
+- Header uses `padding-top: env(safe-area-inset-top, 0px)` and `height: calc(var(--header-height) + env(safe-area-inset-top, 0px))`.
+- Footer uses `padding-bottom: max(8px, env(safe-area-inset-bottom, 8px))`.
+- Sidebar is a `position: fixed` slide-in overlay (transform: translateX) toggled via hamburger button. Backdrop is a full-screen div with `z-index: 199`.
+- Detail panel + resize divider hidden on mobile. Activity log takes full height.
+- `!important` → use double-class selectors (e.g. `.og-hamburger-btn.og-hamburger-btn`) or increase specificity with parent (`.og-content .og-activity-panel`).
+- Biome lint/a11y/noStaticElementInteractions + useKeyWithClickEvents: suppress both with `biome-ignore` comments on the backdrop div.
