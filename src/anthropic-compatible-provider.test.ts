@@ -1561,6 +1561,111 @@ describe("done tool", () => {
 		globalAgentQueues.delete(childId);
 		childQueue.close();
 	});
+
+	test("done() with queue enters idle and returns wake messages", async () => {
+		const node = tracker.addTask("Test Done Idle", "description");
+		tracker.updateStatus(node.id, "in_progress");
+		const queue = new MessageQueue();
+
+		const mockProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" } as AgentResult;
+			},
+			startSession: () => {
+				throw new Error("not used");
+			},
+		};
+
+		const { toolDefs } = createOrchestratorTools({
+			tracker,
+			provider: mockProvider,
+			worktrees: {} as never,
+			projectPath: tempDir,
+			repoPath: tempDir,
+			currentTaskId: node.id,
+			queue,
+		});
+		const doneTool = toolDefs.find((t) => t.name === "done");
+		if (!doneTool) throw new Error("done tool not found");
+
+		// Call done() — it will block on queue.wait()
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const donePromise = (doneTool as any).handler({
+			status: "passed",
+			summary: "All tests pass",
+		});
+
+		// Verify task status was updated immediately (before wake)
+		expect(tracker.get(node.id)?.status).toBe("passed");
+
+		// Send a wake message after a short delay
+		setTimeout(() => {
+			queue.enqueue({
+				source: "parent_update",
+				content: "Resume with new instructions",
+			});
+		}, 10);
+
+		const result = await donePromise;
+		// Should contain the context prefix and the wake message
+		expect(result.content[0].text).toContain(
+			"You previously called done(passed)",
+		);
+		expect(result.content[0].text).toContain("Resume with new instructions");
+		expect(result.content[0].text).toContain("## Pending");
+
+		queue.close();
+	});
+
+	test("done() with queue that closes returns fallback message", async () => {
+		const node = tracker.addTask("Test Done Close", "description");
+		tracker.updateStatus(node.id, "in_progress");
+		const queue = new MessageQueue();
+
+		const mockProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" } as AgentResult;
+			},
+			startSession: () => {
+				throw new Error("not used");
+			},
+		};
+
+		const { toolDefs } = createOrchestratorTools({
+			tracker,
+			provider: mockProvider,
+			worktrees: {} as never,
+			projectPath: tempDir,
+			repoPath: tempDir,
+			currentTaskId: node.id,
+			queue,
+		});
+		const doneTool = toolDefs.find((t) => t.name === "done");
+		if (!doneTool) throw new Error("done tool not found");
+
+		// Call done() — it will block on queue.wait()
+		// biome-ignore lint/suspicious/noExplicitAny: test helper
+		const donePromise = (doneTool as any).handler({
+			status: "failed",
+			summary: "Could not finish",
+		});
+
+		// Close the queue to simulate agent being stopped
+		setTimeout(() => {
+			queue.close();
+		}, 10);
+
+		const result = await donePromise;
+		// When queue closes, done() returns the fallback "Entering idle state" message
+		// (not an error — queue closure is normal shutdown)
+		expect(result.content[0].text).toContain("Entering idle state");
+	});
 });
 
 describe("jsSearch", () => {

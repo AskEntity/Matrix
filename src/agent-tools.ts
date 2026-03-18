@@ -613,6 +613,160 @@ export function createOrchestratorTools(
 	/** Count of outstanding clarify() calls that have not yet received a clarify_response. */
 	let pendingClarifications = 0;
 
+	/**
+	 * Shared yield logic: wait for messages on the queue, handle compact signals,
+	 * clarify timeouts, emit idle/active events, and return formatted result.
+	 * Used by both yield() and done() tools.
+	 * Returns null if no queue is available.
+	 */
+	async function waitForQueueMessages(): Promise<{
+		content: Array<
+			| { type: "text"; text: string }
+			| { type: "image"; data: string; mimeType: string }
+		>;
+		isError?: boolean;
+	} | null> {
+		if (!deps.queue) return null;
+		try {
+			let all: QueueMessage[];
+
+			while (true) {
+				if (currentTaskId) {
+					deps.queue.idle = true;
+					emit({ type: "agent_idle", taskId: currentTaskId });
+				}
+
+				const timeoutMs =
+					pendingClarifications > 0 ? deps.clarifyTimeoutMs : undefined;
+				const result = await deps.queue.waitForMessage(timeoutMs);
+
+				if (result === "timeout") {
+					const timeoutMsg = `<clarify_timeout duration="${timeoutMs}ms">No response received. Proceed with your best judgement.</clarify_timeout>`;
+					emit({
+						type: "clarification_timeout",
+						taskId: currentTaskId ?? undefined,
+						timeoutMs,
+					});
+					const synthesized: QueueMessage[] = Array.from(
+						{ length: pendingClarifications },
+						() => ({
+							source: "clarify_response" as const,
+							answer: timeoutMsg,
+						}),
+					);
+					pendingClarifications = 0;
+					all = [...synthesized, ...deps.queue.drainMerged()];
+				} else {
+					const rest = deps.queue.drainMerged();
+					all = [result, ...rest];
+					for (const msg of all) {
+						if (msg.source === "clarify_response") {
+							pendingClarifications = Math.max(0, pendingClarifications - 1);
+						}
+					}
+				}
+
+				const compactMsgs = all.filter((m) => m.source === "compact");
+				all = all.filter((m) => m.source !== "compact");
+				if (compactMsgs.length > 0) {
+					for (const cm of compactMsgs) {
+						deps.queue.enqueue(cm);
+					}
+					break;
+				}
+				if (all.length > 0) break;
+			}
+
+			if (currentTaskId) {
+				deps.queue.idle = false;
+				emit({ type: "agent_active", taskId: currentTaskId });
+			}
+
+			const formatted = all.map(formatQueueMessage).join("\n");
+			if (formatted) {
+				emit({
+					type: "agent_event",
+					taskId: currentTaskId ?? undefined,
+					eventType: "queue_message",
+					messages: formatted,
+					rawMessages: all.map(toRawMessage),
+				});
+			}
+
+			const completedIds = new Set(
+				all
+					.filter(
+						(m): m is Extract<QueueMessage, { source: "child_complete" }> =>
+							m.source === "child_complete",
+					)
+					.map((m) => m.taskId),
+			);
+			const myChildren = currentTaskId
+				? (tracker.get(currentTaskId)?.children ?? [])
+				: [];
+			const runningChildren = myChildren.filter(
+				(id) => globalAgentQueues.has(id) && !completedIds.has(id),
+			);
+			const runningChildrenText =
+				runningChildren.length > 0
+					? runningChildren
+							.map((id) => {
+								const title = tracker.get(id)?.title ?? id;
+								return `"${title}" (${id})`;
+							})
+							.join(", ")
+					: "none";
+			const clarifyText =
+				pendingClarifications > 0 ? String(pendingClarifications) : "none";
+			const pendingSection = [
+				"",
+				"## Pending",
+				`- Running children: ${runningChildrenText}`,
+				`- Pending clarifications: ${clarifyText}`,
+			].join("\n");
+
+			const imageBlocks: Array<{
+				type: "image";
+				data: string;
+				mimeType: string;
+			}> = [];
+			for (const msg of all) {
+				if (msg.source === "user" && msg.images) {
+					for (const img of msg.images) {
+						imageBlocks.push({
+							type: "image",
+							data: img.base64,
+							mimeType: img.mediaType,
+						});
+					}
+				}
+			}
+
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: formatted
+							? formatted + pendingSection
+							: pendingSection.trimStart(),
+					},
+					...imageBlocks,
+				],
+			};
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `Queue error: ${message}`,
+					},
+				],
+				isError: true,
+			};
+		}
+	}
+
 	const toolDefs = [
 		tool(
 			"get_tree",
@@ -850,7 +1004,8 @@ export function createOrchestratorTools(
 				"Zero token burn while waiting.",
 			{},
 			async () => {
-				if (!deps.queue) {
+				const result = await waitForQueueMessages();
+				if (!result) {
 					return {
 						content: [
 							{
@@ -861,181 +1016,7 @@ export function createOrchestratorTools(
 						isError: true,
 					};
 				}
-				try {
-					let all: QueueMessage[];
-
-					// Loop until we have real (non-compact) messages.
-					// Compact signals are re-enqueued for the provider; if they're
-					// the only messages, we silently wait again instead of returning
-					// a spurious "Resume from yield" to the UI.
-					while (true) {
-						// Emit agent_idle before waiting
-						if (currentTaskId) {
-							deps.queue.idle = true;
-							emit({
-								type: "agent_idle",
-								taskId: currentTaskId,
-							});
-						}
-
-						// Use timeout when there are pending clarifications and clarifyTimeoutMs is set
-						const timeoutMs =
-							pendingClarifications > 0 ? deps.clarifyTimeoutMs : undefined;
-						const result = await deps.queue.waitForMessage(timeoutMs);
-
-						if (result === "timeout") {
-							// Timeout fired — synthesize a clarify_response for all pending clarifications
-							const timeoutMsg = `<clarify_timeout duration="${timeoutMs}ms">No response received. Proceed with your best judgement.</clarify_timeout>`;
-							// Emit clarification_timeout event so the UI knows
-							emit({
-								type: "clarification_timeout",
-								taskId: currentTaskId ?? undefined,
-								timeoutMs,
-							});
-							// Synthesize one clarify_response for each pending clarification
-							const synthesized: QueueMessage[] = Array.from(
-								{ length: pendingClarifications },
-								() => ({
-									source: "clarify_response" as const,
-									answer: timeoutMsg,
-								}),
-							);
-							pendingClarifications = 0;
-							// Also drain any real messages that may have arrived simultaneously
-							all = [...synthesized, ...deps.queue.drainMerged()];
-						} else {
-							// Got a real message — drain any additional messages that accumulated
-							const rest = deps.queue.drainMerged();
-							all = [result, ...rest];
-
-							// Track clarify_response messages — each one resolves a pending clarification
-							for (const msg of all) {
-								if (msg.source === "clarify_response") {
-									pendingClarifications = Math.max(
-										0,
-										pendingClarifications - 1,
-									);
-								}
-							}
-						}
-
-						// Re-enqueue compact signals for the provider to handle
-						const compactMsgs = all.filter((m) => m.source === "compact");
-						all = all.filter((m) => m.source !== "compact");
-						if (compactMsgs.length > 0) {
-							for (const cm of compactMsgs) {
-								deps.queue.enqueue(cm);
-							}
-							// Break immediately — compact signal is re-enqueued for the provider.
-							// Do NOT loop back to waitForMessage: the re-enqueued compact would be
-							// immediately dequeued → re-enqueued → dequeued → infinite sync loop (CPU 100%).
-							break;
-						}
-
-						// If we have real messages, break out and return them
-						if (all.length > 0) break;
-						// Otherwise only compact signals arrived — loop and wait again
-					}
-
-					// Emit agent_active after resuming from wait
-					if (currentTaskId) {
-						deps.queue.idle = false;
-						emit({
-							type: "agent_active",
-							taskId: currentTaskId,
-						});
-					}
-
-					// Format messages for the agent
-					const formatted = all.map(formatQueueMessage).join("\n");
-
-					// Emit queue_message event so the UI can acknowledge pending messages
-					if (formatted) {
-						emit({
-							type: "agent_event",
-							taskId: currentTaskId ?? undefined,
-							eventType: "queue_message",
-							messages: formatted,
-							rawMessages: all.map(toRawMessage),
-						});
-					}
-
-					// Build ## Pending summary
-					const completedIds = new Set(
-						all
-							.filter(
-								(m): m is Extract<QueueMessage, { source: "child_complete" }> =>
-									m.source === "child_complete",
-							)
-							.map((m) => m.taskId),
-					);
-					// Find running children by checking which children of this task
-					// have active queues in globalAgentQueues
-					const myChildren = currentTaskId
-						? (tracker.get(currentTaskId)?.children ?? [])
-						: [];
-					const runningChildren = myChildren.filter(
-						(id) => globalAgentQueues.has(id) && !completedIds.has(id),
-					);
-					const runningChildrenText =
-						runningChildren.length > 0
-							? runningChildren
-									.map((id) => {
-										const title = tracker.get(id)?.title ?? id;
-										return `"${title}" (${id})`;
-									})
-									.join(", ")
-							: "none";
-					const clarifyText =
-						pendingClarifications > 0 ? String(pendingClarifications) : "none";
-					const pendingSection = [
-						"",
-						"## Pending",
-						`- Running children: ${runningChildrenText}`,
-						`- Pending clarifications: ${clarifyText}`,
-					].join("\n");
-
-					// Extract images from user queue messages (MCP image format)
-					const imageBlocks: Array<{
-						type: "image";
-						data: string;
-						mimeType: string;
-					}> = [];
-					for (const msg of all) {
-						if (msg.source === "user" && msg.images) {
-							for (const img of msg.images) {
-								imageBlocks.push({
-									type: "image",
-									data: img.base64,
-									mimeType: img.mediaType,
-								});
-							}
-						}
-					}
-
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: formatted
-									? formatted + pendingSection
-									: pendingSection.trimStart(),
-							},
-							...imageBlocks,
-						],
-					};
-				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Queue error: ${message}`,
-							},
-						],
-						isError: true,
-					};
-				}
+				return result;
 			},
 		),
 
@@ -1769,6 +1750,20 @@ export function createOrchestratorTools(
 					output: args.summary.slice(0, 500),
 				});
 
+				// Enter implicit yield — wait for wake messages (e.g. parent resume).
+				// This prevents the provider from making another API call after done(),
+				// which would waste tokens and create confusing behavior.
+				const wakeResult = await waitForQueueMessages();
+				if (wakeResult && !wakeResult.isError) {
+					// Prepend context so the agent knows it previously completed
+					const firstBlock = wakeResult.content[0];
+					if (firstBlock && firstBlock.type === "text") {
+						firstBlock.text = `You previously called done(${args.status}). New messages woke you up:\n\n${firstBlock.text}`;
+					}
+					return wakeResult;
+				}
+
+				// No queue, or queue closed (normal shutdown) — return immediately
 				return {
 					content: [
 						{
