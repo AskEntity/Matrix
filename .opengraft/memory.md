@@ -558,3 +558,9 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - Detail panel + resize divider hidden on mobile. Activity log takes full height.
 - `!important` → use double-class selectors (e.g. `.og-hamburger-btn.og-hamburger-btn`) or increase specificity with parent (`.og-content .og-activity-panel`).
 - Biome lint/a11y/noStaticElementInteractions + useKeyWithClickEvents: suppress both with `biome-ignore` comments on the backdrop div.
+
+## SSE Overload Retry Fix
+
+- Anthropic SDK SSE stream errors (overloaded_error, etc.) are thrown as `APIError` with `status: undefined` (not a numeric HTTP code).
+- Our retry logic only checked `status === 529`. Fixed: also check `status === undefined` to catch SSE stream errors.
+- Pattern: `(e instanceof Anthropic.APIError && e.status === undefined)  // SSE stream errors`
