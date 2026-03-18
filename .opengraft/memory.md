@@ -517,3 +517,10 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - Debug logging added at 3 points in `src/anthropic-compatible-provider.ts` to trace MCP image pipeline.
 - Pipeline: MCP tool returns `content[]` → parse for `type: "image"` + `data` → yield `images` in `tool_result` event → broadcast via WS → ws-handler extracts `msg.images` → LogEntry.images → ToolResultImages component.
 - Changed parts loop to `Record<string, unknown>` to log all keys. Need to verify chrome-devtools MCP actually returns `type: "image"` (might use a different format like `type: "resource"` or embed base64 differently).
+
+
+## deliverMessage Persist-Only-On-Miss Fix
+
+- `deliverMessage()` now only persists to disk when no running queue exists. Previously it always persisted first, causing duplicate messages on daemon restart.
+- Queue = cache, persist = disk. Cache hit (enqueue succeeds) → return immediately, no disk write. Cache miss → persist + launch.
+- REST `POST /tasks/:nodeId/message` response no longer includes `persisted: true` field (was always hardcoded, now misleading).

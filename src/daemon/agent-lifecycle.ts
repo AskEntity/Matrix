@@ -336,11 +336,12 @@ export async function stopAgent(
 }
 
 /**
- * Unified message delivery: persist to disk, try direct queue delivery, launch agent if needed.
+ * Unified message delivery: try direct queue delivery, persist + launch if no running agent.
  *
  * This is the SINGLE path for delivering a message to any task (child or root).
- * Guarantees exactly-once delivery: message is persisted first, then either enqueued
- * to a running agent's queue or the agent is launched (which loads persisted messages).
+ * Queue = cache, persist = disk. If cache hit (agent running) → enqueue directly,
+ * no disk write needed. If cache miss → persist to disk, then launch agent which
+ * loads persisted messages on startup.
  *
  * Callers should NOT include the message content in any launch prompt — the agent
  * will receive it via queue drain of persisted messages.
@@ -353,35 +354,34 @@ export async function deliverMessage(
 ): Promise<void> {
 	const tracker = await getTracker(ctx, project.id);
 
-	// 1. Always persist to disk (survives crashes)
-	await persistMessage(ctx.config.dataDir, project.id, nodeId, message);
-
-	// 2. Try direct queue delivery (child agent running)
+	// 1. Try direct queue delivery (child agent running)
 	const queue = globalAgentQueues.get(nodeId);
 	if (queue) {
 		try {
 			queue.enqueue(message);
-			return; // Done — agent will process it
+			return; // Agent running, message delivered via queue — no persist needed
 		} catch {
-			// Queue was closed — fall through to launch
+			// Queue was closed — fall through to persist + launch
 		}
 	}
 
-	// 3. Check activeSessions for root orchestrator
+	// 2. Check activeSessions for root orchestrator
 	const rootNodeId = tracker.rootNodeId;
 	if (rootNodeId === nodeId) {
 		const rootSession = ctx.activeSessions.get(project.id);
 		if (rootSession?.queue) {
 			try {
 				rootSession.queue.enqueue(message);
-				return; // Done — root agent will process it
+				return; // Root agent running — no persist needed
 			} catch {
-				// Queue was closed — fall through to launch
+				// Queue was closed — fall through to persist + launch
 			}
 		}
 	}
 
-	// 4. No running agent — launch one (fire-and-forget, errors are broadcast as events)
+	// 3. No running agent — persist to disk + launch
+	await persistMessage(ctx.config.dataDir, project.id, nodeId, message);
+
 	const node = tracker.get(nodeId);
 	if (node) {
 		ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
@@ -410,7 +410,7 @@ export async function ensureChildAgentRunning(
 	const node = tracker.get(nodeId);
 	if (!node) return;
 
-	// Guard: if agent is already running, do nothing (message was already persisted + enqueued by deliverMessage)
+	// Guard: if agent is already running, do nothing (message was already enqueued by deliverMessage)
 	const existingQueue = globalAgentQueues.get(nodeId);
 	if (existingQueue) {
 		return;

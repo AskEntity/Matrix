@@ -1174,10 +1174,8 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		const body = (await res.json()) as {
 			ok: boolean;
 			taskId: string;
-			persisted: boolean;
 		};
 		expect(body.ok).toBe(true);
-		expect(body.persisted).toBe(true);
 	});
 
 	test("routes message to registered task queue", async () => {
@@ -1270,10 +1268,8 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		const body = (await res.json()) as {
 			ok: boolean;
 			taskId: string;
-			persisted: boolean;
 		};
 		expect(body.ok).toBe(true);
-		expect(body.persisted).toBe(true);
 
 		globalAgentQueues.delete(taskId);
 	});
