@@ -582,3 +582,7 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 
 - `bun --watch` only auto-reloads on src/ changes. Web UI (web/) is bundled via `import("../web/index.html")` at daemon startup — requires full daemon restart.
 - User triggers manual reload. Commits to web/ files do NOT auto-trigger daemon restart.
+
+## Anthropic SDK Timeout
+
+- Default timeout: 10 minutes. Increased to 20 minutes for compaction with large contexts under API load.
