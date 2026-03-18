@@ -142,3 +142,14 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - `tool_results.results` stores individual `{ role: "tool", tool_call_id, name, content }` messages.
 - `eventsToOpenAIMessages()` spreads assistant_response.content and tool_results.results directly (they are already OpenAI format).
 - Events persist via both `setSync` (mid-loop) and `set` (final), same as Anthropic.
+
+
+## StrongEvent + EventStore (Phase 1)
+
+- `StrongEvent` type added alongside old `CanonicalEvent` (not replacing yet — Phase 4 cleanup).
+- Uses `ts` (not `timestamp`) for brevity in JSONL serialization.
+- `EventStore` in `src/event-store.ts`: JSONL append-only, `readActive()` filters by last `compact_marker`.
+- `strongEventsToAnthropicMessages()`: key batching logic — assistant_text + tool_calls → single assistant message, tool_results + queue_messages → single user message.
+- Standalone `assistant_text` (no tool_calls) uses simple string content. With tool_calls, uses content array.
+- `queue_message` events between `tool_result` events merge into the same user message with XML-tagged text blocks.
+
