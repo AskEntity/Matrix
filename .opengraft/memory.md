@@ -152,3 +152,11 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - All tested scenarios (echo+tools, fail+resume, implicit yield, rapid messages, orchestrator self-check) show PERFECT match between StrongEvents and provider messages.
 - **Known acceptable mismatch**: trailing empty `{"role":"assistant","content":[]}` after done() — Anthropic protocol artifact, StrongEvents correctly omit it.
 - **send_message_to_child double-delivery**: message appears both in initial prompt AND as queue_message. Design decision (at-least-once delivery), not a bug.
+
+
+## Child Agent Done() Deadlock Fix (March 2026)
+
+- **Root cause**: done()=yield blocks on `waitForQueueMessages()` before `tool_result` event is emitted. `runChildCore` waited for `tool_result` with `tool === "mcp__opengraft__done"` to close the queue, but it never arrived → deadlock.
+- **Fix**: In `createAgentContext`, the `onTaskEvent` callback now detects `task_completed` events (emitted by done() BEFORE blocking) and closes the child queue. This unblocks `waitForQueueMessages()` immediately. Only applies to child agents (`depth > 0`).
+- **Two event paths in agent lifecycle**: (1) `onTaskEvent` callback fires synchronously during tool execution (goes to WebSocket broadcast), (2) provider stream yields `AgentEvent` types to `runChildCore`. `task_completed` flows through path 1, not path 2.
+- **The `tool_result` detection in `runChildCore` remains as fallback** for edge cases where done() returns without blocking.
