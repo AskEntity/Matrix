@@ -83,3 +83,56 @@ export function eventsToAnthropicMessages(events: CanonicalEvent[]): unknown[] {
 	}
 	return messages;
 }
+
+/**
+ * Reconstruct OpenAI-format messages from canonical events.
+ * Pure function — no side effects or external dependencies.
+ *
+ * For OpenAI, assistant_response and tool_results store already-formatted
+ * OpenAI message objects in their content/results arrays. We spread them
+ * directly into the output.
+ */
+export function eventsToOpenAIMessages(events: CanonicalEvent[]): unknown[] {
+	const messages: unknown[] = [];
+	for (const event of events) {
+		switch (event.type) {
+			case "user_message":
+				messages.push({ role: "user", content: event.content });
+				break;
+			case "compacted_resume":
+				messages.push({ role: "user", content: event.content });
+				break;
+			case "summarization_request":
+				messages.push({ role: "user", content: event.instruction });
+				break;
+			case "assistant_response":
+				// OpenAI stores the full assistant message object(s) in content array
+				for (const msg of event.content) {
+					messages.push(msg);
+				}
+				break;
+			case "queue_messages": {
+				const text = `[Messages received while you were idle:]\n${event.formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`;
+				if (event.imageBlocks && event.imageBlocks.length > 0) {
+					messages.push({
+						role: "user",
+						content: [{ type: "text", text }, ...event.imageBlocks],
+					});
+				} else {
+					messages.push({ role: "user", content: text });
+				}
+				break;
+			}
+			case "tool_results":
+				// OpenAI stores individual tool result messages in results array
+				for (const msg of event.results) {
+					messages.push(msg);
+				}
+				break;
+			case "budget_warning":
+				messages.push({ role: "user", content: event.warning });
+				break;
+		}
+	}
+	return messages;
+}
