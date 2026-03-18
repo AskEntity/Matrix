@@ -847,6 +847,7 @@ select {
 
 /* Detail panel (top) */
 .og-detail-panel {
+	flex: var(--split-ratio);
 	display: flex;
 	flex-direction: column;
 	overflow-y: auto;
@@ -885,6 +886,7 @@ select {
 
 /* Activity panel (bottom) */
 .og-activity-panel {
+	flex: var(--activity-ratio);
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;

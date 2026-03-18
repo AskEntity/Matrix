@@ -668,7 +668,12 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				>
 					<div
 						className="og-detail-panel"
-						style={{ flex: splitRatio, minHeight: 0 }}
+						style={
+							{
+								"--split-ratio": splitRatio,
+								minHeight: 0,
+							} as React.CSSProperties
+						}
 					>
 						<div className="og-panel-header">
 							<span className="og-panel-title">
@@ -718,7 +723,14 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						onMouseDown={handleDividerMouseDown}
 					/>
 
-					<div className="og-activity-panel" style={{ flex: 1 - splitRatio }}>
+					<div
+						className="og-activity-panel"
+						style={
+							{
+								"--activity-ratio": 1 - splitRatio,
+							} as React.CSSProperties
+						}
+					>
 						<div className="og-panel-header">
 							<span className="og-panel-title">
 								{t("activity.title")}
