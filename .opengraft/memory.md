@@ -413,3 +413,12 @@ Messages are ALWAYS delivered regardless of agent state. The system guarantees: 
 - Root orchestrator queue is in `ctx.activeSessions.get(projectId)?.queue`, NOT in `globalAgentQueues`.
 - `notifyParentChain` must check both: `globalAgentQueues` for child agents, `activeSessions` for root (no parentId).
 - `createApp` now exposes `activeSessions` for test access.
+
+## Cache Invariant (Core Mental Model)
+
+All in-memory state (queues, session history, provider cache) is a cache of disk state. At any non-tool-call moment, destroying and recreating in-memory state should produce identical observable behavior. Specifically:
+- **SessionStore**: memory cache → disk fallback → empty (fresh start). Eviction = optimization.
+- **MessageQueue**: if no queue, persist to disk. On next queue creation, load from disk. Queue existence = cache.
+- **done() closing queue**: pure optimization. Removing it should be indistinguishable from keeping it.
+- **Only non-recoverable case**: interrupting a tool call mid-execution. Tools cannot be replayed; result = "interrupted" error.
+- This invariant should hold across daemon restarts, stop/resume cycles, and clear sessions.
