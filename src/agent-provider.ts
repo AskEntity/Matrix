@@ -1,3 +1,4 @@
+import type { EventStore } from "./event-store.ts";
 import type { MessageQueue } from "./message-queue.ts";
 import type { SessionStore } from "./session-store.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
@@ -30,6 +31,8 @@ export interface AgentRequest {
 	hasRunningChildren?: () => boolean;
 	/** Budget limit in USD — provider will inject warnings at 80% and 100%. */
 	budgetUsd?: number;
+	/** EventStore for strongly-typed event persistence (StrongEvent JSONL). */
+	eventStore?: EventStore;
 }
 
 /** Streaming event emitted by an agent during execution. */

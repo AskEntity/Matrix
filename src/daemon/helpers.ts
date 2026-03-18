@@ -11,6 +11,7 @@ import {
 	resolveAuthGroup,
 	resolveConfig,
 } from "../config.ts";
+import { EventStore } from "../event-store.ts";
 import { OpenAICompatibleProvider } from "../openai-compatible-provider.ts";
 import { SessionStore } from "../session-store.ts";
 import { TaskTracker } from "../task-tracker.ts";
@@ -90,6 +91,19 @@ export function getSessionStore(
 	if (!store) {
 		store = new SessionStore(join(ctx.config.dataDir, "sessions", projectId));
 		ctx.sessionStores.set(projectId, store);
+	}
+	return store;
+}
+
+/** Get or create an EventStore for a project. */
+export function getEventStore(
+	ctx: DaemonContext,
+	projectId: string,
+): EventStore {
+	let store = ctx.eventStores.get(projectId);
+	if (!store) {
+		store = new EventStore(join(ctx.config.dataDir, "sessions", projectId));
+		ctx.eventStores.set(projectId, store);
 	}
 	return store;
 }

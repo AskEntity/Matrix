@@ -19,6 +19,8 @@ import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
 import {
 	type CanonicalEvent,
 	eventsToAnthropicMessages,
+	type StrongEvent,
+	strongEventsToAnthropicMessages,
 } from "./canonical-events.ts";
 import { DEFAULT_MODEL } from "./config.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
@@ -620,6 +622,26 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			});
 		}
 
+		// ── StrongEvent recording via EventStore (JSONL append-only) ──
+		const eventStore = request.eventStore;
+		if (eventStore) {
+			if (isResume) {
+				eventStore.append(sessionId, {
+					type: "user_message",
+					content: request.prompt,
+					isResume: true,
+					ts: Date.now(),
+				});
+			} else {
+				eventStore.append(sessionId, {
+					type: "user_message",
+					content: firstUserContent,
+					cwd,
+					ts: Date.now(),
+				});
+			}
+		}
+
 		// For context compression: use the original task prompt, not the resume prompt.
 		// On resume, the original prompt is the first user message in history.
 		const taskContext =
@@ -718,20 +740,41 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						cwd,
 					});
 					const postCompactChars = userContent.length;
-					const estimatedPostCompactTokens = Math.floor(postCompactChars / 4);
-					const savedTokens = Math.max(
-						0,
-						oldTokens - estimatedPostCompactTokens,
+					const estimatedPostCompactTokensForSaved = Math.floor(
+						postCompactChars / 4,
 					);
-					estimatedInputTokens = estimatedPostCompactTokens;
+					const compactSavedTokens = Math.max(
+						0,
+						oldTokens - estimatedPostCompactTokensForSaved,
+					);
+					// Append compact_marker + compacted_resume to EventStore
+					if (eventStore) {
+						eventStore.append(sessionId, {
+							type: "compact_marker",
+							checkpoint,
+							savedTokens: compactSavedTokens,
+							ts: Date.now(),
+						});
+						eventStore.append(sessionId, {
+							type: "compacted_resume",
+							content: userContent,
+							cwd,
+							ts: Date.now(),
+						});
+					}
+					estimatedInputTokens = estimatedPostCompactTokensForSaved;
 					yield {
 						type: "usage",
-						inputTokens: estimatedPostCompactTokens,
+						inputTokens: estimatedPostCompactTokensForSaved,
 						compressThreshold: compressThreshold,
 						contextWindow: contextWindow,
 						estimated: true,
 					};
-					yield { type: "compact", checkpoint, savedTokens };
+					yield {
+						type: "compact",
+						checkpoint,
+						savedTokens: compactSavedTokens,
+					};
 					manualCompactRequested = false;
 				} catch (e) {
 					yield {
@@ -795,6 +838,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						type: "summarization_request",
 						instruction: summarizationInstruction,
 					});
+					if (eventStore) {
+						eventStore.append(sessionId, {
+							type: "summarization_request",
+							instruction: summarizationInstruction,
+							ts: Date.now(),
+						});
+					}
 					compactionPending = true;
 					preCompactTokenCount = tokenCount;
 					// Fall through to the normal API call — the model will generate the checkpoint
@@ -970,6 +1020,28 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				type: "assistant_response",
 				content: response.content as unknown[],
 			});
+			// Record individual StrongEvents for each content block
+			if (eventStore) {
+				const strongEvents: StrongEvent[] = [];
+				for (const block of response.content) {
+					if (block.type === "text") {
+						strongEvents.push({
+							type: "assistant_text",
+							content: block.text,
+							ts: Date.now(),
+						});
+					} else if (block.type === "tool_use") {
+						strongEvents.push({
+							type: "tool_call",
+							tool: block.name,
+							toolCallId: block.id,
+							input: block.input as Record<string, unknown>,
+							ts: Date.now(),
+						});
+					}
+				}
+				eventStore.appendBatch(sessionId, strongEvents);
+			}
 
 			// If compaction is pending, skip tool execution and continue to next iteration
 			// where the checkpoint will be extracted and context rebuilt
@@ -1044,6 +1116,24 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							type: "queue_messages",
 							formatted,
 						});
+					}
+					// Record individual queue_message StrongEvents
+					if (eventStore) {
+						const strongEvents: StrongEvent[] = nonCompact.map((msg) => ({
+							type: "queue_message" as const,
+							source: msg.source,
+							content: formatQueueMessage(msg),
+							...(msg.source === "user" && msg.images?.length
+								? {
+										images: msg.images.map((img) => ({
+											base64: img.base64,
+											mediaType: img.mediaType,
+										})),
+									}
+								: {}),
+							ts: Date.now(),
+						}));
+						eventStore.appendBatch(sessionId, strongEvents);
 					}
 					continue;
 				} catch {
@@ -1224,6 +1314,56 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					results: toolResults as unknown[],
 				});
 			}
+			// Record individual tool_result StrongEvents
+			if (eventStore) {
+				const strongEvents: StrongEvent[] = [];
+				for (let i = 0; i < toolUses.length; i++) {
+					const toolUse = toolUses[i] as ToolUseBlock;
+					const toolResult = toolResults[i] as ToolResultBlockParam;
+					const exec = execResults[i] as {
+						content: string;
+						isError: boolean;
+						mcpImages?: Array<{ base64: string; mediaType: string }>;
+						isImage?: boolean;
+						imageData?: string;
+						mediaType?: string;
+					};
+					// Use the actual content from toolResults (includes cancellation text appended by queue drain)
+					const resultContent =
+						typeof toolResult.content === "string"
+							? toolResult.content
+							: exec.content;
+					const images: Array<{ base64: string; mediaType: string }> = [];
+					if (exec.mcpImages?.length) {
+						images.push(...exec.mcpImages);
+					} else if (exec.isImage && exec.imageData && exec.mediaType) {
+						images.push({
+							base64: exec.imageData,
+							mediaType: exec.mediaType,
+						});
+					}
+					// Add cancellation images to the last tool_result event
+					// (matches messages array which appends them after all tool_results)
+					const isLast = i === toolUses.length - 1;
+					if (isLast && cancellationImages.length > 0) {
+						for (const img of cancellationImages) {
+							images.push({
+								base64: img.source.data,
+								mediaType: img.source.media_type,
+							});
+						}
+					}
+					strongEvents.push({
+						type: "tool_result",
+						toolCallId: toolUse.id,
+						content: resultContent,
+						isError: exec.isError,
+						...(images.length > 0 ? { images } : {}),
+						ts: Date.now(),
+					});
+				}
+				eventStore.appendBatch(sessionId, strongEvents);
+			}
 
 			// Persist after tool results too (captures full turn) — fire-and-forget
 			request.sessionStore?.setSync(sessionId, [...messages]);
@@ -1246,6 +1386,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						content: warning,
 					});
 					events.push({ type: "budget_warning", warning });
+					if (eventStore) {
+						eventStore.append(sessionId, {
+							type: "budget_warning",
+							warning,
+							ts: Date.now(),
+						});
+					}
 					yield { type: "status", message: warning };
 				} else if (ratio >= 0.8) {
 					const warning = `⚠️ Warning: task has used ${Math.round(ratio * 100)}% of its ${request.budgetUsd.toFixed(2)} budget (${runningCost.toFixed(4)} spent). Wrap up soon.`;
@@ -1254,6 +1401,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						content: warning,
 					});
 					events.push({ type: "budget_warning", warning });
+					if (eventStore) {
+						eventStore.append(sessionId, {
+							type: "budget_warning",
+							warning,
+							ts: Date.now(),
+						});
+					}
 					yield { type: "status", message: warning };
 				}
 			}
@@ -1265,7 +1419,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			await request.sessionStore.set(sessionId, [...events], "events");
 		}
 
-		// Deterministic verification: compare reconstructed messages from events
+		// Deterministic verification: compare reconstructed messages from old CanonicalEvents
 		if (events.length > 0) {
 			const reconstructed = eventsToAnthropicMessages(events);
 			const match = JSON.stringify(reconstructed) === JSON.stringify(messages);
@@ -1274,6 +1428,23 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					messagesLen: messages.length,
 					reconstructedLen: reconstructed.length,
 				});
+			}
+		}
+
+		// Deterministic verification: compare reconstructed messages from StrongEvents
+		if (eventStore) {
+			const activeEvents = eventStore.readActive(sessionId);
+			if (activeEvents.length > 0) {
+				const reconstructed = strongEventsToAnthropicMessages(activeEvents);
+				const match =
+					JSON.stringify(messages) === JSON.stringify(reconstructed);
+				if (!match) {
+					console.error("[STRONG EVENTS MISMATCH]", {
+						messagesLen: messages.length,
+						eventsLen: activeEvents.length,
+						reconstructedLen: reconstructed.length,
+					});
+				}
 			}
 		}
 
