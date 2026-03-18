@@ -1133,6 +1133,577 @@ describe("StrongEvent recording via EventStore", () => {
 	});
 });
 
+import { strongEventsToOpenAIMessages } from "./canonical-events.ts";
 import { EventStore } from "./event-store.ts";
+import { MessageQueue } from "./message-queue.ts";
 // Import AgentResult for type assertion
 import type { AgentResult } from "./types.ts";
+
+// ── Helper for OpenAI mock fetch ──
+
+function createOpenAIModelsResponse() {
+	return new Response(
+		JSON.stringify({
+			data: [{ id: "gpt-4o", context_length: 128000 }],
+		}),
+		{
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		},
+	);
+}
+
+function createOpenAIChatResponse(opts: {
+	id?: string;
+	content?: string | null;
+	toolCalls?: Array<{
+		id: string;
+		name: string;
+		arguments: string;
+	}>;
+	finishReason?: "stop" | "tool_calls";
+	promptTokens?: number;
+	completionTokens?: number;
+}) {
+	const toolCallsArr = opts.toolCalls?.map((tc) => ({
+		id: tc.id,
+		type: "function",
+		function: {
+			name: tc.name,
+			arguments: tc.arguments,
+		},
+	}));
+	return new Response(
+		JSON.stringify({
+			id: opts.id ?? `chatcmpl-${Math.random().toString(36).slice(2)}`,
+			object: "chat.completion",
+			choices: [
+				{
+					index: 0,
+					message: {
+						role: "assistant",
+						content: opts.content ?? null,
+						...(toolCallsArr ? { tool_calls: toolCallsArr } : {}),
+					},
+					finish_reason:
+						opts.finishReason ?? (opts.toolCalls ? "tool_calls" : "stop"),
+				},
+			],
+			usage: {
+				prompt_tokens: opts.promptTokens ?? 100,
+				completion_tokens: opts.completionTokens ?? 50,
+				total_tokens:
+					(opts.promptTokens ?? 100) + (opts.completionTokens ?? 50),
+			},
+		}),
+		{
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		},
+	);
+}
+
+// ── StrongEvent deterministic verification (OpenAI) ──
+
+describe("StrongEvent deterministic verification (OpenAI)", () => {
+	let tmpDir: string;
+
+	beforeAll(async () => {
+		tmpDir = await mkdtemp(join(tmpdir(), "openai-strong-event-verify-"));
+	});
+
+	afterAll(async () => {
+		clearContextWindowCache();
+		await rm(tmpDir, { recursive: true, force: true });
+	});
+
+	function withMockFetch<T>(
+		mockFn: typeof fetch,
+		fn: () => Promise<T>,
+	): Promise<T> {
+		const originalKey = process.env.OPENAI_API_KEY;
+		const originalBase = process.env.OPENAI_BASE_URL;
+		const originalFetch = globalThis.fetch;
+
+		process.env.OPENAI_API_KEY = "test-key";
+		process.env.OPENAI_BASE_URL = "http://localhost:9999";
+		globalThis.fetch = mockFn;
+
+		return fn().finally(() => {
+			clearContextWindowCache();
+			process.env.OPENAI_API_KEY = originalKey ?? "";
+			if (originalBase) {
+				process.env.OPENAI_BASE_URL = originalBase;
+			} else {
+				delete process.env.OPENAI_BASE_URL;
+			}
+			globalThis.fetch = originalFetch;
+		});
+	}
+
+	test("basic conversation: text only → stop", async () => {
+		const testDir = join(tmpDir, "basic");
+		const eventStore = new EventStore(testDir);
+
+		await withMockFetch(
+			mock(async (url: string | URL | Request) => {
+				const urlStr =
+					typeof url === "string"
+						? url
+						: url instanceof URL
+							? url.toString()
+							: url.url;
+				if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
+					return createOpenAIModelsResponse();
+				}
+				return createOpenAIChatResponse({
+					content: "Hello! How can I help?",
+					finishReason: "stop",
+				});
+			}) as unknown as typeof fetch,
+			async () => {
+				const provider = new OpenAICompatibleProvider("gpt-4o");
+				const result = await provider.execute({
+					prompt: "Say hello",
+					cwd: testDir,
+					systemPrompt: "You are helpful.",
+					eventStore,
+				});
+
+				expect(result.success).toBe(true);
+
+				const events = eventStore.readActive(result.sessionId ?? "");
+				expect(events.length).toBeGreaterThanOrEqual(2);
+				expect(events[0]?.type).toBe("user_message");
+				expect(events[1]?.type).toBe("assistant_text");
+
+				// Verify reconstruction
+				const reconstructed = strongEventsToOpenAIMessages(events);
+				expect(reconstructed.length).toBe(2);
+				expect(reconstructed[0]).toEqual({
+					role: "user",
+					content: `Working directory: ${testDir}\n\nSay hello`,
+				});
+				expect(reconstructed[1]).toEqual({
+					role: "assistant",
+					content: "Hello! How can I help?",
+				});
+			},
+		);
+	});
+
+	test("tool calls: text + tool_use → tool_result → stop", async () => {
+		const testDir = join(tmpDir, "tool-calls");
+		const eventStore = new EventStore(testDir);
+
+		let chatCallCount = 0;
+		await withMockFetch(
+			mock(async (url: string | URL | Request) => {
+				const urlStr =
+					typeof url === "string"
+						? url
+						: url instanceof URL
+							? url.toString()
+							: url.url;
+				if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
+					return createOpenAIModelsResponse();
+				}
+				chatCallCount++;
+				if (chatCallCount === 1) {
+					return createOpenAIChatResponse({
+						content: "I'll complete the task.",
+						toolCalls: [
+							{
+								id: "call_done",
+								name: "mcp__opengraft__done",
+								arguments: JSON.stringify({
+									status: "passed",
+									summary: "All done",
+								}),
+							},
+						],
+					});
+				}
+				return createOpenAIChatResponse({
+					content: "Task completed.",
+					finishReason: "stop",
+				});
+			}) as unknown as typeof fetch,
+			async () => {
+				const sessionStore = new SessionStore(join(testDir, "sessions"));
+				const provider = new OpenAICompatibleProvider("gpt-4o");
+				const session = provider.startSession({
+					prompt: "Do the task",
+					cwd: testDir,
+					systemPrompt: "You are helpful.",
+					sessionStore,
+					eventStore,
+					mcpToolDefs: {
+						opengraft: [
+							{
+								name: "done",
+								description: "Signal completion",
+								inputSchema: {},
+								handler: async (input: Record<string, unknown>) => ({
+									content: [
+										{
+											type: "text",
+											text: `Task marked as ${input.status}. Entering idle state.`,
+										},
+									],
+								}),
+							},
+						],
+					},
+				});
+
+				const consumePromise = (async () => {
+					let result = await session.events.next();
+					while (!result.done) {
+						if (
+							result.value.type === "status" &&
+							(result.value as { message: string }).message.includes(
+								"idle state",
+							)
+						) {
+							session.stop();
+						}
+						result = await session.events.next();
+					}
+					return result.value as AgentResult;
+				})();
+
+				const agentResult = await consumePromise;
+				expect(agentResult.success).toBe(true);
+
+				const events = eventStore.readActive(agentResult.sessionId ?? "");
+				const types = events.map((e) => e.type);
+				expect(types).toContain("user_message");
+				expect(types).toContain("assistant_text");
+				expect(types).toContain("tool_call");
+				expect(types).toContain("tool_result");
+
+				// Verify tool_call details
+				const toolCall = events.find((e) => e.type === "tool_call");
+				if (toolCall?.type === "tool_call") {
+					expect(toolCall.tool).toBe("mcp__opengraft__done");
+					expect(toolCall.toolCallId).toBe("call_done");
+				}
+
+				// Verify reconstruction
+				const reconstructed = strongEventsToOpenAIMessages(events);
+				expect(reconstructed.length).toBeGreaterThanOrEqual(4);
+				// First: user, second: assistant with tool_calls, third: tool result, fourth: assistant
+				expect((reconstructed[0] as { role: string }).role).toBe("user");
+				expect((reconstructed[1] as { role: string }).role).toBe("assistant");
+				const assistantMsg = reconstructed[1] as {
+					tool_calls?: unknown[];
+				};
+				expect(assistantMsg.tool_calls).toBeDefined();
+				expect((reconstructed[2] as { role: string }).role).toBe("tool");
+			},
+		);
+	});
+
+	test("implicit yield: stop → queue drain → continue", async () => {
+		const testDir = join(tmpDir, "implicit-yield");
+		const eventStore = new EventStore(testDir);
+
+		let chatCallCount = 0;
+		await withMockFetch(
+			mock(async (url: string | URL | Request) => {
+				const urlStr =
+					typeof url === "string"
+						? url
+						: url instanceof URL
+							? url.toString()
+							: url.url;
+				if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
+					return createOpenAIModelsResponse();
+				}
+				chatCallCount++;
+				if (chatCallCount === 1) {
+					return createOpenAIChatResponse({
+						content: "I'm done for now.",
+						finishReason: "stop",
+					});
+				}
+				return createOpenAIChatResponse({
+					content: "Got your message.",
+					finishReason: "stop",
+				});
+			}) as unknown as typeof fetch,
+			async () => {
+				const queue = new MessageQueue();
+				const provider = new OpenAICompatibleProvider("gpt-4o");
+				const session = provider.startSession({
+					prompt: "Start working",
+					cwd: testDir,
+					systemPrompt: "You are helpful.",
+					eventStore,
+					queue,
+				});
+
+				let idleCount = 0;
+				const consumePromise = (async () => {
+					let result = await session.events.next();
+					while (!result.done) {
+						if (result.value.type === "agent_idle") {
+							idleCount++;
+							if (idleCount === 1) {
+								queue.enqueue({
+									source: "user",
+									content: "New instruction for you",
+								});
+							} else {
+								session.stop();
+							}
+						}
+						result = await session.events.next();
+					}
+					return result.value as AgentResult;
+				})();
+
+				const agentResult = await consumePromise;
+				expect(agentResult.success).toBe(true);
+				expect(idleCount).toBe(2);
+
+				const events = eventStore.readActive(agentResult.sessionId ?? "");
+				const types = events.map((e) => e.type);
+
+				// Must have queue_message events
+				expect(types).toContain("queue_message");
+				const queueMsgEvent = events.find((e) => e.type === "queue_message");
+				if (queueMsgEvent?.type === "queue_message") {
+					expect(queueMsgEvent.source).toBe("user");
+					expect(queueMsgEvent.content).toContain("New instruction for you");
+				}
+
+				// Verify reconstruction — queue_message should become user message
+				const reconstructed = strongEventsToOpenAIMessages(events);
+				expect(reconstructed.length).toBeGreaterThanOrEqual(4);
+			},
+		);
+	});
+
+	test("error tool results: isError preserved", async () => {
+		const testDir = join(tmpDir, "error-tool");
+		const eventStore = new EventStore(testDir);
+
+		let chatCallCount = 0;
+		await withMockFetch(
+			mock(async (url: string | URL | Request) => {
+				const urlStr =
+					typeof url === "string"
+						? url
+						: url instanceof URL
+							? url.toString()
+							: url.url;
+				if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
+					return createOpenAIModelsResponse();
+				}
+				chatCallCount++;
+				if (chatCallCount === 1) {
+					return createOpenAIChatResponse({
+						content: "Running command.",
+						toolCalls: [
+							{
+								id: "call_err",
+								name: "mcp__opengraft__done",
+								arguments: JSON.stringify({
+									status: "failed",
+									summary: "Error",
+								}),
+							},
+						],
+					});
+				}
+				return createOpenAIChatResponse({
+					content: "Noted.",
+					finishReason: "stop",
+				});
+			}) as unknown as typeof fetch,
+			async () => {
+				const provider = new OpenAICompatibleProvider("gpt-4o");
+				const session = provider.startSession({
+					prompt: "Try something",
+					cwd: testDir,
+					systemPrompt: "You are helpful.",
+					eventStore,
+					mcpToolDefs: {
+						opengraft: [
+							{
+								name: "done",
+								description: "Signal completion",
+								inputSchema: {},
+								handler: async () => ({
+									isError: true,
+									content: [
+										{
+											type: "text",
+											text: "Error: command failed",
+										},
+									],
+								}),
+							},
+						],
+					},
+				});
+
+				const consumePromise = (async () => {
+					let result = await session.events.next();
+					while (!result.done) {
+						if (
+							result.value.type === "status" &&
+							(result.value as { message: string }).message.includes(
+								"idle state",
+							)
+						) {
+							session.stop();
+						}
+						result = await session.events.next();
+					}
+					return result.value as AgentResult;
+				})();
+
+				const agentResult = await consumePromise;
+				expect(agentResult.success).toBe(true);
+
+				const events = eventStore.readActive(agentResult.sessionId ?? "");
+				const toolResult = events.find((e) => e.type === "tool_result");
+				expect(toolResult).toBeDefined();
+				if (toolResult?.type === "tool_result") {
+					expect(toolResult.isError).toBe(true);
+					expect(toolResult.content).toContain("Error: command failed");
+				}
+			},
+		);
+	});
+
+	test("multiple parallel tool calls: 3 tool_use → 3 tool_results", async () => {
+		const testDir = join(tmpDir, "parallel-tools");
+		const eventStore = new EventStore(testDir);
+
+		let chatCallCount = 0;
+		await withMockFetch(
+			mock(async (url: string | URL | Request) => {
+				const urlStr =
+					typeof url === "string"
+						? url
+						: url instanceof URL
+							? url.toString()
+							: url.url;
+				if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
+					return createOpenAIModelsResponse();
+				}
+				chatCallCount++;
+				if (chatCallCount === 1) {
+					return createOpenAIChatResponse({
+						content: "Running three tools.",
+						toolCalls: [
+							{
+								id: "call_a",
+								name: "mcp__test__tool_a",
+								arguments: JSON.stringify({ param: "a" }),
+							},
+							{
+								id: "call_b",
+								name: "mcp__test__tool_b",
+								arguments: JSON.stringify({ param: "b" }),
+							},
+							{
+								id: "call_c",
+								name: "mcp__test__tool_c",
+								arguments: JSON.stringify({ param: "c" }),
+							},
+						],
+					});
+				}
+				return createOpenAIChatResponse({
+					content: "All tools done.",
+					finishReason: "stop",
+				});
+			}) as unknown as typeof fetch,
+			async () => {
+				const provider = new OpenAICompatibleProvider("gpt-4o");
+				const session = provider.startSession({
+					prompt: "Run three tools",
+					cwd: testDir,
+					systemPrompt: "You are helpful.",
+					eventStore,
+					mcpToolDefs: {
+						test: [
+							{
+								name: "tool_a",
+								description: "Tool A",
+								inputSchema: {},
+								handler: async () => ({
+									content: [{ type: "text", text: "Result A" }],
+								}),
+							},
+							{
+								name: "tool_b",
+								description: "Tool B",
+								inputSchema: {},
+								handler: async () => ({
+									content: [{ type: "text", text: "Result B" }],
+								}),
+							},
+							{
+								name: "tool_c",
+								description: "Tool C",
+								inputSchema: {},
+								handler: async () => ({
+									content: [{ type: "text", text: "Result C" }],
+								}),
+							},
+						],
+					},
+				});
+
+				const consumePromise = (async () => {
+					let result = await session.events.next();
+					while (!result.done) {
+						if (
+							result.value.type === "status" &&
+							(result.value as { message: string }).message.includes(
+								"idle state",
+							)
+						) {
+							session.stop();
+						}
+						result = await session.events.next();
+					}
+					return result.value as AgentResult;
+				})();
+
+				const agentResult = await consumePromise;
+				expect(agentResult.success).toBe(true);
+
+				const events = eventStore.readActive(agentResult.sessionId ?? "");
+				const toolCalls = events.filter((e) => e.type === "tool_call");
+				const toolResults = events.filter((e) => e.type === "tool_result");
+
+				expect(toolCalls.length).toBe(3);
+				expect(toolResults.length).toBe(3);
+
+				// Verify reconstruction
+				const reconstructed = strongEventsToOpenAIMessages(events);
+				// user, assistant(with 3 tool_calls), 3 tool results, assistant
+				expect(reconstructed.length).toBeGreaterThanOrEqual(6);
+
+				// Assistant should have 3 tool_calls
+				const assistantMsg = reconstructed[1] as {
+					tool_calls?: unknown[];
+				};
+				expect(assistantMsg.tool_calls?.length).toBe(3);
+
+				// 3 individual tool messages
+				const toolMsgs = reconstructed.filter(
+					(m) => (m as { role: string }).role === "tool",
+				);
+				expect(toolMsgs.length).toBe(3);
+			},
+		);
+	});
+});
