@@ -481,3 +481,10 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - `queue_messages` path only triggers on implicit yield (`end_turn` → `queue.wait()` → drain). Explicit `yield()` MCP tool delivers messages as `tool_results` instead.
 - Pre-Phase-2 legacy sessions will show `[EVENTS MISMATCH]` (expected — no events existed before Phase 2). Goes away after clear sessions.
 - **Key finding**: The 3 most common event types (user_message, assistant_response, tool_results) cover ~99% of real usage and are deterministic.
+
+
+## Self-Testing Timing
+
+- When testing the system by spawning child tasks and expecting them to reach a certain state (e.g., implicit yield, waiting for messages), **sleep at least 20 seconds** before sending follow-up messages.
+- Child agent startup takes ~15 seconds: worktree creation, bun install, provider initialization, API call, response generation.
+- If you send a message too early, it may arrive before the child has entered the expected state (e.g., before implicit yield starts), causing it to be delivered as a prompt batch rather than a queue drain.
