@@ -48,7 +48,16 @@ async function notifyParentChain(
 			content: `User sent a message to child task '${taskTitle}' (${taskId})`,
 		};
 
-		const ancestorQueue = globalAgentQueues.get(currentId);
+		let ancestorQueue = globalAgentQueues.get(currentId);
+
+		// Root orchestrator's queue is in activeSessions, not globalAgentQueues
+		if (!ancestorQueue && !ancestor.parentId) {
+			const session = ctx.activeSessions.get(projectId);
+			if (session?.queue) {
+				ancestorQueue = session.queue;
+			}
+		}
+
 		if (ancestorQueue) {
 			try {
 				ancestorQueue.enqueue(notification);
