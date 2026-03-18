@@ -33,6 +33,7 @@ import {
 	removePendingClarification,
 } from "./event-system.ts";
 import {
+	getEventStore,
 	getProjectProvider,
 	getSessionStore,
 	getTracker,
@@ -544,6 +545,7 @@ export async function runChildAgentInBackground(
 				prompt,
 				cwd: node.worktreePath as string,
 				sessionStore: getSessionStore(ctx, project.id),
+				eventStore: getEventStore(ctx, project.id),
 				systemPrompt: TASK_SYSTEM_PROMPT,
 				resumeSessionId: nodeId,
 				model: agentCtx.effectiveCfg.model,
@@ -800,6 +802,7 @@ export async function launchAgent(
 		cwd: project.path,
 		projectPath: project.path,
 		sessionStore: getSessionStore(ctx, project.id),
+		eventStore: getEventStore(ctx, project.id),
 		systemPrompt,
 		mcpToolDefs: agentCtx.mcpToolDefs,
 		resumeSessionId,

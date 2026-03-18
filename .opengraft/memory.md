@@ -153,3 +153,18 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - Standalone `assistant_text` (no tool_calls) uses simple string content. With tool_calls, uses content array.
 - `queue_message` events between `tool_result` events merge into the same user message with XML-tagged text blocks.
 
+
+
+## StrongEvent Integration (Phase 2)
+
+- EventStore recording runs alongside old CanonicalEvent[] recording (dual-write). Old system not removed yet — Phase 4 cleanup.
+- `eventStore.append()` at each `messages.push` site. `eventStore.appendBatch()` for assistant content blocks and tool_results.
+- `assistant_response` → split into individual `assistant_text` + `tool_call` StrongEvents.
+- `tool_results` → split into individual `tool_result` StrongEvents. Content uses `toolResult.content` (from the modified toolResults array, which includes cancellation-appended text).
+- Cancellation-point queue images: added to the last tool_result event's images array (converter collects all images from all tool_results in a batch).
+- Compaction: `compact_marker` event appended to EventStore (replaces conceptual `events.length = 0`). Followed by `compacted_resume` event.
+- Deterministic verification: `strongEventsToAnthropicMessages(eventStore.readActive(sessionId))` compared against `messages` at end of runLoop. Known mismatch for image tool results (converter produces string content + separate image blocks; messages array has array content on tool_result).
+- `AgentRequest.eventStore` field added to `src/agent-provider.ts`.
+- `getEventStore()` helper in `src/daemon/helpers.ts`, same directory as SessionStore (`{dataDir}/sessions/{projectId}`).
+- `DaemonContext.eventStores` map added to `src/daemon/context.ts`.
+
