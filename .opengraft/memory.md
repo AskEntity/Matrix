@@ -127,3 +127,9 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 - Don't delete completed tasks — close only.
 - Don't change auth config values without permission.
+
+## Slash Commands
+
+- Frontend slash commands (/compact, /clear) are handled in `web/handlers.ts` via `handleSlashCommand()`, intercepted in `handleSubmit` before chat message dispatch.
+- `pendingCompact` state was removed — compact UI feedback comes entirely from WS events (compact_started → compact completion).
+- The compact button in TokenUsageBadge still works as secondary trigger, same code path.
