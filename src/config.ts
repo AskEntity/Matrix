@@ -16,6 +16,17 @@ export interface McpServerConfig {
 	env?: Record<string, string>;
 }
 
+export interface WebAuthnConfig {
+	/** Enable WebAuthn authentication for non-localhost requests. */
+	enabled?: boolean;
+	/** Relying Party display name. Defaults to "OpenGraft". */
+	rpName?: string;
+	/** Relying Party ID (domain). Defaults to request host. */
+	rpID?: string;
+	/** Port for the admin server (localhost-only, used for passkey registration). */
+	adminPort?: number;
+}
+
 export interface OpenGraftConfig {
 	authGroups?: Record<string, AuthGroup>;
 	defaultAuth?: string;
@@ -29,6 +40,7 @@ export interface OpenGraftConfig {
 	port?: number;
 	sessionKeep?: number;
 	selfBootstrap?: boolean;
+	auth?: WebAuthnConfig;
 }
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -144,6 +156,16 @@ export function resolveConfig(
 	};
 	if (Object.keys(allGroups).length > 0) {
 		result.authGroups = allGroups;
+	}
+
+	// auth (WebAuthn) — merge as object, local > repo > global
+	const mergedAuth = {
+		...global.auth,
+		...repo.auth,
+		...local.auth,
+	};
+	if (Object.keys(mergedAuth).length > 0) {
+		result.auth = mergedAuth;
 	}
 
 	return result;

@@ -524,3 +524,18 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 - `deliverMessage()` now only persists to disk when no running queue exists. Previously it always persisted first, causing duplicate messages on daemon restart.
 - Queue = cache, persist = disk. Cache hit (enqueue succeeds) → return immediately, no disk write. Cache miss → persist + launch.
 - REST `POST /tasks/:nodeId/message` response no longer includes `persisted: true` field (was always hardcoded, now misleading).
+
+
+## WebAuthn/Passkey Authentication
+
+- `@simplewebauthn/server` (backend) + `@simplewebauthn/browser` (frontend) for WebAuthn passkey auth.
+- Two-port architecture: main port (7433) requires auth for non-localhost, admin port (7434, localhost-only) for passkey registration.
+- Config: `auth: { enabled, rpName, rpID, adminPort }` in `OpenGraftConfig`. Merged as object in `resolveConfig`.
+- Credentials stored in `~/.opengraft/auth.json` with in-memory cache (`authDataCache`).
+- Sessions: random 64-char hex tokens stored alongside credentials, 30-day TTL.
+- Auth middleware registered before all routes in daemon.ts. Exempts `/auth/*` paths and localhost requests.
+- Frontend: `AppInner` checks `/auth/status` on mount. Shows `LoginPage` when unauthenticated, `AuthenticatedApp` otherwise.
+- Admin page: self-contained HTML served by admin Hono app, uses CDN import of `@simplewebauthn/browser`.
+- `Uint8Array` type: simplewebauthn v13 uses `Uint8Array<ArrayBuffer>` (TS 5.7+). Must construct via `new ArrayBuffer()` + `new Uint8Array(buf)`.
+- Challenge store: in-memory Map with 5-minute TTL, keyed by `login:<challenge>` or `register:<challenge>`.
+
