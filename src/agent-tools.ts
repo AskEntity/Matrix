@@ -1,15 +1,10 @@
 import { pinyin } from "pinyin-pro";
 import { z } from "zod";
-import type {
-	AgentProvider,
-	AgentRequest,
-	AgentSession,
-} from "./agent-provider.ts";
-import { runChildCore } from "./daemon/agent-lifecycle.ts";
+import type { AgentProvider, AgentSession } from "./agent-provider.ts";
 import { readProjectMemory } from "./daemon/helpers.ts";
 import {
 	globalAgentQueues,
-	MessageQueue,
+	type MessageQueue,
 	type QueueMessage,
 } from "./message-queue.ts";
 import { clearPersistedMessages, persistMessage } from "./persistent-queue.ts";
@@ -538,6 +533,8 @@ export interface OrchestratorToolsDeps {
 	sessionStore?: SessionStore;
 	/** Data directory root (~/.opengraft). Used for persistent message queue. */
 	dataDir?: string;
+	/** Launch a child agent in the background. Daemon provides this via runChildAgentInBackground. */
+	launchChild?: (nodeId: string, prompt: string) => Promise<void>;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -579,115 +576,13 @@ export interface OrchestratorToolsResult {
  */
 export function createOrchestratorTools(
 	deps: OrchestratorToolsDeps,
-	costAccumulator?: CostAccumulator,
 ): OrchestratorToolsResult {
-	const {
-		tracker,
-		provider,
-		worktrees,
-		projectPath,
-		repoPath,
-		onTaskEvent,
-		childModel,
-		broadcastTreeUpdate,
-	} = deps;
+	const { tracker, worktrees, projectPath, onTaskEvent, broadcastTreeUpdate } =
+		deps;
 	const currentTaskId = deps.currentTaskId ?? null;
-	const depth = deps.depth ?? 0;
-	const maxDepth = deps.maxDepth ?? 3;
-	const costs = costAccumulator ?? new CostAccumulator();
 	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
 	/** Count of outstanding clarify() calls that have not yet received a clarify_response. */
 	let pendingClarifications = 0;
-
-	/**
-	 * Execute a child agent with streaming, forwarding events tagged with taskId.
-	 * If depth < maxDepth, the child also receives MCP tools for recursive spawning.
-	 * Delegates to runChildCore() for queue management, event streaming, and done() detection.
-	 */
-	async function executeChildStreaming(
-		request: AgentRequest,
-		taskId: string,
-		childCwd: string,
-	): Promise<{
-		success: boolean;
-		output: string;
-		costUsd?: number;
-		turns?: number;
-		sessionId?: string;
-	}> {
-		// Give children MCP tools if we haven't hit max depth
-		if (depth < maxDepth && !request.mcpToolDefs) {
-			// Create the queue first so MCP tools close over the correct queue
-			const childQueue = new MessageQueue();
-			const childCosts = new CostAccumulator();
-			const {
-				toolDefs: childToolDefs,
-				hasRunningChildren: childHasRunningChildren,
-			} = createOrchestratorTools(
-				{
-					tracker,
-					provider,
-					worktrees,
-					projectPath: childCwd,
-					repoPath,
-					currentTaskId: taskId,
-					depth: depth + 1,
-					onTaskEvent,
-					childModel,
-					queue: childQueue,
-					parentQueue: deps.queue,
-					broadcastTreeUpdate,
-					defaultBudgetUsd: deps.defaultBudgetUsd,
-					maxDepth: deps.maxDepth,
-					clarifyTimeoutMs: deps.clarifyTimeoutMs,
-					sessionStore: deps.sessionStore,
-					dataDir: deps.dataDir,
-					currentProjectId: deps.currentProjectId,
-				},
-				childCosts,
-			);
-			request.mcpToolDefs = { opengraft: childToolDefs };
-			request.hasRunningChildren = childHasRunningChildren;
-
-			return runChildCore({
-				provider,
-				tracker,
-				taskId,
-				queue: childQueue,
-				sessionRequest: request,
-				onEvent: (eventType, eventData) => {
-					if (eventType === "agent_idle" || eventType === "agent_active") {
-						emit({ type: eventType, taskId });
-					} else {
-						emit({ type: "agent_event", taskId, eventType, ...eventData });
-					}
-				},
-				persistedMessages:
-					deps.dataDir && deps.currentProjectId
-						? { dataDir: deps.dataDir, projectId: deps.currentProjectId }
-						: undefined,
-			});
-		}
-
-		// No MCP tools needed (max depth reached or already set)
-		return runChildCore({
-			provider,
-			tracker,
-			taskId,
-			sessionRequest: request,
-			onEvent: (eventType, eventData) => {
-				if (eventType === "agent_idle" || eventType === "agent_active") {
-					emit({ type: eventType, taskId });
-				} else {
-					emit({ type: "agent_event", taskId, eventType, ...eventData });
-				}
-			},
-			persistedMessages:
-				deps.dataDir && deps.currentProjectId
-					? { dataDir: deps.dataDir, projectId: deps.currentProjectId }
-					: undefined,
-		});
-	}
 
 	const toolDefs = [
 		tool(
@@ -1267,121 +1162,12 @@ export function createOrchestratorTools(
 						message: args.message,
 					});
 
-					// Spawn child agent in background (fire-and-forget)
-					const childRequest: AgentRequest = {
-						prompt,
-						cwd: node.worktreePath as string,
-						systemPrompt: TASK_SYSTEM_PROMPT,
-						resumeSessionId: node.id,
-						model: childModel,
-						budgetUsd: node.budgetUsd,
-						sessionStore: deps.sessionStore,
-					};
-
-					const nodeRef = node;
-					(async () => {
-						try {
-							const result = await executeChildStreaming(
-								childRequest,
-								nodeRef.id,
-								nodeRef.worktreePath as string,
-							);
-
-							costs.add(result.costUsd, result.turns);
-							if (result.costUsd) {
-								tracker.updateCost(nodeRef.id, result.costUsd);
-							}
-
-							// Check if task exceeded its budget
-							const updatedNode = tracker.get(nodeRef.id);
-							if (
-								updatedNode?.budgetUsd &&
-								updatedNode.costUsd &&
-								updatedNode.costUsd > updatedNode.budgetUsd
-							) {
-								emit({
-									type: "budget_exceeded",
-									taskId: nodeRef.id,
-									title: nodeRef.title,
-									costUsd: updatedNode.costUsd,
-									budgetUsd: updatedNode.budgetUsd,
-								});
-							}
-
-							// done() already set the tracker status. If the agent exited
-							// without calling done(), fall back to result.success.
-							const currentStatus = tracker.get(nodeRef.id)?.status;
-							const doneWasCalled =
-								currentStatus === "passed" || currentStatus === "failed";
-							const success = doneWasCalled
-								? currentStatus === "passed"
-								: result.success;
-
-							if (!doneWasCalled) {
-								let newStatus: "passed" | "failed" | "stuck";
-								if (result.success) {
-									newStatus = "passed";
-									nodeRef.failCount = 0;
-								} else {
-									nodeRef.failCount = (nodeRef.failCount ?? 0) + 1;
-									newStatus = nodeRef.failCount >= 3 ? "stuck" : "failed";
-								}
-								tracker.updateStatus(nodeRef.id, newStatus);
-							}
-							await tracker.save();
-							if (!doneWasCalled) {
-								emit({
-									type: "task_completed",
-									taskId: nodeRef.id,
-									title: nodeRef.title,
-									success,
-									output: result.output.slice(0, 500),
-								});
-							}
-
-							// Enqueue child_complete message to parent's queue
-							if (deps.queue) {
-								try {
-									deps.queue.enqueue({
-										source: "child_complete",
-										taskId: nodeRef.id,
-										title: nodeRef.title,
-										success,
-										output: result.output.slice(0, 2000),
-									});
-								} catch {
-									// Queue may be closed if parent already finished
-								}
-							}
-						} catch (e) {
-							tracker.updateStatus(nodeRef.id, "stuck");
-							await tracker.save();
-							const message = e instanceof Error ? e.message : "Unknown error";
-							emit({
-								type: "task_completed",
-								taskId: nodeRef.id,
-								title: nodeRef.title,
-								success: false,
-								error: message,
-								output: `Error: ${message}`,
-							});
-
-							// Enqueue child_complete (failure) to parent's queue
-							if (deps.queue) {
-								try {
-									deps.queue.enqueue({
-										source: "child_complete",
-										taskId: nodeRef.id,
-										title: nodeRef.title,
-										success: false,
-										output: `Error: ${message}`,
-									});
-								} catch {
-									// Queue may be closed
-								}
-							}
-						}
-					})();
+					// Spawn child agent in background (fire-and-forget) via daemon layer
+					if (deps.launchChild) {
+						deps.launchChild(node.id, prompt).catch(() => {
+							// Error handling is done inside runChildAgentInBackground
+						});
+					}
 
 					return {
 						content: [

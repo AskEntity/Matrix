@@ -435,3 +435,15 @@ MCP tools and REST endpoints that do the same thing MUST produce identical obser
 **Root cause of violations**: Two separate completion handlers — `executeChildStreaming` (MCP, in agent-tools.ts) and `runChildAgentInBackground` (daemon, in agent-lifecycle.ts). Both use `runChildCore` for the streaming loop, but post-completion logic is duplicated.
 
 **Future unification**: `runChildCore` should accept an `onComplete(result, tracker, node)` callback that handles all post-completion logic (task_completed broadcast, child_complete notification, status update, tree update). Both MCP and daemon paths pass the same callback. This eliminates the class of bugs where one path adds logic the other forgets.
+
+
+## Unified Child Agent Lifecycle (Phase 5)
+
+- `executeChildStreaming` removed from `agent-tools.ts`. All child agent launching goes through `runChildAgentInBackground` in `agent-lifecycle.ts`.
+- `OrchestratorToolsDeps.launchChild?: (nodeId: string, prompt: string) => Promise<void>` — daemon provides this callback via `createAgentContext`. MCP `send_message_to_child` calls it instead of inline async IIFE.
+- `createOrchestratorTools` no longer accepts `costAccumulator` parameter. Cost tracking is done per-node via `tracker.updateCost()` in `runChildAgentInBackground`.
+- `runChildAgentInBackground` now handles ALL post-completion logic: cost reporting, budget exceeded check, failCount/stuck handling, `task_completed` broadcast, and `child_complete` notification to parent queue.
+- `findParentQueue()` helper resolves parent queue dynamically: checks `globalAgentQueues` for child-of-child, `ctx.activeSessions` for child-of-root. Used for both `child_complete` and `report_to_parent` (via `parentQueue` in `createAgentContext`).
+- `computeDepth()` replaces hardcoded `depth: 1` — walks up `parentId` chain to compute actual tree depth. Enables recursive spawning at correct depth levels.
+- `orchestration_completed` child costs now summed from tree (`tracker.allNodes()`) instead of `CostAccumulator`. This is the source of truth.
+- `parentQueue` wired in `createAgentContext` so daemon-spawned children have working `report_to_parent` MCP tool.

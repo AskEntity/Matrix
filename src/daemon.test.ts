@@ -3046,24 +3046,21 @@ describe("GET /projects/:id/clarifications", () => {
 
 		const capturedEvents: Record<string, unknown>[] = [];
 
-		const { toolDefs } = createOrchestratorTools(
-			{
-				tracker,
-				provider: mockProvider,
-				worktrees: { createWorktree: async () => {} } as unknown as Parameters<
-					typeof createOrchestratorTools
-				>[0]["worktrees"],
-				projectPath: tempDir,
-				repoPath: tempDir,
-				depth: 0,
-				queue: new MessageQueue(),
-				onTaskEvent: (event) => {
-					capturedEvents.push(event);
-				},
-				broadcastTreeUpdate: () => {},
+		const { toolDefs } = createOrchestratorTools({
+			tracker,
+			provider: mockProvider,
+			worktrees: { createWorktree: async () => {} } as unknown as Parameters<
+				typeof createOrchestratorTools
+			>[0]["worktrees"],
+			projectPath: tempDir,
+			repoPath: tempDir,
+			depth: 0,
+			queue: new MessageQueue(),
+			onTaskEvent: (event) => {
+				capturedEvents.push(event);
 			},
-			undefined,
-		);
+			broadcastTreeUpdate: () => {},
+		});
 
 		// Find the clarify tool and call it
 		const clarifyTool = toolDefs.find((t) => t.name === "clarify");
