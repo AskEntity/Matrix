@@ -1170,6 +1170,30 @@ describe("extractCheckpoint", () => {
 		expect(checkpoint).toContain("- item 1");
 		expect(checkpoint).toContain("- item 2");
 	});
+
+	test("appends system context when cwd is provided", () => {
+		const response = "<summary>\n## Phase\nimplementation\n</summary>";
+		const checkpoint = extractCheckpoint(response, "/path/to/project");
+		expect(checkpoint).toContain("## Phase\nimplementation");
+		expect(checkpoint).toContain("## System Context (auto-generated)");
+		expect(checkpoint).toContain("Working directory: /path/to/project");
+		expect(checkpoint).toContain("Resume from this checkpoint");
+		expect(checkpoint).toContain("Do not cd to your current working directory");
+	});
+
+	test("does not append system context when cwd is undefined", () => {
+		const response = "<summary>\ncheckpoint content\n</summary>";
+		const checkpoint = extractCheckpoint(response);
+		expect(checkpoint).toBe("checkpoint content");
+		expect(checkpoint).not.toContain("System Context");
+	});
+
+	test("appends system context to fallback (no summary tags) when cwd provided", () => {
+		const response = "Plain text checkpoint";
+		const checkpoint = extractCheckpoint(response, "/some/path");
+		expect(checkpoint).toContain("Plain text checkpoint");
+		expect(checkpoint).toContain("Working directory: /some/path");
+	});
 });
 
 describe("buildCompactedContext", () => {
@@ -1181,7 +1205,6 @@ describe("buildCompactedContext", () => {
 		expect(result).toContain("Build a calculator app");
 		expect(result).toContain("Checkpoint Summary");
 		expect(result).toContain("## Current Phase");
-		expect(result).toContain("Resume from this checkpoint");
 	});
 
 	test("includes fresh memory when cwd has memory file", async () => {
@@ -1236,13 +1259,20 @@ describe("SUMMARIZATION_INSTRUCTION", () => {
 
 	test("lists required checkpoint sections", () => {
 		expect(SUMMARIZATION_INSTRUCTION).toContain("User Requests");
-		expect(SUMMARIZATION_INSTRUCTION).toContain("Current Working Directory");
 		expect(SUMMARIZATION_INSTRUCTION).toContain("Current Phase");
 		expect(SUMMARIZATION_INSTRUCTION).toContain("Completed Work");
 		expect(SUMMARIZATION_INSTRUCTION).toContain(
 			"Key Insights & Rejected Approaches",
 		);
-		expect(SUMMARIZATION_INSTRUCTION).toContain("Next Action");
+		expect(SUMMARIZATION_INSTRUCTION).toContain("Pending Work");
+	});
+
+	test("does not include system-injected sections", () => {
+		expect(SUMMARIZATION_INSTRUCTION).not.toContain(
+			"Current Working Directory",
+		);
+		expect(SUMMARIZATION_INSTRUCTION).not.toContain("## 8. Next Action");
+		expect(SUMMARIZATION_INSTRUCTION).not.toContain("## 9. Next Action");
 	});
 });
 
