@@ -1,5 +1,3 @@
-import { unlink } from "node:fs/promises";
-import { join } from "node:path";
 import { pinyin } from "pinyin-pro";
 import { z } from "zod";
 import type {
@@ -16,6 +14,7 @@ import {
 } from "./message-queue.ts";
 import { clearPersistedMessages, persistMessage } from "./persistent-queue.ts";
 import type { ProjectManager } from "./project-manager.ts";
+import type { SessionStore } from "./session-store.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
@@ -527,8 +526,8 @@ export interface OrchestratorToolsDeps {
 	activeSessions?: Map<string, AgentSession>;
 	/** Current project ID — used as sender identity for cross-project messages. */
 	currentProjectId?: string;
-	/** Directory containing session files for this project (<dataDir>/sessions/<projectId>). */
-	sessionsDir?: string;
+	/** Session store for this project's session files. */
+	sessionStore?: SessionStore;
 	/** Data directory root (~/.opengraft). Used for persistent message queue. */
 	dataDir?: string;
 }
@@ -633,7 +632,7 @@ export function createOrchestratorTools(
 					defaultBudgetUsd: deps.defaultBudgetUsd,
 					maxDepth: deps.maxDepth,
 					clarifyTimeoutMs: deps.clarifyTimeoutMs,
-					sessionsDir: deps.sessionsDir,
+					sessionStore: deps.sessionStore,
 					dataDir: deps.dataDir,
 					currentProjectId: deps.currentProjectId,
 				},
@@ -1268,7 +1267,7 @@ export function createOrchestratorTools(
 						resumeSessionId: node.id,
 						model: childModel,
 						budgetUsd: node.budgetUsd,
-						sessionsDir: deps.sessionsDir,
+						sessionStore: deps.sessionStore,
 					};
 
 					const nodeRef = node;
@@ -1511,11 +1510,9 @@ export function createOrchestratorTools(
 						await worktrees.remove(node.id, slug);
 					}
 
-					// Delete session file if sessionsDir is available
-					if (deps.sessionsDir && node.id) {
-						await unlink(join(deps.sessionsDir, `${node.id}.json`)).catch(
-							() => {},
-						);
+					// Delete session files (all suffixes — .json, .openai.json, etc.)
+					if (deps.sessionStore && node.id) {
+						await deps.sessionStore.clear(node.id);
 					}
 
 					// Clear persisted messages for this task and all descendants
@@ -1607,11 +1604,9 @@ export function createOrchestratorTools(
 						node.branch = null;
 					}
 
-					// Delete session file if sessionsDir is available
-					if (deps.sessionsDir) {
-						await unlink(join(deps.sessionsDir, `${node.id}.json`)).catch(
-							() => {},
-						);
+					// Delete session files (all suffixes — .json, .openai.json, etc.)
+					if (deps.sessionStore) {
+						await deps.sessionStore.clear(node.id);
 					}
 
 					// Clear persisted messages (follows session lifecycle)

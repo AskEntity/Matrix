@@ -386,3 +386,18 @@ Messages are ALWAYS delivered regardless of agent state. The system guarantees: 
 - Solution: use regex `[\u4e00-\u9fff\u3400-\u4dbf]+` to match CJK runs, convert only those via `pinyin(match, { toneType: "none" })`, wrap with spaces for word boundary separation.
 - This preserves ASCII text while converting CJK to pinyin. Mixed titles like "Fix: 修复bug" → "fix-xiu-fu-bug".
 - Empty/special-char-only slugs now fallback to "task" instead of empty string (prevents invalid branch names).
+
+## SessionStore Integration (Phase 1)
+
+- `SessionStore` replaces all scattered session management (`sessionsDir`, `sessionHistory` Maps, manual `readFile`/`writeFile`).
+- `AgentRequest.sessionStore?: SessionStore` replaces `sessionsDir?: string`.
+- Anthropic provider uses no suffix (`.json`), OpenAI uses suffix `"openai"` (`.openai.json`).
+- `setSync()` for mid-loop fire-and-forget persists, `set()` (await) for final persist.
+- `getSessionStore(ctx, projectId)` in `src/daemon/helpers.ts` — lazy creates and caches in `ctx.sessionStores`.
+- `DaemonContext.sessionStores: Map<string, SessionStore>` added.
+- `store.clear(nodeId)` fixes the `.openai.json` deletion bug — deletes ALL suffix variants, not just `.json`.
+- Resume detection in `handleInjectMessage` uses `store.hasAny(rootNodeId)` — checks both `.json` and `.openai.json`.
+- `OrchestratorToolsDeps.sessionStore` replaces `sessionsDir`. Propagated through recursive child agent creation.
+- Providers no longer have `private sessionHistory` Maps — all session state is in SessionStore (cache + disk).
+- `routes/agent.ts` sessions/clear uses `store.clearAll()`. Sessions/prune still uses `pruneSessionFiles()` (works on raw disk).
+- Conversation endpoint (`GET /tasks/:nodeId/conversation`) tries Anthropic format first, then OpenAI format.

@@ -2724,15 +2724,15 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.message).toBe("Add tests for edge cases");
 	});
 
-	test("passes sessionsDir to stream for child agent persistence", async () => {
-		let receivedSessionsDir: string | undefined;
+	test("passes sessionStore to stream for child agent persistence", async () => {
+		let receivedSessionStore: unknown;
 
 		const agentProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({ success: true, output: "" }),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* (req) {
-				receivedSessionsDir = req.sessionsDir;
+				receivedSessionStore = req.sessionStore;
 				return { success: true, output: "" };
 			},
 			startSession(req) {
@@ -2804,9 +2804,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 
 		await new Promise((r) => setTimeout(r, 100));
 
-		expect(receivedSessionsDir).toBe(
-			join(localDataDir, "sessions", project.id),
-		);
+		expect(receivedSessionStore).toBeDefined();
 
 		await rm(localDataDir, { recursive: true });
 	});

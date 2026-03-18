@@ -1,5 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import type { Hono } from "hono";
 import { DEFAULT_MODEL } from "../../config.ts";
 import type { QueueImage } from "../../message-queue.ts";
@@ -15,6 +14,7 @@ import type { DaemonContext } from "../context.ts";
 import { broadcastTreeUpdate, eventsPath } from "../event-system.ts";
 import {
 	getProjectProvider,
+	getSessionStore,
 	getTracker,
 	pruneSessionFiles,
 	resolveProjectConfig,
@@ -282,9 +282,8 @@ export function registerAgentRoutes(
 		if (ctx.activeSessions.has(project.id)) {
 			await stopAgent(ctx, project.id);
 		}
-		const sessionsDir = join(ctx.config.dataDir, "sessions", project.id);
-		await rm(sessionsDir, { recursive: true, force: true });
-		await mkdir(sessionsDir, { recursive: true });
+		const store = getSessionStore(ctx, project.id);
+		await store.clearAll();
 		// Also clear event history
 		ctx.eventHistory.delete(project.id);
 		try {
