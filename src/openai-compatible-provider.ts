@@ -557,7 +557,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						responseText = "";
 					}
 				}
-				const checkpoint = extractCheckpoint(responseText);
+				const checkpoint = extractCheckpoint(responseText, cwd);
 
 				try {
 					const compactedContent = await buildCompactedContext(

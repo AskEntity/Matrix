@@ -126,22 +126,19 @@ Chronological timeline of every user message or parent instruction received, wit
 This creates a complete narrative thread. The resuming agent has NO access to previous messages — this is the only record.
 For resolved requests, state the outcome concisely. Do not carry forward debugging narratives or step-by-step problem-solving details from issues that are fully resolved.
 
-## 2. Current Working Directory
-The absolute path of the current working directory. This prevents the resuming agent from trying to cd to the same directory (which errors).
-
-## 3. Current Phase
+## 2. Current Phase
 What the agent is doing RIGHT NOW: planning / implementing / testing / debugging / reviewing / orchestrating / done
 If debugging: include the exact error message and what has been tried.
 
-## 4. Completed Work
+## 3. Completed Work
 What has been built, tested, committed, and merged — with key architectural and technical decisions.
 Include specific file paths and function names. Note WHY decisions were made, not just what.
 Focus on outcomes and key decisions. Omit debugging journeys and error traces for issues already resolved.
 
-## 5. Task Tree State
+## 4. Task Tree State
 Current live task tree. Only tasks that currently exist (pending/in_progress/failed/draft). For each: ID, title, status, branch. Omit completed/merged tasks (they're recorded in Section 1's timeline). Group: Running → Failed → Pending → Draft.
 
-## 6. Key Insights & Rejected Approaches
+## 5. Key Insights & Rejected Approaches
 Design principles and mental models discovered during this session — especially from failed approaches.
 Focus on HIGH-LEVEL insights that prevent entire CLASSES of bugs, not one-off technical fixes.
 
@@ -159,19 +156,15 @@ Bad examples (these belong in code comments, not in the checkpoint):
 For each insight: state the principle, and briefly note what triggered the discovery.
 If truly nothing was learned, write "None so far."
 
-## 7. Key Context
+## 6. Key Context
 Important state and knowledge that is HARD to reconstruct from disk:
 - Constraints or invariants that affect the remaining work
 - Environment or configuration state
 - Communication state: pending clarifications, recent messages to/from parent or children
 
-## 8. Pending Work
+## 7. Pending Work
 Numbered list of ALL remaining tasks/steps to complete the goal.
 Be specific: "implement X in file Y", "add test for Z", "merge child branch A".
-
-## 9. Next Action
-The single, concrete, immediate next step. Start with a verb.
-e.g. "Run bun test src/foo.test.ts to verify the fix" — not "continue testing".
 
 Rules:
 - Be precise: file paths, function names, exact error messages, task IDs
@@ -193,15 +186,25 @@ export function buildSummarizationInstruction(cwd?: string): string {
 /**
  * Extract checkpoint text from an assistant response that should contain <summary>...</summary> tags.
  * If no tags found, uses the full response text as the checkpoint.
+ * When `cwd` is provided, appends a system-generated context block with the working directory
+ * and resume instructions (these are injected by the system, not written by the AI).
  * @internal Exported for testing
  */
-export function extractCheckpoint(responseText: string): string {
+export function extractCheckpoint(responseText: string, cwd?: string): string {
 	const match = responseText.match(/<summary>([\s\S]*?)<\/summary>/);
+	let checkpoint: string;
 	if (match && match[1] !== undefined) {
-		return match[1].trim();
+		checkpoint = match[1].trim();
+	} else {
+		// No summary tags found — use full response text as checkpoint
+		checkpoint = responseText.trim();
 	}
-	// No summary tags found — use full response text as checkpoint
-	return responseText.trim();
+
+	if (cwd) {
+		checkpoint += `\n\n---\n\n## System Context (auto-generated)\nWorking directory: ${cwd}\n\nResume from this checkpoint. Your task is NOT done unless the checkpoint says "Current Phase: done". Continue working — check get_tree, follow the stimulus priority, and drive to completion.\nDo not cd to your current working directory — you are already there.`;
+	}
+
+	return checkpoint;
 }
 
 /**
@@ -233,9 +236,6 @@ export async function buildCompactedContext(
 		parts.push(`## Project Memory (fresh)\n${freshMemory}`);
 	}
 	parts.push(`## Checkpoint Summary\n\n${checkpoint}`);
-	parts.push(
-		'Resume from this checkpoint. Your task is NOT done unless the checkpoint says "Current Phase: done". Continue working — check get_tree, follow the stimulus priority, and drive to completion.',
-	);
 
 	return parts.join("\n\n---\n\n");
 }
@@ -716,7 +716,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							.join("\n");
 					}
 				}
-				const checkpoint = extractCheckpoint(responseText);
+				const checkpoint = extractCheckpoint(responseText, cwd);
 
 				try {
 					const compactedContent = await buildCompactedContext(
