@@ -88,7 +88,7 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - 7 statuses: draft, pending, in_progress, testing, passed, failed, stuck, closed.
 - `close_task`: removes worktree, status → closed. `delete_task`: full removal. `reset_task`: removes worktree + session, status → pending.
 - `send_message_to_child` is universal: auto-creates worktree + launches agent if not running. Resumes if passed/failed/closed.
-- `deliverMessage()`: single path for all delivery. Persist on miss, enqueue on hit.
+- `deliverMessage()`: single path for ALL delivery (root + child). Returns `"enqueued" | "persisted"`. Root: no auto-launch (caller handles). Child: auto-launches via `ensureChildAgentRunning`. `handleInjectMessage` is a thin REST wrapper.
 
 ## WebAuthn/Passkey Authentication
 
@@ -159,8 +159,4 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - Step 1 ✅: LogEntry type renames — `"text"` → `"assistant_text"`, `"tool_use"` → `"tool_call"`, `"user_prompt"` → `"user_message"`, `"compact"` → `"compact_marker"`. Server event types (`case "tool_use"` in processAgentEvent) unchanged — they map to the new LogEntry type at creation.
 - Roadmap: Step 2 (field names) → Step 3 (LogEntry = StrongEvent & UI fields) → Step 4 (StrongEvent gains UI fields) → Step 5 (unified type).
 
-## deliverMessage Unification (March 2026)
 
-- `deliverMessage()` is the single path for all message delivery (root + child). Returns `"enqueued" | "persisted"`.
-- For root nodes: does NOT auto-launch (caller handles via `launchAgent` with orchestratorSystemPrompt). For child nodes: auto-launches via `ensureChildAgentRunning`.
-- `handleInjectMessage()` is a thin REST wrapper: validates project, calls `deliverMessage`, handles auto-resume + `addPendingMessage`.
