@@ -85,7 +85,9 @@ describe("formatQueueMessageEvent", () => {
 			answer: "Yes",
 			ts: 1000,
 		};
-		expect(formatQueueMessageEvent(event)).toBe("Yes");
+		expect(formatQueueMessageEvent(event)).toBe(
+			"<clarify_response>Yes</clarify_response>",
+		);
 	});
 
 	test("formats compact", () => {
