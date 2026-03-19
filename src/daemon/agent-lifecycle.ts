@@ -11,6 +11,7 @@ import {
 	TASK_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
 import { DEFAULT_MODEL } from "../config.ts";
+import type { BroadcastEvent } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { globalAgentQueues, MessageQueue } from "../message-queue.ts";
@@ -41,6 +42,116 @@ import {
 	readProjectMemory,
 	resolveProjectConfig,
 } from "./helpers.ts";
+
+// ---------------------------------------------------------------------------
+// Map provider AgentEvent → typed BroadcastEvent for WS emission
+// ---------------------------------------------------------------------------
+
+function agentEventToBroadcast(
+	eventType: string,
+	eventData: Record<string, unknown>,
+	taskId: string,
+): BroadcastEvent {
+	const ts = Date.now();
+	switch (eventType) {
+		case "text_delta":
+			return {
+				type: "text_delta",
+				content: (eventData.content as string) || "",
+				taskId,
+				ts,
+			};
+		case "text":
+			return {
+				type: "assistant_text",
+				content: (eventData.content as string) || "",
+				taskId,
+				ts,
+			};
+		case "tool_use":
+			return {
+				type: "tool_call",
+				tool: eventData.tool as string,
+				toolUseId: eventData.toolUseId as string,
+				input: eventData.input as Record<string, unknown>,
+				taskId,
+				ts,
+			};
+		case "tool_result":
+			return {
+				type: "tool_result",
+				tool: eventData.tool as string,
+				toolUseId: eventData.toolUseId as string,
+				content: (eventData.content as string) || "",
+				isError: (eventData.isError as boolean) || false,
+				...(eventData.images
+					? {
+							images: eventData.images as Array<{
+								base64: string;
+								mediaType: string;
+							}>,
+						}
+					: {}),
+				taskId,
+				ts,
+			};
+		case "error":
+			return {
+				type: "error",
+				message: (eventData.message as string) || "",
+				taskId,
+				ts,
+			};
+		case "usage":
+			return {
+				type: "usage",
+				taskId,
+				inputTokens: eventData.inputTokens as number,
+				contextWindow: eventData.contextWindow as number,
+				estimated: (eventData.estimated as boolean) || undefined,
+				ts,
+			};
+		case "compact_started":
+			return { type: "compact_started", taskId, ts };
+		case "compact":
+			return {
+				type: "compact_marker",
+				checkpoint: eventData.checkpoint as string,
+				savedTokens: eventData.savedTokens as number,
+				taskId,
+				ts,
+			};
+		case "queue_message":
+			return {
+				type: "queue_message",
+				messages: (eventData.messages as string) || "",
+				rawMessages: eventData.rawMessages as
+					| Array<{
+							source: string;
+							content: string;
+							images?: { base64: string; mediaType: string }[];
+					  }>
+					| undefined,
+				taskId,
+				ts,
+			};
+		case "status":
+			return {
+				type: "status",
+				message: (eventData.message as string) || "",
+				taskId,
+				ts,
+			};
+		default:
+			// Unknown event type — pass through as status
+			return {
+				type: "status",
+				message: JSON.stringify({ eventType, ...eventData }),
+				taskId,
+				ts,
+			};
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Shared helpers — extracted from launchAgent / runChildAgentInBackground
@@ -113,7 +224,26 @@ async function createAgentContext(
 		sessionStore: getSessionStore(ctx, project.id),
 		dataDir: ctx.config.dataDir,
 		onTaskEvent: (event) => {
-			broadcastEvent(ctx, project.id, event);
+			const ts = (event.ts as number) || Date.now();
+			// Transform agent_event wrappers into flat BroadcastEvents
+			if (event.type === "agent_event") {
+				const taskId = (event.taskId as string) || "";
+				const eventType = event.eventType as string;
+				const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
+				broadcastEvent(
+					ctx,
+					project.id,
+					agentEventToBroadcast(
+						eventType,
+						rest as Record<string, unknown>,
+						taskId,
+					),
+				);
+			} else {
+				// Already a valid BroadcastEvent shape — just ensure ts
+				const withTs = event.ts ? event : { ...event, ts };
+				broadcastEvent(ctx, project.id, withTs as unknown as BroadcastEvent);
+			}
 			broadcastTreeUpdate(ctx, project.id, opts.tracker);
 
 			// Detect done() via task_completed event. done() emits this BEFORE
@@ -340,6 +470,7 @@ export async function stopAgent(
 	broadcastEvent(ctx, projectId, {
 		type: "agent_stopped",
 		...(rootNodeId ? { taskId: rootNodeId } : {}),
+		ts: Date.now(),
 	});
 
 	// Flush any pending events to disk to prevent data loss
@@ -415,6 +546,7 @@ export async function deliverMessage(
 				type: "error",
 				taskId: nodeId,
 				message: `Auto-launch failed: ${e instanceof Error ? e.message : String(e)}`,
+				ts: Date.now(),
 			});
 		});
 	}
@@ -459,6 +591,7 @@ export async function ensureChildAgentRunning(
 		type: "task_started",
 		taskId: nodeId,
 		title: node.title,
+		ts: Date.now(),
 	});
 	broadcastTreeUpdate(ctx, project.id, tracker);
 
@@ -581,18 +714,24 @@ export async function runChildAgentInBackground(
 				hasRunningChildren: agentCtx.hasRunningChildren,
 			},
 			onEvent: (eventType, eventData) => {
-				if (eventType === "agent_idle" || eventType === "agent_active") {
+				if (eventType === "agent_idle") {
 					broadcastEvent(ctx, project.id, {
-						type: eventType,
+						type: "agent_idle",
 						taskId: nodeId,
+						ts: Date.now(),
+					});
+				} else if (eventType === "agent_active") {
+					broadcastEvent(ctx, project.id, {
+						type: "agent_active",
+						taskId: nodeId,
+						ts: Date.now(),
 					});
 				} else {
-					broadcastEvent(ctx, project.id, {
-						type: "agent_event",
-						taskId: nodeId,
-						eventType,
-						...eventData,
-					});
+					broadcastEvent(
+						ctx,
+						project.id,
+						agentEventToBroadcast(eventType, eventData, nodeId),
+					);
 				}
 			},
 			persistedMessages: {
@@ -621,6 +760,7 @@ export async function runChildAgentInBackground(
 				title: node.title,
 				costUsd: updatedNode.costUsd,
 				budgetUsd: updatedNode.budgetUsd,
+				ts: Date.now(),
 			});
 		}
 
@@ -652,8 +792,9 @@ export async function runChildAgentInBackground(
 				type: "task_completed",
 				taskId: nodeId,
 				title: node.title,
-				success,
+				success: success ?? true,
 				output: (agentResult.output ?? "").slice(0, 500),
+				ts: Date.now(),
 			});
 		}
 
@@ -698,6 +839,7 @@ export async function runChildAgentInBackground(
 			success: false,
 			error: errorMsg,
 			output: `Error: ${errorMsg}`,
+			ts: Date.now(),
 		});
 
 		// Enqueue child_complete (failure) to parent's queue (bubbles up through non-running intermediates)
@@ -806,6 +948,7 @@ export async function launchAgent(
 		prompt: opts.resume ? undefined : opts.prompt,
 		provider: agentCtx.provider.name,
 		model: effectiveModel ?? DEFAULT_MODEL,
+		ts: Date.now(),
 	});
 	broadcastTreeUpdate(ctx, project.id, tracker);
 
@@ -853,18 +996,24 @@ export async function launchAgent(
 			const finalResult = await consumeAgentEvents(
 				session.events,
 				(eventType, eventData) => {
-					if (eventType === "agent_idle" || eventType === "agent_active") {
+					if (eventType === "agent_idle") {
 						broadcastEvent(ctx, project.id, {
-							type: eventType,
+							type: "agent_idle",
 							taskId: rootNodeId,
+							ts: Date.now(),
+						});
+					} else if (eventType === "agent_active") {
+						broadcastEvent(ctx, project.id, {
+							type: "agent_active",
+							taskId: rootNodeId,
+							ts: Date.now(),
 						});
 					} else {
-						broadcastEvent(ctx, project.id, {
-							type: "agent_event",
-							taskId: rootNodeId,
-							eventType,
-							...eventData,
-						});
+						broadcastEvent(
+							ctx,
+							project.id,
+							agentEventToBroadcast(eventType, eventData, rootNodeId),
+						);
 					}
 				},
 			);
@@ -897,7 +1046,7 @@ export async function launchAgent(
 			broadcastEvent(ctx, project.id, {
 				type: "orchestration_completed",
 				taskId: rootNodeId,
-				success: didPass,
+				success: didPass ?? true,
 				costUsd: totalCostUsd,
 				turns: finalResult.turns,
 				inputTokens: finalResult.inputTokens,
@@ -909,6 +1058,7 @@ export async function launchAgent(
 					totalTurns: 0,
 					taskCount: childNodes.length,
 				},
+				ts: Date.now(),
 			});
 			broadcastTreeUpdate(ctx, project.id, tracker);
 		} catch (e) {
@@ -919,6 +1069,7 @@ export async function launchAgent(
 				type: "error",
 				taskId: rootNodeId,
 				message: `Agent failed: ${message}`,
+				ts: Date.now(),
 			});
 		} finally {
 			// Save tree state regardless of how the agent exited.
@@ -939,6 +1090,7 @@ export async function launchAgent(
 					broadcastEvent(ctx, project.id, {
 						type: "agent_stopped",
 						taskId: rootNodeId,
+						ts: Date.now(),
 					});
 				}
 			}
@@ -1120,6 +1272,7 @@ export async function handleClarifyResponse(
 			type: "clarification_answered",
 			taskId,
 			answer,
+			ts: Date.now(),
 		});
 		return { ok: true };
 	}
@@ -1143,6 +1296,7 @@ export async function handleClarifyResponse(
 		type: "clarification_answered",
 		taskId,
 		answer,
+		ts: Date.now(),
 	});
 	return { ok: true };
 }

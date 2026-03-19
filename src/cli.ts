@@ -677,29 +677,31 @@ function formatWatchEvent(msg: Record<string, unknown>): void {
 			);
 			break;
 		}
-		case "agent_event": {
-			const eventType = msg.eventType as string;
-			if (eventType === "tool_use") {
-				const tool = msg.tool as string;
-				const input = JSON.stringify(msg.input ?? {}).slice(0, 120);
-				console.log(`${time} ${c.blue("[tool]")} ${tool} ${input}`);
-			} else if (eventType === "tool_result") {
-				const tool = msg.tool as string;
-				const isError = msg.isError;
-				const ok = isError ? c.red("ERR") : c.green("OK");
-				const content =
-					((msg.content as string) ?? "").split("\n")[0]?.slice(0, 100) ?? "";
-				console.log(`${time} [result] ${tool} ${ok} ${content}`);
-			} else if (eventType === "text") {
-				const content = (msg.content as string) ?? "";
-				// Show first line only for brevity
-				const firstLine = content.split("\n")[0]?.slice(0, 120) ?? "";
-				if (firstLine) console.log(`${time} [text] ${firstLine}`);
-			} else if (eventType === "status") {
-				console.log(`${time} ${c.yellow("[status]")} ${msg.message}`);
-			}
+		case "tool_call": {
+			const tool = msg.tool as string;
+			const input = JSON.stringify(msg.input ?? {}).slice(0, 120);
+			console.log(`${time} ${c.blue("[tool]")} ${tool} ${input}`);
 			break;
 		}
+		case "tool_result": {
+			const tool = msg.tool as string;
+			const isError = msg.isError;
+			const ok = isError ? c.red("ERR") : c.green("OK");
+			const content =
+				((msg.content as string) ?? "").split("\n")[0]?.slice(0, 100) ?? "";
+			console.log(`${time} [result] ${tool} ${ok} ${content}`);
+			break;
+		}
+		case "assistant_text": {
+			const content = (msg.content as string) ?? "";
+			// Show first line only for brevity
+			const firstLine = content.split("\n")[0]?.slice(0, 120) ?? "";
+			if (firstLine) console.log(`${time} [text] ${firstLine}`);
+			break;
+		}
+		case "status":
+			console.log(`${time} ${c.yellow("[status]")} ${msg.message}`);
+			break;
 		case "task_started":
 			console.log(`${time} [task] ${c.green(">")} ${msg.title}`);
 			break;
