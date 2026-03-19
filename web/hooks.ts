@@ -34,14 +34,13 @@ export type UIEvent = Event | BroadcastEvent | UIOnlyEvent;
 
 /**
  * LogEntry = UIEvent + display metadata.
- * `id` for keying and `time` for display.
+ * `id` for keying. Time is derived from `ts` on render.
  * `taskId` is added by ws-handler to route entries to the correct task log.
  * Some UIEvent variants already have taskId (BroadcastEvent); for others it's
  * added as extra metadata via the intersection.
  */
 export type LogEntry = UIEvent & {
 	id: number;
-	time: string;
 	taskId?: string;
 	expanded?: boolean;
 };
@@ -384,14 +383,18 @@ export function useAgent(projectId: string) {
 
 // --- Log helpers ---
 
-/** Create a LogEntry from a UIEvent by adding id + time.
+/** Create a LogEntry from a UIEvent by adding id.
  * Extra fields (like taskId for routing) can be passed and will be preserved. */
 export function createLogEntry(event: UIEvent & { taskId?: string }): LogEntry {
 	return {
 		...event,
 		id: logIdCounter++,
-		time: new Date().toLocaleTimeString(),
 	} as LogEntry;
+}
+
+/** Format a timestamp for display. */
+export function formatTime(ts: number): string {
+	return new Date(ts).toLocaleTimeString();
 }
 
 /** Safely get taskId from any LogEntry — not all event types have it. */

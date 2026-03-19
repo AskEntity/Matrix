@@ -637,8 +637,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 							taskId: op.taskId ?? "",
 							ts: Date.now(),
 						});
-						// Override the auto-generated time with the original entry's time
-						replacement.time = e.time;
+						// Preserve the original entry's timestamp
+						(replacement as { ts: number }).ts = e.ts;
 						entries[i] = replacement;
 						return;
 					}
@@ -727,7 +727,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 								taskId: op.taskId ?? "",
 								ts: Date.now(),
 							});
-							replacement.time = e.time;
+							// Preserve the original entry's timestamp
+							(replacement as { ts: number }).ts = e.ts;
 							updated[i] = replacement;
 							return updated;
 						}

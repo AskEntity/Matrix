@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { getLogTaskId, type LogEntry, type TaskNode } from "../hooks.ts";
+import {
+	formatTime,
+	getLogTaskId,
+	type LogEntry,
+	type TaskNode,
+} from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron } from "./icons.tsx";
 
@@ -706,7 +711,7 @@ export function ToolCard({
 
 	return (
 		<div className="og-log-entry og-event-tool_card">
-			<span className="og-log-time">{useEntry.time}</span>
+			<span className="og-log-time">{formatTime(useEntry.ts)}</span>
 			{taskLabel && (
 				<span className="og-log-badge" title={getLogTaskId(useEntry)}>
 					{taskLabel}
@@ -788,7 +793,7 @@ function QueueMessageCard({
 
 	return (
 		<div className="og-log-entry og-event-tool_card">
-			<span className="og-log-time">{entry.time}</span>
+			<span className="og-log-time">{formatTime(entry.ts)}</span>
 			{taskLabel && (
 				<span className="og-log-badge" title={getLogTaskId(entry)}>
 					{taskLabel}
@@ -883,7 +888,7 @@ export function LogEntryView({
 		if (isYield) {
 			return (
 				<div className="og-log-entry og-event-tool_card">
-					<span className="og-log-time">{entry.time}</span>
+					<span className="og-log-time">{formatTime(entry.ts)}</span>
 					{taskLabel && (
 						<span className="og-log-badge" title={getLogTaskId(entry)}>
 							{taskLabel}
@@ -899,7 +904,7 @@ export function LogEntryView({
 		}
 		return (
 			<div className="og-log-entry og-event-tool_card">
-				<span className="og-log-time">{entry.time}</span>
+				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				{taskLabel && (
 					<span className="og-log-badge" title={getLogTaskId(entry)}>
 						{taskLabel}
@@ -941,7 +946,7 @@ export function LogEntryView({
 		const statusClass = isErr ? "og-tool-card-err" : "og-tool-card-ok";
 		return (
 			<div className="og-log-entry og-event-tool_card">
-				<span className="og-log-time">{entry.time}</span>
+				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				{taskLabel && (
 					<span className="og-log-badge" title={getLogTaskId(entry)}>
 						{taskLabel}
@@ -981,7 +986,7 @@ export function LogEntryView({
 	if (entry.type === "task_started") {
 		return (
 			<div className="og-log-entry og-event-tool_card">
-				<span className="og-log-time">{entry.time}</span>
+				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				{taskLabel && (
 					<span className="og-log-badge" title={entry.taskId}>
 						{taskLabel}
@@ -1010,7 +1015,7 @@ export function LogEntryView({
 
 		return (
 			<div className="og-log-entry og-event-tool_card">
-				<span className="og-log-time">{entry.time}</span>
+				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				{taskLabel && (
 					<span className="og-log-badge" title={entry.taskId}>
 						{taskLabel}
@@ -1061,7 +1066,7 @@ export function LogEntryView({
 		const text = entry.title ? `${entry.action}: ${entry.title}` : entry.action;
 		return (
 			<div className="og-log-entry og-event-tool_card">
-				<span className="og-log-time">{entry.time}</span>
+				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				<div className="og-tool-card og-tool-card-system">
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">🌿 {t("log.treeUpdated")}</span>
@@ -1112,7 +1117,7 @@ export function LogEntryView({
 			.join(" · ");
 		return (
 			<div className="og-log-entry og-event-tool_card">
-				<span className="og-log-time">{entry.time}</span>
+				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				<div className="og-tool-card og-tool-card-bg-complete">
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">
@@ -1149,7 +1154,7 @@ export function LogEntryView({
 				: (text.split("\n")[0] ?? text);
 		return (
 			<div className="og-log-entry og-event-tool_card">
-				<span className="og-log-time">{entry.time}</span>
+				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				{taskLabel && (
 					<span className="og-log-badge" title={entry.taskId}>
 						{taskLabel}
@@ -1191,7 +1196,7 @@ export function LogEntryView({
 	if (entry.type === "user_message") {
 		return (
 			<div className="og-log-entry og-event-user_message">
-				<span className="og-log-time">{entry.time}</span>
+				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				<div className="og-user-prompt-bubble">
 					<span className="og-user-prompt-text">{entry.content}</span>
 					{entry.images && entry.images.length > 0 && (
@@ -1227,7 +1232,7 @@ export function LogEntryView({
 	if (entry.type === "error") {
 		return (
 			<div className="og-log-entry og-event-error">
-				<span className="og-log-time">{entry.time}</span>
+				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				{taskLabel && (
 					<span className="og-log-badge" title={entry.taskId}>
 						{taskLabel}
@@ -1244,7 +1249,7 @@ export function LogEntryView({
 	const text = getEntryText(entry);
 	return (
 		<div className={`og-log-entry og-event-${entry.type}`}>
-			<span className="og-log-time">{entry.time}</span>
+			<span className="og-log-time">{formatTime(entry.ts)}</span>
 			{taskLabel && (
 				<span
 					className="og-log-badge"
