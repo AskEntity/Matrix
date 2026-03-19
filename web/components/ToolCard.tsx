@@ -1,7 +1,67 @@
 import { useState } from "react";
-import type { LogEntry, TaskNode } from "../hooks.ts";
+import { getLogTaskId, type LogEntry, type TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron } from "./icons.tsx";
+
+// --- Helper functions to extract display text from typed LogEntry ---
+
+/** Get the primary display text for any LogEntry type. */
+function getEntryText(entry: LogEntry): string {
+	switch (entry.type) {
+		case "assistant_text":
+		case "text_delta":
+			return entry.content;
+		case "tool_call":
+			return entry.tool;
+		case "tool_result":
+			return entry.content;
+		case "error":
+			return entry.message;
+		case "user_message":
+			return entry.content;
+		case "lifecycle":
+		case "parent_update":
+		case "child_report":
+		case "background_complete":
+		case "cross_project":
+		case "generic_queue_message":
+			return entry.content;
+		case "task_started":
+			return entry.title;
+		case "task_completed":
+			return entry.title;
+		case "tree_mutation":
+			return entry.title ?? entry.action;
+		case "compact_marker":
+			return `Context compacted (saved ~${entry.savedTokens} tokens)`;
+		case "compact_started":
+			return "Compressing context...";
+		case "clarification_requested":
+			return entry.question;
+		case "clarification_answered":
+			return entry.answer;
+		case "budget_exceeded":
+			return entry.title;
+		default:
+			return "";
+	}
+}
+
+/** Get tool name from entry (only for tool_call/tool_result). */
+function getToolName(entry: LogEntry): string {
+	if (entry.type === "tool_call" || entry.type === "tool_result") {
+		return entry.tool;
+	}
+	return "";
+}
+
+/** Get tool args from entry (only for tool_call). */
+function getToolArgs(entry: LogEntry): Record<string, unknown> | undefined {
+	if (entry.type === "tool_call") {
+		return entry.input;
+	}
+	return undefined;
+}
 
 /** Render inline images from tool results (e.g. MCP screenshots). */
 function ToolResultImages({
@@ -594,12 +654,16 @@ export function ToolCard({
 }) {
 	const { t } = useLocale();
 
-	const toolName = useEntry.toolName ?? "";
-	const toolArgs = useEntry.toolArgs;
+	const toolName = getToolName(useEntry);
+	const toolArgs = getToolArgs(useEntry);
 	const argsExclude = bashBgExcludeKeys(toolName, toolArgs);
 	const argsStr = formatArgs(toolArgs, argsExclude);
-	const resultContent = resultEntry.toolResult ?? resultEntry.text;
-	const isErr = resultEntry.isError ?? false;
+	const resultContent =
+		resultEntry.type === "tool_result"
+			? resultEntry.content
+			: getEntryText(resultEntry);
+	const isErr =
+		resultEntry.type === "tool_result" ? resultEntry.isError : false;
 	const isOk = !isErr;
 
 	const isMcp = toolName.startsWith("mcp__opengraft__");
@@ -624,7 +688,7 @@ export function ToolCard({
 				resultContent={resultContent}
 				isOk={isOk}
 				t={t}
-				taskId={useEntry.taskId}
+				taskId={getLogTaskId(useEntry)}
 			/>
 		) : null;
 
@@ -638,7 +702,7 @@ export function ToolCard({
 		<div className="og-log-entry og-event-tool_card">
 			<span className="og-log-time">{useEntry.time}</span>
 			{taskLabel && (
-				<span className="og-log-badge" title={useEntry.taskId}>
+				<span className="og-log-badge" title={getLogTaskId(useEntry)}>
 					{taskLabel}
 				</span>
 			)}
@@ -681,11 +745,13 @@ export function ToolCard({
 						)}
 					</div>
 				)}
-				{resultEntry.images && resultEntry.images.length > 0 && (
-					<div className="og-tool-card-body">
-						<ToolResultImages images={resultEntry.images} />
-					</div>
-				)}
+				{resultEntry.type === "tool_result" &&
+					resultEntry.images &&
+					resultEntry.images.length > 0 && (
+						<div className="og-tool-card-body">
+							<ToolResultImages images={resultEntry.images} />
+						</div>
+					)}
 			</div>
 		</div>
 	);
@@ -706,18 +772,19 @@ function QueueMessageCard({
 	taskLabel: string | null;
 }) {
 	const [expanded, setExpanded] = useState(false);
-	const isLong = entry.text.length > 100 || entry.text.includes("\n");
+	const text = getEntryText(entry);
+	const isLong = text.length > 100 || text.includes("\n");
 	const headerText =
-		entry.text.length > 100
-			? `${entry.text.slice(0, 100)}…`
-			: (entry.text.split("\n")[0] ?? entry.text);
+		text.length > 100
+			? `${text.slice(0, 100)}…`
+			: (text.split("\n")[0] ?? text);
 	const header = `${icon ? `${icon} ` : ""}${label}`;
 
 	return (
 		<div className="og-log-entry og-event-tool_card">
 			<span className="og-log-time">{entry.time}</span>
 			{taskLabel && (
-				<span className="og-log-badge" title={entry.taskId}>
+				<span className="og-log-badge" title={getLogTaskId(entry)}>
 					{taskLabel}
 				</span>
 			)}
@@ -737,12 +804,12 @@ function QueueMessageCard({
 				) : (
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">{header}</span>
-						<span className="og-tool-card-detail">{entry.text}</span>
+						<span className="og-tool-card-detail">{text}</span>
 					</div>
 				)}
 				{expanded && isLong && (
 					<div className="og-tool-card-body">
-						<div className="og-tool-card-result">{entry.text.trim()}</div>
+						<div className="og-tool-card-result">{text.trim()}</div>
 					</div>
 				)}
 			</div>
@@ -763,13 +830,12 @@ export function LogEntryView({
 	const { t } = useLocale();
 
 	if (entry.type === "compact_marker") {
+		const displayText = `Context compacted (saved ~${entry.savedTokens} tokens)`;
 		return (
 			<div className="og-compact-boundary">
 				<div className="og-compact-hint">{t("compact.notVisible")}</div>
-				<div
-					className={`og-compact-bar${entry.checkpoint ? "" : " og-compact-bar-loading"}`}
-				>
-					<span className="og-compact-label">◈ {entry.text}</span>
+				<div className="og-compact-bar">
+					<span className="og-compact-label">◈ {displayText}</span>
 					{entry.checkpoint && (
 						<button
 							type="button"
@@ -787,12 +853,23 @@ export function LogEntryView({
 		);
 	}
 
+	if (entry.type === "compact_started") {
+		return (
+			<div className="og-compact-boundary">
+				<div className="og-compact-hint">{t("compact.notVisible")}</div>
+				<div className="og-compact-bar og-compact-bar-loading">
+					<span className="og-compact-label">◈ Compressing context...</span>
+				</div>
+			</div>
+		);
+	}
+
 	// Standalone tool_use (not merged with result) — show as a card too
 	if (entry.type === "tool_call") {
-		const toolName = entry.toolName ?? "";
+		const toolName = entry.tool;
 		// Suppress done() tool_use card — task_completed card replaces it
 		if (toolName === "mcp__opengraft__done") return null;
-		const toolArgs = entry.toolArgs;
+		const toolArgs = entry.input;
 		const argsStr = formatArgs(toolArgs, bashBgExcludeKeys(toolName, toolArgs));
 		const isMcp = toolName.startsWith("mcp__opengraft__");
 		const isYield = toolName === "mcp__opengraft__yield";
@@ -845,11 +922,11 @@ export function LogEntryView({
 
 	// Standalone tool_result (not merged) — show as a card
 	if (entry.type === "tool_result") {
-		const toolName = entry.toolName ?? "";
+		const toolName = entry.tool;
 		// Suppress done() tool_result card — task_completed card replaces it
 		if (toolName === "mcp__opengraft__done") return null;
-		const content = entry.toolResult ?? entry.text;
-		const isErr = entry.isError ?? false;
+		const content = entry.content;
+		const isErr = entry.isError;
 		const isOk = !isErr;
 		const mcpFormatted = isOk
 			? formatMcpToolResult(toolName, content, t)
@@ -906,7 +983,9 @@ export function LogEntryView({
 				)}
 				<div className="og-tool-card og-tool-card-pending">
 					<div className="og-tool-card-header">
-						<span className="og-tool-card-name">▶ {entry.text}</span>
+						<span className="og-tool-card-name">
+							▶ {t("lifecycle.taskStarted")} {entry.title}
+						</span>
 					</div>
 				</div>
 			</div>
@@ -915,12 +994,9 @@ export function LogEntryView({
 
 	// task_completed — styled card with green/red border, badge, collapsible output
 	if (entry.type === "task_completed") {
-		const meta = entry.meta as
-			| { title?: string; success?: boolean; output?: string }
-			| undefined;
-		const title = meta?.title ?? "";
-		const success = meta?.success ?? entry.text.startsWith("✓");
-		const output = meta?.output ?? "";
+		const title = entry.title;
+		const success = entry.success;
+		const output = entry.output ?? "";
 		const hasOutput = output.length > 0;
 		const borderClass = success
 			? "og-tool-card-done-passed"
@@ -976,13 +1052,14 @@ export function LogEntryView({
 	}
 
 	if (entry.type === "tree_mutation") {
+		const text = entry.title ? `${entry.action}: ${entry.title}` : entry.action;
 		return (
 			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{entry.time}</span>
 				<div className="og-tool-card og-tool-card-system">
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">🌿 {t("log.treeUpdated")}</span>
-						<span className="og-tool-card-detail">{entry.text}</span>
+						<span className="og-tool-card-detail">{text}</span>
 					</div>
 				</div>
 			</div>
@@ -1002,7 +1079,7 @@ export function LogEntryView({
 	}
 
 	if (entry.type === "child_report") {
-		const childTitle = (entry.meta?.childTitle as string) ?? "";
+		const childTitle = entry.childTitle ?? "";
 		const label = childTitle ? `↑ from ${childTitle}` : "↑ Child Report";
 		return (
 			<QueueMessageCard
@@ -1016,9 +1093,9 @@ export function LogEntryView({
 	}
 
 	if (entry.type === "background_complete") {
-		const command = (entry.meta?.command as string) ?? "";
-		const exitCode = (entry.meta?.exitCode as string) ?? "";
-		const durationMs = (entry.meta?.durationMs as string) ?? "";
+		const command = entry.command ?? "";
+		const exitCode = entry.exitCode ?? "";
+		const durationMs = entry.durationMs ?? "";
 		const cmdDisplay =
 			command.length > 50 ? `${command.slice(0, 50)}…` : command;
 		const detail = [
@@ -1043,7 +1120,7 @@ export function LogEntryView({
 	}
 
 	if (entry.type === "cross_project") {
-		const projectName = (entry.meta?.projectName as string) ?? "";
+		const projectName = entry.projectName ?? "";
 		const label = projectName ? `← from ${projectName}` : "← Cross-Project";
 		return (
 			<QueueMessageCard
@@ -1056,15 +1133,14 @@ export function LogEntryView({
 		);
 	}
 
-	if (entry.type === "queue_message") {
-		const sourceLabel = entry.meta?.source
-			? `[${entry.meta.source as string}]`
-			: "";
-		const isLong = entry.text.length > 100 || entry.text.includes("\n");
+	if (entry.type === "generic_queue_message") {
+		const text = entry.content;
+		const sourceLabel = entry.source ? `[${entry.source}]` : "";
+		const isLong = text.length > 100 || text.includes("\n");
 		const headerText =
-			entry.text.length > 100
-				? `${entry.text.slice(0, 100)}…`
-				: (entry.text.split("\n")[0] ?? entry.text);
+			text.length > 100
+				? `${text.slice(0, 100)}…`
+				: (text.split("\n")[0] ?? text);
 		return (
 			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{entry.time}</span>
@@ -1090,7 +1166,7 @@ export function LogEntryView({
 							</button>
 							{expanded && (
 								<div className="og-mcp-body">
-									<div className="og-mcp-task-desc">{entry.text}</div>
+									<div className="og-mcp-task-desc">{text}</div>
 								</div>
 							)}
 						</>
@@ -1111,7 +1187,7 @@ export function LogEntryView({
 			<div className="og-log-entry og-event-user_message">
 				<span className="og-log-time">{entry.time}</span>
 				<div className="og-user-prompt-bubble">
-					<span className="og-user-prompt-text">{entry.text}</span>
+					<span className="og-user-prompt-text">{entry.content}</span>
 					{entry.images && entry.images.length > 0 && (
 						<div className="og-user-images">
 							{entry.images.map((img) => (
@@ -1142,16 +1218,37 @@ export function LogEntryView({
 		);
 	}
 
+	if (entry.type === "error") {
+		return (
+			<div className="og-log-entry og-event-error">
+				<span className="og-log-time">{entry.time}</span>
+				{taskLabel && (
+					<span className="og-log-badge" title={entry.taskId}>
+						{taskLabel}
+					</span>
+				)}
+				<div className="og-log-body">
+					<span className="og-log-text">{entry.message}</span>
+				</div>
+			</div>
+		);
+	}
+
+	// Fallback for lifecycle and any other event types
+	const text = getEntryText(entry);
 	return (
 		<div className={`og-log-entry og-event-${entry.type}`}>
 			<span className="og-log-time">{entry.time}</span>
 			{taskLabel && (
-				<span className="og-log-badge" title={entry.taskId}>
+				<span
+					className="og-log-badge"
+					title={"taskId" in entry ? entry.taskId : undefined}
+				>
 					{taskLabel}
 				</span>
 			)}
 			<div className="og-log-body">
-				<span className="og-log-text">{entry.text}</span>
+				<span className="og-log-text">{text}</span>
 			</div>
 		</div>
 	);

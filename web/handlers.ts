@@ -1,12 +1,7 @@
 import type React from "react";
-import type {
-	CreateLogEntryOpts,
-	LogEntry,
-	Project,
-	TaskNode,
-} from "./hooks.ts";
+import type { LogEntry, Project, TaskNode, UIEvent } from "./hooks.ts";
 
-type AddLogFn = (opts: CreateLogEntryOpts) => void;
+type AddLogFn = (event: UIEvent) => void;
 
 export interface ActionHandlerDeps {
 	projectId: string;
@@ -115,17 +110,21 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 	async function handleSlashCommand(command: string): Promise<boolean> {
 		const cmd = command.trim().toLowerCase();
 		if (cmd === "/compact") {
-			addLog({ type: "lifecycle", text: "⚡ /compact" });
+			addLog({ type: "lifecycle", content: "⚡ /compact", ts: Date.now() });
 			try {
 				await compact();
 			} catch (err) {
-				addLog({ type: "error", text: (err as Error).message });
+				addLog({
+					type: "error",
+					message: (err as Error).message,
+					ts: Date.now(),
+				});
 			}
 			return true;
 		}
 		if (cmd === "/clear") {
 			if (!confirm(t("confirm.clearSessions"))) return true;
-			addLog({ type: "lifecycle", text: "⚡ /clear" });
+			addLog({ type: "lifecycle", content: "⚡ /clear", ts: Date.now() });
 			try {
 				const res = await fetch(`/projects/${projectId}/sessions/clear`, {
 					method: "POST",
@@ -137,9 +136,17 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				setLastCacheReadTokens(null);
 				setLastOutputTokens(null);
 				setLogs([]);
-				addLog({ type: "lifecycle", text: "Session history cleared" });
+				addLog({
+					type: "lifecycle",
+					content: "Session history cleared",
+					ts: Date.now(),
+				});
 			} catch (err) {
-				addLog({ type: "error", text: (err as Error).message });
+				addLog({
+					type: "error",
+					message: (err as Error).message,
+					ts: Date.now(),
+				});
 			}
 			return true;
 		}
@@ -186,7 +193,11 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setAttachedImages([]);
 			localStorage.removeItem("og-prompt-draft");
 		} catch (err) {
-			addLog({ type: "error", text: (err as Error).message });
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				ts: Date.now(),
+			});
 		}
 	}
 
@@ -194,7 +205,11 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		try {
 			await stop();
 		} catch (err) {
-			addLog({ type: "error", text: (err as Error).message });
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				ts: Date.now(),
+			});
 		}
 	}
 
@@ -220,7 +235,8 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				const body = (await res.json()) as { error: string };
 				addLog({
 					type: "error",
-					text: `Failed to answer clarification: ${body.error}`,
+					message: `Failed to answer clarification: ${body.error}`,
+					ts: Date.now(),
 				});
 				return;
 			}
@@ -230,7 +246,11 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				return next;
 			});
 		} catch (err) {
-			addLog({ type: "error", text: (err as Error).message });
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				ts: Date.now(),
+			});
 		}
 	}
 
@@ -247,9 +267,17 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setLastCacheReadTokens(null);
 			setLastOutputTokens(null);
 			setLogs([]);
-			addLog({ type: "lifecycle", text: "Session history cleared" });
+			addLog({
+				type: "lifecycle",
+				content: "Session history cleared",
+				ts: Date.now(),
+			});
 		} catch (err) {
-			addLog({ type: "error", text: (err as Error).message });
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				ts: Date.now(),
+			});
 		}
 	}
 
@@ -259,11 +287,19 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			return;
 		try {
 			await deleteTask(selectedTaskId);
-			addLog({ type: "lifecycle", text: `Deleted: ${selectedNode.title}` });
+			addLog({
+				type: "lifecycle",
+				content: `Deleted: ${selectedNode.title}`,
+				ts: Date.now(),
+			});
 			setSelectedTaskId(rootNodeId);
 			await refreshTasks();
 		} catch (err) {
-			addLog({ type: "error", text: (err as Error).message });
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				ts: Date.now(),
+			});
 		}
 	}
 
@@ -275,7 +311,11 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				"PAUSED by user. Please call yield() and wait for further instructions before continuing.",
 			);
 		} catch (err) {
-			addLog({ type: "error", text: (err as Error).message });
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				ts: Date.now(),
+			});
 		}
 	}
 
@@ -293,7 +333,11 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setNewProjectPath("");
 			setShowAddProject(false);
 		} catch (err) {
-			addLog({ type: "error", text: (err as Error).message });
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				ts: Date.now(),
+			});
 		} finally {
 			setCreatingProject(false);
 		}
@@ -313,7 +357,11 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setRootNodeId(null);
 			setLogs([]);
 		} catch (err) {
-			addLog({ type: "error", text: (err as Error).message });
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				ts: Date.now(),
+			});
 		}
 	}
 
@@ -337,7 +385,11 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				throw new Error(((await res.json()) as { error: string }).error);
 			await refreshTasks();
 		} catch (err) {
-			addLog({ type: "error", text: (err as Error).message });
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				ts: Date.now(),
+			});
 		}
 	}
 
@@ -351,12 +403,17 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			await deleteTask(taskId);
 			addLog({
 				type: "lifecycle",
-				text: `${t("lifecycle.deleted")} ${taskId}`,
+				content: `${t("lifecycle.deleted")} ${taskId}`,
+				ts: Date.now(),
 			});
 			if (selectedTaskId === taskId) setSelectedTaskId(rootNodeId);
 			await refreshTasks();
 		} catch (err) {
-			addLog({ type: "error", text: (err as Error).message });
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				ts: Date.now(),
+			});
 		}
 	}
 

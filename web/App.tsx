@@ -21,10 +21,10 @@ import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
 import { createActionHandlers } from "./handlers.ts";
 
 import {
-	type CreateLogEntryOpts,
 	createLogEntry,
 	type LogEntry,
 	type TaskNode,
+	type UIEvent,
 	useAgent,
 	useProjects,
 	useTasks,
@@ -264,8 +264,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		? activeAgents.has(viewedTaskId)
 		: false;
 
-	const addLog = useCallback((opts: CreateLogEntryOpts) => {
-		setLogs((prev) => [...prev, createLogEntry(opts)]);
+	const addLog = useCallback((event: UIEvent) => {
+		setLogs((prev) => [...prev, createLogEntry(event)]);
 	}, []);
 
 	// ── Effects ──────────────────────────────────────────────────────────────
@@ -588,9 +588,17 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					onRestart={async () => {
 						try {
 							await fetch("/restart-daemon", { method: "POST" });
-							addLog({ type: "lifecycle", text: "Daemon restarting…" });
+							addLog({
+								type: "lifecycle",
+								content: "Daemon restarting…",
+								ts: Date.now(),
+							});
 						} catch {
-							addLog({ type: "lifecycle", text: "Daemon restarting…" });
+							addLog({
+								type: "lifecycle",
+								content: "Daemon restarting…",
+								ts: Date.now(),
+							});
 						}
 					}}
 				/>
@@ -768,7 +776,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 													? () => {
 															addLog({
 																type: "lifecycle",
-																text: "⚡ /compact",
+																content: "⚡ /compact",
+																ts: Date.now(),
 															});
 															compact();
 														}
