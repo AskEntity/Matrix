@@ -712,211 +712,11 @@ describe("fetchContextWindowFromAPI", () => {
 	});
 });
 
-// ── Canonical events recording ──
+// Old CanonicalEvent recording tests removed — system deleted in Event migration.
 
-describe("canonical events recording", () => {
-	let tmpDir: string;
+// ── Event recording via EventStore ──
 
-	beforeAll(async () => {
-		tmpDir = await mkdtemp(
-			join(tmpdir(), "openai-compatible-provider-events-test-"),
-		);
-	});
-
-	afterAll(async () => {
-		clearContextWindowCache();
-		await rm(tmpDir, { recursive: true, force: true });
-	});
-
-	test("records canonical events alongside messages", async () => {
-		const originalKey = process.env.OPENAI_API_KEY;
-		const originalBase = process.env.OPENAI_BASE_URL;
-		const originalFetch = globalThis.fetch;
-
-		process.env.OPENAI_API_KEY = "test-key";
-		process.env.OPENAI_BASE_URL = "http://localhost:9999";
-
-		let chatCallCount = 0;
-		globalThis.fetch = mock(async (url: string | URL | Request) => {
-			const urlStr =
-				typeof url === "string"
-					? url
-					: url instanceof URL
-						? url.toString()
-						: url.url;
-			if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
-				return new Response(
-					JSON.stringify({
-						data: [{ id: "gpt-4o", context_length: 128000 }],
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
-			}
-			chatCallCount++;
-			if (chatCallCount === 1) {
-				// First call: assistant calls done()
-				return new Response(
-					JSON.stringify({
-						id: "chatcmpl-1",
-						object: "chat.completion",
-						choices: [
-							{
-								index: 0,
-								message: {
-									role: "assistant",
-									content: "Completing task.",
-									tool_calls: [
-										{
-											id: "call_done",
-											type: "function",
-											function: {
-												name: "mcp__opengraft__done",
-												arguments: JSON.stringify({
-													status: "passed",
-													summary: "Done",
-												}),
-											},
-										},
-									],
-								},
-								finish_reason: "tool_calls",
-							},
-						],
-						usage: {
-							prompt_tokens: 400,
-							completion_tokens: 80,
-							total_tokens: 480,
-						},
-					}),
-					{
-						status: 200,
-						headers: { "Content-Type": "application/json" },
-					},
-				);
-			}
-			// Second call: stop
-			return new Response(
-				JSON.stringify({
-					id: "chatcmpl-2",
-					object: "chat.completion",
-					choices: [
-						{
-							index: 0,
-							message: { role: "assistant", content: "All done." },
-							finish_reason: "stop",
-						},
-					],
-					usage: {
-						prompt_tokens: 100,
-						completion_tokens: 10,
-						total_tokens: 110,
-					},
-				}),
-				{
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				},
-			);
-		}) as unknown as typeof fetch;
-
-		try {
-			const sessionStore = new SessionStore(join(tmpDir, "sessions-events"));
-			const provider = new OpenAICompatibleProvider("gpt-4o");
-			const session = provider.startSession({
-				prompt: "Do the task",
-				cwd: tmpDir,
-				systemPrompt: "You are a helpful agent.",
-				sessionStore,
-				mcpToolDefs: {
-					opengraft: [
-						{
-							name: "done",
-							description: "Signal completion",
-							inputSchema: {
-								status: {
-									_zod: {
-										def: { type: "string" },
-										bag: { description: "passed or failed" },
-									},
-								},
-								summary: {
-									_zod: {
-										def: { type: "string" },
-										bag: { description: "Summary" },
-									},
-								},
-							},
-							handler: async (input: Record<string, unknown>) => ({
-								content: [
-									{
-										type: "text",
-										text: `Task marked as ${input.status}.`,
-									},
-								],
-							}),
-						},
-					],
-				},
-			});
-
-			// Consume events until idle, then stop
-			const consumePromise = (async () => {
-				let result = await session.events.next();
-				while (!result.done) {
-					if (
-						result.value.type === "status" &&
-						(result.value as { message: string }).message.includes("idle state")
-					) {
-						session.stop();
-					}
-					result = await session.events.next();
-				}
-				return result.value as AgentResult;
-			})();
-
-			await consumePromise;
-
-			// Verify canonical events were persisted
-			const storedEvents = (await sessionStore.get(
-				session.sessionId,
-				"events",
-			)) as Array<{ type: string }> | null;
-			expect(storedEvents).not.toBeNull();
-			expect(storedEvents?.length).toBeGreaterThanOrEqual(3);
-
-			// Should have: user_message, assistant_response (with tool_calls), tool_results, assistant_response (stop)
-			const types = storedEvents?.map((e) => e.type);
-			expect(types?.[0]).toBe("user_message");
-			expect(types).toContain("assistant_response");
-			expect(types).toContain("tool_results");
-
-			// Verify user_message has cwd
-			const userMsg = storedEvents?.[0] as {
-				type: string;
-				content: string;
-				cwd?: string;
-			};
-			expect(userMsg.cwd).toBe(tmpDir);
-			expect(userMsg.content).toContain("Do the task");
-		} finally {
-			clearContextWindowCache();
-			process.env.OPENAI_API_KEY = originalKey ?? "";
-			if (originalBase) {
-				process.env.OPENAI_BASE_URL = originalBase;
-			} else {
-				delete process.env.OPENAI_BASE_URL;
-			}
-			globalThis.fetch = originalFetch;
-		}
-	});
-});
-
-// ── StrongEvent recording via EventStore ──
-
-describe("StrongEvent recording via EventStore", () => {
+describe("Event recording via EventStore", () => {
 	let tmpDir: string;
 
 	beforeAll(async () => {
@@ -930,7 +730,7 @@ describe("StrongEvent recording via EventStore", () => {
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
-	test("records StrongEvents to EventStore alongside old events", async () => {
+	test("records Events to EventStore", async () => {
 		const originalKey = process.env.OPENAI_API_KEY;
 		const originalBase = process.env.OPENAI_BASE_URL;
 		const originalFetch = globalThis.fetch;
@@ -1081,7 +881,7 @@ describe("StrongEvent recording via EventStore", () => {
 			const agentResult = await consumePromise;
 			expect(agentResult.success).toBe(true);
 
-			// Verify StrongEvents were recorded
+			// Verify Events were recorded
 			const strongEvents = eventStore.readActive(session.sessionId);
 			expect(strongEvents.length).toBeGreaterThanOrEqual(4);
 
@@ -1133,8 +933,8 @@ describe("StrongEvent recording via EventStore", () => {
 	});
 });
 
-import { strongEventsToOpenAIMessages } from "./canonical-events.ts";
 import { EventStore } from "./event-store.ts";
+import { eventsToOpenAIMessages } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 // Import AgentResult for type assertion
 import type { AgentResult } from "./types.ts";
@@ -1203,9 +1003,9 @@ function createOpenAIChatResponse(opts: {
 	);
 }
 
-// ── StrongEvent deterministic verification (OpenAI) ──
+// ── Event deterministic verification (OpenAI) ──
 
-describe("StrongEvent deterministic verification (OpenAI)", () => {
+describe("Event deterministic verification (OpenAI)", () => {
 	let tmpDir: string;
 
 	beforeAll(async () => {
@@ -1278,7 +1078,7 @@ describe("StrongEvent deterministic verification (OpenAI)", () => {
 				expect(events[1]?.type).toBe("assistant_text");
 
 				// Verify reconstruction
-				const reconstructed = strongEventsToOpenAIMessages(events);
+				const reconstructed = eventsToOpenAIMessages(events);
 				expect(reconstructed.length).toBe(2);
 				expect(reconstructed[0]).toEqual({
 					role: "user",
@@ -1391,7 +1191,7 @@ describe("StrongEvent deterministic verification (OpenAI)", () => {
 				}
 
 				// Verify reconstruction
-				const reconstructed = strongEventsToOpenAIMessages(events);
+				const reconstructed = eventsToOpenAIMessages(events);
 				expect(reconstructed.length).toBeGreaterThanOrEqual(4);
 				// First: user, second: assistant with tool_calls, third: tool result, fourth: assistant
 				expect((reconstructed[0] as { role: string }).role).toBe("user");
@@ -1474,13 +1274,15 @@ describe("StrongEvent deterministic verification (OpenAI)", () => {
 				// Must have queue_message events
 				expect(types).toContain("queue_message");
 				const queueMsgEvent = events.find((e) => e.type === "queue_message");
-				if (queueMsgEvent?.type === "queue_message") {
-					expect(queueMsgEvent.source).toBe("user");
+				if (
+					queueMsgEvent?.type === "queue_message" &&
+					queueMsgEvent.source === "user"
+				) {
 					expect(queueMsgEvent.content).toContain("New instruction for you");
 				}
 
 				// Verify reconstruction — queue_message should become user message
-				const reconstructed = strongEventsToOpenAIMessages(events);
+				const reconstructed = eventsToOpenAIMessages(events);
 				expect(reconstructed.length).toBeGreaterThanOrEqual(4);
 			},
 		);
@@ -1688,7 +1490,7 @@ describe("StrongEvent deterministic verification (OpenAI)", () => {
 				expect(toolResults.length).toBe(3);
 
 				// Verify reconstruction
-				const reconstructed = strongEventsToOpenAIMessages(events);
+				const reconstructed = eventsToOpenAIMessages(events);
 				// user, assistant(with 3 tool_calls), 3 tool results, assistant
 				expect(reconstructed.length).toBeGreaterThanOrEqual(6);
 

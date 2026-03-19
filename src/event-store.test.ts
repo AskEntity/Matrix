@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { StrongEvent } from "./canonical-events.ts";
 import { EventStore } from "./event-store.ts";
+import type { Event } from "./events.ts";
 
 const TEST_DIR = join(import.meta.dir, "..", ".test-event-store");
 
@@ -29,7 +29,7 @@ describe("EventStore", () => {
 	});
 
 	test("append + read single event", () => {
-		const event: StrongEvent = {
+		const event: Event = {
 			type: "user_message",
 			content: "hello",
 			ts: 1000,
@@ -40,12 +40,12 @@ describe("EventStore", () => {
 	});
 
 	test("append multiple events sequentially", () => {
-		const e1: StrongEvent = {
+		const e1: Event = {
 			type: "user_message",
 			content: "hello",
 			ts: 1000,
 		};
-		const e2: StrongEvent = {
+		const e2: Event = {
 			type: "assistant_text",
 			content: "hi there",
 			ts: 1001,
@@ -56,7 +56,7 @@ describe("EventStore", () => {
 	});
 
 	test("appendBatch writes multiple events", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "user_message", content: "hello", ts: 1000 },
 			{ type: "assistant_text", content: "hi", ts: 1001 },
 			{
@@ -98,7 +98,7 @@ describe("EventStore", () => {
 	});
 
 	test("readActive returns all events when no compact_marker", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "user_message", content: "hello", ts: 1000 },
 			{ type: "assistant_text", content: "hi", ts: 1001 },
 		];
@@ -107,7 +107,7 @@ describe("EventStore", () => {
 	});
 
 	test("readActive returns events after last compact_marker", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "user_message", content: "old msg", ts: 1000 },
 			{ type: "assistant_text", content: "old response", ts: 1001 },
 			{
@@ -129,7 +129,7 @@ describe("EventStore", () => {
 	});
 
 	test("readActive with multiple compact_markers uses the last one", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "user_message", content: "very old", ts: 1000 },
 			{
 				type: "compact_marker",
@@ -159,7 +159,7 @@ describe("EventStore", () => {
 	});
 
 	test("preserves all event fields through round-trip", () => {
-		const event: StrongEvent = {
+		const event: Event = {
 			type: "tool_result",
 			toolCallId: "tc1",
 			content: 'result with "quotes" and\nnewlines',
@@ -172,12 +172,12 @@ describe("EventStore", () => {
 	});
 
 	test("separate sessions do not interfere", () => {
-		const e1: StrongEvent = {
+		const e1: Event = {
 			type: "user_message",
 			content: "session 1",
 			ts: 1000,
 		};
-		const e2: StrongEvent = {
+		const e2: Event = {
 			type: "user_message",
 			content: "session 2",
 			ts: 2000,

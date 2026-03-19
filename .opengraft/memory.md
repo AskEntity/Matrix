@@ -181,3 +181,13 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - **Anthropic converter**: Tool images are embedded INSIDE `tool_result.content` as `[{type: "image", source: ...}, {type: "text", text: ...}]` (matching provider format). Queue message images remain as sibling blocks with `"[N image(s) attached by user]"` annotation.
 - **OpenAI converter**: Tool images use `current.content` as text label in the user image message. Queue images use `"[User-attached image]"` label.
 - **Provider fix**: Cancellation-point queue messages are recorded as separate `queue_message` StrongEvents (not mixed into the last `tool_result.images`). Variable `cancellationQueueMsgs` hoisted for access in StrongEvent recording block.
+
+
+## Event System Migration (Phase 1 - March 2026)
+
+- **StrongEvent → Event**: Type renamed, file renamed `canonical-events.ts` → `events.ts`. All imports updated.
+- **CanonicalEvent deleted**: The old `events` array, `sessionStore.set/get(id, events, "events")`, and old deterministic verification removed from both providers.
+- **Structured queue_message**: `QueueMessageEvent` discriminated union by `source`. Stores structured data, not pre-formatted XML strings. `queueMessageToEvent()` converts `QueueMessage` → `QueueMessageEvent`.
+- **Converter formatting**: `formatQueueMessageEvent()` in `src/events.ts` formats structured events to XML (identical output to `formatQueueMessage` in agent-tools.ts). Converters call it when reconstructing messages.
+- **Runtime vs converter**: `formatQueueMessage` (agent-tools.ts) still used at RUNTIME for yield/done tools and provider message injection. `formatQueueMessageEvent` (events.ts) used by converters. Both produce identical XML.
+- **Converter renames**: `strongEventsToAnthropicMessages` → `eventsToAnthropicMessages`, `strongEventsToOpenAIMessages` → `eventsToOpenAIMessages`. Old CanonicalEvent converters deleted.
