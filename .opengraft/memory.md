@@ -161,23 +161,10 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 
 
-## Pending Messages — Data-Driven from Queue (March 2026)
-
-- Removed `ctx.pendingMessages` map and `PendingMessage` type. Pending messages are now derived from `MessageQueue.peekMessages()`.
-- Added `peekMessages()` and `onDrain` callback to `MessageQueue`. `onDrain` fires when `drain()`, `wait()`, or `waitForMessage()` consume messages from the internal array.
-- `broadcastPendingFromQueue()` and `broadcastPendingCleared()` replaced `addPendingMessage`/`getPendingMessages`/`clearPendingMessages`.
-- One source of truth: the queue. When a message is enqueued, broadcast queue contents. When drained, broadcast empty. GET `/pending-messages` peeks the queue.
-- `stopAgent` no longer takes `keepPendingMessages` option — stopping always broadcasts cleared (queue is gone).
-
-
 ## Pending Message Banner (Data-Driven)
 
-- `ctx.pendingMessages` removed. Queue state is the source of truth.
-- `MessageQueue.peekMessages()` returns current pending messages without consuming.
-- `MessageQueue.onDrain` callback fires after messages are consumed.
-- `broadcastPendingFromQueue(ctx, projectId, messages)` broadcasts queue contents as pending_messages.
-- `broadcastPendingCleared(ctx, projectId)` broadcasts empty pending_messages (called from onDrain).
-- No fallback — one clearing mechanism only (queue drain).
+- Queue state is the source of truth (`ctx.pendingMessages` removed). `MessageQueue.peekMessages()` + `onDrain` callback.
+- `broadcastPendingFromQueue()` on enqueue, `broadcastPendingCleared()` on drain. No fallback — one mechanism only.
 
 ## clarify Tool Routing
 
