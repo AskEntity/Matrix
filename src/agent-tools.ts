@@ -240,7 +240,7 @@ If you're unsure about a requirement, use \`clarify\` to ask the user (returns i
 If you encounter problems you can't overcome, call done("failed", ...) — failing early is better than spinning.
 
 ### Progress Updates
-During execution, use \`report_to_parent\` 1-2 times to share progress — especially after completing a major phase or making a significant design decision. If you're unsure about a design decision or how to interpret the task — use \`clarify\` to ask the user BEFORE implementing. A wrong approach wastes tokens and the task may be rejected. Clarifying is cheap, rework is expensive.
+During execution, use \`report_to_parent\` 1-2 times to share progress — especially after completing a major phase or making a significant design decision. If you're unsure about a design decision or how to interpret the task — use \`report_to_parent\` with requestReply: true to ask your parent. Don't go in circles guessing. The parent has context and can answer quickly. A wrong approach wastes tokens and the task may be rejected. Asking is cheap, rework is expensive.
 
 ### Before calling done("passed") — self-verification checklist
 Before marking a task as passed, verify EVERY item in the task description is complete:
