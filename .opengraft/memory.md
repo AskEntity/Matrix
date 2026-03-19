@@ -10,7 +10,7 @@
 ## How to Run Tests
 
 ```bash
-bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/anthropic-compatible-provider.test.ts src/openai-compatible-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts src/config.test.ts src/canonical-events.test.ts src/event-store.test.ts
+bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/anthropic-compatible-provider.test.ts src/openai-compatible-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts src/config.test.ts src/canonical-events.test.ts src/event-store.test.ts src/lifecycle.test.ts
 bun run typecheck   # tsc --noEmit
 bun run check       # biome lint + format
 ```
@@ -81,6 +81,7 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - Loop exits ONLY when queue is closed (stop signal).
 - Stop = pause (root stays in_progress → auto-resume on restart). Only `done()` changes to passed/failed.
 - `runChildAgentInBackground` handles ALL child lifecycle: queue, streaming, done() detection, cost, completion events.
+- **done() deadlock fix**: done()=yield blocks on queue.wait() before tool_result emits. `onTaskEvent` callback in `createAgentContext` detects `task_completed` (emitted before blocking) and closes queue immediately. Only for child agents (depth > 0). `tool_result` detection in `runChildCore` remains as fallback.
 
 ## Task System
 
@@ -106,7 +107,7 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 ## Compaction
 
-- `buildSummarizationInstruction(cwd)` includes CWD in checkpoint template.
+- **Structured checkpoint**: AI writes 7 sections in `<summary>` tags. System auto-injects CWD + resume instructions via `extractCheckpoint(responseText, cwd?)`.
 - "Key Insights & Rejected Approaches" — high-level design principles, not API quirks.
 - Anthropic SDK timeout: 20 minutes (default 10min insufficient for large contexts under load).
 
@@ -153,23 +154,7 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - **Known acceptable mismatch**: trailing empty `{"role":"assistant","content":[]}` after done() — Anthropic protocol artifact, StrongEvents correctly omit it.
 - **send_message_to_child double-delivery**: message appears both in initial prompt AND as queue_message. Design decision (at-least-once delivery), not a bug.
 
-## Compaction Checkpoint Refactor (March 2026)
+## LogEntry → StrongEvent Type Merge (in progress)
 
-- **Structured checkpoint**: AI writes 7 sections (User Requests, Current Phase, Completed Work, Task Tree State, Key Insights, Key Context, Pending Work). System auto-injects CWD and resume instructions via `extractCheckpoint(responseText, cwd?)`.
-- **Removed from AI prompt**: "Current Working Directory" section (system injects it) and "Next Action" section (redundant with Pending Work).
-- **Resume instruction flow**: `extractCheckpoint` appends "## System Context (auto-generated)" block when cwd provided. `buildCompactedContext` no longer appends its own resume instruction.
-
-## Child Agent Done() Deadlock Fix (March 2026)
-
-- **Root cause**: done()=yield blocks on `waitForQueueMessages()` before `tool_result` event is emitted. `runChildCore` waited for `tool_result` with `tool === "mcp__opengraft__done"` to close the queue, but it never arrived → deadlock.
-- **Fix**: In `createAgentContext`, the `onTaskEvent` callback now detects `task_completed` events (emitted by done() BEFORE blocking) and closes the child queue. This unblocks `waitForQueueMessages()` immediately. Only applies to child agents (`depth > 0`).
-- **Two event paths in agent lifecycle**: (1) `onTaskEvent` callback fires synchronously during tool execution (goes to WebSocket broadcast), (2) provider stream yields `AgentEvent` types to `runChildCore`. `task_completed` flows through path 1, not path 2.
-- **The `tool_result` detection in `runChildCore` remains as fallback** for edge cases where done() returns without blocking.
-
-
-## TDD Tests: Child Completion Notification Paths (March 2026)
-
-- **done()=yield deadlock test**: Mock provider simulates done()=yield by: updating tracker status → yielding status event → blocking on queue.wait(). The `onEvent` callback simulates the fix (closing queue when task_completed detected). Without the fix, stream deadlocks (queue.wait() never resolves).
-- **Companion deadlock test**: Proves the bug exists — same mock without queue closure in onEvent results in timeout.
-- **runChildCore** can be tested directly without full DaemonContext. For child_complete delivery (which happens in runChildAgentInBackground), simulate the notification manually since that function needs full DaemonContext + real git worktrees.
-- **Reset simulation**: reset_task behavior = delete queue from globalAgentQueues → close queue → update status to pending. Tests can simulate this without going through the MCP tool handler.
+- Step 1 ✅: LogEntry type renames — `"text"` → `"assistant_text"`, `"tool_use"` → `"tool_call"`, `"user_prompt"` → `"user_message"`, `"compact"` → `"compact_marker"`. Server event types (`case "tool_use"` in processAgentEvent) unchanged — they map to the new LogEntry type at creation.
+- Roadmap: Step 2 (field names) → Step 3 (LogEntry = StrongEvent & UI fields) → Step 4 (StrongEvent gains UI fields) → Step 5 (unified type).
