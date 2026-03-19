@@ -189,3 +189,13 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - **Frontend backward compat**: `processLegacyAgentEvent` handles old `agent_event` format from persisted event history. Maps old eventType names (tool_use→tool_call, text→assistant_text, compact→compact_marker).
 - **CLI updated**: `formatWatchEvent` handles flat event types (tool_call, tool_result, assistant_text, status).
 
+
+
+## Phase 2: WS Broadcast Event Types (March 2026)
+
+- `BroadcastEvent` type in `src/events.ts` covers all lifecycle events (text_delta, usage, orchestration_started/completed, task_started/completed, agent_idle/active/stopped, error, budget_exceeded, clarification_requested/answered, tree_mutation, compact_started).
+- `broadcastEvent` signature changed from `Record<string, unknown>` to `BroadcastEvent`.
+- Backend emits flat Events — no more `{ type: "agent_event", eventType, ...data }` wrapper.
+- Frontend `processEvent` handles flat types in main switch. `processLegacyAgentEvent` handles old persisted event history format.
+- `src/cli.ts` updated to handle flat event types for CLI streaming output.
+
