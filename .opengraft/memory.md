@@ -213,3 +213,14 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - **`getEntryText(entry)` + `getSearchableText(entry)`** helper functions extract display text by switching on event type.
 - **`compact_started` is now a separate event type** in the UI (was previously a `compact_marker` without a checkpoint). Gets replaced by `compact_marker` when compaction completes.
 - **Old `queue_message` UI type renamed to `generic_queue_message`** to avoid collision with the BroadcastEvent `queue_message` type.
+
+## Phase 3: LogEntry = BroadcastEvent + UI metadata (March 2026)
+
+- `LogEntry = UIEvent & { id: number; time: string }` where `UIEvent = BroadcastEvent | UIOnlyEvent`.
+- `UIOnlyEvent` covers frontend-created events: lifecycle, user_message (local), parent_update, child_report, background_complete, cross_project, generic_queue_message.
+- `createLogEntry` takes `UIEvent`, adds `id` + `time`. Old `CreateLogEntryOpts` removed.
+- ToolCard.tsx uses helper functions (`getEntryText`, `getToolName`, `getToolArgs`) to extract typed fields from discriminated union.
+- `getLogTaskId(entry)` replaces scattered `entry.taskId` lookups — handles both BroadcastEvent and UIOnlyEvent taskId locations.
+- `createQueueEntry` regex parsing simplified — uses structured event data where available.
+- `processLegacyAgentEvent` still handles old persisted event history format.
+
