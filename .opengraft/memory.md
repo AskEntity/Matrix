@@ -168,3 +168,20 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - `broadcastPendingFromQueue()` and `broadcastPendingCleared()` replaced `addPendingMessage`/`getPendingMessages`/`clearPendingMessages`.
 - One source of truth: the queue. When a message is enqueued, broadcast queue contents. When drained, broadcast empty. GET `/pending-messages` peeks the queue.
 - `stopAgent` no longer takes `keepPendingMessages` option — stopping always broadcasts cleared (queue is gone).
+
+
+## Pending Message Banner (Data-Driven)
+
+- `ctx.pendingMessages` removed. Queue state is the source of truth.
+- `MessageQueue.peekMessages()` returns current pending messages without consuming.
+- `MessageQueue.onDrain` callback fires after messages are consumed.
+- `broadcastPendingFromQueue(ctx, projectId, messages)` broadcasts queue contents as pending_messages.
+- `broadcastPendingCleared(ctx, projectId)` broadcasts empty pending_messages (called from onDrain).
+- No fallback — one clearing mechanism only (queue drain).
+
+## clarify Tool Routing
+
+- `clarify` ALWAYS goes to the user (via UI), never to the parent orchestrator.
+- For child agents needing design guidance: use `report_to_parent` with `requestReply: true` instead.
+- `handleClarifyResponse` routes answers directly to the asking agent queue, bypassing the orchestrator hierarchy.
+
