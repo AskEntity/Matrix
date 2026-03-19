@@ -1,10 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { QueueMessage } from "../message-queue.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type {
 	DaemonContext,
 	PendingClarification,
-	PendingMessage,
 	WSClient,
 } from "./context.ts";
 
@@ -124,16 +124,6 @@ export function broadcastEvent(
 	}
 	broadcast(ctx.wsClients, projectId, event);
 
-	// Agent consumed all queued messages — clear every pending indicator for this project
-	if (event.type === "agent_event" && event.eventType === "queue_message") {
-		ctx.pendingMessages.delete(projectId);
-		broadcast(ctx.wsClients, projectId, {
-			type: "pending_messages",
-			projectId,
-			messages: [],
-		});
-	}
-
 	// Track clarification_requested events for Web UI display
 	if (
 		event.type === "clarification_requested" &&
@@ -144,34 +134,36 @@ export function broadcastEvent(
 	}
 }
 
-// --- Pending Messages ---
+// --- Pending Messages (data-driven from queue) ---
 
-export function getPendingMessages(
+/** Broadcast current queue contents as pending messages to WS clients. */
+export function broadcastPendingFromQueue(
 	ctx: DaemonContext,
 	projectId: string,
-): PendingMessage[] {
-	if (!ctx.pendingMessages.has(projectId))
-		ctx.pendingMessages.set(projectId, []);
-	return ctx.pendingMessages.get(projectId) as PendingMessage[];
-}
-
-export function addPendingMessage(
-	ctx: DaemonContext,
-	projectId: string,
-	taskId: string | null,
-	text: string,
+	messages: QueueMessage[],
 ): void {
-	const msgs = getPendingMessages(ctx, projectId);
-	msgs.push({
-		id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-		taskId,
-		text,
-		timestamp: Date.now(),
-	});
+	const pending = messages
+		.filter((m) => m.source === "user")
+		.map((m) => ({
+			text: (m as Extract<QueueMessage, { source: "user" }>).content,
+			timestamp: Date.now(),
+		}));
 	broadcast(ctx.wsClients, projectId, {
 		type: "pending_messages",
 		projectId,
-		messages: msgs,
+		messages: pending,
+	});
+}
+
+/** Broadcast empty pending messages to WS clients (queue drained). */
+export function broadcastPendingCleared(
+	ctx: DaemonContext,
+	projectId: string,
+): void {
+	broadcast(ctx.wsClients, projectId, {
+		type: "pending_messages",
+		projectId,
+		messages: [],
 	});
 }
 

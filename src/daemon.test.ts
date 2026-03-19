@@ -2911,7 +2911,7 @@ describe("GET /projects/:id/pending-messages", () => {
 		expect(orchRes.status).toBe(200);
 		await new Promise((r) => setTimeout(r, 50));
 
-		// Send a message to the orchestrator
+		// Send a message to the running orchestrator — it gets enqueued
 		const msgRes = await localApp.request(`/projects/${project.id}/message`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -2919,23 +2919,19 @@ describe("GET /projects/:id/pending-messages", () => {
 		});
 		expect(msgRes.status).toBe(200);
 
-		// Check pending messages
+		// Pending messages derived from queue — message is in queue, so it's pending
 		const res = await localApp.request(
 			`/projects/${project.id}/pending-messages`,
 		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			messages: {
-				id: string;
-				taskId: string | null;
 				text: string;
 				timestamp: number;
 			}[];
 		};
 		expect(body.messages.length).toBe(1);
 		expect(body.messages[0]?.text).toBe("hello agent");
-		expect(body.messages[0]?.taskId).toBeNull();
-		expect(typeof body.messages[0]?.id).toBe("string");
 		expect(typeof body.messages[0]?.timestamp).toBe("number");
 
 		// Clean up: stop the agent
@@ -2960,7 +2956,7 @@ describe("GET /projects/:id/pending-messages", () => {
 		globalAgentQueues.set(task.id, taskQueue);
 
 		try {
-			// Send a message to the task
+			// Send a message to the running task — it gets enqueued immediately
 			const msgRes = await app.request(
 				`/projects/${projectId}/tasks/${task.id}/message`,
 				{
@@ -2971,7 +2967,7 @@ describe("GET /projects/:id/pending-messages", () => {
 			);
 			expect(msgRes.status).toBe(200);
 
-			// Check pending messages
+			// Pending messages should be empty — message was enqueued to running agent
 			const res = await app.request(`/projects/${projectId}/pending-messages`);
 			expect(res.status).toBe(200);
 			const body = (await res.json()) as {
@@ -2982,9 +2978,7 @@ describe("GET /projects/:id/pending-messages", () => {
 					timestamp: number;
 				}[];
 			};
-			expect(body.messages.length).toBe(1);
-			expect(body.messages[0]?.text).toBe("task message");
-			expect(body.messages[0]?.taskId).toBe(task.id);
+			expect(body.messages.length).toBe(0);
 		} finally {
 			globalAgentQueues.delete(task.id);
 		}

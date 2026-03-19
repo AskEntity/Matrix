@@ -25,9 +25,10 @@ import type { AgentResult } from "../types.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
 import {
-	addPendingMessage,
 	broadcast,
 	broadcastEvent,
+	broadcastPendingCleared,
+	broadcastPendingFromQueue,
 	broadcastTreeUpdate,
 	flushEvents,
 	removePendingClarification,
@@ -296,14 +297,10 @@ export async function runChildCore(
 /**
  * Stop a running agent and clean up all associated state.
  * Single path for all stop operations (explicit stop, restart, project delete).
- *
- * @param opts.keepPendingMessages - Set true during restart so pending user messages
- *   survive for the new session to consume.
  */
 export async function stopAgent(
 	ctx: DaemonContext,
 	projectId: string,
-	opts?: { keepPendingMessages?: boolean },
 ): Promise<void> {
 	const session = ctx.activeSessions.get(projectId);
 	if (!session) return;
@@ -330,15 +327,8 @@ export async function stopAgent(
 		broadcastTreeUpdate(ctx, projectId, tracker);
 	}
 
-	// Clear pending state
-	if (!opts?.keepPendingMessages) {
-		ctx.pendingMessages.delete(projectId);
-		broadcast(ctx.wsClients, projectId, {
-			type: "pending_messages",
-			projectId,
-			messages: [],
-		});
-	}
+	// Clear pending state — queue is gone, no pending messages
+	broadcastPendingCleared(ctx, projectId);
 	ctx.pendingClarifications.delete(projectId);
 	broadcast(ctx.wsClients, projectId, {
 		type: "pending_clarifications",
@@ -387,6 +377,7 @@ export async function deliverMessage(
 	if (queue) {
 		try {
 			queue.enqueue(message);
+			broadcastPendingFromQueue(ctx, project.id, queue.peekMessages());
 			return "enqueued";
 		} catch {
 			// Queue was closed — fall through to persist + launch
@@ -400,6 +391,11 @@ export async function deliverMessage(
 		if (rootSession?.queue) {
 			try {
 				rootSession.queue.enqueue(message);
+				broadcastPendingFromQueue(
+					ctx,
+					project.id,
+					rootSession.queue.peekMessages(),
+				);
 				return "enqueued";
 			} catch {
 				// Queue was closed — fall through to persist + launch
@@ -557,6 +553,7 @@ export async function runChildAgentInBackground(
 
 		// Create the queue first — shared between MCP tools and runChildCore
 		const childQueue = new MessageQueue();
+		childQueue.onDrain = () => broadcastPendingCleared(ctx, project.id);
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
 			projectPath: node.worktreePath as string,
@@ -766,6 +763,9 @@ export async function launchAgent(
 
 	const queue = new MessageQueue();
 
+	// Wire up drain callback to clear pending indicators when agent processes messages
+	queue.onDrain = () => broadcastPendingCleared(ctx, project.id);
+
 	// Load any persisted messages from disk and enqueue them
 	const persistedMsgs = await loadPersistedMessages(
 		ctx.config.dataDir,
@@ -777,6 +777,8 @@ export async function launchAgent(
 	}
 	if (persistedMsgs.length > 0) {
 		await clearPersistedMessages(ctx.config.dataDir, project.id, rootNodeId);
+		// Broadcast persisted messages as pending until the agent drains them
+		broadcastPendingFromQueue(ctx, project.id, queue.peekMessages());
 	}
 
 	const mcpManager = new McpClientManager();
@@ -984,7 +986,11 @@ export async function handleOrchestrate(
 		} catch {
 			return { ok: false, error: "Queue closed", status: 409 };
 		}
-		addPendingMessage(ctx, projectId, null, prompt);
+		broadcastPendingFromQueue(
+			ctx,
+			projectId,
+			existingSession.queue.peekMessages(),
+		);
 		return { ok: true };
 	}
 	await getTracker(ctx, projectId);
@@ -1003,7 +1009,7 @@ export async function handleOrchestrate(
  * - Project validation
  * - First-run launch (no rootNodeId yet)
  * - Auto-resume orchestrator when not running
- * - addPendingMessage for UI feedback
+ * - Pending message broadcast for UI feedback
  *
  * Used by POST /message and WS inject_message.
  */
@@ -1048,11 +1054,18 @@ export async function handleInjectMessage(
 	};
 
 	const result = await deliverMessage(ctx, project, rootNodeId, msg);
-	addPendingMessage(ctx, projectId, null, message);
 
 	if (result === "enqueued") {
+		// deliverMessage already broadcast pending state from queue
 		return { ok: true };
 	}
+
+	// Message was persisted — broadcast as pending until agent loads it
+	broadcast(ctx.wsClients, projectId, {
+		type: "pending_messages",
+		projectId,
+		messages: [{ text: message, timestamp: Date.now() }],
+	});
 
 	// Message was persisted (agent not running) — auto-resume if possible.
 	// Don't pass the user message as prompt — it's already persisted to disk

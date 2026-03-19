@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import type { QueueImage } from "../../message-queue.ts";
+import { globalAgentQueues } from "../../message-queue.ts";
 import {
 	handleClarifyResponse,
 	handleInjectMessage,
@@ -10,7 +11,6 @@ import type { DaemonContext, WSClient } from "../context.ts";
 import {
 	broadcastEvent,
 	getPendingClarifications,
-	getPendingMessages,
 	loadEventHistory,
 } from "../event-system.ts";
 import { getTracker } from "../helpers.ts";
@@ -82,16 +82,30 @@ export function registerWebSocketRoute(
 									}),
 								);
 							}
-							// Send current pending messages
-							const pending = getPendingMessages(ctx, msg.projectId);
-							if (pending.length > 0) {
-								ws.send(
-									JSON.stringify({
-										type: "pending_messages",
-										projectId: msg.projectId,
-										messages: pending,
-									}),
-								);
+							// Send current pending messages — derived from queue state
+							const rootNodeId = tracker?.rootNodeId;
+							if (rootNodeId) {
+								const agentQueue =
+									globalAgentQueues.get(rootNodeId) ??
+									ctx.activeSessions.get(msg.projectId)?.queue;
+								if (agentQueue) {
+									const pending = agentQueue
+										.peekMessages()
+										.filter((m) => m.source === "user")
+										.map((m) => ({
+											text: (m as { content: string }).content,
+											timestamp: Date.now(),
+										}));
+									if (pending.length > 0) {
+										ws.send(
+											JSON.stringify({
+												type: "pending_messages",
+												projectId: msg.projectId,
+												messages: pending,
+											}),
+										);
+									}
+								}
 							}
 							// Send current pending clarifications
 							const clarifications = getPendingClarifications(

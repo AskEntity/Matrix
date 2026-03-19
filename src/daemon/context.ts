@@ -12,14 +12,6 @@ export interface WSClient {
 	projectId: string | null;
 }
 
-/** Pending user message waiting to be consumed by an agent. */
-export interface PendingMessage {
-	id: string;
-	taskId: string | null;
-	text: string;
-	timestamp: number;
-}
-
 /** Pending clarification from a clarify() call waiting for user answer. */
 export interface PendingClarification {
 	id: string;
@@ -49,7 +41,6 @@ export interface DaemonContext {
 	readonly activeSessions: Map<string, AgentSession>;
 	readonly eventHistory: Map<string, Record<string, unknown>[]>;
 	readonly eventsDirty: Set<string>;
-	readonly pendingMessages: Map<string, PendingMessage[]>;
 	readonly pendingClarifications: Map<string, PendingClarification[]>;
 	readonly sessionStores: Map<string, SessionStore>;
 	readonly eventStores: Map<string, EventStore>;

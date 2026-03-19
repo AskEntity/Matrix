@@ -1,13 +1,10 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Hono } from "hono";
+import { globalAgentQueues } from "../../message-queue.ts";
 import { stopAgent } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
-import {
-	getPendingClarifications,
-	getPendingMessages,
-	loadEventHistory,
-} from "../event-system.ts";
+import { getPendingClarifications, loadEventHistory } from "../event-system.ts";
 
 export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 	// Projects CRUD
@@ -62,7 +59,6 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 
 			// Clean up all in-memory state for this project
 			ctx.trackers.delete(projectId);
-			ctx.pendingMessages.delete(projectId);
 			ctx.pendingClarifications.delete(projectId);
 			ctx.eventHistory.delete(projectId);
 			return c.json({ ok: true });
@@ -84,13 +80,31 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 		return c.json({ events });
 	});
 
-	// Pending messages
+	// Pending messages — derived from queue state
 	app.get("/projects/:id/pending-messages", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		return c.json({ messages: getPendingMessages(ctx, project.id) });
+		// Check the root orchestrator's queue for pending user messages
+		const tracker = ctx.trackers.get(project.id);
+		const rootNodeId = tracker?.rootNodeId;
+		let pending: { text: string; timestamp: number }[] = [];
+		if (rootNodeId) {
+			const queue =
+				globalAgentQueues.get(rootNodeId) ??
+				ctx.activeSessions.get(project.id)?.queue;
+			if (queue) {
+				pending = queue
+					.peekMessages()
+					.filter((m) => m.source === "user")
+					.map((m) => ({
+						text: (m as { content: string }).content,
+						timestamp: Date.now(),
+					}));
+			}
+		}
+		return c.json({ messages: pending });
 	});
 
 	// Pending clarifications
