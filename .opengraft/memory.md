@@ -141,19 +141,12 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 ## Event Converter Details
 
-- **Assistant text format**: Always use array `content` for assistant messages (e.g., `[{type: "text", text: "..."}]`), never bare string.
-- **Idle vs working queue wrapper**: Standalone `queue_message` (idle drain) uses `[Messages received while you were idle:]` with suffix. Cancellation-point uses `[Messages received while you were working:]` without suffix.
+- **Assistant text format**: Always use array `content` for assistant messages, never bare string.
+- **Idle vs working queue wrapper**: Standalone `queue_message` (idle drain) uses `[Messages received while you were idle:]`. Cancellation-point uses `[Messages received while you were working:]`.
 - **caller field**: Converter adds `caller: {type: "direct"}` to tool_use blocks to match Anthropic API.
-- **Dual formatting**: `formatQueueMessage` (agent-tools.ts, runtime) and `formatQueueMessageEvent` (events.ts, converters) produce identical XML. Runtime path takes `QueueMessage`, converter takes `QueueMessageEvent`.
+- **Single formatter**: `formatQueueMessage` delegates to `formatQueueMessageEvent(queueMessageToEvent(msg))` — one source of truth.
+- **Queue message XML rules**: `user` and `compact` = raw content (no XML). `clarify_response` and `system` = XML tags for semantic clarity. Multi-field messages (child_complete, parent_update, etc.) = XML tags for structured data.
 - **Mocking Anthropic SDK**: Fake stream with `{[Symbol.asyncIterator], finalMessage}`. Replace `(provider as any).client`.
-- **Verification**: All tested scenarios show PERFECT match. Known mismatch: trailing empty assistant after done() (Anthropic artifact).
-
-## LogEntry → Event Type Merge (in progress)
-
-- Step 1 ✅: LogEntry type renames — `"text"→"assistant_text"`, `"tool_use"→"tool_call"`, `"user_prompt"→"user_message"`, `"compact"→"compact_marker"`.
-- Next: WS pushes Event types (Phase 2) → LogEntry = Event + UI metadata (Phase 3) → cleanup (Phase 4).
-
-
 
 ## Pending Message Banner (Data-Driven)
 
@@ -164,72 +157,21 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 - `clarify` ALWAYS goes to the user (via UI), never to the parent orchestrator.
 - For child agents needing design guidance: use `report_to_parent` with `requestReply: true` instead.
-- `handleClarifyResponse` routes answers directly to the asking agent queue, bypassing the orchestrator hierarchy.
 
+## Tool Images vs Queue Images Separation
 
+- `tool_result.images` = tool images only (MCP screenshots). Embedded INSIDE tool_result content.
+- `queue_message.images` = user images only (sent via queue). Sibling blocks with annotation.
+- Cancellation-point queue messages recorded as separate `queue_message` Events (not mixed into tool_result).
 
-## Tool Images vs Queue Images Separation (March 2026)
+## Unified Event System (Completed March 2026)
 
-- **`tool_result.images`** = ONLY images from the tool itself (MCP screenshots, etc.)
-- **`queue_message.images`** = ONLY images from the user (sent via queue at cancellation points)
-- **Anthropic converter**: Tool images are embedded INSIDE `tool_result.content` as `[{type: "image", source: ...}, {type: "text", text: ...}]` (matching provider format). Queue message images remain as sibling blocks with `"[N image(s) attached by user]"` annotation.
-- **OpenAI converter**: Tool images use `current.content` as text label in the user image message. Queue images use `"[User-attached image]"` label.
-- **Provider fix**: Cancellation-point queue messages are recorded as separate `queue_message` StrongEvents (not mixed into the last `tool_result.images`). Variable `cancellationQueueMsgs` hoisted for access in StrongEvent recording block.
+**4-phase refactor collapsed 5 parallel event/message systems into 1.**
 
+**Phase 1**: `StrongEvent` → `Event`. File `canonical-events.ts` → `events.ts`. `QueueMessageEvent` discriminated union (structured data per source). Old `CanonicalEvent` system fully deleted.
 
+**Phase 2**: `BroadcastEvent` type for lifecycle/ephemeral WS events (text_delta, usage, orchestration_started, etc.). `broadcastEvent` typed. Backend emits flat Events — no more `agent_event` wrapper. `processLegacyAgentEvent` handles old persisted event history.
 
+**Phase 3**: `LogEntry = UIEvent & { id, time }` where `UIEvent = BroadcastEvent | UIOnlyEvent`. `UIOnlyEvent` covers frontend-created types (lifecycle, user_message, parent_update, child_report, etc.). Helper functions (`getEntryText`, `getToolName`, `getLogTaskId`) extract typed fields via discriminated union narrowing. `createLogEntry` takes `UIEvent`, adds `id` + `time`.
 
-
-## Phase 2: WS Broadcast Event Types (March 2026)
-
-- **`BroadcastEvent` type** in `src/events.ts`: Separate union type for lifecycle/ephemeral events pushed over WebSocket (text_delta, usage, orchestration_started, task_completed, etc.). NOT persisted to EventStore.
-- **`broadcastEvent` now typed**: `event: BroadcastEvent` instead of `Record<string, unknown>`.
-- **`agent_event` wrapper eliminated**: Backend emits flat Events directly. `agentEventToBroadcast()` maps provider AgentEvent → BroadcastEvent in agent-lifecycle.ts.
-- **`onTaskEvent` still `Record<string, unknown>`**: Events from agent-tools.ts `emit()` are transformed in the onTaskEvent callback (agent_event wrappers → flat, ts added).
-- **Frontend backward compat**: `processLegacyAgentEvent` handles old `agent_event` format from persisted event history. Maps old eventType names (tool_use→tool_call, text→assistant_text, compact→compact_marker).
-- **CLI updated**: `formatWatchEvent` handles flat event types (tool_call, tool_result, assistant_text, status).
-
-
-
-## Phase 2: WS Broadcast Event Types (March 2026)
-
-- `BroadcastEvent` type in `src/events.ts` covers all lifecycle events (text_delta, usage, orchestration_started/completed, task_started/completed, agent_idle/active/stopped, error, budget_exceeded, clarification_requested/answered, tree_mutation, compact_started).
-- `broadcastEvent` signature changed from `Record<string, unknown>` to `BroadcastEvent`.
-- Backend emits flat Events — no more `{ type: "agent_event", eventType, ...data }` wrapper.
-- Frontend `processEvent` handles flat types in main switch. `processLegacyAgentEvent` handles old persisted event history format.
-- `src/cli.ts` updated to handle flat event types for CLI streaming output.
-
-
-
-## Phase 3: LogEntry = Event + UI Metadata (March 2026)
-
-- **`LogEntry` is now `UIEvent & { id, time, expanded? }`** where `UIEvent = BroadcastEvent | UIOnlyEvent`.
-- **`UIOnlyEvent`** covers UI-created types: `lifecycle`, `user_message` (UI-originated), `parent_update`, `child_report`, `background_complete`, `cross_project`, `generic_queue_message`.
-- **`CreateLogEntryOpts` removed** — `createLogEntry(event: UIEvent)` takes a typed event and adds `id` + `time`.
-- **Queue message regex parsing removed** — `createQueueUIEvent` uses structured fields from `rawMessages` (title, taskId, command, etc.) directly from `QueueMessageEvent`.
-- **`getLogTaskId(entry: LogEntry)`** helper for safe taskId access — not all BroadcastEvent variants have `taskId` (e.g., `tree_mutation` has `nodeId`).
-- **Old `entry.text` replaced** by typed fields: `entry.content` (text events), `entry.tool`/`entry.input` (tool_call), `entry.message` (error), `entry.title` (task events).
-- **Old `entry.toolName`/`entry.toolArgs`/`entry.toolResult`/`entry.meta`** all replaced by direct typed field access through discriminated union narrowing.
-- **`getEntryText(entry)` + `getSearchableText(entry)`** helper functions extract display text by switching on event type.
-- **`compact_started` is now a separate event type** in the UI (was previously a `compact_marker` without a checkpoint). Gets replaced by `compact_marker` when compaction completes.
-- **Old `queue_message` UI type renamed to `generic_queue_message`** to avoid collision with the BroadcastEvent `queue_message` type.
-
-## Phase 3: LogEntry = BroadcastEvent + UI metadata (March 2026)
-
-- `LogEntry = UIEvent & { id: number; time: string }` where `UIEvent = BroadcastEvent | UIOnlyEvent`.
-- `UIOnlyEvent` covers frontend-created events: lifecycle, user_message (local), parent_update, child_report, background_complete, cross_project, generic_queue_message.
-- `createLogEntry` takes `UIEvent`, adds `id` + `time`. Old `CreateLogEntryOpts` removed.
-- ToolCard.tsx uses helper functions (`getEntryText`, `getToolName`, `getToolArgs`) to extract typed fields from discriminated union.
-- `getLogTaskId(entry)` replaces scattered `entry.taskId` lookups — handles both BroadcastEvent and UIOnlyEvent taskId locations.
-- `createQueueEntry` regex parsing simplified — uses structured event data where available.
-- `processLegacyAgentEvent` still handles old persisted event history format.
-
-
-
-## Phase 4: Message Format Cleanup (March 2026)
-
-- **Simple queue messages no longer XML-wrapped**: `user`, `clarify_response`, `system`, `compact` sources return raw content from `formatQueueMessageEvent`. Multi-field messages (`child_complete`, `parent_update`, `child_report`, `cross_project`, `background_complete`) still use XML tags for structured data.
-- **"Process these messages..." suffix removed**: Idle drain wrapper `[Messages received while you were idle:]` no longer includes the suffix in converters (`events.ts`) or providers. System prompt already covers this.
-- **`readProjectMemory` uses markdown headers**: `## CLAUDE.md` and `## Project Memory` instead of fake `[read_file: ...]` fiction. Preamble removed.
-- **Dual formatters unified**: `formatQueueMessage` (agent-tools.ts) now delegates to `formatQueueMessageEvent(queueMessageToEvent(msg))` — single source of truth for message formatting.
-- **`buildTaskPrompt` reused in REST resume path**: `src/daemon/routes/tasks.ts` no longer manually constructs task prompts for re-launched tasks.
+**Phase 4**: XML tags simplified (user = raw, clarify/system = XML, multi-field = XML). "Process these messages..." suffix removed. `readProjectMemory` uses `## CLAUDE.md` / `## Project Memory` markdown headers instead of fake `[read_file: ...]`. Dual formatters unified.
