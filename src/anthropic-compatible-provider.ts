@@ -489,8 +489,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		const apiKey = opts?.apiKey ?? process.env.ANTHROPIC_API_KEY;
 		const oauthToken = opts?.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN;
 		this.useOAuth = Boolean(oauthToken && !apiKey);
-		// 20 minute timeout (default is 10min) — compaction with large contexts can be slow
-		const timeout = 20 * 60 * 1000;
+		// 1 hour timeout — compaction with very large contexts under API load can be slow
+		const timeout = 60 * 60 * 1000;
 		if (this.useOAuth) {
 			this.client = new Anthropic({
 				authToken: oauthToken,

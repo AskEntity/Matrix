@@ -109,7 +109,7 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 - **Structured checkpoint**: AI writes 7 sections in `<summary>` tags. System auto-injects CWD + resume instructions via `extractCheckpoint(responseText, cwd?)`.
 - "Key Insights & Rejected Approaches" — high-level design principles, not API quirks.
-- Anthropic SDK timeout: 20 minutes (default 10min insufficient for large contexts under load).
+- Anthropic SDK timeout: 60 minutes (1 hour) (default 10min insufficient for large contexts under load).
 
 ## SSE Error Retry
 
