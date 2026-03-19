@@ -263,7 +263,8 @@ export function strongEventsToAnthropicMessages(
 			case "tool_result": {
 				// Collect consecutive tool_results (with optional queue_messages for cancellation points) into one user message
 				const resultBlocks: unknown[] = [];
-				const imageBlocks: unknown[] = [];
+				// Queue message images (user-sent) go as sibling blocks after all tool_results
+				const queueImageBlocks: unknown[] = [];
 
 				while (
 					i < events.length &&
@@ -272,15 +273,12 @@ export function strongEventsToAnthropicMessages(
 				) {
 					const current = events[i] as StrongEvent;
 					if (current.type === "tool_result") {
-						resultBlocks.push({
-							type: "tool_result",
-							tool_use_id: current.toolCallId,
-							content: current.content,
-							is_error: current.isError,
-						});
-						if (current.images) {
+						if (current.images && current.images.length > 0) {
+							// Tool images (e.g., MCP screenshots) go INSIDE the tool_result content
+							// as array [image_block, ..., text_block] — matching provider format
+							const contentParts: unknown[] = [];
 							for (const img of current.images) {
-								imageBlocks.push({
+								contentParts.push({
 									type: "image",
 									source: {
 										type: "base64",
@@ -289,6 +287,19 @@ export function strongEventsToAnthropicMessages(
 									},
 								});
 							}
+							contentParts.push({ type: "text", text: current.content });
+							resultBlocks.push({
+								type: "tool_result",
+								tool_use_id: current.toolCallId,
+								content: contentParts,
+							});
+						} else {
+							resultBlocks.push({
+								type: "tool_result",
+								tool_use_id: current.toolCallId,
+								content: current.content,
+								is_error: current.isError,
+							});
 						}
 					} else if (current.type === "queue_message") {
 						// Queue messages at cancellation points (between tool_results)
@@ -296,7 +307,7 @@ export function strongEventsToAnthropicMessages(
 						resultBlocks.push({ type: "text", text: queueText });
 						if (current.images) {
 							for (const img of current.images) {
-								imageBlocks.push({
+								queueImageBlocks.push({
 									type: "image",
 									source: {
 										type: "base64",
@@ -310,15 +321,15 @@ export function strongEventsToAnthropicMessages(
 					i++;
 				}
 
-				if (imageBlocks.length > 0) {
+				if (queueImageBlocks.length > 0) {
 					messages.push({
 						role: "user",
 						content: [
 							...resultBlocks,
-							...imageBlocks,
+							...queueImageBlocks,
 							{
 								type: "text",
-								text: `[${imageBlocks.length} image(s) attached by user]`,
+								text: `[${queueImageBlocks.length} image(s) attached by user]`,
 							},
 						],
 					});
@@ -477,7 +488,13 @@ export function strongEventsToOpenAIMessages(events: StrongEvent[]): unknown[] {
 			case "tool_result": {
 				// Process tool_results as individual messages, with queue_messages
 				// appended to the preceding tool result and images collected for a user message
-				const imageResults: Array<{
+				// Tool images (screenshots etc.) use tool result content as label
+				const toolImageResults: Array<{
+					text: string;
+					dataUri: string;
+				}> = [];
+				// Queue message images (user-sent) use "[User-attached image]" label
+				const queueImageResults: Array<{
 					text: string;
 					dataUri: string;
 				}> = [];
@@ -498,8 +515,8 @@ export function strongEventsToOpenAIMessages(events: StrongEvent[]): unknown[] {
 						});
 						if (current.images) {
 							for (const img of current.images) {
-								imageResults.push({
-									text: "[User-attached image]",
+								toolImageResults.push({
+									text: current.content,
 									dataUri: `data:${img.mediaType};base64,${img.base64}`,
 								});
 							}
@@ -517,7 +534,7 @@ export function strongEventsToOpenAIMessages(events: StrongEvent[]): unknown[] {
 						}
 						if (current.images) {
 							for (const img of current.images) {
-								imageResults.push({
+								queueImageResults.push({
 									text: "[User-attached image]",
 									dataUri: `data:${img.mediaType};base64,${img.base64}`,
 								});
@@ -527,10 +544,11 @@ export function strongEventsToOpenAIMessages(events: StrongEvent[]): unknown[] {
 					i++;
 				}
 
-				// Inject images as a user message (OpenAI tool results are text-only)
-				if (imageResults.length > 0) {
+				// Inject tool images as a user message (OpenAI tool results are text-only)
+				const allImageResults = [...toolImageResults, ...queueImageResults];
+				if (allImageResults.length > 0) {
 					const imageParts: unknown[] = [];
-					for (const img of imageResults) {
+					for (const img of allImageResults) {
 						imageParts.push(
 							{ type: "text", text: img.text },
 							{
