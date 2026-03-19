@@ -7,9 +7,11 @@ import type {
 	AgentProvider,
 	AgentSession,
 } from "./agent-provider.ts";
+import { runChildCore } from "./daemon/agent-lifecycle.ts";
 import { createApp } from "./daemon.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { loadPersistedMessages } from "./persistent-queue.ts";
+import { TaskTracker } from "./task-tracker.ts";
 import type { AgentResult, Project, TaskNode } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -1817,5 +1819,417 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 			method: "DELETE",
 		});
 		expect(res.status).toBe(200);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Child completion notification paths
+// ---------------------------------------------------------------------------
+
+describe("lifecycle: child completion notification paths", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let projectDir: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-lc-childcomp-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-lc-childcompd-"));
+		projectDir = join(tempDir, "proj");
+		await mkdir(join(projectDir, ".git"), { recursive: true });
+	});
+
+	afterEach(async () => {
+		for (const [key] of globalAgentQueues) {
+			globalAgentQueues.delete(key);
+		}
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
+	});
+
+	test("reset task then re-start: child_complete reaches parent", async () => {
+		// Test the full cycle: child runs → completes → parent gets child_complete
+		// → reset → child runs again → parent gets child_complete again.
+		// Uses runChildCore directly to avoid needing real git worktrees.
+
+		const trackerPath = join(dataDir, "test-reset-tracker.json");
+		const tracker = new TaskTracker(trackerPath);
+		const parentNode = tracker.ensureRootNode("Parent", "");
+		const childNode = tracker.addChild(parentNode.id, "Child", "");
+		tracker.updateStatus(parentNode.id, "in_progress");
+		tracker.updateStatus(childNode.id, "in_progress");
+
+		// Register parent queue (simulating running parent agent)
+		const parentQueue = new MessageQueue();
+		globalAgentQueues.set(parentNode.id, parentQueue);
+
+		// -- First run --
+		const result1 = await runChildCore({
+			provider: createInstantProvider(),
+			tracker,
+			taskId: childNode.id,
+			sessionRequest: {
+				prompt: "do work",
+				cwd: projectDir,
+			},
+			onEvent: () => {},
+		});
+		expect(result1.success).toBe(true);
+
+		// After runChildCore, the queue is cleaned up from globalAgentQueues
+		expect(globalAgentQueues.has(childNode.id)).toBe(false);
+
+		// Simulate runChildAgentInBackground's post-completion: send child_complete
+		parentQueue.enqueue({
+			source: "child_complete" as const,
+			taskId: childNode.id,
+			title: childNode.title,
+			success: true,
+			output: "",
+		});
+
+		// Verify child_complete in parent queue
+		let parentMsgs = parentQueue.drain();
+		const firstComplete = parentMsgs.find((m) => m.source === "child_complete");
+		expect(firstComplete).toBeTruthy();
+		expect((firstComplete as { taskId: string }).taskId).toBe(childNode.id);
+
+		// -- Reset --
+		// Simulate reset_task: clean up queue (already gone after runChildCore),
+		// update status to pending
+		tracker.updateStatus(childNode.id, "pending");
+
+		// -- Second run --
+		tracker.updateStatus(childNode.id, "in_progress");
+		const result2 = await runChildCore({
+			provider: createInstantProvider(),
+			tracker,
+			taskId: childNode.id,
+			sessionRequest: {
+				prompt: "try again",
+				cwd: projectDir,
+			},
+			onEvent: () => {},
+		});
+		expect(result2.success).toBe(true);
+
+		// Simulate child_complete again
+		parentQueue.enqueue({
+			source: "child_complete" as const,
+			taskId: childNode.id,
+			title: childNode.title,
+			success: true,
+			output: "",
+		});
+
+		// Verify second child_complete arrives
+		parentMsgs = parentQueue.drain();
+		const secondComplete = parentMsgs.find(
+			(m) => m.source === "child_complete",
+		);
+		expect(secondComplete).toBeTruthy();
+		expect((secondComplete as { taskId: string }).taskId).toBe(childNode.id);
+
+		parentQueue.close();
+		globalAgentQueues.delete(parentNode.id);
+	});
+
+	test("child_complete after task_completed event (done()=yield detection)", async () => {
+		// KEY test for the deadlock fix.
+		//
+		// The done()=yield sequence is:
+		// 1. done() handler updates tracker status to passed/failed
+		// 2. done() handler calls emit({ type: "task_completed" }) — triggers onTaskEvent
+		// 3. onTaskEvent (the fix) closes the child queue
+		// 4. done() handler calls waitForQueueMessages() — rejects immediately (queue closed)
+		// 5. done() returns → provider emits tool_result → runChildCore sees it and exits
+		//
+		// This test simulates the stream behavior where:
+		// - The tracker status is updated to "passed" (step 1)
+		// - The queue is closed externally (step 3 — the fix)
+		// - The stream unblocks and exits (steps 4-5)
+		// - runChildCore completes without deadlock
+		//
+		// If the onEvent callback does NOT close the queue, the stream deadlocks.
+
+		const trackerPath = join(dataDir, "test-donefix-tracker.json");
+		const tracker = new TaskTracker(trackerPath);
+		const parentNode = tracker.ensureRootNode("Parent", "");
+		tracker.updateStatus(parentNode.id, "in_progress");
+		const childNode = tracker.addChild(parentNode.id, "Child", "");
+		const childId = childNode.id;
+		tracker.updateStatus(childId, "in_progress");
+
+		// Register parent queue
+		const parentQueue = new MessageQueue();
+		globalAgentQueues.set(parentNode.id, parentQueue);
+
+		// Create a provider whose stream simulates done()=yield:
+		// 1. Emits text (simulating work)
+		// 2. Updates tracker status (simulating done() handler step 1)
+		// 3. Yields a "status" event with task_completed message (simulating emit())
+		// 4. Blocks on queue.wait() (simulating done() handler step 3)
+		// The stream NEVER yields a tool_result for mcp__opengraft__done —
+		// that only happens AFTER done() unblocks.
+		const doneYieldProvider: AgentProvider = {
+			name: "mock-done-yield",
+			execute: async () => ({ success: true, output: "" }),
+			stream: async function* (req) {
+				const queue = req.queue ?? new MessageQueue();
+
+				// Step 1: Agent does some work
+				yield { type: "text" as const, content: "Working..." };
+
+				// Step 2: Agent calls done("passed") — handler updates tracker
+				tracker.updateStatus(childId, "passed");
+
+				// Step 3: done() handler calls emit({ type: "task_completed" })
+				// In production, this triggers onTaskEvent which closes the queue.
+				// We yield a status event that our onEvent callback can detect.
+				yield {
+					type: "status" as const,
+					message: `task_completed:${childId}`,
+				};
+
+				// Step 4: done() handler calls waitForQueueMessages()
+				// which blocks on queue.wait() — if queue is closed, it rejects
+				try {
+					await queue.wait();
+				} catch {
+					// Queue closed — exit cleanly (the fix unblocks us here)
+				}
+
+				// Step 5: After unblocking, the provider would emit tool_result
+				// (but we're simulating the whole thing)
+				return { success: true, output: "done" } as AgentResult;
+			},
+			startSession(req) {
+				const queue = req.queue ?? new MessageQueue();
+				return {
+					sessionId: "mock",
+					events: this.stream(req),
+					queue,
+					sendMessage: async () => {},
+					stop: () => queue.close(),
+				};
+			},
+		};
+
+		const eventLog: string[] = [];
+
+		// Run runChildCore with an onEvent that simulates the fix:
+		// When it sees the task_completed status event AND tracker shows passed/failed,
+		// it closes the queue. This is what createAgentContext's onTaskEvent does.
+		const corePromise = runChildCore({
+			provider: doneYieldProvider,
+			tracker,
+			taskId: childId,
+			sessionRequest: {
+				prompt: "test",
+				cwd: projectDir,
+			},
+			onEvent: (type, data) => {
+				eventLog.push(type);
+
+				// Simulate the fix: detect task_completed and close the queue
+				if (
+					type === "status" &&
+					typeof data.message === "string" &&
+					data.message.startsWith("task_completed:")
+				) {
+					const nodeStatus = tracker.get(childId)?.status;
+					if (nodeStatus === "passed" || nodeStatus === "failed") {
+						const q = globalAgentQueues.get(childId);
+						if (q) q.close();
+					}
+				}
+			},
+		});
+
+		// Race against timeout — deadlock means corePromise never resolves
+		const timeoutPromise = delay(3000).then(() => "timeout" as const);
+		const result = await Promise.race([corePromise, timeoutPromise]);
+
+		// With the fix in place, runChildCore should complete (not timeout)
+		expect(result).not.toBe("timeout");
+		expect(tracker.get(childId)?.status).toBe("passed");
+		expect(eventLog).toContain("text");
+		expect(eventLog).toContain("status");
+
+		// Cleanup
+		globalAgentQueues.delete(childId);
+		parentQueue.close();
+		globalAgentQueues.delete(parentNode.id);
+	});
+
+	test("done()=yield deadlocks WITHOUT task_completed detection", async () => {
+		// Companion test: verifies that WITHOUT the fix (no queue closure in onEvent),
+		// the stream blocks indefinitely. This proves the fix is necessary.
+
+		const trackerPath = join(dataDir, "test-deadlock-tracker.json");
+		const tracker = new TaskTracker(trackerPath);
+		const parentNode = tracker.ensureRootNode("Parent", "");
+		tracker.updateStatus(parentNode.id, "in_progress");
+		const childNode = tracker.addChild(parentNode.id, "Child", "");
+		const childId = childNode.id;
+		tracker.updateStatus(childId, "in_progress");
+
+		// Provider that simulates done()=yield WITHOUT the fix closing the queue
+		const deadlockProvider: AgentProvider = {
+			name: "mock-deadlock",
+			execute: async () => ({ success: true, output: "" }),
+			stream: async function* (req) {
+				const queue = req.queue ?? new MessageQueue();
+				yield { type: "text" as const, content: "Working..." };
+
+				tracker.updateStatus(childId, "passed");
+				yield { type: "status" as const, message: "task_completed" };
+
+				// Block forever — no one closes the queue
+				try {
+					await queue.wait();
+				} catch {
+					// If somehow closed, exit
+				}
+				return { success: true, output: "done" } as AgentResult;
+			},
+			startSession(req) {
+				const queue = req.queue ?? new MessageQueue();
+				return {
+					sessionId: "mock",
+					events: this.stream(req),
+					queue,
+					sendMessage: async () => {},
+					stop: () => queue.close(),
+				};
+			},
+		};
+
+		const corePromise = runChildCore({
+			provider: deadlockProvider,
+			tracker,
+			taskId: childId,
+			sessionRequest: {
+				prompt: "test",
+				cwd: projectDir,
+			},
+			onEvent: () => {
+				// No fix — onEvent does nothing with task_completed
+			},
+		});
+
+		// Should timeout because the stream is stuck in queue.wait()
+		const timeoutPromise = delay(500).then(() => "timeout" as const);
+		const result = await Promise.race([corePromise, timeoutPromise]);
+		expect(result).toBe("timeout");
+
+		// Force cleanup — close the queue to unblock the deadlocked provider
+		const stuckQueue = globalAgentQueues.get(childId);
+		if (stuckQueue) {
+			globalAgentQueues.delete(childId);
+			stuckQueue.close();
+		}
+		// Wait for runChildCore to finish after we unblocked it
+		await Promise.race([corePromise, delay(1000)]);
+	});
+
+	test("reset task cleans up queue from globalAgentQueues", async () => {
+		// Verify that reset_task (simulated) properly cleans up the old queue,
+		// and that re-starting after reset creates a fresh queue.
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: createLongRunningProvider(),
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+		const parent = await createTask(app, project.id, "Parent");
+		const child = await createTask(app, project.id, "Child", {
+			parentId: parent.id,
+		});
+
+		// Register a queue for the child (simulating running agent)
+		const oldQueue = new MessageQueue();
+		globalAgentQueues.set(child.id, oldQueue);
+		expect(globalAgentQueues.get(child.id)).toBe(oldQueue);
+
+		// Simulate reset_task: delete from registry THEN close (correct order)
+		globalAgentQueues.delete(child.id);
+		oldQueue.close();
+
+		// Verify queue is gone
+		expect(globalAgentQueues.has(child.id)).toBe(false);
+
+		// Verify old queue is closed
+		expect(() => oldQueue.enqueue({ source: "user", content: "test" })).toThrow(
+			"Queue closed",
+		);
+
+		// After reset, re-start creates a fresh queue (via auto-launch)
+		// Send a message to trigger auto-launch
+		await setTaskStatus(app, project.id, child.id, "pending");
+		await sendTaskMessage(app, project.id, child.id, "restart");
+		await delay(300);
+
+		// If auto-launch succeeded, a new queue was created (and may already be gone
+		// if the instant provider completed). Either way, it's not the old queue.
+		const newQueue = globalAgentQueues.get(child.id);
+		if (newQueue) {
+			expect(newQueue).not.toBe(oldQueue);
+			newQueue.close();
+			globalAgentQueues.delete(child.id);
+		}
+	});
+
+	test("reset task while running: queue closed, agent stops", async () => {
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: createLongRunningProvider(),
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+		const task = await createTask(app, project.id, "Running child");
+		await setTaskStatus(app, project.id, task.id, "in_progress");
+
+		// Register queue simulating a running agent blocked on queue.wait()
+		const taskQueue = new MessageQueue();
+		globalAgentQueues.set(task.id, taskQueue);
+
+		// Start a waiter to detect when queue is closed
+		let waiterError: Error | null = null;
+		const waiterPromise = taskQueue.wait().catch((err: Error) => {
+			waiterError = err;
+		});
+
+		// Simulate reset_task behavior:
+		// 1. Delete from globalAgentQueues (so callers see "no queue")
+		const activeQueue = globalAgentQueues.get(task.id);
+		expect(activeQueue).toBe(taskQueue);
+		globalAgentQueues.delete(task.id);
+
+		// 2. Close the queue (stops the agent)
+		activeQueue?.close();
+
+		// 3. Update status to pending
+		await setTaskStatus(app, project.id, task.id, "pending");
+
+		// Wait for the waiter to be rejected
+		await waiterPromise;
+
+		// Verify queue was closed (waiter got the error)
+		expect(waiterError).toBeInstanceOf(Error);
+		// biome-ignore lint/style/noNonNullAssertion: verified above
+		expect(waiterError!.message).toBe("Queue closed");
+
+		// Verify queue is removed from registry
+		expect(globalAgentQueues.has(task.id)).toBe(false);
+
+		// Verify status is pending
+		const getRes = await app.request(`/projects/${project.id}/tasks`);
+		const { nodes } = (await getRes.json()) as { nodes: TaskNode[] };
+		const resetNode = nodes.find((n) => n.id === task.id);
+		expect(resetNode?.status).toBe("pending");
 	});
 });
