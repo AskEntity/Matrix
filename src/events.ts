@@ -318,17 +318,18 @@ export function queueMessageToEvent(msg: QueueMessage): QueueMessageEvent {
 }
 
 /** Format a QueueMessageEvent for inclusion in provider messages.
- * Simple messages (user, clarify_response, system, compact) use raw content.
- * Multi-field messages (child_complete, parent_update, etc.) use XML tags. */
+ * Simple messages (user, compact) use raw content.
+ * Single-field messages (clarify_response, system) use XML tags for semantic clarity.
+ * Multi-field messages (child_complete, parent_update, etc.) use XML tags for structured data. */
 export function formatQueueMessageEvent(event: QueueMessageEvent): string {
 	switch (event.source) {
 		// Simple messages — raw content, no XML wrapping
 		case "user":
 			return event.content;
 		case "clarify_response":
-			return event.answer;
+			return `<clarify_response>${event.answer}</clarify_response>`;
 		case "system":
-			return event.content;
+			return `<system_notification>${event.content}</system_notification>`;
 		case "compact":
 			return "Manual compaction requested";
 		// Multi-field messages — XML tags carry structured data
