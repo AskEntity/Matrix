@@ -203,8 +203,7 @@ export function registerAgentRoutes(
 
 		ctx.restartingProjects.add(project.id);
 		try {
-			// Keep pending messages so the restarted agent can consume them
-			await stopAgent(ctx, project.id, { keepPendingMessages: true });
+			await stopAgent(ctx, project.id);
 
 			// Relaunch with resume to pick up new config
 			await launchAgent(

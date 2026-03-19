@@ -13,7 +13,6 @@ import type {
 	DaemonConfig,
 	DaemonContext,
 	PendingClarification,
-	PendingMessage,
 	WSClient,
 } from "./daemon/context.ts";
 import { flushEvents, loadEventHistory } from "./daemon/event-system.ts";
@@ -74,7 +73,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		activeSessions: new Map<string, AgentSession>(),
 		eventHistory: new Map<string, Record<string, unknown>[]>(),
 		eventsDirty: new Set<string>(),
-		pendingMessages: new Map<string, PendingMessage[]>(),
 		pendingClarifications: new Map<string, PendingClarification[]>(),
 		sessionStores: new Map(),
 		eventStores: new Map(),

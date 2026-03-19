@@ -14,7 +14,7 @@ import {
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
 import {
-	addPendingMessage,
+	broadcast,
 	broadcastEvent,
 	broadcastTreeUpdate,
 } from "../event-system.ts";
@@ -579,11 +579,18 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const taskTitle = node?.title ?? nodeId;
 
 		// Unified delivery: enqueue (if running) or persist + launch (if not)
-		await deliverMessage(ctx, project, nodeId, {
+		const deliveryResult = await deliverMessage(ctx, project, nodeId, {
 			source: "user",
 			content: body.content,
 		});
-		addPendingMessage(ctx, project.id, nodeId, body.content);
+		if (deliveryResult === "persisted") {
+			// Message went to disk — broadcast as pending until agent loads it
+			broadcast(ctx.wsClients, project.id, {
+				type: "pending_messages",
+				projectId: project.id,
+				messages: [{ text: body.content, timestamp: Date.now() }],
+			});
+		}
 
 		// Notify parent chain that user sent a message to this task (REST-only)
 		await notifyParentChain(ctx, project.id, nodeId, taskTitle);

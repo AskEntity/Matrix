@@ -160,3 +160,11 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - Roadmap: Step 2 (field names) → Step 3 (LogEntry = StrongEvent & UI fields) → Step 4 (StrongEvent gains UI fields) → Step 5 (unified type).
 
 
+
+## Pending Messages — Data-Driven from Queue (March 2026)
+
+- Removed `ctx.pendingMessages` map and `PendingMessage` type. Pending messages are now derived from `MessageQueue.peekMessages()`.
+- Added `peekMessages()` and `onDrain` callback to `MessageQueue`. `onDrain` fires when `drain()`, `wait()`, or `waitForMessage()` consume messages from the internal array.
+- `broadcastPendingFromQueue()` and `broadcastPendingCleared()` replaced `addPendingMessage`/`getPendingMessages`/`clearPendingMessages`.
+- One source of truth: the queue. When a message is enqueued, broadcast queue contents. When drained, broadcast empty. GET `/pending-messages` peeks the queue.
+- `stopAgent` no longer takes `keepPendingMessages` option — stopping always broadcasts cleared (queue is gone).

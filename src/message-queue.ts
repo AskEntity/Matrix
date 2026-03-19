@@ -65,6 +65,9 @@ export class MessageQueue {
 	/** Whether this agent is currently idle (waiting for messages). */
 	idle = false;
 
+	/** Optional callback fired after messages are drained from the queue. */
+	onDrain?: () => void;
+
 	/** Add a message to the queue. If someone is waiting via wait(), resolve them immediately. */
 	enqueue(msg: QueueMessage): void {
 		if (this.closed) {
@@ -88,10 +91,16 @@ export class MessageQueue {
 		this.messages.push(msg);
 	}
 
+	/** Return a shallow copy of pending messages without consuming them. */
+	peekMessages(): QueueMessage[] {
+		return [...this.messages];
+	}
+
 	/** Take all pending messages and clear the queue. Non-blocking. Returns empty array if nothing pending. */
 	drain(): QueueMessage[] {
 		const msgs = this.messages;
 		this.messages = [];
+		if (msgs.length > 0) this.onDrain?.();
 		return msgs;
 	}
 
@@ -142,6 +151,7 @@ export class MessageQueue {
 
 		if (this.messages.length > 0) {
 			const msg = this.messages.shift() as QueueMessage;
+			this.onDrain?.();
 			return Promise.resolve(msg);
 		}
 
@@ -166,6 +176,7 @@ export class MessageQueue {
 
 		if (this.messages.length > 0) {
 			const msg = this.messages.shift() as QueueMessage;
+			this.onDrain?.();
 			return Promise.resolve(msg);
 		}
 
