@@ -10,7 +10,7 @@
 ## How to Run Tests
 
 ```bash
-bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/anthropic-compatible-provider.test.ts src/openai-compatible-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts src/config.test.ts src/canonical-events.test.ts src/event-store.test.ts src/lifecycle.test.ts
+bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/anthropic-compatible-provider.test.ts src/openai-compatible-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts src/config.test.ts src/events.test.ts src/event-store.test.ts src/lifecycle.test.ts
 bun run typecheck   # tsc --noEmit
 bun run check       # biome lint + format
 ```
@@ -46,7 +46,7 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 | src/message-queue.ts | MessageQueue + globalAgentQueues |
 | src/persistent-queue.ts | Disk-backed message persistence |
 | src/session-store.ts | SessionStore (cache + disk) for session history |
-| src/canonical-events.ts | StrongEvent types + provider converters (+ legacy CanonicalEvent) |
+| src/events.ts | Event types + provider converters (eventsToAnthropicMessages, eventsToOpenAIMessages) |
 | src/event-store.ts | JSONL EventStore — append-only event persistence |
 | src/daemon/routes/auth.ts | WebAuthn/Passkey auth middleware + endpoints |
 | web/App.tsx | Web UI main, WS/handlers |
@@ -115,15 +115,15 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 - SSE stream errors have `APIError.status === undefined`. Retry catches: RateLimitError, APIConnectionError, InternalServerError, status 529, AND status undefined.
 
-## Canonical Events (StrongEvent System)
+## Event System (`src/events.ts`)
 
-- **Two-tier events**: Old `CanonicalEvent` (unknown[], provider-specific) + new `StrongEvent` (strongly-typed, provider-agnostic). Dual-write during migration. Old system to be removed in cleanup phase.
-- **StrongEvent types**: `user_message`, `assistant_text`, `tool_call`, `tool_result`, `queue_message`, `compacted_resume`, `summarization_request`, `budget_warning`, `compact_marker`. Each has `ts: number` timestamp.
-- **EventStore** (`src/event-store.ts`): JSONL append-only. `readActive()` returns events after last `compact_marker`.
-- **Converters**: `strongEventsToAnthropicMessages()` and `strongEventsToOpenAIMessages()` reconstruct provider messages from strong events. Key batching: consecutive assistant_text + tool_call → single assistant message; consecutive tool_result → single user message (Anthropic) or individual tool messages (OpenAI).
-- **Deterministic verification** at end of each provider runLoop. Known mismatch for cancellation-point queue images (not yet captured as separate StrongEvent).
-- **Compaction**: `compact_marker` event replaces `events.length = 0`. Converter skips events before last marker.
-- `AgentRequest.eventStore` + `getEventStore()` in daemon helpers. `DaemonContext.eventStores` map.
+- **`Event` type** (renamed from StrongEvent): provider-agnostic, strongly-typed. Types: `user_message`, `assistant_text`, `tool_call`, `tool_result`, `queue_message`, `compacted_resume`, `summarization_request`, `budget_warning`, `compact_marker`. Each has `ts: number`.
+- **`queue_message` is a discriminated union by `source`** (`QueueMessageEvent`): stores structured data (taskId, title, success, etc.), NOT pre-formatted XML strings. Formatting happens in converters at consumption time.
+- **`EventStore`** (`src/event-store.ts`): JSONL append-only. `readActive()` returns events after last `compact_marker`.
+- **Converters**: `eventsToAnthropicMessages()` and `eventsToOpenAIMessages()` reconstruct provider messages. `formatQueueMessageEvent()` formats structured queue events for AI.
+- **Old `CanonicalEvent` system deleted** — no more dual-write, no more `.events.json` files.
+- **Compaction**: `compact_marker` event. Converter skips events before last marker.
+- **Test command includes**: `src/events.test.ts src/event-store.test.ts` (not `canonical-events.test.ts`).
 
 ## CF Tunnel
 
@@ -139,25 +139,19 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 - Frontend slash commands (/compact, /clear) handled in `web/handlers.ts` via `handleSlashCommand()`. `pendingCompact` state removed — WS events drive UI feedback.
 
-## StrongEvent Converter Fixes (March 2026)
+## Event Converter Details
 
-- **Bug 1 (assistant text-only format)**: `strongEventsToAnthropicMessages` must always use array `content` for assistant messages (e.g., `[{type: "text", text: "..."}]`), matching what the Anthropic API returns in `response.content`. Never use bare string for assistant content.
-- **Bug 2 (idle vs working queue wrapper)**: Standalone `queue_message` events (from implicit yield/idle drain) use `[Messages received while you were idle:]` wrapper with `Process these messages...` suffix. Queue messages between tool_results (cancellation point) use `[Messages received while you were working:]` wrapper without suffix.
-- **caller field**: Converter adds `caller: {type: "direct"}` to tool_use blocks to match Anthropic API response format, eliminating need for stripCaller workaround.
-- **OpenAI converter**: Same idle/working distinction applies. Standalone queue_messages produce a user message; cancellation-point queue_messages append to last tool result content.
-- **Mocking Anthropic SDK**: Create fake stream with `{[Symbol.asyncIterator]: async function*() {...}, finalMessage: () => Promise.resolve(response)}`. Replace `(provider as any).client` with mock object providing `messages.stream` and `messages.countTokens`.
+- **Assistant text format**: Always use array `content` for assistant messages (e.g., `[{type: "text", text: "..."}]`), never bare string.
+- **Idle vs working queue wrapper**: Standalone `queue_message` (idle drain) uses `[Messages received while you were idle:]` with suffix. Cancellation-point uses `[Messages received while you were working:]` without suffix.
+- **caller field**: Converter adds `caller: {type: "direct"}` to tool_use blocks to match Anthropic API.
+- **Dual formatting**: `formatQueueMessage` (agent-tools.ts, runtime) and `formatQueueMessageEvent` (events.ts, converters) produce identical XML. Runtime path takes `QueueMessage`, converter takes `QueueMessageEvent`.
+- **Mocking Anthropic SDK**: Fake stream with `{[Symbol.asyncIterator], finalMessage}`. Replace `(provider as any).client`.
+- **Verification**: All tested scenarios show PERFECT match. Known mismatch: trailing empty assistant after done() (Anthropic artifact).
 
+## LogEntry → Event Type Merge (in progress)
 
-## StrongEvent Verification Results
-
-- All tested scenarios (echo+tools, fail+resume, implicit yield, rapid messages, orchestrator self-check) show PERFECT match between StrongEvents and provider messages.
-- **Known acceptable mismatch**: trailing empty `{"role":"assistant","content":[]}` after done() — Anthropic protocol artifact, StrongEvents correctly omit it.
-- **send_message_to_child double-delivery**: message appears both in initial prompt AND as queue_message. Design decision (at-least-once delivery), not a bug.
-
-## LogEntry → StrongEvent Type Merge (in progress)
-
-- Step 1 ✅: LogEntry type renames — `"text"` → `"assistant_text"`, `"tool_use"` → `"tool_call"`, `"user_prompt"` → `"user_message"`, `"compact"` → `"compact_marker"`. Server event types (`case "tool_use"` in processAgentEvent) unchanged — they map to the new LogEntry type at creation.
-- Roadmap: Step 2 (field names) → Step 3 (LogEntry = StrongEvent & UI fields) → Step 4 (StrongEvent gains UI fields) → Step 5 (unified type).
+- Step 1 ✅: LogEntry type renames — `"text"→"assistant_text"`, `"tool_use"→"tool_call"`, `"user_prompt"→"user_message"`, `"compact"→"compact_marker"`.
+- Next: WS pushes Event types (Phase 2) → LogEntry = Event + UI metadata (Phase 3) → cleanup (Phase 4).
 
 
 
@@ -183,11 +177,4 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - **Provider fix**: Cancellation-point queue messages are recorded as separate `queue_message` StrongEvents (not mixed into the last `tool_result.images`). Variable `cancellationQueueMsgs` hoisted for access in StrongEvent recording block.
 
 
-## Event System Migration (Phase 1 - March 2026)
 
-- **StrongEvent → Event**: Type renamed, file renamed `canonical-events.ts` → `events.ts`. All imports updated.
-- **CanonicalEvent deleted**: The old `events` array, `sessionStore.set/get(id, events, "events")`, and old deterministic verification removed from both providers.
-- **Structured queue_message**: `QueueMessageEvent` discriminated union by `source`. Stores structured data, not pre-formatted XML strings. `queueMessageToEvent()` converts `QueueMessage` → `QueueMessageEvent`.
-- **Converter formatting**: `formatQueueMessageEvent()` in `src/events.ts` formats structured events to XML (identical output to `formatQueueMessage` in agent-tools.ts). Converters call it when reconstructing messages.
-- **Runtime vs converter**: `formatQueueMessage` (agent-tools.ts) still used at RUNTIME for yield/done tools and provider message injection. `formatQueueMessageEvent` (events.ts) used by converters. Both produce identical XML.
-- **Converter renames**: `strongEventsToAnthropicMessages` → `eventsToAnthropicMessages`, `strongEventsToOpenAIMessages` → `eventsToOpenAIMessages`. Old CanonicalEvent converters deleted.
