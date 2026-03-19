@@ -114,6 +114,23 @@ async function createAgentContext(
 		onTaskEvent: (event) => {
 			broadcastEvent(ctx, project.id, event);
 			broadcastTreeUpdate(ctx, project.id, opts.tracker);
+
+			// Detect done() via task_completed event. done() emits this BEFORE
+			// blocking on waitForQueueMessages(). Closing the queue here causes
+			// waitForQueueMessages() to reject with "Queue closed", unblocking
+			// the done() handler and allowing the provider stream to finish.
+			// Without this, done()=yield deadlocks: tool_result never emits
+			// because done() blocks, and nobody closes the queue.
+			if (
+				event.type === "task_completed" &&
+				event.taskId === opts.currentTaskId &&
+				opts.depth > 0
+			) {
+				const nodeStatus = opts.tracker.get(opts.currentTaskId)?.status;
+				if (nodeStatus === "passed" || nodeStatus === "failed") {
+					opts.queue.close();
+				}
+			}
 		},
 		parentQueue: opts.parentQueue,
 		broadcastTreeUpdate: () =>
@@ -193,9 +210,11 @@ export interface RunChildCoreParams {
  *
  * Used by `runChildAgentInBackground` for all child agents (both MCP and daemon paths).
  *
- * The done() detection closes the child queue when `mcp__opengraft__done` tool_result
- * is observed and the tracker status is passed/failed, causing the provider run loop
- * to exit its yield mode.
+ * Done detection has two paths:
+ * 1. Primary: onTaskEvent callback detects task_completed and closes queue BEFORE
+ *    done()'s waitForQueueMessages() blocks (prevents deadlock).
+ * 2. Fallback: tool_result with tool === "mcp__opengraft__done" closes queue
+ *    (handles edge cases where done() returns without blocking).
  */
 export async function runChildCore(
 	params: RunChildCoreParams,
@@ -240,9 +259,10 @@ export async function runChildCore(
 			const { type: eventType, ...eventData } = result.value;
 			onEvent(eventType, eventData as Record<string, unknown>);
 
-			// When the child calls done(), its status is updated in the tracker
-			// but the run loop enters yield mode (queue.wait()) instead of exiting.
-			// Detect done() completion and close the queue so the run loop exits.
+			// Fallback done() detection via tool_result. The primary detection path
+			// is in onTaskEvent (task_completed event closes the queue before
+			// waitForQueueMessages blocks). This fallback handles edge cases where
+			// done() completes without blocking (e.g., no queue available).
 			if (
 				eventType === "tool_result" &&
 				"tool" in eventData &&

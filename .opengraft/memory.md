@@ -158,3 +158,10 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - **Structured checkpoint**: AI writes 7 sections (User Requests, Current Phase, Completed Work, Task Tree State, Key Insights, Key Context, Pending Work). System auto-injects CWD and resume instructions via `extractCheckpoint(responseText, cwd?)`.
 - **Removed from AI prompt**: "Current Working Directory" section (system injects it) and "Next Action" section (redundant with Pending Work).
 - **Resume instruction flow**: `extractCheckpoint` appends "## System Context (auto-generated)" block when cwd provided. `buildCompactedContext` no longer appends its own resume instruction.
+
+## Child Agent Done() Deadlock Fix (March 2026)
+
+- **Root cause**: done()=yield blocks on `waitForQueueMessages()` before `tool_result` event is emitted. `runChildCore` waited for `tool_result` with `tool === "mcp__opengraft__done"` to close the queue, but it never arrived → deadlock.
+- **Fix**: In `createAgentContext`, the `onTaskEvent` callback now detects `task_completed` events (emitted by done() BEFORE blocking) and closes the child queue. This unblocks `waitForQueueMessages()` immediately. Only applies to child agents (`depth > 0`).
+- **Two event paths in agent lifecycle**: (1) `onTaskEvent` callback fires synchronously during tool execution (goes to WebSocket broadcast), (2) provider stream yields `AgentEvent` types to `runChildCore`. `task_completed` flows through path 1, not path 2.
+- **The `tool_result` detection in `runChildCore` remains as fallback** for edge cases where done() returns without blocking.
