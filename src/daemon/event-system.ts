@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { BroadcastEvent } from "../events.ts";
 import type { QueueMessage } from "../message-queue.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type {
@@ -106,30 +107,32 @@ export function broadcastTreeUpdate(
 export function broadcastEvent(
 	ctx: DaemonContext,
 	projectId: string,
-	event: Record<string, unknown>,
+	event: BroadcastEvent,
 ) {
-	// Store in history (skip tree_updated, text_delta, agent_idle/active — too granular for persistence)
+	// Store in history (skip text_delta, agent_idle/active — too granular for persistence)
 	if (
-		event.type !== "tree_updated" &&
 		event.type !== "agent_idle" &&
 		event.type !== "agent_active" &&
-		!(event.type === "agent_event" && event.eventType === "text_delta")
+		event.type !== "text_delta"
 	) {
 		const history = getEventHistory(ctx, projectId);
-		history.push({ ...event, timestamp: Date.now() });
+		history.push({
+			...(event as unknown as Record<string, unknown>),
+			timestamp: Date.now(),
+		});
 		if (history.length > ctx.MAX_EVENT_HISTORY) {
 			history.splice(0, history.length - ctx.MAX_EVENT_HISTORY);
 		}
 		scheduleEventFlush(ctx, projectId);
 	}
-	broadcast(ctx.wsClients, projectId, event);
+	broadcast(
+		ctx.wsClients,
+		projectId,
+		event as unknown as Record<string, unknown>,
+	);
 
 	// Track clarification_requested events for Web UI display
-	if (
-		event.type === "clarification_requested" &&
-		typeof event.taskId === "string" &&
-		typeof event.question === "string"
-	) {
+	if (event.type === "clarification_requested") {
 		addPendingClarification(ctx, projectId, event.taskId, event.question);
 	}
 }

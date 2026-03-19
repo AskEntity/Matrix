@@ -92,6 +92,7 @@ function notifyAgentOfTreeChange(
 		action,
 		nodeId,
 		title,
+		ts: Date.now(),
 	});
 
 	// Non-waking queue message for agent awareness — picked up on next drain(), doesn't interrupt yield
@@ -317,6 +318,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				type: "task_started",
 				taskId: nodeId,
 				title: node.title,
+				ts: Date.now(),
 			});
 			broadcastTreeUpdate(ctx, project.id, tracker);
 			notifyParentOfContinue();
@@ -360,6 +362,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 					type: "task_started",
 					taskId: nodeId,
 					title: node.title,
+					ts: Date.now(),
 				});
 				broadcastTreeUpdate(ctx, project.id, tracker);
 				notifyParentOfContinue();

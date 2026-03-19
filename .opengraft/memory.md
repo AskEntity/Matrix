@@ -178,3 +178,14 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 
 
+
+
+## Phase 2: WS Broadcast Event Types (March 2026)
+
+- **`BroadcastEvent` type** in `src/events.ts`: Separate union type for lifecycle/ephemeral events pushed over WebSocket (text_delta, usage, orchestration_started, task_completed, etc.). NOT persisted to EventStore.
+- **`broadcastEvent` now typed**: `event: BroadcastEvent` instead of `Record<string, unknown>`.
+- **`agent_event` wrapper eliminated**: Backend emits flat Events directly. `agentEventToBroadcast()` maps provider AgentEvent → BroadcastEvent in agent-lifecycle.ts.
+- **`onTaskEvent` still `Record<string, unknown>`**: Events from agent-tools.ts `emit()` are transformed in the onTaskEvent callback (agent_event wrappers → flat, ts added).
+- **Frontend backward compat**: `processLegacyAgentEvent` handles old `agent_event` format from persisted event history. Maps old eventType names (tool_use→tool_call, text→assistant_text, compact→compact_marker).
+- **CLI updated**: `formatWatchEvent` handles flat event types (tool_call, tool_result, assistant_text, status).
+

@@ -184,8 +184,164 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					},
 				};
 
-			case "agent_event":
-				return processAgentEvent(msg);
+			// --- Provider events (flat, from BroadcastEvent) ---
+
+			case "tool_call":
+				return {
+					entries: [
+						createLogEntry({
+							type: "tool_call",
+							text: msg.tool as string,
+							taskId: msg.taskId as string | undefined,
+							toolName: msg.tool as string,
+							toolUseId: (msg.toolUseId as string) || undefined,
+							toolArgs: msg.input as Record<string, unknown>,
+						}),
+					],
+					updates: [],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
+
+			case "tool_result": {
+				const toolImages = msg.images as
+					| Array<{ base64: string; mediaType: string }>
+					| undefined;
+				return {
+					entries: [
+						createLogEntry({
+							type: "tool_result",
+							text: (msg.content as string) || "",
+							taskId: msg.taskId as string | undefined,
+							toolName: msg.tool as string,
+							toolUseId: (msg.toolUseId as string) || undefined,
+							toolResult: (msg.content as string) || "",
+							isError: (msg.isError as boolean) || false,
+							images: toolImages,
+						}),
+					],
+					updates: [],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
+			}
+
+			case "text_delta": {
+				const deltaText = (msg.content as string) || "";
+				if (!deltaText) {
+					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
+				}
+				return {
+					entries: [],
+					updates: [
+						{
+							type: "merge_text",
+							taskId: msg.taskId as string | undefined,
+							text: deltaText,
+						},
+					],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
+			}
+
+			case "assistant_text": {
+				const fullText = (msg.content as string) || "";
+				if (!fullText) {
+					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
+				}
+				return {
+					entries: [],
+					updates: [
+						{
+							type: "replace_text",
+							taskId: msg.taskId as string | undefined,
+							text: fullText,
+						},
+					],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
+			}
+
+			case "usage":
+				return {
+					entries: [],
+					updates: [],
+					sideEffects: () => {
+						const usageKey =
+							(msg.taskId as string | undefined) ?? "orchestrator";
+						setTokenUsage((prev) => ({
+							...prev,
+							[usageKey]: {
+								inputTokens: msg.inputTokens as number,
+								contextWindow: msg.contextWindow as number,
+								estimated: (msg.estimated as boolean) || false,
+							},
+						}));
+					},
+				};
+
+			case "compact_started":
+				return {
+					entries: [
+						createLogEntry({
+							type: "compact_marker",
+							text: "Compressing context...",
+							taskId: msg.taskId as string | undefined,
+						}),
+					],
+					updates: [],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
+
+			case "compact_marker":
+				return {
+					entries: [],
+					updates: [
+						{
+							type: "complete_compact",
+							text: `Context compacted (saved ~${msg.savedTokens} tokens)`,
+							checkpoint: msg.checkpoint as string,
+							taskId: msg.taskId as string | undefined,
+						},
+					],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
+
+			case "queue_message": {
+				const entries: LogEntry[] = [];
+				const rawMessages = msg.rawMessages as
+					| Array<{
+							source: string;
+							content: string;
+							images?: { base64: string; mediaType: string }[];
+					  }>
+					| undefined;
+				if (rawMessages && rawMessages.length > 0) {
+					for (const rm of rawMessages) {
+						const entry = createQueueEntry(
+							rm,
+							msg.taskId as string | undefined,
+						);
+						if (entry) entries.push(entry);
+					}
+				} else {
+					const raw = (msg.messages as string) || "";
+					if (raw) {
+						entries.push(
+							createLogEntry({
+								type: "queue_message",
+								text: raw,
+								taskId: msg.taskId as string | undefined,
+							}),
+						);
+					}
+				}
+				return { entries, updates: [], sideEffects: NO_SIDE_EFFECTS };
+			}
+
+			case "status":
+				// Status events are internal — no log entries
+				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
+
+			// --- Lifecycle events ---
 
 			case "orchestration_started": {
 				const startRootId = msg.taskId as string | undefined;
@@ -376,184 +532,45 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				};
 			}
 
+			// Backward compat: handle old-format agent_event from persisted event history
+			case "agent_event":
+				return processLegacyAgentEvent(msg);
+
 			default:
 				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 		}
 	}
 
 	/**
-	 * Process agent_event subtypes. Extracted for readability.
+	 * Handle legacy agent_event format from persisted event history.
+	 * Transforms the old wrapped format into the new flat format and re-processes.
 	 */
-	function processAgentEvent(msg: Record<string, unknown>): ProcessResult {
+	function processLegacyAgentEvent(
+		msg: Record<string, unknown>,
+	): ProcessResult {
 		const et = msg.eventType as string;
-		const taskId = msg.taskId as string | undefined;
+		const ts = msg.ts ?? msg.timestamp ?? Date.now();
 
+		// Map old eventType names to new flat event types
+		const mapped: Record<string, unknown> = { ...msg, ts };
 		switch (et) {
 			case "tool_use":
-				return {
-					entries: [
-						createLogEntry({
-							type: "tool_call",
-							text: msg.tool as string,
-							taskId,
-							toolName: msg.tool as string,
-							toolUseId: (msg.toolUseId as string) || undefined,
-							toolArgs: msg.input as Record<string, unknown>,
-						}),
-					],
-					updates: [],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-
-			case "tool_result": {
-				const toolImages = msg.images as
-					| Array<{ base64: string; mediaType: string }>
-					| undefined;
-				return {
-					entries: [
-						createLogEntry({
-							type: et,
-							text: (msg.content as string) || "",
-							taskId,
-							toolName: msg.tool as string,
-							toolUseId: (msg.toolUseId as string) || undefined,
-							toolResult: (msg.content as string) || "",
-							isError: (msg.isError as boolean) || false,
-							images: toolImages,
-						}),
-					],
-					updates: [],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-			}
-
-			case "text_delta": {
-				const deltaText = (msg.content as string) || "";
-				if (!deltaText) {
-					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
-				}
-				return {
-					entries: [],
-					updates: [{ type: "merge_text", taskId, text: deltaText }],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-			}
-
-			case "text": {
-				const fullText = (msg.content as string) || "";
-				if (!fullText) {
-					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
-				}
-				// Consolidated text — replace the text_delta-accumulated entry
-				return {
-					entries: [],
-					updates: [{ type: "replace_text", taskId, text: fullText }],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-			}
-
-			case "error":
-				return {
-					entries: [
-						createLogEntry({
-							type: et,
-							text: (msg.message as string) || "",
-							taskId,
-						}),
-					],
-					updates: [],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-
-			case "usage":
-				return {
-					entries: [],
-					updates: [],
-					sideEffects: () => {
-						const usageKey = taskId ?? "orchestrator";
-						setTokenUsage((prev) => ({
-							...prev,
-							[usageKey]: {
-								inputTokens: msg.inputTokens as number,
-								contextWindow: msg.contextWindow as number,
-								estimated: (msg.estimated as boolean) || false,
-							},
-						}));
-					},
-				};
-
-			case "compact_started":
-				return {
-					entries: [
-						createLogEntry({
-							type: "compact_marker",
-							text: "Compressing context...",
-							taskId,
-							// Leave checkpoint undefined — "compact_marker" event will set it.
-							// undefined (not "") distinguishes pending from completed-with-empty-checkpoint.
-						}),
-					],
-					updates: [],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-
+				mapped.type = "tool_call";
+				break;
+			case "text":
+				mapped.type = "assistant_text";
+				break;
 			case "compact":
-				return {
-					entries: [],
-					updates: [
-						{
-							type: "complete_compact",
-							text: `Context compacted (saved ~${msg.savedTokens} tokens)`,
-							checkpoint: msg.checkpoint as string,
-							taskId,
-						},
-					],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-
-			case "queue_message": {
-				const entries: LogEntry[] = [];
-				const rawMessages = msg.rawMessages as
-					| Array<{
-							source: string;
-							content: string;
-							images?: { base64: string; mediaType: string }[];
-					  }>
-					| undefined;
-				if (rawMessages && rawMessages.length > 0) {
-					for (const rm of rawMessages) {
-						const entry = createQueueEntry(rm, taskId);
-						if (entry) entries.push(entry);
-					}
-				} else {
-					const raw = (msg.messages as string) || "";
-					if (raw) {
-						entries.push(
-							createLogEntry({ type: "queue_message", text: raw, taskId }),
-						);
-					}
-				}
-				return { entries, updates: [], sideEffects: NO_SIDE_EFFECTS };
-			}
-
-			case "status":
-				// Status events are internal — no log entries
-				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
-
+				mapped.type = "compact_marker";
+				break;
 			default:
-				// Unknown event type — show raw JSON
-				return {
-					entries: [
-						createLogEntry({
-							type: et,
-							text: JSON.stringify(msg).slice(0, 2000),
-							taskId,
-						}),
-					],
-					updates: [],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
+				// Most eventTypes map directly to the new type names
+				mapped.type = et;
+				break;
 		}
+		// Remove the wrapper fields
+		delete mapped.eventType;
+		return processEvent(mapped);
 	}
 
 	// --- Update application helpers ---

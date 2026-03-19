@@ -165,6 +165,7 @@ export function registerWebSocketRoute(
 								broadcastEvent(ctx, msg.projectId, {
 									type: "message_injected",
 									message: msg.prompt,
+									ts: Date.now(),
 								});
 							} else {
 								ws.send(

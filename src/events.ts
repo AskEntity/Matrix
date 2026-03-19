@@ -99,6 +99,139 @@ export type Event =
 			ts: number;
 	  };
 
+/**
+ * Lifecycle/broadcast events — emitted over WebSocket but NOT persisted to EventStore.
+ * These represent agent lifecycle state changes and ephemeral streaming data.
+ */
+export type BroadcastEvent =
+	| { type: "text_delta"; content: string; taskId: string; ts: number }
+	| {
+			type: "assistant_text";
+			content: string;
+			taskId: string;
+			ts: number;
+	  }
+	| {
+			type: "tool_call";
+			tool: string;
+			toolUseId: string;
+			input: Record<string, unknown>;
+			taskId: string;
+			ts: number;
+	  }
+	| {
+			type: "tool_result";
+			tool: string;
+			toolUseId: string;
+			content: string;
+			isError: boolean;
+			images?: Array<{ base64: string; mediaType: string }>;
+			taskId: string;
+			ts: number;
+	  }
+	| {
+			type: "usage";
+			taskId: string;
+			inputTokens: number;
+			contextWindow: number;
+			estimated?: boolean;
+			ts: number;
+	  }
+	| {
+			type: "orchestration_started";
+			taskId: string;
+			resume: boolean;
+			prompt?: string;
+			model?: string;
+			provider?: string;
+			ts: number;
+	  }
+	| {
+			type: "orchestration_completed";
+			taskId: string;
+			success: boolean;
+			costUsd?: number;
+			turns?: number;
+			inputTokens?: number;
+			cacheCreationTokens?: number;
+			cacheReadTokens?: number;
+			outputTokens?: number;
+			childCosts?: {
+				totalCostUsd: number;
+				totalTurns: number;
+				taskCount: number;
+			};
+			ts: number;
+	  }
+	| { type: "task_started"; taskId: string; title: string; ts: number }
+	| {
+			type: "task_completed";
+			taskId: string;
+			title: string;
+			success: boolean;
+			output?: string;
+			error?: string;
+			ts: number;
+	  }
+	| { type: "agent_stopped"; taskId?: string; ts: number }
+	| { type: "agent_idle"; taskId: string; ts: number }
+	| { type: "agent_active"; taskId: string; ts: number }
+	| { type: "error"; taskId?: string; message: string; ts: number }
+	| {
+			type: "budget_exceeded";
+			taskId: string;
+			title: string;
+			costUsd?: number;
+			budgetUsd?: number;
+			ts: number;
+	  }
+	| {
+			type: "clarification_requested";
+			taskId: string;
+			question: string;
+			ts: number;
+	  }
+	| {
+			type: "clarification_answered";
+			taskId: string;
+			answer: string;
+			ts: number;
+	  }
+	| {
+			type: "tree_mutation";
+			action: string;
+			nodeId: string;
+			title?: string;
+			ts: number;
+	  }
+	| { type: "compact_started"; taskId: string; ts: number }
+	| {
+			type: "compact_marker";
+			checkpoint: string;
+			savedTokens: number;
+			taskId: string;
+			ts: number;
+	  }
+	| {
+			type: "queue_message";
+			messages: string;
+			rawMessages?: Array<{
+				source: string;
+				content: string;
+				images?: { base64: string; mediaType: string }[];
+			}>;
+			taskId: string;
+			ts: number;
+	  }
+	| { type: "status"; message: string; taskId: string; ts: number }
+	| { type: "message_injected"; message: string; ts: number }
+	| {
+			type: "clarification_timeout";
+			taskId?: string;
+			timeoutMs: number;
+			ts: number;
+	  };
+
 /** Convert a QueueMessage to a structured QueueMessageEvent. */
 export function queueMessageToEvent(msg: QueueMessage): QueueMessageEvent {
 	const ts = Date.now();

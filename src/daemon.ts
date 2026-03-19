@@ -268,11 +268,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 				// Extract recent error events so the agent knows what went wrong
 				const errorMessages = events
-					.filter(
-						(e) =>
-							e.type === "error" ||
-							(e.type === "agent_event" && e.eventType === "error"),
-					)
+					.filter((e) => e.type === "error")
 					.slice(-5)
 					.map((e) => String(e.message ?? "Unknown error"));
 
@@ -286,11 +282,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				const resumePrompt = `Continue where you left off. The daemon restarted.${orphanCount > 0 ? ` Note: ${orphanCount} in_progress task(s) were reset to failed.` : ""}${errorSection}\n\nCheck the task tree and proceed.`;
 				// Clear error events after injecting them into resume prompt — show once only
 				if (errorMessages.length > 0) {
-					const cleaned = events.filter(
-						(e) =>
-							e.type !== "error" &&
-							!(e.type === "agent_event" && e.eventType === "error"),
-					);
+					const cleaned = events.filter((e) => e.type !== "error");
 					ctx.eventHistory.set(project.id, cleaned);
 					ctx.eventsDirty.add(project.id);
 				}
