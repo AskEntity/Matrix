@@ -1267,6 +1267,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 			// Cancellation point: drain queue and append messages to tool results
 			let cancellationImages: ReturnType<typeof extractQueueImages> = [];
+			let cancellationQueueMsgs: QueueMessage[] = [];
 			if (queue && queue.pending > 0) {
 				const queueMsgs = queue.drain();
 				if (queueMsgs.some((m) => m.source === "compact")) {
@@ -1280,6 +1281,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						lastResult.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
 					}
 					cancellationImages = extractQueueImages(nonCompactMsgs);
+					cancellationQueueMsgs = nonCompactMsgs;
 					yield {
 						type: "queue_message",
 						messages: formatted,
@@ -1342,23 +1344,30 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							mediaType: exec.mediaType,
 						});
 					}
-					// Add cancellation images to the last tool_result event
-					// (matches messages array which appends them after all tool_results)
-					const isLast = i === toolUses.length - 1;
-					if (isLast && cancellationImages.length > 0) {
-						for (const img of cancellationImages) {
-							images.push({
-								base64: img.source.data,
-								mediaType: img.source.media_type,
-							});
-						}
-					}
 					strongEvents.push({
 						type: "tool_result",
 						toolCallId: toolUse.id,
 						content: resultContent,
 						isError: exec.isError,
 						...(images.length > 0 ? { images } : {}),
+						ts: Date.now(),
+					});
+				}
+				// Record cancellation-point queue messages as separate StrongEvents
+				// (user-sent images belong on queue_message, not tool_result)
+				for (const qm of cancellationQueueMsgs) {
+					strongEvents.push({
+						type: "queue_message" as const,
+						source: qm.source,
+						content: formatQueueMessage(qm),
+						...(qm.source === "user" && qm.images?.length
+							? {
+									images: qm.images.map((img) => ({
+										base64: img.base64,
+										mediaType: img.mediaType,
+									})),
+								}
+							: {}),
 						ts: Date.now(),
 					});
 				}

@@ -185,3 +185,12 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - For child agents needing design guidance: use `report_to_parent` with `requestReply: true` instead.
 - `handleClarifyResponse` routes answers directly to the asking agent queue, bypassing the orchestrator hierarchy.
 
+
+
+## Tool Images vs Queue Images Separation (March 2026)
+
+- **`tool_result.images`** = ONLY images from the tool itself (MCP screenshots, etc.)
+- **`queue_message.images`** = ONLY images from the user (sent via queue at cancellation points)
+- **Anthropic converter**: Tool images are embedded INSIDE `tool_result.content` as `[{type: "image", source: ...}, {type: "text", text: ...}]` (matching provider format). Queue message images remain as sibling blocks with `"[N image(s) attached by user]"` annotation.
+- **OpenAI converter**: Tool images use `current.content` as text label in the user image message. Queue images use `"[User-attached image]"` label.
+- **Provider fix**: Cancellation-point queue messages are recorded as separate `queue_message` StrongEvents (not mixed into the last `tool_result.images`). Variable `cancellationQueueMsgs` hoisted for access in StrongEvent recording block.

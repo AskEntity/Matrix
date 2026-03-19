@@ -696,7 +696,7 @@ describe("strongEventsToAnthropicMessages", () => {
 		]);
 	});
 
-	test("tool_results with images adds image blocks", () => {
+	test("tool_results with images embeds images inside tool_result content", () => {
 		const events: StrongEvent[] = [
 			{
 				type: "tool_result",
@@ -707,6 +707,7 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1000,
 			},
 		];
+		// Tool images go INSIDE the tool_result content (matching provider format)
 		expect(strongEventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "user",
@@ -714,18 +715,18 @@ describe("strongEventsToAnthropicMessages", () => {
 					{
 						type: "tool_result",
 						tool_use_id: "tc1",
-						content: "screenshot taken",
-						is_error: false,
+						content: [
+							{
+								type: "image",
+								source: {
+									type: "base64",
+									media_type: "image/png",
+									data: "abc123",
+								},
+							},
+							{ type: "text", text: "screenshot taken" },
+						],
 					},
-					{
-						type: "image",
-						source: {
-							type: "base64",
-							media_type: "image/png",
-							data: "abc123",
-						},
-					},
-					{ type: "text", text: "[1 image(s) attached by user]" },
 				],
 			},
 		]);
@@ -971,7 +972,7 @@ describe("strongEventsToAnthropicMessages", () => {
 		]);
 	});
 
-	test("multiple images from multiple tool_results", () => {
+	test("multiple images from multiple tool_results embedded in each", () => {
 		const events: StrongEvent[] = [
 			{
 				type: "tool_result",
@@ -993,31 +994,33 @@ describe("strongEventsToAnthropicMessages", () => {
 		const messages = strongEventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(1);
 		const content = (messages[0] as { content: unknown[] }).content;
-		// 2 tool_results + 2 images + 1 text annotation = 5
-		expect(content).toHaveLength(5);
+		// 2 tool_results (each with images embedded inside content)
+		expect(content).toHaveLength(2);
 		expect(content[0]).toEqual({
 			type: "tool_result",
 			tool_use_id: "tc1",
-			content: "screenshot 1",
-			is_error: false,
+			content: [
+				{
+					type: "image",
+					source: { type: "base64", media_type: "image/png", data: "img1" },
+				},
+				{ type: "text", text: "screenshot 1" },
+			],
 		});
 		expect(content[1]).toEqual({
 			type: "tool_result",
 			tool_use_id: "tc2",
-			content: "screenshot 2",
-			is_error: false,
-		});
-		expect(content[2]).toEqual({
-			type: "image",
-			source: { type: "base64", media_type: "image/png", data: "img1" },
-		});
-		expect(content[3]).toEqual({
-			type: "image",
-			source: { type: "base64", media_type: "image/jpeg", data: "img2" },
-		});
-		expect(content[4]).toEqual({
-			type: "text",
-			text: "[2 image(s) attached by user]",
+			content: [
+				{
+					type: "image",
+					source: {
+						type: "base64",
+						media_type: "image/jpeg",
+						data: "img2",
+					},
+				},
+				{ type: "text", text: "screenshot 2" },
+			],
 		});
 	});
 
@@ -1050,6 +1053,66 @@ describe("strongEventsToAnthropicMessages", () => {
 		expect(content[2]).toEqual({
 			type: "image",
 			source: { type: "base64", media_type: "image/png", data: "qimg" },
+		});
+		expect(content[3]).toEqual({
+			type: "text",
+			text: "[1 image(s) attached by user]",
+		});
+	});
+
+	test("tool images and queue images separated correctly", () => {
+		// tool_result has its own images (from tool), queue_message has user images
+		const events: StrongEvent[] = [
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "screenshot captured",
+				isError: false,
+				images: [{ base64: "tool_img", mediaType: "image/png" }],
+				ts: 1000,
+			},
+			{
+				type: "queue_message",
+				source: "user",
+				content: "Check this out",
+				images: [{ base64: "user_img", mediaType: "image/jpeg" }],
+				ts: 1001,
+			},
+		];
+		const messages = strongEventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(1);
+		const content = (messages[0] as { content: unknown[] }).content;
+		// tool_result (with embedded image) + queue text + queue image + annotation = 4
+		expect(content).toHaveLength(4);
+		// Tool images embedded INSIDE tool_result content
+		expect(content[0]).toEqual({
+			type: "tool_result",
+			tool_use_id: "tc1",
+			content: [
+				{
+					type: "image",
+					source: {
+						type: "base64",
+						media_type: "image/png",
+						data: "tool_img",
+					},
+				},
+				{ type: "text", text: "screenshot captured" },
+			],
+		});
+		// Queue message text
+		expect(content[1]).toEqual({
+			type: "text",
+			text: "[Messages received while you were working:]\nCheck this out",
+		});
+		// Queue images as sibling blocks with annotation
+		expect(content[2]).toEqual({
+			type: "image",
+			source: {
+				type: "base64",
+				media_type: "image/jpeg",
+				data: "user_img",
+			},
 		});
 		expect(content[3]).toEqual({
 			type: "text",
@@ -1261,7 +1324,7 @@ describe("strongEventsToOpenAIMessages", () => {
 		]);
 	});
 
-	test("tool_results with images → separate user message with image_url parts", () => {
+	test("tool_results with images → separate user message with tool content as label", () => {
 		const events: StrongEvent[] = [
 			{
 				type: "tool_call",
@@ -1281,10 +1344,11 @@ describe("strongEventsToOpenAIMessages", () => {
 		];
 		const messages = strongEventsToOpenAIMessages(events);
 		expect(messages).toHaveLength(3); // assistant + tool + user(images)
+		// Tool images use tool result content as label (not "[User-attached image]")
 		expect(messages[2]).toEqual({
 			role: "user",
 			content: [
-				{ type: "text", text: "[User-attached image]" },
+				{ type: "text", text: "screenshot taken" },
 				{
 					type: "image_url",
 					image_url: {
