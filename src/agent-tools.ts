@@ -165,7 +165,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   Use after merging a passed child, or to defer a task and reclaim disk space.
 - delete_task: Full removal — deletes worktree, session file, and task node from the tree. Use for abandoned tasks.
 - reset_task: Remove worktree + session file but keep node. Sets status to pending. Use to start over with a different approach.
-- clarify: Send a clarification question to the user or parent orchestrator. Returns immediately —
+- clarify: Send a clarification question to the user. Returns immediately —
   you can continue doing other work that doesn't need the answer, then call yield() when ready
   to wait for the clarify_response.
 - done: Signal that you have finished your task. Call done(status, summary) with status "passed" or "failed".
@@ -236,8 +236,11 @@ When you finish working on a task, you MUST call \`done(status, summary)\`:
 **Every agent session MUST end with a done() call.** If you stop without calling done(),
 the parent hangs forever waiting for your result. This is the #1 cause of stuck orchestrations.
 
-If you're unsure about a requirement, use \`clarify\` to ask (returns immediately, continue working).
+If you're unsure about a requirement, use \`clarify\` to ask the user (returns immediately, continue working).
 If you encounter problems you can't overcome, call done("failed", ...) — failing early is better than spinning.
+
+### Progress Updates
+During execution, use \`report_to_parent\` 1-2 times to share progress — especially after completing a major phase or making a significant design decision. If you're unsure about a design decision or how to interpret the task — use \`clarify\` to ask the user BEFORE implementing. A wrong approach wastes tokens and the task may be rejected. Clarifying is cheap, rework is expensive.
 
 ### Before calling done("passed") — self-verification checklist
 Before marking a task as passed, verify EVERY item in the task description is complete:
@@ -1440,7 +1443,7 @@ export function createOrchestratorTools(
 
 		tool(
 			"clarify",
-			"Ask a clarification question and send it to the user or parent orchestrator. " +
+			"Ask a clarification question and send it to the user. " +
 				"Returns immediately — you can continue doing other work that doesn't need the answer, " +
 				"then call yield() when ready to wait for the clarify_response. " +
 				"Only use this for genuine ambiguities that could lead to wasted work.",
