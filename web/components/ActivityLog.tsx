@@ -19,10 +19,11 @@ function getSearchableText(entry: LogEntry): string {
 		case "lifecycle":
 		case "parent_update":
 		case "child_report":
-		case "background_complete":
 		case "cross_project":
 		case "generic_queue_message":
 			return entry.content;
+		case "background_complete":
+			return entry.command;
 		case "task_started":
 		case "task_completed":
 		case "budget_exceeded":
@@ -166,10 +167,10 @@ export function ActivityLog({
 			  }
 		> = [];
 
-		// Get tool name from typed entry
+		// Get tool name from typed entry (handles both Event and BroadcastEvent variants)
 		const getToolName = (entry: LogEntry): string => {
 			if (entry.type === "tool_call" || entry.type === "tool_result") {
-				return entry.tool;
+				return "tool" in entry ? (entry.tool as string) : "";
 			}
 			return "";
 		};
@@ -184,12 +185,20 @@ export function ActivityLog({
 		// Indices to hide: yield pairs
 		const hiddenIndices = new Set<number>();
 
+		// Get tool use ID from entry (handles both Event.toolCallId and BroadcastEvent.toolUseId)
+		const getToolUseId = (entry: LogEntry): string | undefined => {
+			if ("toolUseId" in entry) return entry.toolUseId as string;
+			if ("toolCallId" in entry) return entry.toolCallId as string;
+			return undefined;
+		};
+
 		// First pass: register all tool_call entries by toolUseId
 		for (let j = 0; j < visible.length; j++) {
 			const entry = visible[j];
 			if (!entry || entry.type !== "tool_call") continue;
-			if (entry.toolUseId) {
-				useByToolUseId.set(entry.toolUseId, j);
+			const uid = getToolUseId(entry);
+			if (uid) {
+				useByToolUseId.set(uid, j);
 			}
 		}
 
@@ -198,9 +207,10 @@ export function ActivityLog({
 			const entry = visible[j];
 			if (!entry || entry.type !== "tool_result") continue;
 
-			// Match by toolUseId
-			if (entry.toolUseId) {
-				const useIdx = useByToolUseId.get(entry.toolUseId);
+			// Match by toolUseId/toolCallId
+			const uid = getToolUseId(entry);
+			if (uid) {
+				const useIdx = useByToolUseId.get(uid);
 				if (useIdx !== undefined) {
 					paired.set(useIdx, j);
 					pairedResults.add(j);

@@ -1271,13 +1271,13 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const events = eventStore.readActive(agentResult.sessionId ?? "");
 				const types = events.map((e) => e.type);
 
-				// Must have queue_message events
-				expect(types).toContain("queue_message");
-				const queueMsgEvent = events.find((e) => e.type === "queue_message");
-				if (
-					queueMsgEvent?.type === "queue_message" &&
-					queueMsgEvent.source === "user"
-				) {
+				// Must have user_message events (from queue)
+				expect(types).toContain("user_message");
+				const queueMsgEvent = events.find(
+					(e) =>
+						e.type === "user_message" && e.content.includes("New instruction"),
+				);
+				if (queueMsgEvent?.type === "user_message") {
 					expect(queueMsgEvent.content).toContain("New instruction for you");
 				}
 

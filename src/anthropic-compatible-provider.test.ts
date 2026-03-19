@@ -2295,14 +2295,13 @@ describe("Event deterministic verification", () => {
 		const events = eventStore.readActive(agentResult.sessionId ?? "");
 		const types = events.map((e) => e.type);
 
-		// Must have queue_message events
-		expect(types).toContain("queue_message");
-		const queueMsgEvent = events.find((e) => e.type === "queue_message");
+		// Must have user_message events (from queue)
+		expect(types).toContain("user_message");
+		const queueMsgEvent = events.find(
+			(e) => e.type === "user_message" && e.content.includes("new instruction"),
+		);
 		expect(queueMsgEvent).toBeDefined();
-		if (
-			queueMsgEvent?.type === "queue_message" &&
-			queueMsgEvent.source === "user"
-		) {
+		if (queueMsgEvent?.type === "user_message") {
 			expect(queueMsgEvent.content).toContain("Here is a new instruction");
 		}
 
@@ -2311,18 +2310,11 @@ describe("Event deterministic verification", () => {
 		// Should have: user_msg, assistant(end_turn), queue_message(as user), assistant(continue)
 		expect(reconstructed.length).toBeGreaterThanOrEqual(4);
 
-		// Find the queue message in reconstructed — it becomes a user message with tool_result/text format
+		// Find the queue-originated user message in reconstructed — it becomes a plain user message
 		const queueReconstructed = reconstructed.find((m) => {
 			const content = (m as { role: string; content: unknown }).content;
-			if (Array.isArray(content)) {
-				return content.some(
-					(b: { type?: string; text?: string }) =>
-						b.type === "text" &&
-						b.text?.includes("[Messages received while you were working:]"),
-				);
-			}
 			if (typeof content === "string") {
-				return content.includes("[Messages received while");
+				return content.includes("Here is a new instruction");
 			}
 			return false;
 		});

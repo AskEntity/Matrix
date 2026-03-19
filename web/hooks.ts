@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type { TaskNode, TaskStatus } from "../src/types.ts";
 
-import type { BroadcastEvent } from "../src/events.ts";
+import type { BroadcastEvent, Event } from "../src/events.ts";
 import type { TaskNode } from "../src/types.ts";
 
-export type { BroadcastEvent } from "../src/events.ts";
+export type { BroadcastEvent, Event } from "../src/events.ts";
 
 // --- Types ---
 
@@ -16,50 +16,11 @@ export interface Project {
 }
 
 /**
- * UI-only event types — created by the frontend when unpacking queue messages
- * or from slash commands/UI actions. Not part of the WS protocol.
+ * UI-only event types — lifecycle and generic_queue_message that only exist
+ * in the frontend rendering layer.
  */
 export type UIOnlyEvent =
 	| { type: "lifecycle"; content: string; taskId?: string; ts: number }
-	| {
-			type: "user_message";
-			content: string;
-			taskId?: string;
-			images?: Array<{ base64: string; mediaType: string }>;
-			ts: number;
-	  }
-	| {
-			type: "parent_update";
-			content: string;
-			taskId?: string;
-			ts: number;
-	  }
-	| {
-			type: "child_report";
-			content: string;
-			childTitle?: string;
-			childTaskId?: string;
-			taskId?: string;
-			ts: number;
-	  }
-	| {
-			type: "background_complete";
-			content: string;
-			command?: string;
-			commandId?: string;
-			exitCode?: string;
-			durationMs?: string;
-			taskId?: string;
-			ts: number;
-	  }
-	| {
-			type: "cross_project";
-			content: string;
-			projectName?: string;
-			projectId?: string;
-			taskId?: string;
-			ts: number;
-	  }
 	| {
 			type: "generic_queue_message";
 			content: string;
@@ -68,17 +29,20 @@ export type UIOnlyEvent =
 			ts: number;
 	  };
 
-/** All event types the UI can display — BroadcastEvent plus UI-only types. */
-export type UIEvent = BroadcastEvent | UIOnlyEvent;
+/** All event types the UI can display. */
+export type UIEvent = Event | BroadcastEvent | UIOnlyEvent;
 
 /**
  * LogEntry = UIEvent + display metadata.
- * The discriminated union from UIEvent provides structured data;
- * `id` and `time` are added for rendering.
+ * `id` for keying and `time` for display.
+ * `taskId` is added by ws-handler to route entries to the correct task log.
+ * Some UIEvent variants already have taskId (BroadcastEvent); for others it's
+ * added as extra metadata via the intersection.
  */
 export type LogEntry = UIEvent & {
 	id: number;
 	time: string;
+	taskId?: string;
 	expanded?: boolean;
 };
 
@@ -420,13 +384,14 @@ export function useAgent(projectId: string) {
 
 // --- Log helpers ---
 
-/** Create a LogEntry from a UIEvent by adding id + time. */
-export function createLogEntry(event: UIEvent): LogEntry {
+/** Create a LogEntry from a UIEvent by adding id + time.
+ * Extra fields (like taskId for routing) can be passed and will be preserved. */
+export function createLogEntry(event: UIEvent & { taskId?: string }): LogEntry {
 	return {
 		...event,
 		id: logIdCounter++,
 		time: new Date().toLocaleTimeString(),
-	};
+	} as LogEntry;
 }
 
 /** Safely get taskId from any LogEntry — not all event types have it. */
