@@ -199,3 +199,17 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - Frontend `processEvent` handles flat types in main switch. `processLegacyAgentEvent` handles old persisted event history format.
 - `src/cli.ts` updated to handle flat event types for CLI streaming output.
 
+
+
+## Phase 3: LogEntry = Event + UI Metadata (March 2026)
+
+- **`LogEntry` is now `UIEvent & { id, time, expanded? }`** where `UIEvent = BroadcastEvent | UIOnlyEvent`.
+- **`UIOnlyEvent`** covers UI-created types: `lifecycle`, `user_message` (UI-originated), `parent_update`, `child_report`, `background_complete`, `cross_project`, `generic_queue_message`.
+- **`CreateLogEntryOpts` removed** — `createLogEntry(event: UIEvent)` takes a typed event and adds `id` + `time`.
+- **Queue message regex parsing removed** — `createQueueUIEvent` uses structured fields from `rawMessages` (title, taskId, command, etc.) directly from `QueueMessageEvent`.
+- **`getLogTaskId(entry: LogEntry)`** helper for safe taskId access — not all BroadcastEvent variants have `taskId` (e.g., `tree_mutation` has `nodeId`).
+- **Old `entry.text` replaced** by typed fields: `entry.content` (text events), `entry.tool`/`entry.input` (tool_call), `entry.message` (error), `entry.title` (task events).
+- **Old `entry.toolName`/`entry.toolArgs`/`entry.toolResult`/`entry.meta`** all replaced by direct typed field access through discriminated union narrowing.
+- **`getEntryText(entry)` + `getSearchableText(entry)`** helper functions extract display text by switching on event type.
+- **`compact_started` is now a separate event type** in the UI (was previously a `compact_marker` without a checkpoint). Gets replaced by `compact_marker` when compaction completes.
+- **Old `queue_message` UI type renamed to `generic_queue_message`** to avoid collision with the BroadcastEvent `queue_message` type.

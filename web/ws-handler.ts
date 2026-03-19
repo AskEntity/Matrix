@@ -1,5 +1,11 @@
 import type React from "react";
-import { createLogEntry, type LogEntry, type TaskNode } from "./hooks.ts";
+import {
+	createLogEntry,
+	getLogTaskId,
+	type LogEntry,
+	type TaskNode,
+	type UIEvent,
+} from "./hooks.ts";
 
 // --- Update operations for in-place entry mutations ---
 
@@ -69,93 +75,92 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		setLastCacheReadTokens,
 		setLastOutputTokens,
 		nodeMapRef,
-		t,
 	} = deps;
 
 	/**
-	 * Convert a raw queue message into a typed LogEntry with structured meta.
+	 * Convert a raw queue message into a UIEvent.
+	 * Uses structured data from rawMessages — no regex parsing needed.
 	 * Returns null for messages that should be skipped (child_complete, system).
 	 */
-	function createQueueEntry(
+	function createQueueUIEvent(
 		rm: {
 			source: string;
-			content: string;
+			content?: string;
 			images?: { base64: string; mediaType: string }[];
+			// Structured fields from QueueMessageEvent
+			taskId?: string;
+			title?: string;
+			success?: boolean;
+			output?: string;
+			requestReply?: boolean;
+			fromProjectId?: string;
+			fromProjectName?: string;
+			command?: string;
+			commandId?: string;
+			exitCode?: number | null;
+			durationMs?: number;
 		},
-		taskId?: string,
-	): LogEntry | null {
+		parentTaskId?: string,
+	): UIEvent | null {
+		const ts = Date.now();
 		if (rm.source === "child_complete" || rm.source === "system") return null;
 		if (rm.source === "user") {
-			return createLogEntry({
+			return {
 				type: "user_message",
-				text: rm.content,
-				taskId,
+				content: rm.content ?? "",
+				taskId: parentTaskId,
 				images: rm.images,
-			});
+				ts,
+			};
 		}
 		if (rm.source === "parent_update") {
-			return createLogEntry({
+			return {
 				type: "parent_update",
-				text: rm.content,
-				taskId,
-				meta: { source: "parent_update" },
-			});
+				content: rm.content ?? "",
+				taskId: parentTaskId,
+				ts,
+			};
 		}
 		if (rm.source === "child_report") {
-			const childMatch = /^From child "([^"]*)" \(([^)]*)\): ([\s\S]*)$/.exec(
-				rm.content,
-			);
-			return createLogEntry({
+			return {
 				type: "child_report",
-				text: childMatch ? (childMatch[3] ?? rm.content) : rm.content,
-				taskId,
-				meta: {
-					source: "child_report",
-					childTitle: childMatch?.[1] ?? undefined,
-					childTaskId: childMatch?.[2] ?? undefined,
-				},
-			});
+				content: rm.content ?? "",
+				childTitle: rm.title,
+				childTaskId: rm.taskId,
+				taskId: parentTaskId,
+				ts,
+			};
 		}
 		if (rm.source === "background_complete") {
-			const bgMatch =
-				/^Command "([^"]*)" \(([^)]*)\): exit=([^,]*), duration=(\d+)ms/.exec(
-					rm.content,
-				);
-			return createLogEntry({
+			return {
 				type: "background_complete",
-				text: rm.content,
-				taskId,
-				meta: {
-					source: "background_complete",
-					command: bgMatch?.[1] ?? undefined,
-					commandId: bgMatch?.[2] ?? undefined,
-					exitCode: bgMatch?.[3] ?? undefined,
-					durationMs: bgMatch?.[4] ?? undefined,
-				},
-			});
+				content: rm.content ?? "",
+				command: rm.command,
+				commandId: rm.commandId,
+				exitCode: rm.exitCode != null ? String(rm.exitCode) : undefined,
+				durationMs: rm.durationMs != null ? String(rm.durationMs) : undefined,
+				taskId: parentTaskId,
+				ts,
+			};
 		}
 		if (rm.source === "cross_project") {
-			const cpMatch = /^From project "([^"]*)" \(([^)]*)\): ([\s\S]*)$/.exec(
-				rm.content,
-			);
-			return createLogEntry({
+			return {
 				type: "cross_project",
-				text: cpMatch ? (cpMatch[3] ?? rm.content) : rm.content,
-				taskId,
-				meta: {
-					source: "cross_project",
-					projectName: cpMatch?.[1] ?? undefined,
-					projectId: cpMatch?.[2] ?? undefined,
-				},
-			});
+				content: rm.content ?? "",
+				projectName: rm.fromProjectName,
+				projectId: rm.fromProjectId,
+				taskId: parentTaskId,
+				ts,
+			};
 		}
 		// Generic fallback
-		return createLogEntry({
-			type: "queue_message",
-			text: rm.content,
-			taskId,
-			meta: { source: rm.source },
-		});
+		return {
+			type: "generic_queue_message",
+			content: rm.content ?? "",
+			source: rm.source,
+			taskId: parentTaskId,
+			ts,
+		};
 	}
 
 	// --- Unified event processing ---
@@ -191,38 +196,36 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					entries: [
 						createLogEntry({
 							type: "tool_call",
-							text: msg.tool as string,
-							taskId: msg.taskId as string | undefined,
-							toolName: msg.tool as string,
-							toolUseId: (msg.toolUseId as string) || undefined,
-							toolArgs: msg.input as Record<string, unknown>,
+							tool: msg.tool as string,
+							toolUseId: (msg.toolUseId as string) || "",
+							input: (msg.input as Record<string, unknown>) ?? {},
+							taskId: msg.taskId as string,
+							ts: (msg.ts as number) ?? Date.now(),
 						}),
 					],
 					updates: [],
 					sideEffects: NO_SIDE_EFFECTS,
 				};
 
-			case "tool_result": {
-				const toolImages = msg.images as
-					| Array<{ base64: string; mediaType: string }>
-					| undefined;
+			case "tool_result":
 				return {
 					entries: [
 						createLogEntry({
 							type: "tool_result",
-							text: (msg.content as string) || "",
-							taskId: msg.taskId as string | undefined,
-							toolName: msg.tool as string,
-							toolUseId: (msg.toolUseId as string) || undefined,
-							toolResult: (msg.content as string) || "",
+							tool: msg.tool as string,
+							toolUseId: (msg.toolUseId as string) || "",
+							content: (msg.content as string) || "",
 							isError: (msg.isError as boolean) || false,
-							images: toolImages,
+							images: msg.images as
+								| Array<{ base64: string; mediaType: string }>
+								| undefined,
+							taskId: msg.taskId as string,
+							ts: (msg.ts as number) ?? Date.now(),
 						}),
 					],
 					updates: [],
 					sideEffects: NO_SIDE_EFFECTS,
 				};
-			}
 
 			case "text_delta": {
 				const deltaText = (msg.content as string) || "";
@@ -282,9 +285,9 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				return {
 					entries: [
 						createLogEntry({
-							type: "compact_marker",
-							text: "Compressing context...",
-							taskId: msg.taskId as string | undefined,
+							type: "compact_started",
+							taskId: msg.taskId as string,
+							ts: (msg.ts as number) ?? Date.now(),
 						}),
 					],
 					updates: [],
@@ -308,28 +311,25 @@ export function createWSHandler(deps: WSHandlerDeps) {
 			case "queue_message": {
 				const entries: LogEntry[] = [];
 				const rawMessages = msg.rawMessages as
-					| Array<{
-							source: string;
-							content: string;
-							images?: { base64: string; mediaType: string }[];
-					  }>
+					| Array<Record<string, unknown>>
 					| undefined;
 				if (rawMessages && rawMessages.length > 0) {
 					for (const rm of rawMessages) {
-						const entry = createQueueEntry(
-							rm,
+						const event = createQueueUIEvent(
+							rm as Parameters<typeof createQueueUIEvent>[0],
 							msg.taskId as string | undefined,
 						);
-						if (entry) entries.push(entry);
+						if (event) entries.push(createLogEntry(event));
 					}
 				} else {
 					const raw = (msg.messages as string) || "";
 					if (raw) {
 						entries.push(
 							createLogEntry({
-								type: "queue_message",
-								text: raw,
+								type: "generic_queue_message",
+								content: raw,
 								taskId: msg.taskId as string | undefined,
+								ts: (msg.ts as number) ?? Date.now(),
 							}),
 						);
 					}
@@ -350,8 +350,9 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					entries.push(
 						createLogEntry({
 							type: "lifecycle",
-							text: "↻ Session resumed",
+							content: "↻ Session resumed",
 							taskId: startRootId,
+							ts: (msg.ts as number) ?? Date.now(),
 						}),
 					);
 				}
@@ -359,8 +360,9 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					entries.push(
 						createLogEntry({
 							type: "user_message",
-							text: msg.prompt as string,
+							content: msg.prompt as string,
 							taskId: startRootId,
+							ts: (msg.ts as number) ?? Date.now(),
 						}),
 					);
 				}
@@ -448,58 +450,54 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				};
 
 			case "task_started": {
-				const instruction = msg.message
-					? `\n${t("lifecycle.instructions")} ${msg.message}`
-					: "";
-				const startedText = `${t("lifecycle.taskStarted")} ${msg.title}${instruction}`;
 				const startedParentId =
 					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
+				const ts = (msg.ts as number) ?? Date.now();
 				const entries = [
 					createLogEntry({
 						type: "task_started",
-						text: startedText,
 						taskId: msg.taskId as string,
+						title: msg.title as string,
+						ts,
 					}),
 				];
 				if (startedParentId) {
 					entries.push(
 						createLogEntry({
 							type: "task_started",
-							text: startedText,
 							taskId: startedParentId,
+							title: msg.title as string,
+							ts,
 						}),
 					);
 				}
+
 				return { entries, updates: [], sideEffects: NO_SIDE_EFFECTS };
 			}
 
 			case "task_completed": {
-				const output = (msg.output as string) || "";
-				const completedText = output
-					? `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}\n${output}`
-					: `${msg.success ? "✓ Passed" : "✗ Failed"}: ${msg.title}`;
-				const completedMeta = {
-					title: msg.title as string,
-					success: msg.success as boolean,
-					output,
-				};
 				const completedParentId =
 					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
+				const ts = (msg.ts as number) ?? Date.now();
 				const entries = [
 					createLogEntry({
 						type: "task_completed",
-						text: completedText,
 						taskId: msg.taskId as string,
-						meta: completedMeta,
+						title: msg.title as string,
+						success: msg.success as boolean,
+						output: (msg.output as string) || undefined,
+						ts,
 					}),
 				];
 				if (completedParentId) {
 					entries.push(
 						createLogEntry({
 							type: "task_completed",
-							text: completedText,
 							taskId: completedParentId,
-							meta: completedMeta,
+							title: msg.title as string,
+							success: msg.success as boolean,
+							output: (msg.output as string) || undefined,
+							ts,
 						}),
 					);
 				}
@@ -511,8 +509,9 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					entries: [
 						createLogEntry({
 							type: "error",
-							text: msg.message as string,
+							message: msg.message as string,
 							taskId: msg.taskId as string | undefined,
+							ts: (msg.ts as number) ?? Date.now(),
 						}),
 					],
 					updates: [],
@@ -522,10 +521,15 @@ export function createWSHandler(deps: WSHandlerDeps) {
 			case "tree_mutation": {
 				const action = msg.action as string;
 				const title = (msg.title as string) || "";
-				const mutationText = title ? `${action}: ${title}` : action;
 				return {
 					entries: [
-						createLogEntry({ type: "tree_mutation", text: mutationText }),
+						createLogEntry({
+							type: "tree_mutation",
+							action,
+							nodeId: msg.nodeId as string,
+							title: title || undefined,
+							ts: (msg.ts as number) ?? Date.now(),
+						}),
 					],
 					updates: [],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -585,17 +589,19 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
 					if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
-						entries[i] = { ...e, text: e.text + op.text };
+						entries[i] = { ...e, content: e.content + op.text };
 						return;
 					}
-					if (e && e.taskId === op.taskId && e.type !== "assistant_text") break;
+					if (e && getLogTaskId(e) === op.taskId && e.type !== "assistant_text")
+						break;
 				}
 				// No existing text entry — create new
 				entries.push(
 					createLogEntry({
 						type: "assistant_text",
-						text: op.text,
-						taskId: op.taskId,
+						content: op.text,
+						taskId: op.taskId ?? "",
+						ts: Date.now(),
 					}),
 				);
 				break;
@@ -604,16 +610,18 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
 					if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
-						entries[i] = { ...e, text: op.text };
+						entries[i] = { ...e, content: op.text };
 						return;
 					}
-					if (e && e.taskId === op.taskId && e.type !== "assistant_text") break;
+					if (e && getLogTaskId(e) === op.taskId && e.type !== "assistant_text")
+						break;
 				}
 				entries.push(
 					createLogEntry({
 						type: "assistant_text",
-						text: op.text,
-						taskId: op.taskId,
+						content: op.text,
+						taskId: op.taskId ?? "",
+						ts: Date.now(),
 					}),
 				);
 				break;
@@ -621,12 +629,18 @@ export function createWSHandler(deps: WSHandlerDeps) {
 			case "complete_compact": {
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
-					if (e && e.type === "compact_marker" && e.checkpoint === undefined) {
-						entries[i] = {
-							...e,
-							text: op.text,
+					if (e && e.type === "compact_started") {
+						// Replace compact_started with compact_marker
+						const replacement = createLogEntry({
+							type: "compact_marker",
 							checkpoint: op.checkpoint,
-						};
+							savedTokens: 0,
+							taskId: op.taskId ?? "",
+							ts: Date.now(),
+						});
+						// Override the auto-generated time with the original entry's time
+						replacement.time = e.time;
+						entries[i] = replacement;
 						return;
 					}
 				}
@@ -634,9 +648,10 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				entries.push(
 					createLogEntry({
 						type: "compact_marker",
-						text: op.text,
-						taskId: op.taskId,
 						checkpoint: op.checkpoint,
+						savedTokens: 0,
+						taskId: op.taskId ?? "",
+						ts: Date.now(),
 					}),
 				);
 				break;
@@ -656,18 +671,23 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						const e = prev[i];
 						if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
 							const updated = [...prev];
-							updated[i] = { ...e, text: e.text + op.text };
+							updated[i] = { ...e, content: e.content + op.text };
 							return updated;
 						}
-						if (e && e.taskId === op.taskId && e.type !== "assistant_text")
+						if (
+							e &&
+							getLogTaskId(e) === op.taskId &&
+							e.type !== "assistant_text"
+						)
 							break;
 					}
 					return [
 						...prev,
 						createLogEntry({
 							type: "assistant_text",
-							text: op.text,
-							taskId: op.taskId,
+							content: op.text,
+							taskId: op.taskId ?? "",
+							ts: Date.now(),
 						}),
 					];
 				}
@@ -676,35 +696,40 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						const e = prev[i];
 						if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
 							const updated = [...prev];
-							updated[i] = { ...e, text: op.text };
+							updated[i] = { ...e, content: op.text };
 							return updated;
 						}
-						if (e && e.taskId === op.taskId && e.type !== "assistant_text")
+						if (
+							e &&
+							getLogTaskId(e) === op.taskId &&
+							e.type !== "assistant_text"
+						)
 							break;
 					}
 					return [
 						...prev,
 						createLogEntry({
 							type: "assistant_text",
-							text: op.text,
-							taskId: op.taskId,
+							content: op.text,
+							taskId: op.taskId ?? "",
+							ts: Date.now(),
 						}),
 					];
 				}
 				case "complete_compact": {
 					for (let i = prev.length - 1; i >= 0; i--) {
 						const e = prev[i];
-						if (
-							e &&
-							e.type === "compact_marker" &&
-							e.checkpoint === undefined
-						) {
+						if (e && e.type === "compact_started") {
 							const updated = [...prev];
-							updated[i] = {
-								...e,
-								text: op.text,
+							const replacement = createLogEntry({
+								type: "compact_marker",
 								checkpoint: op.checkpoint,
-							};
+								savedTokens: 0,
+								taskId: op.taskId ?? "",
+								ts: Date.now(),
+							});
+							replacement.time = e.time;
+							updated[i] = replacement;
 							return updated;
 						}
 					}
@@ -712,9 +737,10 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						...prev,
 						createLogEntry({
 							type: "compact_marker",
-							text: op.text,
-							taskId: op.taskId,
 							checkpoint: op.checkpoint,
+							savedTokens: 0,
+							taskId: op.taskId ?? "",
+							ts: Date.now(),
 						}),
 					];
 				}

@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type { TaskNode, TaskStatus } from "../src/types.ts";
 
+import type { BroadcastEvent } from "../src/events.ts";
 import type { TaskNode } from "../src/types.ts";
+
+export type { BroadcastEvent } from "../src/events.ts";
 
 // --- Types ---
 
@@ -12,25 +15,72 @@ export interface Project {
 	path: string;
 }
 
-export interface LogEntry {
+/**
+ * UI-only event types — created by the frontend when unpacking queue messages
+ * or from slash commands/UI actions. Not part of the WS protocol.
+ */
+export type UIOnlyEvent =
+	| { type: "lifecycle"; content: string; taskId?: string; ts: number }
+	| {
+			type: "user_message";
+			content: string;
+			taskId?: string;
+			images?: Array<{ base64: string; mediaType: string }>;
+			ts: number;
+	  }
+	| {
+			type: "parent_update";
+			content: string;
+			taskId?: string;
+			ts: number;
+	  }
+	| {
+			type: "child_report";
+			content: string;
+			childTitle?: string;
+			childTaskId?: string;
+			taskId?: string;
+			ts: number;
+	  }
+	| {
+			type: "background_complete";
+			content: string;
+			command?: string;
+			commandId?: string;
+			exitCode?: string;
+			durationMs?: string;
+			taskId?: string;
+			ts: number;
+	  }
+	| {
+			type: "cross_project";
+			content: string;
+			projectName?: string;
+			projectId?: string;
+			taskId?: string;
+			ts: number;
+	  }
+	| {
+			type: "generic_queue_message";
+			content: string;
+			source?: string;
+			taskId?: string;
+			ts: number;
+	  };
+
+/** All event types the UI can display — BroadcastEvent plus UI-only types. */
+export type UIEvent = BroadcastEvent | UIOnlyEvent;
+
+/**
+ * LogEntry = UIEvent + display metadata.
+ * The discriminated union from UIEvent provides structured data;
+ * `id` and `time` are added for rendering.
+ */
+export type LogEntry = UIEvent & {
 	id: number;
 	time: string;
-	type: string;
-	text: string;
-	taskId?: string;
-	/** Full checkpoint content for compact events (collapsible in UI). */
-	checkpoint?: string;
-	/** Structured tool fields — present for tool_use/tool_result from live WS events. */
-	toolName?: string;
-	/** Unique ID linking a tool_use to its tool_result (from provider's tool_use_id). */
-	toolUseId?: string;
-	toolArgs?: Record<string, unknown>;
-	toolResult?: string;
-	isError?: boolean;
-	images?: { base64: string; mediaType: string }[];
-	/** Structured metadata for queue message cards (parent_update, child_report, etc.) */
-	meta?: Record<string, unknown>;
-}
+	expanded?: boolean;
+};
 
 let logIdCounter = 0;
 
@@ -370,37 +420,19 @@ export function useAgent(projectId: string) {
 
 // --- Log helpers ---
 
-export interface CreateLogEntryOpts {
-	type: string;
-	text: string;
-	taskId?: string;
-	checkpoint?: string;
-	toolName?: string;
-	toolUseId?: string;
-	toolArgs?: Record<string, unknown>;
-	toolResult?: string;
-	isError?: boolean;
-	images?: { base64: string; mediaType: string }[];
-	meta?: Record<string, unknown>;
-}
-
-export function createLogEntry(opts: CreateLogEntryOpts): LogEntry {
-	const entry: LogEntry = {
+/** Create a LogEntry from a UIEvent by adding id + time. */
+export function createLogEntry(event: UIEvent): LogEntry {
+	return {
+		...event,
 		id: logIdCounter++,
 		time: new Date().toLocaleTimeString(),
-		type: opts.type,
-		text: opts.text,
-		taskId: opts.taskId,
 	};
-	if (opts.checkpoint !== undefined) entry.checkpoint = opts.checkpoint;
-	if (opts.toolName !== undefined) entry.toolName = opts.toolName;
-	if (opts.toolUseId !== undefined) entry.toolUseId = opts.toolUseId;
-	if (opts.toolArgs !== undefined) entry.toolArgs = opts.toolArgs;
-	if (opts.toolResult !== undefined) entry.toolResult = opts.toolResult;
-	if (opts.isError !== undefined) entry.isError = opts.isError;
-	if (opts.images && opts.images.length > 0) entry.images = opts.images;
-	if (opts.meta) entry.meta = opts.meta;
-	return entry;
+}
+
+/** Safely get taskId from any LogEntry — not all event types have it. */
+export function getLogTaskId(entry: LogEntry): string | undefined {
+	if ("taskId" in entry) return entry.taskId as string | undefined;
+	return undefined;
 }
 
 // --- useProjectConfig ---

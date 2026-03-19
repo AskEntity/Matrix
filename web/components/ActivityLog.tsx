@@ -1,7 +1,46 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { LogEntry, TaskNode } from "../hooks.ts";
+import { getLogTaskId, type LogEntry, type TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { LogEntryView, ToolCard } from "./ToolCard.tsx";
+
+/** Get searchable text content from a LogEntry. */
+function getSearchableText(entry: LogEntry): string {
+	switch (entry.type) {
+		case "assistant_text":
+		case "text_delta":
+			return entry.content;
+		case "tool_call":
+			return entry.tool;
+		case "tool_result":
+			return entry.content;
+		case "error":
+			return entry.message;
+		case "user_message":
+		case "lifecycle":
+		case "parent_update":
+		case "child_report":
+		case "background_complete":
+		case "cross_project":
+		case "generic_queue_message":
+			return entry.content;
+		case "task_started":
+		case "task_completed":
+		case "budget_exceeded":
+			return entry.title;
+		case "tree_mutation":
+			return entry.title ?? entry.action;
+		case "compact_marker":
+			return entry.checkpoint;
+		case "compact_started":
+			return "Compressing context...";
+		case "clarification_requested":
+			return entry.question;
+		case "clarification_answered":
+			return entry.answer;
+		default:
+			return "";
+	}
+}
 
 export function ActivityLog({
 	entries,
@@ -38,14 +77,19 @@ export function ActivityLog({
 		let items: LogEntry[];
 		if (isRootFilter) {
 			// Root/orchestrator view — show entries tagged with root node OR untagged (backward compat)
-			items = entries.filter((e) => !e.taskId || e.taskId === rootNodeId);
+			items = entries.filter((e) => {
+				const tid = getLogTaskId(e);
+				return !tid || tid === rootNodeId;
+			});
 		} else {
-			items = entries.filter((e) => e.taskId === filterTaskId);
+			items = entries.filter((e) => getLogTaskId(e) === filterTaskId);
 		}
 
 		if (searchText.trim()) {
 			const lower = searchText.toLowerCase();
-			items = items.filter((e) => e.text.toLowerCase().includes(lower));
+			items = items.filter((e) =>
+				getSearchableText(e).toLowerCase().includes(lower),
+			);
 		}
 
 		return items;
@@ -122,9 +166,12 @@ export function ActivityLog({
 			  }
 		> = [];
 
-		// Get tool name from structured field
+		// Get tool name from typed entry
 		const getToolName = (entry: LogEntry): string => {
-			return entry.toolName ?? "";
+			if (entry.type === "tool_call" || entry.type === "tool_result") {
+				return entry.tool;
+			}
+			return "";
 		};
 
 		// --- ID-based pairing ---
@@ -137,7 +184,7 @@ export function ActivityLog({
 		// Indices to hide: yield pairs
 		const hiddenIndices = new Set<number>();
 
-		// First pass: register all tool_use entries by toolUseId
+		// First pass: register all tool_call entries by toolUseId
 		for (let j = 0; j < visible.length; j++) {
 			const entry = visible[j];
 			if (!entry || entry.type !== "tool_call") continue;
@@ -146,7 +193,7 @@ export function ActivityLog({
 			}
 		}
 
-		// Second pass: match tool_result entries to tool_use entries
+		// Second pass: match tool_result entries to tool_call entries
 		for (let j = 0; j < visible.length; j++) {
 			const entry = visible[j];
 			if (!entry || entry.type !== "tool_result") continue;
