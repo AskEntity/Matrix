@@ -224,3 +224,12 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - `createQueueEntry` regex parsing simplified — uses structured event data where available.
 - `processLegacyAgentEvent` still handles old persisted event history format.
 
+
+
+## Phase 4: Message Format Cleanup (March 2026)
+
+- **Simple queue messages no longer XML-wrapped**: `user`, `clarify_response`, `system`, `compact` sources return raw content from `formatQueueMessageEvent`. Multi-field messages (`child_complete`, `parent_update`, `child_report`, `cross_project`, `background_complete`) still use XML tags for structured data.
+- **"Process these messages..." suffix removed**: Idle drain wrapper `[Messages received while you were idle:]` no longer includes the suffix in converters (`events.ts`) or providers. System prompt already covers this.
+- **`readProjectMemory` uses markdown headers**: `## CLAUDE.md` and `## Project Memory` instead of fake `[read_file: ...]` fiction. Preamble removed.
+- **Dual formatters unified**: `formatQueueMessage` (agent-tools.ts) now delegates to `formatQueueMessageEvent(queueMessageToEvent(msg))` — single source of truth for message formatting.
+- **`buildTaskPrompt` reused in REST resume path**: `src/daemon/routes/tasks.ts` no longer manually constructs task prompts for re-launched tasks.

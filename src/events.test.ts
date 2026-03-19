@@ -47,9 +47,7 @@ describe("formatQueueMessageEvent", () => {
 			content: "Hello world",
 			ts: 1000,
 		};
-		expect(formatQueueMessageEvent(event)).toBe(
-			"<user_message>Hello world</user_message>",
-		);
+		expect(formatQueueMessageEvent(event)).toBe("Hello world");
 	});
 
 	test("formats child_complete", () => {
@@ -87,9 +85,7 @@ describe("formatQueueMessageEvent", () => {
 			answer: "Yes",
 			ts: 1000,
 		};
-		expect(formatQueueMessageEvent(event)).toBe(
-			"<clarify_response>Yes</clarify_response>",
-		);
+		expect(formatQueueMessageEvent(event)).toBe("Yes");
 	});
 
 	test("formats compact", () => {
@@ -98,9 +94,7 @@ describe("formatQueueMessageEvent", () => {
 			source: "compact",
 			ts: 1000,
 		};
-		expect(formatQueueMessageEvent(event)).toBe(
-			"<compact>Manual compaction requested</compact>",
-		);
+		expect(formatQueueMessageEvent(event)).toBe("Manual compaction requested");
 	});
 });
 
@@ -363,8 +357,7 @@ describe("eventsToAnthropicMessages", () => {
 		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "user",
-				content:
-					"[Messages received while you were idle:]\n<user_message>Please check this</user_message>\n\nProcess these messages and continue working. Remember to call done() when finished.",
+				content: "[Messages received while you were idle:]\nPlease check this",
 			},
 		]);
 	});
@@ -575,7 +568,7 @@ describe("eventsToAnthropicMessages", () => {
 		expect(content).toHaveLength(4);
 		expect(content[1]).toEqual({
 			type: "text",
-			text: "[Messages received while you were working:]\n<user_message>Look at this</user_message>",
+			text: "[Messages received while you were working:]\nLook at this",
 		});
 		expect(content[2]).toEqual({
 			type: "image",
@@ -628,7 +621,7 @@ describe("eventsToAnthropicMessages", () => {
 		// Queue message text
 		expect(content[1]).toEqual({
 			type: "text",
-			text: "[Messages received while you were working:]\n<user_message>Check this out</user_message>",
+			text: "[Messages received while you were working:]\nCheck this out",
 		});
 		// Queue images as sibling blocks with annotation
 		expect(content[2]).toEqual({
@@ -1174,7 +1167,6 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 		// Standalone queue_message events (from implicit yield drain) should:
 		// - Use "[Messages received while you were idle:]"
 		// - Format content from structured fields via formatQueueMessageEvent
-		// - Include the "Process these messages..." suffix
 		const events: Event[] = [
 			{
 				type: "queue_message",
@@ -1186,8 +1178,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages[0]).toEqual({
 			role: "user",
-			content:
-				"[Messages received while you were idle:]\n<user_message>Hello from user</user_message>\n\nProcess these messages and continue working. Remember to call done() when finished.",
+			content: "[Messages received while you were idle:]\nHello from user",
 		});
 	});
 
@@ -1210,7 +1201,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 		expect(messages[0]).toEqual({
 			role: "user",
 			content:
-				"[Messages received while you were idle:]\n<user_message>First message</user_message>\n<parent_update>Second message</parent_update>\n\nProcess these messages and continue working. Remember to call done() when finished.",
+				"[Messages received while you were idle:]\nFirst message\n<parent_update>Second message</parent_update>",
 		});
 	});
 
@@ -1230,7 +1221,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 			content: [
 				{
 					type: "text",
-					text: "[Messages received while you were idle:]\n<user_message>Check this image</user_message>\n\nProcess these messages and continue working. Remember to call done() when finished.",
+					text: "[Messages received while you were idle:]\nCheck this image",
 				},
 				{
 					type: "image",

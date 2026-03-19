@@ -1059,7 +1059,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							content: [
 								{
 									type: "text" as const,
-									text: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+									text: `[Messages received while you were idle:]\n${formatted}`,
 								},
 								...imageBlocks,
 							],
@@ -1067,7 +1067,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					} else {
 						messages.push({
 							role: "user" as const,
-							content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
+							content: `[Messages received while you were idle:]\n${formatted}`,
 						});
 					}
 					// Record individual queue_message Events

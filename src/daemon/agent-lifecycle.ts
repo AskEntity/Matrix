@@ -961,7 +961,7 @@ export async function launchAgent(
 		? (opts.prompt ??
 			"Continue where you left off. Check the task tree and proceed.")
 		: memory
-			? `${memory}\n\n---\n\n${opts.prompt}`
+			? `${memory}\n\n${opts.prompt}`
 			: opts.prompt;
 
 	const resumeSessionId = rootNodeId;
