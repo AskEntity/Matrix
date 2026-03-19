@@ -317,27 +317,31 @@ export function queueMessageToEvent(msg: QueueMessage): QueueMessageEvent {
 	}
 }
 
-/** Format a QueueMessageEvent to XML text for inclusion in provider messages. */
+/** Format a QueueMessageEvent for inclusion in provider messages.
+ * Simple messages (user, clarify_response, system, compact) use raw content.
+ * Multi-field messages (child_complete, parent_update, etc.) use XML tags. */
 export function formatQueueMessageEvent(event: QueueMessageEvent): string {
 	switch (event.source) {
+		// Simple messages — raw content, no XML wrapping
+		case "user":
+			return event.content;
+		case "clarify_response":
+			return event.answer;
+		case "system":
+			return event.content;
+		case "compact":
+			return "Manual compaction requested";
+		// Multi-field messages — XML tags carry structured data
 		case "child_complete":
 			return `<child_complete task="${event.title}" id="${event.taskId}" status="${event.success ? "passed" : "failed"}">${event.output.slice(0, 500)}</child_complete>`;
-		case "user":
-			return `<user_message>${event.content}</user_message>`;
 		case "parent_update":
 			return `<parent_update${event.requestReply ? ' requestReply="true"' : ""}>${event.content}</parent_update>`;
-		case "clarify_response":
-			return `<clarify_response>${event.answer}</clarify_response>`;
 		case "child_report":
 			return `<child_report from="${event.title}" id="${event.taskId}"${event.requestReply ? ' requestReply="true"' : ""}>${event.content}</child_report>`;
 		case "cross_project":
 			return `<cross_project from="${event.fromProjectName}" projectId="${event.fromProjectId}">${event.content}</cross_project>`;
 		case "background_complete":
 			return `<background_complete command="${event.command}" id="${event.commandId}" exit="${event.exitCode}" duration="${event.durationMs}ms">Command completed. Use bg_action="status" with background_id="${event.commandId}" or read_file on output files to see results.</background_complete>`;
-		case "system":
-			return `<system_notification>${event.content}</system_notification>`;
-		case "compact":
-			return "<compact>Manual compaction requested</compact>";
 	}
 }
 
@@ -522,7 +526,7 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 				}
 
 				const joined = queueContents.join("\n");
-				const idleText = `[Messages received while you were idle:]\n${joined}\n\nProcess these messages and continue working. Remember to call done() when finished.`;
+				const idleText = `[Messages received while you were idle:]\n${joined}`;
 				if (queueImageBlocks.length > 0) {
 					messages.push({
 						role: "user",
@@ -744,7 +748,7 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 				}
 
 				const oaiJoined = oaiQueueContents.join("\n");
-				const oaiIdleText = `[Messages received while you were idle:]\n${oaiJoined}\n\nProcess these messages and continue working. Remember to call done() when finished.`;
+				const oaiIdleText = `[Messages received while you were idle:]\n${oaiJoined}`;
 				if (oaiQueueImageParts.length > 0) {
 					messages.push({
 						role: "user",

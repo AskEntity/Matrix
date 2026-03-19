@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { Hono } from "hono";
-import { slugify } from "../../agent-tools.ts";
+import { buildTaskPrompt, slugify } from "../../agent-tools.ts";
 import { globalAgentQueues } from "../../message-queue.ts";
 import {
 	clearPersistedMessages,
@@ -367,11 +367,16 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				broadcastTreeUpdate(ctx, project.id, tracker);
 				notifyParentOfContinue();
 
-				const memory = readProjectMemory(project.path);
-				const branchReminder = `\n\nYou are on branch \`${wt.branch}\`. Do NOT switch branches.`;
+				const memory = readProjectMemory(project.path, false);
+				const updatedNode = tracker.get(nodeId);
+				const taskPrompt = buildTaskPrompt(
+					updatedNode ?? node,
+					tracker,
+					memory,
+				);
 				const continuePrompt = body.message
-					? `${body.message}\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}${branchReminder}`
-					: `Continue working on this task.\n\n## Task: ${node.title}\n${node.description}\n\n## Project Memory\n${memory}${branchReminder}`;
+					? `${body.message}\n\n${taskPrompt}`
+					: taskPrompt;
 
 				runChildAgentInBackground(
 					ctx,

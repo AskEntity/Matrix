@@ -2,6 +2,7 @@ import { pinyin } from "pinyin-pro";
 import { z } from "zod";
 import type { AgentProvider, AgentSession } from "./agent-provider.ts";
 import { readProjectMemory } from "./daemon/helpers.ts";
+import { formatQueueMessageEvent, queueMessageToEvent } from "./events.ts";
 import {
 	globalAgentQueues,
 	type MessageQueue,
@@ -72,28 +73,9 @@ async function isGitClean(projectPath: string): Promise<{
 	};
 }
 
-/** Format a QueueMessage for display to the agent (XML format to prevent injection). */
+/** Format a QueueMessage for display to the agent. Delegates to formatQueueMessageEvent. */
 export function formatQueueMessage(msg: QueueMessage): string {
-	switch (msg.source) {
-		case "child_complete":
-			return `<child_complete task="${msg.title}" id="${msg.taskId}" status="${msg.success ? "passed" : "failed"}">${msg.output.slice(0, 500)}</child_complete>`;
-		case "user":
-			return `<user_message>${msg.content}</user_message>`;
-		case "parent_update":
-			return `<parent_update${msg.requestReply ? ' requestReply="true"' : ""}>${msg.content}</parent_update>`;
-		case "clarify_response":
-			return `<clarify_response>${msg.answer}</clarify_response>`;
-		case "child_report":
-			return `<child_report from="${msg.title}" id="${msg.taskId}"${msg.requestReply ? ' requestReply="true"' : ""}>${msg.content}</child_report>`;
-		case "cross_project":
-			return `<cross_project from="${msg.fromProjectName}" projectId="${msg.fromProjectId}">${msg.content}</cross_project>`;
-		case "background_complete":
-			return `<background_complete command="${msg.command}" id="${msg.commandId}" exit="${msg.exitCode}" duration="${msg.durationMs}ms">Command completed. Use bg_action="status" with background_id="${msg.commandId}" or read_file on output files to see results.</background_complete>`;
-		case "system":
-			return `<system_notification>${msg.content}</system_notification>`;
-		case "compact":
-			return "<compact>Manual compaction requested</compact>";
-	}
+	return formatQueueMessageEvent(queueMessageToEvent(msg));
 }
 
 /** Convert a QueueMessage to a simplified { source, content } for structured WS events. */
