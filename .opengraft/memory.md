@@ -165,3 +165,11 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - **Fix**: In `createAgentContext`, the `onTaskEvent` callback now detects `task_completed` events (emitted by done() BEFORE blocking) and closes the child queue. This unblocks `waitForQueueMessages()` immediately. Only applies to child agents (`depth > 0`).
 - **Two event paths in agent lifecycle**: (1) `onTaskEvent` callback fires synchronously during tool execution (goes to WebSocket broadcast), (2) provider stream yields `AgentEvent` types to `runChildCore`. `task_completed` flows through path 1, not path 2.
 - **The `tool_result` detection in `runChildCore` remains as fallback** for edge cases where done() returns without blocking.
+
+
+## TDD Tests: Child Completion Notification Paths (March 2026)
+
+- **done()=yield deadlock test**: Mock provider simulates done()=yield by: updating tracker status → yielding status event → blocking on queue.wait(). The `onEvent` callback simulates the fix (closing queue when task_completed detected). Without the fix, stream deadlocks (queue.wait() never resolves).
+- **Companion deadlock test**: Proves the bug exists — same mock without queue closure in onEvent results in timeout.
+- **runChildCore** can be tested directly without full DaemonContext. For child_complete delivery (which happens in runChildAgentInBackground), simulate the notification manually since that function needs full DaemonContext + real git worktrees.
+- **Reset simulation**: reset_task behavior = delete queue from globalAgentQueues → close queue → update status to pending. Tests can simulate this without going through the MCP tool handler.
