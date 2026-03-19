@@ -364,15 +364,22 @@ export async function stopAgent(
  * no disk write needed. If cache miss → persist to disk, then launch agent which
  * loads persisted messages on startup.
  *
+ * For child nodes, auto-launches the agent via ensureChildAgentRunning.
+ * For root nodes, returns "persisted" so the caller can handle launch
+ * (root launch requires orchestratorSystemPrompt and resume logic).
+ *
  * Callers should NOT include the message content in any launch prompt — the agent
  * will receive it via queue drain of persisted messages.
+ *
+ * @returns "enqueued" if delivered to a running agent's queue,
+ *          "persisted" if written to disk (agent not running).
  */
 export async function deliverMessage(
 	ctx: DaemonContext,
 	project: { id: string; path: string },
 	nodeId: string,
 	message: QueueMessage,
-): Promise<void> {
+): Promise<"enqueued" | "persisted"> {
 	const tracker = await getTracker(ctx, project.id);
 
 	// 1. Try direct queue delivery (child agent running)
@@ -380,7 +387,7 @@ export async function deliverMessage(
 	if (queue) {
 		try {
 			queue.enqueue(message);
-			return; // Agent running, message delivered via queue — no persist needed
+			return "enqueued";
 		} catch {
 			// Queue was closed — fall through to persist + launch
 		}
@@ -393,18 +400,20 @@ export async function deliverMessage(
 		if (rootSession?.queue) {
 			try {
 				rootSession.queue.enqueue(message);
-				return; // Root agent running — no persist needed
+				return "enqueued";
 			} catch {
 				// Queue was closed — fall through to persist + launch
 			}
 		}
 	}
 
-	// 3. No running agent — persist to disk + launch
+	// 3. No running agent — persist to disk
 	await persistMessage(ctx.config.dataDir, project.id, nodeId, message);
 
+	// 4. Auto-launch for child nodes only. Root launch requires caller-specific
+	// logic (orchestratorSystemPrompt, resume detection) — caller handles it.
 	const node = tracker.get(nodeId);
-	if (node) {
+	if (node?.parentId) {
 		ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
 			broadcastEvent(ctx, project.id, {
 				type: "error",
@@ -413,6 +422,8 @@ export async function deliverMessage(
 			});
 		});
 	}
+
+	return "persisted";
 }
 
 /**
@@ -986,7 +997,16 @@ export async function handleOrchestrate(
 	return { ok: true };
 }
 
-/** Inject a user message into a running agent. Used by POST /message and WS inject_message. */
+/**
+ * Inject a user message into a running or stopped agent.
+ * Thin wrapper around deliverMessage that adds REST-specific concerns:
+ * - Project validation
+ * - First-run launch (no rootNodeId yet)
+ * - Auto-resume orchestrator when not running
+ * - addPendingMessage for UI feedback
+ *
+ * Used by POST /message and WS inject_message.
+ */
 export async function handleInjectMessage(
 	ctx: DaemonContext,
 	projectId: string,
@@ -1020,33 +1040,21 @@ export async function handleInjectMessage(
 		};
 	}
 
-	// Use deliverMessage for unified path: persist → enqueue (if running) → launch (if not).
-	// For root orchestrator, deliverMessage checks activeSessions queue.
+	// Unified delivery: enqueue if running, persist if not
 	const msg: QueueMessage = {
 		source: "user",
 		content: message,
 		...(images?.length ? { images } : {}),
 	};
 
-	// Check if session is running — deliverMessage handles this,
-	// but we need the result to know whether to auto-resume
-	const session = ctx.activeSessions.get(projectId);
-	if (session?.queue) {
-		// Session running — direct enqueue, no persist needed (cache invariant)
-		try {
-			session.queue.enqueue(msg);
-		} catch {
-			return { ok: false, error: "Queue closed", status: 409 };
-		}
-		addPendingMessage(ctx, projectId, null, message);
+	const result = await deliverMessage(ctx, project, rootNodeId, msg);
+	addPendingMessage(ctx, projectId, null, message);
+
+	if (result === "enqueued") {
 		return { ok: true };
 	}
 
-	// No active session — persist and auto-resume
-	await persistMessage(ctx.config.dataDir, projectId, rootNodeId, msg);
-	addPendingMessage(ctx, projectId, null, message);
-
-	// Auto-resume the orchestrator if we have the system prompt.
+	// Message was persisted (agent not running) — auto-resume if possible.
 	// Don't pass the user message as prompt — it's already persisted to disk
 	// and will be delivered as a queue_message. Passing it as prompt would cause
 	// the message to appear twice.
