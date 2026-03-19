@@ -30,11 +30,8 @@ import {
 	truncateSearchOutput,
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
-import {
-	type StrongEvent,
-	strongEventsToAnthropicMessages,
-} from "./canonical-events.ts";
 import { EventStore } from "./event-store.ts";
+import { type Event, eventsToAnthropicMessages } from "./events.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { AgentResult } from "./types.ts";
@@ -1932,9 +1929,9 @@ function buildAnthropicResponse(opts: {
 	} as Anthropic.Messages.Message;
 }
 
-// ── StrongEvent deterministic verification (Anthropic) ──
+// ── Event deterministic verification (Anthropic) ──
 
-describe("StrongEvent deterministic verification", () => {
+describe("Event deterministic verification", () => {
 	let tmpDir: string;
 
 	beforeAll(async () => {
@@ -1998,7 +1995,7 @@ describe("StrongEvent deterministic verification", () => {
 		expect(types).toContain("assistant_text");
 
 		// Verify reconstruction matches
-		const reconstructed = strongEventsToAnthropicMessages(events);
+		const reconstructed = eventsToAnthropicMessages(events);
 		expect(reconstructed.length).toBeGreaterThanOrEqual(2);
 		expect(reconstructed[0]).toEqual({
 			role: "user",
@@ -2107,7 +2104,7 @@ describe("StrongEvent deterministic verification", () => {
 		}
 
 		// Verify reconstruction
-		const reconstructed = strongEventsToAnthropicMessages(events);
+		const reconstructed = eventsToAnthropicMessages(events);
 		// Should have: user, assistant+tool_use, tool_result, assistant(end_turn text)
 		expect(reconstructed.length).toBeGreaterThanOrEqual(4);
 
@@ -2216,7 +2213,7 @@ describe("StrongEvent deterministic verification", () => {
 		}
 
 		// Verify reconstruction preserves is_error
-		const reconstructed = strongEventsToAnthropicMessages(events);
+		const reconstructed = eventsToAnthropicMessages(events);
 		const userMsgWithToolResult = reconstructed.find(
 			(m) =>
 				(m as { role: string }).role === "user" &&
@@ -2302,13 +2299,15 @@ describe("StrongEvent deterministic verification", () => {
 		expect(types).toContain("queue_message");
 		const queueMsgEvent = events.find((e) => e.type === "queue_message");
 		expect(queueMsgEvent).toBeDefined();
-		if (queueMsgEvent?.type === "queue_message") {
-			expect(queueMsgEvent.source).toBe("user");
+		if (
+			queueMsgEvent?.type === "queue_message" &&
+			queueMsgEvent.source === "user"
+		) {
 			expect(queueMsgEvent.content).toContain("Here is a new instruction");
 		}
 
 		// Verify reconstruction
-		const reconstructed = strongEventsToAnthropicMessages(events);
+		const reconstructed = eventsToAnthropicMessages(events);
 		// Should have: user_msg, assistant(end_turn), queue_message(as user), assistant(continue)
 		expect(reconstructed.length).toBeGreaterThanOrEqual(4);
 
@@ -2442,7 +2441,7 @@ describe("StrongEvent deterministic verification", () => {
 		}
 
 		// Verify reconstruction batching
-		const reconstructed = strongEventsToAnthropicMessages(events);
+		const reconstructed = eventsToAnthropicMessages(events);
 		// user, assistant(text + 3 tool_uses), user(3 tool_results), assistant(end_turn)
 		expect(reconstructed.length).toBe(4);
 
@@ -2476,7 +2475,7 @@ describe("StrongEvent deterministic verification", () => {
 		const sessionId = "test-compaction-session";
 
 		// Manually write pre-compaction events
-		const preEvents: StrongEvent[] = [
+		const preEvents: Event[] = [
 			{
 				type: "user_message",
 				content: "Old message before compaction",
@@ -2499,7 +2498,7 @@ describe("StrongEvent deterministic verification", () => {
 		});
 
 		// Write post-compaction events
-		const postEvents: StrongEvent[] = [
+		const postEvents: Event[] = [
 			{
 				type: "compacted_resume",
 				content: "Resuming from checkpoint",
@@ -2525,7 +2524,7 @@ describe("StrongEvent deterministic verification", () => {
 		expect(all.length).toBe(5); // 2 pre + 1 marker + 2 post
 
 		// Reconstruction of active events should be correct
-		const reconstructed = strongEventsToAnthropicMessages(active);
+		const reconstructed = eventsToAnthropicMessages(active);
 		expect(reconstructed.length).toBe(2);
 		expect(reconstructed[0]).toEqual({
 			role: "user",
@@ -2543,7 +2542,7 @@ describe("StrongEvent deterministic verification", () => {
 		const sessionId = "test-budget-session";
 
 		// Write a conversation with a budget warning
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "user_message",
 				content: "Start working",
@@ -2582,7 +2581,7 @@ describe("StrongEvent deterministic verification", () => {
 		eventStore.appendBatch(sessionId, events);
 
 		const active = eventStore.readActive(sessionId);
-		const reconstructed = strongEventsToAnthropicMessages(active);
+		const reconstructed = eventsToAnthropicMessages(active);
 
 		// Should have: user, assistant+tool, tool_result, budget_warning(user), assistant
 		expect(reconstructed.length).toBe(5);

@@ -31,7 +31,7 @@ export interface AgentRequest {
 	hasRunningChildren?: () => boolean;
 	/** Budget limit in USD — provider will inject warnings at 80% and 100%. */
 	budgetUsd?: number;
-	/** EventStore for strongly-typed event persistence (StrongEvent JSONL). */
+	/** EventStore for strongly-typed event persistence (Event JSONL). */
 	eventStore?: EventStore;
 }
 

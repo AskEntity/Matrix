@@ -16,13 +16,12 @@ import type {
 	AgentSession,
 } from "./agent-provider.ts";
 import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
-import {
-	type CanonicalEvent,
-	eventsToAnthropicMessages,
-	type StrongEvent,
-	strongEventsToAnthropicMessages,
-} from "./canonical-events.ts";
 import { DEFAULT_MODEL } from "./config.ts";
+import {
+	type Event,
+	eventsToAnthropicMessages,
+	queueMessageToEvent,
+} from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
@@ -600,29 +599,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			? [...existingHistory, { role: "user" as const, content: request.prompt }]
 			: [{ role: "user" as const, content: firstUserContent }];
 
-		// ── Canonical events: provider-agnostic record of each messages.push ──
-		const existingEvents = request.sessionStore
-			? ((await request.sessionStore.get(sessionId, "events")) as
-					| CanonicalEvent[]
-					| null)
-			: null;
-		const events: CanonicalEvent[] = existingEvents ? [...existingEvents] : [];
-		// Record the initial user message (or resume message)
-		if (isResume) {
-			events.push({
-				type: "user_message",
-				content: request.prompt,
-				isResume: true,
-			});
-		} else {
-			events.push({
-				type: "user_message",
-				content: firstUserContent,
-				cwd,
-			});
-		}
-
-		// ── StrongEvent recording via EventStore (JSONL append-only) ──
+		// ── Event recording via EventStore (JSONL append-only) ──
 		const eventStore = request.eventStore;
 		if (eventStore) {
 			if (isResume) {
@@ -726,18 +703,12 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					);
 					const oldTokens = preCompactTokenCount;
 					messages.length = 0;
-					events.length = 0;
 					const userContent = cwd
 						? `Working directory: ${cwd}\n\n${compactedContent}`
 						: compactedContent;
 					messages.push({
 						role: "user" as const,
 						content: userContent,
-					});
-					events.push({
-						type: "compacted_resume",
-						content: userContent,
-						cwd,
 					});
 					const postCompactChars = userContent.length;
 					const estimatedPostCompactTokensForSaved = Math.floor(
@@ -833,10 +804,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					messages.push({
 						role: "user" as const,
 						content: summarizationInstruction,
-					});
-					events.push({
-						type: "summarization_request",
-						instruction: summarizationInstruction,
 					});
 					if (eventStore) {
 						eventStore.append(sessionId, {
@@ -1016,22 +983,18 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 			// Add assistant message to history
 			messages.push({ role: "assistant", content: response.content });
-			events.push({
-				type: "assistant_response",
-				content: response.content as unknown[],
-			});
-			// Record individual StrongEvents for each content block
+			// Record individual Events for each content block
 			if (eventStore) {
-				const strongEvents: StrongEvent[] = [];
+				const contentEvents: Event[] = [];
 				for (const block of response.content) {
 					if (block.type === "text") {
-						strongEvents.push({
+						contentEvents.push({
 							type: "assistant_text",
 							content: block.text,
 							ts: Date.now(),
 						});
 					} else if (block.type === "tool_use") {
-						strongEvents.push({
+						contentEvents.push({
 							type: "tool_call",
 							tool: block.name,
 							toolCallId: block.id,
@@ -1040,7 +1003,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						});
 					}
 				}
-				eventStore.appendBatch(sessionId, strongEvents);
+				eventStore.appendBatch(sessionId, contentEvents);
 			}
 
 			// If compaction is pending, skip tool execution and continue to next iteration
@@ -1101,39 +1064,18 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 								...imageBlocks,
 							],
 						});
-						events.push({
-							type: "queue_messages",
-							formatted,
-							hasImages: true,
-							imageBlocks: imageBlocks as unknown[],
-						});
 					} else {
 						messages.push({
 							role: "user" as const,
 							content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
 						});
-						events.push({
-							type: "queue_messages",
-							formatted,
-						});
 					}
-					// Record individual queue_message StrongEvents
+					// Record individual queue_message Events
 					if (eventStore) {
-						const strongEvents: StrongEvent[] = nonCompact.map((msg) => ({
-							type: "queue_message" as const,
-							source: msg.source,
-							content: formatQueueMessage(msg),
-							...(msg.source === "user" && msg.images?.length
-								? {
-										images: msg.images.map((img) => ({
-											base64: img.base64,
-											mediaType: img.mediaType,
-										})),
-									}
-								: {}),
-							ts: Date.now(),
-						}));
-						eventStore.appendBatch(sessionId, strongEvents);
+						const queueEvents: Event[] = nonCompact.map((msg) =>
+							queueMessageToEvent(msg),
+						);
+						eventStore.appendBatch(sessionId, queueEvents);
 					}
 					continue;
 				} catch {
@@ -1303,26 +1245,16 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						},
 					],
 				});
-				events.push({
-					type: "tool_results",
-					results: toolResults as unknown[],
-					hasImages: true,
-					imageBlocks: cancellationImages as unknown[],
-				});
 			} else {
 				messages.push({ role: "user", content: toolResults });
-				events.push({
-					type: "tool_results",
-					results: toolResults as unknown[],
-				});
 			}
-			// Record individual tool_result StrongEvents
+			// Record individual tool_result Events
 			if (eventStore) {
-				const strongEvents: StrongEvent[] = [];
-				for (let i = 0; i < toolUses.length; i++) {
-					const toolUse = toolUses[i] as ToolUseBlock;
-					const toolResult = toolResults[i] as ToolResultBlockParam;
-					const exec = execResults[i] as {
+				const toolEvents: Event[] = [];
+				for (let idx = 0; idx < toolUses.length; idx++) {
+					const toolUse = toolUses[idx] as ToolUseBlock;
+					const toolResult = toolResults[idx] as ToolResultBlockParam;
+					const exec = execResults[idx] as {
 						content: string;
 						isError: boolean;
 						mcpImages?: Array<{ base64: string; mediaType: string }>;
@@ -1344,7 +1276,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							mediaType: exec.mediaType,
 						});
 					}
-					strongEvents.push({
+					toolEvents.push({
 						type: "tool_result",
 						toolCallId: toolUse.id,
 						content: resultContent,
@@ -1353,30 +1285,16 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						ts: Date.now(),
 					});
 				}
-				// Record cancellation-point queue messages as separate StrongEvents
+				// Record cancellation-point queue messages as separate Events
 				// (user-sent images belong on queue_message, not tool_result)
 				for (const qm of cancellationQueueMsgs) {
-					strongEvents.push({
-						type: "queue_message" as const,
-						source: qm.source,
-						content: formatQueueMessage(qm),
-						...(qm.source === "user" && qm.images?.length
-							? {
-									images: qm.images.map((img) => ({
-										base64: img.base64,
-										mediaType: img.mediaType,
-									})),
-								}
-							: {}),
-						ts: Date.now(),
-					});
+					toolEvents.push(queueMessageToEvent(qm));
 				}
-				eventStore.appendBatch(sessionId, strongEvents);
+				eventStore.appendBatch(sessionId, toolEvents);
 			}
 
 			// Persist after tool results too (captures full turn) — fire-and-forget
 			request.sessionStore?.setSync(sessionId, [...messages]);
-			request.sessionStore?.setSync(sessionId, [...events], "events");
 
 			// Budget check: compute running cost and warn the agent if approaching limit
 			if (request.budgetUsd && request.budgetUsd > 0) {
@@ -1394,7 +1312,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						role: "user" as const,
 						content: warning,
 					});
-					events.push({ type: "budget_warning", warning });
 					if (eventStore) {
 						eventStore.append(sessionId, {
 							type: "budget_warning",
@@ -1409,7 +1326,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						role: "user" as const,
 						content: warning,
 					});
-					events.push({ type: "budget_warning", warning });
 					if (eventStore) {
 						eventStore.append(sessionId, {
 							type: "budget_warning",
@@ -1422,33 +1338,20 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			}
 		}
 
-		// Persist conversation history and canonical events for future resume
+		// Persist conversation history for future resume
 		if (request.sessionStore) {
 			await request.sessionStore.set(sessionId, [...messages]);
-			await request.sessionStore.set(sessionId, [...events], "events");
 		}
 
-		// Deterministic verification: compare reconstructed messages from old CanonicalEvents
-		if (events.length > 0) {
-			const reconstructed = eventsToAnthropicMessages(events);
-			const match = JSON.stringify(reconstructed) === JSON.stringify(messages);
-			if (!match) {
-				console.error("[EVENTS MISMATCH]", {
-					messagesLen: messages.length,
-					reconstructedLen: reconstructed.length,
-				});
-			}
-		}
-
-		// Deterministic verification: compare reconstructed messages from StrongEvents
+		// Deterministic verification: compare reconstructed messages from Events
 		if (eventStore) {
 			const activeEvents = eventStore.readActive(sessionId);
 			if (activeEvents.length > 0) {
-				const reconstructed = strongEventsToAnthropicMessages(activeEvents);
+				const reconstructed = eventsToAnthropicMessages(activeEvents);
 				const match =
 					JSON.stringify(messages) === JSON.stringify(reconstructed);
 				if (!match) {
-					console.error("[STRONG EVENTS MISMATCH]", {
+					console.error("[EVENTS MISMATCH]", {
 						messagesLen: messages.length,
 						eventsLen: activeEvents.length,
 						reconstructedLen: reconstructed.length,

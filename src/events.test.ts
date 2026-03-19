@@ -1,553 +1,125 @@
 import { describe, expect, test } from "bun:test";
 import {
-	type CanonicalEvent,
+	type Event,
 	eventsToAnthropicMessages,
 	eventsToOpenAIMessages,
-	type StrongEvent,
-	strongEventsToAnthropicMessages,
-	strongEventsToOpenAIMessages,
-} from "./canonical-events.ts";
+	formatQueueMessageEvent,
+	type QueueMessageEvent,
+	queueMessageToEvent,
+} from "./events.ts";
+
+describe("queueMessageToEvent", () => {
+	test("converts user message", () => {
+		const event = queueMessageToEvent({
+			source: "user",
+			content: "hello",
+			images: [{ base64: "abc", mediaType: "image/png" }],
+		});
+		expect(event.type).toBe("queue_message");
+		expect(event.source).toBe("user");
+		expect((event as { content: string }).content).toBe("hello");
+		expect((event as { images: unknown[] }).images).toHaveLength(1);
+	});
+
+	test("converts child_complete", () => {
+		const event = queueMessageToEvent({
+			source: "child_complete",
+			taskId: "t1",
+			title: "Auth",
+			success: true,
+			output: "done",
+		});
+		expect(event.source).toBe("child_complete");
+		expect((event as { taskId: string }).taskId).toBe("t1");
+	});
+
+	test("converts compact", () => {
+		const event = queueMessageToEvent({ source: "compact" });
+		expect(event.source).toBe("compact");
+	});
+});
+
+describe("formatQueueMessageEvent", () => {
+	test("formats user message", () => {
+		const event: QueueMessageEvent = {
+			type: "queue_message",
+			source: "user",
+			content: "Hello world",
+			ts: 1000,
+		};
+		expect(formatQueueMessageEvent(event)).toBe(
+			"<user_message>Hello world</user_message>",
+		);
+	});
+
+	test("formats child_complete", () => {
+		const event: QueueMessageEvent = {
+			type: "queue_message",
+			source: "child_complete",
+			taskId: "t1",
+			title: "Auth",
+			success: true,
+			output: "All tests pass",
+			ts: 1000,
+		};
+		expect(formatQueueMessageEvent(event)).toBe(
+			'<child_complete task="Auth" id="t1" status="passed">All tests pass</child_complete>',
+		);
+	});
+
+	test("formats parent_update with requestReply", () => {
+		const event: QueueMessageEvent = {
+			type: "queue_message",
+			source: "parent_update",
+			content: "What status?",
+			requestReply: true,
+			ts: 1000,
+		};
+		expect(formatQueueMessageEvent(event)).toBe(
+			'<parent_update requestReply="true">What status?</parent_update>',
+		);
+	});
+
+	test("formats clarify_response", () => {
+		const event: QueueMessageEvent = {
+			type: "queue_message",
+			source: "clarify_response",
+			answer: "Yes",
+			ts: 1000,
+		};
+		expect(formatQueueMessageEvent(event)).toBe(
+			"<clarify_response>Yes</clarify_response>",
+		);
+	});
+
+	test("formats compact", () => {
+		const event: QueueMessageEvent = {
+			type: "queue_message",
+			source: "compact",
+			ts: 1000,
+		};
+		expect(formatQueueMessageEvent(event)).toBe(
+			"<compact>Manual compaction requested</compact>",
+		);
+	});
+});
 
 describe("eventsToAnthropicMessages", () => {
 	test("returns empty array for no events", () => {
 		expect(eventsToAnthropicMessages([])).toEqual([]);
 	});
 
-	test("converts user_message event", () => {
-		const events: CanonicalEvent[] = [
-			{ type: "user_message", content: "Hello world" },
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "Hello world" },
-		]);
-	});
-
-	test("converts user_message with cwd (cwd already baked into content)", () => {
-		const events: CanonicalEvent[] = [
-			{
-				type: "user_message",
-				content: "Working directory: /tmp/test\n\nHello",
-				cwd: "/tmp/test",
-			},
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "Working directory: /tmp/test\n\nHello" },
-		]);
-	});
-
-	test("converts compacted_resume event", () => {
-		const events: CanonicalEvent[] = [
-			{ type: "compacted_resume", content: "Checkpoint summary here" },
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "Checkpoint summary here" },
-		]);
-	});
-
-	test("converts summarization_request event", () => {
-		const events: CanonicalEvent[] = [
-			{ type: "summarization_request", instruction: "Summarize now" },
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "Summarize now" },
-		]);
-	});
-
-	test("converts assistant_response event", () => {
-		const content = [{ type: "text", text: "I'll help you with that." }];
-		const events: CanonicalEvent[] = [{ type: "assistant_response", content }];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "assistant", content },
-		]);
-	});
-
-	test("converts queue_messages without images", () => {
-		const events: CanonicalEvent[] = [
-			{ type: "queue_messages", formatted: "New task assigned" },
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{
-				role: "user",
-				content:
-					"[Messages received while you were idle:]\nNew task assigned\n\nProcess these messages and continue working. Remember to call done() when finished.",
-			},
-		]);
-	});
-
-	test("converts queue_messages with images", () => {
-		const imageBlocks = [
-			{
-				type: "image",
-				source: {
-					type: "base64",
-					media_type: "image/png",
-					data: "abc123",
-				},
-			},
-		];
-		const events: CanonicalEvent[] = [
-			{
-				type: "queue_messages",
-				formatted: "Check this image",
-				hasImages: true,
-				imageBlocks,
-			},
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{
-				role: "user",
-				content: [
-					{
-						type: "text",
-						text: "[Messages received while you were idle:]\nCheck this image\n\nProcess these messages and continue working. Remember to call done() when finished.",
-					},
-					...imageBlocks,
-				],
-			},
-		]);
-	});
-
-	test("converts tool_results without images", () => {
-		const results = [
-			{
-				type: "tool_result",
-				tool_use_id: "id1",
-				content: "success",
-				is_error: false,
-			},
-		];
-		const events: CanonicalEvent[] = [{ type: "tool_results", results }];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: results },
-		]);
-	});
-
-	test("converts tool_results with images (includes text annotation)", () => {
-		const results = [
-			{
-				type: "tool_result",
-				tool_use_id: "id1",
-				content: "done",
-			},
-		];
-		const imageBlocks = [
-			{
-				type: "image",
-				source: {
-					type: "base64",
-					media_type: "image/jpeg",
-					data: "img_data",
-				},
-			},
-		];
-		const events: CanonicalEvent[] = [
-			{
-				type: "tool_results",
-				results,
-				hasImages: true,
-				imageBlocks,
-			},
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{
-				role: "user",
-				content: [
-					...results,
-					...imageBlocks,
-					{ type: "text", text: "[1 image(s) attached by user]" },
-				],
-			},
-		]);
-	});
-
-	test("converts budget_warning event", () => {
-		const events: CanonicalEvent[] = [
-			{
-				type: "budget_warning",
-				warning: "⚠️ Budget exceeded (0.50 / 0.40 budget). Call done() now.",
-			},
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{
-				role: "user",
-				content: "⚠️ Budget exceeded (0.50 / 0.40 budget). Call done() now.",
-			},
-		]);
-	});
-
-	test("converts a full conversation sequence", () => {
-		const events: CanonicalEvent[] = [
-			{
-				type: "user_message",
-				content: "Working directory: /tmp\n\nBuild a feature",
-				cwd: "/tmp",
-			},
-			{
-				type: "assistant_response",
-				content: [
-					{ type: "text", text: "I'll build that." },
-					{
-						type: "tool_use",
-						id: "tu_1",
-						name: "bash",
-						input: { command: "echo hi" },
-					},
-				],
-			},
-			{
-				type: "tool_results",
-				results: [
-					{
-						type: "tool_result",
-						tool_use_id: "tu_1",
-						content: "hi\n",
-						is_error: false,
-					},
-				],
-			},
-			{
-				type: "assistant_response",
-				content: [{ type: "text", text: "Done!" }],
-			},
-		];
-
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages).toHaveLength(4);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content: "Working directory: /tmp\n\nBuild a feature",
-		});
-		expect(messages[1]).toEqual({
-			role: "assistant",
-			content: [
-				{ type: "text", text: "I'll build that." },
-				{
-					type: "tool_use",
-					id: "tu_1",
-					name: "bash",
-					input: { command: "echo hi" },
-				},
-			],
-		});
-		expect(messages[2]).toEqual({
-			role: "user",
-			content: [
-				{
-					type: "tool_result",
-					tool_use_id: "tu_1",
-					content: "hi\n",
-					is_error: false,
-				},
-			],
-		});
-		expect(messages[3]).toEqual({
-			role: "assistant",
-			content: [{ type: "text", text: "Done!" }],
-		});
-	});
-
-	test("handles compaction scenario (events reset after compaction)", () => {
-		// After compaction, events.length = 0 and a compacted_resume is the first event
-		const events: CanonicalEvent[] = [
-			{
-				type: "compacted_resume",
-				content:
-					"Working directory: /tmp\n\n## Checkpoint Summary\n\nCompleted steps 1-3.",
-				cwd: "/tmp",
-			},
-			{
-				type: "assistant_response",
-				content: [{ type: "text", text: "Continuing from checkpoint." }],
-			},
-		];
-
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages).toHaveLength(2);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content:
-				"Working directory: /tmp\n\n## Checkpoint Summary\n\nCompleted steps 1-3.",
-		});
-		expect(messages[1]).toEqual({
-			role: "assistant",
-			content: [{ type: "text", text: "Continuing from checkpoint." }],
-		});
-	});
-
-	test("handles queue_messages with empty imageBlocks array (no images)", () => {
-		const events: CanonicalEvent[] = [
-			{
-				type: "queue_messages",
-				formatted: "Message text",
-				hasImages: false,
-				imageBlocks: [],
-			},
-		];
-		// Empty imageBlocks array means no images — should use string content
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{
-				role: "user",
-				content:
-					"[Messages received while you were idle:]\nMessage text\n\nProcess these messages and continue working. Remember to call done() when finished.",
-			},
-		]);
-	});
-
-	test("handles tool_results with empty imageBlocks array (no images)", () => {
-		const results = [
-			{ type: "tool_result", tool_use_id: "id1", content: "ok" },
-		];
-		const events: CanonicalEvent[] = [
-			{
-				type: "tool_results",
-				results,
-				hasImages: false,
-				imageBlocks: [],
-			},
-		];
-		// Empty imageBlocks = no images, should use results directly
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: results },
-		]);
-	});
-
-	test("handles resume user_message", () => {
-		const events: CanonicalEvent[] = [
-			{
-				type: "user_message",
-				content: "Continue the task",
-				isResume: true,
-			},
-		];
-		// isResume is metadata only — message format is the same
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "Continue the task" },
-		]);
-	});
-
-	test("multiple tool_results with images counts correctly", () => {
-		const results = [
-			{ type: "tool_result", tool_use_id: "id1", content: "ok" },
-			{ type: "tool_result", tool_use_id: "id2", content: "ok" },
-		];
-		const imageBlocks = [
-			{
-				type: "image",
-				source: { type: "base64", media_type: "image/png", data: "a" },
-			},
-			{
-				type: "image",
-				source: { type: "base64", media_type: "image/png", data: "b" },
-			},
-		];
-		const events: CanonicalEvent[] = [
-			{
-				type: "tool_results",
-				results,
-				hasImages: true,
-				imageBlocks,
-			},
-		];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages).toHaveLength(1);
-		const content = (messages[0] as { content: unknown[] }).content;
-		// results + 2 images + 1 text annotation
-		expect(content).toHaveLength(5);
-		expect(content[4]).toEqual({
-			type: "text",
-			text: "[2 image(s) attached by user]",
-		});
-	});
-});
-
-describe("eventsToOpenAIMessages", () => {
-	test("returns empty array for no events", () => {
-		expect(eventsToOpenAIMessages([])).toEqual([]);
-	});
-
-	test("converts user_message event", () => {
-		const events: CanonicalEvent[] = [
-			{ type: "user_message", content: "Hello world" },
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "Hello world" },
-		]);
-	});
-
-	test("converts compacted_resume event", () => {
-		const events: CanonicalEvent[] = [
-			{
-				type: "compacted_resume",
-				content: "Working directory: /tmp\n\nCheckpoint",
-				cwd: "/tmp",
-			},
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "Working directory: /tmp\n\nCheckpoint" },
-		]);
-	});
-
-	test("converts summarization_request event", () => {
-		const events: CanonicalEvent[] = [
-			{ type: "summarization_request", instruction: "Summarize now" },
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "Summarize now" },
-		]);
-	});
-
-	test("converts assistant_response — spreads content array", () => {
-		const assistantMsg = {
-			role: "assistant",
-			content: "I'll help",
-			tool_calls: [
-				{
-					id: "call_1",
-					type: "function",
-					function: { name: "bash", arguments: '{"command":"echo hi"}' },
-				},
-			],
-		};
-		const events: CanonicalEvent[] = [
-			{ type: "assistant_response", content: [assistantMsg] },
-		];
-		// Should spread — each item in content becomes a separate message
-		expect(eventsToOpenAIMessages(events)).toEqual([assistantMsg]);
-	});
-
-	test("converts tool_results — spreads results array", () => {
-		const toolMsg1 = {
-			role: "tool",
-			tool_call_id: "call_1",
-			name: "bash",
-			content: "hi\n",
-		};
-		const toolMsg2 = {
-			role: "tool",
-			tool_call_id: "call_2",
-			name: "read_file",
-			content: "file contents",
-		};
-		const events: CanonicalEvent[] = [
-			{ type: "tool_results", results: [toolMsg1, toolMsg2] },
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([toolMsg1, toolMsg2]);
-	});
-
-	test("converts queue_messages without images", () => {
-		const events: CanonicalEvent[] = [
-			{ type: "queue_messages", formatted: "New task assigned" },
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{
-				role: "user",
-				content:
-					"[Messages received while you were idle:]\nNew task assigned\n\nProcess these messages and continue working. Remember to call done() when finished.",
-			},
-		]);
-	});
-
-	test("converts queue_messages with images", () => {
-		const imageBlocks = [
-			{
-				type: "image_url",
-				image_url: { url: "data:image/png;base64,abc", detail: "auto" },
-			},
-		];
-		const events: CanonicalEvent[] = [
-			{
-				type: "queue_messages",
-				formatted: "Check this",
-				hasImages: true,
-				imageBlocks,
-			},
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{
-				role: "user",
-				content: [
-					{
-						type: "text",
-						text: "[Messages received while you were idle:]\nCheck this\n\nProcess these messages and continue working. Remember to call done() when finished.",
-					},
-					...imageBlocks,
-				],
-			},
-		]);
-	});
-
-	test("converts budget_warning event", () => {
-		const events: CanonicalEvent[] = [
-			{ type: "budget_warning", warning: "⚠️ Budget exceeded" },
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "⚠️ Budget exceeded" },
-		]);
-	});
-
-	test("converts a full OpenAI conversation sequence", () => {
-		const assistantMsg = {
-			role: "assistant",
-			content: "Running command.",
-			tool_calls: [
-				{
-					id: "call_1",
-					type: "function",
-					function: { name: "bash", arguments: '{"command":"ls"}' },
-				},
-			],
-		};
-		const toolResult = {
-			role: "tool",
-			tool_call_id: "call_1",
-			name: "bash",
-			content: "file1.ts\nfile2.ts",
-		};
-		const events: CanonicalEvent[] = [
-			{
-				type: "user_message",
-				content: "Working directory: /tmp\n\nList files",
-				cwd: "/tmp",
-			},
-			{ type: "assistant_response", content: [assistantMsg] },
-			{ type: "tool_results", results: [toolResult] },
-			{
-				type: "assistant_response",
-				content: [{ role: "assistant", content: "Found 2 files." }],
-			},
-		];
-
-		const messages = eventsToOpenAIMessages(events);
-		expect(messages).toHaveLength(4);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content: "Working directory: /tmp\n\nList files",
-		});
-		expect(messages[1]).toEqual(assistantMsg);
-		expect(messages[2]).toEqual(toolResult);
-		expect(messages[3]).toEqual({
-			role: "assistant",
-			content: "Found 2 files.",
-		});
-	});
-});
-
-describe("strongEventsToAnthropicMessages", () => {
-	test("returns empty array for no events", () => {
-		expect(strongEventsToAnthropicMessages([])).toEqual([]);
-	});
-
 	test("converts user_message", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "user_message", content: "Hello world", ts: 1000 },
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "Hello world" },
 		]);
 	});
 
 	test("converts compacted_resume", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "compacted_resume",
 				content: "Checkpoint summary",
@@ -555,34 +127,34 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1000,
 			},
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "Checkpoint summary" },
 		]);
 	});
 
 	test("converts summarization_request", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "summarization_request", instruction: "Summarize now", ts: 1000 },
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "Summarize now" },
 		]);
 	});
 
 	test("converts budget_warning", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "budget_warning", warning: "⚠️ Over budget", ts: 1000 },
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "⚠️ Over budget" },
 		]);
 	});
 
 	test("converts assistant_text only → array content format", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "assistant_text", content: "I'll help you.", ts: 1000 },
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "assistant",
 				content: [{ type: "text", text: "I'll help you." }],
@@ -591,7 +163,7 @@ describe("strongEventsToAnthropicMessages", () => {
 	});
 
 	test("converts assistant_text + tool_calls → single assistant message", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "assistant_text", content: "Let me check.", ts: 1000 },
 			{
 				type: "tool_call",
@@ -608,7 +180,7 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1002,
 			},
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "assistant",
 				content: [
@@ -633,7 +205,7 @@ describe("strongEventsToAnthropicMessages", () => {
 	});
 
 	test("converts tool_calls without assistant_text", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_call",
 				tool: "bash",
@@ -642,7 +214,7 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1000,
 			},
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "assistant",
 				content: [
@@ -659,7 +231,7 @@ describe("strongEventsToAnthropicMessages", () => {
 	});
 
 	test("converts tool_results → single user message", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_result",
 				toolCallId: "tc1",
@@ -675,7 +247,7 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1001,
 			},
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "user",
 				content: [
@@ -697,7 +269,7 @@ describe("strongEventsToAnthropicMessages", () => {
 	});
 
 	test("tool_results with images embeds images inside tool_result content", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_result",
 				toolCallId: "tc1",
@@ -707,8 +279,7 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1000,
 			},
 		];
-		// Tool images go INSIDE the tool_result content (matching provider format)
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "user",
 				content: [
@@ -733,7 +304,7 @@ describe("strongEventsToAnthropicMessages", () => {
 	});
 
 	test("queue_messages between tool_results merge into user message", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_result",
 				toolCallId: "tc1",
@@ -755,7 +326,7 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1002,
 			},
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "user",
 				content: [
@@ -767,7 +338,7 @@ describe("strongEventsToAnthropicMessages", () => {
 					},
 					{
 						type: "text",
-						text: "[Messages received while you were working:]\nNew instructions here",
+						text: "[Messages received while you were working:]\n<parent_update>New instructions here</parent_update>",
 					},
 					{
 						type: "tool_result",
@@ -781,7 +352,7 @@ describe("strongEventsToAnthropicMessages", () => {
 	});
 
 	test("standalone queue_message → user message with idle wrapper", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "queue_message",
 				source: "user",
@@ -789,17 +360,17 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1000,
 			},
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "user",
 				content:
-					"[Messages received while you were idle:]\nPlease check this\n\nProcess these messages and continue working. Remember to call done() when finished.",
+					"[Messages received while you were idle:]\n<user_message>Please check this</user_message>\n\nProcess these messages and continue working. Remember to call done() when finished.",
 			},
 		]);
 	});
 
 	test("compact_marker is skipped", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "user_message", content: "hello", ts: 1000 },
 			{
 				type: "compact_marker",
@@ -809,14 +380,14 @@ describe("strongEventsToAnthropicMessages", () => {
 			},
 			{ type: "compacted_resume", content: "summary", ts: 2001 },
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "hello" },
 			{ role: "user", content: "summary" },
 		]);
 	});
 
 	test("full conversation: user → assistant+tools → results → assistant", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "user_message",
 				content: "Working directory: /tmp\n\nBuild a feature",
@@ -841,7 +412,7 @@ describe("strongEventsToAnthropicMessages", () => {
 			{ type: "assistant_text", content: "Done!", ts: 1004 },
 		];
 
-		const messages = strongEventsToAnthropicMessages(events);
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(4);
 		expect(messages[0]).toEqual({
 			role: "user",
@@ -878,7 +449,7 @@ describe("strongEventsToAnthropicMessages", () => {
 	});
 
 	test("compaction scenario: compacted_resume + continuation", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "compacted_resume",
 				content: "## Checkpoint\n\nCompleted steps 1-3.",
@@ -911,44 +482,16 @@ describe("strongEventsToAnthropicMessages", () => {
 			},
 		];
 
-		const messages = strongEventsToAnthropicMessages(events);
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(4);
 		expect(messages[0]).toEqual({
 			role: "user",
 			content: "## Checkpoint\n\nCompleted steps 1-3.",
 		});
-		expect(messages[1]).toEqual({
-			role: "assistant",
-			content: [
-				{ type: "text", text: "Continuing from checkpoint." },
-				{
-					type: "tool_use",
-					id: "tc1",
-					name: "bash",
-					input: { command: "ls" },
-					caller: { type: "direct" },
-				},
-			],
-		});
-		expect(messages[2]).toEqual({
-			role: "user",
-			content: [
-				{
-					type: "tool_result",
-					tool_use_id: "tc1",
-					content: "src/",
-					is_error: false,
-				},
-			],
-		});
-		expect(messages[3]).toEqual({
-			role: "assistant",
-			content: [{ type: "text", text: "Found the source directory." }],
-		});
 	});
 
 	test("tool_result with error flag", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_result",
 				toolCallId: "tc1",
@@ -957,7 +500,7 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1000,
 			},
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "user",
 				content: [
@@ -973,7 +516,7 @@ describe("strongEventsToAnthropicMessages", () => {
 	});
 
 	test("multiple images from multiple tool_results embedded in each", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_result",
 				toolCallId: "tc1",
@@ -991,10 +534,9 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1001,
 			},
 		];
-		const messages = strongEventsToAnthropicMessages(events);
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(1);
 		const content = (messages[0] as { content: unknown[] }).content;
-		// 2 tool_results (each with images embedded inside content)
 		expect(content).toHaveLength(2);
 		expect(content[0]).toEqual({
 			type: "tool_result",
@@ -1007,25 +549,10 @@ describe("strongEventsToAnthropicMessages", () => {
 				{ type: "text", text: "screenshot 1" },
 			],
 		});
-		expect(content[1]).toEqual({
-			type: "tool_result",
-			tool_use_id: "tc2",
-			content: [
-				{
-					type: "image",
-					source: {
-						type: "base64",
-						media_type: "image/jpeg",
-						data: "img2",
-					},
-				},
-				{ type: "text", text: "screenshot 2" },
-			],
-		});
 	});
 
 	test("queue_message with images between tool_results", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_result",
 				toolCallId: "tc1",
@@ -1041,14 +568,14 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1001,
 			},
 		];
-		const messages = strongEventsToAnthropicMessages(events);
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(1);
 		const content = (messages[0] as { content: unknown[] }).content;
 		// 1 tool_result + 1 text (queue msg) + 1 image + 1 annotation
 		expect(content).toHaveLength(4);
 		expect(content[1]).toEqual({
 			type: "text",
-			text: "[Messages received while you were working:]\nLook at this",
+			text: "[Messages received while you were working:]\n<user_message>Look at this</user_message>",
 		});
 		expect(content[2]).toEqual({
 			type: "image",
@@ -1061,8 +588,7 @@ describe("strongEventsToAnthropicMessages", () => {
 	});
 
 	test("tool images and queue images separated correctly", () => {
-		// tool_result has its own images (from tool), queue_message has user images
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_result",
 				toolCallId: "tc1",
@@ -1079,10 +605,9 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1001,
 			},
 		];
-		const messages = strongEventsToAnthropicMessages(events);
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(1);
 		const content = (messages[0] as { content: unknown[] }).content;
-		// tool_result (with embedded image) + queue text + queue image + annotation = 4
 		expect(content).toHaveLength(4);
 		// Tool images embedded INSIDE tool_result content
 		expect(content[0]).toEqual({
@@ -1103,7 +628,7 @@ describe("strongEventsToAnthropicMessages", () => {
 		// Queue message text
 		expect(content[1]).toEqual({
 			type: "text",
-			text: "[Messages received while you were working:]\nCheck this out",
+			text: "[Messages received while you were working:]\n<user_message>Check this out</user_message>",
 		});
 		// Queue images as sibling blocks with annotation
 		expect(content[2]).toEqual({
@@ -1121,7 +646,7 @@ describe("strongEventsToAnthropicMessages", () => {
 	});
 
 	test("handles resume user_message", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "user_message",
 				content: "Continue the task",
@@ -1129,28 +654,28 @@ describe("strongEventsToAnthropicMessages", () => {
 				ts: 1000,
 			},
 		];
-		expect(strongEventsToAnthropicMessages(events)).toEqual([
+		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "Continue the task" },
 		]);
 	});
 });
 
-describe("strongEventsToOpenAIMessages", () => {
+describe("eventsToOpenAIMessages", () => {
 	test("returns empty array for no events", () => {
-		expect(strongEventsToOpenAIMessages([])).toEqual([]);
+		expect(eventsToOpenAIMessages([])).toEqual([]);
 	});
 
 	test("converts user_message", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "user_message", content: "Hello world", ts: 1000 },
 		];
-		expect(strongEventsToOpenAIMessages(events)).toEqual([
+		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "user", content: "Hello world" },
 		]);
 	});
 
 	test("converts compacted_resume", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "compacted_resume",
 				content: "Checkpoint summary",
@@ -1158,40 +683,40 @@ describe("strongEventsToOpenAIMessages", () => {
 				ts: 1000,
 			},
 		];
-		expect(strongEventsToOpenAIMessages(events)).toEqual([
+		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "user", content: "Checkpoint summary" },
 		]);
 	});
 
 	test("converts summarization_request", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "summarization_request", instruction: "Summarize now", ts: 1000 },
 		];
-		expect(strongEventsToOpenAIMessages(events)).toEqual([
+		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "user", content: "Summarize now" },
 		]);
 	});
 
 	test("converts budget_warning", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "budget_warning", warning: "⚠️ Over budget", ts: 1000 },
 		];
-		expect(strongEventsToOpenAIMessages(events)).toEqual([
+		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "user", content: "⚠️ Over budget" },
 		]);
 	});
 
 	test("converts assistant_text only → content string, no tool_calls", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "assistant_text", content: "I'll help you.", ts: 1000 },
 		];
-		expect(strongEventsToOpenAIMessages(events)).toEqual([
+		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "assistant", content: "I'll help you." },
 		]);
 	});
 
 	test("converts assistant_text + tool_calls → single message with tool_calls array", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "assistant_text", content: "Let me check.", ts: 1000 },
 			{
 				type: "tool_call",
@@ -1208,7 +733,7 @@ describe("strongEventsToOpenAIMessages", () => {
 				ts: 1002,
 			},
 		];
-		expect(strongEventsToOpenAIMessages(events)).toEqual([
+		expect(eventsToOpenAIMessages(events)).toEqual([
 			{
 				role: "assistant",
 				content: "Let me check.",
@@ -1235,7 +760,7 @@ describe("strongEventsToOpenAIMessages", () => {
 	});
 
 	test("converts tool_calls without assistant_text → null content", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_call",
 				tool: "bash",
@@ -1244,7 +769,7 @@ describe("strongEventsToOpenAIMessages", () => {
 				ts: 1000,
 			},
 		];
-		expect(strongEventsToOpenAIMessages(events)).toEqual([
+		expect(eventsToOpenAIMessages(events)).toEqual([
 			{
 				role: "assistant",
 				content: null,
@@ -1263,7 +788,7 @@ describe("strongEventsToOpenAIMessages", () => {
 	});
 
 	test("converts tool_results → individual tool messages with name lookup", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_call",
 				tool: "bash",
@@ -1279,23 +804,7 @@ describe("strongEventsToOpenAIMessages", () => {
 				ts: 1001,
 			},
 		];
-		const messages = strongEventsToOpenAIMessages(events);
-		// First message is the assistant with tool_call
-		expect(messages[0]).toEqual({
-			role: "assistant",
-			content: null,
-			tool_calls: [
-				{
-					id: "call_1",
-					type: "function",
-					function: {
-						name: "bash",
-						arguments: JSON.stringify({ command: "ls" }),
-					},
-				},
-			],
-		});
-		// Second message is the tool result
+		const messages = eventsToOpenAIMessages(events);
 		expect(messages[1]).toEqual({
 			role: "tool",
 			tool_call_id: "call_1",
@@ -1305,7 +814,7 @@ describe("strongEventsToOpenAIMessages", () => {
 	});
 
 	test("tool_result uses 'unknown' when tool_call not found", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_result",
 				toolCallId: "orphan_call",
@@ -1314,7 +823,7 @@ describe("strongEventsToOpenAIMessages", () => {
 				ts: 1000,
 			},
 		];
-		expect(strongEventsToOpenAIMessages(events)).toEqual([
+		expect(eventsToOpenAIMessages(events)).toEqual([
 			{
 				role: "tool",
 				tool_call_id: "orphan_call",
@@ -1325,7 +834,7 @@ describe("strongEventsToOpenAIMessages", () => {
 	});
 
 	test("tool_results with images → separate user message with tool content as label", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_call",
 				tool: "take_screenshot",
@@ -1342,9 +851,8 @@ describe("strongEventsToOpenAIMessages", () => {
 				ts: 1001,
 			},
 		];
-		const messages = strongEventsToOpenAIMessages(events);
-		expect(messages).toHaveLength(3); // assistant + tool + user(images)
-		// Tool images use tool result content as label (not "[User-attached image]")
+		const messages = eventsToOpenAIMessages(events);
+		expect(messages).toHaveLength(3);
 		expect(messages[2]).toEqual({
 			role: "user",
 			content: [
@@ -1361,7 +869,7 @@ describe("strongEventsToOpenAIMessages", () => {
 	});
 
 	test("queue_message between tool_results appends to last tool content", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_call",
 				tool: "bash",
@@ -1397,12 +905,11 @@ describe("strongEventsToOpenAIMessages", () => {
 				ts: 1004,
 			},
 		];
-		const messages = strongEventsToOpenAIMessages(events);
-		// assistant + tool(call_1 with queue appended) + tool(call_2) = 3
+		const messages = eventsToOpenAIMessages(events);
 		expect(messages).toHaveLength(3);
 		// Queue message should be appended to the first tool result
 		expect((messages[1] as { content: string }).content).toContain(
-			"New instructions",
+			"<parent_update>New instructions</parent_update>",
 		);
 		expect((messages[1] as { content: string }).content).toContain(
 			"[Messages received while you were working:]",
@@ -1410,7 +917,7 @@ describe("strongEventsToOpenAIMessages", () => {
 	});
 
 	test("compact_marker is skipped", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "user_message", content: "hello", ts: 1000 },
 			{
 				type: "compact_marker",
@@ -1420,14 +927,14 @@ describe("strongEventsToOpenAIMessages", () => {
 			},
 			{ type: "compacted_resume", content: "summary", ts: 2001 },
 		];
-		expect(strongEventsToOpenAIMessages(events)).toEqual([
+		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "user", content: "hello" },
 			{ role: "user", content: "summary" },
 		]);
 	});
 
 	test("full conversation: user → assistant+tools → results → assistant", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "user_message",
 				content: "Working directory: /tmp\n\nBuild a feature",
@@ -1452,7 +959,7 @@ describe("strongEventsToOpenAIMessages", () => {
 			{ type: "assistant_text", content: "Done!", ts: 1004 },
 		];
 
-		const messages = strongEventsToOpenAIMessages(events);
+		const messages = eventsToOpenAIMessages(events);
 		expect(messages).toHaveLength(4);
 		expect(messages[0]).toEqual({
 			role: "user",
@@ -1485,7 +992,7 @@ describe("strongEventsToOpenAIMessages", () => {
 	});
 
 	test("handles resume user_message", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "user_message",
 				content: "Continue the task",
@@ -1493,13 +1000,13 @@ describe("strongEventsToOpenAIMessages", () => {
 				ts: 1000,
 			},
 		];
-		expect(strongEventsToOpenAIMessages(events)).toEqual([
+		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "user", content: "Continue the task" },
 		]);
 	});
 
 	test("multiple tool_results with images from different tools", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_call",
 				tool: "screenshot1",
@@ -1531,16 +1038,14 @@ describe("strongEventsToOpenAIMessages", () => {
 				ts: 1003,
 			},
 		];
-		const messages = strongEventsToOpenAIMessages(events);
-		// assistant + tool_1 + tool_2 + user(images)
+		const messages = eventsToOpenAIMessages(events);
 		expect(messages).toHaveLength(4);
-		// Image user message should have both images
 		const imgMsg = messages[3] as { content: unknown[] };
-		expect(imgMsg.content).toHaveLength(4); // 2 text + 2 image_url
+		expect(imgMsg.content).toHaveLength(4);
 	});
 
 	test("compaction scenario: compacted_resume + continuation", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "compacted_resume",
 				content: "## Checkpoint\n\nCompleted steps 1-3.",
@@ -1573,40 +1078,16 @@ describe("strongEventsToOpenAIMessages", () => {
 			},
 		];
 
-		const messages = strongEventsToOpenAIMessages(events);
+		const messages = eventsToOpenAIMessages(events);
 		expect(messages).toHaveLength(4);
 		expect(messages[0]).toEqual({
 			role: "user",
 			content: "## Checkpoint\n\nCompleted steps 1-3.",
 		});
-		expect(messages[1]).toEqual({
-			role: "assistant",
-			content: "Continuing from checkpoint.",
-			tool_calls: [
-				{
-					id: "call_1",
-					type: "function",
-					function: {
-						name: "bash",
-						arguments: JSON.stringify({ command: "ls" }),
-					},
-				},
-			],
-		});
-		expect(messages[2]).toEqual({
-			role: "tool",
-			tool_call_id: "call_1",
-			name: "bash",
-			content: "src/",
-		});
-		expect(messages[3]).toEqual({
-			role: "assistant",
-			content: "Found the source directory.",
-		});
 	});
 
 	test("tool_result with error flag", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_call",
 				tool: "bash",
@@ -1622,7 +1103,7 @@ describe("strongEventsToOpenAIMessages", () => {
 				ts: 1001,
 			},
 		];
-		const messages = strongEventsToOpenAIMessages(events);
+		const messages = eventsToOpenAIMessages(events);
 		expect(messages[1]).toEqual({
 			role: "tool",
 			tool_call_id: "call_1",
@@ -1634,15 +1115,13 @@ describe("strongEventsToOpenAIMessages", () => {
 
 // ── Bug fix regression tests ──
 
-describe("strongEventsToAnthropicMessages — converter bug fixes", () => {
+describe("eventsToAnthropicMessages — converter bug fixes", () => {
 	test("Bug 1: assistant text-only must use array content format (not bare string)", () => {
-		// The Anthropic provider stores: {role: "assistant", content: [{type: "text", text: "..."}]}
-		// The converter must produce the same array format, not a bare string.
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "user_message", content: "Hello", ts: 1000 },
 			{ type: "assistant_text", content: "Hi there!", ts: 1001 },
 		];
-		const messages = strongEventsToAnthropicMessages(events);
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages[1]).toEqual({
 			role: "assistant",
 			content: [{ type: "text", text: "Hi there!" }],
@@ -1650,11 +1129,11 @@ describe("strongEventsToAnthropicMessages — converter bug fixes", () => {
 	});
 
 	test("Bug 1: multiple assistant_text blocks still produce array format", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "assistant_text", content: "First paragraph.", ts: 1000 },
 			{ type: "assistant_text", content: "Second paragraph.", ts: 1001 },
 		];
-		const messages = strongEventsToAnthropicMessages(events);
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages[0]).toEqual({
 			role: "assistant",
 			content: [
@@ -1665,7 +1144,7 @@ describe("strongEventsToAnthropicMessages — converter bug fixes", () => {
 	});
 
 	test("Bug 1: assistant_text + tool_calls still produce array format (unchanged)", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{ type: "assistant_text", content: "Let me check.", ts: 1000 },
 			{
 				type: "tool_call",
@@ -1675,8 +1154,7 @@ describe("strongEventsToAnthropicMessages — converter bug fixes", () => {
 				ts: 1001,
 			},
 		];
-		const messages = strongEventsToAnthropicMessages(events);
-		// Should still be array format with text + tool_use (including caller)
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages[0]).toEqual({
 			role: "assistant",
 			content: [
@@ -1692,21 +1170,20 @@ describe("strongEventsToAnthropicMessages — converter bug fixes", () => {
 		});
 	});
 
-	test("Bug 2: standalone queue_message uses idle wrapper and formatted content", () => {
+	test("Bug 2: standalone queue_message formats from structured data", () => {
 		// Standalone queue_message events (from implicit yield drain) should:
-		// - Use "[Messages received while you were idle:]" (not "working")
-		// - Include the content as-is (already formatted by formatQueueMessage)
+		// - Use "[Messages received while you were idle:]"
+		// - Format content from structured fields via formatQueueMessageEvent
 		// - Include the "Process these messages..." suffix
-		// - Output as string content (not array)
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "queue_message",
 				source: "user",
-				content: "<user_message>Hello from user</user_message>",
+				content: "Hello from user",
 				ts: 1000,
 			},
 		];
-		const messages = strongEventsToAnthropicMessages(events);
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages[0]).toEqual({
 			role: "user",
 			content:
@@ -1715,21 +1192,21 @@ describe("strongEventsToAnthropicMessages — converter bug fixes", () => {
 	});
 
 	test("Bug 2: multiple queue_messages are joined and wrapped correctly", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "queue_message",
 				source: "user",
-				content: "<user_message>First message</user_message>",
+				content: "First message",
 				ts: 1000,
 			},
 			{
 				type: "queue_message",
 				source: "parent_update",
-				content: "<parent_update>Second message</parent_update>",
+				content: "Second message",
 				ts: 1001,
 			},
 		];
-		const messages = strongEventsToAnthropicMessages(events);
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages[0]).toEqual({
 			role: "user",
 			content:
@@ -1738,16 +1215,16 @@ describe("strongEventsToAnthropicMessages — converter bug fixes", () => {
 	});
 
 	test("Bug 2: queue_message with images uses array content format", () => {
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "queue_message",
 				source: "user",
-				content: "<user_message>Check this image</user_message>",
+				content: "Check this image",
 				images: [{ base64: "abc123", mediaType: "image/png" }],
 				ts: 1000,
 			},
 		];
-		const messages = strongEventsToAnthropicMessages(events);
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages[0]).toEqual({
 			role: "user",
 			content: [
@@ -1768,9 +1245,7 @@ describe("strongEventsToAnthropicMessages — converter bug fixes", () => {
 	});
 
 	test("Bug fix: queue_message between tool_results uses working wrapper", () => {
-		// Cancellation-point queue messages (between tool_results) should use
-		// "[Messages received while you were working:]" (existing behavior is correct for this case)
-		const events: StrongEvent[] = [
+		const events: Event[] = [
 			{
 				type: "tool_result",
 				toolCallId: "tc1",
@@ -1781,7 +1256,7 @@ describe("strongEventsToAnthropicMessages — converter bug fixes", () => {
 			{
 				type: "queue_message",
 				source: "parent_update",
-				content: "<parent_update>New instructions</parent_update>",
+				content: "New instructions",
 				ts: 1001,
 			},
 			{
@@ -1792,12 +1267,10 @@ describe("strongEventsToAnthropicMessages — converter bug fixes", () => {
 				ts: 1002,
 			},
 		];
-		const messages = strongEventsToAnthropicMessages(events);
+		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(1);
 		const content = (messages[0] as { content: unknown[] }).content;
-		// tool_result + queue text + tool_result
 		expect(content).toHaveLength(3);
-		// The queue text block should use "working" wrapper with content as-is
 		expect(content[1]).toEqual({
 			type: "text",
 			text: "[Messages received while you were working:]\n<parent_update>New instructions</parent_update>",

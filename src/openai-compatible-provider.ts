@@ -13,11 +13,10 @@ import {
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
 import {
-	type CanonicalEvent,
+	type Event,
 	eventsToOpenAIMessages,
-	type StrongEvent,
-	strongEventsToOpenAIMessages,
-} from "./canonical-events.ts";
+	queueMessageToEvent,
+} from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import {
@@ -461,29 +460,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					: request.prompt
 				: request.prompt;
 
-		// ── Canonical events: provider-agnostic record of each messages.push ──
-		const existingEvents = request.sessionStore
-			? ((await request.sessionStore.get(sessionId, "events")) as
-					| CanonicalEvent[]
-					| null)
-			: null;
-		const events: CanonicalEvent[] = existingEvents ? [...existingEvents] : [];
-		// Record the initial user message (or resume message)
-		if (isResume) {
-			events.push({
-				type: "user_message",
-				content: request.prompt,
-				isResume: true,
-			});
-		} else {
-			events.push({
-				type: "user_message",
-				content: firstUserContent,
-				cwd,
-			});
-		}
-
-		// ── StrongEvent recording via EventStore (dual-write alongside old events) ──
+		// ── Event recording via EventStore (JSONL append-only) ──
 		const eventStore = request.eventStore;
 		if (eventStore) {
 			if (isResume) {
@@ -567,18 +544,12 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					);
 					const oldTokens = preCompactTokenCount;
 					messages.length = 0;
-					events.length = 0;
 					const userContent = cwd
 						? `Working directory: ${cwd}\n\n${compactedContent}`
 						: compactedContent;
 					messages.push({
 						role: "user" as const,
 						content: userContent,
-					});
-					events.push({
-						type: "compacted_resume",
-						content: userContent,
-						cwd,
 					});
 					const postCompactChars = userContent.length;
 					const estimatedPostCompactTokens = Math.floor(postCompactChars / 4);
@@ -652,10 +623,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				messages.push({
 					role: "user" as const,
 					content: summarizationInstruction,
-				});
-				events.push({
-					type: "summarization_request",
-					instruction: summarizationInstruction,
 				});
 				if (eventStore) {
 					eventStore.append(sessionId, {
@@ -742,15 +709,11 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				historyMsg.tool_calls = assistantMsg.tool_calls;
 			}
 			messages.push(historyMsg);
-			events.push({
-				type: "assistant_response",
-				content: [{ ...historyMsg }],
-			});
-			// Record individual StrongEvents for each content block
+			// Record individual Events for each content block
 			if (eventStore) {
-				const strongEvents: StrongEvent[] = [];
+				const contentEvents: Event[] = [];
 				if (assistantMsg.content) {
-					strongEvents.push({
+					contentEvents.push({
 						type: "assistant_text",
 						content: assistantMsg.content,
 						ts: Date.now(),
@@ -768,7 +731,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						} catch {
 							// Keep empty
 						}
-						strongEvents.push({
+						contentEvents.push({
 							type: "tool_call",
 							tool: tc.function.name,
 							toolCallId: tc.id,
@@ -777,7 +740,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						});
 					}
 				}
-				eventStore.appendBatch(sessionId, strongEvents);
+				eventStore.appendBatch(sessionId, contentEvents);
 			}
 
 			// If compaction is pending, skip tool execution and continue to next iteration
@@ -838,39 +801,18 @@ export class OpenAICompatibleProvider implements AgentProvider {
 								...imageParts,
 							],
 						});
-						events.push({
-							type: "queue_messages",
-							formatted,
-							hasImages: true,
-							imageBlocks: imageParts as unknown[],
-						});
 					} else {
 						messages.push({
 							role: "user",
 							content: `[Messages received while you were idle:]\n${formatted}\n\nProcess these messages and continue working. Remember to call done() when finished.`,
 						});
-						events.push({
-							type: "queue_messages",
-							formatted,
-						});
 					}
-					// Record individual queue_message StrongEvents
+					// Record individual queue_message Events
 					if (eventStore) {
-						const strongEvents: StrongEvent[] = nonCompact.map((msg) => ({
-							type: "queue_message" as const,
-							source: msg.source,
-							content: formatQueueMessage(msg),
-							...(msg.source === "user" && msg.images?.length
-								? {
-										images: msg.images.map((img) => ({
-											base64: img.base64,
-											mediaType: img.mediaType,
-										})),
-									}
-								: {}),
-							ts: Date.now(),
-						}));
-						eventStore.appendBatch(sessionId, strongEvents);
+						const queueEvents: Event[] = nonCompact.map((msg) =>
+							queueMessageToEvent(msg),
+						);
+						eventStore.appendBatch(sessionId, queueEvents);
 					}
 					continue;
 				} catch {
@@ -1110,38 +1052,9 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				}
 			}
 
-			// Record tool results (and any post-mutation content) as canonical events.
-			// Done AFTER done() reminder and queue cancellation so events match messages exactly.
-			{
-				// Collect all messages pushed since the assistant response:
-				// tool results (role: "tool"), image user messages, and any queue image messages.
-				const toolAndFollowupMsgs: unknown[] = [];
-				// Walk backwards from end to find all messages after the assistant response
-				for (let j = messages.length - 1; j >= 0; j--) {
-					const msg = messages[j] as OpenAIMessage;
-					if (msg.role === "assistant") break;
-					toolAndFollowupMsgs.unshift(msg);
-				}
-				if (imageResults.length > 0) {
-					events.push({
-						type: "tool_results",
-						results: toolAndFollowupMsgs,
-						hasImages: true,
-						imageBlocks: imageResults.map((img) => ({
-							type: "image_url",
-							image_url: { url: img.dataUri, detail: "auto" },
-						})) as unknown[],
-					});
-				} else {
-					events.push({
-						type: "tool_results",
-						results: toolAndFollowupMsgs,
-					});
-				}
-			}
-			// Record individual tool_result StrongEvents
+			// Record individual tool_result Events
 			if (eventStore) {
-				const strongEvents: StrongEvent[] = [];
+				const toolEvents: Event[] = [];
 				for (let j = 0; j < toolCalls.length; j++) {
 					const tc = toolCalls[j] as OpenAIToolCall;
 					const exec = execResults[j] as {
@@ -1174,7 +1087,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 							mediaType: exec.mediaType,
 						});
 					}
-					strongEvents.push({
+					toolEvents.push({
 						type: "tool_result",
 						toolCallId: tc.id,
 						content: resultContent,
@@ -1183,12 +1096,11 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						ts: Date.now(),
 					});
 				}
-				eventStore.appendBatch(sessionId, strongEvents);
+				eventStore.appendBatch(sessionId, toolEvents);
 			}
 
 			// Persist after tool results — fire-and-forget
 			request.sessionStore?.setSync(sessionId, [...messages], "openai");
-			request.sessionStore?.setSync(sessionId, [...events], "events");
 
 			// Budget check
 			if (request.budgetUsd && request.budgetUsd > 0) {
@@ -1201,7 +1113,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				if (ratio >= 1.0) {
 					const warning = `⚠️ Budget exceeded (${runningCost.toFixed(4)} / ${request.budgetUsd.toFixed(2)} budget). Call done() now.`;
 					messages.push({ role: "user", content: warning });
-					events.push({ type: "budget_warning", warning });
 					if (eventStore) {
 						eventStore.append(sessionId, {
 							type: "budget_warning",
@@ -1213,7 +1124,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				} else if (ratio >= 0.8) {
 					const warning = `⚠️ Warning: task has used ${Math.round(ratio * 100)}% of its ${request.budgetUsd.toFixed(2)} budget (${runningCost.toFixed(4)} spent). Wrap up soon.`;
 					messages.push({ role: "user", content: warning });
-					events.push({ type: "budget_warning", warning });
 					if (eventStore) {
 						eventStore.append(sessionId, {
 							type: "budget_warning",
@@ -1229,30 +1139,17 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		// Persist final conversation history
 		if (request.sessionStore) {
 			await request.sessionStore.set(sessionId, [...messages], "openai");
-			await request.sessionStore.set(sessionId, [...events], "events");
 		}
 
-		// Deterministic verification: compare reconstructed messages from old CanonicalEvents
-		if (events.length > 0) {
-			const reconstructed = eventsToOpenAIMessages(events);
-			const match = JSON.stringify(reconstructed) === JSON.stringify(messages);
-			if (!match) {
-				console.error("[EVENTS MISMATCH]", {
-					messagesLen: messages.length,
-					reconstructedLen: reconstructed.length,
-				});
-			}
-		}
-
-		// Deterministic verification: compare reconstructed messages from StrongEvents
+		// Deterministic verification: compare reconstructed messages from Events
 		if (eventStore) {
 			const activeEvents = eventStore.readActive(sessionId);
 			if (activeEvents.length > 0) {
-				const reconstructed = strongEventsToOpenAIMessages(activeEvents);
+				const reconstructed = eventsToOpenAIMessages(activeEvents);
 				const match =
 					JSON.stringify(messages) === JSON.stringify(reconstructed);
 				if (!match) {
-					console.error("[STRONG EVENTS MISMATCH]", {
+					console.error("[EVENTS MISMATCH]", {
 						messagesLen: messages.length,
 						eventsLen: activeEvents.length,
 						reconstructedLen: reconstructed.length,
