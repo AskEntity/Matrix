@@ -2,7 +2,7 @@ import { pinyin } from "pinyin-pro";
 import { z } from "zod";
 import type { AgentProvider, AgentSession } from "./agent-provider.ts";
 import { readProjectMemory } from "./daemon/helpers.ts";
-import { formatQueueMessageEvent, queueMessageToEvent } from "./events.ts";
+import { formatEventForAI, queueMessageToEvent } from "./events.ts";
 import {
 	globalAgentQueues,
 	type MessageQueue,
@@ -73,9 +73,9 @@ async function isGitClean(projectPath: string): Promise<{
 	};
 }
 
-/** Format a QueueMessage for display to the agent. Delegates to formatQueueMessageEvent. */
+/** Format a QueueMessage for display to the agent. */
 export function formatQueueMessage(msg: QueueMessage): string {
-	return formatQueueMessageEvent(queueMessageToEvent(msg));
+	return formatEventForAI(queueMessageToEvent(msg));
 }
 
 /** Convert a QueueMessage to a simplified { source, content } for structured WS events. */

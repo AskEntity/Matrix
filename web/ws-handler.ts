@@ -79,15 +79,14 @@ export function createWSHandler(deps: WSHandlerDeps) {
 
 	/**
 	 * Convert a raw queue message into a UIEvent.
-	 * Uses structured data from rawMessages — no regex parsing needed.
-	 * Returns null for messages that should be skipped (child_complete, system).
+	 * Maps structured rawMessage fields directly to concrete Event types.
+	 * Returns null for messages that should be skipped (child_complete, system_notification).
 	 */
 	function createQueueUIEvent(
 		rm: {
 			source: string;
 			content?: string;
 			images?: { base64: string; mediaType: string }[];
-			// Structured fields from QueueMessageEvent
 			taskId?: string;
 			title?: string;
 			success?: boolean;
@@ -103,6 +102,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		parentTaskId?: string,
 	): UIEvent | null {
 		const ts = Date.now();
+		// child_complete and system_notification don't show as separate log entries
 		if (rm.source === "child_complete" || rm.source === "system") return null;
 		if (rm.source === "user") {
 			return {
@@ -111,7 +111,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				taskId: parentTaskId,
 				images: rm.images,
 				ts,
-			};
+			} as UIEvent;
 		}
 		if (rm.source === "parent_update") {
 			return {
@@ -119,39 +119,38 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				content: rm.content ?? "",
 				taskId: parentTaskId,
 				ts,
-			};
+			} as UIEvent;
 		}
 		if (rm.source === "child_report") {
 			return {
 				type: "child_report",
+				taskId: rm.taskId ?? "",
+				title: rm.title ?? "",
 				content: rm.content ?? "",
-				childTitle: rm.title,
-				childTaskId: rm.taskId,
-				taskId: parentTaskId,
+				...(rm.requestReply ? { requestReply: true } : {}),
 				ts,
-			};
+			} as UIEvent;
 		}
 		if (rm.source === "background_complete") {
 			return {
 				type: "background_complete",
-				content: rm.content ?? "",
-				command: rm.command,
-				commandId: rm.commandId,
-				exitCode: rm.exitCode != null ? String(rm.exitCode) : undefined,
-				durationMs: rm.durationMs != null ? String(rm.durationMs) : undefined,
+				command: rm.command ?? "",
+				commandId: rm.commandId ?? "",
+				exitCode: rm.exitCode ?? null,
+				durationMs: rm.durationMs ?? 0,
 				taskId: parentTaskId,
 				ts,
-			};
+			} as UIEvent;
 		}
 		if (rm.source === "cross_project") {
 			return {
 				type: "cross_project",
+				fromProjectId: rm.fromProjectId ?? "",
+				fromProjectName: rm.fromProjectName ?? "",
 				content: rm.content ?? "",
-				projectName: rm.fromProjectName,
-				projectId: rm.fromProjectId,
 				taskId: parentTaskId,
 				ts,
-			};
+			} as UIEvent;
 		}
 		// Generic fallback
 		return {
@@ -638,8 +637,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 							taskId: op.taskId ?? "",
 							ts: Date.now(),
 						});
-						// Override the auto-generated time with the original entry's time
-						replacement.time = e.time;
+						// Preserve the original entry's timestamp
+						(replacement as { ts: number }).ts = e.ts;
 						entries[i] = replacement;
 						return;
 					}
@@ -728,7 +727,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 								taskId: op.taskId ?? "",
 								ts: Date.now(),
 							});
-							replacement.time = e.time;
+							// Preserve the original entry's timestamp
+							(replacement as { ts: number }).ts = e.ts;
 							updated[i] = replacement;
 							return updated;
 						}

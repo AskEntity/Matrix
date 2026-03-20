@@ -1,68 +1,11 @@
 import type { QueueMessage } from "./message-queue.ts";
 
-/** Structured queue message event — discriminated union by source. */
-export type QueueMessageEvent =
-	| {
-			type: "queue_message";
-			source: "user";
-			content: string;
-			images?: Array<{ base64: string; mediaType: string }>;
-			ts: number;
-	  }
-	| {
-			type: "queue_message";
-			source: "child_complete";
-			taskId: string;
-			title: string;
-			success: boolean;
-			output: string;
-			ts: number;
-	  }
-	| {
-			type: "queue_message";
-			source: "parent_update";
-			content: string;
-			requestReply?: boolean;
-			ts: number;
-	  }
-	| {
-			type: "queue_message";
-			source: "clarify_response";
-			answer: string;
-			ts: number;
-	  }
-	| {
-			type: "queue_message";
-			source: "child_report";
-			taskId: string;
-			title: string;
-			content: string;
-			requestReply?: boolean;
-			ts: number;
-	  }
-	| {
-			type: "queue_message";
-			source: "cross_project";
-			fromProjectId: string;
-			fromProjectName: string;
-			content: string;
-			ts: number;
-	  }
-	| {
-			type: "queue_message";
-			source: "background_complete";
-			command: string;
-			commandId: string;
-			exitCode: number | null;
-			durationMs: number;
-			ts: number;
-	  }
-	| { type: "queue_message"; source: "system"; content: string; ts: number }
-	| { type: "queue_message"; source: "compact"; ts: number };
-
 /**
  * Strongly-typed event — provider-agnostic, one event per action.
  * Each event represents a single atomic action (no batching).
+ *
+ * Queue-originated events (previously nested under queue_message) are now
+ * independent types. They can be identified by isQueueEvent() for batching.
  */
 export type Event =
 	| {
@@ -70,6 +13,7 @@ export type Event =
 			content: string;
 			cwd?: string;
 			isResume?: boolean;
+			images?: Array<{ base64: string; mediaType: string }>;
 			ts: number;
 	  }
 	| { type: "assistant_text"; content: string; ts: number }
@@ -88,7 +32,46 @@ export type Event =
 			images?: Array<{ base64: string; mediaType: string }>;
 			ts: number;
 	  }
-	| QueueMessageEvent
+	| {
+			type: "child_complete";
+			taskId: string;
+			title: string;
+			success: boolean;
+			output: string;
+			ts: number;
+	  }
+	| {
+			type: "parent_update";
+			content: string;
+			requestReply?: boolean;
+			ts: number;
+	  }
+	| { type: "clarify_response"; answer: string; ts: number }
+	| {
+			type: "child_report";
+			taskId: string;
+			title: string;
+			content: string;
+			requestReply?: boolean;
+			ts: number;
+	  }
+	| {
+			type: "cross_project";
+			fromProjectId: string;
+			fromProjectName: string;
+			content: string;
+			ts: number;
+	  }
+	| {
+			type: "background_complete";
+			command: string;
+			commandId: string;
+			exitCode: number | null;
+			durationMs: number;
+			ts: number;
+	  }
+	| { type: "system_notification"; content: string; ts: number }
+	| { type: "compact_request"; ts: number }
 	| { type: "compacted_resume"; content: string; cwd?: string; ts: number }
 	| { type: "summarization_request"; instruction: string; ts: number }
 	| { type: "budget_warning"; warning: string; ts: number }
@@ -98,6 +81,27 @@ export type Event =
 			savedTokens: number;
 			ts: number;
 	  };
+
+/** Event types that originate from the message queue (idle drain or cancellation points). */
+const QUEUE_EVENT_TYPES = new Set([
+	"child_complete",
+	"parent_update",
+	"clarify_response",
+	"child_report",
+	"cross_project",
+	"background_complete",
+	"system_notification",
+	"compact_request",
+]);
+
+/**
+ * Check if an event originated from the message queue.
+ * user_message is ambiguous (can be provider or queue) — NOT included here.
+ * The converter handles user_message specially based on context.
+ */
+export function isQueueEvent(event: Event): boolean {
+	return QUEUE_EVENT_TYPES.has(event.type);
+}
 
 /**
  * Lifecycle/broadcast events — emitted over WebSocket but NOT persisted to EventStore.
@@ -232,14 +236,13 @@ export type BroadcastEvent =
 			ts: number;
 	  };
 
-/** Convert a QueueMessage to a structured QueueMessageEvent. */
-export function queueMessageToEvent(msg: QueueMessage): QueueMessageEvent {
+/** Convert a QueueMessage to a concrete Event type. */
+export function queueMessageToEvent(msg: QueueMessage): Event {
 	const ts = Date.now();
 	switch (msg.source) {
 		case "user":
 			return {
-				type: "queue_message",
-				source: "user",
+				type: "user_message",
 				content: msg.content,
 				...(msg.images?.length
 					? {
@@ -253,8 +256,7 @@ export function queueMessageToEvent(msg: QueueMessage): QueueMessageEvent {
 			};
 		case "child_complete":
 			return {
-				type: "queue_message",
-				source: "child_complete",
+				type: "child_complete",
 				taskId: msg.taskId,
 				title: msg.title,
 				success: msg.success,
@@ -263,23 +265,20 @@ export function queueMessageToEvent(msg: QueueMessage): QueueMessageEvent {
 			};
 		case "parent_update":
 			return {
-				type: "queue_message",
-				source: "parent_update",
+				type: "parent_update",
 				content: msg.content,
 				...(msg.requestReply ? { requestReply: true } : {}),
 				ts,
 			};
 		case "clarify_response":
 			return {
-				type: "queue_message",
-				source: "clarify_response",
+				type: "clarify_response",
 				answer: msg.answer,
 				ts,
 			};
 		case "child_report":
 			return {
-				type: "queue_message",
-				source: "child_report",
+				type: "child_report",
 				taskId: msg.taskId,
 				title: msg.title,
 				content: msg.content,
@@ -288,8 +287,7 @@ export function queueMessageToEvent(msg: QueueMessage): QueueMessageEvent {
 			};
 		case "cross_project":
 			return {
-				type: "queue_message",
-				source: "cross_project",
+				type: "cross_project",
 				fromProjectId: msg.fromProjectId,
 				fromProjectName: msg.fromProjectName,
 				content: msg.content,
@@ -297,8 +295,7 @@ export function queueMessageToEvent(msg: QueueMessage): QueueMessageEvent {
 			};
 		case "background_complete":
 			return {
-				type: "queue_message",
-				source: "background_complete",
+				type: "background_complete",
 				command: msg.command,
 				commandId: msg.commandId,
 				exitCode: msg.exitCode,
@@ -307,32 +304,31 @@ export function queueMessageToEvent(msg: QueueMessage): QueueMessageEvent {
 			};
 		case "system":
 			return {
-				type: "queue_message",
-				source: "system",
+				type: "system_notification",
 				content: msg.content,
 				ts,
 			};
 		case "compact":
-			return { type: "queue_message", source: "compact", ts };
+			return { type: "compact_request", ts };
 	}
 }
 
-/** Format a QueueMessageEvent for inclusion in provider messages.
- * Simple messages (user, compact) use raw content.
- * Single-field messages (clarify_response, system) use XML tags for semantic clarity.
- * Multi-field messages (child_complete, parent_update, etc.) use XML tags for structured data. */
-export function formatQueueMessageEvent(event: QueueMessageEvent): string {
-	switch (event.source) {
-		// Simple messages — raw content, no XML wrapping
-		case "user":
+/**
+ * Format a concrete Event for inclusion in provider messages.
+ * Simple messages (user_message) use raw content.
+ * Single-field messages (clarify_response, system_notification) use XML tags for semantic clarity.
+ * Multi-field messages (child_complete, parent_update, etc.) use XML tags for structured data.
+ */
+export function formatEventForAI(event: Event): string {
+	switch (event.type) {
+		case "user_message":
 			return event.content;
 		case "clarify_response":
 			return `<clarify_response>${event.answer}</clarify_response>`;
-		case "system":
+		case "system_notification":
 			return `<system_notification>${event.content}</system_notification>`;
-		case "compact":
+		case "compact_request":
 			return "Manual compaction requested";
-		// Multi-field messages — XML tags carry structured data
 		case "child_complete":
 			return `<child_complete task="${event.title}" id="${event.taskId}" status="${event.success ? "passed" : "failed"}">${event.output.slice(0, 500)}</child_complete>`;
 		case "parent_update":
@@ -343,6 +339,88 @@ export function formatQueueMessageEvent(event: QueueMessageEvent): string {
 			return `<cross_project from="${event.fromProjectName}" projectId="${event.fromProjectId}">${event.content}</cross_project>`;
 		case "background_complete":
 			return `<background_complete command="${event.command}" id="${event.commandId}" exit="${event.exitCode}" duration="${event.durationMs}ms">Command completed. Use bg_action="status" with background_id="${event.commandId}" or read_file on output files to see results.</background_complete>`;
+		default:
+			return "";
+	}
+}
+
+/**
+ * Normalize legacy queue_message events from old JSONL files into concrete Event types.
+ * Returns the event unchanged if it's not a legacy queue_message.
+ */
+function normalizeLegacyEvent(event: Event): Event {
+	const e = event as Record<string, unknown>;
+	if (e.type !== "queue_message" || !e.source) return event;
+
+	const ts = (e.ts as number) ?? Date.now();
+	switch (e.source) {
+		case "user":
+			return {
+				type: "user_message",
+				content: (e.content as string) ?? "",
+				...(e.images
+					? { images: e.images as Array<{ base64: string; mediaType: string }> }
+					: {}),
+				ts,
+			};
+		case "child_complete":
+			return {
+				type: "child_complete",
+				taskId: (e.taskId as string) ?? "",
+				title: (e.title as string) ?? "",
+				success: (e.success as boolean) ?? false,
+				output: (e.output as string) ?? "",
+				ts,
+			};
+		case "parent_update":
+			return {
+				type: "parent_update",
+				content: (e.content as string) ?? "",
+				...(e.requestReply ? { requestReply: true } : {}),
+				ts,
+			};
+		case "clarify_response":
+			return {
+				type: "clarify_response",
+				answer: (e.answer as string) ?? "",
+				ts,
+			};
+		case "child_report":
+			return {
+				type: "child_report",
+				taskId: (e.taskId as string) ?? "",
+				title: (e.title as string) ?? "",
+				content: (e.content as string) ?? "",
+				...(e.requestReply ? { requestReply: true } : {}),
+				ts,
+			};
+		case "cross_project":
+			return {
+				type: "cross_project",
+				fromProjectId: (e.fromProjectId as string) ?? "",
+				fromProjectName: (e.fromProjectName as string) ?? "",
+				content: (e.content as string) ?? "",
+				ts,
+			};
+		case "background_complete":
+			return {
+				type: "background_complete",
+				command: (e.command as string) ?? "",
+				commandId: (e.commandId as string) ?? "",
+				exitCode: (e.exitCode as number | null) ?? null,
+				durationMs: (e.durationMs as number) ?? 0,
+				ts,
+			};
+		case "system":
+			return {
+				type: "system_notification",
+				content: (e.content as string) ?? "",
+				ts,
+			};
+		case "compact":
+			return { type: "compact_request", ts };
+		default:
+			return event;
 	}
 }
 
@@ -352,10 +430,12 @@ export function formatQueueMessageEvent(event: QueueMessageEvent): string {
  *
  * Key batching rules:
  * - assistant_text + consecutive tool_calls → single assistant message
- * - consecutive tool_results (with optional queue_messages) → single user message
+ * - consecutive tool_results (with optional queue events) → single user message
  * - compact_marker → skipped (readActive handles filtering)
  */
-export function eventsToAnthropicMessages(events: Event[]): unknown[] {
+export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
+	// Normalize legacy queue_message events on the fly
+	const events = rawEvents.map(normalizeLegacyEvent);
 	const messages: unknown[] = [];
 	let i = 0;
 
@@ -419,21 +499,15 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 			}
 
 			case "tool_result": {
-				// Collect consecutive tool_results (with optional queue_messages for cancellation points) into one user message
+				// Collect consecutive tool_results (with optional queue events for cancellation points) into one user message
 				const resultBlocks: unknown[] = [];
 				// Queue message images (user-sent) go as sibling blocks after all tool_results
 				const queueImageBlocks: unknown[] = [];
 
-				while (
-					i < events.length &&
-					((events[i] as Event).type === "tool_result" ||
-						(events[i] as Event).type === "queue_message")
-				) {
+				while (i < events.length) {
 					const current = events[i] as Event;
 					if (current.type === "tool_result") {
 						if (current.images && current.images.length > 0) {
-							// Tool images (e.g., MCP screenshots) go INSIDE the tool_result content
-							// as array [image_block, ..., text_block] — matching provider format
 							const contentParts: unknown[] = [];
 							for (const img of current.images) {
 								contentParts.push({
@@ -459,13 +533,14 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 								is_error: current.isError,
 							});
 						}
-					} else if (current.type === "queue_message") {
-						// Queue messages at cancellation points (between tool_results)
-						// Format from structured data
-						const formatted = formatQueueMessageEvent(current);
+						i++;
+					} else if (isQueueEvent(current) || current.type === "user_message") {
+						// Queue events at cancellation points (between tool_results)
+						// user_message between tool_results is always queue-originated
+						const formatted = formatEventForAI(current);
 						const queueText = `[Messages received while you were working:]\n${formatted}`;
 						resultBlocks.push({ type: "text", text: queueText });
-						if (current.source === "user" && current.images) {
+						if (current.type === "user_message" && current.images) {
 							for (const img of current.images) {
 								queueImageBlocks.push({
 									type: "image",
@@ -477,8 +552,10 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 								});
 							}
 						}
+						i++;
+					} else {
+						break;
 					}
-					i++;
 				}
 
 				if (queueImageBlocks.length > 0) {
@@ -499,31 +576,39 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 				break;
 			}
 
-			case "queue_message": {
-				// Standalone queue_messages (from implicit yield / idle drain)
-				// Collect consecutive queue_messages into a single user message
+			// Queue-originated events (standalone, from idle drain)
+			case "child_complete":
+			case "parent_update":
+			case "clarify_response":
+			case "child_report":
+			case "cross_project":
+			case "background_complete":
+			case "system_notification":
+			case "compact_request": {
+				// Collect consecutive queue events into a single user message
 				const queueContents: string[] = [];
 				const queueImageBlocks: unknown[] = [];
 
-				while (
-					i < events.length &&
-					(events[i] as Event).type === "queue_message"
-				) {
-					const qm = events[i] as QueueMessageEvent;
-					queueContents.push(formatQueueMessageEvent(qm));
-					if (qm.source === "user" && qm.images) {
-						for (const img of qm.images) {
-							queueImageBlocks.push({
-								type: "image",
-								source: {
-									type: "base64",
-									media_type: img.mediaType,
-									data: img.base64,
-								},
-							});
+				while (i < events.length) {
+					const current = events[i] as Event;
+					if (isQueueEvent(current) || current.type === "user_message") {
+						queueContents.push(formatEventForAI(current));
+						if (current.type === "user_message" && current.images) {
+							for (const img of current.images) {
+								queueImageBlocks.push({
+									type: "image",
+									source: {
+										type: "base64",
+										media_type: img.mediaType,
+										data: img.base64,
+									},
+								});
+							}
 						}
+						i++;
+					} else {
+						break;
 					}
-					i++;
 				}
 
 				const joined = queueContents.join("\n");
@@ -556,10 +641,11 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
  * - assistant_text + tool_calls → single message with `content` and `tool_calls` array
  * - tool_results → individual `{ role: "tool" }` messages (not batched into one user message)
  * - Images from tool_results → separate `{ role: "user" }` message with image_url parts
- * - queue_messages between tool_results → appended to last tool result content
+ * - queue events between tool_results → appended to last tool result content
  * - compact_marker → skipped
  */
-export function eventsToOpenAIMessages(events: Event[]): unknown[] {
+export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
+	const events = rawEvents.map(normalizeLegacyEvent);
 	const messages: unknown[] = [];
 	// Map toolCallId → tool name for resolving tool_result.name
 	const toolNames = new Map<string, string>();
@@ -607,7 +693,6 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 					const textEvent = events[i] as Event & {
 						type: "assistant_text";
 					};
-					// Concatenate multiple text blocks (rare but possible)
 					textContent =
 						textContent === null
 							? textEvent.content
@@ -643,24 +728,18 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 			}
 
 			case "tool_result": {
-				// Process tool_results as individual messages, with queue_messages
+				// Process tool_results as individual messages, with queue events
 				// appended to the preceding tool result and images collected for a user message
-				// Tool images (screenshots etc.) use tool result content as label
 				const toolImageResults: Array<{
 					text: string;
 					dataUri: string;
 				}> = [];
-				// Queue message images (user-sent) use "[User-attached image]" label
 				const queueImageResults: Array<{
 					text: string;
 					dataUri: string;
 				}> = [];
 
-				while (
-					i < events.length &&
-					((events[i] as Event).type === "tool_result" ||
-						(events[i] as Event).type === "queue_message")
-				) {
+				while (i < events.length) {
 					const current = events[i] as Event;
 					if (current.type === "tool_result") {
 						const toolName = toolNames.get(current.toolCallId) ?? "unknown";
@@ -678,9 +757,11 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 								});
 							}
 						}
-					} else if (current.type === "queue_message") {
-						// Queue messages at cancellation points are appended to last tool result
-						const formatted = formatQueueMessageEvent(current);
+						i++;
+					} else if (isQueueEvent(current) || current.type === "user_message") {
+						// Queue events at cancellation points are appended to last tool result
+						// user_message between tool_results is always queue-originated
+						const formatted = formatEventForAI(current);
 						const lastMsg = messages[messages.length - 1] as
 							| { role: string; content: string }
 							| undefined;
@@ -690,7 +771,7 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 						) {
 							lastMsg.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
 						}
-						if (current.source === "user" && current.images) {
+						if (current.type === "user_message" && current.images) {
 							for (const img of current.images) {
 								queueImageResults.push({
 									text: "[User-attached image]",
@@ -698,8 +779,10 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 								});
 							}
 						}
+						i++;
+					} else {
+						break;
 					}
-					i++;
 				}
 
 				// Inject tool images as a user message (OpenAI tool results are text-only)
@@ -720,32 +803,40 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 				break;
 			}
 
-			case "queue_message": {
-				// Standalone queue_messages (from implicit yield / idle drain)
+			// Queue-originated events (standalone, from idle drain)
+			case "child_complete":
+			case "parent_update":
+			case "clarify_response":
+			case "child_report":
+			case "cross_project":
+			case "background_complete":
+			case "system_notification":
+			case "compact_request": {
 				const oaiQueueContents: string[] = [];
 				const oaiQueueImageParts: unknown[] = [];
 
-				while (
-					i < events.length &&
-					(events[i] as Event).type === "queue_message"
-				) {
-					const qm = events[i] as QueueMessageEvent;
-					oaiQueueContents.push(formatQueueMessageEvent(qm));
-					if (qm.source === "user" && qm.images) {
-						for (const img of qm.images) {
-							oaiQueueImageParts.push(
-								{ type: "text", text: "[User-attached image]" },
-								{
-									type: "image_url",
-									image_url: {
-										url: `data:${img.mediaType};base64,${img.base64}`,
-										detail: "auto",
+				while (i < events.length) {
+					const current = events[i] as Event;
+					if (isQueueEvent(current) || current.type === "user_message") {
+						oaiQueueContents.push(formatEventForAI(current));
+						if (current.type === "user_message" && current.images) {
+							for (const img of current.images) {
+								oaiQueueImageParts.push(
+									{ type: "text", text: "[User-attached image]" },
+									{
+										type: "image_url",
+										image_url: {
+											url: `data:${img.mediaType};base64,${img.base64}`,
+											detail: "auto",
+										},
 									},
-								},
-							);
+								);
+							}
 						}
+						i++;
+					} else {
+						break;
 					}
-					i++;
 				}
 
 				const oaiJoined = oaiQueueContents.join("\n");
