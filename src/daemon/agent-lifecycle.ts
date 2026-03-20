@@ -1214,7 +1214,14 @@ export async function handleInjectMessage(
 	broadcast(ctx.wsClients, projectId, {
 		type: "pending_messages",
 		projectId,
-		messages: [{ text: message, timestamp: Date.now() }],
+		messages: [
+			{
+				id: `pending-${Date.now()}`,
+				taskId: null,
+				text: message,
+				timestamp: Date.now(),
+			},
+		],
 	});
 
 	// Message was persisted (agent not running) — auto-resume if possible.

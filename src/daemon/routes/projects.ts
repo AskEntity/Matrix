@@ -96,7 +96,12 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 		// Check the root orchestrator's queue for pending user messages
 		const tracker = ctx.trackers.get(project.id);
 		const rootNodeId = tracker?.rootNodeId;
-		let pending: { text: string; timestamp: number }[] = [];
+		let pending: {
+			id: string;
+			taskId: string | null;
+			text: string;
+			timestamp: number;
+		}[] = [];
 		if (rootNodeId) {
 			const queue =
 				globalAgentQueues.get(rootNodeId) ??
@@ -105,7 +110,9 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 				pending = queue
 					.peekMessages()
 					.filter((m) => m.source === "user")
-					.map((m) => ({
+					.map((m, i) => ({
+						id: `pending-${Date.now()}-${i}`,
+						taskId: null,
 						text: (m as { content: string }).content,
 						timestamp: Date.now(),
 					}));

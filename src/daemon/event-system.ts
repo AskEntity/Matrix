@@ -258,7 +258,9 @@ export function broadcastPendingFromQueue(
 ): void {
 	const pending = messages
 		.filter((m) => m.source === "user")
-		.map((m) => ({
+		.map((m, i) => ({
+			id: `pending-${Date.now()}-${i}`,
+			taskId: null,
 			text: (m as Extract<QueueMessage, { source: "user" }>).content,
 			timestamp: Date.now(),
 		}));
