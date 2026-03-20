@@ -148,7 +148,12 @@ export type Event =
 	  }
 	| { type: "compact_started"; taskId: string; ts: number }
 	| { type: "agent_stopped"; taskId?: string; ts: number }
-	| { type: "message_injected"; message: string; ts: number };
+	| {
+			type: "message_injected";
+			message: string;
+			images?: Array<{ base64: string; mediaType: string }>;
+			ts: number;
+	  };
 
 /** Event types that originate from the message queue (idle drain or cancellation points). */
 const QUEUE_EVENT_TYPES = new Set([
@@ -296,7 +301,12 @@ export type BroadcastEvent =
 			ts: number;
 	  }
 	| { type: "status"; message: string; taskId: string; ts: number }
-	| { type: "message_injected"; message: string; ts: number }
+	| {
+			type: "message_injected";
+			message: string;
+			images?: Array<{ base64: string; mediaType: string }>;
+			ts: number;
+	  }
 	| {
 			type: "clarification_timeout";
 			taskId?: string;
