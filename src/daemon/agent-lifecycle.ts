@@ -1006,6 +1006,27 @@ export async function launchAgent(
 							agentEventToBroadcast(eventType, eventData, rootNodeId),
 						);
 					}
+
+					// When the agent consumes a user message from the queue,
+					// emit message_injected so it appears in the activity log
+					// at consumption time (not send time).
+					if (eventType === "queue_message" && eventData.rawMessages) {
+						const rawMsgs = eventData.rawMessages as Array<{
+							source: string;
+							content: string;
+							images?: { base64: string; mediaType: string }[];
+						}>;
+						for (const rm of rawMsgs) {
+							if (rm.source === "user") {
+								broadcastEvent(ctx, project.id, {
+									type: "message_injected",
+									message: rm.content,
+									...(rm.images?.length ? { images: rm.images } : {}),
+									ts: Date.now(),
+								});
+							}
+						}
+					}
 				},
 			);
 
@@ -1200,13 +1221,9 @@ export async function handleInjectMessage(
 	const result = await deliverMessage(ctx, project, rootNodeId, msg);
 
 	if (result === "enqueued") {
-		// deliverMessage already broadcast pending state from queue
-		broadcastEvent(ctx, projectId, {
-			type: "message_injected",
-			message,
-			...(images?.length ? { images } : {}),
-			ts: Date.now(),
-		});
+		// deliverMessage already broadcast pending state from queue.
+		// message_injected will be emitted when the agent actually consumes
+		// the message from the queue (via queue_message event in consumeAgentEvents).
 		return { ok: true };
 	}
 
@@ -1250,12 +1267,8 @@ export async function handleInjectMessage(
 		}
 	}
 
-	broadcastEvent(ctx, projectId, {
-		type: "message_injected",
-		message,
-		...(images?.length ? { images } : {}),
-		ts: Date.now(),
-	});
+	// message_injected will be emitted when the agent actually consumes
+	// the message from the queue (via queue_message event in consumeAgentEvents).
 	return { ok: true };
 }
 
