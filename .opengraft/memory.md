@@ -216,4 +216,9 @@ Event (src/events.ts) — THE source of truth
 - **appendFileSync → async appendFile**: EventStore.append() and appendBatch() now return Promise<void> with internal .catch() for fire-and-forget safety.
 - **Callers**: broadcastEvent() fire-and-forgets. Provider runLoop calls are also fire-and-forget (unawaited Promises in async generators). Tests must await.
 - **Reads remain sync**: read(), readActive() still use readFileSync — only called during session resume, not in hot path.
-- **Motivation**: Prevent event loop starvation under load with many concurrent agents. appendFileSync blocked the event loop for each write; with multiple agents broadcasting events, cumulative blocking could cause noticeable stalls.
+
+## MessageQueue onEnqueue Callback
+
+- **Bug**: `enqueue()` has two paths — waiter (direct resolve) and array (push to `this.messages`). The waiter path bypasses the array, so `peekMessages()` returns empty and `onDrain` never fires. This broke pending message banner display.
+- **Fix**: Added `onEnqueue?: (msg: QueueMessage) => void` callback, called at the TOP of `enqueue()` before the waiter check. Fires on every enqueue regardless of path. `onDrain` still handles clearing.
+- **Wiring**: Set `queue.onEnqueue` at queue creation sites in `agent-lifecycle.ts` (child queues and root queue). Removed all manual `broadcastPendingFromQueue` calls after `enqueue()` in `deliverMessage` — the callback handles it.
