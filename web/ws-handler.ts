@@ -16,6 +16,7 @@ type UpdateOp =
 			type: "complete_compact";
 			text: string;
 			checkpoint: string;
+			savedTokens: number;
 			taskId: string | undefined;
 	  };
 
@@ -301,6 +302,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 							type: "complete_compact",
 							text: `Context compacted (saved ~${msg.savedTokens} tokens)`,
 							checkpoint: msg.checkpoint as string,
+							savedTokens: (msg.savedTokens as number) ?? 0,
 							taskId: msg.taskId as string | undefined,
 						},
 					],
@@ -633,7 +635,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						const replacement = createLogEntry({
 							type: "compact_marker",
 							checkpoint: op.checkpoint,
-							savedTokens: 0,
+							savedTokens: op.savedTokens,
 							taskId: op.taskId ?? "",
 							ts: Date.now(),
 						});
@@ -648,7 +650,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					createLogEntry({
 						type: "compact_marker",
 						checkpoint: op.checkpoint,
-						savedTokens: 0,
+						savedTokens: op.savedTokens,
 						taskId: op.taskId ?? "",
 						ts: Date.now(),
 					}),
@@ -723,7 +725,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 							const replacement = createLogEntry({
 								type: "compact_marker",
 								checkpoint: op.checkpoint,
-								savedTokens: 0,
+								savedTokens: op.savedTokens,
 								taskId: op.taskId ?? "",
 								ts: Date.now(),
 							});
@@ -738,7 +740,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						createLogEntry({
 							type: "compact_marker",
 							checkpoint: op.checkpoint,
-							savedTokens: 0,
+							savedTokens: op.savedTokens,
 							taskId: op.taskId ?? "",
 							ts: Date.now(),
 						}),
