@@ -504,7 +504,7 @@ export async function deliverMessage(
 	if (queue) {
 		try {
 			queue.enqueue(message);
-			broadcastPendingFromQueue(ctx, project.id, queue.peekMessages());
+			// onEnqueue callback handles pending broadcast (set at queue creation)
 			return "enqueued";
 		} catch {
 			// Queue was closed — fall through to persist + launch
@@ -518,11 +518,7 @@ export async function deliverMessage(
 		if (rootSession?.queue) {
 			try {
 				rootSession.queue.enqueue(message);
-				broadcastPendingFromQueue(
-					ctx,
-					project.id,
-					rootSession.queue.peekMessages(),
-				);
+				// onEnqueue callback handles pending broadcast (set at queue creation)
 				return "enqueued";
 			} catch {
 				// Queue was closed — fall through to persist + launch
@@ -682,6 +678,8 @@ export async function runChildAgentInBackground(
 
 		// Create the queue first — shared between MCP tools and runChildCore
 		const childQueue = new MessageQueue();
+		childQueue.onEnqueue = (msg) =>
+			broadcastPendingFromQueue(ctx, project.id, [msg]);
 		childQueue.onDrain = () => broadcastPendingCleared(ctx, project.id);
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
@@ -900,7 +898,8 @@ export async function launchAgent(
 
 	const queue = new MessageQueue();
 
-	// Wire up drain callback to clear pending indicators when agent processes messages
+	// Wire up enqueue/drain callbacks for pending message indicators
+	queue.onEnqueue = (msg) => broadcastPendingFromQueue(ctx, project.id, [msg]);
 	queue.onDrain = () => broadcastPendingCleared(ctx, project.id);
 
 	// Load any persisted messages from disk and enqueue them
@@ -914,8 +913,6 @@ export async function launchAgent(
 	}
 	if (persistedMsgs.length > 0) {
 		await clearPersistedMessages(ctx.config.dataDir, project.id, rootNodeId);
-		// Broadcast persisted messages as pending until the agent drains them
-		broadcastPendingFromQueue(ctx, project.id, queue.peekMessages());
 	}
 
 	const mcpManager = new McpClientManager();
@@ -1132,11 +1129,7 @@ export async function handleOrchestrate(
 		} catch {
 			return { ok: false, error: "Queue closed", status: 409 };
 		}
-		broadcastPendingFromQueue(
-			ctx,
-			projectId,
-			existingSession.queue.peekMessages(),
-		);
+		// onEnqueue callback handles pending broadcast
 		return { ok: true };
 	}
 	await getTracker(ctx, projectId);

@@ -65,6 +65,9 @@ export class MessageQueue {
 	/** Whether this agent is currently idle (waiting for messages). */
 	idle = false;
 
+	/** Optional callback fired whenever a message is enqueued (before delivery to waiter or array). */
+	onEnqueue?: (msg: QueueMessage) => void;
+
 	/** Optional callback fired after messages are drained from the queue. */
 	onDrain?: () => void;
 
@@ -73,6 +76,8 @@ export class MessageQueue {
 		if (this.closed) {
 			throw new Error("Queue closed");
 		}
+
+		this.onEnqueue?.(msg);
 
 		if (this.waiter) {
 			const { resolve } = this.waiter;

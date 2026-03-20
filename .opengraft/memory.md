@@ -209,3 +209,9 @@ Event (src/events.ts) — THE source of truth
 - **Daemon restart addLog is OK**: Page is about to reconnect anyway.
 - **Removed**: `⚡ /compact`, `⚡ /clear`, `Session history cleared`, `Deleted: ...` — all had backend event equivalents (`compact_started`, `tree_mutation`).
 - **Slash commands**: `handleSlashCommand` still routes to correct API endpoints, just no longer injects frontend-only log entries.
+
+## MessageQueue onEnqueue Callback
+
+- **Bug**: `enqueue()` has two paths — waiter (direct resolve) and array (push to `this.messages`). The waiter path bypasses the array, so `peekMessages()` returns empty and `onDrain` never fires. This broke pending message banner display.
+- **Fix**: Added `onEnqueue?: (msg: QueueMessage) => void` callback, called at the TOP of `enqueue()` before the waiter check. Fires on every enqueue regardless of path. `onDrain` still handles clearing.
+- **Wiring**: Set `queue.onEnqueue` at queue creation sites in `agent-lifecycle.ts` (child queues and root queue). Removed all manual `broadcastPendingFromQueue` calls after `enqueue()` in `deliverMessage` — the callback handles it.

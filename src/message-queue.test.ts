@@ -400,4 +400,53 @@ describe("MessageQueue", () => {
 		expect(q.pending).toBe(0);
 		expect(q.drainMerged()).toEqual([]);
 	});
+
+	test("onEnqueue fires when message goes to array (no waiter)", () => {
+		const q = new MessageQueue();
+		const received: QueueMessage[] = [];
+		q.onEnqueue = (msg) => received.push(msg);
+
+		q.enqueue({ source: "user", content: "hello" });
+		q.enqueue({ source: "user", content: "world" });
+
+		expect(received).toHaveLength(2);
+		expect(received[0]).toEqual({ source: "user", content: "hello" });
+		expect(received[1]).toEqual({ source: "user", content: "world" });
+	});
+
+	test("onEnqueue fires when message goes directly to waiter", async () => {
+		const q = new MessageQueue();
+		const received: QueueMessage[] = [];
+		q.onEnqueue = (msg) => received.push(msg);
+
+		// Start waiting — creates a waiter
+		const promise = q.wait();
+
+		// Enqueue while waiter exists — message bypasses array
+		q.enqueue({ source: "user", content: "direct to waiter" });
+
+		// onEnqueue should still have fired
+		expect(received).toHaveLength(1);
+		expect(received[0]).toEqual({
+			source: "user",
+			content: "direct to waiter",
+		});
+
+		// Waiter should resolve with the message
+		const msg = await promise;
+		expect(msg).toEqual({ source: "user", content: "direct to waiter" });
+	});
+
+	test("onEnqueue does not fire for enqueueQuiet", () => {
+		const q = new MessageQueue();
+		const received: QueueMessage[] = [];
+		q.onEnqueue = (msg) => received.push(msg);
+
+		q.enqueueQuiet({ source: "system", content: "quiet" });
+		expect(received).toHaveLength(0);
+
+		// But normal enqueue does fire it
+		q.enqueue({ source: "user", content: "loud" });
+		expect(received).toHaveLength(1);
+	});
 });
