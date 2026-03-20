@@ -142,10 +142,10 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 ## Event Converter Details
 
 - **Assistant text format**: Always use array `content` for assistant messages, never bare string.
-- **Idle vs working queue wrapper**: Standalone `queue_message` (idle drain) uses `[Messages received while you were idle:]`. Cancellation-point uses `[Messages received while you were working:]`.
+- **Idle vs working queue wrapper**: Standalone queue events (idle drain) batched with `[Messages received while you were idle:]`. Cancellation-point uses `[Messages received while you were working:]`.
 - **caller field**: Converter adds `caller: {type: "direct"}` to tool_use blocks to match Anthropic API.
-- **Single formatter**: `formatQueueMessage` delegates to `formatQueueMessageEvent(queueMessageToEvent(msg))` — one source of truth.
-- **Queue message XML rules**: `user` and `compact` = raw content (no XML). `clarify_response` and `system` = XML tags for semantic clarity. Multi-field messages (child_complete, parent_update, etc.) = XML tags for structured data.
+- **Single formatter**: `formatQueueMessage` → `formatEventForAI(queueMessageToEvent(msg))` — one source of truth.
+- **XML rules**: `user_message` and `compact_request` = raw content. `clarify_response` and `system_notification` = XML for semantic clarity. Multi-field events (child_complete, parent_update, etc.) = XML for structured data.
 - **Mocking Anthropic SDK**: Fake stream with `{[Symbol.asyncIterator], finalMessage}`. Replace `(provider as any).client`.
 
 ## Pending Message Banner (Data-Driven)
@@ -166,34 +166,26 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 
 ## Unified Event System (Completed March 2026)
 
-**4-phase refactor collapsed 5 parallel event/message systems into 1.**
+**One Event type for the entire system.** 5 parallel event systems → 1.
 
-**Phase 1**: `StrongEvent` → `Event`. File `canonical-events.ts` → `events.ts`. `QueueMessageEvent` discriminated union (structured data per source). Old `CanonicalEvent` system fully deleted.
+```
+Event (src/events.ts) — THE source of truth
+  ├── JSONL persistence (EventStore)
+  ├── WS broadcast (BroadcastEvent subset)
+  ├── Provider converter → AI messages
+  └── Frontend LogEntry = Event & { id, taskId? }
+```
 
-**Phase 2**: `BroadcastEvent` type for lifecycle/ephemeral WS events (text_delta, usage, orchestration_started, etc.). `broadcastEvent` typed. Backend emits flat Events — no more `agent_event` wrapper. `processLegacyAgentEvent` handles old persisted event history.
+**Event types** (all in one discriminated union):
+- Provider: `user_message`, `assistant_text`, `tool_call`, `tool_result`, `compacted_resume`, `summarization_request`, `budget_warning`, `compact_marker`
+- Queue: `child_complete`, `parent_update`, `clarify_response`, `child_report`, `cross_project`, `background_complete`, `system_notification`, `compact_request`
+- Lifecycle: `text_delta`, `usage`, `orchestration_started/completed`, `task_started/completed`, `agent_idle/active/stopped`, `error`, `budget_exceeded`, `clarification_requested/answered`, `tree_mutation`, `compact_started`
 
-**Phase 3**: `LogEntry = UIEvent & { id, time }` where `UIEvent = BroadcastEvent | UIOnlyEvent`. `UIOnlyEvent` covers frontend-created types (lifecycle, user_message, parent_update, child_report, etc.). Helper functions (`getEntryText`, `getToolName`, `getLogTaskId`) extract typed fields via discriminated union narrowing. `createLogEntry` takes `UIEvent`, adds `id` + `time`.
+**Key helpers:**
+- `formatEventForAI(event)` — formats any Event for AI consumption (XML for multi-field, raw for simple)
+- `queueMessageToEvent(msg)` — converts runtime QueueMessage to concrete Event type
+- `isQueueEvent(event)` — identifies queue-originated events for converter batching
+- `normalizeLegacyEvent(event)` — backward compat for old `queue_message` JSONL events
+- `formatTime(ts)` — frontend renders `ts` field on demand (no pre-formatted `time` string)
 
-**Phase 4**: XML tags simplified (user = raw, clarify/system = XML, multi-field = XML). "Process these messages..." suffix removed. `readProjectMemory` uses `## CLAUDE.md` / `## Project Memory` markdown headers instead of fake `[read_file: ...]`. Dual formatters unified.
-
-
-## Queue Message Unification (March 2026)
-
-**`QueueMessageEvent` discriminated union eliminated.** Each queue source is now an independent Event type:
-- `user_message` (same shape as provider user_message — no collision)
-- `child_complete`, `parent_update`, `clarify_response`, `child_report`, `cross_project`, `background_complete`
-- `system` → `system_notification` (renamed to avoid confusion)
-- `compact` → `compact_request` (renamed)
-
-**Key exports changed:**
-- `formatQueueMessageEvent()` → `formatEventForAI()` (same logic, takes concrete Event)
-- `queueMessageToEvent()` now returns concrete Event types (not QueueMessageEvent)
-- `isQueueEvent()` helper identifies queue-originated events for batching
-
-**Converter backward compat:** `normalizeLegacyEvent()` converts old `{type: "queue_message", source: "..."}` JSONL events to concrete types on the fly.
-
-**Frontend UIOnlyEvent simplified:** Only `lifecycle` and `generic_queue_message` remain as UI-only types. All queue types (`parent_update`, `child_report`, etc.) are now proper Event types imported from `src/events.ts`. `LogEntry` has `taskId?: string` on the intersection for routing.
-
-**`user_message` ambiguity:** Provider and queue `user_message` events are the same type. The converter handles this by context: between tool_results = working wrapper, standalone after queue events = batched into idle wrapper, standalone alone = normal user message.
-
-**LogEntry time field removed:** `LogEntry` no longer has `time: string`. Frontend uses `formatTime(entry.ts)` to format timestamps on render. This keeps LogEntry as a pure data type without pre-formatted display strings.
+**Frontend residual:** `UIOnlyEvent` has 2 types (`lifecycle`, `generic_queue_message`) that are frontend-only. `UIEvent = Event | BroadcastEvent | UIOnlyEvent`. `LogEntry = UIEvent & { id, taskId? }`.
