@@ -223,3 +223,10 @@ Event (src/events.ts) — THE source of truth
 - **Bug**: `enqueue()` has two paths — waiter (direct resolve) and array (push to `this.messages`). The waiter path bypasses the array, so `peekMessages()` returns empty and `onDrain` never fires. This broke pending message banner display.
 - **Fix**: Added `onEnqueue?: (msg: QueueMessage) => void` callback, called at the TOP of `enqueue()` before the waiter check. Fires on every enqueue regardless of path. `onDrain` still handles clearing.
 - **Wiring**: Set `queue.onEnqueue` at queue creation sites in `agent-lifecycle.ts` (child queues and root queue). Removed all manual `broadcastPendingFromQueue` calls after `enqueue()` in `deliverMessage` — the callback handles it.
+
+## Deadlock Proper Fix (March 2026)
+
+- **Root cause**: After done() closes the queue, provider checked `queue.isClosed` BEFORE yielding tool_result events. On resume, orphaned tool_use without tool_result → Anthropic 400 error.
+- **Fix**: Moved `queue.isClosed` check to AFTER EventStore records tool_result events but BEFORE `messages.push` (which sends to API). Both providers fixed.
+- **Safety net**: Implicit yield catch block uses `return` not `break` (Bun async generator `break`-from-`catch` hangs under concurrent I/O).
+
