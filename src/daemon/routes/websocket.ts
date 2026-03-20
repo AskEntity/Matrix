@@ -8,7 +8,7 @@ import {
 	handleOrchestrate,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext, WSClient } from "../context.ts";
-import { broadcastEvent, getPendingClarifications } from "../event-system.ts";
+import { getPendingClarifications } from "../event-system.ts";
 import { getTracker } from "../helpers.ts";
 
 export function registerWebSocketRoute(
@@ -144,13 +144,7 @@ export function registerWebSocketRoute(
 								msg.images,
 								orchestratorSystemPrompt,
 							);
-							if (result.ok) {
-								broadcastEvent(ctx, msg.projectId, {
-									type: "message_injected",
-									message: msg.prompt,
-									ts: Date.now(),
-								});
-							} else {
+							if (!result.ok) {
 								ws.send(
 									JSON.stringify({ type: "error", message: result.error }),
 								);

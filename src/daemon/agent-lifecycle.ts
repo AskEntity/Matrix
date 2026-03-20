@@ -1176,6 +1176,11 @@ export async function handleInjectMessage(
 				{ prompt: message },
 				orchestratorSystemPrompt,
 			);
+			broadcastEvent(ctx, projectId, {
+				type: "message_injected",
+				message,
+				ts: Date.now(),
+			});
 			return { ok: true };
 		}
 		return {
@@ -1196,6 +1201,11 @@ export async function handleInjectMessage(
 
 	if (result === "enqueued") {
 		// deliverMessage already broadcast pending state from queue
+		broadcastEvent(ctx, projectId, {
+			type: "message_injected",
+			message,
+			ts: Date.now(),
+		});
 		return { ok: true };
 	}
 
@@ -1232,6 +1242,11 @@ export async function handleInjectMessage(
 		}
 	}
 
+	broadcastEvent(ctx, projectId, {
+		type: "message_injected",
+		message,
+		ts: Date.now(),
+	});
 	return { ok: true };
 }
 
