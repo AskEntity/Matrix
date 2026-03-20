@@ -1086,9 +1086,12 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: queue.wait() CATCH error=${e instanceof Error ? e.message : String(e)}`);
 					queue.idle = false;
 					// Queue closed — normal exit path (stop was called)
+					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: about to break`);
 					break;
 				}
+				console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: after try/catch (unreachable if break worked)`);
 			}
+			console.error(`[DEADLOCK-TRACE ${Date.now()}] after end_turn block (unreachable if break worked)`);
 
 			// Execute tools concurrently
 			console.error(`[DEADLOCK-TRACE ${Date.now()}] tool execution batch START (${toolUses.length} tools: ${toolUses.map(t => t.name).join(", ")})`);
@@ -1345,10 +1348,12 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			}
 		}
 
+		console.error(`[DEADLOCK-TRACE ${Date.now()}] provider: while loop exited, persisting session`);
 		// Persist conversation history for future resume
 		if (request.sessionStore) {
 			await request.sessionStore.set(sessionId, [...messages]);
 		}
+		console.error(`[DEADLOCK-TRACE ${Date.now()}] provider: session persisted, starting verification`);
 
 		// Deterministic verification: compare reconstructed messages from Events
 		if (eventStore) {
