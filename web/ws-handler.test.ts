@@ -1,9 +1,11 @@
 import { describe, expect, it, mock } from "bun:test";
-import { createWSHandler } from "./ws-handler.ts";
+import type React from "react";
+import type { LogEntry } from "./hooks.ts";
+import { createWSHandler, type WSHandlerDeps } from "./ws-handler.ts";
 
 /** Minimal deps that satisfy the WSHandlerDeps interface */
 function makeDeps() {
-	const logs: unknown[][] = [];
+	const logs: LogEntry[][] = [];
 	return {
 		deps: {
 			updateFromWS: mock(() => {}),
@@ -12,12 +14,12 @@ function makeDeps() {
 			checkAgentStatus: mock(() => {}),
 			setAgentProvider: mock(() => {}),
 			setAgentModel: mock(() => {}),
-			setLogs: mock((updater: unknown) => {
+			setLogs: mock((updater: React.SetStateAction<LogEntry[]>) => {
 				if (typeof updater === "function") {
 					const result = updater([]);
 					logs.push(result);
 				} else {
-					logs.push(updater as unknown[]);
+					logs.push(updater);
 				}
 			}),
 			setTokenUsage: mock(() => {}),
@@ -39,15 +41,15 @@ describe("ws-handler compact_marker savedTokens", () => {
 	it("processEvent returns savedTokens in the complete_compact UpdateOp", () => {
 		const { deps } = makeDeps();
 		// Smoke test: createWSHandler works without error
-		createWSHandler(deps as any);
+		createWSHandler(deps as WSHandlerDeps);
 	});
 
 	it("handleWS: compact_marker with savedTokens=5000 produces LogEntry with savedTokens=5000", () => {
 		const { deps } = makeDeps();
 
 		// Pre-populate logs with a compact_started entry so the replacement path is hit
-		let capturedLogs: any[] = [];
-		deps.setLogs = mock((updater: any) => {
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
 			if (typeof updater === "function") {
 				capturedLogs = updater(capturedLogs);
 			} else {
@@ -55,7 +57,7 @@ describe("ws-handler compact_marker savedTokens", () => {
 			}
 		});
 
-		const { handleWS } = createWSHandler(deps as any);
+		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
 
 		// First, add a compact_started entry
 		handleWS({
@@ -75,17 +77,17 @@ describe("ws-handler compact_marker savedTokens", () => {
 
 		// Find the compact_marker entry
 		const markerEntry = capturedLogs.find(
-			(e: any) => e.type === "compact_marker",
+			(e: LogEntry) => e.type === "compact_marker",
 		);
 		expect(markerEntry).toBeDefined();
-		expect(markerEntry.savedTokens).toBe(5000);
+		expect(markerEntry?.savedTokens).toBe(5000);
 	});
 
 	it("handleWS: compact_marker fallback (no compact_started) also uses savedTokens", () => {
 		const { deps } = makeDeps();
 
-		let capturedLogs: any[] = [];
-		deps.setLogs = mock((updater: any) => {
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
 			if (typeof updater === "function") {
 				capturedLogs = updater(capturedLogs);
 			} else {
@@ -93,7 +95,7 @@ describe("ws-handler compact_marker savedTokens", () => {
 			}
 		});
 
-		const { handleWS } = createWSHandler(deps as any);
+		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
 
 		// Send compact_marker without preceding compact_started
 		handleWS({
@@ -105,21 +107,21 @@ describe("ws-handler compact_marker savedTokens", () => {
 		});
 
 		const markerEntry = capturedLogs.find(
-			(e: any) => e.type === "compact_marker",
+			(e: LogEntry) => e.type === "compact_marker",
 		);
 		expect(markerEntry).toBeDefined();
-		expect(markerEntry.savedTokens).toBe(8000);
+		expect(markerEntry?.savedTokens).toBe(8000);
 	});
 
 	it("processEventBatch: compact_marker with savedTokens flows through correctly", () => {
 		const { deps } = makeDeps();
 
-		let capturedLogs: any[] = [];
-		deps.setLogs = mock((entries: any) => {
-			capturedLogs = entries;
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
 		});
 
-		const { processEventBatch } = createWSHandler(deps as any);
+		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
 
 		processEventBatch([
 			{ type: "compact_started", taskId: "task-3", ts: 1000 },
@@ -133,21 +135,21 @@ describe("ws-handler compact_marker savedTokens", () => {
 		]);
 
 		const markerEntry = capturedLogs.find(
-			(e: any) => e.type === "compact_marker",
+			(e: LogEntry) => e.type === "compact_marker",
 		);
 		expect(markerEntry).toBeDefined();
-		expect(markerEntry.savedTokens).toBe(12000);
+		expect(markerEntry?.savedTokens).toBe(12000);
 	});
 
 	it("processEventBatch: compact_marker fallback also uses savedTokens", () => {
 		const { deps } = makeDeps();
 
-		let capturedLogs: any[] = [];
-		deps.setLogs = mock((entries: any) => {
-			capturedLogs = entries;
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
 		});
 
-		const { processEventBatch } = createWSHandler(deps as any);
+		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
 
 		// No compact_started, just compact_marker directly
 		processEventBatch([
@@ -161,9 +163,9 @@ describe("ws-handler compact_marker savedTokens", () => {
 		]);
 
 		const markerEntry = capturedLogs.find(
-			(e: any) => e.type === "compact_marker",
+			(e: LogEntry) => e.type === "compact_marker",
 		);
 		expect(markerEntry).toBeDefined();
-		expect(markerEntry.savedTokens).toBe(3000);
+		expect(markerEntry?.savedTokens).toBe(3000);
 	});
 });
