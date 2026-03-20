@@ -307,3 +307,16 @@ Event (src/events.ts) — THE source of truth
 - **Fix**: Removed `message_injected` from the "enqueued" and "persisted" paths in `handleInjectMessage`. Added emission in `launchAgent`'s `consumeAgentEvents` callback — when `queue_message` event has `rawMessages` with `source: "user"`, emits `message_injected` at that point.
 - **Fresh starts kept**: When no session exists (first message = prompt), `message_injected` still fires immediately since there's no queue delay.
 - **Both idle drain and cancellation point work**: Both yield `queue_message` with `rawMessages`, so user messages consumed either way trigger `message_injected`.
+
+
+## Unified Message Abstraction (March 2026)
+
+- **UserMessageEvent**: Single interface for ALL queue messages. Uses `source` field to discriminate (user, child_complete, parent_update, clarify_response, cross_project, background_complete, system, compact). All fields optional at type level, narrowed by source at runtime.
+- **Two-phase lifecycle**: Phase 1 = `user_message` with `id` written to JSONL at send time. Phase 2 = `messages_consumed` event (or `messagesConsumed` field on `tool_result`) marks when messages were consumed.
+- **Converter changes**: Events with `id` are skipped at their original position in the event stream. They are materialized at the `messages_consumed` point (or `tool_result.messagesConsumed`). Backward-compatible: events without `id` still work as before.
+- **`messagesConsumed` on `tool_result`**: At cancellation points (tool calls), consumed message IDs are embedded in the last tool_result Event. Only standalone `messages_consumed` event needed for implicit yield (end_turn).
+- **`queueMessageToEvent`**: Returns `UserMessageEvent` with `source` field. All queue message types unified under `type: "user_message"`.
+- **`formatEventForAI`**: Handles both unified format (user_message with source) and legacy concrete types (child_complete, parent_update, etc.) for backward compat.
+- **`handleInjectMessage`**: Writes user_message to JSONL BEFORE delivery. Checks `eventStore.has()` BEFORE writing (so the fresh-vs-resume decision isnt influenced by the event being written).
+- **QueueMessage `id` field**: User QueueMessage carries `id` from the JSONL event, passed through to provider for messages_consumed tracking.
+- **Legacy types preserved**: child_complete, parent_update, etc. kept in Event union for backward compat with old JSONL files. New writes use unified user_message format.
