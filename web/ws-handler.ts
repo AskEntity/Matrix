@@ -505,6 +505,20 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				return { entries, updates: [], sideEffects: NO_SIDE_EFFECTS };
 			}
 
+			case "message_injected":
+				return {
+					entries: [
+						createLogEntry({
+							type: "user_message",
+							content: (msg.message as string) || "",
+							taskId: msg.taskId as string | undefined,
+							ts: (msg.ts as number) ?? Date.now(),
+						}),
+					],
+					updates: [],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
+
 			case "error":
 				return {
 					entries: [
