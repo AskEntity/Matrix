@@ -232,6 +232,45 @@ Event (src/events.ts) — THE source of truth
 
 
 
+## Frontend addLog Audit (March 2026)
+
+- **Principle**: "UI must never show anything that disappears on refresh." All activity log entries must come from backend-persisted events.
+- **Error addLog calls are OK**: Transient UX feedback for failed API calls (no backend event for "frontend fetch failed"). These are ephemeral by design.
+- **Daemon restart addLog is OK**: Page is about to reconnect anyway.
+- **Removed**: `⚡ /compact`, `⚡ /clear`, `Session history cleared`, `Deleted: ...` — all had backend event equivalents (`compact_started`, `tree_mutation`).
+- **Slash commands**: `handleSlashCommand` still routes to correct API endpoints, just no longer injects frontend-only log entries.
+
+
+## EventStore Async Writes (March 2026)
+
+- **appendFileSync → async appendFile**: EventStore.append() and appendBatch() now return Promise<void> with internal .catch() for fire-and-forget safety.
+- **Callers**: broadcastEvent() fire-and-forgets. Provider runLoop calls are also fire-and-forget (unawaited Promises in async generators). Tests must await.
+- **Reads remain sync**: read(), readActive() still use readFileSync — only called during session resume, not in hot path.
+
+## MessageQueue onEnqueue Callback
+
+- **Bug**: `enqueue()` has two paths — waiter (direct resolve) and array (push to `this.messages`). The waiter path bypasses the array, so `peekMessages()` returns empty and `onDrain` never fires. This broke pending message banner display.
+- **Fix**: Added `onEnqueue?: (msg: QueueMessage) => void` callback, called at the TOP of `enqueue()` before the waiter check. Fires on every enqueue regardless of path. `onDrain` still handles clearing.
+- **Wiring**: Set `queue.onEnqueue` at queue creation sites in `agent-lifecycle.ts` (child queues and root queue). Removed all manual `broadcastPendingFromQueue` calls after `enqueue()` in `deliverMessage` — the callback handles it.
+
+
+## Autonomous Operation Mode (March 2026)
+
+- **User left for extended period** (possibly months). Run fully autonomously.
+- **Use take_screenshot, NOT take_snapshot** for Chrome MCP — snapshots blow up context fast.
+- **Priorities**: Fix bugs, streamline code, remove workarounds, unified maintainable codepaths.
+- **Be careful**: Dont break daemon startup — cant self-recover if daemon wont start.
+- **Test via Chrome MCP**: Send messages, take screenshots to verify UI rendering.
+- **Restart daemon**: Via Settings button in UI (Chrome MCP) or POST /restart-daemon with auth cookie.
+
+
+## Input Lag Fix (March 2026)
+
+- **Root cause**: `prompt` state in App.tsx → every keystroke triggers full App re-render (ActivityLog with thousands of entries).
+- **Fix**: Extracted `InputBar` component (`web/components/InputBar.tsx`) with local `prompt` + `attachedImages` state. App only receives final values via `onSend(message, images?)` callback.
+- **AppFooter**: Now delegates form rendering to `InputBar`. Props simplified — no more `prompt`, `onPromptChange`, `attachedImages`, `onImageAttach`, `onImageRemove`.
+- **handlers.ts**: `handleSubmit(e)` → `handleSend(message, images?)`. No longer reads prompt/images from closure.
+
 ## SessionStore Removal (March 2026)
 
 - **Deleted**: `src/session-store.ts` and `src/session-store.test.ts`. SessionStore was a cache of provider-native message arrays (JSON files).

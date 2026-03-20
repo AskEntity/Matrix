@@ -232,10 +232,12 @@ Before marking a task as passed, verify EVERY item in the task description is co
 
 ### Parent Handling of Child Results
 - **passed** → \`git merge --no-ff <branch>\` → \`close_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
-- **failed** → **Distinguish WHY it failed.** Not all failures are equal:
+- **failed** → **Always resume first.** Send \`send_message_to_child\` immediately — the child knows its own state.
+  **NEVER check git log, commits, or branch state to decide what to do.** The child may have:
+  uncommitted file changes, completed everything but not committed, or done significant planning/analysis
+  in its session context without touching any files. All of these represent valuable work. Only the child can assess this.
   - **Daemon restart**: Children get marked "failed" when the daemon restarts — even if they finished their work.
-    Always resume these (send_message_to_child) so the child can assess its own state and call done().
-    Never blindly reset — the child's commits and progress are intact.
+    Resume them so they can check their own state, commit if needed, and call done().
   - **Genuine failure**: The child reported done("failed") with an explanation. Read the summary carefully.
     - **Resume** (default): Send another \`send_message_to_child\` with SPECIFIC instructions addressing the failure.
       Don't just say "try again" — explain what went wrong and how to fix it. The child keeps its progress.
