@@ -9,9 +9,7 @@ export interface ActionHandlerDeps {
 	rootNodeId: string | null;
 	selectedNode: TaskNode | null;
 	isOrchestratorNode: boolean;
-	prompt: string;
 	targetNodeId: string | null;
-	attachedImages: { base64: string; mediaType: string }[];
 	clarifyAnswers: Record<string, string>;
 	pendingClarifications: {
 		id: string;
@@ -24,10 +22,6 @@ export interface ActionHandlerDeps {
 	projects: Project[];
 
 	addLog: AddLogFn;
-	setPrompt: React.Dispatch<React.SetStateAction<string>>;
-	setAttachedImages: React.Dispatch<
-		React.SetStateAction<{ base64: string; mediaType: string }[]>
-	>;
 	setLogs: React.Dispatch<React.SetStateAction<LogEntry[]>>;
 	setLastTurns: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastInputTokens: React.Dispatch<React.SetStateAction<number | null>>;
@@ -69,17 +63,13 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		rootNodeId,
 		selectedNode,
 		isOrchestratorNode,
-		prompt,
 		targetNodeId,
-		attachedImages,
 		clarifyAnswers,
 		pendingClarifications,
 		newProjectPath,
 		creatingProject,
 		projects,
 		addLog,
-		setPrompt,
-		setAttachedImages,
 		setLogs,
 		setLastTurns,
 		setLastInputTokens,
@@ -146,45 +136,39 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		return false;
 	}
 
-	async function handleSubmit(e: React.FormEvent) {
-		e.preventDefault();
-		if (!prompt.trim() || !projectId) return;
+	async function handleSend(
+		message: string,
+		images?: { base64: string; mediaType: string }[],
+	) {
+		if (!message.trim() || !projectId) return;
 
 		// Check for slash commands before sending as a chat message
-		if (prompt.trim().startsWith("/")) {
-			const handled = await handleSlashCommand(prompt.trim());
-			if (handled) {
-				setPrompt("");
-				localStorage.removeItem("og-prompt-draft");
-				return;
-			}
+		if (message.trim().startsWith("/")) {
+			const handled = await handleSlashCommand(message.trim());
+			if (handled) return;
 		}
 
-		const images = attachedImages.length > 0 ? attachedImages : undefined;
 		try {
 			if (targetNodeId) {
 				// Sending to a specific child task
-				await sendMessageToTask(targetNodeId, prompt.trim());
+				await sendMessageToTask(targetNodeId, message.trim());
 			} else {
 				// Unified path: always try sendMessage first (handles active and no-session).
 				// Falls back to start() only if sendMessage returns 404 (no project).
 				try {
-					await sendMessage(prompt.trim(), images);
+					await sendMessage(message.trim(), images);
 				} catch (msgErr) {
 					// sendMessage failed — likely no session exists yet. Start a new one.
 					if (
 						(msgErr as Error).message?.includes("not found") ||
 						(msgErr as Error).message?.includes("No active session")
 					) {
-						await start({ prompt: prompt.trim() });
+						await start({ prompt: message.trim() });
 					} else {
 						throw msgErr;
 					}
 				}
 			}
-			setPrompt("");
-			setAttachedImages([]);
-			localStorage.removeItem("og-prompt-draft");
 		} catch (err) {
 			addLog({
 				type: "error",
@@ -396,7 +380,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 	}
 
 	return {
-		handleSubmit,
+		handleSend,
 		handleStop,
 		handleClarifySubmit,
 		handleClearSessions,

@@ -172,9 +172,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	);
 	const [lastOutputTokens, setLastOutputTokens] = useState<number | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
-	const [prompt, setPrompt] = useState(
-		() => localStorage.getItem("og-prompt-draft") ?? "",
-	);
 	const [showSettings, setShowSettings] = useState(false);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
 	const [splitRatio, setSplitRatio] = useState(0.35);
@@ -203,9 +200,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [clarifyAnswers, setClarifyAnswers] = useState<Record<string, string>>(
 		{},
 	);
-	const [attachedImages, setAttachedImages] = useState<
-		{ base64: string; mediaType: string }[]
-	>([]);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
 	const {
@@ -482,26 +476,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		});
 	}, [selectedTaskId]);
 
-	useEffect(() => {
-		const timer = setTimeout(() => {
-			if (prompt) localStorage.setItem("og-prompt-draft", prompt);
-			else localStorage.removeItem("og-prompt-draft");
-		}, 2000);
-		return () => clearTimeout(timer);
-	}, [prompt]);
-
-	useEffect(() => {
-		const handler = () => {
-			if (prompt) localStorage.setItem("og-prompt-draft", prompt);
-		};
-		window.addEventListener("beforeunload", handler);
-		return () => window.removeEventListener("beforeunload", handler);
-	}, [prompt]);
-
 	// ── Handlers ─────────────────────────────────────────────────────────────
 
 	const {
-		handleSubmit,
+		handleSend,
 		handleStop,
 		handleClarifySubmit,
 		handleClearSessions,
@@ -519,17 +497,13 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		rootNodeId,
 		selectedNode,
 		isOrchestratorNode,
-		prompt,
 		targetNodeId,
-		attachedImages,
 		clarifyAnswers,
 		pendingClarifications,
 		newProjectPath,
 		creatingProject,
 		projects,
 		addLog,
-		setPrompt,
-		setAttachedImages,
 		setLogs,
 		setLastTurns,
 		setLastInputTokens,
@@ -827,19 +801,12 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 			<AppFooter
 				projectId={projectId}
-				prompt={prompt}
 				targetNodeId={targetNodeId}
 				nodeMap={nodeMap}
 				pendingMessages={pendingMessages}
 				pendingClarifications={pendingClarifications}
 				clarifyAnswers={clarifyAnswers}
-				attachedImages={attachedImages}
-				onPromptChange={setPrompt}
-				onSubmit={handleSubmit}
-				onImageAttach={(img) => setAttachedImages((prev) => [...prev, img])}
-				onImageRemove={(index) =>
-					setAttachedImages((prev) => prev.filter((_, i) => i !== index))
-				}
+				onSend={handleSend}
 				onClearTarget={() => {
 					setTargetNodeId(null);
 					setSelectedTaskId(rootNodeId);
