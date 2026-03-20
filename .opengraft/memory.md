@@ -252,3 +252,13 @@ Event (src/events.ts) — THE source of truth
 - **Bug**: `enqueue()` has two paths — waiter (direct resolve) and array (push to `this.messages`). The waiter path bypasses the array, so `peekMessages()` returns empty and `onDrain` never fires. This broke pending message banner display.
 - **Fix**: Added `onEnqueue?: (msg: QueueMessage) => void` callback, called at the TOP of `enqueue()` before the waiter check. Fires on every enqueue regardless of path. `onDrain` still handles clearing.
 - **Wiring**: Set `queue.onEnqueue` at queue creation sites in `agent-lifecycle.ts` (child queues and root queue). Removed all manual `broadcastPendingFromQueue` calls after `enqueue()` in `deliverMessage` — the callback handles it.
+
+
+## Autonomous Operation Mode (March 2026)
+
+- **User left for extended period** (possibly months). Run fully autonomously.
+- **Use take_screenshot, NOT take_snapshot** for Chrome MCP — snapshots blow up context fast.
+- **Priorities**: Fix bugs, streamline code, remove workarounds, unified maintainable codepaths.
+- **Be careful**: Dont break daemon startup — cant self-recover if daemon wont start.
+- **Test via Chrome MCP**: Send messages, take screenshots to verify UI rendering.
+- **Restart daemon**: Via Settings button in UI (Chrome MCP) or POST /restart-daemon with auth cookie.
