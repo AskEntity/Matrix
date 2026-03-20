@@ -1,4 +1,3 @@
-import { rm } from "node:fs/promises";
 import type { Hono } from "hono";
 import { DEFAULT_MODEL } from "../../config.ts";
 import type { QueueImage } from "../../message-queue.ts";
@@ -11,7 +10,7 @@ import {
 	stopAgent,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
-import { broadcastTreeUpdate, eventsPath } from "../event-system.ts";
+import { broadcastTreeUpdate } from "../event-system.ts";
 import {
 	getProjectProvider,
 	getSessionStore,
@@ -283,13 +282,10 @@ export function registerAgentRoutes(
 		}
 		const store = getSessionStore(ctx, project.id);
 		await store.clearAll();
-		// Also clear event history
-		ctx.eventHistory.delete(project.id);
-		try {
-			await rm(eventsPath(ctx, project.id));
-		} catch {
-			/* ok */
-		}
+		// JSONL event files live alongside session files in the sessions dir —
+		// clearAll() removes both .json and .events.jsonl files.
+		// Also clear the in-memory EventStore cache so it re-creates from disk.
+		ctx.eventStores.delete(project.id);
 		const tracker = ctx.trackers.get(project.id);
 		if (tracker) {
 			// Broadcast tree so connected WS clients re-render with current nodes

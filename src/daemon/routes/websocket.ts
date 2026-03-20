@@ -8,11 +8,7 @@ import {
 	handleOrchestrate,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext, WSClient } from "../context.ts";
-import {
-	broadcastEvent,
-	getPendingClarifications,
-	loadEventHistory,
-} from "../event-system.ts";
+import { broadcastEvent, getPendingClarifications } from "../event-system.ts";
 import { getTracker } from "../helpers.ts";
 
 export function registerWebSocketRoute(
@@ -66,19 +62,6 @@ export function registerWebSocketRoute(
 										type: "tree_updated",
 										nodes: tracker.allNodes(),
 										rootNodeId: tracker.rootNodeId,
-									}),
-								);
-							}
-							// Send event history so client has full context (load from disk if needed)
-							let history = ctx.eventHistory.get(msg.projectId);
-							if (!history) {
-								history = await loadEventHistory(ctx, msg.projectId);
-							}
-							if (history.length > 0) {
-								ws.send(
-									JSON.stringify({
-										type: "event_history",
-										events: history,
 									}),
 								);
 							}

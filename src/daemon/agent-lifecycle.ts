@@ -31,7 +31,6 @@ import {
 	broadcastPendingCleared,
 	broadcastPendingFromQueue,
 	broadcastTreeUpdate,
-	flushEvents,
 	removePendingClarification,
 } from "./event-system.ts";
 import {
@@ -472,9 +471,6 @@ export async function stopAgent(
 		...(rootNodeId ? { taskId: rootNodeId } : {}),
 		ts: Date.now(),
 	});
-
-	// Flush any pending events to disk to prevent data loss
-	await flushEvents(ctx);
 }
 
 /**
@@ -873,7 +869,6 @@ export async function runChildAgentInBackground(
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} finally {
-		await flushEvents(ctx);
 		await mcpManager.disconnectAll();
 	}
 }
@@ -1095,7 +1090,6 @@ export async function launchAgent(
 				}
 			}
 			broadcastTreeUpdate(ctx, project.id, tracker);
-			await flushEvents(ctx);
 			await mcpManager.disconnectAll();
 		}
 	})();

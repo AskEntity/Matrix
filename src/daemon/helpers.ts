@@ -12,6 +12,7 @@ import {
 	resolveConfig,
 } from "../config.ts";
 import { EventStore } from "../event-store.ts";
+import type { Event } from "../events.ts";
 import { OpenAICompatibleProvider } from "../openai-compatible-provider.ts";
 import { SessionStore } from "../session-store.ts";
 import { TaskTracker } from "../task-tracker.ts";
@@ -200,4 +201,30 @@ export async function pruneSessionFiles(
 	} catch {
 		return { pruned: 0, remaining: 0 };
 	}
+}
+
+/**
+ * Normalize an Event from JSONL to UI-compatible format.
+ * Maps Event field names to BroadcastEvent field names that the frontend processEvent expects:
+ * - toolCallId → toolUseId (for tool_call and tool_result)
+ * - Adds taskId to events that don't have it
+ */
+export function normalizeEventForUI(
+	event: Event,
+	sessionId: string,
+): Record<string, unknown> {
+	const base = event as unknown as Record<string, unknown>;
+	const result: Record<string, unknown> = {
+		...base,
+		taskId: base.taskId ?? sessionId,
+	};
+
+	// Map toolCallId → toolUseId for frontend compatibility
+	if (event.type === "tool_call") {
+		result.toolUseId = event.toolCallId;
+	} else if (event.type === "tool_result") {
+		result.toolUseId = event.toolCallId;
+	}
+
+	return result;
 }

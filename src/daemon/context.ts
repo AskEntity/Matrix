@@ -39,16 +39,12 @@ export interface DaemonContext {
 	readonly restartingProjects: Set<string>;
 	readonly wsClients: Set<WSClient>;
 	readonly activeSessions: Map<string, AgentSession>;
-	readonly eventHistory: Map<string, Record<string, unknown>[]>;
-	readonly eventsDirty: Set<string>;
 	readonly pendingClarifications: Map<string, PendingClarification[]>;
 	readonly sessionStores: Map<string, SessionStore>;
 	readonly eventStores: Map<string, EventStore>;
-	readonly MAX_EVENT_HISTORY: number;
 
 	/** Mutable counters/flags */
 	requestCount: number;
 	startupReady: boolean;
 	globalConfig: OpenGraftConfig;
-	eventFlushTimer: ReturnType<typeof setTimeout> | null;
 }

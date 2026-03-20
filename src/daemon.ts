@@ -15,8 +15,12 @@ import type {
 	PendingClarification,
 	WSClient,
 } from "./daemon/context.ts";
-import { flushEvents, loadEventHistory } from "./daemon/event-system.ts";
-import { getTracker, pruneSessionFiles } from "./daemon/helpers.ts";
+
+import {
+	getEventStore,
+	getTracker,
+	pruneSessionFiles,
+} from "./daemon/helpers.ts";
 import { registerAgentRoutes } from "./daemon/routes/agent.ts";
 import {
 	createAuthMiddleware,
@@ -71,16 +75,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		restartingProjects: new Set(),
 		wsClients: new Set<WSClient>(),
 		activeSessions: new Map<string, AgentSession>(),
-		eventHistory: new Map<string, Record<string, unknown>[]>(),
-		eventsDirty: new Set<string>(),
 		pendingClarifications: new Map<string, PendingClarification[]>(),
 		sessionStores: new Map(),
 		eventStores: new Map(),
-		MAX_EVENT_HISTORY: 5000,
 		requestCount: 0,
 		startupReady: false,
 		globalConfig: config.initialConfig ?? {},
-		eventFlushTimer: null,
 	};
 
 	// Request counter middleware
@@ -263,14 +263,18 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				}
 				if (orphanCount > 0) await tracker.save();
 
-				// Load event history from disk so UI can show previous logs
-				const events = await loadEventHistory(ctx, project.id);
-
-				// Extract recent error events so the agent knows what went wrong
-				const errorMessages = events
-					.filter((e) => e.type === "error")
+				// Extract recent error events from JSONL so the agent knows what went wrong
+				const eventStore = getEventStore(ctx, project.id);
+				const rootEvents = tracker.rootNodeId
+					? eventStore.read(tracker.rootNodeId)
+					: [];
+				const errorMessages = rootEvents
+					.filter(
+						(e): e is Extract<typeof e, { type: "error" }> =>
+							e.type === "error",
+					)
 					.slice(-5)
-					.map((e) => String(e.message ?? "Unknown error"));
+					.map((e) => e.message);
 
 				console.log(
 					`Auto-resuming orchestration for ${project.name} (${project.id.slice(0, 8)})`,
@@ -280,12 +284,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						? `\n\nPrevious session encountered these errors:\n${errorMessages.map((m) => `- ${m}`).join("\n")}`
 						: "";
 				const resumePrompt = `Continue where you left off. The daemon restarted.${orphanCount > 0 ? ` Note: ${orphanCount} in_progress task(s) were reset to failed.` : ""}${errorSection}\n\nCheck the task tree and proceed.`;
-				// Clear error events after injecting them into resume prompt — show once only
-				if (errorMessages.length > 0) {
-					const cleaned = events.filter((e) => e.type !== "error");
-					ctx.eventHistory.set(project.id, cleaned);
-					ctx.eventsDirty.add(project.id);
-				}
 				await launchAgent(
 					ctx,
 					project,
@@ -299,14 +297,13 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		}
 	}
 
-	/** Graceful shutdown: save all active session IDs and flush events. */
+	/** Graceful shutdown: stop all agents. */
 	async function shutdown(): Promise<void> {
 		// Stop all agents — their root nodes stay in_progress so they resume on next start
 		const projectIds = [...ctx.activeSessions.keys()];
 		for (const projectId of projectIds) {
 			await stopAgent(ctx, projectId);
 		}
-		await flushEvents(ctx);
 	}
 
 	function markReady() {

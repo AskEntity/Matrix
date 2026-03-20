@@ -348,7 +348,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 	// ── WebSocket handler ────────────────────────────────────────────────────
 
-	const handleWS = useMemo(
+	const { handleWS, processEventBatch } = useMemo(
 		() =>
 			createWSHandler({
 				updateFromWS,
@@ -387,6 +387,25 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		const first = projects[0];
 		if (first) setProjectId(first.id);
 	}, [projects, projectId]);
+
+	// Fetch event history from JSONL EventStore on project change
+	// biome-ignore lint/correctness/useExhaustiveDependencies: processEventBatch is stable within useMemo
+	useEffect(() => {
+		if (!projectId) return;
+		let cancelled = false;
+		fetch(`/projects/${projectId}/events`)
+			.then((r) => r.json())
+			.then((data: { events?: Record<string, unknown>[] }) => {
+				if (cancelled) return;
+				if (data.events && data.events.length > 0) {
+					processEventBatch(data.events);
+				}
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
+	}, [projectId]);
 
 	// ── Hash routing sync ────────────────────────────────────────────────────
 

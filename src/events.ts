@@ -80,7 +80,75 @@ export type Event =
 			checkpoint: string;
 			savedTokens: number;
 			ts: number;
-	  };
+	  }
+	// Lifecycle events — persisted to JSONL for activity log replay
+	| {
+			type: "orchestration_started";
+			taskId: string;
+			resume: boolean;
+			prompt?: string;
+			model?: string;
+			provider?: string;
+			ts: number;
+	  }
+	| {
+			type: "orchestration_completed";
+			taskId: string;
+			success: boolean;
+			costUsd?: number;
+			turns?: number;
+			inputTokens?: number;
+			cacheCreationTokens?: number;
+			cacheReadTokens?: number;
+			outputTokens?: number;
+			childCosts?: {
+				totalCostUsd: number;
+				totalTurns: number;
+				taskCount: number;
+			};
+			ts: number;
+	  }
+	| { type: "task_started"; taskId: string; title: string; ts: number }
+	| {
+			type: "task_completed";
+			taskId: string;
+			title: string;
+			success: boolean;
+			output?: string;
+			error?: string;
+			ts: number;
+	  }
+	| { type: "error"; taskId?: string; message: string; ts: number }
+	| {
+			type: "budget_exceeded";
+			taskId: string;
+			title: string;
+			costUsd?: number;
+			budgetUsd?: number;
+			ts: number;
+	  }
+	| {
+			type: "clarification_requested";
+			taskId: string;
+			question: string;
+			ts: number;
+	  }
+	| {
+			type: "clarification_answered";
+			taskId: string;
+			answer: string;
+			ts: number;
+	  }
+	| {
+			type: "tree_mutation";
+			action: string;
+			nodeId: string;
+			title?: string;
+			ts: number;
+	  }
+	| { type: "compact_started"; taskId: string; ts: number }
+	| { type: "agent_stopped"; taskId?: string; ts: number }
+	| { type: "message_injected"; message: string; ts: number };
 
 /** Event types that originate from the message queue (idle drain or cancellation points). */
 const QUEUE_EVENT_TYPES = new Set([
