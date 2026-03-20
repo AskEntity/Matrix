@@ -88,6 +88,8 @@ export class MessageQueue {
 			const { resolve } = this.waiter;
 			this.waiter = null;
 			resolve(msg);
+			// Message was consumed immediately — clear pending banner
+			this.onDrain?.();
 		} else {
 			this.messages.push(msg);
 		}
