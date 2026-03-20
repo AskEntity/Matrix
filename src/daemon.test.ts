@@ -2308,11 +2308,11 @@ describe("POST /projects/:id/sessions/prune", () => {
 	});
 
 	test("returns pruned=0 when file count is within keepCount", async () => {
-		// Create 3 session files
+		// Create 3 event JSONL files
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
 		for (let i = 0; i < 3; i++) {
-			await writeFile(join(sessionsDir, `session-${i}.json`), "{}");
+			await writeFile(join(sessionsDir, `session-${i}.events.jsonl`), "{}");
 		}
 
 		const res = await app.request(`/projects/${projectId}/sessions/prune`, {
@@ -2326,12 +2326,12 @@ describe("POST /projects/:id/sessions/prune", () => {
 		expect(body.remaining).toBe(3);
 	});
 
-	test("prunes oldest session files keeping only keepCount", async () => {
-		// Create 5 session files
+	test("prunes oldest event JSONL files keeping only keepCount", async () => {
+		// Create 5 event JSONL files
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
 		for (let i = 0; i < 5; i++) {
-			await writeFile(join(sessionsDir, `session-${i}.json`), "{}");
+			await writeFile(join(sessionsDir, `session-${i}.events.jsonl`), "{}");
 		}
 
 		const res = await app.request(`/projects/${projectId}/sessions/prune`, {
@@ -2346,11 +2346,11 @@ describe("POST /projects/:id/sessions/prune", () => {
 	});
 
 	test("defaults to keepCount=10 when not specified", async () => {
-		// Create 12 session files
+		// Create 12 event JSONL files
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
 		for (let i = 0; i < 12; i++) {
-			await writeFile(join(sessionsDir, `session-${i}.json`), "{}");
+			await writeFile(join(sessionsDir, `session-${i}.events.jsonl`), "{}");
 		}
 
 		const res = await app.request(`/projects/${projectId}/sessions/prune`, {
@@ -2720,15 +2720,15 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.message).toBe("Add tests for edge cases");
 	});
 
-	test("passes sessionStore to stream for child agent persistence", async () => {
-		let receivedSessionStore: unknown;
+	test("passes eventStore to stream for child agent persistence", async () => {
+		let receivedEventStore: unknown;
 
 		const agentProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({ success: true, output: "" }),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* (req) {
-				receivedSessionStore = req.sessionStore;
+				receivedEventStore = req.eventStore;
 				return { success: true, output: "" };
 			},
 			startSession(req) {
@@ -2800,7 +2800,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 
 		await new Promise((r) => setTimeout(r, 100));
 
-		expect(receivedSessionStore).toBeDefined();
+		expect(receivedEventStore).toBeDefined();
 
 		await rm(localDataDir, { recursive: true });
 	});
@@ -3105,9 +3105,12 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
 
-		// Create 8 session files one by one with small delays to ensure distinct mtimes
+		// Create 8 event JSONL files one by one with small delays to ensure distinct mtimes
 		for (let i = 0; i < 8; i++) {
-			await writeFile(join(sessionsDir, `session-${i}.json`), `{"i":${i}}`);
+			await writeFile(
+				join(sessionsDir, `session-${i}.events.jsonl`),
+				`{"i":${i}}`,
+			);
 			await new Promise((r) => setTimeout(r, 5));
 		}
 
@@ -3122,8 +3125,8 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 		await result.autoResumeProjects();
 
 		const remaining = await readdir(sessionsDir);
-		const jsonFiles = remaining.filter((f) => f.endsWith(".json"));
-		expect(jsonFiles.length).toBe(3);
+		const jsonlFiles = remaining.filter((f) => f.endsWith(".events.jsonl"));
+		expect(jsonlFiles.length).toBe(3);
 	});
 
 	test("does not prune when session count is within limit", async () => {
@@ -3131,7 +3134,10 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 		await mkdir(sessionsDir, { recursive: true });
 
 		for (let i = 0; i < 3; i++) {
-			await writeFile(join(sessionsDir, `session-${i}.json`), `{"i":${i}}`);
+			await writeFile(
+				join(sessionsDir, `session-${i}.events.jsonl`),
+				`{"i":${i}}`,
+			);
 		}
 
 		const result = createApp({
@@ -3143,8 +3149,8 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 		await result.autoResumeProjects();
 
 		const remaining = await readdir(sessionsDir);
-		const jsonFiles = remaining.filter((f) => f.endsWith(".json"));
-		expect(jsonFiles.length).toBe(3);
+		const jsonlFiles = remaining.filter((f) => f.endsWith(".events.jsonl"));
+		expect(jsonlFiles.length).toBe(3);
 	});
 
 	test("defaults to keeping 5 sessions when sessionKeep not set", async () => {
@@ -3152,7 +3158,10 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 		await mkdir(sessionsDir, { recursive: true });
 
 		for (let i = 0; i < 9; i++) {
-			await writeFile(join(sessionsDir, `session-${i}.json`), `{"i":${i}}`);
+			await writeFile(
+				join(sessionsDir, `session-${i}.events.jsonl`),
+				`{"i":${i}}`,
+			);
 			await new Promise((r) => setTimeout(r, 5));
 		}
 
@@ -3162,8 +3171,8 @@ describe("autoResumeProjects — auto-prune old sessions", () => {
 		await result.autoResumeProjects();
 
 		const remaining = await readdir(sessionsDir);
-		const jsonFiles = remaining.filter((f) => f.endsWith(".json"));
-		expect(jsonFiles.length).toBe(5);
+		const jsonlFiles = remaining.filter((f) => f.endsWith(".events.jsonl"));
+		expect(jsonlFiles.length).toBe(5);
 	});
 
 	test("does not fail when sessions directory does not exist", async () => {
@@ -3537,7 +3546,7 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 		expect(body.messages).toEqual([]);
 	});
 
-	test("returns transformed messages from session file (happy path)", async () => {
+	test("returns transformed messages from event JSONL (happy path)", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -3545,32 +3554,31 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		// Write mock session file — sessionId = nodeId
+		// Write mock event JSONL file — sessionId = nodeId
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
-		const sessionData = [
-			{ role: "user", content: "Help me build a feature" },
+		const events = [
+			{ type: "user_message", content: "Help me build a feature", ts: 1 },
+			{ type: "assistant_text", content: "I'll help you", ts: 2 },
 			{
-				role: "assistant",
-				content: [
-					{ type: "text", text: "I'll help you" },
-					{ type: "tool_use", id: "tool-1", name: "bash", input: {} },
-				],
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tool-1",
+				input: {},
+				ts: 3,
 			},
 			{
-				role: "user",
-				content: [
-					{ type: "tool_result", tool_use_id: "tool-1", content: "ok" },
-				],
+				type: "tool_result",
+				toolCallId: "tool-1",
+				content: "ok",
+				isError: false,
+				ts: 4,
 			},
-			{
-				role: "assistant",
-				content: [{ type: "text", text: "Done!" }],
-			},
+			{ type: "assistant_text", content: "Done!", ts: 5 },
 		];
 		await writeFile(
-			join(sessionsDir, `${task.id}.json`),
-			JSON.stringify(sessionData),
+			join(sessionsDir, `${task.id}.events.jsonl`),
+			`${events.map((e) => JSON.stringify(e)).join("\n")}\n`,
 		);
 
 		const res = await app.request(
@@ -3586,31 +3594,26 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 			}[];
 		};
 
-		expect(body.messages).toHaveLength(4);
+		expect(body.messages).toHaveLength(3);
 
-		// First message: plain string content
+		// First message: user message
 		expect(body.messages[0]?.role).toBe("user");
 		expect(body.messages[0]?.content).toBe("Help me build a feature");
 		expect(body.messages[0]?.hasToolUse).toBe(false);
 
-		// Second message: assistant with text + tool_use
+		// Second message: assistant with text + tool_call merged
 		expect(body.messages[1]?.role).toBe("assistant");
 		expect(body.messages[1]?.content).toBe("I'll help you");
 		expect(body.messages[1]?.hasToolUse).toBe(true);
 		expect(body.messages[1]?.toolNames).toEqual(["bash"]);
 
-		// Third message: user tool_result (no text blocks)
-		expect(body.messages[2]?.role).toBe("user");
-		expect(body.messages[2]?.content).toBe("");
+		// Third message: assistant text only
+		expect(body.messages[2]?.role).toBe("assistant");
+		expect(body.messages[2]?.content).toBe("Done!");
 		expect(body.messages[2]?.hasToolUse).toBe(false);
-
-		// Fourth message: assistant text only
-		expect(body.messages[3]?.role).toBe("assistant");
-		expect(body.messages[3]?.content).toBe("Done!");
-		expect(body.messages[3]?.hasToolUse).toBe(false);
 	});
 
-	test("returns last 100 messages when session has more than 100", async () => {
+	test("returns last 100 messages when events produce more than 100", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -3618,16 +3621,17 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		// Write 110 messages — sessionId = nodeId
+		// Write 110 events alternating user_message and assistant_text
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
-		const sessionData = Array.from({ length: 110 }, (_, i) => ({
-			role: i % 2 === 0 ? "user" : "assistant",
+		const events = Array.from({ length: 110 }, (_, i) => ({
+			type: i % 2 === 0 ? "user_message" : "assistant_text",
 			content: `Message ${i}`,
+			ts: i,
 		}));
 		await writeFile(
-			join(sessionsDir, `${task.id}.json`),
-			JSON.stringify(sessionData),
+			join(sessionsDir, `${task.id}.events.jsonl`),
+			`${events.map((e) => JSON.stringify(e)).join("\n")}\n`,
 		);
 
 		const res = await app.request(

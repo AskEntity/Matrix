@@ -2,6 +2,7 @@ import { pinyin } from "pinyin-pro";
 import { z } from "zod";
 import type { AgentProvider, AgentSession } from "./agent-provider.ts";
 import { readProjectMemory } from "./daemon/helpers.ts";
+import type { EventStore } from "./event-store.ts";
 import { formatEventForAI, queueMessageToEvent } from "./events.ts";
 import {
 	globalAgentQueues,
@@ -10,7 +11,6 @@ import {
 } from "./message-queue.ts";
 import { clearPersistedMessages, persistMessage } from "./persistent-queue.ts";
 import type { ProjectManager } from "./project-manager.ts";
-import type { SessionStore } from "./session-store.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import type { WorktreeManager } from "./worktree-manager.ts";
@@ -540,8 +540,8 @@ export interface OrchestratorToolsDeps {
 	activeSessions?: Map<string, AgentSession>;
 	/** Current project ID — used as sender identity for cross-project messages. */
 	currentProjectId?: string;
-	/** Session store for this project's session files. */
-	sessionStore?: SessionStore;
+	/** EventStore for JSONL event persistence. Used to clear session data on reset/delete. */
+	eventStore?: EventStore;
 	/** Data directory root (~/.opengraft). Used for persistent message queue. */
 	dataDir?: string;
 	/** Launch a child agent in the background. Daemon provides this via runChildAgentInBackground. */
@@ -1282,9 +1282,9 @@ export function createOrchestratorTools(
 						await worktrees.remove(node.id, slug);
 					}
 
-					// Delete session files (all suffixes — .json, .openai.json, etc.)
-					if (deps.sessionStore && node.id) {
-						await deps.sessionStore.clear(node.id);
+					// Delete event JSONL files
+					if (deps.eventStore && node.id) {
+						deps.eventStore.clear(node.id);
 					}
 
 					// Clear persisted messages for this task and all descendants
@@ -1376,9 +1376,9 @@ export function createOrchestratorTools(
 						node.branch = null;
 					}
 
-					// Delete session files (all suffixes — .json, .openai.json, etc.)
-					if (deps.sessionStore) {
-						await deps.sessionStore.clear(node.id);
+					// Delete event JSONL files
+					if (deps.eventStore) {
+						deps.eventStore.clear(node.id);
 					}
 
 					// Clear persisted messages (follows session lifecycle)

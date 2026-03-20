@@ -21,7 +21,6 @@ import {
 import {
 	collectDescendants,
 	getEventStore,
-	getSessionStore,
 	getTracker,
 	normalizeEventForUI,
 	readProjectMemory,
@@ -419,7 +418,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 
 		// Clean up all resources for this node and all descendants
 		const nodesToRemove = collectDescendants(tracker, nodeId);
-		const store = getSessionStore(ctx, project.id);
+		const eventStore = getEventStore(ctx, project.id);
 
 		for (const n of nodesToRemove) {
 			// Close running agent queue (must happen before close() to match
@@ -455,8 +454,8 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				}
 			}
 
-			// Delete session files (all suffixes — .json, .openai.json, etc.)
-			await store.clear(n.id);
+			// Delete event JSONL files
+			eventStore.clear(n.id);
 		}
 
 		// Clear persisted messages for all removed tasks
@@ -519,54 +518,58 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 	});
 
-	// Conversation history for a task (from session file)
+	// Conversation history for a task (from EventStore JSONL)
 	app.get("/projects/:id/tasks/:nodeId/conversation", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));
 		if (!project) return c.json({ error: "Project not found" }, 404);
 		const tracker = await getTracker(ctx, project.id);
 		const node = tracker.get(c.req.param("nodeId"));
 		if (!node) return c.json({ error: "Task not found" }, 404);
-		// Try Anthropic format first (no suffix), then OpenAI format ("openai" suffix)
-		const store = getSessionStore(ctx, project.id);
 		try {
-			const params =
-				((await store.get(node.id)) as Array<{
-					role: string;
-					content: unknown;
-				}> | null) ??
-				((await store.get(node.id, "openai")) as Array<{
-					role: string;
-					content: unknown;
-				}> | null);
-			if (!params) return c.json({ messages: [] });
-			const messages = params.slice(-100).map((msg) => {
-				let content = "";
-				let hasToolUse = false;
-				const toolNames: string[] = [];
-				if (typeof msg.content === "string") {
-					content = msg.content;
-				} else if (Array.isArray(msg.content)) {
-					for (const block of msg.content as Array<{
-						type: string;
-						text?: string;
-						name?: string;
-					}>) {
-						if (block.type === "text" && block.text)
-							content += (content ? "\n" : "") + block.text;
-						else if (block.type === "tool_use" && block.name) {
-							hasToolUse = true;
-							toolNames.push(block.name);
-						}
+			const eventStore = getEventStore(ctx, project.id);
+			const events = eventStore.readActive(node.id);
+			if (events.length === 0) return c.json({ messages: [] });
+			// Convert events to simplified conversation messages
+			const messages: Array<{
+				role: string;
+				content: string;
+				hasToolUse: boolean;
+				toolNames?: string[];
+			}> = [];
+			for (const event of events) {
+				if (
+					event.type === "user_message" ||
+					event.type === "compacted_resume"
+				) {
+					messages.push({
+						role: "user",
+						content: event.content,
+						hasToolUse: false,
+					});
+				} else if (event.type === "assistant_text") {
+					messages.push({
+						role: "assistant",
+						content: event.content,
+						hasToolUse: false,
+					});
+				} else if (event.type === "tool_call") {
+					// Merge tool_call info into the last assistant message if possible
+					const last = messages[messages.length - 1];
+					if (last && last.role === "assistant") {
+						last.hasToolUse = true;
+						if (!last.toolNames) last.toolNames = [];
+						last.toolNames.push(event.tool);
+					} else {
+						messages.push({
+							role: "assistant",
+							content: "",
+							hasToolUse: true,
+							toolNames: [event.tool],
+						});
 					}
 				}
-				return {
-					role: msg.role,
-					content,
-					hasToolUse,
-					...(toolNames.length ? { toolNames } : {}),
-				};
-			});
-			return c.json({ messages });
+			}
+			return c.json({ messages: messages.slice(-100) });
 		} catch {
 			return c.json({ messages: [] });
 		}

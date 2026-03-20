@@ -14,7 +14,7 @@ import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { loadPersistedMessages } from "./persistent-queue.ts";
-import { SessionStore } from "./session-store.ts";
+
 import { TaskTracker } from "./task-tracker.ts";
 import type { AgentResult, Project, TaskNode } from "./types.ts";
 
@@ -2452,18 +2452,19 @@ describe("lifecycle edge cases — session continuity", () => {
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
 		await delay(100);
 
-		// Write some fake session data to simulate a real session having history
+		// Write some fake event data to simulate a real session having history
 		const sessionsDir = join(dataDir, "sessions", project.id);
 		// biome-ignore lint/style/noNonNullAssertion: length checked above
 		const firstReq = sessionRequests[0]!;
 		const sessionId = firstReq.resumeSessionId ?? "unknown";
-		const sessionStore = new SessionStore(sessionsDir);
-		await sessionStore.set(sessionId, [
-			{ role: "user", content: "hello" },
-			{ role: "assistant", content: "Hi there!" },
-		]);
+		const eventStore = new EventStore(sessionsDir);
+		await eventStore.append(sessionId, {
+			type: "user_message",
+			content: "hello",
+			ts: Date.now(),
+		} as Event);
 		// Verify it was saved
-		expect(sessionStore.hasAny(sessionId)).toBe(true);
+		expect(eventStore.has(sessionId)).toBe(true);
 
 		// Clear sessions — should wipe all session data
 		await app.request(`/projects/${project.id}/sessions/clear`, {
@@ -2471,9 +2472,9 @@ describe("lifecycle edge cases — session continuity", () => {
 		});
 		await delay(100);
 
-		// Session store should now be empty for this sessionId
-		const freshStore = new SessionStore(sessionsDir);
-		expect(freshStore.hasAny(sessionId)).toBe(false);
+		// Event store should now be empty for this sessionId
+		const freshStore = new EventStore(sessionsDir);
+		expect(freshStore.has(sessionId)).toBe(false);
 
 		// Send new message — should start fresh
 		await app.request(`/projects/${project.id}/message`, {
@@ -2491,13 +2492,17 @@ describe("lifecycle edge cases — session continuity", () => {
 		expect(newReq.prompt).toContain("new task");
 		expect(newReq.prompt).not.toContain("Resuming");
 
-		// Verify there's no session history for the new session
-		const newStore = new SessionStore(sessionsDir);
+		// Verify there's no old session history for the new session
+		const newEventStore = new EventStore(sessionsDir);
 		const newSessionId = newReq.resumeSessionId;
 		if (newSessionId) {
-			const history = await newStore.get(newSessionId);
-			// Either null (no file) or empty
-			expect(!history || history.length === 0).toBe(true);
+			// New session should have no prior events (or only what the current run created)
+			const events = newEventStore.read(newSessionId);
+			// Events may exist from the new launch but should NOT contain old "hello" message
+			const hasOldMessage = events.some(
+				(e) => e.type === "user_message" && (e as Event & { type: "user_message" }).content === "hello",
+			);
+			expect(hasOldMessage).toBe(false);
 		}
 
 		// Cleanup
@@ -2527,16 +2532,17 @@ describe("lifecycle edge cases — session continuity", () => {
 		});
 		await delay(100);
 
-		// Write fake session data so handleInjectMessage detects existing session
+		// Write fake event data so handleInjectMessage detects existing session
 		// biome-ignore lint/style/noNonNullAssertion: length checked above
 		const firstReq = sessionRequests[0]!;
 		const sessionId = firstReq.resumeSessionId ?? "unknown";
 		const sessionsDir = join(dataDir, "sessions", project.id);
-		const sessionStore = new SessionStore(sessionsDir);
-		await sessionStore.set(sessionId, [
-			{ role: "user", content: "initial work" },
-			{ role: "assistant", content: "Done!" },
-		]);
+		const eventStore2 = new EventStore(sessionsDir);
+		await eventStore2.append(sessionId, {
+			type: "user_message",
+			content: "initial work",
+			ts: Date.now(),
+		} as Event);
 
 		// Stop the agent (session files preserved)
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
@@ -2794,13 +2800,17 @@ describe("lifecycle edge cases — session continuity", () => {
 		expect(eventsAfterStop.length).toBeGreaterThanOrEqual(launchEventCount);
 		const stopEventCount = eventsAfterStop.length;
 
-		// Save fake session to enable resume path
+		// Save fake event to enable resume path
 		// biome-ignore lint/style/noNonNullAssertion: length checked above
 		const firstReq = sessionRequests[0]!;
 		const sessionId = firstReq.resumeSessionId ?? "unknown";
 		const sessionsDir = join(dataDir, "sessions", project.id);
-		const sessionStore = new SessionStore(sessionsDir);
-		await sessionStore.set(sessionId, [{ role: "user", content: "do work" }]);
+		const eventStore2 = new EventStore(sessionsDir);
+		await eventStore2.append(sessionId, {
+			type: "user_message",
+			content: "do work",
+			ts: Date.now(),
+		} as Event);
 
 		// Send message to resume
 		await app.request(`/projects/${project.id}/message`, {

@@ -274,8 +274,19 @@ Event (src/events.ts) — THE source of truth
 
 ## Lifecycle Test Patterns (March 2026)
 
-- **SessionStore API**: Method is `set()` not `save()`. `hasAny(sessionId)` checks both `.json` and `.openai.json` suffixes.
-- **Fresh vs resume detection**: `handleInjectMessage` checks `sessionStore.hasAny(rootNodeId)`. If true → resume with generic prompt. If false → fresh start with user message as prompt.
+- **Fresh vs resume detection**: `handleInjectMessage` checks `eventStore.has(rootNodeId)`. If true → resume with generic prompt. If false → fresh start with user message as prompt.
 - **launchAgent prompt prepends memory**: For fresh starts, `launchAgent` reads `.opengraft/memory.md` and prepends to prompt. Test with `toContain()` not `toBe()`.
-- **sessions/clear wipes JSONL events too**: `clearAll()` removes the entire sessions dir (which contains both `.json` session files and `.events.jsonl` files). EventStore cache is also cleared.
+- **sessions/clear wipes JSONL events too**: `clearAll()` removes the entire sessions dir. EventStore cache is also cleared.
 - **Capturing provider pattern**: Create a provider that records `AgentRequest` objects passed to `startSession()` — useful for verifying prompt content, resumeSessionId, and other session parameters.
+
+## SessionStore Removal (March 2026)
+
+- **Deleted**: `src/session-store.ts` and `src/session-store.test.ts`. SessionStore was a cache of provider-native message arrays (JSON files).
+- **EventStore is now sole persistence**: Providers reconstruct messages from EventStore JSONL on resume via `eventsToAnthropicMessages()` / `eventsToOpenAIMessages()`.
+- **Resume path**: `eventStore.readActive(sessionId)` → converter → messages array. `isResume = activeEvents.length > 0`.
+- **taskContext for compaction**: On resume, reads first `user_message` from full event history (`eventStore.read(sessionId)`, not `readActive`).
+- **EventStore.clearAll()**: New method — deletes all JSONL files in the directory.
+- **handleInjectMessage resume detection**: Uses `eventStore.has(rootNodeId)`.
+- **Conversation endpoint**: Reconstructs from EventStore events (user_message, assistant_text, tool_call).
+- **pruneSessionFiles**: Prunes `.events.jsonl` files.
+- **Type casts**: `eventsToAnthropicMessages()` and `eventsToOpenAIMessages()` return `unknown[]` — cast at call sites.

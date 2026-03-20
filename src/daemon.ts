@@ -76,7 +76,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		wsClients: new Set<WSClient>(),
 		activeSessions: new Map<string, AgentSession>(),
 		pendingClarifications: new Map<string, PendingClarification[]>(),
-		sessionStores: new Map(),
 		eventStores: new Map(),
 		requestCount: 0,
 		startupReady: false,

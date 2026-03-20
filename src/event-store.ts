@@ -5,7 +5,7 @@ import {
 	readFileSync,
 	unlinkSync,
 } from "node:fs";
-import { appendFile } from "node:fs/promises";
+import { appendFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Event } from "./events.ts";
 
@@ -71,6 +71,16 @@ export class EventStore {
 	/** Check if events exist */
 	has(sessionId: string): boolean {
 		return existsSync(this.path(sessionId));
+	}
+
+	/** Delete all event files in the directory */
+	async clearAll(): Promise<void> {
+		try {
+			await rm(this.dir, { recursive: true, force: true });
+			await mkdir(this.dir, { recursive: true });
+		} catch {
+			/* ok */
+		}
 	}
 
 	/** List all session IDs that have event files */
