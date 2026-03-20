@@ -201,3 +201,11 @@ Event (src/events.ts) — THE source of truth
 - **normalizeEventForUI()**: Maps Event field names to BroadcastEvent-compatible format for frontend `processEvent()`.
 - **EventStore.listSessions()** and **readAllSorted()**: New methods for project-level event retrieval.
 
+
+## Frontend addLog Audit (March 2026)
+
+- **Principle**: "UI must never show anything that disappears on refresh." All activity log entries must come from backend-persisted events.
+- **Error addLog calls are OK**: Transient UX feedback for failed API calls (no backend event for "frontend fetch failed"). These are ephemeral by design.
+- **Daemon restart addLog is OK**: Page is about to reconnect anyway.
+- **Removed**: `⚡ /compact`, `⚡ /clear`, `Session history cleared`, `Deleted: ...` — all had backend event equivalents (`compact_started`, `tree_mutation`).
+- **Slash commands**: `handleSlashCommand` still routes to correct API endpoints, just no longer injects frontend-only log entries.

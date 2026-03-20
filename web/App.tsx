@@ -793,11 +793,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 											onCompact={
 												isSelectedTaskActive
 													? () => {
-															addLog({
-																type: "lifecycle",
-																content: "⚡ /compact",
-																ts: Date.now(),
-															});
 															compact();
 														}
 													: undefined

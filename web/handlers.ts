@@ -110,7 +110,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 	async function handleSlashCommand(command: string): Promise<boolean> {
 		const cmd = command.trim().toLowerCase();
 		if (cmd === "/compact") {
-			addLog({ type: "lifecycle", content: "⚡ /compact", ts: Date.now() });
 			try {
 				await compact();
 			} catch (err) {
@@ -124,7 +123,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		}
 		if (cmd === "/clear") {
 			if (!confirm(t("confirm.clearSessions"))) return true;
-			addLog({ type: "lifecycle", content: "⚡ /clear", ts: Date.now() });
 			try {
 				const res = await fetch(`/projects/${projectId}/sessions/clear`, {
 					method: "POST",
@@ -136,11 +134,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				setLastCacheReadTokens(null);
 				setLastOutputTokens(null);
 				setLogs([]);
-				addLog({
-					type: "lifecycle",
-					content: "Session history cleared",
-					ts: Date.now(),
-				});
 			} catch (err) {
 				addLog({
 					type: "error",
@@ -267,11 +260,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setLastCacheReadTokens(null);
 			setLastOutputTokens(null);
 			setLogs([]);
-			addLog({
-				type: "lifecycle",
-				content: "Session history cleared",
-				ts: Date.now(),
-			});
 		} catch (err) {
 			addLog({
 				type: "error",
@@ -287,11 +275,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			return;
 		try {
 			await deleteTask(selectedTaskId);
-			addLog({
-				type: "lifecycle",
-				content: `Deleted: ${selectedNode.title}`,
-				ts: Date.now(),
-			});
 			setSelectedTaskId(rootNodeId);
 			await refreshTasks();
 		} catch (err) {
@@ -401,11 +384,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		if (!projectId) return;
 		try {
 			await deleteTask(taskId);
-			addLog({
-				type: "lifecycle",
-				content: `${t("lifecycle.deleted")} ${taskId}`,
-				ts: Date.now(),
-			});
 			if (selectedTaskId === taskId) setSelectedTaskId(rootNodeId);
 			await refreshTasks();
 		} catch (err) {
