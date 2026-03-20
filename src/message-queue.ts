@@ -154,6 +154,7 @@ export class MessageQueue {
 	/** Block until at least one message arrives. If messages already pending, resolve immediately. */
 	wait(): Promise<QueueMessage> {
 		if (this.closed) {
+			console.error(`[DEADLOCK-TRACE ${Date.now()}] queue.wait() rejecting immediately (closed)`);
 			return Promise.reject(new Error("Queue closed"));
 		}
 

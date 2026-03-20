@@ -1034,7 +1034,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				try {
 					queue.idle = true;
 					yield { type: "agent_idle" };
+					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: queue.wait() START closed=${queue.closed}`);
 					const first = await queue.wait();
+					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: queue.wait() DONE source=${first.source}`);
 					queue.idle = false;
 					yield { type: "agent_active" };
 					const rest = queue.drain();
@@ -1080,7 +1082,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						eventStore.appendBatch(sessionId, queueEvents);
 					}
 					continue;
-				} catch {
+				} catch (e) {
+					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: queue.wait() CATCH error=${e instanceof Error ? e.message : String(e)}`);
 					queue.idle = false;
 					// Queue closed — normal exit path (stop was called)
 					break;
@@ -1364,6 +1367,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			}
 		}
 
+		console.error(`[DEADLOCK-TRACE ${Date.now()}] provider runLoop EXITED (while loop broken)`);
 		const { inputPer1M, outputPer1M } = getModelPricing(model);
 		// Anthropic API: input_tokens = non-cached tokens only (excludes cache_creation
 		// and cache_read tokens — those are reported separately). Do NOT subtract them.

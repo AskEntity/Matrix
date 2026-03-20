@@ -414,12 +414,15 @@ export async function runChildCore(
 				if (nodeStatus === "passed" || nodeStatus === "failed") {
 					childQueue.close();
 					// Drain remaining events until the generator exits
+					console.error(`[DEADLOCK-TRACE ${Date.now()}] runChildCore drain START after done() taskId=${taskId}`);
 					result = await stream.next();
 					while (!result.done) {
 						const { type: et, ...ed } = result.value;
+						console.error(`[DEADLOCK-TRACE ${Date.now()}] runChildCore drain event: ${et} taskId=${taskId}`);
 						onEvent(et, ed as Record<string, unknown>);
 						result = await stream.next();
 					}
+					console.error(`[DEADLOCK-TRACE ${Date.now()}] runChildCore drain DONE taskId=${taskId}`);
 					return result.value;
 				}
 			}
