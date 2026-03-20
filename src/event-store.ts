@@ -1,17 +1,20 @@
 import {
-	appendFileSync,
 	existsSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
 	unlinkSync,
 } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Event } from "./events.ts";
 
 /**
  * JSONL-based event store for Event persistence.
  * Append-only: one JSON line per event. File path: `{dir}/{sessionId}.events.jsonl`
+ *
+ * Write operations (append/appendBatch) are async and non-blocking.
+ * Read operations remain synchronous for simplicity (only called during resume).
  */
 export class EventStore {
 	constructor(private dir: string) {
@@ -22,16 +25,22 @@ export class EventStore {
 		return join(this.dir, `${sessionId}.events.jsonl`);
 	}
 
-	/** Append a single event to the JSONL file */
-	append(sessionId: string, event: Event): void {
-		appendFileSync(this.path(sessionId), `${JSON.stringify(event)}\n`);
+	/** Append a single event to the JSONL file (async, non-blocking) */
+	append(sessionId: string, event: Event): Promise<void> {
+		return appendFile(this.path(sessionId), `${JSON.stringify(event)}\n`).catch(
+			() => {
+				/* non-fatal — don't break caller if write fails */
+			},
+		);
 	}
 
-	/** Append multiple events */
-	appendBatch(sessionId: string, events: Event[]): void {
-		if (events.length === 0) return;
+	/** Append multiple events (async, non-blocking) */
+	appendBatch(sessionId: string, events: Event[]): Promise<void> {
+		if (events.length === 0) return Promise.resolve();
 		const lines = `${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
-		appendFileSync(this.path(sessionId), lines);
+		return appendFile(this.path(sessionId), lines).catch(() => {
+			/* non-fatal */
+		});
 	}
 
 	/** Read all events for a session */

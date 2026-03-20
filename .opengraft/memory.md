@@ -209,3 +209,11 @@ Event (src/events.ts) — THE source of truth
 - **Daemon restart addLog is OK**: Page is about to reconnect anyway.
 - **Removed**: `⚡ /compact`, `⚡ /clear`, `Session history cleared`, `Deleted: ...` — all had backend event equivalents (`compact_started`, `tree_mutation`).
 - **Slash commands**: `handleSlashCommand` still routes to correct API endpoints, just no longer injects frontend-only log entries.
+
+
+## EventStore Async Writes (March 2026)
+
+- **appendFileSync → async appendFile**: EventStore.append() and appendBatch() now return Promise<void> with internal .catch() for fire-and-forget safety.
+- **Callers**: broadcastEvent() fire-and-forgets. Provider runLoop calls are also fire-and-forget (unawaited Promises in async generators). Tests must await.
+- **Reads remain sync**: read(), readActive() still use readFileSync — only called during session resume, not in hot path.
+- **Motivation**: Prevent event loop starvation under load with many concurrent agents. appendFileSync blocked the event loop for each write; with multiple agents broadcasting events, cumulative blocking could cause noticeable stalls.
