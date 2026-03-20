@@ -17,6 +17,8 @@ export function broadcast(
 	console.error(
 		"[DEADLOCK-TRACE] broadcast START",
 		event.type,
+		event.type === "tool_call" ? event.tool : "",
+		event.type === "tool_result" ? event.tool : "",
 		clients.size,
 		"clients",
 	);
