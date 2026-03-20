@@ -1403,11 +1403,21 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 describe("converter resilience — lifecycle events in JSONL", () => {
 	test("Anthropic converter skips lifecycle events without infinite loop", () => {
 		const events: Event[] = [
-			{ type: "orchestration_started", resume: false, prompt: "hello", ts: 1 } as Event,
+			{
+				type: "orchestration_started",
+				resume: false,
+				prompt: "hello",
+				ts: 1,
+			} as Event,
 			{ type: "user_message", content: "hello", ts: 2 } as Event,
 			{ type: "assistant_text", content: "hi", ts: 3 } as Event,
 			{ type: "agent_stopped", ts: 4 } as Event,
-			{ type: "orchestration_started", resume: true, prompt: "resume", ts: 5 } as Event,
+			{
+				type: "orchestration_started",
+				resume: true,
+				prompt: "resume",
+				ts: 5,
+			} as Event,
 		];
 		const messages = eventsToAnthropicMessages(events);
 		// Should produce messages for user_message and assistant_text only
@@ -1416,11 +1426,21 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 
 	test("OpenAI converter skips lifecycle events without infinite loop", () => {
 		const events: Event[] = [
-			{ type: "orchestration_started", resume: false, prompt: "hello", ts: 1 } as Event,
+			{
+				type: "orchestration_started",
+				resume: false,
+				prompt: "hello",
+				ts: 1,
+			} as Event,
 			{ type: "user_message", content: "hello", ts: 2 } as Event,
 			{ type: "assistant_text", content: "hi", ts: 3 } as Event,
 			{ type: "agent_stopped", ts: 4 } as Event,
-			{ type: "orchestration_started", resume: true, prompt: "resume", ts: 5 } as Event,
+			{
+				type: "orchestration_started",
+				resume: true,
+				prompt: "resume",
+				ts: 5,
+			} as Event,
 		];
 		const messages = eventsToOpenAIMessages(events);
 		expect(messages.length).toBe(2);
