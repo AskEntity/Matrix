@@ -2500,7 +2500,9 @@ describe("lifecycle edge cases — session continuity", () => {
 			const events = newEventStore.read(newSessionId);
 			// Events may exist from the new launch but should NOT contain old "hello" message
 			const hasOldMessage = events.some(
-				(e) => e.type === "user_message" && (e as Event & { type: "user_message" }).content === "hello",
+				(e) =>
+					e.type === "user_message" &&
+					(e as Event & { type: "user_message" }).content === "hello",
 			);
 			expect(hasOldMessage).toBe(false);
 		}
