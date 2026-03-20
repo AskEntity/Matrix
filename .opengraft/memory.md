@@ -299,3 +299,11 @@ Event (src/events.ts) — THE source of truth
 - **Critical bug**: Multiple unawaited `appendBatch()` calls raced, causing tool_result events to appear before their matching tool_call in JSONL. On resume, the converter saw orphaned tool_result → Anthropic 400 error. User had to manually reorder the JSONL to fix.
 - **Root cause**: `appendFile()` is async. Two fire-and-forget `appendBatch()` calls (one for assistant_text+tool_call, one for tool_result) could complete out of order.
 - **Fix**: Added per-session write queue (`Map<sessionId, Promise>`) in EventStore. Each write chains on the previous via `.then()`, guaranteeing sequential execution. Queue entries self-clean after completion.
+
+
+## Message Injected Timing Fix (March 2026)
+
+- **Problem**: `message_injected` broadcast in `handleInjectMessage` showed user messages in activity log immediately on send. User wanted them to appear when the agent actually consumes them.
+- **Fix**: Removed `message_injected` from the "enqueued" and "persisted" paths in `handleInjectMessage`. Added emission in `launchAgent`'s `consumeAgentEvents` callback — when `queue_message` event has `rawMessages` with `source: "user"`, emits `message_injected` at that point.
+- **Fresh starts kept**: When no session exists (first message = prompt), `message_injected` still fires immediately since there's no queue delay.
+- **Both idle drain and cancellation point work**: Both yield `queue_message` with `rawMessages`, so user messages consumed either way trigger `message_injected`.
