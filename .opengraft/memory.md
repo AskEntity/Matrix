@@ -71,7 +71,7 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - **Inline styles vs media queries**: Inline `style={{ flex: val }}` beats CSS. Use CSS custom properties: `style={{ '--var': val }}` + `flex: var(--var)` in CSS, override with direct `flex: 1` in media query.
 - **Daemon reload**: System daemon (LaunchAgent), not `bun --watch`. Web changes need manual restart. Commits do NOT auto-restart.
 - **Compact signal in yield**: MUST `break` after re-enqueue — prevents infinite sync loop.
-- **Bun async generator break-from-catch hang**: `break` from a `catch` block inside an async generator resumed via `.next()` hangs indefinitely in Bun. Use direct `return` instead. Affects both providers' implicit yield catch blocks.
+- **Provider must exit when queue closes during tool execution**: After done() closes the queue, provider must check `queue.isClosed` after tool execution and `return` immediately — never send tool results to the API. The extra API call enters implicit yield on a closed queue, where `break` from `catch` hangs in Bun. Safety net: implicit yield catch uses `return` not `break`.
 - **Don't edit src/ directly as orchestrator**: Use child tasks in worktrees. Exception: deadlock debugging — edit directly per user instruction.
 
 ## Agent Lifecycle
