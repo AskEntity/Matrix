@@ -195,3 +195,5 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 **Frontend UIOnlyEvent simplified:** Only `lifecycle` and `generic_queue_message` remain as UI-only types. All queue types (`parent_update`, `child_report`, etc.) are now proper Event types imported from `src/events.ts`. `LogEntry` has `taskId?: string` on the intersection for routing.
 
 **`user_message` ambiguity:** Provider and queue `user_message` events are the same type. The converter handles this by context: between tool_results = working wrapper, standalone after queue events = batched into idle wrapper, standalone alone = normal user message.
+
+**LogEntry time field removed:** `LogEntry` no longer has `time: string`. Frontend uses `formatTime(entry.ts)` to format timestamps on render. This keeps LogEntry as a pure data type without pre-formatted display strings.
