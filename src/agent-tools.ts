@@ -59,6 +59,7 @@ export function getDescendantIds(
 	const result: string[] = [];
 	const queue = [...(tracker.get(ancestorId)?.children ?? [])];
 	while (queue.length > 0) {
+		// biome-ignore lint/style/noNonNullAssertion: length > 0 guarantees shift returns a value
 		const id = queue.shift()!;
 		result.push(id);
 		const node = tracker.get(id);
