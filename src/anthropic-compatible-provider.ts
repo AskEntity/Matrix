@@ -880,7 +880,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {
 				try {
-					console.error(`[DEADLOCK-TRACE ${Date.now()}] API call START attempt=${attempt}`);
 					const stream = this.useOAuth
 						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
 							(this.client.beta.messages as any).stream(createParams)
@@ -916,7 +915,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						};
 					}
 					response = await stream.finalMessage();
-					console.error(`[DEADLOCK-TRACE ${Date.now()}] API call DONE stop_reason=${response?.stop_reason}`);
 					break;
 				} catch (e) {
 					const isTransient =
@@ -1034,9 +1032,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				try {
 					queue.idle = true;
 					yield { type: "agent_idle" };
-					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: queue.wait() START closed=${queue.closed}`);
 					const first = await queue.wait();
-					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: queue.wait() DONE source=${first.source}`);
 					queue.idle = false;
 					yield { type: "agent_active" };
 					const rest = queue.drain();
@@ -1082,13 +1078,11 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						eventStore.appendBatch(sessionId, queueEvents);
 					}
 					continue;
-				} catch (e) {
-					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: queue.wait() CATCH error=${e instanceof Error ? e.message : String(e)}`);
+				} catch {
 					queue.idle = false;
 					// Queue closed — normal exit path (stop was called)
 					// NOTE: Using direct return instead of break to work around Bun async generator hang.
 					// break from catch inside an async generator resumed via .next() hangs in Bun.
-					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: returning directly (break hangs in Bun)`);
 					// Persist session before returning
 					if (request.sessionStore) {
 						await request.sessionStore.set(sessionId, [...messages]);
@@ -1115,7 +1109,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			}
 
 			// Execute tools concurrently
-			console.error(`[DEADLOCK-TRACE ${Date.now()}] tool execution batch START (${toolUses.length} tools: ${toolUses.map(t => t.name).join(", ")})`);
 			const execResults = await Promise.all(
 				toolUses.map(async (toolUse) => {
 					const mcpHandler = mcpHandlers.get(toolUse.name);
@@ -1171,7 +1164,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				}),
 			);
 
-			console.error(`[DEADLOCK-TRACE ${Date.now()}] tool execution batch DONE`);
 			// Emit tool_result events and build API result array
 			const toolResults: ToolResultBlockParam[] = [];
 			for (let i = 0; i < toolUses.length; i++) {
@@ -1369,12 +1361,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			}
 		}
 
-		console.error(`[DEADLOCK-TRACE ${Date.now()}] provider: while loop exited, persisting session`);
 		// Persist conversation history for future resume
 		if (request.sessionStore) {
 			await request.sessionStore.set(sessionId, [...messages]);
 		}
-		console.error(`[DEADLOCK-TRACE ${Date.now()}] provider: session persisted, starting verification`);
 
 		// Deterministic verification: compare reconstructed messages from Events
 		if (eventStore) {
@@ -1393,7 +1383,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			}
 		}
 
-		console.error(`[DEADLOCK-TRACE ${Date.now()}] provider runLoop EXITED (while loop broken)`);
 		const { inputPer1M, outputPer1M } = getModelPricing(model);
 		// Anthropic API: input_tokens = non-cached tokens only (excludes cache_creation
 		// and cache_read tokens — those are reported separately). Do NOT subtract them.

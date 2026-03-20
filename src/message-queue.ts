@@ -73,16 +73,13 @@ export class MessageQueue {
 
 	/** Add a message to the queue. If someone is waiting via wait(), resolve them immediately. */
 	enqueue(msg: QueueMessage): void {
-		console.error(`[DEADLOCK-TRACE ${Date.now()}] queue.enqueue START`, msg.source);
 		if (this.closed) {
 			throw new Error("Queue closed");
 		}
 
 		this.onEnqueue?.(msg);
-		console.error(`[DEADLOCK-TRACE ${Date.now()}] queue.enqueue onEnqueue DONE`);
 
 		if (this.waiter) {
-			console.error(`[DEADLOCK-TRACE ${Date.now()}] queue.enqueue resolving waiter`);
 			const { resolve } = this.waiter;
 			this.waiter = null;
 			resolve(msg);
@@ -154,7 +151,6 @@ export class MessageQueue {
 	/** Block until at least one message arrives. If messages already pending, resolve immediately. */
 	wait(): Promise<QueueMessage> {
 		if (this.closed) {
-			console.error(`[DEADLOCK-TRACE ${Date.now()}] queue.wait() rejecting immediately (closed)`);
 			return Promise.reject(new Error("Queue closed"));
 		}
 
@@ -217,13 +213,11 @@ export class MessageQueue {
 
 	/** Close the queue. Any pending wait() calls reject with "Queue closed" error. */
 	close(): void {
-		console.error(`[DEADLOCK-TRACE ${Date.now()}] queue.close START`);
 		this.closed = true;
 		if (this.waiter) {
 			const { reject } = this.waiter;
 			this.waiter = null;
 			reject(new Error("Queue closed"));
 		}
-		console.error(`[DEADLOCK-TRACE ${Date.now()}] queue.close DONE`);
 	}
 }

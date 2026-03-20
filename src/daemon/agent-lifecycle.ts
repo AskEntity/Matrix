@@ -223,11 +223,7 @@ async function createAgentContext(
 		sessionStore: getSessionStore(ctx, project.id),
 		dataDir: ctx.config.dataDir,
 		onTaskEvent: (event) => {
-			console.error(
-				`[DEADLOCK-TRACE ${Date.now()}] onTaskEvent START`,
-				event.type,
-				event.taskId,
-			);
+			console.error(event.type, event.taskId);
 			const ts = (event.ts as number) || Date.now();
 			// Transform agent_event wrappers into flat BroadcastEvents
 			if (event.type === "agent_event") {
@@ -248,9 +244,7 @@ async function createAgentContext(
 				const withTs = event.ts ? event : { ...event, ts };
 				broadcastEvent(ctx, project.id, withTs as unknown as BroadcastEvent);
 			}
-			console.error(`[DEADLOCK-TRACE ${Date.now()}] onTaskEvent broadcastEvent DONE`);
 			broadcastTreeUpdate(ctx, project.id, opts.tracker);
-			console.error(`[DEADLOCK-TRACE ${Date.now()}] onTaskEvent broadcastTreeUpdate DONE`);
 
 			// Detect done() via task_completed event. done() emits this BEFORE
 			// blocking on waitForQueueMessages(). Closing the queue here causes
@@ -265,11 +259,8 @@ async function createAgentContext(
 			) {
 				const nodeStatus = opts.tracker.get(opts.currentTaskId)?.status;
 				if (nodeStatus === "passed" || nodeStatus === "failed") {
-					console.error(
-						`[DEADLOCK-TRACE ${Date.now()}] onTaskEvent closing queue for done()`,
-					);
+					console.error();
 					opts.queue.close();
-					console.error(`[DEADLOCK-TRACE ${Date.now()}] onTaskEvent queue.close() DONE`);
 				}
 			}
 		},
@@ -394,7 +385,6 @@ export async function runChildCore(
 	}
 
 	try {
-		console.error(`[DEADLOCK-TRACE ${Date.now()}] runChildCore stream START taskId=${taskId}`);
 		const stream = provider.stream(sessionRequest);
 		let result = await stream.next();
 		while (!result.done) {
@@ -414,25 +404,20 @@ export async function runChildCore(
 				if (nodeStatus === "passed" || nodeStatus === "failed") {
 					childQueue.close();
 					// Drain remaining events until the generator exits
-					console.error(`[DEADLOCK-TRACE ${Date.now()}] runChildCore drain START after done() taskId=${taskId}`);
 					result = await stream.next();
 					while (!result.done) {
 						const { type: et, ...ed } = result.value;
-						console.error(`[DEADLOCK-TRACE ${Date.now()}] runChildCore drain event: ${et} taskId=${taskId}`);
 						onEvent(et, ed as Record<string, unknown>);
 						result = await stream.next();
 					}
-					console.error(`[DEADLOCK-TRACE ${Date.now()}] runChildCore drain DONE taskId=${taskId}`);
 					return result.value;
 				}
 			}
 
 			result = await stream.next();
 		}
-		console.error(`[DEADLOCK-TRACE ${Date.now()}] runChildCore stream DONE taskId=${taskId}`);
 		return result.value;
 	} finally {
-		console.error(`[DEADLOCK-TRACE ${Date.now()}] runChildCore finally cleanup taskId=${taskId}`);
 		globalAgentQueues.delete(taskId);
 		childQueue.close();
 	}
@@ -520,9 +505,7 @@ export async function deliverMessage(
 	const queue = globalAgentQueues.get(nodeId);
 	if (queue) {
 		try {
-			console.error(`[DEADLOCK-TRACE ${Date.now()}] deliverMessage enqueue START`, nodeId);
 			queue.enqueue(message);
-			console.error(`[DEADLOCK-TRACE ${Date.now()}] deliverMessage enqueue DONE`, nodeId);
 			// onEnqueue callback handles pending broadcast (set at queue creation)
 			return "enqueued";
 		} catch {
@@ -536,9 +519,7 @@ export async function deliverMessage(
 		const rootSession = ctx.activeSessions.get(project.id);
 		if (rootSession?.queue) {
 			try {
-				console.error(`[DEADLOCK-TRACE ${Date.now()}] deliverMessage enqueue START`, nodeId);
 				rootSession.queue.enqueue(message);
-				console.error(`[DEADLOCK-TRACE ${Date.now()}] deliverMessage enqueue DONE`, nodeId);
 				// onEnqueue callback handles pending broadcast (set at queue creation)
 				return "enqueued";
 			} catch {

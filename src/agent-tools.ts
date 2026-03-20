@@ -612,7 +612,6 @@ export function createOrchestratorTools(
 		isError?: boolean;
 	} | null> {
 		if (!deps.queue) return null;
-		console.error(`[DEADLOCK-TRACE ${Date.now()}] waitForQueueMessages START taskId=${currentTaskId}`);
 		try {
 			let all: QueueMessage[];
 
@@ -728,7 +727,6 @@ export function createOrchestratorTools(
 				}
 			}
 
-			console.error(`[DEADLOCK-TRACE ${Date.now()}] waitForQueueMessages DONE (${all.length} messages) taskId=${currentTaskId}`);
 			return {
 				content: [
 					{
@@ -742,7 +740,6 @@ export function createOrchestratorTools(
 			};
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
-			console.error(`[DEADLOCK-TRACE ${Date.now()}] waitForQueueMessages ERROR: ${message} taskId=${currentTaskId}`);
 			return {
 				content: [
 					{

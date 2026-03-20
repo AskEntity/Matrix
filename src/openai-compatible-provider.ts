@@ -818,7 +818,24 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				} catch {
 					queue.idle = false;
 					// Queue closed — normal exit path (stop was called)
-					break;
+					// NOTE: Using direct return instead of break to work around Bun async generator hang.
+					// break from catch inside an async generator resumed via .next() hangs in Bun.
+					if (request.sessionStore) {
+						await request.sessionStore.set(sessionId, [...messages]);
+					}
+					const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
+					const exitCost =
+						(totalInputTokens * ip) / 1_000_000 +
+						(totalOutputTokens * op) / 1_000_000;
+					return {
+						success: true,
+						output: lastText,
+						costUsd: exitCost,
+						turns,
+						sessionId,
+						inputTokens: totalInputTokens,
+						outputTokens: totalOutputTokens,
+					};
 				}
 			}
 
