@@ -36,7 +36,6 @@ import {
 import {
 	getEventStore,
 	getProjectProvider,
-	getSessionStore,
 	getTracker,
 	readProjectMemory,
 	resolveProjectConfig,
@@ -220,7 +219,7 @@ async function createAgentContext(
 		projectManager: opts.depth === 0 ? ctx.pm : undefined,
 		activeSessions: opts.depth === 0 ? ctx.activeSessions : undefined,
 		currentProjectId: project.id,
-		sessionStore: getSessionStore(ctx, project.id),
+		eventStore: getEventStore(ctx, project.id),
 		dataDir: ctx.config.dataDir,
 		onTaskEvent: (event) => {
 			console.error(event.type, event.taskId);
@@ -701,7 +700,6 @@ export async function runChildAgentInBackground(
 			sessionRequest: {
 				prompt,
 				cwd: node.worktreePath as string,
-				sessionStore: getSessionStore(ctx, project.id),
 				eventStore: getEventStore(ctx, project.id),
 				systemPrompt: TASK_SYSTEM_PROMPT,
 				resumeSessionId: nodeId,
@@ -971,7 +969,6 @@ export async function launchAgent(
 		prompt,
 		cwd: project.path,
 		projectPath: project.path,
-		sessionStore: getSessionStore(ctx, project.id),
 		eventStore: getEventStore(ctx, project.id),
 		systemPrompt,
 		mcpToolDefs: agentCtx.mcpToolDefs,
@@ -1225,8 +1222,8 @@ export async function handleInjectMessage(
 	// and will be delivered as a queue_message. Passing it as prompt would cause
 	// the message to appear twice.
 	if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
-		const store = getSessionStore(ctx, projectId);
-		const shouldResume = store.hasAny(rootNodeId);
+		const eventStore = getEventStore(ctx, projectId);
+		const shouldResume = eventStore.has(rootNodeId);
 		if (shouldResume) {
 			await launchAgent(
 				ctx,

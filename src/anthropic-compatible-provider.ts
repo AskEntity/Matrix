@@ -583,11 +583,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 		let cwd = request.cwd;
 
-		// Load session history via SessionStore (survives daemon restart)
-		const existingHistory = request.sessionStore
-			? ((await request.sessionStore.get(sessionId)) as MessageParam[] | null)
-			: null;
-		const isResume = Boolean(existingHistory);
+		// ── Event recording via EventStore (JSONL append-only) ──
+		const eventStore = request.eventStore;
+
+		// Load session from EventStore (survives daemon restart)
+		const activeEvents = eventStore ? eventStore.readActive(sessionId) : [];
+		const isResume = activeEvents.length > 0;
+
 		// Prepend working directory to the first user message (not on resume turns) so that
 		// the system prompt stays identical across agents in different worktrees, enabling
 		// Anthropic prompt caching to cache the system prompt once and share it across agents.
@@ -595,12 +597,16 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			cwd && !isResume
 				? `Working directory: ${cwd}\n\n${request.prompt}`
 				: request.prompt;
-		const messages: MessageParam[] = existingHistory
-			? [...existingHistory, { role: "user" as const, content: request.prompt }]
+
+		// Reconstruct messages from EventStore on resume, or start fresh
+		const messages: MessageParam[] = isResume
+			? [
+					...(eventsToAnthropicMessages(activeEvents) as MessageParam[]),
+					{ role: "user" as const, content: request.prompt },
+				]
 			: [{ role: "user" as const, content: firstUserContent }];
 
-		// ── Event recording via EventStore (JSONL append-only) ──
-		const eventStore = request.eventStore;
+		// Record the new user message event
 		if (eventStore) {
 			if (isResume) {
 				eventStore.append(sessionId, {
@@ -620,13 +626,15 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		}
 
 		// For context compression: use the original task prompt, not the resume prompt.
-		// On resume, the original prompt is the first user message in history.
-		const taskContext =
-			isResume && existingHistory
-				? typeof existingHistory[0]?.content === "string"
-					? existingHistory[0].content
-					: request.prompt
-				: request.prompt;
+		// On resume, find the first user_message in the FULL event history.
+		let taskContext = request.prompt;
+		if (isResume && eventStore) {
+			const allEvents = eventStore.read(sessionId);
+			const firstUserMsg = allEvents.find((e) => e.type === "user_message");
+			if (firstUserMsg && "content" in firstUserMsg) {
+				taskContext = firstUserMsg.content as string;
+			}
+		}
 
 		// Add MCP tool definitions from mcpToolDefs
 		const allTools: Tool[] = [..._TOOLS];
@@ -1083,9 +1091,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					// Queue closed — normal exit path (stop was called or done() was called).
 					// Use direct return instead of break (break hangs in Bun async generators
 					// under certain conditions with concurrent I/O).
-					if (request.sessionStore) {
-						await request.sessionStore.set(sessionId, [...messages]);
-					}
 					const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
 					return {
 						success: true,
@@ -1316,9 +1321,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			// If queue was closed during tool execution (done() was called),
 			// exit after recording events but before sending results to the API.
 			if (queue?.isClosed) {
-				if (request.sessionStore) {
-					await request.sessionStore.set(sessionId, [...messages]);
-				}
 				const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
 				const exitCost =
 					(totalInputTokens * ip) / 1_000_000 +
@@ -1337,9 +1339,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					outputTokens: totalOutputTokens,
 				};
 			}
-
-			// Persist after tool results too (captures full turn) — fire-and-forget
-			request.sessionStore?.setSync(sessionId, [...messages]);
 
 			// Budget check: compute running cost and warn the agent if approaching limit
 			if (request.budgetUsd && request.budgetUsd > 0) {
@@ -1381,11 +1380,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					yield { type: "status", message: warning };
 				}
 			}
-		}
-
-		// Persist conversation history for future resume
-		if (request.sessionStore) {
-			await request.sessionStore.set(sessionId, [...messages]);
 		}
 
 		// Deterministic verification: compare reconstructed messages from Events

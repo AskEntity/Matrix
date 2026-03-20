@@ -1,6 +1,5 @@
 import type { EventStore } from "./event-store.ts";
 import type { MessageQueue } from "./message-queue.ts";
-import type { SessionStore } from "./session-store.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 
@@ -12,8 +11,6 @@ export interface AgentRequest {
 	cwd: string;
 	/** Absolute path to the project root. Defaults to cwd if omitted. */
 	projectPath?: string;
-	/** Session store for history persistence. */
-	sessionStore?: SessionStore;
 	/** System prompt injected into the agent session. */
 	systemPrompt?: string;
 	/** Abort signal for cancellation. */

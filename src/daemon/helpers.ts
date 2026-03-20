@@ -14,7 +14,6 @@ import {
 import { EventStore } from "../event-store.ts";
 import type { Event } from "../events.ts";
 import { OpenAICompatibleProvider } from "../openai-compatible-provider.ts";
-import { SessionStore } from "../session-store.ts";
 import { TaskTracker } from "../task-tracker.ts";
 import type { TaskNode } from "../types.ts";
 import type { DaemonContext } from "./context.ts";
@@ -81,19 +80,6 @@ export async function getTracker(
 		ctx.trackers.set(projectId, tracker);
 	}
 	return tracker;
-}
-
-/** Get or create a SessionStore for a project. */
-export function getSessionStore(
-	ctx: DaemonContext,
-	projectId: string,
-): SessionStore {
-	let store = ctx.sessionStores.get(projectId);
-	if (!store) {
-		store = new SessionStore(join(ctx.config.dataDir, "sessions", projectId));
-		ctx.sessionStores.set(projectId, store);
-	}
-	return store;
 }
 
 /** Get or create an EventStore for a project. */
@@ -169,7 +155,7 @@ export function readProjectMemory(
 }
 
 /**
- * Prune old session files, keeping only the most recent N.
+ * Prune old event JSONL files, keeping only the most recent N.
  * Used by autoResumeProjects (startup) and POST /sessions/prune.
  */
 export async function pruneSessionFiles(
@@ -180,14 +166,14 @@ export async function pruneSessionFiles(
 	const sessionsDir = join(ctx.config.dataDir, "sessions", projectId);
 	try {
 		const files = await readdir(sessionsDir).catch(() => []);
-		const jsonFiles = files.filter((f) => f.endsWith(".json"));
+		const jsonlFiles = files.filter((f) => f.endsWith(".events.jsonl"));
 
-		if (jsonFiles.length <= keepCount) {
-			return { pruned: 0, remaining: jsonFiles.length };
+		if (jsonlFiles.length <= keepCount) {
+			return { pruned: 0, remaining: jsonlFiles.length };
 		}
 
 		const withMtime = await Promise.all(
-			jsonFiles.map(async (f) => ({
+			jsonlFiles.map(async (f) => ({
 				name: f,
 				mtime: (await stat(join(sessionsDir, f))).mtimeMs,
 			})),

@@ -435,33 +435,38 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			contextWindow * (1 - COMPACT_BUFFER_RATIO),
 		);
 
-		// Load session history via SessionStore (survives daemon restart)
-		const existingHistory = request.sessionStore
-			? ((await request.sessionStore.get(sessionId, "openai")) as
-					| OpenAIMessage[]
-					| null)
-			: null;
-		const isResume = Boolean(existingHistory);
+		// ── Event recording via EventStore (JSONL append-only) ──
+		const eventStore = request.eventStore;
+
+		// Load session from EventStore (survives daemon restart)
+		const activeEvents = eventStore ? eventStore.readActive(sessionId) : [];
+		const isResume = activeEvents.length > 0;
 
 		const firstUserContent =
 			cwd && !isResume
 				? `Working directory: ${cwd}\n\n${request.prompt}`
 				: request.prompt;
 
-		const messages: OpenAIMessage[] = existingHistory
-			? [...existingHistory, { role: "user" as const, content: request.prompt }]
+		// Reconstruct messages from EventStore on resume, or start fresh
+		const messages: OpenAIMessage[] = isResume
+			? [
+					...(eventsToOpenAIMessages(activeEvents) as OpenAIMessage[]),
+					{ role: "user" as const, content: request.prompt },
+				]
 			: [{ role: "user" as const, content: firstUserContent }];
 
-		const firstContent = existingHistory?.[0]?.content;
-		const taskContext =
-			isResume && existingHistory
-				? typeof firstContent === "string"
-					? firstContent
-					: request.prompt
-				: request.prompt;
+		// For context compression: use the original task prompt, not the resume prompt.
+		// On resume, find the first user_message in the FULL event history.
+		let taskContext = request.prompt;
+		if (isResume && eventStore) {
+			const allEvents = eventStore.read(sessionId);
+			const firstUserMsg = allEvents.find((e) => e.type === "user_message");
+			if (firstUserMsg && "content" in firstUserMsg) {
+				taskContext = firstUserMsg.content as string;
+			}
+		}
 
-		// ── Event recording via EventStore (JSONL append-only) ──
-		const eventStore = request.eventStore;
+		// Record the new user message event
 		if (eventStore) {
 			if (isResume) {
 				eventStore.append(sessionId, {
@@ -820,9 +825,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					// Queue closed — normal exit path (stop was called)
 					// NOTE: Using direct return instead of break to work around Bun async generator hang.
 					// break from catch inside an async generator resumed via .next() hangs in Bun.
-					if (request.sessionStore) {
-						await request.sessionStore.set(sessionId, [...messages]);
-					}
 					const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
 					const exitCost =
 						(totalInputTokens * ip) / 1_000_000 +
@@ -1119,9 +1121,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			// If queue was closed during tool execution (done() was called),
 			// exit after recording events but before sending results to the API.
 			if (queue?.isClosed) {
-				if (request.sessionStore) {
-					await request.sessionStore.set(sessionId, [...messages]);
-				}
 				const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
 				return {
 					success: true,
@@ -1135,9 +1134,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					outputTokens: totalOutputTokens,
 				};
 			}
-
-			// Persist after tool results — fire-and-forget
-			request.sessionStore?.setSync(sessionId, [...messages], "openai");
 
 			// Budget check
 			if (request.budgetUsd && request.budgetUsd > 0) {
@@ -1171,11 +1167,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					yield { type: "status", message: warning };
 				}
 			}
-		}
-
-		// Persist final conversation history
-		if (request.sessionStore) {
-			await request.sessionStore.set(sessionId, [...messages], "openai");
 		}
 
 		// Deterministic verification: compare reconstructed messages from Events

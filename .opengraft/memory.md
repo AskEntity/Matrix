@@ -230,3 +230,16 @@ Event (src/events.ts) — THE source of truth
 - **Fix**: Moved `queue.isClosed` check to AFTER EventStore records tool_result events but BEFORE `messages.push` (which sends to API). Both providers fixed.
 - **Safety net**: Implicit yield catch block uses `return` not `break` (Bun async generator `break`-from-`catch` hangs under concurrent I/O).
 
+
+
+## SessionStore Removal (March 2026)
+
+- **Deleted**: `src/session-store.ts` and `src/session-store.test.ts`. SessionStore was a cache of provider-native message arrays (JSON files).
+- **EventStore is now sole persistence**: Providers reconstruct messages from EventStore JSONL on resume via `eventsToAnthropicMessages()` / `eventsToOpenAIMessages()`.
+- **Resume path**: `eventStore.readActive(sessionId)` → converter → messages array. `isResume = activeEvents.length > 0`.
+- **taskContext for compaction**: On resume, reads first `user_message` from full event history (`eventStore.read(sessionId)`, not `readActive`).
+- **EventStore.clearAll()**: New method — deletes all JSONL files in the directory. Replaces `SessionStore.clearAll()`.
+- **handleInjectMessage resume detection**: Uses `eventStore.has(rootNodeId)` instead of `sessionStore.hasAny(rootNodeId)`.
+- **Conversation endpoint**: Rewrote to reconstruct from EventStore events (user_message, assistant_text, tool_call) instead of SessionStore JSON.
+- **pruneSessionFiles**: Updated to prune `.events.jsonl` files instead of `.json` files.
+- **Type casts**: `eventsToAnthropicMessages()` and `eventsToOpenAIMessages()` return `unknown[]` — cast to `MessageParam[]` / `OpenAIMessage[]` at call sites.

@@ -19,7 +19,6 @@ import {
 	getModelPricing,
 	OpenAICompatibleProvider,
 } from "./openai-compatible-provider.ts";
-import { SessionStore } from "./session-store.ts";
 import { TOOLS } from "./tools/index.ts";
 
 // ── Pricing ──
@@ -360,7 +359,6 @@ describe("runLoop integration", () => {
 				prompt: "Do something",
 				cwd: tmpDir,
 				systemPrompt: "You are a helpful agent.",
-				sessionStore: new SessionStore(join(tmpDir, "sessions")),
 				mcpToolDefs: {
 					opengraft: [
 						{
@@ -823,14 +821,12 @@ describe("Event recording via EventStore", () => {
 		}) as unknown as typeof fetch;
 
 		try {
-			const sessionStore = new SessionStore(join(tmpDir, "sessions-se"));
 			const eventStore = new EventStore(join(tmpDir, "sessions-se"));
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const session = provider.startSession({
 				prompt: "Do something",
 				cwd: tmpDir,
 				systemPrompt: "You are a helpful agent.",
-				sessionStore,
 				eventStore,
 				mcpToolDefs: {
 					opengraft: [
@@ -1130,13 +1126,11 @@ describe("Event deterministic verification (OpenAI)", () => {
 				});
 			}) as unknown as typeof fetch,
 			async () => {
-				const sessionStore = new SessionStore(join(testDir, "sessions"));
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const session = provider.startSession({
 					prompt: "Do the task",
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
-					sessionStore,
 					eventStore,
 					mcpToolDefs: {
 						opengraft: [

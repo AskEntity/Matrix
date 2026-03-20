@@ -12,8 +12,8 @@ import {
 import type { DaemonContext } from "../context.ts";
 import { broadcastTreeUpdate } from "../event-system.ts";
 import {
+	getEventStore,
 	getProjectProvider,
-	getSessionStore,
 	getTracker,
 	pruneSessionFiles,
 	resolveProjectConfig,
@@ -280,11 +280,9 @@ export function registerAgentRoutes(
 		if (ctx.activeSessions.has(project.id)) {
 			await stopAgent(ctx, project.id);
 		}
-		const store = getSessionStore(ctx, project.id);
-		await store.clearAll();
-		// JSONL event files live alongside session files in the sessions dir —
-		// clearAll() removes both .json and .events.jsonl files.
-		// Also clear the in-memory EventStore cache so it re-creates from disk.
+		const eventStore = getEventStore(ctx, project.id);
+		await eventStore.clearAll();
+		// Re-create the EventStore cache entry so it sees the cleaned directory
 		ctx.eventStores.delete(project.id);
 		const tracker = ctx.trackers.get(project.id);
 		if (tracker) {

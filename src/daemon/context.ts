@@ -3,7 +3,6 @@ import type { AgentProvider, AgentSession } from "../agent-provider.ts";
 import type { OpenGraftConfig } from "../config.ts";
 import type { EventStore } from "../event-store.ts";
 import type { ProjectManager } from "../project-manager.ts";
-import type { SessionStore } from "../session-store.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 
 /** WebSocket client connection with project subscription. */
@@ -40,7 +39,6 @@ export interface DaemonContext {
 	readonly wsClients: Set<WSClient>;
 	readonly activeSessions: Map<string, AgentSession>;
 	readonly pendingClarifications: Map<string, PendingClarification[]>;
-	readonly sessionStores: Map<string, SessionStore>;
 	readonly eventStores: Map<string, EventStore>;
 
 	/** Mutable counters/flags */
