@@ -262,3 +262,11 @@ Event (src/events.ts) — THE source of truth
 - **Be careful**: Dont break daemon startup — cant self-recover if daemon wont start.
 - **Test via Chrome MCP**: Send messages, take screenshots to verify UI rendering.
 - **Restart daemon**: Via Settings button in UI (Chrome MCP) or POST /restart-daemon with auth cookie.
+
+
+## Input Lag Fix (March 2026)
+
+- **Root cause**: `prompt` state in App.tsx → every keystroke triggers full App re-render (ActivityLog with thousands of entries).
+- **Fix**: Extracted `InputBar` component (`web/components/InputBar.tsx`) with local `prompt` + `attachedImages` state. App only receives final values via `onSend(message, images?)` callback.
+- **AppFooter**: Now delegates form rendering to `InputBar`. Props simplified — no more `prompt`, `onPromptChange`, `attachedImages`, `onImageAttach`, `onImageRemove`.
+- **handlers.ts**: `handleSubmit(e)` → `handleSend(message, images?)`. No longer reads prompt/images from closure.
