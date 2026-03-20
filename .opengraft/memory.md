@@ -292,3 +292,10 @@ Event (src/events.ts) — THE source of truth
 - **Deleted**: `~/.opengraft/events/*.json` (old JSON array event files from pre-JSONL migration)
 - **Deleted**: `~/.opengraft/sessions/*/*.json` (old SessionStore JSON files, replaced by `.events.jsonl`)
 - **Kept**: `~/.opengraft/logs/` (daemon stdout/stderr logs)
+
+
+## EventStore Write Serialization (March 2026)
+
+- **Critical bug**: Multiple unawaited `appendBatch()` calls raced, causing tool_result events to appear before their matching tool_call in JSONL. On resume, the converter saw orphaned tool_result → Anthropic 400 error. User had to manually reorder the JSONL to fix.
+- **Root cause**: `appendFile()` is async. Two fire-and-forget `appendBatch()` calls (one for assistant_text+tool_call, one for tool_result) could complete out of order.
+- **Fix**: Added per-session write queue (`Map<sessionId, Promise>`) in EventStore. Each write chains on the previous via `.then()`, guaranteeing sequential execution. Queue entries self-clean after completion.
