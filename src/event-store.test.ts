@@ -28,18 +28,18 @@ describe("EventStore", () => {
 		expect(store.has("no-such-session")).toBe(false);
 	});
 
-	test("append + read single event", () => {
+	test("append + read single event", async () => {
 		const event: Event = {
 			type: "user_message",
 			content: "hello",
 			ts: 1000,
 		};
-		store.append("s1", event);
+		await store.append("s1", event);
 		expect(store.has("s1")).toBe(true);
 		expect(store.read("s1")).toEqual([event]);
 	});
 
-	test("append multiple events sequentially", () => {
+	test("append multiple events sequentially", async () => {
 		const e1: Event = {
 			type: "user_message",
 			content: "hello",
@@ -50,12 +50,12 @@ describe("EventStore", () => {
 			content: "hi there",
 			ts: 1001,
 		};
-		store.append("s1", e1);
-		store.append("s1", e2);
+		await store.append("s1", e1);
+		await store.append("s1", e2);
 		expect(store.read("s1")).toEqual([e1, e2]);
 	});
 
-	test("appendBatch writes multiple events", () => {
+	test("appendBatch writes multiple events", async () => {
 		const events: Event[] = [
 			{ type: "user_message", content: "hello", ts: 1000 },
 			{ type: "assistant_text", content: "hi", ts: 1001 },
@@ -67,12 +67,12 @@ describe("EventStore", () => {
 				ts: 1002,
 			},
 		];
-		store.appendBatch("s1", events);
+		await store.appendBatch("s1", events);
 		expect(store.read("s1")).toEqual(events);
 	});
 
-	test("appendBatch with empty array is a no-op", () => {
-		store.appendBatch("s1", []);
+	test("appendBatch with empty array is a no-op", async () => {
+		await store.appendBatch("s1", []);
 		expect(store.has("s1")).toBe(false);
 	});
 
@@ -80,8 +80,8 @@ describe("EventStore", () => {
 		expect(store.read("missing")).toEqual([]);
 	});
 
-	test("clear removes the file", () => {
-		store.append("s1", {
+	test("clear removes the file", async () => {
+		await store.append("s1", {
 			type: "user_message",
 			content: "hello",
 			ts: 1000,
@@ -97,16 +97,16 @@ describe("EventStore", () => {
 		store.clear("missing");
 	});
 
-	test("readActive returns all events when no compact_marker", () => {
+	test("readActive returns all events when no compact_marker", async () => {
 		const events: Event[] = [
 			{ type: "user_message", content: "hello", ts: 1000 },
 			{ type: "assistant_text", content: "hi", ts: 1001 },
 		];
-		store.appendBatch("s1", events);
+		await store.appendBatch("s1", events);
 		expect(store.readActive("s1")).toEqual(events);
 	});
 
-	test("readActive returns events after last compact_marker", () => {
+	test("readActive returns events after last compact_marker", async () => {
 		const events: Event[] = [
 			{ type: "user_message", content: "old msg", ts: 1000 },
 			{ type: "assistant_text", content: "old response", ts: 1001 },
@@ -119,7 +119,7 @@ describe("EventStore", () => {
 			{ type: "compacted_resume", content: "checkpoint text", ts: 2001 },
 			{ type: "assistant_text", content: "new response", ts: 2002 },
 		];
-		store.appendBatch("s1", events);
+		await store.appendBatch("s1", events);
 
 		const active = store.readActive("s1");
 		expect(active).toEqual([
@@ -128,7 +128,7 @@ describe("EventStore", () => {
 		]);
 	});
 
-	test("readActive with multiple compact_markers uses the last one", () => {
+	test("readActive with multiple compact_markers uses the last one", async () => {
 		const events: Event[] = [
 			{ type: "user_message", content: "very old", ts: 1000 },
 			{
@@ -146,7 +146,7 @@ describe("EventStore", () => {
 			},
 			{ type: "compacted_resume", content: "second checkpoint", ts: 3001 },
 		];
-		store.appendBatch("s1", events);
+		await store.appendBatch("s1", events);
 
 		const active = store.readActive("s1");
 		expect(active).toEqual([
@@ -158,7 +158,7 @@ describe("EventStore", () => {
 		expect(store.readActive("missing")).toEqual([]);
 	});
 
-	test("preserves all event fields through round-trip", () => {
+	test("preserves all event fields through round-trip", async () => {
 		const event: Event = {
 			type: "tool_result",
 			toolCallId: "tc1",
@@ -167,11 +167,11 @@ describe("EventStore", () => {
 			images: [{ base64: "abc123", mediaType: "image/png" }],
 			ts: 1234,
 		};
-		store.append("s1", event);
+		await store.append("s1", event);
 		expect(store.read("s1")).toEqual([event]);
 	});
 
-	test("separate sessions do not interfere", () => {
+	test("separate sessions do not interfere", async () => {
 		const e1: Event = {
 			type: "user_message",
 			content: "session 1",
@@ -182,8 +182,8 @@ describe("EventStore", () => {
 			content: "session 2",
 			ts: 2000,
 		};
-		store.append("s1", e1);
-		store.append("s2", e2);
+		await store.append("s1", e1);
+		await store.append("s2", e2);
 		expect(store.read("s1")).toEqual([e1]);
 		expect(store.read("s2")).toEqual([e2]);
 		store.clear("s1");

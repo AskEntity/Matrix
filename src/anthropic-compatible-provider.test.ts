@@ -2479,10 +2479,10 @@ describe("Event deterministic verification", () => {
 				ts: 1001,
 			},
 		];
-		eventStore.appendBatch(sessionId, preEvents);
+		await eventStore.appendBatch(sessionId, preEvents);
 
 		// Write compact_marker
-		eventStore.append(sessionId, {
+		await eventStore.append(sessionId, {
 			type: "compact_marker",
 			checkpoint: "Checkpoint: completed old task",
 			savedTokens: 5000,
@@ -2503,7 +2503,7 @@ describe("Event deterministic verification", () => {
 				ts: 2002,
 			},
 		];
-		eventStore.appendBatch(sessionId, postEvents);
+		await eventStore.appendBatch(sessionId, postEvents);
 
 		// readActive should only return post-marker events
 		const active = eventStore.readActive(sessionId);
@@ -2570,7 +2570,7 @@ describe("Event deterministic verification", () => {
 				ts: 1005,
 			},
 		];
-		eventStore.appendBatch(sessionId, events);
+		await eventStore.appendBatch(sessionId, events);
 
 		const active = eventStore.readActive(sessionId);
 		const reconstructed = eventsToAnthropicMessages(active);

@@ -219,16 +219,13 @@ export function broadcastEvent(
 	projectId: string,
 	event: BroadcastEvent,
 ) {
-	// Persist lifecycle events to JSONL EventStore
+	// Persist lifecycle events to JSONL EventStore (fire-and-forget async write)
 	const rootNodeId = ctx.trackers.get(projectId)?.rootNodeId ?? undefined;
 	const persistable = broadcastToEvent(event, rootNodeId);
 	if (persistable) {
-		try {
-			const eventStore = getEventStore(ctx, projectId);
-			eventStore.append(persistable.sessionId, persistable.event);
-		} catch {
-			/* non-fatal — don't break broadcasting if JSONL write fails */
-		}
+		const eventStore = getEventStore(ctx, projectId);
+		// append() is async with internal .catch() — safe to fire-and-forget
+		eventStore.append(persistable.sessionId, persistable.event);
 	}
 
 	broadcast(
