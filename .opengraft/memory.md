@@ -274,3 +274,21 @@ Event (src/events.ts) — THE source of truth
 - **Bug**: `waitForQueueMessages()` in `agent-tools.ts` only checked direct children (`tracker.get(currentTaskId)?.children`) when building the `## Pending` summary. Children launched by the daemon (not via the orchestrator MCP tool) were already visible since `globalAgentQueues` is the source of truth for running agents, but grandchildren (descendants) were not tracked.
 - **Fix**: Added `getDescendantIds(tracker, ancestorId)` helper that collects all descendant node IDs (breadth-first). Used in both `waitForQueueMessages()` pending section and `hasRunningChildren()`.
 - **Key insight**: `globalAgentQueues` already tracks ALL running agents regardless of launch path (MCP tool or daemon). The issue was only checking direct children instead of the full descendant tree.
+
+
+## Event Converter Lifecycle Skip (March 2026)
+
+- **Critical bug**: `eventsToAnthropicMessages()` and `eventsToOpenAIMessages()` had no `default` case. Lifecycle events (`orchestration_started`, `agent_stopped`, etc.) in JSONL caused infinite loop (i never advanced). Root cause of daemon deadlock on startup after SessionStore removal (resume path now reads from JSONL which includes lifecycle events).
+- **Fix**: Added `default: i++; break;` to both converters.
+- **Regression test**: `converter resilience — lifecycle events in JSONL` in `src/events.test.ts`.
+
+## Pending Banner Data Format (March 2026)
+
+- **Bug**: `broadcastPendingFromQueue` sent `{text, timestamp}` but frontend expected `{id, taskId, text, timestamp}`. Pending banner never showed because type mismatch.
+- **Fix**: Added `id: "pending-${Date.now()}"` and `taskId: null` to all 3 pending broadcast sites (event-system.ts, agent-lifecycle.ts, routes/projects.ts).
+
+## Data Cleanup (March 2026)
+
+- **Deleted**: `~/.opengraft/events/*.json` (old JSON array event files from pre-JSONL migration)
+- **Deleted**: `~/.opengraft/sessions/*/*.json` (old SessionStore JSON files, replaced by `.events.jsonl`)
+- **Kept**: `~/.opengraft/logs/` (daemon stdout/stderr logs)
