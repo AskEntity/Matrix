@@ -103,17 +103,15 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		parentTaskId?: string,
 	): UIEvent | null {
 		const ts = Date.now();
-		// child_complete and system_notification don't show as separate log entries
-		if (rm.source === "child_complete" || rm.source === "system") return null;
-		if (rm.source === "user") {
-			return {
-				type: "user_message",
-				content: rm.content ?? "",
-				taskId: parentTaskId,
-				images: rm.images,
-				ts,
-			} as UIEvent;
-		}
+		// child_complete, system_notification, and user messages don't show as separate log entries.
+		// User messages are already displayed via message_injected — queue_message source:user
+		// is just an internal delivery confirmation, not a second visible entry.
+		if (
+			rm.source === "child_complete" ||
+			rm.source === "system" ||
+			rm.source === "user"
+		)
+			return null;
 		if (rm.source === "parent_update") {
 			return {
 				type: "parent_update",
