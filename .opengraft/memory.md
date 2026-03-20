@@ -45,9 +45,8 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 | src/worktree-manager.ts | Git worktree lifecycle |
 | src/message-queue.ts | MessageQueue + globalAgentQueues |
 | src/persistent-queue.ts | Disk-backed message persistence |
-| src/session-store.ts | SessionStore (cache + disk) for session history |
 | src/events.ts | Event types + provider converters (eventsToAnthropicMessages, eventsToOpenAIMessages) |
-| src/event-store.ts | JSONL EventStore — append-only event persistence |
+| src/event-store.ts | JSONL EventStore — sole persistence for events (session resume + activity log) |
 | src/daemon/routes/auth.ts | WebAuthn/Passkey auth middleware + endpoints |
 | web/App.tsx | Web UI main, WS/handlers |
 | web/ws-handler.ts | WS event processing (processEvent, UpdateOp) |
@@ -230,28 +229,6 @@ Event (src/events.ts) — THE source of truth
 - **Fix**: Moved `queue.isClosed` check to AFTER EventStore records tool_result events but BEFORE `messages.push` (which sends to API). Both providers fixed.
 - **Safety net**: Implicit yield catch block uses `return` not `break` (Bun async generator `break`-from-`catch` hangs under concurrent I/O).
 
-
-
-## Frontend addLog Audit (March 2026)
-
-- **Principle**: "UI must never show anything that disappears on refresh." All activity log entries must come from backend-persisted events.
-- **Error addLog calls are OK**: Transient UX feedback for failed API calls (no backend event for "frontend fetch failed"). These are ephemeral by design.
-- **Daemon restart addLog is OK**: Page is about to reconnect anyway.
-- **Removed**: `⚡ /compact`, `⚡ /clear`, `Session history cleared`, `Deleted: ...` — all had backend event equivalents (`compact_started`, `tree_mutation`).
-- **Slash commands**: `handleSlashCommand` still routes to correct API endpoints, just no longer injects frontend-only log entries.
-
-
-## EventStore Async Writes (March 2026)
-
-- **appendFileSync → async appendFile**: EventStore.append() and appendBatch() now return Promise<void> with internal .catch() for fire-and-forget safety.
-- **Callers**: broadcastEvent() fire-and-forgets. Provider runLoop calls are also fire-and-forget (unawaited Promises in async generators). Tests must await.
-- **Reads remain sync**: read(), readActive() still use readFileSync — only called during session resume, not in hot path.
-
-## MessageQueue onEnqueue Callback
-
-- **Bug**: `enqueue()` has two paths — waiter (direct resolve) and array (push to `this.messages`). The waiter path bypasses the array, so `peekMessages()` returns empty and `onDrain` never fires. This broke pending message banner display.
-- **Fix**: Added `onEnqueue?: (msg: QueueMessage) => void` callback, called at the TOP of `enqueue()` before the waiter check. Fires on every enqueue regardless of path. `onDrain` still handles clearing.
-- **Wiring**: Set `queue.onEnqueue` at queue creation sites in `agent-lifecycle.ts` (child queues and root queue). Removed all manual `broadcastPendingFromQueue` calls after `enqueue()` in `deliverMessage` — the callback handles it.
 
 
 ## Autonomous Operation Mode (March 2026)
