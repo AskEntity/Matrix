@@ -49,6 +49,27 @@ export function isDescendantOf(
 }
 
 /**
+ * Collect all descendant node IDs of a given ancestor (breadth-first).
+ * Includes direct children, grandchildren, etc.
+ */
+export function getDescendantIds(
+	tracker: TaskTracker,
+	ancestorId: string,
+): string[] {
+	const result: string[] = [];
+	const queue = [...(tracker.get(ancestorId)?.children ?? [])];
+	while (queue.length > 0) {
+		const id = queue.shift()!;
+		result.push(id);
+		const node = tracker.get(id);
+		if (node?.children?.length) {
+			queue.push(...node.children);
+		}
+	}
+	return result;
+}
+
+/**
  * Check if the git working tree is clean (no uncommitted changes).
  * Worktrees branch from the current HEAD, so dirty state would be lost.
  */
@@ -688,10 +709,10 @@ export function createOrchestratorTools(
 					)
 					.map((m) => m.taskId),
 			);
-			const myChildren = currentTaskId
-				? (tracker.get(currentTaskId)?.children ?? [])
+			const myDescendants = currentTaskId
+				? getDescendantIds(tracker, currentTaskId)
 				: [];
-			const runningChildren = myChildren.filter(
+			const runningChildren = myDescendants.filter(
 				(id) => globalAgentQueues.has(id) && !completedIds.has(id),
 			);
 			const runningChildrenText =
@@ -1766,11 +1787,11 @@ export function createOrchestratorTools(
 	return {
 		toolDefs,
 		hasRunningChildren: () => {
-			// Check if any children of this task have active queues in globalAgentQueues
+			// Check if any descendants of this task have active queues in globalAgentQueues
 			if (!currentTaskId) return false;
-			const myNode = tracker.get(currentTaskId);
-			if (!myNode?.children?.length) return false;
-			return myNode.children.some((id) => globalAgentQueues.has(id));
+			return getDescendantIds(tracker, currentTaskId).some((id) =>
+				globalAgentQueues.has(id),
+			);
 		},
 	};
 }

@@ -267,3 +267,10 @@ Event (src/events.ts) — THE source of truth
 - **Conversation endpoint**: Reconstructs from EventStore events (user_message, assistant_text, tool_call).
 - **pruneSessionFiles**: Prunes `.events.jsonl` files.
 - **Type casts**: `eventsToAnthropicMessages()` and `eventsToOpenAIMessages()` return `unknown[]` — cast at call sites.
+
+
+## Yield Pending Section — Descendant Tracking (March 2026)
+
+- **Bug**: `waitForQueueMessages()` in `agent-tools.ts` only checked direct children (`tracker.get(currentTaskId)?.children`) when building the `## Pending` summary. Children launched by the daemon (not via the orchestrator MCP tool) were already visible since `globalAgentQueues` is the source of truth for running agents, but grandchildren (descendants) were not tracked.
+- **Fix**: Added `getDescendantIds(tracker, ancestorId)` helper that collects all descendant node IDs (breadth-first). Used in both `waitForQueueMessages()` pending section and `hasRunningChildren()`.
+- **Key insight**: `globalAgentQueues` already tracks ALL running agents regardless of launch path (MCP tool or daemon). The issue was only checking direct children instead of the full descendant tree.
