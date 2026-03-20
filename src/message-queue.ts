@@ -62,6 +62,11 @@ export class MessageQueue {
 	} | null = null;
 	private closed = false;
 
+	/** Whether the queue has been closed. */
+	get isClosed(): boolean {
+		return this.closed;
+	}
+
 	/** Whether this agent is currently idle (waiting for messages). */
 	idle = false;
 

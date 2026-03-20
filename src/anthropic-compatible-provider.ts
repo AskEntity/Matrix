@@ -1080,24 +1080,21 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					continue;
 				} catch {
 					queue.idle = false;
-					// Queue closed — normal exit path (stop was called)
-					// NOTE: Using direct return instead of break to work around Bun async generator hang.
-					// break from catch inside an async generator resumed via .next() hangs in Bun.
-					// Persist session before returning
+					// Queue closed — normal exit path (stop was called or done() was called).
+					// Use direct return instead of break (break hangs in Bun async generators
+					// under certain conditions with concurrent I/O).
 					if (request.sessionStore) {
 						await request.sessionStore.set(sessionId, [...messages]);
 					}
-					// Skip verification for this exit path — it's a clean shutdown
 					const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
-					const exitCost =
-						(totalInputTokens * ip) / 1_000_000 +
-						(totalCacheCreationTokens * ip * 1.25) / 1_000_000 +
-						(totalCacheReadTokens * ip * 0.1) / 1_000_000 +
-						(totalOutputTokens * op) / 1_000_000;
 					return {
 						success: true,
 						output: lastText,
-						costUsd: exitCost,
+						costUsd:
+							(totalInputTokens * ip) / 1_000_000 +
+							(totalCacheCreationTokens * ip * 1.25) / 1_000_000 +
+							(totalCacheReadTokens * ip * 0.1) / 1_000_000 +
+							(totalOutputTokens * op) / 1_000_000,
 						turns,
 						sessionId,
 						inputTokens: totalInputTokens,
@@ -1163,6 +1160,33 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					);
 				}),
 			);
+
+			// If queue was closed during tool execution (done() was called),
+			// exit immediately — don't send tool results to the API.
+			// The next resume will reconstruct the conversation from events.
+			if (queue?.isClosed) {
+				// Persist session before exiting
+				if (request.sessionStore) {
+					await request.sessionStore.set(sessionId, [...messages]);
+				}
+				const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
+				const exitCost =
+					(totalInputTokens * ip) / 1_000_000 +
+					(totalCacheCreationTokens * ip * 1.25) / 1_000_000 +
+					(totalCacheReadTokens * ip * 0.1) / 1_000_000 +
+					(totalOutputTokens * op) / 1_000_000;
+				return {
+					success: true,
+					output: lastText,
+					costUsd: exitCost,
+					turns,
+					sessionId,
+					inputTokens: totalInputTokens,
+					cacheCreationTokens: totalCacheCreationTokens,
+					cacheReadTokens: totalCacheReadTokens,
+					outputTokens: totalOutputTokens,
+				};
+			}
 
 			// Emit tool_result events and build API result array
 			const toolResults: ToolResultBlockParam[] = [];

@@ -936,6 +936,26 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				}),
 			);
 
+			// If queue was closed during tool execution (done() was called),
+			// exit immediately — don't send tool results to the API.
+			if (queue?.isClosed) {
+				if (request.sessionStore) {
+					await request.sessionStore.set(sessionId, [...messages]);
+				}
+				const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
+				return {
+					success: true,
+					output: lastText,
+					costUsd:
+						(totalInputTokens * ip) / 1_000_000 +
+						(totalOutputTokens * op) / 1_000_000,
+					turns,
+					sessionId,
+					inputTokens: totalInputTokens,
+					outputTokens: totalOutputTokens,
+				};
+			}
+
 			// Emit tool_result events and build response messages
 			// Collect image results to inject as user message after tool results
 			const imageResults: Array<{
