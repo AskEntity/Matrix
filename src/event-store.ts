@@ -17,6 +17,9 @@ import type { Event } from "./events.ts";
  * Read operations remain synchronous for simplicity (only called during resume).
  */
 export class EventStore {
+	/** Per-session write queue to serialize async appends and prevent interleaving */
+	private writeQueues = new Map<string, Promise<void>>();
+
 	constructor(private dir: string) {
 		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 	}
@@ -25,21 +28,42 @@ export class EventStore {
 		return join(this.dir, `${sessionId}.events.jsonl`);
 	}
 
-	/** Append a single event to the JSONL file (async, non-blocking) */
+	/** Serialize a write operation for a given session */
+	private enqueueWrite(
+		sessionId: string,
+		writeFn: () => Promise<void>,
+	): Promise<void> {
+		const prev = this.writeQueues.get(sessionId) ?? Promise.resolve();
+		const next = prev.then(writeFn, writeFn); // run even if previous failed
+		this.writeQueues.set(sessionId, next);
+		// Clean up completed queues to prevent memory leak
+		next.then(() => {
+			if (this.writeQueues.get(sessionId) === next) {
+				this.writeQueues.delete(sessionId);
+			}
+		});
+		return next;
+	}
+
+	/** Append a single event to the JSONL file (async, serialized per session) */
 	append(sessionId: string, event: Event): Promise<void> {
-		return appendFile(this.path(sessionId), `${JSON.stringify(event)}\n`).catch(
-			() => {
-				/* non-fatal — don't break caller if write fails */
-			},
+		return this.enqueueWrite(sessionId, () =>
+			appendFile(this.path(sessionId), `${JSON.stringify(event)}\n`).catch(
+				() => {
+					/* non-fatal — don't break caller if write fails */
+				},
+			),
 		);
 	}
 
-	/** Append multiple events (async, non-blocking) */
+	/** Append multiple events (async, serialized per session) */
 	appendBatch(sessionId: string, events: Event[]): Promise<void> {
 		if (events.length === 0) return Promise.resolve();
-		const lines = `${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
-		return appendFile(this.path(sessionId), lines).catch(() => {
-			/* non-fatal */
+		return this.enqueueWrite(sessionId, () => {
+			const lines = `${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
+			return appendFile(this.path(sessionId), lines).catch(() => {
+				/* non-fatal */
+			});
 		});
 	}
 
