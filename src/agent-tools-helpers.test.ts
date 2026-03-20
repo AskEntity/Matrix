@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	buildTaskPrompt,
 	formatQueueMessage,
+	getDescendantIds,
 	isDescendantOf,
 	slugify,
 	toRawMessage,
@@ -246,6 +247,62 @@ describe("isDescendantOf", () => {
 	test("returns false for self", () => {
 		const tracker = makeTracker([makeNode({ id: "self" })]);
 		expect(isDescendantOf(tracker, "self", "self")).toBe(false);
+	});
+});
+
+describe("getDescendantIds", () => {
+	function makeTracker(nodes: TaskNode[]): TaskTracker {
+		const tracker = new TaskTracker("/dev/null/tree.json");
+		const nodesMap = (tracker as unknown as { nodes: Map<string, TaskNode> })
+			.nodes;
+		for (const node of nodes) {
+			nodesMap.set(node.id, node);
+		}
+		return tracker;
+	}
+
+	test("returns direct children", () => {
+		const tracker = makeTracker([
+			makeNode({ id: "root", children: ["a", "b"] }),
+			makeNode({ id: "a", parentId: "root" }),
+			makeNode({ id: "b", parentId: "root" }),
+		]);
+		expect(getDescendantIds(tracker, "root")).toEqual(["a", "b"]);
+	});
+
+	test("returns grandchildren and deeper", () => {
+		const tracker = makeTracker([
+			makeNode({ id: "root", children: ["mid"] }),
+			makeNode({ id: "mid", parentId: "root", children: ["leaf"] }),
+			makeNode({ id: "leaf", parentId: "mid" }),
+		]);
+		const ids = getDescendantIds(tracker, "root");
+		expect(ids).toContain("mid");
+		expect(ids).toContain("leaf");
+		expect(ids).toHaveLength(2);
+	});
+
+	test("returns empty array for leaf node", () => {
+		const tracker = makeTracker([makeNode({ id: "leaf" })]);
+		expect(getDescendantIds(tracker, "leaf")).toEqual([]);
+	});
+
+	test("returns empty array for non-existent node", () => {
+		const tracker = makeTracker([]);
+		expect(getDescendantIds(tracker, "missing")).toEqual([]);
+	});
+
+	test("returns all descendants in breadth-first order", () => {
+		const tracker = makeTracker([
+			makeNode({ id: "root", children: ["a", "b"] }),
+			makeNode({ id: "a", parentId: "root", children: ["a1", "a2"] }),
+			makeNode({ id: "b", parentId: "root", children: ["b1"] }),
+			makeNode({ id: "a1", parentId: "a" }),
+			makeNode({ id: "a2", parentId: "a" }),
+			makeNode({ id: "b1", parentId: "b" }),
+		]);
+		const ids = getDescendantIds(tracker, "root");
+		expect(ids).toEqual(["a", "b", "a1", "a2", "b1"]);
 	});
 });
 

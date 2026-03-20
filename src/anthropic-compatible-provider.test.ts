@@ -1589,6 +1589,42 @@ describe("done tool", () => {
 		childQueue.close();
 	});
 
+	test("hasRunningChildren detects running grandchildren (descendants)", async () => {
+		const mockProvider = {
+			name: "mock",
+			execute: async () => ({ success: true, output: "" }),
+			// biome-ignore lint/correctness/useYield: mock provider never streams
+			stream: async function* () {
+				return { success: true, output: "" } as AgentResult;
+			},
+			startSession: () => {
+				throw new Error("not used");
+			},
+		};
+
+		const parentId =
+			tracker.rootNodeId ?? tracker.ensureRootNode("Root", "").id;
+		const child = tracker.addChild(parentId, "Child Task", "desc");
+		const grandchild = tracker.addChild(child.id, "Grandchild Task", "desc");
+		const grandchildQueue = new MessageQueue();
+		globalAgentQueues.set(grandchild.id, grandchildQueue);
+
+		const { hasRunningChildren } = createOrchestratorTools({
+			tracker,
+			provider: mockProvider,
+			worktrees: {} as never,
+			projectPath: tempDir,
+			repoPath: tempDir,
+			currentTaskId: parentId,
+		});
+		// Grandchild has a queue → hasRunningChildren should be true
+		expect(hasRunningChildren?.()).toBe(true);
+
+		// Clean up
+		globalAgentQueues.delete(grandchild.id);
+		grandchildQueue.close();
+	});
+
 	test("done() with queue enters idle and returns wake messages", async () => {
 		const node = tracker.addTask("Test Done Idle", "description");
 		tracker.updateStatus(node.id, "in_progress");
