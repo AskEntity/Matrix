@@ -14,6 +14,12 @@ export function broadcast(
 	projectId: string,
 	event: Record<string, unknown>,
 ) {
+	console.error(
+		"[DEADLOCK-TRACE] broadcast START",
+		event.type,
+		clients.size,
+		"clients",
+	);
 	const msg = JSON.stringify(event);
 	for (const client of clients) {
 		if (client.projectId === projectId) {
@@ -24,6 +30,7 @@ export function broadcast(
 			}
 		}
 	}
+	console.error("[DEADLOCK-TRACE] broadcast DONE");
 }
 
 /** Broadcast a tree update to all subscribers of a project. */

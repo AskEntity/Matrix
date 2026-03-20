@@ -223,6 +223,11 @@ async function createAgentContext(
 		sessionStore: getSessionStore(ctx, project.id),
 		dataDir: ctx.config.dataDir,
 		onTaskEvent: (event) => {
+			console.error(
+				"[DEADLOCK-TRACE] onTaskEvent START",
+				event.type,
+				event.taskId,
+			);
 			const ts = (event.ts as number) || Date.now();
 			// Transform agent_event wrappers into flat BroadcastEvents
 			if (event.type === "agent_event") {
@@ -243,7 +248,9 @@ async function createAgentContext(
 				const withTs = event.ts ? event : { ...event, ts };
 				broadcastEvent(ctx, project.id, withTs as unknown as BroadcastEvent);
 			}
+			console.error("[DEADLOCK-TRACE] onTaskEvent broadcastEvent DONE");
 			broadcastTreeUpdate(ctx, project.id, opts.tracker);
+			console.error("[DEADLOCK-TRACE] onTaskEvent broadcastTreeUpdate DONE");
 
 			// Detect done() via task_completed event. done() emits this BEFORE
 			// blocking on waitForQueueMessages(). Closing the queue here causes
@@ -258,7 +265,11 @@ async function createAgentContext(
 			) {
 				const nodeStatus = opts.tracker.get(opts.currentTaskId)?.status;
 				if (nodeStatus === "passed" || nodeStatus === "failed") {
+					console.error(
+						"[DEADLOCK-TRACE] onTaskEvent closing queue for done()",
+					);
 					opts.queue.close();
+					console.error("[DEADLOCK-TRACE] onTaskEvent queue.close() DONE");
 				}
 			}
 		},
@@ -503,7 +514,9 @@ export async function deliverMessage(
 	const queue = globalAgentQueues.get(nodeId);
 	if (queue) {
 		try {
+			console.error("[DEADLOCK-TRACE] deliverMessage enqueue START", nodeId);
 			queue.enqueue(message);
+			console.error("[DEADLOCK-TRACE] deliverMessage enqueue DONE", nodeId);
 			// onEnqueue callback handles pending broadcast (set at queue creation)
 			return "enqueued";
 		} catch {
@@ -517,7 +530,9 @@ export async function deliverMessage(
 		const rootSession = ctx.activeSessions.get(project.id);
 		if (rootSession?.queue) {
 			try {
+				console.error("[DEADLOCK-TRACE] deliverMessage enqueue START", nodeId);
 				rootSession.queue.enqueue(message);
+				console.error("[DEADLOCK-TRACE] deliverMessage enqueue DONE", nodeId);
 				// onEnqueue callback handles pending broadcast (set at queue creation)
 				return "enqueued";
 			} catch {
