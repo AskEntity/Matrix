@@ -270,3 +270,12 @@ Event (src/events.ts) — THE source of truth
 - **Fix**: Extracted `InputBar` component (`web/components/InputBar.tsx`) with local `prompt` + `attachedImages` state. App only receives final values via `onSend(message, images?)` callback.
 - **AppFooter**: Now delegates form rendering to `InputBar`. Props simplified — no more `prompt`, `onPromptChange`, `attachedImages`, `onImageAttach`, `onImageRemove`.
 - **handlers.ts**: `handleSubmit(e)` → `handleSend(message, images?)`. No longer reads prompt/images from closure.
+
+
+## Lifecycle Test Patterns (March 2026)
+
+- **SessionStore API**: Method is `set()` not `save()`. `hasAny(sessionId)` checks both `.json` and `.openai.json` suffixes.
+- **Fresh vs resume detection**: `handleInjectMessage` checks `sessionStore.hasAny(rootNodeId)`. If true → resume with generic prompt. If false → fresh start with user message as prompt.
+- **launchAgent prompt prepends memory**: For fresh starts, `launchAgent` reads `.opengraft/memory.md` and prepends to prompt. Test with `toContain()` not `toBe()`.
+- **sessions/clear wipes JSONL events too**: `clearAll()` removes the entire sessions dir (which contains both `.json` session files and `.events.jsonl` files). EventStore cache is also cleared.
+- **Capturing provider pattern**: Create a provider that records `AgentRequest` objects passed to `startSession()` — useful for verifying prompt content, resumeSessionId, and other session parameters.
