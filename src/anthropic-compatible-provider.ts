@@ -1161,33 +1161,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				}),
 			);
 
-			// If queue was closed during tool execution (done() was called),
-			// exit immediately — don't send tool results to the API.
-			// The next resume will reconstruct the conversation from events.
-			if (queue?.isClosed) {
-				// Persist session before exiting
-				if (request.sessionStore) {
-					await request.sessionStore.set(sessionId, [...messages]);
-				}
-				const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
-				const exitCost =
-					(totalInputTokens * ip) / 1_000_000 +
-					(totalCacheCreationTokens * ip * 1.25) / 1_000_000 +
-					(totalCacheReadTokens * ip * 0.1) / 1_000_000 +
-					(totalOutputTokens * op) / 1_000_000;
-				return {
-					success: true,
-					output: lastText,
-					costUsd: exitCost,
-					turns,
-					sessionId,
-					inputTokens: totalInputTokens,
-					cacheCreationTokens: totalCacheCreationTokens,
-					cacheReadTokens: totalCacheReadTokens,
-					outputTokens: totalOutputTokens,
-				};
-			}
-
 			// Emit tool_result events and build API result array
 			const toolResults: ToolResultBlockParam[] = [];
 			for (let i = 0; i < toolUses.length; i++) {
@@ -1338,6 +1311,31 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					toolEvents.push(queueMessageToEvent(qm));
 				}
 				eventStore.appendBatch(sessionId, toolEvents);
+			}
+
+			// If queue was closed during tool execution (done() was called),
+			// exit after recording events but before sending results to the API.
+			if (queue?.isClosed) {
+				if (request.sessionStore) {
+					await request.sessionStore.set(sessionId, [...messages]);
+				}
+				const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
+				const exitCost =
+					(totalInputTokens * ip) / 1_000_000 +
+					(totalCacheCreationTokens * ip * 1.25) / 1_000_000 +
+					(totalCacheReadTokens * ip * 0.1) / 1_000_000 +
+					(totalOutputTokens * op) / 1_000_000;
+				return {
+					success: true,
+					output: lastText,
+					costUsd: exitCost,
+					turns,
+					sessionId,
+					inputTokens: totalInputTokens,
+					cacheCreationTokens: totalCacheCreationTokens,
+					cacheReadTokens: totalCacheReadTokens,
+					outputTokens: totalOutputTokens,
+				};
 			}
 
 			// Persist after tool results too (captures full turn) — fire-and-forget
