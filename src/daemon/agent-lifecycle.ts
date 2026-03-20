@@ -1181,6 +1181,7 @@ export async function handleInjectMessage(
 			broadcastEvent(ctx, projectId, {
 				type: "message_injected",
 				message,
+				...(images?.length ? { images } : {}),
 				ts: Date.now(),
 			});
 			return { ok: true };
@@ -1206,6 +1207,7 @@ export async function handleInjectMessage(
 		broadcastEvent(ctx, projectId, {
 			type: "message_injected",
 			message,
+			...(images?.length ? { images } : {}),
 			ts: Date.now(),
 		});
 		return { ok: true };
@@ -1247,6 +1249,7 @@ export async function handleInjectMessage(
 	broadcastEvent(ctx, projectId, {
 		type: "message_injected",
 		message,
+		...(images?.length ? { images } : {}),
 		ts: Date.now(),
 	});
 	return { ok: true };

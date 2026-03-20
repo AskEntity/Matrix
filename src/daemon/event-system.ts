@@ -204,6 +204,7 @@ function broadcastToEvent(
 				event: {
 					type: "message_injected",
 					message: event.message,
+					...(event.images?.length ? { images: event.images } : {}),
 					ts: event.ts,
 				},
 				sessionId: rootNodeId ?? sessionId,

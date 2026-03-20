@@ -511,6 +511,14 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						createLogEntry({
 							type: "user_message",
 							content: (msg.message as string) || "",
+							...(msg.images
+								? {
+										images: msg.images as Array<{
+											base64: string;
+											mediaType: string;
+										}>,
+									}
+								: {}),
 							taskId: msg.taskId as string | undefined,
 							ts: (msg.ts as number) ?? Date.now(),
 						}),
