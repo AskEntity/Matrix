@@ -174,7 +174,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 
 	/**
 	 * Single event → entries, in-place updates, and side effects.
-	 * Both batch (event_history) and live paths use this.
+	 * Used by both batch processing (REST-fetched events) and live WS events.
 	 */
 	function processEvent(msg: Record<string, unknown>): ProcessResult {
 		switch (msg.type) {
@@ -748,26 +748,28 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		});
 	}
 
+	/**
+	 * Process a batch of events into log entries (used for REST-fetched event history).
+	 * Returns the log entries with all side effects applied.
+	 */
+	function processEventBatch(events: Record<string, unknown>[]): void {
+		const entries: LogEntry[] = [];
+		const deferredSideEffects: (() => void)[] = [];
+		for (const evt of events) {
+			const result = processEvent(evt);
+			for (const entry of result.entries) entries.push(entry);
+			for (const op of result.updates) applyUpdateToArray(entries, op);
+			if (result.sideEffects !== NO_SIDE_EFFECTS) {
+				deferredSideEffects.push(result.sideEffects);
+			}
+		}
+		setLogs(entries);
+		for (const fn of deferredSideEffects) fn();
+	}
+
 	// --- Main handler ---
 
 	function handleWS(msg: Record<string, unknown>) {
-		// event_history: batch mode — collect all entries at once
-		if (msg.type === "event_history") {
-			const entries: LogEntry[] = [];
-			const deferredSideEffects: (() => void)[] = [];
-			for (const evt of msg.events as Record<string, unknown>[]) {
-				const result = processEvent(evt);
-				for (const entry of result.entries) entries.push(entry);
-				for (const op of result.updates) applyUpdateToArray(entries, op);
-				if (result.sideEffects !== NO_SIDE_EFFECTS) {
-					deferredSideEffects.push(result.sideEffects);
-				}
-			}
-			setLogs(entries);
-			for (const fn of deferredSideEffects) fn();
-			return;
-		}
-
 		// pending_messages / pending_clarifications: pass-through
 		if (msg.type === "pending_messages") {
 			setPendingMessages(
@@ -801,5 +803,5 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		result.sideEffects();
 	}
 
-	return handleWS;
+	return { handleWS, processEventBatch };
 }

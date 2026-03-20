@@ -4,7 +4,8 @@ import type { Hono } from "hono";
 import { globalAgentQueues } from "../../message-queue.ts";
 import { stopAgent } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
-import { getPendingClarifications, loadEventHistory } from "../event-system.ts";
+import { getPendingClarifications } from "../event-system.ts";
+import { getEventStore, normalizeEventForUI } from "../helpers.ts";
 
 export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 	// Projects CRUD
@@ -60,7 +61,7 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 			// Clean up all in-memory state for this project
 			ctx.trackers.delete(projectId);
 			ctx.pendingClarifications.delete(projectId);
-			ctx.eventHistory.delete(projectId);
+			ctx.eventStores.delete(projectId);
 			return c.json({ ok: true });
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -68,16 +69,22 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 		}
 	});
 
-	// Event history
+	// Event history — merged from all tasks' JSONL EventStores, sorted by ts
 	app.get("/projects/:id/events", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		const events = ctx.eventHistory.has(project.id)
-			? (ctx.eventHistory.get(project.id) as Record<string, unknown>[])
-			: await loadEventHistory(ctx, project.id);
-		return c.json({ events });
+		const eventStore = getEventStore(ctx, project.id);
+		// Read all sessions and normalize for UI consumption
+		const all: Record<string, unknown>[] = [];
+		for (const sessionId of eventStore.listSessions()) {
+			for (const event of eventStore.read(sessionId)) {
+				all.push(normalizeEventForUI(event, sessionId));
+			}
+		}
+		all.sort((a, b) => ((a.ts as number) ?? 0) - ((b.ts as number) ?? 0));
+		return c.json({ events: all });
 	});
 
 	// Pending messages — derived from queue state

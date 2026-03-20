@@ -2,6 +2,7 @@ import {
 	appendFileSync,
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
 	unlinkSync,
 } from "node:fs";
@@ -61,5 +62,27 @@ export class EventStore {
 	/** Check if events exist */
 	has(sessionId: string): boolean {
 		return existsSync(this.path(sessionId));
+	}
+
+	/** List all session IDs that have event files */
+	listSessions(): string[] {
+		try {
+			return readdirSync(this.dir)
+				.filter((f) => f.endsWith(".events.jsonl"))
+				.map((f) => f.replace(".events.jsonl", ""));
+		} catch {
+			return [];
+		}
+	}
+
+	/** Read all events across all sessions, sorted by timestamp */
+	readAllSorted(): Event[] {
+		const sessions = this.listSessions();
+		const all: Event[] = [];
+		for (const sessionId of sessions) {
+			all.push(...this.read(sessionId));
+		}
+		all.sort((a, b) => a.ts - b.ts);
+		return all;
 	}
 }

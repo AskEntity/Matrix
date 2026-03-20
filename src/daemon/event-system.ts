@@ -1,6 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import type { BroadcastEvent } from "../events.ts";
+import type { BroadcastEvent, Event } from "../events.ts";
 import type { QueueMessage } from "../message-queue.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type {
@@ -8,6 +6,7 @@ import type {
 	PendingClarification,
 	WSClient,
 } from "./context.ts";
+import { getEventStore } from "./helpers.ts";
 
 /** Broadcast an event to all WebSocket clients subscribed to a project. */
 export function broadcast(
@@ -27,69 +26,6 @@ export function broadcast(
 	}
 }
 
-export function eventsPath(ctx: DaemonContext, projectId: string): string {
-	return join(ctx.config.dataDir, "events", `${projectId}.json`);
-}
-
-export async function loadEventHistory(
-	ctx: DaemonContext,
-	projectId: string,
-): Promise<Record<string, unknown>[]> {
-	const path = eventsPath(ctx, projectId);
-	try {
-		const raw = await readFile(path, "utf-8");
-		const events = JSON.parse(raw) as Record<string, unknown>[];
-		ctx.eventHistory.set(projectId, events);
-		return events;
-	} catch {
-		const events: Record<string, unknown>[] = [];
-		ctx.eventHistory.set(projectId, events);
-		return events;
-	}
-}
-
-export async function flushEvents(ctx: DaemonContext): Promise<void> {
-	const dirty = [...ctx.eventsDirty];
-	ctx.eventsDirty.clear();
-	const eventsDir = join(ctx.config.dataDir, "events");
-	await mkdir(eventsDir, { recursive: true });
-	for (const projectId of dirty) {
-		const history = ctx.eventHistory.get(projectId);
-		if (history) {
-			try {
-				await writeFile(
-					eventsPath(ctx, projectId),
-					JSON.stringify(history),
-					"utf-8",
-				);
-			} catch {
-				/* non-fatal */
-			}
-		}
-	}
-}
-
-export function scheduleEventFlush(
-	ctx: DaemonContext,
-	projectId: string,
-): void {
-	ctx.eventsDirty.add(projectId);
-	if (!ctx.eventFlushTimer) {
-		ctx.eventFlushTimer = setTimeout(async () => {
-			ctx.eventFlushTimer = null;
-			await flushEvents(ctx);
-		}, 2000); // batch writes every 2s
-	}
-}
-
-export function getEventHistory(
-	ctx: DaemonContext,
-	projectId: string,
-): Record<string, unknown>[] {
-	if (!ctx.eventHistory.has(projectId)) ctx.eventHistory.set(projectId, []);
-	return ctx.eventHistory.get(projectId) as Record<string, unknown>[];
-}
-
 /** Broadcast a tree update to all subscribers of a project. */
 export function broadcastTreeUpdate(
 	ctx: DaemonContext,
@@ -103,28 +39,198 @@ export function broadcastTreeUpdate(
 	});
 }
 
-/** Broadcast an agent event to subscribers and store in history. */
+/**
+ * Convert a BroadcastEvent to a persistable Event for JSONL storage.
+ * Returns null for ephemeral events that should not be persisted.
+ * Also returns the taskId (sessionId) to store under.
+ */
+function broadcastToEvent(
+	event: BroadcastEvent,
+	rootNodeId: string | undefined,
+): { event: Event; sessionId: string } | null {
+	// Extract taskId for session routing
+	const taskId =
+		"taskId" in event ? (event.taskId as string | undefined) : undefined;
+	const sessionId = taskId || rootNodeId;
+	if (!sessionId) return null;
+
+	// Skip ephemeral events
+	switch (event.type) {
+		case "text_delta":
+		case "usage":
+		case "agent_idle":
+		case "agent_active":
+		case "status":
+		case "queue_message":
+		case "clarification_timeout":
+			return null;
+	}
+
+	// These event types match the Event union directly
+	switch (event.type) {
+		case "orchestration_started":
+			return {
+				event: {
+					type: "orchestration_started",
+					taskId: event.taskId,
+					resume: event.resume,
+					prompt: event.prompt,
+					model: event.model,
+					provider: event.provider,
+					ts: event.ts,
+				},
+				sessionId,
+			};
+		case "orchestration_completed":
+			return {
+				event: {
+					type: "orchestration_completed",
+					taskId: event.taskId,
+					success: event.success,
+					costUsd: event.costUsd,
+					turns: event.turns,
+					inputTokens: event.inputTokens,
+					cacheCreationTokens: event.cacheCreationTokens,
+					cacheReadTokens: event.cacheReadTokens,
+					outputTokens: event.outputTokens,
+					childCosts: event.childCosts,
+					ts: event.ts,
+				},
+				sessionId,
+			};
+		case "task_started":
+			return {
+				event: {
+					type: "task_started",
+					taskId: event.taskId,
+					title: event.title,
+					ts: event.ts,
+				},
+				sessionId,
+			};
+		case "task_completed":
+			return {
+				event: {
+					type: "task_completed",
+					taskId: event.taskId,
+					title: event.title,
+					success: event.success,
+					output: event.output,
+					error: event.error,
+					ts: event.ts,
+				},
+				sessionId,
+			};
+		case "error":
+			return {
+				event: {
+					type: "error",
+					taskId: event.taskId,
+					message: event.message,
+					ts: event.ts,
+				},
+				sessionId,
+			};
+		case "budget_exceeded":
+			return {
+				event: {
+					type: "budget_exceeded",
+					taskId: event.taskId,
+					title: event.title,
+					costUsd: event.costUsd,
+					budgetUsd: event.budgetUsd,
+					ts: event.ts,
+				},
+				sessionId,
+			};
+		case "clarification_requested":
+			return {
+				event: {
+					type: "clarification_requested",
+					taskId: event.taskId,
+					question: event.question,
+					ts: event.ts,
+				},
+				sessionId,
+			};
+		case "clarification_answered":
+			return {
+				event: {
+					type: "clarification_answered",
+					taskId: event.taskId,
+					answer: event.answer,
+					ts: event.ts,
+				},
+				sessionId,
+			};
+		case "tree_mutation":
+			return {
+				event: {
+					type: "tree_mutation",
+					action: event.action,
+					nodeId: event.nodeId,
+					title: event.title,
+					ts: event.ts,
+				},
+				sessionId,
+			};
+		case "compact_started":
+			return {
+				event: {
+					type: "compact_started",
+					taskId: event.taskId,
+					ts: event.ts,
+				},
+				sessionId,
+			};
+		case "agent_stopped":
+			return {
+				event: {
+					type: "agent_stopped",
+					taskId: event.taskId,
+					ts: event.ts,
+				},
+				sessionId,
+			};
+		case "message_injected":
+			return {
+				event: {
+					type: "message_injected",
+					message: event.message,
+					ts: event.ts,
+				},
+				sessionId: rootNodeId ?? sessionId,
+			};
+		// Provider events (assistant_text, tool_call, tool_result, compact_marker)
+		// are already written to JSONL by the provider — don't double-write
+		case "assistant_text":
+		case "tool_call":
+		case "tool_result":
+		case "compact_marker":
+			return null;
+		default:
+			return null;
+	}
+}
+
+/** Broadcast an agent event to subscribers and persist lifecycle events to JSONL. */
 export function broadcastEvent(
 	ctx: DaemonContext,
 	projectId: string,
 	event: BroadcastEvent,
 ) {
-	// Store in history (skip text_delta, agent_idle/active — too granular for persistence)
-	if (
-		event.type !== "agent_idle" &&
-		event.type !== "agent_active" &&
-		event.type !== "text_delta"
-	) {
-		const history = getEventHistory(ctx, projectId);
-		history.push({
-			...(event as unknown as Record<string, unknown>),
-			timestamp: Date.now(),
-		});
-		if (history.length > ctx.MAX_EVENT_HISTORY) {
-			history.splice(0, history.length - ctx.MAX_EVENT_HISTORY);
+	// Persist lifecycle events to JSONL EventStore
+	const rootNodeId = ctx.trackers.get(projectId)?.rootNodeId ?? undefined;
+	const persistable = broadcastToEvent(event, rootNodeId);
+	if (persistable) {
+		try {
+			const eventStore = getEventStore(ctx, projectId);
+			eventStore.append(persistable.sessionId, persistable.event);
+		} catch {
+			/* non-fatal — don't break broadcasting if JSONL write fails */
 		}
-		scheduleEventFlush(ctx, projectId);
 	}
+
 	broadcast(
 		ctx.wsClients,
 		projectId,

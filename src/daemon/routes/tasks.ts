@@ -20,8 +20,10 @@ import {
 } from "../event-system.ts";
 import {
 	collectDescendants,
+	getEventStore,
 	getSessionStore,
 	getTracker,
+	normalizeEventForUI,
 	readProjectMemory,
 } from "../helpers.ts";
 
@@ -568,6 +570,25 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		} catch {
 			return c.json({ messages: [] });
 		}
+	});
+
+	// JSONL events for a specific task
+	app.get("/projects/:id/tasks/:nodeId/events", async (c) => {
+		const project = ctx.pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const tracker = await getTracker(ctx, project.id);
+		const nodeId = c.req.param("nodeId");
+		const node = tracker.get(nodeId);
+		if (!node) {
+			return c.json({ error: "Task not found" }, 404);
+		}
+		const eventStore = getEventStore(ctx, project.id);
+		const events = eventStore
+			.read(nodeId)
+			.map((e) => normalizeEventForUI(e, nodeId));
+		return c.json({ events });
 	});
 
 	// Inject a message into a specific running child agent's queue

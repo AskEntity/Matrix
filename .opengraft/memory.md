@@ -189,3 +189,15 @@ Event (src/events.ts) — THE source of truth
 - `formatTime(ts)` — frontend renders `ts` field on demand (no pre-formatted `time` string)
 
 **Frontend residual:** `UIOnlyEvent` has 2 types (`lifecycle`, `generic_queue_message`) that are frontend-only. `UIEvent = Event | BroadcastEvent | UIOnlyEvent`. `LogEntry = UIEvent & { id, taskId? }`.
+
+## Activity Log Migration (JSONL EventStore)
+
+- **Old system deleted**: `data/events/<projectId>.json` (JSON array), `ctx.eventHistory`, `eventsDirty`, `eventFlushTimer`, `MAX_EVENT_HISTORY`, `loadEventHistory`, `flushEvents`, `scheduleEventFlush`, `getEventHistory`, `eventsPath`.
+- **New system**: All activity log events served from per-task JSONL files (`data/<projectId>/events/<taskId>.events.jsonl`).
+- **Lifecycle events added to Event union**: `orchestration_started/completed`, `task_started/completed`, `error`, `budget_exceeded`, `clarification_requested/answered`, `tree_mutation`, `compact_started`, `agent_stopped`, `message_injected`.
+- **broadcastEvent()** now persists lifecycle events to JSONL via `broadcastToEvent()` converter. Provider events (assistant_text, tool_call, tool_result, compact_marker) are skipped since providers already write them.
+- **REST endpoints**: `GET /projects/:id/events` merges all tasks' JSONL sorted by `ts`. `GET /projects/:id/tasks/:nodeId/events` returns one task's events. Both normalize Event→BroadcastEvent field names (toolCallId→toolUseId, add taskId).
+- **Frontend**: Fetches events from REST on project change. WS subscribe no longer sends `event_history`. `createWSHandler` returns `{ handleWS, processEventBatch }`.
+- **normalizeEventForUI()**: Maps Event field names to BroadcastEvent-compatible format for frontend `processEvent()`.
+- **EventStore.listSessions()** and **readAllSorted()**: New methods for project-level event retrieval.
+
