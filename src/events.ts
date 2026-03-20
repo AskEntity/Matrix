@@ -706,6 +706,12 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 				// Skip — readActive handles filtering by compact markers
 				i++;
 				break;
+
+			default:
+				// Skip lifecycle/broadcast events (orchestration_started, agent_stopped, etc.)
+				// that are persisted to JSONL but have no message representation.
+				i++;
+				break;
 		}
 	}
 	return messages;
@@ -935,6 +941,12 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 
 			case "compact_marker":
 				// Skip — readActive handles filtering by compact markers
+				i++;
+				break;
+
+			default:
+				// Skip lifecycle/broadcast events (orchestration_started, agent_stopped, etc.)
+				// that are persisted to JSONL but have no message representation.
 				i++;
 				break;
 		}
