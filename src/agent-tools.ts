@@ -198,10 +198,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 7. When a child passes, merge its branch:
    a. Merge via bash: \`git merge --no-ff <child-branch> -m "Merge task: <title>"\`
    b. Call close_task(taskId) to clean up the child's worktree and branch (node stays in tree for history)
-8. If a child fails: read the failure summary carefully. Decide:
-   - Send another message to resume with specific instructions addressing the failure
-   - Call reset_task first, then send_message_to_child to start fresh with a different approach
-   - Delete and create a new task with different scope if the approach was wrong
+8. If a child fails: distinguish daemon-restart failures (child was interrupted, work may be complete) from genuine failures (child called done("failed")). **Always resume first** (send_message_to_child) — the child can assess its own state. Only reset_task when the approach was fundamentally wrong.
 9. After ALL children are merged: run full test suite to verify no regressions
 10. If integration issues surface, create new targeted tasks to fix them
 
@@ -235,12 +232,15 @@ Before marking a task as passed, verify EVERY item in the task description is co
 
 ### Parent Handling of Child Results
 - **passed** → \`git merge --no-ff <branch>\` → \`close_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
-- **failed** → Read the child's failure summary carefully. The quality of your retry decision
-  directly affects whether the next attempt succeeds:
-  - **Resume**: Send another \`send_message_to_child\` with SPECIFIC instructions addressing the failure.
-    Don't just say "try again" — explain what went wrong and how to fix it. The child keeps its progress.
-  - **Reset**: Call \`reset_task\` first, then \`send_message_to_child\` to start fresh.
-    Use when the approach was fundamentally wrong.
+- **failed** → **Distinguish WHY it failed.** Not all failures are equal:
+  - **Daemon restart**: Children get marked "failed" when the daemon restarts — even if they finished their work.
+    Always resume these (send_message_to_child) so the child can assess its own state and call done().
+    Never blindly reset — the child's commits and progress are intact.
+  - **Genuine failure**: The child reported done("failed") with an explanation. Read the summary carefully.
+    - **Resume** (default): Send another \`send_message_to_child\` with SPECIFIC instructions addressing the failure.
+      Don't just say "try again" — explain what went wrong and how to fix it. The child keeps its progress.
+    - **Reset** (last resort): Call \`reset_task\` first, then \`send_message_to_child\` to start fresh.
+      Only when the approach was fundamentally wrong and you want to start over from scratch.
   - If the failure reveals a scope issue: delete the task and create new tasks with better boundaries.
 
 ### Merge Protocol
