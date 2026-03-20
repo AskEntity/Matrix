@@ -307,3 +307,19 @@ Event (src/events.ts) — THE source of truth
 - **Fix**: Removed `message_injected` from the "enqueued" and "persisted" paths in `handleInjectMessage`. Added emission in `launchAgent`'s `consumeAgentEvents` callback — when `queue_message` event has `rawMessages` with `source: "user"`, emits `message_injected` at that point.
 - **Fresh starts kept**: When no session exists (first message = prompt), `message_injected` still fires immediately since there's no queue delay.
 - **Both idle drain and cancellation point work**: Both yield `queue_message` with `rawMessages`, so user messages consumed either way trigger `message_injected`.
+
+
+## Core Architectural Insight: Cancellation Points (March 2026)
+
+**The fundamental complexity of the agent lifecycle comes from ONE fact**: User messages can only be injected into the AI conversation at cancellation points (between tool calls). This is an API constraint, not a design choice.
+
+**The mistake we kept making**: Conflating the API constraint (messages arrive at cancellation points) with our abstraction (how we represent and persist messages). We built multiple overlapping event types (message_injected, queue_message source:user, user_message) because we didnt clearly separate:
+1. **When the user sent the message** (UI concern — pending banner)
+2. **When the message was persisted** (durability concern — JSONL)  
+3. **When the agent consumed it** (API constraint — cancellation point)
+
+**The clean abstraction**: Two events per user message lifecycle:
+- `user_message { id, content, ts }` — written to JSONL at send time. Appears in pending banner.
+- `messages_consumed { messageIds, ts }` — written at cancellation point. Marks injection into AI conversation.
+
+This separates the architectural constraint (cancellation points) from the user-facing abstraction (message sent → message consumed).
