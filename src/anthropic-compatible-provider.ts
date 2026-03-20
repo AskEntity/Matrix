@@ -1086,12 +1086,33 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: queue.wait() CATCH error=${e instanceof Error ? e.message : String(e)}`);
 					queue.idle = false;
 					// Queue closed — normal exit path (stop was called)
-					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: about to break`);
-					break;
+					// NOTE: Using direct return instead of break to work around Bun async generator hang.
+					// break from catch inside an async generator resumed via .next() hangs in Bun.
+					console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: returning directly (break hangs in Bun)`);
+					// Persist session before returning
+					if (request.sessionStore) {
+						await request.sessionStore.set(sessionId, [...messages]);
+					}
+					// Skip verification for this exit path — it's a clean shutdown
+					const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
+					const exitCost =
+						(totalInputTokens * ip) / 1_000_000 +
+						(totalCacheCreationTokens * ip * 1.25) / 1_000_000 +
+						(totalCacheReadTokens * ip * 0.1) / 1_000_000 +
+						(totalOutputTokens * op) / 1_000_000;
+					return {
+						success: true,
+						output: lastText,
+						costUsd: exitCost,
+						turns,
+						sessionId,
+						inputTokens: totalInputTokens,
+						cacheCreationTokens: totalCacheCreationTokens,
+						cacheReadTokens: totalCacheReadTokens,
+						outputTokens: totalOutputTokens,
+					};
 				}
-				console.error(`[DEADLOCK-TRACE ${Date.now()}] implicit yield: after try/catch (unreachable if break worked)`);
 			}
-			console.error(`[DEADLOCK-TRACE ${Date.now()}] after end_turn block (unreachable if break worked)`);
 
 			// Execute tools concurrently
 			console.error(`[DEADLOCK-TRACE ${Date.now()}] tool execution batch START (${toolUses.length} tools: ${toolUses.map(t => t.name).join(", ")})`);
