@@ -15,7 +15,7 @@ export function broadcast(
 	event: Record<string, unknown>,
 ) {
 	console.error(
-		"[DEADLOCK-TRACE] broadcast START",
+		`[DEADLOCK-TRACE ${Date.now()}] broadcast START`,
 		event.type,
 		event.type === "tool_call" ? event.tool : "",
 		event.type === "tool_result" ? event.tool : "",
@@ -32,7 +32,7 @@ export function broadcast(
 			}
 		}
 	}
-	console.error("[DEADLOCK-TRACE] broadcast DONE");
+	console.error(`[DEADLOCK-TRACE ${Date.now()}] broadcast DONE`);
 }
 
 /** Broadcast a tree update to all subscribers of a project. */

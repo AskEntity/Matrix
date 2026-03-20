@@ -880,6 +880,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {
 				try {
+					console.error(`[DEADLOCK-TRACE ${Date.now()}] API call START attempt=${attempt}`);
 					const stream = this.useOAuth
 						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
 							(this.client.beta.messages as any).stream(createParams)
@@ -915,6 +916,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						};
 					}
 					response = await stream.finalMessage();
+					console.error(`[DEADLOCK-TRACE ${Date.now()}] API call DONE stop_reason=${response?.stop_reason}`);
 					break;
 				} catch (e) {
 					const isTransient =
@@ -1086,6 +1088,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			}
 
 			// Execute tools concurrently
+			console.error(`[DEADLOCK-TRACE ${Date.now()}] tool execution batch START (${toolUses.length} tools: ${toolUses.map(t => t.name).join(", ")})`);
 			const execResults = await Promise.all(
 				toolUses.map(async (toolUse) => {
 					const mcpHandler = mcpHandlers.get(toolUse.name);
@@ -1141,6 +1144,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				}),
 			);
 
+			console.error(`[DEADLOCK-TRACE ${Date.now()}] tool execution batch DONE`);
 			// Emit tool_result events and build API result array
 			const toolResults: ToolResultBlockParam[] = [];
 			for (let i = 0; i < toolUses.length; i++) {

@@ -93,6 +93,7 @@ export async function executeTool(
 					: "";
 
 			try {
+				console.error(`[DEADLOCK-TRACE ${Date.now()}] bash executeBashWithTimeout START: ${command.slice(0, 80)}`);
 				const result = await executeBashWithTimeout(
 					command,
 					cwd,
@@ -101,11 +102,13 @@ export async function executeTool(
 					sessionId,
 					queue,
 				);
+				console.error(`[DEADLOCK-TRACE ${Date.now()}] bash executeBashWithTimeout DONE: ${command.slice(0, 80)}`);
 				return {
 					...result,
 					content: bgWarning + result.content,
 				};
 			} catch (e) {
+				console.error(`[DEADLOCK-TRACE ${Date.now()}] bash executeBashWithTimeout ERROR: ${command.slice(0, 80)}`);
 				return {
 					content: `${bgWarning}Error: ${e instanceof Error ? e.message : String(e)}`,
 					isError: true,
