@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type {
 	AgentEvent,
@@ -11,7 +12,7 @@ import {
 	TASK_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
 import { DEFAULT_MODEL } from "../config.ts";
-import type { BroadcastEvent } from "../events.ts";
+import type { BroadcastEvent, Event } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { globalAgentQueues, MessageQueue } from "../message-queue.ts";
@@ -1007,26 +1008,9 @@ export async function launchAgent(
 						);
 					}
 
-					// When the agent consumes a user message from the queue,
-					// emit message_injected so it appears in the activity log
-					// at consumption time (not send time).
-					if (eventType === "queue_message" && eventData.rawMessages) {
-						const rawMsgs = eventData.rawMessages as Array<{
-							source: string;
-							content: string;
-							images?: { base64: string; mediaType: string }[];
-						}>;
-						for (const rm of rawMsgs) {
-							if (rm.source === "user") {
-								broadcastEvent(ctx, project.id, {
-									type: "message_injected",
-									message: rm.content,
-									...(rm.images?.length ? { images: rm.images } : {}),
-									ts: Date.now(),
-								});
-							}
-						}
-					}
+					// User messages are now written to JSONL at send time (handleInjectMessage).
+					// The activity log entry appears immediately via message_injected broadcast
+					// at send time, not at consumption time.
 				},
 			);
 
@@ -1144,8 +1128,30 @@ export async function handleOrchestrate(
 	// Agent already running — enqueue the prompt as a user message instead of error
 	const existingSession = ctx.activeSessions.get(projectId);
 	if (existingSession) {
+		const orchMsgId = randomUUID();
+		const orchTracker = await getTracker(ctx, projectId);
+		const orchRootNodeId = orchTracker.rootNodeId;
+		// Write user_message to JSONL at send time
+		if (orchRootNodeId) {
+			const orchEventStore = getEventStore(ctx, projectId);
+			orchEventStore.append(orchRootNodeId, {
+				type: "user_message",
+				id: orchMsgId,
+				content: prompt,
+				ts: Date.now(),
+			});
+			broadcastEvent(ctx, projectId, {
+				type: "message_injected",
+				message: prompt,
+				ts: Date.now(),
+			});
+		}
 		try {
-			existingSession.queue.enqueue({ source: "user", content: prompt });
+			existingSession.queue.enqueue({
+				source: "user",
+				id: orchMsgId,
+				content: prompt,
+			});
 		} catch {
 			return { ok: false, error: "Queue closed", status: 409 };
 		}
@@ -1196,12 +1202,25 @@ export async function handleInjectMessage(
 				{ prompt: message },
 				orchestratorSystemPrompt,
 			);
-			broadcastEvent(ctx, projectId, {
-				type: "message_injected",
-				message,
-				...(images?.length ? { images } : {}),
-				ts: Date.now(),
-			});
+			// Write user_message to JSONL at send time (Phase 1 of two-phase lifecycle)
+			const eventStore = getEventStore(ctx, projectId);
+			const freshRootNodeId = tracker.rootNodeId;
+			if (freshRootNodeId) {
+				const userMsgEvent: Event = {
+					type: "user_message",
+					id: randomUUID(),
+					content: message,
+					...(images?.length ? { images } : {}),
+					ts: Date.now(),
+				};
+				eventStore.append(freshRootNodeId, userMsgEvent);
+				broadcastEvent(ctx, projectId, {
+					type: "message_injected",
+					message,
+					...(images?.length ? { images } : {}),
+					ts: Date.now(),
+				});
+			}
 			return { ok: true };
 		}
 		return {
@@ -1211,9 +1230,36 @@ export async function handleInjectMessage(
 		};
 	}
 
+	const msgId = randomUUID();
+	const eventStore = getEventStore(ctx, projectId);
+
+	// Check resume BEFORE writing user_message (the event we're about to write
+	// shouldn't influence the fresh-vs-resume decision)
+	const shouldResume = eventStore.has(rootNodeId);
+
+	// Write user_message to JSONL at send time (Phase 1 of two-phase lifecycle)
+	const userMsgEvent: Event = {
+		type: "user_message",
+		id: msgId,
+		content: message,
+		...(images?.length ? { images } : {}),
+		ts: Date.now(),
+	};
+	eventStore.append(rootNodeId, userMsgEvent);
+
+	// Broadcast user_message for activity log — shows immediately at send time
+	broadcastEvent(ctx, projectId, {
+		type: "message_injected",
+		message,
+		...(images?.length ? { images } : {}),
+		ts: Date.now(),
+	});
+
 	// Unified delivery: enqueue if running, persist if not
+	// Pass msgId through QueueMessage so providers can write messages_consumed
 	const msg: QueueMessage = {
 		source: "user",
+		id: msgId,
 		content: message,
 		...(images?.length ? { images } : {}),
 	};
@@ -1222,8 +1268,6 @@ export async function handleInjectMessage(
 
 	if (result === "enqueued") {
 		// deliverMessage already broadcast pending state from queue.
-		// message_injected will be emitted when the agent actually consumes
-		// the message from the queue (via queue_message event in consumeAgentEvents).
 		return { ok: true };
 	}
 
@@ -1246,8 +1290,6 @@ export async function handleInjectMessage(
 	// and will be delivered as a queue_message. Passing it as prompt would cause
 	// the message to appear twice.
 	if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
-		const eventStore = getEventStore(ctx, projectId);
-		const shouldResume = eventStore.has(rootNodeId);
 		if (shouldResume) {
 			await launchAgent(
 				ctx,
@@ -1267,8 +1309,6 @@ export async function handleInjectMessage(
 		}
 	}
 
-	// message_injected will be emitted when the agent actually consumes
-	// the message from the queue (via queue_message event in consumeAgentEvents).
 	return { ok: true };
 }
 

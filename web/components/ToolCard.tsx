@@ -23,13 +23,13 @@ function getEntryText(entry: LogEntry): string {
 		case "error":
 			return entry.message;
 		case "user_message":
-			return entry.content;
+			return entry.content ?? "";
 		case "lifecycle":
 		case "parent_update":
 		case "child_report":
 		case "cross_project":
 		case "generic_queue_message":
-			return entry.content;
+			return entry.content ?? "";
 		case "background_complete":
 			return `${entry.command} (exit ${entry.exitCode})`;
 		case "system_notification":
@@ -1198,32 +1198,36 @@ export function LogEntryView({
 			<div className="og-log-entry og-event-user_message">
 				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				<div className="og-user-prompt-bubble">
-					<span className="og-user-prompt-text">{entry.content}</span>
-					{entry.images && entry.images.length > 0 && (
-						<div className="og-user-images">
-							{entry.images.map((img) => (
-								<img
-									key={img.base64.slice(-32)}
-									src={`data:${img.mediaType};base64,${img.base64}`}
-									alt="attached"
-									className="og-user-image-thumb"
-									onClick={() =>
-										window.open(
-											`data:${img.mediaType};base64,${img.base64}`,
-											"_blank",
-										)
-									}
-									onKeyDown={(e) => {
-										if (e.key === "Enter" || e.key === " ")
+					<span className="og-user-prompt-text">{entry.content ?? ""}</span>
+					{entry.images &&
+						(entry.images as Array<{ base64: string; mediaType: string }>)
+							.length > 0 && (
+							<div className="og-user-images">
+								{(
+									entry.images as Array<{ base64: string; mediaType: string }>
+								).map((img: { base64: string; mediaType: string }) => (
+									<img
+										key={img.base64.slice(-32)}
+										src={`data:${img.mediaType};base64,${img.base64}`}
+										alt="attached"
+										className="og-user-image-thumb"
+										onClick={() =>
 											window.open(
 												`data:${img.mediaType};base64,${img.base64}`,
 												"_blank",
-											);
-									}}
-								/>
-							))}
-						</div>
-					)}
+											)
+										}
+										onKeyDown={(e) => {
+											if (e.key === "Enter" || e.key === " ")
+												window.open(
+													`data:${img.mediaType};base64,${img.base64}`,
+													"_blank",
+												);
+										}}
+									/>
+								))}
+							</div>
+						)}
 				</div>
 			</div>
 		);

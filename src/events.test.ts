@@ -19,7 +19,7 @@ describe("queueMessageToEvent", () => {
 		expect((event as { images: unknown[] }).images).toHaveLength(1);
 	});
 
-	test("converts child_complete", () => {
+	test("converts child_complete to unified user_message", () => {
 		const event = queueMessageToEvent({
 			source: "child_complete",
 			taskId: "t1",
@@ -27,28 +27,33 @@ describe("queueMessageToEvent", () => {
 			success: true,
 			output: "done",
 		});
-		expect(event.type).toBe("child_complete");
+		expect(event.type).toBe("user_message");
+		expect((event as { source: string }).source).toBe("child_complete");
 		expect((event as { taskId: string }).taskId).toBe("t1");
+		expect((event as { id: string }).id).toBeTruthy();
 	});
 
-	test("converts compact", () => {
+	test("converts compact to unified user_message", () => {
 		const event = queueMessageToEvent({ source: "compact" });
-		expect(event.type).toBe("compact_request");
+		expect(event.type).toBe("user_message");
+		expect((event as { source: string }).source).toBe("compact");
 	});
 
-	test("converts system", () => {
+	test("converts system to unified user_message", () => {
 		const event = queueMessageToEvent({ source: "system", content: "hi" });
-		expect(event.type).toBe("system_notification");
+		expect(event.type).toBe("user_message");
+		expect((event as { source: string }).source).toBe("system");
 		expect((event as { content: string }).content).toBe("hi");
 	});
 
-	test("converts parent_update", () => {
+	test("converts parent_update to unified user_message", () => {
 		const event = queueMessageToEvent({
 			source: "parent_update",
 			content: "update",
 			requestReply: true,
 		});
-		expect(event.type).toBe("parent_update");
+		expect(event.type).toBe("user_message");
+		expect((event as { source: string }).source).toBe("parent_update");
 		expect((event as { requestReply?: boolean }).requestReply).toBe(true);
 	});
 });
@@ -1397,6 +1402,363 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 			content:
 				"[Messages received while you were idle:]\nManual compaction requested",
 		});
+	});
+});
+
+describe("messages_consumed — two-phase user message lifecycle", () => {
+	test("Anthropic: user_message with id is skipped; messages_consumed materializes it (idle)", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Hello", ts: 1000 },
+			{ type: "assistant_text", content: "Working...", ts: 1001 },
+			// Agent calls done(), enters idle state. User sends new message.
+			{
+				type: "user_message",
+				id: "msg-1",
+				content: "Please also check X",
+				ts: 2000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-1"],
+				ts: 3000,
+			},
+			{ type: "assistant_text", content: "I'll check X.", ts: 3001 },
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(4);
+		expect(messages[0]).toEqual({ role: "user", content: "Hello" });
+		expect(messages[1]).toEqual({
+			role: "assistant",
+			content: [{ type: "text", text: "Working..." }],
+		});
+		expect(messages[2]).toEqual({
+			role: "user",
+			content: "[Messages received while you were idle:]\nPlease also check X",
+		});
+		expect(messages[3]).toEqual({
+			role: "assistant",
+			content: [{ type: "text", text: "I'll check X." }],
+		});
+	});
+
+	test("Anthropic: messages_consumed at cancellation point (between tool_results)", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Do a task", ts: 1000 },
+			{ type: "assistant_text", content: "OK", ts: 1001 },
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "ls" },
+				ts: 1002,
+			},
+			{
+				type: "user_message",
+				id: "msg-1",
+				content: "Also do Y",
+				ts: 1500,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "ok",
+				isError: false,
+				ts: 2000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-1"],
+				ts: 2001,
+			},
+			{ type: "assistant_text", content: "I see Y.", ts: 2002 },
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(4);
+		// Message 3 = tool_results user message with messages_consumed appended
+		const toolResultMsg = messages[2] as { role: string; content: unknown[] };
+		expect(toolResultMsg.role).toBe("user");
+		expect(toolResultMsg.content).toHaveLength(2);
+		expect(toolResultMsg.content[0]).toEqual({
+			type: "tool_result",
+			tool_use_id: "tc1",
+			content: "ok",
+			is_error: false,
+		});
+		expect(toolResultMsg.content[1]).toEqual({
+			type: "text",
+			text: "[Messages received while you were working:]\nAlso do Y",
+		});
+	});
+
+	test("Anthropic: multiple user_messages consumed together", () => {
+		const events: Event[] = [
+			{
+				type: "user_message",
+				id: "msg-1",
+				content: "First",
+				ts: 1000,
+			},
+			{
+				type: "user_message",
+				id: "msg-2",
+				content: "Second",
+				ts: 1500,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-1", "msg-2"],
+				ts: 2000,
+			},
+			{ type: "assistant_text", content: "Got both.", ts: 2001 },
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(2);
+		expect(messages[0]).toEqual({
+			role: "user",
+			content: "[Messages received while you were idle:]\nFirst\nSecond",
+		});
+	});
+
+	test("Anthropic: user_message with id and images at cancellation point", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{ type: "assistant_text", content: "OK", ts: 1001 },
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "ls" },
+				ts: 1002,
+			},
+			{
+				type: "user_message",
+				id: "msg-1",
+				content: "Look at this",
+				images: [{ base64: "abc123", mediaType: "image/png" }],
+				ts: 1500,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "ok",
+				isError: false,
+				ts: 2000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-1"],
+				ts: 2001,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(3);
+		const toolResultMsg = messages[2] as { role: string; content: unknown[] };
+		expect(toolResultMsg.content).toHaveLength(4);
+		expect(toolResultMsg.content[1]).toEqual({
+			type: "text",
+			text: "[Messages received while you were working:]\nLook at this",
+		});
+		expect(toolResultMsg.content[2]).toEqual({
+			type: "image",
+			source: {
+				type: "base64",
+				media_type: "image/png",
+				data: "abc123",
+			},
+		});
+		expect(toolResultMsg.content[3]).toEqual({
+			type: "text",
+			text: "[1 image(s) attached by user]",
+		});
+	});
+
+	test("OpenAI: user_message with id is skipped; messages_consumed materializes it (idle)", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Hello", ts: 1000 },
+			{ type: "assistant_text", content: "Working...", ts: 1001 },
+			{
+				type: "user_message",
+				id: "msg-1",
+				content: "Please also check X",
+				ts: 2000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-1"],
+				ts: 3000,
+			},
+			{ type: "assistant_text", content: "I'll check X.", ts: 3001 },
+		];
+		const messages = eventsToOpenAIMessages(events);
+		expect(messages).toHaveLength(4);
+		expect(messages[0]).toEqual({ role: "user", content: "Hello" });
+		expect(messages[1]).toEqual({
+			role: "assistant",
+			content: "Working...",
+		});
+		expect(messages[2]).toEqual({
+			role: "user",
+			content: "[Messages received while you were idle:]\nPlease also check X",
+		});
+		expect(messages[3]).toEqual({
+			role: "assistant",
+			content: "I'll check X.",
+		});
+	});
+
+	test("OpenAI: messages_consumed at cancellation point appends to tool result", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Do a task", ts: 1000 },
+			{ type: "assistant_text", content: "OK", ts: 1001 },
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "call_1",
+				input: { command: "ls" },
+				ts: 1002,
+			},
+			{
+				type: "user_message",
+				id: "msg-1",
+				content: "Also do Y",
+				ts: 1500,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "ok",
+				isError: false,
+				ts: 2000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-1"],
+				ts: 2001,
+			},
+			{ type: "assistant_text", content: "I see Y.", ts: 2002 },
+		];
+		const messages = eventsToOpenAIMessages(events);
+		expect(messages).toHaveLength(4);
+		// Tool result should have consumed messages appended
+		const toolResult = messages[2] as { content: string };
+		expect(toolResult.content).toContain(
+			"[Messages received while you were working:]",
+		);
+		expect(toolResult.content).toContain("Also do Y");
+	});
+
+	test("Anthropic: messages_consumed skips unknown IDs gracefully", () => {
+		const events: Event[] = [
+			{
+				type: "messages_consumed",
+				messageIds: ["nonexistent-id"],
+				ts: 1000,
+			},
+			{ type: "assistant_text", content: "OK", ts: 1001 },
+		];
+		const messages = eventsToAnthropicMessages(events);
+		// No user message generated for unknown IDs
+		expect(messages).toHaveLength(1);
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: [{ type: "text", text: "OK" }],
+		});
+	});
+
+	test("Anthropic: messagesConsumed field on tool_result (embedded cancellation point)", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Do a task", ts: 1000 },
+			{ type: "assistant_text", content: "OK", ts: 1001 },
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "ls" },
+				ts: 1002,
+			},
+			{
+				type: "user_message",
+				id: "msg-1",
+				content: "Also do Y",
+				ts: 1500,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "ok",
+				isError: false,
+				messagesConsumed: ["msg-1"],
+				ts: 2000,
+			},
+			{ type: "assistant_text", content: "I see Y.", ts: 2002 },
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(4);
+		const toolResultMsg = messages[2] as { role: string; content: unknown[] };
+		expect(toolResultMsg.role).toBe("user");
+		expect(toolResultMsg.content).toHaveLength(2);
+		expect(toolResultMsg.content[0]).toEqual({
+			type: "tool_result",
+			tool_use_id: "tc1",
+			content: "ok",
+			is_error: false,
+		});
+		expect(toolResultMsg.content[1]).toEqual({
+			type: "text",
+			text: "[Messages received while you were working:]\nAlso do Y",
+		});
+	});
+
+	test("OpenAI: messagesConsumed field on tool_result (embedded cancellation point)", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Do a task", ts: 1000 },
+			{ type: "assistant_text", content: "OK", ts: 1001 },
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "call_1",
+				input: { command: "ls" },
+				ts: 1002,
+			},
+			{
+				type: "user_message",
+				id: "msg-1",
+				content: "Also do Y",
+				ts: 1500,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "ok",
+				isError: false,
+				messagesConsumed: ["msg-1"],
+				ts: 2000,
+			},
+			{ type: "assistant_text", content: "I see Y.", ts: 2002 },
+		];
+		const messages = eventsToOpenAIMessages(events);
+		expect(messages).toHaveLength(4);
+		const toolResult = messages[2] as { content: string };
+		expect(toolResult.content).toContain(
+			"[Messages received while you were working:]",
+		);
+		expect(toolResult.content).toContain("Also do Y");
+	});
+
+	test("user_message without id still works as direct message (backward compat)", () => {
+		const events: Event[] = [
+			{
+				type: "user_message",
+				content: "Direct message",
+				ts: 1000,
+			},
+		];
+		expect(eventsToAnthropicMessages(events)).toEqual([
+			{ role: "user", content: "Direct message" },
+		]);
+		expect(eventsToOpenAIMessages(events)).toEqual([
+			{ role: "user", content: "Direct message" },
+		]);
 	});
 });
 

@@ -1269,7 +1269,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				expect(types).toContain("user_message");
 				const queueMsgEvent = events.find(
 					(e) =>
-						e.type === "user_message" && e.content.includes("New instruction"),
+						e.type === "user_message" && e.content?.includes("New instruction"),
 				);
 				if (queueMsgEvent?.type === "user_message") {
 					expect(queueMsgEvent.content).toContain("New instruction for you");

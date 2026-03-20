@@ -543,7 +543,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				) {
 					messages.push({
 						role: "user",
-						content: event.content,
+						content: event.content ?? "",
 						hasToolUse: false,
 					});
 				} else if (event.type === "assistant_text") {

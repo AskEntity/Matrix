@@ -2334,7 +2334,8 @@ describe("Event deterministic verification", () => {
 		// Must have user_message events (from queue)
 		expect(types).toContain("user_message");
 		const queueMsgEvent = events.find(
-			(e) => e.type === "user_message" && e.content.includes("new instruction"),
+			(e) =>
+				e.type === "user_message" && e.content?.includes("new instruction"),
 		);
 		expect(queueMsgEvent).toBeDefined();
 		if (queueMsgEvent?.type === "user_message") {
