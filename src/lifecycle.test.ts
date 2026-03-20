@@ -5,12 +5,16 @@ import { join } from "node:path";
 import type {
 	AgentEvent,
 	AgentProvider,
+	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
 import { runChildCore } from "./daemon/agent-lifecycle.ts";
 import { createApp } from "./daemon.ts";
+import { EventStore } from "./event-store.ts";
+import type { Event } from "./events.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { loadPersistedMessages } from "./persistent-queue.ts";
+import { SessionStore } from "./session-store.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { AgentResult, Project, TaskNode } from "./types.ts";
 
@@ -2231,5 +2235,587 @@ describe("lifecycle: child completion notification paths", () => {
 		const { nodes } = (await getRes.json()) as { nodes: TaskNode[] };
 		const resetNode = nodes.find((n) => n.id === task.id);
 		expect(resetNode?.status).toBe("pending");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Session continuity edge cases
+// ---------------------------------------------------------------------------
+
+/**
+ * Mock provider that captures session requests for inspection.
+ * Each call to startSession records the AgentRequest and keeps the
+ * session alive until the queue is closed.
+ */
+function createCapturingProvider(): {
+	provider: AgentProvider;
+	/** All AgentRequests that were passed to startSession, in order. */
+	sessionRequests: AgentRequest[];
+} {
+	const sessionRequests: AgentRequest[] = [];
+	const provider: AgentProvider = {
+		name: "mock-capturing",
+		execute: async () => ({ success: true, output: "" }),
+		// biome-ignore lint/correctness/useYield: mock
+		stream: async function* () {
+			return { success: true, output: "" };
+		},
+		startSession(req) {
+			sessionRequests.push(req);
+			const queue = req.queue ?? new MessageQueue();
+			// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
+			async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				try {
+					while (true) {
+						await queue.wait();
+					}
+				} catch {
+					// Queue closed
+				}
+				return { success: true, output: "" };
+			}
+			return {
+				sessionId: req.resumeSessionId ?? "mock-capturing-session",
+				events: events(),
+				queue,
+				sendMessage: async () => {},
+				stop: () => {
+					queue.close();
+				},
+			};
+		},
+	};
+	return { provider, sessionRequests };
+}
+
+/**
+ * Mock provider whose sessions exit immediately (for tests that
+ * need the agent to complete quickly so the queue is cleaned up).
+ */
+function createInstantCapturingProvider(): {
+	provider: AgentProvider;
+	sessionRequests: AgentRequest[];
+} {
+	const sessionRequests: AgentRequest[] = [];
+	const provider: AgentProvider = {
+		name: "mock-instant-capturing",
+		execute: async () => ({ success: true, output: "" }),
+		// biome-ignore lint/correctness/useYield: mock
+		stream: async function* () {
+			return { success: true, output: "" };
+		},
+		startSession(req) {
+			sessionRequests.push(req);
+			const queue = req.queue ?? new MessageQueue();
+			// biome-ignore lint/correctness/useYield: mock session exits immediately
+			async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				return { success: true, output: "" };
+			}
+			return {
+				sessionId: req.resumeSessionId ?? "mock-instant-session",
+				events: events(),
+				queue,
+				sendMessage: async () => {},
+				stop: () => {
+					queue.close();
+				},
+			};
+		},
+	};
+	return { provider, sessionRequests };
+}
+
+describe("lifecycle edge cases — session continuity", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let projectDir: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-lc-session-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-lc-sessiond-"));
+		projectDir = join(tempDir, "proj");
+		await mkdir(join(projectDir, ".git"), { recursive: true });
+	});
+
+	afterEach(async () => {
+		for (const [key] of globalAgentQueues) {
+			globalAgentQueues.delete(key);
+		}
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
+	});
+
+	test("clear sessions then send message starts fresh (not resume)", async () => {
+		// 1. Create project, launch agent, stop it
+		// 2. Clear sessions
+		// 3. Send message
+		// 4. Verify: orchestration_started has resume: false and includes the prompt
+		const { provider, sessionRequests } = createCapturingProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+
+		// Launch agent with initial prompt
+		await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "initial task" }),
+		});
+		await delay(100);
+		expect(sessionRequests.length).toBe(1);
+
+		// Stop the agent
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+
+		// Clear sessions
+		const clearRes = await app.request(
+			`/projects/${project.id}/sessions/clear`,
+			{ method: "POST" },
+		);
+		expect(clearRes.status).toBe(200);
+
+		// Send a new message (should trigger fresh launch, not resume)
+		const msgRes = await app.request(`/projects/${project.id}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "new fresh task" }),
+		});
+		expect(msgRes.status).toBe(200);
+		await delay(200);
+
+		// Should have 2 session requests: initial + after clear
+		expect(sessionRequests.length).toBe(2);
+		// biome-ignore lint/style/noNonNullAssertion: length checked above
+		const lastReq = sessionRequests[1]!;
+
+		// Key assertion: the prompt should contain the user message (fresh start),
+		// NOT "User sent a new message. Resuming."
+		// (launchAgent may prepend project memory to the prompt for fresh starts)
+		expect(lastReq.prompt).toContain("new fresh task");
+		expect(lastReq.prompt).not.toContain("Resuming");
+
+		// Verify the orchestration_started event has resume: false
+		// Note: clear sessions wipes the JSONL events too, so only the
+		// new session's events exist after clear.
+		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const allEvents = eventStore.readAllSorted();
+		const orchStartEvents = allEvents.filter(
+			(e) => e.type === "orchestration_started",
+		);
+		// After clear, only the new session's event exists
+		expect(orchStartEvents.length).toBeGreaterThanOrEqual(1);
+		// biome-ignore lint/style/noNonNullAssertion: length checked above
+		const lastOrchStart = orchStartEvents[
+			orchStartEvents.length - 1
+		]! as Event & {
+			type: "orchestration_started";
+		};
+		expect(lastOrchStart.resume).toBe(false);
+		expect(lastOrchStart.prompt).toBe("new fresh task");
+
+		// Cleanup
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+	});
+
+	test("clear sessions then send message — no stale session history", async () => {
+		// 1. Create project, launch agent with "hello", let it run, stop
+		// 2. Clear sessions
+		// 3. Send new message "new task"
+		// 4. Verify: The provider receives no session history (resumeSessionId
+		//    points to a fresh session OR sessionStore has no data for it)
+		const { provider, sessionRequests } = createCapturingProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+
+		// Launch agent
+		await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "hello" }),
+		});
+		await delay(100);
+
+		// Stop
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+
+		// Write some fake session data to simulate a real session having history
+		const sessionsDir = join(dataDir, "sessions", project.id);
+		// biome-ignore lint/style/noNonNullAssertion: length checked above
+		const firstReq = sessionRequests[0]!;
+		const sessionId = firstReq.resumeSessionId ?? "unknown";
+		const sessionStore = new SessionStore(sessionsDir);
+		await sessionStore.set(sessionId, [
+			{ role: "user", content: "hello" },
+			{ role: "assistant", content: "Hi there!" },
+		]);
+		// Verify it was saved
+		expect(sessionStore.hasAny(sessionId)).toBe(true);
+
+		// Clear sessions — should wipe all session data
+		await app.request(`/projects/${project.id}/sessions/clear`, {
+			method: "POST",
+		});
+		await delay(100);
+
+		// Session store should now be empty for this sessionId
+		const freshStore = new SessionStore(sessionsDir);
+		expect(freshStore.hasAny(sessionId)).toBe(false);
+
+		// Send new message — should start fresh
+		await app.request(`/projects/${project.id}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "new task" }),
+		});
+		await delay(200);
+
+		// Verify the new session request gets the raw prompt (fresh start)
+		expect(sessionRequests.length).toBe(2);
+		// biome-ignore lint/style/noNonNullAssertion: length checked above
+		const newReq = sessionRequests[1]!;
+		// launchAgent may prepend project memory for fresh starts
+		expect(newReq.prompt).toContain("new task");
+		expect(newReq.prompt).not.toContain("Resuming");
+
+		// Verify there's no session history for the new session
+		const newStore = new SessionStore(sessionsDir);
+		const newSessionId = newReq.resumeSessionId;
+		if (newSessionId) {
+			const history = await newStore.get(newSessionId);
+			// Either null (no file) or empty
+			expect(!history || history.length === 0).toBe(true);
+		}
+
+		// Cleanup
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+	});
+
+	test("stop agent then send message resumes correctly", async () => {
+		// 1. Create project, launch agent, stop it (session files preserved)
+		// 2. Send message
+		// 3. Verify: orchestration_started has resume: true
+		const { provider, sessionRequests } = createCapturingProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+
+		// Launch agent
+		await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "initial work" }),
+		});
+		await delay(100);
+
+		// Write fake session data so handleInjectMessage detects existing session
+		// biome-ignore lint/style/noNonNullAssertion: length checked above
+		const firstReq = sessionRequests[0]!;
+		const sessionId = firstReq.resumeSessionId ?? "unknown";
+		const sessionsDir = join(dataDir, "sessions", project.id);
+		const sessionStore = new SessionStore(sessionsDir);
+		await sessionStore.set(sessionId, [
+			{ role: "user", content: "initial work" },
+			{ role: "assistant", content: "Done!" },
+		]);
+
+		// Stop the agent (session files preserved)
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+
+		// Send a new message — should trigger resume (not fresh)
+		await app.request(`/projects/${project.id}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "continue please" }),
+		});
+		await delay(200);
+
+		// Should have 2 session requests: initial + resume
+		expect(sessionRequests.length).toBe(2);
+		// biome-ignore lint/style/noNonNullAssertion: length checked above
+		const resumeReq = sessionRequests[1]!;
+
+		// Key assertion: on resume, the prompt is a generic resume message,
+		// NOT the user's message (which was persisted to disk separately)
+		expect(resumeReq.prompt).toBe("User sent a new message. Resuming.");
+
+		// Verify the orchestration_started event has resume: true
+		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const allEvents = eventStore.readAllSorted();
+		const orchStartEvents = allEvents.filter(
+			(e) => e.type === "orchestration_started",
+		);
+		expect(orchStartEvents.length).toBeGreaterThanOrEqual(2);
+		// biome-ignore lint/style/noNonNullAssertion: length checked above
+		const lastOrchStart = orchStartEvents[
+			orchStartEvents.length - 1
+		]! as Event & {
+			type: "orchestration_started";
+		};
+		expect(lastOrchStart.resume).toBe(true);
+
+		// Cleanup
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+	});
+
+	test("multiple rapid messages while no agent is running", async () => {
+		// 1. Create project, launch and stop agent so rootNodeId exists
+		// 2. No agent running, rootNodeId exists
+		// 3. Send 3 messages rapidly
+		// 4. Verify: Only one agent launch, all messages delivered via queue
+		const { provider, sessionRequests } = createCapturingProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+
+		// Launch and stop to establish rootNodeId
+		await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "setup" }),
+		});
+		await delay(100);
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+
+		expect(sessionRequests.length).toBe(1);
+
+		// Send 3 messages rapidly (no agent running)
+		const [r1, r2, r3] = await Promise.all([
+			app.request(`/projects/${project.id}/message`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "msg-1" }),
+			}),
+			app.request(`/projects/${project.id}/message`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "msg-2" }),
+			}),
+			app.request(`/projects/${project.id}/message`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ message: "msg-3" }),
+			}),
+		]);
+
+		expect(r1.status).toBe(200);
+		expect(r2.status).toBe(200);
+		expect(r3.status).toBe(200);
+
+		// Wait for auto-launch to complete
+		await delay(300);
+
+		// The critical assertion: despite 3 rapid messages, each triggering
+		// handleInjectMessage's auto-resume path, the number of NEW session
+		// launches should be limited. The first message triggers a launch;
+		// subsequent messages either persist or enqueue to the already-launching queue.
+		// With the capturing long-running provider, once the queue exists in
+		// activeSessions, subsequent messages enqueue instead of launching again.
+		const launchCount = sessionRequests.length - 1; // subtract the initial setup launch
+		expect(launchCount).toBeGreaterThanOrEqual(1);
+		// With concurrent Promise.all, the exact number depends on race conditions,
+		// but all 3 messages should ultimately succeed (all returned 200).
+
+		// Cleanup
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+	});
+
+	test("send message to non-existent project returns 404", async () => {
+		const { provider } = createCapturingProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+
+		const res = await app.request("/projects/nonexistent-id/message", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "hello" }),
+		});
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toBe("Project not found");
+	});
+
+	test("send message creates root node if none exists", async () => {
+		// Fresh project with no tasks — sending a message should create
+		// the root node and launch agent as fresh (not resume)
+		const { provider, sessionRequests } = createCapturingProvider();
+		const { app, pm, markReady, getTracker } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+
+		// Verify no root node yet
+		const tracker = await getTracker(project.id);
+		expect(tracker.rootNodeId).toBeNull();
+
+		// Send message — should create root and launch fresh
+		const res = await app.request(`/projects/${project.id}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "first message ever" }),
+		});
+		expect(res.status).toBe(200);
+		await delay(200);
+
+		// Root node should now exist
+		const updatedTracker = await getTracker(project.id);
+		expect(updatedTracker.rootNodeId).not.toBeNull();
+
+		// Should have exactly one session launch
+		expect(sessionRequests.length).toBe(1);
+		// biome-ignore lint/style/noNonNullAssertion: length checked above
+		const req = sessionRequests[0]!;
+
+		// Launched fresh with the user's message as the prompt
+		expect(req.prompt).toContain("first message ever");
+
+		// Verify orchestration_started has resume: false
+		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const allEvents = eventStore.readAllSorted();
+		const orchStart = allEvents.find(
+			(e) => e.type === "orchestration_started",
+		) as (Event & { type: "orchestration_started" }) | undefined;
+		expect(orchStart).toBeTruthy();
+		// biome-ignore lint/style/noNonNullAssertion: verified above
+		expect(orchStart!.resume).toBe(false);
+		// biome-ignore lint/style/noNonNullAssertion: verified above
+		expect(orchStart!.prompt).toBe("first message ever");
+
+		// Cleanup
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+	});
+
+	test("clear then send — event store has no events from previous session", async () => {
+		// After clear, the event store is also wiped, so the events endpoint
+		// should only return events from the new session
+		const { provider } = createInstantCapturingProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+
+		// Launch agent to generate some events
+		await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "generate events" }),
+		});
+		await delay(200);
+
+		// Verify events exist
+		const eventStore1 = new EventStore(join(dataDir, "sessions", project.id));
+		const beforeClear = eventStore1.readAllSorted();
+		expect(beforeClear.length).toBeGreaterThan(0);
+
+		// Clear sessions (also clears eventStores cache per sessions/clear handler)
+		await app.request(`/projects/${project.id}/sessions/clear`, {
+			method: "POST",
+		});
+		await delay(100);
+
+		// After clear, event store should be empty
+		const eventStore2 = new EventStore(join(dataDir, "sessions", project.id));
+		const afterClear = eventStore2.readAllSorted();
+		expect(afterClear.length).toBe(0);
+	});
+
+	test("stop preserves events; resume adds new events", async () => {
+		const { provider, sessionRequests } = createCapturingProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+
+		// Launch agent
+		await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "do work" }),
+		});
+		await delay(100);
+
+		// Count events after first launch
+		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const eventsAfterLaunch = eventStore.readAllSorted();
+		const launchEventCount = eventsAfterLaunch.length;
+		expect(launchEventCount).toBeGreaterThan(0);
+
+		// Stop (preserves events)
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+
+		// Events should still be there (and may have more from stop)
+		const eventsAfterStop = eventStore.readAllSorted();
+		expect(eventsAfterStop.length).toBeGreaterThanOrEqual(launchEventCount);
+		const stopEventCount = eventsAfterStop.length;
+
+		// Save fake session to enable resume path
+		// biome-ignore lint/style/noNonNullAssertion: length checked above
+		const firstReq = sessionRequests[0]!;
+		const sessionId = firstReq.resumeSessionId ?? "unknown";
+		const sessionsDir = join(dataDir, "sessions", project.id);
+		const sessionStore = new SessionStore(sessionsDir);
+		await sessionStore.set(sessionId, [{ role: "user", content: "do work" }]);
+
+		// Send message to resume
+		await app.request(`/projects/${project.id}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "resume now" }),
+		});
+		await delay(200);
+
+		// New events should be added (orchestration_started for resume, etc.)
+		const eventsAfterResume = eventStore.readAllSorted();
+		expect(eventsAfterResume.length).toBeGreaterThan(stopEventCount);
+
+		// Cleanup
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
 	});
 });
