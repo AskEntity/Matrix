@@ -85,6 +85,7 @@ export type Event =
 			rawMessages?: Array<{
 				source: string;
 				content: string;
+				id?: string;
 				images?: { base64: string; mediaType: string }[];
 			}>;
 			taskId?: string;
@@ -220,12 +221,6 @@ export type Event =
 	  }
 	| { type: "compact_started"; taskId: string; ts: number }
 	| { type: "agent_stopped"; taskId?: string; ts: number }
-	| {
-			type: "message_injected";
-			message: string;
-			images?: Array<{ base64: string; mediaType: string }>;
-			ts: number;
-	  }
 	| {
 			type: "messages_consumed";
 			messageIds: string[];

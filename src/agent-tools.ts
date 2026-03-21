@@ -104,6 +104,7 @@ export function formatQueueMessage(msg: QueueMessage): string {
 export function toRawMessage(msg: QueueMessage): {
 	source: string;
 	content: string;
+	id?: string;
 	images?: { base64: string; mediaType: string }[];
 } {
 	switch (msg.source) {
@@ -116,6 +117,7 @@ export function toRawMessage(msg: QueueMessage): {
 			return {
 				source: msg.source,
 				content: msg.content,
+				...(msg.id ? { id: msg.id } : {}),
 				...(msg.images?.length ? { images: msg.images } : {}),
 			};
 		case "system":

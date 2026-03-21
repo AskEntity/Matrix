@@ -23,6 +23,7 @@ export function AppFooter({
 		taskId: string | null;
 		text: string;
 		timestamp: number;
+		images?: Array<{ base64: string; mediaType: string }>;
 	}[];
 	pendingClarifications: {
 		id: string;

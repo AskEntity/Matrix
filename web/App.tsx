@@ -192,7 +192,13 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		>
 	>({});
 	const [pendingMessages, setPendingMessages] = useState<
-		{ id: string; taskId: string | null; text: string; timestamp: number }[]
+		{
+			id: string;
+			taskId: string | null;
+			text: string;
+			timestamp: number;
+			images?: Array<{ base64: string; mediaType: string }>;
+		}[]
 	>([]);
 	const [pendingClarifications, setPendingClarifications] = useState<
 		{ id: string; taskId: string; question: string; timestamp: number }[]

@@ -332,6 +332,17 @@ Event (src/events.ts) — THE source of truth
 - **ws-handler backward compat**: Reads both `toolCallId` and `toolUseId` from incoming messages for compatibility with old cached WS data.
 
 
+## User Message Consumption-Time Display (March 2026)
+
+- **Eliminated `message_injected` event type** — replaced by two-phase `user_message` + `messages_consumed` lifecycle.
+- **Send time**: `user_message` (with `id`) written to JSONL and broadcast via WS. Frontend shows in PENDING area (not activity log).
+- **Consumption time**: `messages_consumed` broadcast via WS when provider drains queue. Frontend moves messages from pending to ACTIVITY LOG.
+- **Fresh starts**: `user_message` without `id` (initial prompt via `orchestration_started`) shows directly in activity log — no pending phase.
+- **Backend broadcasts**: `user_message` events broadcast directly via `broadcast()` (not `broadcastEvent()` which would persist — already persisted separately). `messages_consumed` broadcast extracted from `queue_message` rawMessages user IDs in `onEvent` callbacks.
+- **`toRawMessage()`**: Now includes `id` field for user messages so `extractConsumedUserIds()` can find them in queue_message events.
+- **Batch processing**: `processEventBatch` in ws-handler.ts resolves two-phase lifecycle locally — collects `user_message` with IDs, materializes them at `messages_consumed` position (or `messagesConsumed` on `tool_result`). Unconsumed messages go to pending state.
+- **Backward compat**: Old `message_injected` events in JSONL still render via ws-handler fallback case.
+
 ## Message Delivery Architecture Debt (March 2026)
 
 **CRITICAL**: No single message delivery abstraction. 4+ code paths implement message delivery with different subsets of behavior. This has caused repeated bugs across 5+ sessions (message_injected timing, pending banner, duplicate messages, disappearing messages).
