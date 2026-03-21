@@ -2,7 +2,7 @@ import type React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconClose, IconSend } from "./icons.tsx";
+import { IconClose, IconImage, IconSend } from "./icons.tsx";
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
@@ -22,6 +22,7 @@ export function InputBar({
 }) {
 	const { t } = useLocale();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const fileInputRef = useRef<HTMLInputElement>(null);
 	const composingRef = useRef(false);
 
 	const [prompt, setPrompt] = useState(
@@ -169,6 +170,33 @@ export function InputBar({
 				disabled={!projectId}
 			/>
 			<div className="og-footer-controls">
+				<input
+					ref={fileInputRef}
+					type="file"
+					accept="image/*"
+					multiple
+					hidden
+					onChange={(e) => {
+						const files = e.target.files;
+						if (files) {
+							for (const file of files) {
+								handleFileToBase64(file);
+							}
+						}
+						// Reset so the same file can be re-selected
+						e.target.value = "";
+					}}
+				/>
+				<button
+					type="button"
+					className="og-btn-attach"
+					onClick={() => fileInputRef.current?.click()}
+					disabled={!projectId}
+					aria-label={t("footer.attachImage")}
+					title={t("footer.attachImage")}
+				>
+					<IconImage size={14} />
+				</button>
 				<button
 					type="submit"
 					className="og-btn-run"
