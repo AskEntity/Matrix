@@ -6,6 +6,7 @@ import { IconClose } from "./icons.tsx";
 export function AppFooter({
 	projectId,
 	targetNodeId,
+	rootNodeId,
 	nodeMap,
 	pendingMessages,
 	pendingClarifications,
@@ -17,6 +18,7 @@ export function AppFooter({
 }: {
 	projectId: string;
 	targetNodeId: string | null;
+	rootNodeId: string | null;
 	nodeMap: Map<string, TaskNode>;
 	pendingMessages: {
 		id: string;
@@ -99,7 +101,9 @@ export function AppFooter({
 			)}
 			{(() => {
 				const filtered = pendingMessages.filter((m) =>
-					targetNodeId ? m.taskId === targetNodeId : m.taskId === null,
+					targetNodeId
+						? m.taskId === targetNodeId
+						: m.taskId === null || m.taskId === rootNodeId,
 				);
 				return (
 					filtered.length > 0 && (

@@ -910,6 +910,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			<AppFooter
 				projectId={projectId}
 				targetNodeId={targetNodeId}
+				rootNodeId={rootNodeId}
 				nodeMap={nodeMap}
 				pendingMessages={pendingMessages}
 				pendingClarifications={pendingClarifications}
