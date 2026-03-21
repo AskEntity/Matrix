@@ -494,3 +494,10 @@ Event (src/events.ts) — THE source of truth
 - **Initial state on connect**: Tree, pending messages, and pending clarifications sent immediately in `sendInitialState()`.
 - **Cleanup on disconnect**: `c.req.raw.signal.addEventListener("abort", ...)` removes client from Set.
 - **No special Bun dependencies**: SSE uses standard `ReadableStream` + `Response` — no `hono/bun` websocket import needed.
+
+
+## iOS Auto-Scroll Fix (March 2026)
+
+- **Bug**: `scrollIntoView({ block: "end" })` on iOS Safari propagates to ancestor containers even with `overflow: hidden`, scrolling the entire page and pushing the input bar out of view.
+- **Fix**: Replaced with `el.scrollTop = el.scrollHeight` on the `og-activity-log` container directly. `scrollTop` only affects the target element, immune to iOS Safari scroll propagation.
+- **Removed**: `bottomRef` sentinel div — no longer needed since we use `scrollTop` instead of `scrollIntoView`.
