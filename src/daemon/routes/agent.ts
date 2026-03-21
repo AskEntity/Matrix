@@ -73,18 +73,22 @@ export function registerAgentRoutes(
 			return c.json({ error: "Agent restarting, please wait" }, 409);
 		}
 
-		// Agent already running — enqueue the prompt as a user message
-		const existingSession = ctx.activeSessions.get(project.id);
-		if (existingSession) {
-			try {
-				existingSession.queue.enqueue({
-					source: "user",
-					content: body.prompt,
-				});
-			} catch {
-				return c.json({ error: "Queue closed" }, 409);
+		// Agent already running — enqueue the prompt as a user message via unified registry
+		const tracker = await getTracker(ctx, project.id);
+		const rootNodeId = tracker.rootNodeId;
+		if (rootNodeId) {
+			const rootQueue = globalAgentQueues.get(rootNodeId);
+			if (rootQueue) {
+				try {
+					rootQueue.enqueue({
+						source: "user",
+						content: body.prompt,
+					});
+				} catch {
+					return c.json({ error: "Queue closed" }, 409);
+				}
+				return c.json({ status: "running", projectId: project.id });
 			}
-			return c.json({ status: "running", projectId: project.id });
 		}
 
 		await getTracker(ctx, project.id);
@@ -98,7 +102,6 @@ export function registerAgentRoutes(
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		const session = ctx.activeSessions.get(project.id);
 		const effectiveCfg = await resolveProjectConfig(
 			ctx,
 			project.path,
@@ -106,8 +109,10 @@ export function registerAgentRoutes(
 		);
 		const provider = getProjectProvider(ctx, effectiveCfg);
 		const model = effectiveCfg.model ?? DEFAULT_MODEL;
+		// Check if root agent is running via unified registry
+		const running = ctx.activeSessions.has(project.id);
 		return c.json({
-			running: !!session,
+			running,
 			provider: provider.name,
 			model,
 		});
@@ -123,6 +128,7 @@ export function registerAgentRoutes(
 		const active: string[] = [];
 		const tracker = ctx.trackers.get(project.id);
 		if (tracker) {
+			// All agent queues (root + children) are in globalAgentQueues
 			for (const node of tracker.allNodes()) {
 				const queue = globalAgentQueues.get(node.id);
 				if (queue) {
@@ -130,18 +136,6 @@ export function registerAgentRoutes(
 						idle.push(node.id);
 					} else {
 						active.push(node.id);
-					}
-				}
-			}
-			// Also check the root/orchestrator session
-			const session = ctx.activeSessions.get(project.id);
-			if (session && tracker.rootNodeId) {
-				const rootId = tracker.rootNodeId;
-				if (!active.includes(rootId) && !idle.includes(rootId)) {
-					if (session.queue.idle) {
-						idle.push(rootId);
-					} else {
-						active.push(rootId);
 					}
 				}
 			}
@@ -179,11 +173,15 @@ export function registerAgentRoutes(
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		const session = ctx.activeSessions.get(project.id);
-		if (!session) {
+		const tracker = ctx.trackers.get(project.id);
+		const rootNodeId = tracker?.rootNodeId;
+		const rootQueue = rootNodeId
+			? globalAgentQueues.get(rootNodeId)
+			: undefined;
+		if (!rootQueue) {
 			return c.json({ error: "No active agent for this project" }, 404);
 		}
-		session.queue.enqueue({ source: "compact" });
+		rootQueue.enqueue({ source: "compact" });
 		return c.json({ compacting: true });
 	});
 

@@ -1,7 +1,7 @@
 import { pinyin } from "pinyin-pro";
 import { z } from "zod";
-import type { AgentProvider, AgentSession } from "./agent-provider.ts";
-import { readProjectMemory } from "./daemon/helpers.ts";
+import type { AgentProvider } from "./agent-provider.ts";
+
 import type { EventStore } from "./event-store.ts";
 import { formatEventForAI, queueMessageToEvent } from "./events.ts";
 import {
@@ -9,7 +9,7 @@ import {
 	type MessageQueue,
 	type QueueMessage,
 } from "./message-queue.ts";
-import { clearPersistedMessages, persistMessage } from "./persistent-queue.ts";
+import { clearPersistedMessages } from "./persistent-queue.ts";
 import type { ProjectManager } from "./project-manager.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
@@ -550,8 +550,11 @@ export interface OrchestratorToolsDeps {
 	childModel?: string;
 	/** MessageQueue for the parent agent session (for fire-and-forget results). */
 	queue?: MessageQueue;
-	/** Parent's queue — used by report_to_parent to send messages UP. Null for top-level orchestrator. */
-	parentQueue?: MessageQueue;
+	/**
+	 * Dynamic parent queue lookup — called at invocation time, not captured at launch.
+	 * Returns the nearest ancestor's queue, or undefined for top-level orchestrator.
+	 */
+	getParentQueue?: () => MessageQueue | undefined;
 	/** Default budget per task from project config. undefined = unlimited. */
 	defaultBudgetUsd?: number;
 	/** Timeout for clarify() responses in ms. undefined = wait forever. */
@@ -560,16 +563,22 @@ export interface OrchestratorToolsDeps {
 	maxDepth?: number;
 	/** Project manager for cross-project communication. Only needed at depth 0. */
 	projectManager?: ProjectManager;
-	/** Active sessions map for cross-project message delivery. Only needed at depth 0. */
-	activeSessions?: Map<string, AgentSession>;
+	/**
+	 * Check if a project has an active agent running. Only needed at depth 0.
+	 * Uses globalAgentQueues to check if root node has a queue.
+	 */
+	isProjectActive?: (projectId: string) => boolean;
+	/**
+	 * Find the root queue for a project by looking up its rootNodeId in globalAgentQueues.
+	 * Only needed at depth 0 for cross-project message delivery.
+	 */
+	getProjectRootQueue?: (projectId: string) => MessageQueue | undefined;
 	/** Current project ID — used as sender identity for cross-project messages. */
 	currentProjectId?: string;
 	/** EventStore for JSONL event persistence. Used to clear session data on reset/delete. */
 	eventStore?: EventStore;
 	/** Data directory root (~/.opengraft). Used for persistent message queue. */
 	dataDir?: string;
-	/** Launch a child agent in the background. Daemon provides this via runChildAgentInBackground. */
-	launchChild?: (nodeId: string, prompt: string) => Promise<void>;
 	/**
 	 * Deliver a message to a task: persist → enqueue (if running) → launch (if not).
 	 * Daemon provides this via the deliverMessage function in agent-lifecycle.ts.
@@ -1130,41 +1139,10 @@ export function createOrchestratorTools(
 						await deps.deliverMessage(args.taskId, queueMessage);
 					} else {
 						// Fallback for non-daemon contexts (tests without full daemon):
-						// direct queue delivery or persist
+						// direct queue delivery only
 						const existingQueue = globalAgentQueues.get(args.taskId);
 						if (existingQueue) {
 							existingQueue.enqueue(queueMessage);
-						} else if (deps.dataDir && deps.currentProjectId) {
-							await persistMessage(
-								deps.dataDir,
-								deps.currentProjectId,
-								node.id,
-								queueMessage,
-							);
-							// Need to launch — fall back to launchChild with generic prompt
-							if (deps.launchChild) {
-								const hasExistingSession =
-									node.status === "failed" ||
-									node.status === "stuck" ||
-									node.status === "passed" ||
-									node.status === "closed";
-								let genericPrompt: string;
-								if (hasExistingSession) {
-									genericPrompt =
-										"New message received. Resume and check your queue.";
-								} else {
-									const memory = readProjectMemory(projectPath, false);
-									genericPrompt = buildTaskPrompt(node, tracker, memory);
-								}
-								tracker.updateStatus(node.id, "in_progress");
-								await tracker.save();
-								emit({
-									type: "task_started",
-									taskId: node.id,
-									title: node.title,
-								});
-								deps.launchChild(node.id, genericPrompt).catch(() => {});
-							}
 						}
 					}
 
@@ -1504,7 +1482,9 @@ export function createOrchestratorTools(
 					),
 			},
 			async (args) => {
-				if (!deps.parentQueue) {
+				// Dynamic parent queue lookup at invocation time
+				const parentQueue = deps.getParentQueue?.();
+				if (!parentQueue) {
 					// No parent queue — silently no-op (top-level orchestrator has no parent)
 					return {
 						content: [
@@ -1520,7 +1500,7 @@ export function createOrchestratorTools(
 				const taskTitle = node?.title ?? "unknown";
 
 				try {
-					deps.parentQueue.enqueue({
+					parentQueue.enqueue({
 						source: "child_report",
 						taskId: currentTaskId ?? "unknown",
 						title: taskTitle,
@@ -1627,7 +1607,7 @@ export function createOrchestratorTools(
 					id: p.id,
 					name: p.name,
 					path: p.path,
-					hasActiveAgent: deps.activeSessions?.has(p.id) ?? false,
+					hasActiveAgent: deps.isProjectActive?.(p.id) ?? false,
 				}));
 				return {
 					content: [
@@ -1650,7 +1630,7 @@ export function createOrchestratorTools(
 				message: z.string().describe("Message content to send"),
 			},
 			async (args) => {
-				if (!deps.projectManager || !deps.activeSessions) {
+				if (!deps.projectManager || !deps.getProjectRootQueue) {
 					return {
 						content: [
 							{
@@ -1675,8 +1655,8 @@ export function createOrchestratorTools(
 					};
 				}
 
-				const targetSession = deps.activeSessions.get(args.projectId);
-				if (!targetSession) {
+				const targetQueue = deps.getProjectRootQueue(args.projectId);
+				if (!targetQueue) {
 					return {
 						content: [
 							{
@@ -1696,7 +1676,7 @@ export function createOrchestratorTools(
 				const fromProjectName = senderProject?.name ?? "unknown";
 
 				try {
-					targetSession.queue.enqueue({
+					targetQueue.enqueue({
 						source: "cross_project",
 						fromProjectId,
 						fromProjectName,

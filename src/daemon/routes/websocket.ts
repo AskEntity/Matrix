@@ -68,9 +68,8 @@ export function registerWebSocketRoute(
 							// Send current pending messages — derived from queue state
 							const rootNodeId = tracker?.rootNodeId;
 							if (rootNodeId) {
-								const agentQueue =
-									globalAgentQueues.get(rootNodeId) ??
-									ctx.activeSessions.get(msg.projectId)?.queue;
+								// All agent queues (root + children) are in unified globalAgentQueues
+								const agentQueue = globalAgentQueues.get(rootNodeId);
 								if (agentQueue) {
 									const pending = agentQueue
 										.peekMessages()

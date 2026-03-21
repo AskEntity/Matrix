@@ -356,3 +356,27 @@ Event (src/events.ts) — THE source of truth
 **Each path handles differently:** JSONL persistence, WS broadcast, pending banner, worktree creation, agent launch/resume, parent notification, message ID assignment.
 
 **Required fix:** Single `deliverMessage()` that ALL paths call. It should handle: JSONL write (for user source), UI events, pending banner, worktree creation, agent launch. Entry points become thin wrappers.
+
+## Unified Agent Queue Registry (March 2026)
+
+**All agent queues (root + child) are in `globalAgentQueues`**, keyed by task node ID. No more split between `activeSessions.queue` (root) and `globalAgentQueues` (children).
+
+**Key changes:**
+- `launchAgent()`: Registers root queue in `globalAgentQueues` with `rootNodeId` as key
+- `stopAgent()`: Closes root queue from `globalAgentQueues` before cascading to children
+- `deliverMessage()`: Single lookup path — only checks `globalAgentQueues`, no `activeSessions` fallback
+- `findParentQueue()`: Exported, simplified — no `activeSessions` check, no `ctx`/`projectId` params. Just walks `globalAgentQueues`
+- `report_to_parent`: Dynamic lookup via `getParentQueue()` function, not captured static reference. Fixes stale parent queue when parent wasn't running at child launch
+- Cross-project tools: `isProjectActive()` and `getProjectRootQueue()` callbacks replace `activeSessions` map
+
+**`ctx.activeSessions` still exists** but ONLY for root session lifecycle (`.stop()`, session identity, `.has()` for "is running?" checks). No queue access via activeSessions anywhere.
+
+**Deleted:**
+- `deps.launchChild` — deliverMessage handles launch
+- `deps.activeSessions` from OrchestratorToolsDeps
+- `deps.parentQueue` (static ref) — replaced by `deps.getParentQueue` (dynamic lookup)
+- Fallback path in MCP `send_message_to_child` (persist + launchChild)
+
+**`broadcastAgentStreamEvent()`**: Unified helper for all queue message consumption tracking. Both provider stream events (onEvent) and MCP tool events (onTaskEvent/agent_event wrapper) go through this single function for event broadcast + messages_consumed.
+
+**Bug fix**: `messages_consumed` was never broadcast for messages consumed via yield/done MCP tools. The onTaskEvent callback (agent_event wrapper path) didn't check for queue_message events. Fixed by routing both paths through `broadcastAgentStreamEvent()`.

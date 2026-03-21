@@ -171,6 +171,40 @@ function extractConsumedUserIds(eventData: Record<string, unknown>): string[] {
 	return ids;
 }
 
+/**
+ * Broadcast an agent event and handle messages_consumed for queue_message events.
+ * This is the SINGLE path for all queue message consumption tracking.
+ *
+ * Called from both:
+ * 1. Provider stream events (onEvent callback) — idle drain / cancellation points
+ * 2. MCP tool events (onTaskEvent callback) — yield/done via agent_event wrapper
+ */
+function broadcastAgentStreamEvent(
+	ctx: DaemonContext,
+	projectId: string,
+	eventType: string,
+	eventData: Record<string, unknown>,
+	taskId: string,
+): void {
+	broadcastEvent(
+		ctx,
+		projectId,
+		agentEventToBroadcast(eventType, eventData, taskId),
+	);
+	// Broadcast messages_consumed when queue messages with user IDs are consumed
+	if (eventType === "queue_message") {
+		const consumedIds = extractConsumedUserIds(eventData);
+		if (consumedIds.length > 0) {
+			broadcast(ctx.wsClients, projectId, {
+				type: "messages_consumed",
+				messageIds: consumedIds,
+				taskId,
+				ts: Date.now(),
+			});
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers — extracted from launchAgent / runChildAgentInBackground
 // ---------------------------------------------------------------------------
@@ -201,8 +235,6 @@ async function createAgentContext(
 		queue: MessageQueue;
 		childModel?: string;
 		mcpManager?: McpClientManager;
-		/** Parent agent's queue for report_to_parent. Null/undefined for root orchestrator. */
-		parentQueue?: MessageQueue;
 	},
 ): Promise<AgentContextResult> {
 	const effectiveCfg = await resolveProjectConfig(
@@ -237,7 +269,6 @@ async function createAgentContext(
 		clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
 		maxDepth: effectiveCfg.maxDepth,
 		projectManager: opts.depth === 0 ? ctx.pm : undefined,
-		activeSessions: opts.depth === 0 ? ctx.activeSessions : undefined,
 		currentProjectId: project.id,
 		eventStore: getEventStore(ctx, project.id),
 		dataDir: ctx.config.dataDir,
@@ -249,14 +280,13 @@ async function createAgentContext(
 				const taskId = (event.taskId as string) || "";
 				const eventType = event.eventType as string;
 				const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
-				broadcastEvent(
+				// Unified path: broadcast event + messages_consumed for queue_message
+				broadcastAgentStreamEvent(
 					ctx,
 					project.id,
-					agentEventToBroadcast(
-						eventType,
-						rest as Record<string, unknown>,
-						taskId,
-					),
+					eventType,
+					rest as Record<string, unknown>,
+					taskId,
 				);
 			} else {
 				// Already a valid BroadcastEvent shape — just ensure ts
@@ -283,18 +313,24 @@ async function createAgentContext(
 				}
 			}
 		},
-		parentQueue: opts.parentQueue,
+		getParentQueue:
+			opts.depth > 0
+				? () => findParentQueue(opts.tracker, opts.currentTaskId)?.queue
+				: undefined,
 		broadcastTreeUpdate: () =>
 			broadcastTreeUpdate(ctx, project.id, opts.tracker),
-		launchChild: async (nodeId: string, prompt: string) => {
-			await runChildAgentInBackground(
-				ctx,
-				project,
-				opts.tracker,
-				nodeId,
-				prompt,
-			);
-		},
+		isProjectActive:
+			opts.depth === 0
+				? (projectId: string) => ctx.activeSessions.has(projectId)
+				: undefined,
+		getProjectRootQueue:
+			opts.depth === 0
+				? (projectId: string) => {
+						const t = ctx.trackers.get(projectId);
+						if (!t?.rootNodeId) return undefined;
+						return globalAgentQueues.get(t.rootNodeId);
+					}
+				: undefined,
 		deliverMessage: async (nodeId: string, message: QueueMessage) => {
 			await deliverMessage(ctx, project, nodeId, message);
 		},
@@ -460,9 +496,17 @@ export async function stopAgent(
 	session.stop();
 	ctx.activeSessions.delete(projectId);
 
-	// Cascade stop to all in-progress child agents
+	// Cascade stop to ALL agents (root + children) via unified globalAgentQueues
 	if (tracker) {
 		const rootNodeId = tracker.rootNodeId;
+		// Close root queue from unified registry
+		if (rootNodeId) {
+			const rootQueue = globalAgentQueues.get(rootNodeId);
+			if (rootQueue) {
+				globalAgentQueues.delete(rootNodeId);
+				rootQueue.close();
+			}
+		}
 		for (const node of tracker.allNodes()) {
 			if (node.status === "in_progress" && node.id !== rootNodeId) {
 				const childQueue = globalAgentQueues.get(node.id);
@@ -520,7 +564,7 @@ export async function deliverMessage(
 ): Promise<"enqueued" | "persisted"> {
 	const tracker = await getTracker(ctx, project.id);
 
-	// 1. Try direct queue delivery (child agent running)
+	// 1. Try direct queue delivery (unified registry — root + child queues)
 	const queue = globalAgentQueues.get(nodeId);
 	if (queue) {
 		try {
@@ -532,22 +576,7 @@ export async function deliverMessage(
 		}
 	}
 
-	// 2. Check activeSessions for root orchestrator
-	const rootNodeId = tracker.rootNodeId;
-	if (rootNodeId === nodeId) {
-		const rootSession = ctx.activeSessions.get(project.id);
-		if (rootSession?.queue) {
-			try {
-				rootSession.queue.enqueue(message);
-				// onEnqueue callback handles pending broadcast (set at queue creation)
-				return "enqueued";
-			} catch {
-				// Queue was closed — fall through to persist + launch
-			}
-		}
-	}
-
-	// 3. No running agent — persist to disk
+	// 2. No running agent — persist to disk
 	await persistMessage(ctx.config.dataDir, project.id, nodeId, message);
 
 	// 4. Auto-launch for child nodes only. Root launch requires caller-specific
@@ -649,9 +678,14 @@ function computeDepth(tracker: TaskTracker, nodeId: string): number {
  * Walks up the parent chain to bubble through non-running intermediate nodes.
  * Returns both the queue and the ID of the ancestor it belongs to.
  */
-function findParentQueue(
-	ctx: DaemonContext,
-	projectId: string,
+/**
+ * Find the nearest ancestor with an active queue for a given node.
+ * Walks up the parent chain to bubble through non-running intermediate nodes.
+ * Returns both the queue and the ID of the ancestor it belongs to.
+ *
+ * Exported so agent-tools.ts can use it for dynamic parent queue lookup.
+ */
+export function findParentQueue(
 	tracker: TaskTracker,
 	nodeId: string,
 ): { queue: MessageQueue; targetId: string } | undefined {
@@ -666,12 +700,8 @@ function findParentQueue(
 		const ancestor = tracker.get(targetId);
 		if (!ancestor) break;
 
-		// Root orchestrator check — its queue is in activeSessions, not globalAgentQueues
-		if (!ancestor.parentId) {
-			const rootQueue = ctx.activeSessions.get(projectId)?.queue;
-			if (rootQueue) return { queue: rootQueue, targetId };
-			break;
-		}
+		// Reached root without finding a queue — root isn't running
+		if (!ancestor.parentId) break;
 
 		targetId = ancestor.parentId;
 	}
@@ -693,9 +723,8 @@ export async function runChildAgentInBackground(
 
 	const mcpManager = new McpClientManager();
 	try {
-		// Compute depth from the tree and find the parent's queue
+		// Compute depth from the tree
 		const depth = computeDepth(tracker, nodeId);
-		const parentQueueResult = findParentQueue(ctx, project.id, tracker, nodeId);
 
 		// Create the queue first — shared between MCP tools and runChildCore
 		const childQueue = new MessageQueue();
@@ -708,7 +737,6 @@ export async function runChildAgentInBackground(
 			currentTaskId: nodeId,
 			depth,
 			queue: childQueue,
-			parentQueue: parentQueueResult?.queue,
 			mcpManager,
 		});
 
@@ -741,23 +769,14 @@ export async function runChildAgentInBackground(
 						ts: Date.now(),
 					});
 				} else {
-					broadcastEvent(
+					// Unified path: broadcast event + messages_consumed for queue_message
+					broadcastAgentStreamEvent(
 						ctx,
 						project.id,
-						agentEventToBroadcast(eventType, eventData, nodeId),
+						eventType,
+						eventData,
+						nodeId,
 					);
-					// Broadcast messages_consumed when queue messages with user IDs are consumed
-					if (eventType === "queue_message") {
-						const consumedIds = extractConsumedUserIds(eventData);
-						if (consumedIds.length > 0) {
-							broadcast(ctx.wsClients, project.id, {
-								type: "messages_consumed",
-								messageIds: consumedIds,
-								taskId: nodeId,
-								ts: Date.now(),
-							});
-						}
-					}
 				}
 			},
 			persistedMessages: {
@@ -825,7 +844,7 @@ export async function runChildAgentInBackground(
 		}
 
 		// Enqueue child_complete message to parent's queue (bubbles up through non-running intermediates)
-		const completionResult = findParentQueue(ctx, project.id, tracker, nodeId);
+		const completionResult = findParentQueue(tracker, nodeId);
 		const completionNotification = {
 			source: "child_complete" as const,
 			taskId: nodeId,
@@ -869,7 +888,7 @@ export async function runChildAgentInBackground(
 		});
 
 		// Enqueue child_complete (failure) to parent's queue (bubbles up through non-running intermediates)
-		const errorResult = findParentQueue(ctx, project.id, tracker, nodeId);
+		const errorResult = findParentQueue(tracker, nodeId);
 		const errorNotification = {
 			source: "child_complete" as const,
 			taskId: nodeId,
@@ -1010,6 +1029,8 @@ export async function launchAgent(
 		hasRunningChildren: agentCtx.hasRunningChildren,
 	});
 
+	// Register root queue in the unified globalAgentQueues registry
+	globalAgentQueues.set(rootNodeId, queue);
 	ctx.activeSessions.set(project.id, session);
 
 	// Fire-and-forget: consume events in background
@@ -1032,23 +1053,14 @@ export async function launchAgent(
 							ts: Date.now(),
 						});
 					} else {
-						broadcastEvent(
+						// Unified path: broadcast event + messages_consumed for queue_message
+						broadcastAgentStreamEvent(
 							ctx,
 							project.id,
-							agentEventToBroadcast(eventType, eventData, rootNodeId),
+							eventType,
+							eventData,
+							rootNodeId,
 						);
-						// Broadcast messages_consumed when queue messages with user IDs are consumed
-						if (eventType === "queue_message") {
-							const consumedIds = extractConsumedUserIds(eventData);
-							if (consumedIds.length > 0) {
-								broadcast(ctx.wsClients, project.id, {
-									type: "messages_consumed",
-									messageIds: consumedIds,
-									taskId: rootNodeId,
-									ts: Date.now(),
-								});
-							}
-						}
 					}
 				},
 			);
@@ -1114,6 +1126,8 @@ export async function launchAgent(
 				// Don't let save failure prevent cleanup
 			}
 			session.stop();
+			// Remove root queue from unified registry
+			globalAgentQueues.delete(rootNodeId);
 			// Only clean up if this session is still the active one.
 			// During restart, a new session replaces us — don't clobber it.
 			if (ctx.activeSessions.get(project.id) === session) {
@@ -1165,13 +1179,13 @@ export async function handleOrchestrate(
 	}
 
 	// Agent already running — enqueue the prompt as a user message instead of error
-	const existingSession = ctx.activeSessions.get(projectId);
-	if (existingSession) {
-		const orchMsgId = randomUUID();
-		const orchTracker = await getTracker(ctx, projectId);
-		const orchRootNodeId = orchTracker.rootNodeId;
-		// Write user_message to JSONL at send time
-		if (orchRootNodeId) {
+	const orchTracker = await getTracker(ctx, projectId);
+	const orchRootNodeId = orchTracker.rootNodeId;
+	if (orchRootNodeId) {
+		const rootQueue = globalAgentQueues.get(orchRootNodeId);
+		if (rootQueue) {
+			const orchMsgId = randomUUID();
+			// Write user_message to JSONL at send time
 			const orchEventStore = getEventStore(ctx, projectId);
 			const orchUserMsg: Event = {
 				type: "user_message",
@@ -1185,18 +1199,18 @@ export async function handleOrchestrate(
 				...orchUserMsg,
 				taskId: orchRootNodeId,
 			} as unknown as Record<string, unknown>);
+			try {
+				rootQueue.enqueue({
+					source: "user",
+					id: orchMsgId,
+					content: prompt,
+				});
+			} catch {
+				return { ok: false, error: "Queue closed", status: 409 };
+			}
+			// onEnqueue callback handles pending broadcast
+			return { ok: true };
 		}
-		try {
-			existingSession.queue.enqueue({
-				source: "user",
-				id: orchMsgId,
-				content: prompt,
-			});
-		} catch {
-			return { ok: false, error: "Queue closed", status: 409 };
-		}
-		// onEnqueue callback handles pending broadcast
-		return { ok: true };
 	}
 	await getTracker(ctx, projectId);
 	await launchAgent(
@@ -1357,12 +1371,9 @@ export async function handleClarifyResponse(
 	answer: string,
 	clarificationId?: string,
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
-	const session = ctx.activeSessions.get(projectId);
-	if (session) {
-		// Route the response to the correct agent's queue:
-		// - If taskId has a queue in globalAgentQueues, it's a child agent → route there
-		// - Otherwise, fall back to session.queue (the orchestrator)
-		const targetQueue = globalAgentQueues.get(taskId) ?? session.queue;
+	// Route the response to the correct agent's queue via unified registry
+	const targetQueue = globalAgentQueues.get(taskId);
+	if (targetQueue) {
 		try {
 			targetQueue.enqueue({ source: "clarify_response", answer });
 		} catch {
@@ -1378,7 +1389,7 @@ export async function handleClarifyResponse(
 		return { ok: true };
 	}
 
-	// No active session — persist the clarify_response to disk
+	// No running agent — persist the clarify_response to disk
 	const project = ctx.pm.get(projectId);
 	if (!project) {
 		return {
