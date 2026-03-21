@@ -488,3 +488,13 @@ Event (src/events.ts) — THE source of truth
 - **Standalone queue types preserved**: `child_complete`, `parent_update`, etc. kept in Event union as legacy for old JSONL. `isQueueEvent()` handles both legacy types and new `message` type.
 - **`tree_mutation` kept as-is**: Not converted to `message` — it carries structured UI data and changing it would alter frontend rendering logic.
 
+
+## JSONL Event Migration Runner (March 2026)
+
+- **Pattern**: `ACTIVE_MIGRATIONS: EventMigration[]` — list of idempotent transform functions. Add new ones, remove old when confident all files migrated.
+- **Current migration**: `migrateUserMessageToMessage` handles: user_message→message, queueEntry→body, standalone queue types→message+body, tree_mutation→message+system body, message_injected→message.
+- **Location**: `src/event-store.ts` (`runEventMigrations(sessionsDir)`). Called at daemon startup in `import.meta.main` block before `autoResumeProjects`.
+- **Idempotent**: Running twice produces no changes. Second run returns `migratedCount=0`.
+- **No-op fast path**: When `ACTIVE_MIGRATIONS` is empty, returns 0 immediately.
+- **`createApp` returns `dataDir`**: Needed by startup code to locate sessions directory.
+
