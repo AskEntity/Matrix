@@ -154,9 +154,12 @@ Daemon (Hono: HTTP + SSE on :7433)
 ## Provider Architecture
 
 - **`runProviderLoop()`** in `provider-shared.ts` — ONE run loop for all providers.
-- **`ProviderAdapter`** interface — ~15 hooks for provider-specific operations (message format, API call, streaming, response parsing, tool result building, cost calculation).
+- **`ProviderAdapter`** interface — hooks for provider-specific operations (message format, API call, streaming, response parsing, tool result building, cost calculation).
+- **`walkEventsToMessages()`** in `provider-shared.ts` — shared event walker for JSONL→messages conversion. Providers implement `EventConverterCallbacks` for format-specific message construction.
 - Each provider creates an adapter (`createAnthropicAdapter()` / `createOpenAIAdapter()`) and delegates to `runProviderLoop()`.
-- Adding a new provider = implement ProviderAdapter. Run loop, compaction, tool execution, queue handling, budget check all shared.
+- Converters (`eventsToAnthropicMessages` / `eventsToOpenAIMessages`) live in their respective provider files, not events.ts.
+- `events.ts` is types + helpers only (576 lines). No converter logic.
+- Adding a new provider = implement ProviderAdapter + EventConverterCallbacks.
 
 ## Miscellaneous
 
@@ -166,10 +169,3 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **Chrome MCP**: Use `take_screenshot` for root (safe). `take_snapshot` only for child tasks with short logs.
 - **Done counter**: UI counts both `passed` and `closed` tasks as "done".
 - **Resume error dedup**: Only show errors after last `orchestration_started` or resume event.
-
-## Event Converter Refactor (completed)
-
-- **Converters moved to providers**: `eventsToAnthropicMessages` → `anthropic-compatible-provider.ts`, `eventsToOpenAIMessages` → `openai-compatible-provider.ts`. Import from provider files, not events.ts.
-- **Shared walker**: `walkEventsToMessages()` in `provider-shared.ts` handles all shared control flow (event index, two-phase skip/materialize, queue event skip, compact skip). Each provider implements `EventConverterCallbacks` for format-specific message construction.
-- **Eliminated adapter duplication**: `buildCompactedResumeMessage`, `buildBudgetWarningMessage` inlined in `runProviderLoop` (both were `{role:"user", content}`). `verifyEvents` inlined (identical logic). `buildResult` made optional with default.
-- **events.ts is now types-only**: 576 lines of types + helpers (`isQueueEvent`, `queueMessageToEvent`, `formatEventForAI`, `formatPendingSection`, `findOrphanedToolCalls`). No converter logic.
