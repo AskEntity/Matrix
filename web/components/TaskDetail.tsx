@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { ConversationHistory } from "./ConversationHistory.tsx";
-import { IconPause, IconTrash } from "./icons.tsx";
+import { IconCopy, IconPause, IconTrash } from "./icons.tsx";
 import { StatusBadge, statusDotClass } from "./StatusBadge.tsx";
 
 const TASK_COLORS = [
@@ -73,6 +73,14 @@ export function TaskDetail({
 		setEditingDesc(false);
 	}, [node.id]);
 
+	const [idCopied, setIdCopied] = useState(false);
+	const copyId = useCallback(() => {
+		navigator.clipboard.writeText(node.id).then(() => {
+			setIdCopied(true);
+			setTimeout(() => setIdCopied(false), 1500);
+		});
+	}, [node.id]);
+
 	const saveTitle = useCallback(
 		(value: string) => {
 			const trimmed = value.trim();
@@ -138,6 +146,19 @@ export function TaskDetail({
 					</button>
 				)}
 			</div>
+
+			<button
+				type="button"
+				className="og-detail-task-id"
+				onClick={copyId}
+				title={t("detail.copyId")}
+			>
+				<span className="og-detail-task-id-text">{node.id.slice(0, 8)}</span>
+				<IconCopy size={10} />
+				{idCopied && (
+					<span className="og-detail-id-copied">{t("detail.copied")}</span>
+				)}
+			</button>
 
 			{editingDesc ? (
 				<textarea

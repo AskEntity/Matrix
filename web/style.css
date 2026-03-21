@@ -649,6 +649,19 @@ select {
 	white-space: nowrap;
 }
 
+.og-task-id-tag {
+	flex-shrink: 0;
+	font-size: 9.5px;
+	font-family: var(--font-mono);
+	color: var(--text-faint);
+	opacity: 0.5;
+	transition: opacity var(--t-fast);
+}
+.og-task-node:hover .og-task-id-tag,
+.og-task-node.selected .og-task-id-tag {
+	opacity: 0.8;
+}
+
 .og-task-draft .og-task-title {
 	opacity: 0.6;
 	font-style: italic;
@@ -905,10 +918,37 @@ select {
 	font-size: 15px;
 	font-weight: 600;
 	color: var(--text-primary);
-	margin-bottom: 12px;
+	margin-bottom: 4px;
 	display: flex;
 	align-items: center;
 	gap: 8px;
+}
+
+.og-detail-task-id {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 11px;
+	font-family: var(--font-mono);
+	color: var(--text-faint);
+	background: none;
+	border: none;
+	padding: 0;
+	margin-bottom: 12px;
+	cursor: pointer;
+	transition: color var(--t-fast);
+}
+.og-detail-task-id:hover {
+	color: var(--text-secondary);
+}
+.og-detail-task-id-text {
+	letter-spacing: 0.5px;
+}
+.og-detail-id-copied {
+	font-family: var(--font-sans);
+	font-size: 10px;
+	color: var(--color-passed);
+	margin-left: 2px;
 }
 
 .og-detail-description {
