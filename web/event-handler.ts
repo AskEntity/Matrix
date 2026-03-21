@@ -20,7 +20,7 @@ type UpdateOp =
 			taskId: string | undefined;
 	  };
 
-export interface WSHandlerDeps {
+export interface EventHandlerDeps {
 	updateFromWS: (nodes: TaskNode[]) => void;
 	setRootNodeId: React.Dispatch<React.SetStateAction<string | null>>;
 	setActiveAgents: React.Dispatch<React.SetStateAction<Set<string>>>;
@@ -63,7 +63,7 @@ export interface WSHandlerDeps {
 	t: (key: string, params?: Record<string, string>) => string;
 }
 
-export function createWSHandler(deps: WSHandlerDeps) {
+export function createEventHandler(deps: EventHandlerDeps) {
 	const {
 		updateFromWS,
 		setRootNodeId,
@@ -1028,7 +1028,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 
 	// --- Main handler ---
 
-	function handleWS(msg: Record<string, unknown>) {
+	function handleEvent(msg: Record<string, unknown>) {
 		// pending_clarifications: pass-through (still ephemeral/in-memory)
 		if (msg.type === "pending_clarifications") {
 			setPendingClarifications(
@@ -1053,5 +1053,5 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		result.sideEffects();
 	}
 
-	return { handleWS, processEventBatch };
+	return { handleEvent, processEventBatch };
 }

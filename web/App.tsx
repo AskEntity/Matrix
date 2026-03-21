@@ -22,8 +22,8 @@ import { SettingsPanel } from "./components/SettingsPanel.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
 import { TaskTree } from "./components/TaskTree.tsx";
 import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
+import { createEventHandler } from "./event-handler.ts";
 import { createActionHandlers } from "./handlers.ts";
-
 import {
 	createLogEntry,
 	type LogEntry,
@@ -35,10 +35,8 @@ import {
 	useTasks,
 	useThreeLayerConfig,
 } from "./hooks.ts";
-
 import { LocaleProvider, useLocale } from "./i18n.ts";
 import { applyTheme, themes } from "./themes.ts";
-import { createWSHandler } from "./ws-handler.ts";
 
 // ── Hash routing helpers ───────────────────────────────────────────────────
 
@@ -366,9 +364,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 	// ── SSE handler ──────────────────────────────────────────────────────────
 
-	const { handleWS, processEventBatch } = useMemo(
+	const { handleEvent, processEventBatch } = useMemo(
 		() =>
-			createWSHandler({
+			createEventHandler({
 				updateFromWS,
 				setRootNodeId,
 				setActiveAgents,
@@ -432,7 +430,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 	const { connected } = useSSE(
 		projectId,
-		handleWS,
+		handleEvent,
 		checkStatus,
 		handleReconnect,
 	);

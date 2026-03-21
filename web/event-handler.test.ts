@@ -1,9 +1,9 @@
 import { describe, expect, it, mock } from "bun:test";
 import type React from "react";
+import { createEventHandler, type EventHandlerDeps } from "./event-handler.ts";
 import type { LogEntry } from "./hooks.ts";
-import { createWSHandler, type WSHandlerDeps } from "./ws-handler.ts";
 
-/** Minimal deps that satisfy the WSHandlerDeps interface */
+/** Minimal deps that satisfy the EventHandlerDeps interface */
 function makeDeps() {
 	const logs: LogEntry[][] = [];
 	return {
@@ -36,7 +36,7 @@ function makeDeps() {
 	};
 }
 
-describe("ws-handler queueEntry handling", () => {
+describe("event-handler queueEntry handling", () => {
 	it("processEventBatch: user_message with queueEntry.source=child_report materializes as child_report", () => {
 		const { deps } = makeDeps();
 
@@ -45,7 +45,7 @@ describe("ws-handler queueEntry handling", () => {
 			capturedLogs = typeof entries === "function" ? entries([]) : entries;
 		});
 
-		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
 			{
@@ -86,7 +86,7 @@ describe("ws-handler queueEntry handling", () => {
 			capturedLogs = typeof entries === "function" ? entries([]) : entries;
 		});
 
-		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
 			{
@@ -122,7 +122,7 @@ describe("ws-handler queueEntry handling", () => {
 			capturedLogs = typeof entries === "function" ? entries([]) : entries;
 		});
 
-		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
 			{
@@ -159,7 +159,7 @@ describe("ws-handler queueEntry handling", () => {
 			},
 		);
 
-		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
 			{
@@ -195,7 +195,7 @@ describe("ws-handler queueEntry handling", () => {
 			},
 		);
 
-		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
 			{
@@ -221,7 +221,7 @@ describe("ws-handler queueEntry handling", () => {
 			capturedLogs = typeof entries === "function" ? entries([]) : entries;
 		});
 
-		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		// Legacy format: source + flat fields, no queueEntry
 		processEventBatch([
@@ -249,7 +249,7 @@ describe("ws-handler queueEntry handling", () => {
 		expect(childReportEntry?.title).toBe("Legacy Task");
 	});
 
-	it("handleWS: live user_message with queueEntry.source=child_report deferred, then messages_consumed renders card", () => {
+	it("handleEvent: live user_message with queueEntry.source=child_report deferred, then messages_consumed renders card", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -269,10 +269,10 @@ describe("ws-handler queueEntry handling", () => {
 			},
 		);
 
-		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
 		// 1. Receive user_message with queueEntry (non-user source)
-		handleWS({
+		handleEvent({
 			type: "message",
 			id: "msg-7",
 			source: "child_report",
@@ -295,7 +295,7 @@ describe("ws-handler queueEntry handling", () => {
 		expect(capturedLogs.length).toBe(0);
 
 		// 2. Receive messages_consumed
-		handleWS({
+		handleEvent({
 			type: "messages_consumed",
 			messageIds: ["msg-7"],
 			ts: 2000,
@@ -313,7 +313,7 @@ describe("ws-handler queueEntry handling", () => {
 		expect(capturedPending.length).toBe(0);
 	});
 
-	it("handleWS: live user_message (actual user) goes to pending, then messages_consumed moves to log", () => {
+	it("handleEvent: live user_message (actual user) goes to pending, then messages_consumed moves to log", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -333,10 +333,10 @@ describe("ws-handler queueEntry handling", () => {
 			},
 		);
 
-		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
 		// 1. Receive user_message (actual user)
-		handleWS({
+		handleEvent({
 			type: "message",
 			id: "msg-8",
 			content: "Build a feature",
@@ -349,7 +349,7 @@ describe("ws-handler queueEntry handling", () => {
 		expect(capturedPending[0]?.text).toBe("Build a feature");
 
 		// 2. Receive messages_consumed
-		handleWS({
+		handleEvent({
 			type: "messages_consumed",
 			messageIds: ["msg-8"],
 			ts: 2000,
@@ -372,7 +372,7 @@ describe("ws-handler queueEntry handling", () => {
 			capturedLogs = typeof entries === "function" ? entries([]) : entries;
 		});
 
-		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
 			{
@@ -401,7 +401,7 @@ describe("ws-handler queueEntry handling", () => {
 	});
 });
 
-describe("ws-handler JSONL-driven pending state", () => {
+describe("event-handler JSONL-driven pending state", () => {
 	it("pending state is derived from deferredMessages map — no race condition possible", () => {
 		const { deps } = makeDeps();
 
@@ -436,10 +436,10 @@ describe("ws-handler JSONL-driven pending state", () => {
 			},
 		);
 
-		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
 		// Step 1: message arrives → deferred in map, shown in pending banner
-		handleWS({
+		handleEvent({
 			type: "message",
 			id: "msg-race",
 			content: "Hello world",
@@ -452,7 +452,7 @@ describe("ws-handler JSONL-driven pending state", () => {
 
 		// Step 2: messages_consumed arrives — materializes in log, clears from pending
 		// No pending_messages:[] race — pending state is derived from deferredMessages map
-		handleWS({
+		handleEvent({
 			type: "messages_consumed",
 			messageIds: ["msg-race"],
 			ts: 2000,
@@ -467,14 +467,14 @@ describe("ws-handler JSONL-driven pending state", () => {
 	});
 });
 
-describe("ws-handler compact_marker savedTokens", () => {
+describe("event-handler compact_marker savedTokens", () => {
 	it("processEvent returns savedTokens in the complete_compact UpdateOp", () => {
 		const { deps } = makeDeps();
-		// Smoke test: createWSHandler works without error
-		createWSHandler(deps as WSHandlerDeps);
+		// Smoke test: createEventHandler works without error
+		createEventHandler(deps as EventHandlerDeps);
 	});
 
-	it("handleWS: compact_marker with savedTokens=5000 produces LogEntry with savedTokens=5000", () => {
+	it("handleEvent: compact_marker with savedTokens=5000 produces LogEntry with savedTokens=5000", () => {
 		const { deps } = makeDeps();
 
 		// Pre-populate logs with a compact_started entry so the replacement path is hit
@@ -487,17 +487,17 @@ describe("ws-handler compact_marker savedTokens", () => {
 			}
 		});
 
-		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
 		// First, add a compact_started entry
-		handleWS({
+		handleEvent({
 			type: "compact_started",
 			taskId: "task-1",
 			ts: 1000,
 		});
 
 		// Now send compact_marker with savedTokens
-		handleWS({
+		handleEvent({
 			type: "compact_marker",
 			savedTokens: 5000,
 			checkpoint: "test checkpoint",
@@ -513,7 +513,7 @@ describe("ws-handler compact_marker savedTokens", () => {
 		expect(markerEntry?.savedTokens).toBe(5000);
 	});
 
-	it("handleWS: compact_marker fallback (no compact_started) also uses savedTokens", () => {
+	it("handleEvent: compact_marker fallback (no compact_started) also uses savedTokens", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -525,10 +525,10 @@ describe("ws-handler compact_marker savedTokens", () => {
 			}
 		});
 
-		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
 		// Send compact_marker without preceding compact_started
-		handleWS({
+		handleEvent({
 			type: "compact_marker",
 			savedTokens: 8000,
 			checkpoint: "test checkpoint",
@@ -551,7 +551,7 @@ describe("ws-handler compact_marker savedTokens", () => {
 			capturedLogs = typeof entries === "function" ? entries([]) : entries;
 		});
 
-		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		processEventBatch([
 			{ type: "compact_started", taskId: "task-3", ts: 1000 },
@@ -579,7 +579,7 @@ describe("ws-handler compact_marker savedTokens", () => {
 			capturedLogs = typeof entries === "function" ? entries([]) : entries;
 		});
 
-		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
 		// No compact_started, just compact_marker directly
 		processEventBatch([

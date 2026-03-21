@@ -36,7 +36,7 @@ export type UIEvent = Event | UIOnlyEvent;
 /**
  * LogEntry = UIEvent + display metadata.
  * `id` for keying. Time is derived from `ts` on render.
- * `taskId` is added by ws-handler to route entries to the correct task log.
+ * `taskId` is added by event-handler to route entries to the correct task log.
  * Some UIEvent variants already have taskId (Event); for others it's
  * added as extra metadata via the intersection.
  */
