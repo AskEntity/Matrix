@@ -200,6 +200,6 @@ export function normalizeEventForUI(
 	const base = event as unknown as Record<string, unknown>;
 	return {
 		...base,
-		taskId: base.taskId ?? sessionId,
+		taskId: sessionId,
 	};
 }
