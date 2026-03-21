@@ -5,7 +5,6 @@ import type {
 	TextBlockParam,
 	Tool,
 	ToolResultBlockParam,
-	ToolUseBlock,
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import type {
 	AgentEvent,
@@ -13,28 +12,16 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
-import { toRawMessage } from "./agent-tools.ts";
 import { DEFAULT_MODEL } from "./config.ts";
+import { type Event, eventsToAnthropicMessages } from "./events.ts";
+import { MessageQueue } from "./message-queue.ts";
 import {
-	type Event,
-	eventsToAnthropicMessages,
-	findOrphanedToolCalls,
-} from "./events.ts";
-import { MessageQueue, type QueueMessage } from "./message-queue.ts";
-import {
-	buildSummarizationInstruction,
-	buildToolResultEvents,
-	checkBudget,
-	collectToolResultImages,
-	DEFAULT_MAX_TOKENS,
-	drainQueueAtCancellationPoint,
-	executeToolUnified,
 	extractQueueImages,
-	getCompactionThresholds,
-	handleImplicitYield,
-	processCompaction,
-	recordBudgetWarning,
-	recordQueueEvents,
+	type ProviderAdapter,
+	type ProviderTokenUsage,
+	type ProviderToolUse,
+	runProviderLoop,
+	type ToolExecResult,
 	zodShapeToJsonSchema,
 } from "./provider-shared.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
@@ -190,6 +177,459 @@ export function addMessagesCacheControl(
 	});
 }
 
+// ── Anthropic Provider Adapter ──
+
+/**
+ * Create an Anthropic adapter for the unified run loop.
+ * Encapsulates all Anthropic-specific API call format, streaming, caching, etc.
+ */
+function createAnthropicAdapter(
+	client: Anthropic,
+	useOAuth: boolean,
+): ProviderAdapter {
+	return {
+		getContextWindow(model: string): number {
+			return getContextWindow(model);
+		},
+
+		getModelPricing(model: string) {
+			return getModelPricing(model);
+		},
+
+		convertEventsToMessages(events: Event[]): unknown[] {
+			return eventsToAnthropicMessages(events) as unknown[];
+		},
+
+		prepareTools(
+			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+			mcpToolDefs: Record<string, ToolDefinition<any>[]> | undefined,
+			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+			mcpHandlers: Map<string, ToolDefinition<any>>,
+		): unknown[] {
+			const allTools: Tool[] = [..._TOOLS];
+			if (mcpToolDefs) {
+				for (const [serverName, defs] of Object.entries(mcpToolDefs)) {
+					for (const def of defs) {
+						const toolName = `mcp__${serverName}__${def.name}`;
+						mcpHandlers.set(toolName, def);
+						const jsonSchema =
+							def.jsonSchema ?? zodShapeToJsonSchema(def.inputSchema);
+						allTools.push({
+							name: toolName,
+							description: def.description,
+							input_schema: jsonSchema as Tool["input_schema"],
+						});
+					}
+				}
+			}
+			return allTools;
+		},
+
+		async *callAPI(params) {
+			const messages = params.messages as MessageParam[];
+			const tools = params.tools as Tool[];
+
+			// Cache control: system prompt cached as array of TextBlockParam
+			const systemText = params.systemPrompt;
+			const systemBlocks: TextBlockParam[] = useOAuth
+				? [
+						{
+							type: "text",
+							text: "You are Claude Code, Anthropic's official CLI for Claude.",
+							cache_control: { type: "ephemeral" },
+						},
+						...(systemText
+							? [
+									{
+										type: "text" as const,
+										text: systemText,
+										cache_control: {
+											type: "ephemeral" as const,
+										},
+									},
+								]
+							: []),
+					]
+				: [
+						{
+							type: "text",
+							text: systemText,
+							cache_control: { type: "ephemeral" },
+						},
+					];
+
+			// Cache control: add cache breakpoint on the last tool definition
+			const toolsWithCache: Tool[] =
+				tools.length > 0
+					? tools.map((tool, i) =>
+							i === tools.length - 1
+								? { ...tool, cache_control: { type: "ephemeral" } }
+								: tool,
+						)
+					: tools;
+
+			// Cache control: add a cache breakpoint at the second-to-last user message
+			const messagesWithCache = addMessagesCacheControl(messages);
+
+			const createParams = {
+				model: params.model,
+				max_tokens: params.maxTokens,
+				system: systemBlocks,
+				messages: messagesWithCache,
+				tools: toolsWithCache,
+			};
+
+			let response: Anthropic.Messages.Message | undefined;
+			for (let attempt = 0; attempt < 5; attempt++) {
+				try {
+					const stream = useOAuth
+						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
+							(client.beta.messages as any).stream(createParams)
+						: client.messages.stream(createParams);
+
+					// Stream text deltas to UI (throttled to ~12 yields/sec)
+					let textBuffer = "";
+					let lastFlushTime = Date.now();
+					const TEXT_FLUSH_INTERVAL = 80;
+
+					for await (const event of stream) {
+						if (
+							event.type === "content_block_delta" &&
+							(event.delta as { type?: string })?.type === "text_delta" &&
+							!params.isCompacting
+						) {
+							textBuffer += (event.delta as { text: string }).text;
+							const now = Date.now();
+							if (now - lastFlushTime >= TEXT_FLUSH_INTERVAL) {
+								yield {
+									type: "text_delta" as const,
+									content: textBuffer,
+								};
+								textBuffer = "";
+								lastFlushTime = now;
+							}
+						}
+					}
+					if (textBuffer) {
+						yield {
+							type: "text_delta" as const,
+							content: textBuffer,
+						};
+					}
+					response = await stream.finalMessage();
+					break;
+				} catch (e) {
+					const isTransient =
+						e instanceof Anthropic.RateLimitError ||
+						e instanceof Anthropic.APIConnectionError ||
+						e instanceof Anthropic.InternalServerError ||
+						(e instanceof Anthropic.APIError && e.status === 529) ||
+						// SSE stream errors (overloaded, etc.) have status=undefined
+						(e instanceof Anthropic.APIError && e.status === undefined);
+					if (!isTransient || attempt >= 4) throw e;
+					const delay = Math.min(2000 * 2 ** attempt, 60000);
+					yield {
+						type: "error",
+						message: `API error (retry ${attempt + 1}/4): ${e.message}`,
+					};
+					await new Promise((r) => setTimeout(r, delay));
+				}
+			}
+			if (!response) throw new Error("Failed to get API response");
+			return response;
+		},
+
+		getResponseText(response: unknown): string {
+			const msg = response as Anthropic.Messages.Message;
+			const texts: string[] = [];
+			for (const block of msg.content) {
+				if (block.type === "text") {
+					texts.push(block.text);
+				}
+			}
+			return texts.join("\n");
+		},
+
+		getToolUses(response: unknown): ProviderToolUse[] {
+			const msg = response as Anthropic.Messages.Message;
+			const result: ProviderToolUse[] = [];
+			for (const block of msg.content) {
+				if (block.type === "tool_use") {
+					result.push({
+						id: block.id,
+						name: block.name,
+						input: block.input as Record<string, unknown>,
+					});
+				}
+			}
+			return result;
+		},
+
+		getTokenUsage(response: unknown): ProviderTokenUsage {
+			const msg = response as Anthropic.Messages.Message;
+			const cacheCreation = msg.usage.cache_creation_input_tokens ?? 0;
+			const cacheRead = msg.usage.cache_read_input_tokens ?? 0;
+			// input_tokens is ONLY non-cached tokens; must include cache_read and
+			// cache_creation to get the true context size for threshold comparison.
+			const totalContextTokens =
+				msg.usage.input_tokens + cacheCreation + cacheRead;
+			return {
+				inputTokens: msg.usage.input_tokens,
+				outputTokens: msg.usage.output_tokens,
+				totalContextTokens,
+				cacheCreationTokens: cacheCreation,
+				cacheReadTokens: cacheRead,
+			};
+		},
+
+		getStopReason(response: unknown): "end_turn" | "tool_use" {
+			const msg = response as Anthropic.Messages.Message;
+			return msg.stop_reason === "end_turn" ? "end_turn" : "tool_use";
+		},
+
+		supportsTokenCounting: true,
+
+		async countTokens(params) {
+			const result = await client.messages.countTokens({
+				model: params.model,
+				system: [{ type: "text", text: params.system }],
+				messages: params.messages as MessageParam[],
+				tools: params.tools as Tool[],
+			});
+			return result.input_tokens;
+		},
+
+		buildResponseEvents(response: unknown, isCompacting: boolean): Event[] {
+			const msg = response as Anthropic.Messages.Message;
+			const events: Event[] = [];
+			for (const block of msg.content) {
+				if (block.type === "text") {
+					events.push({
+						type: "assistant_text",
+						content: block.text,
+						ts: Date.now(),
+					});
+				} else if (block.type === "tool_use" && !isCompacting) {
+					events.push({
+						type: "tool_call",
+						tool: block.name,
+						toolCallId: block.id,
+						input: block.input as Record<string, unknown>,
+						ts: Date.now(),
+					});
+				}
+			}
+			return events;
+		},
+
+		addAssistantMessage(
+			messages: unknown[],
+			response: unknown,
+			_isCompacting: boolean,
+		): void {
+			const msg = response as Anthropic.Messages.Message;
+			(messages as MessageParam[]).push({
+				role: "assistant",
+				content: msg.content,
+			});
+		},
+
+		buildToolResultsMessage(params): unknown[] {
+			type ImageMediaType =
+				| "image/jpeg"
+				| "image/png"
+				| "image/gif"
+				| "image/webp";
+
+			const toolResults: ToolResultBlockParam[] = [];
+			for (let i = 0; i < params.toolUses.length; i++) {
+				const toolUse = params.toolUses[i] as ProviderToolUse;
+				const exec = params.execResults[i] as ToolExecResult;
+
+				if (exec.isImage && exec.imageData && exec.mediaType) {
+					toolResults.push({
+						type: "tool_result",
+						tool_use_id: toolUse.id,
+						content: [
+							{
+								type: "image",
+								source: {
+									type: "base64",
+									media_type: exec.mediaType as ImageMediaType,
+									data: exec.imageData,
+								},
+							},
+							{ type: "text", text: exec.content },
+						],
+					});
+				} else {
+					toolResults.push({
+						type: "tool_result",
+						tool_use_id: toolUse.id,
+						content: exec.content,
+						is_error: exec.isError,
+					});
+				}
+			}
+
+			// Collect formatted queue messages from yield/done tools
+			const yieldQueueTextBlocks: Array<{ type: "text"; text: string }> = [];
+			const yieldQueueImageBlocks: Array<{
+				type: "image";
+				data: string;
+				mimeType: string;
+			}> = [];
+			for (const exec of params.execResults) {
+				if (exec._formattedQueueMessages) {
+					yieldQueueTextBlocks.push({
+						type: "text" as const,
+						text: `[Messages received while you were idle:]\n${exec._formattedQueueMessages}`,
+					});
+					if (exec.mcpImages?.length) {
+						for (const img of exec.mcpImages) {
+							yieldQueueImageBlocks.push({
+								type: "image",
+								data: img.base64 ?? img.data ?? "",
+								mimeType: img.mediaType,
+							});
+						}
+					}
+				}
+			}
+
+			// Build cancellation blocks
+			const cancellationTextBlocks: Array<{ type: "text"; text: string }> = [];
+			const cancellationImageBlocks = extractQueueImages(
+				params.cancellationQueueMsgs,
+			);
+			if (
+				params.cancellationQueueMsgs.length > 0 &&
+				params.cancellationFormatted
+			) {
+				cancellationTextBlocks.push({
+					type: "text" as const,
+					text: `[Messages received while you were working:]\n${params.cancellationFormatted}`,
+				});
+			}
+
+			// Anthropic user message content can mix tool_result, text, and image blocks
+			const userContentBlocks = [
+				...toolResults,
+				...yieldQueueTextBlocks,
+				...yieldQueueImageBlocks.map((img) => ({
+					type: "image" as const,
+					source: {
+						type: "base64" as const,
+						media_type: img.mimeType as ImageMediaType,
+						data: img.data,
+					},
+				})),
+				...(yieldQueueImageBlocks.length > 0
+					? [
+							{
+								type: "text" as const,
+								text: `[${yieldQueueImageBlocks.length} image(s) attached by user]`,
+							},
+						]
+					: []),
+				...cancellationTextBlocks,
+				...cancellationImageBlocks,
+				...(cancellationImageBlocks.length > 0
+					? [
+							{
+								type: "text" as const,
+								text: `[${cancellationImageBlocks.length} image(s) attached by user]`,
+							},
+						]
+					: []),
+			];
+
+			return [
+				{
+					role: "user" as const,
+					content: userContentBlocks as MessageParam["content"],
+				},
+			];
+		},
+
+		buildImplicitYieldMessage(formatted: string, nonCompact) {
+			const imageBlocks = extractQueueImages(nonCompact);
+			if (imageBlocks.length > 0) {
+				return {
+					role: "user" as const,
+					content: [
+						{
+							type: "text" as const,
+							text: `[Messages received while you were idle:]\n${formatted}`,
+						},
+						...imageBlocks,
+					],
+				};
+			}
+			return {
+				role: "user" as const,
+				content: `[Messages received while you were idle:]\n${formatted}`,
+			};
+		},
+
+		buildCompactedResumeMessage(content: string) {
+			return { role: "user" as const, content };
+		},
+
+		buildBudgetWarningMessage(warning: string) {
+			return { role: "user" as const, content: warning };
+		},
+
+		computeCost(
+			model: string,
+			totalInputTokens: number,
+			totalOutputTokens: number,
+			totalCacheCreationTokens: number,
+			totalCacheReadTokens: number,
+		): number {
+			const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
+			// Anthropic API: input_tokens = non-cached tokens only (excludes cache_creation
+			// and cache_read tokens — those are reported separately). Do NOT subtract them.
+			return (
+				(totalInputTokens * ip) / 1_000_000 +
+				(totalCacheCreationTokens * ip * 1.25) / 1_000_000 +
+				(totalCacheReadTokens * ip * 0.1) / 1_000_000 +
+				(totalOutputTokens * op) / 1_000_000
+			);
+		},
+
+		buildResult(params): AgentResult {
+			return {
+				success: params.success,
+				output: params.output,
+				costUsd: params.costUsd,
+				turns: params.turns,
+				sessionId: params.sessionId,
+				inputTokens: params.totalInputTokens,
+				cacheCreationTokens: params.totalCacheCreationTokens,
+				cacheReadTokens: params.totalCacheReadTokens,
+				outputTokens: params.totalOutputTokens,
+			};
+		},
+
+		verifyEvents(params) {
+			const activeEvents = params.eventStore.readActive(params.sessionId);
+			if (activeEvents.length > 0) {
+				const reconstructed = eventsToAnthropicMessages(activeEvents);
+				const match =
+					JSON.stringify(params.messages) === JSON.stringify(reconstructed);
+				if (!match) {
+					console.error("[EVENTS MISMATCH]", {
+						messagesLen: (params.messages as unknown[]).length,
+						eventsLen: activeEvents.length,
+						reconstructedLen: reconstructed.length,
+					});
+				}
+			}
+		},
+	};
+}
+
 /**
  * Direct Anthropic API provider.
  * Uses the Messages API with tool use for a lightweight, controllable agent loop.
@@ -293,750 +733,12 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		sessionId: string,
 		queue?: MessageQueue,
 	): AsyncGenerator<AgentEvent, AgentResult> {
-		const model = request.model ?? this.model;
-		const contextWindow = getContextWindow(model);
-		const { compressThreshold, lazyCountThreshold } =
-			getCompactionThresholds(contextWindow);
-
-		let cwd = request.cwd;
-
-		// ── Event recording via EventStore (JSONL append-only) ──
-		const eventStore = request.eventStore;
-
-		// Load session from EventStore (survives daemon restart)
-		let activeEvents = eventStore ? eventStore.readActive(sessionId) : [];
-		const isResume = activeEvents.length > 0;
-
-		// Fix orphaned tool_calls: persist synthetic tool_results to JSONL so the
-		// fix survives future restarts (no repeated re-fixing on each resume)
-		if (isResume && eventStore) {
-			const orphanFixes = findOrphanedToolCalls(activeEvents);
-			if (orphanFixes.length > 0) {
-				await eventStore.appendBatch(sessionId, orphanFixes);
-				activeEvents = [...activeEvents, ...orphanFixes];
-			}
-		}
-
-		// Prepend working directory to the first user message (not on resume turns) so that
-		// the system prompt stays identical across agents in different worktrees, enabling
-		// Anthropic prompt caching to cache the system prompt once and share it across agents.
-		const firstUserContent =
-			cwd && !isResume
-				? `Working directory: ${cwd}\n\n${request.prompt}`
-				: request.prompt;
-
-		// Reconstruct messages from EventStore on resume, or start fresh
-		const messages: MessageParam[] = isResume
-			? [
-					...(eventsToAnthropicMessages(activeEvents) as MessageParam[]),
-					{ role: "user" as const, content: request.prompt },
-				]
-			: [{ role: "user" as const, content: firstUserContent }];
-
-		// Record the new user message event
-		if (eventStore) {
-			if (isResume) {
-				eventStore.append(sessionId, {
-					type: "message",
-					content: request.prompt,
-					isResume: true,
-					ts: Date.now(),
-				});
-			} else {
-				eventStore.append(sessionId, {
-					type: "message",
-					content: firstUserContent,
-					cwd,
-					ts: Date.now(),
-				});
-			}
-		}
-
-		// Add MCP tool definitions from mcpToolDefs
-		const allTools: Tool[] = [..._TOOLS];
-		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-		const mcpHandlers = new Map<string, ToolDefinition<any>>();
-
-		if (request.mcpToolDefs) {
-			for (const [serverName, defs] of Object.entries(request.mcpToolDefs)) {
-				for (const def of defs) {
-					const toolName = `mcp__${serverName}__${def.name}`;
-					mcpHandlers.set(toolName, def);
-
-					// Use pre-computed JSON Schema if available (external MCP tools),
-					// otherwise convert Zod schema
-					const jsonSchema =
-						def.jsonSchema ?? zodShapeToJsonSchema(def.inputSchema);
-					allTools.push({
-						name: toolName,
-						description: def.description,
-						input_schema: jsonSchema as Tool["input_schema"],
-					});
-				}
-			}
-		}
-
-		let turns = 0;
-		let totalInputTokens = 0;
-		let totalOutputTokens = 0;
-		let totalCacheCreationTokens = 0;
-		let totalCacheReadTokens = 0;
-		let estimatedInputTokens = 0;
-		let lastText = "";
-		let manualCompactRequested = false;
-		let compactionPending = false;
-		let preCompactTokenCount = 0;
-		yield { type: "status", message: `Starting agent loop (model: ${model})` };
-
-		while (true) {
-			// Check abort signal
-			if (request.signal?.aborted) {
-				yield { type: "status", message: "Aborted" };
-				break;
-			}
-
-			// ── Handle compaction response: extract checkpoint and rebuild context ──
-			if (compactionPending) {
-				compactionPending = false;
-				const lastMsg = messages[messages.length - 1];
-				let responseText = "";
-				if (lastMsg?.role === "assistant") {
-					const content = lastMsg.content;
-					if (typeof content === "string") {
-						responseText = content;
-					} else if (Array.isArray(content)) {
-						responseText = content
-							.filter(
-								(b): b is { type: "text"; text: string } =>
-									typeof b === "object" &&
-									b !== null &&
-									"type" in b &&
-									b.type === "text",
-							)
-							.map((b) => b.text)
-							.join("\n");
-					}
-				}
-
-				const compactGen = processCompaction(
-					responseText,
-					cwd,
-					preCompactTokenCount,
-					eventStore,
-					sessionId,
-					contextWindow,
-					compressThreshold,
-				);
-				let compactStep = await compactGen.next();
-				while (!compactStep.done) {
-					yield compactStep.value;
-					compactStep = await compactGen.next();
-				}
-				const compactResult = compactStep.value;
-
-				if (compactResult) {
-					messages.length = 0;
-					messages.push({
-						role: "user" as const,
-						content: compactResult.userContent,
-					});
-					estimatedInputTokens = compactResult.estimatedInputTokens;
-					manualCompactRequested = false;
-				}
-				continue; // Skip normal processing, go to next API call with rebuilt context
-			}
-
-			// ── Pre-call compression: count tokens, inject summarization instruction if over threshold ──
-			if (manualCompactRequested && messages.length <= 4) {
-				yield { type: "status", message: "Context is too short to compact" };
-				yield { type: "compact_started" };
-				yield {
-					type: "compact",
-					checkpoint: "Context too short for meaningful compaction",
-					savedTokens: 0,
-				};
-				manualCompactRequested = false;
-				continue;
-			}
-			if (messages.length > 4) {
-				let tokenCount = estimatedInputTokens;
-				let isEstimated = true;
-
-				if (
-					manualCompactRequested ||
-					estimatedInputTokens >= lazyCountThreshold
-				) {
-					if (!manualCompactRequested) {
-						const result = await this.client.messages.countTokens({
-							model,
-							system: [{ type: "text", text: request.systemPrompt ?? "" }],
-							messages,
-							tools: allTools,
-						});
-						tokenCount = result.input_tokens;
-						isEstimated = false;
-					}
-				}
-
-				if (
-					manualCompactRequested ||
-					(!isEstimated && tokenCount > compressThreshold)
-				) {
-					yield { type: "compact_started" };
-					yield {
-						type: "status",
-						message: manualCompactRequested
-							? "Manual compaction triggered"
-							: `Compressing conversation (${tokenCount} tokens, threshold: ${compressThreshold})`,
-					};
-					// Inject summarization instruction as a user message instead of making a separate API call
-					const summarizationInstruction = buildSummarizationInstruction(cwd);
-					messages.push({
-						role: "user" as const,
-						content: summarizationInstruction,
-					});
-					if (eventStore) {
-						eventStore.append(sessionId, {
-							type: "summarization_request",
-							instruction: summarizationInstruction,
-							ts: Date.now(),
-						});
-					}
-					compactionPending = true;
-					preCompactTokenCount = tokenCount;
-					// Fall through to the normal API call — the model will generate the checkpoint
-				}
-			}
-
-			turns++;
-
-			const systemParts = [request.systemPrompt].filter(Boolean);
-
-			// Cache control: system prompt cached as array of TextBlockParam
-			// OAuth tokens require the Claude Code identity prefix in the system prompt.
-			const systemText = systemParts.join("\n\n");
-			const systemBlocks: TextBlockParam[] = this.useOAuth
-				? [
-						{
-							type: "text",
-							text: "You are Claude Code, Anthropic's official CLI for Claude.",
-							cache_control: { type: "ephemeral" },
-						},
-						...(systemText
-							? [
-									{
-										type: "text" as const,
-										text: systemText,
-										cache_control: {
-											type: "ephemeral" as const,
-										},
-									},
-								]
-							: []),
-					]
-				: [
-						{
-							type: "text",
-							text: systemText,
-							cache_control: { type: "ephemeral" },
-						},
-					];
-			const systemWithCache: TextBlockParam[] = systemBlocks;
-
-			// Cache control: add cache breakpoint on the last tool definition so the
-			// full tool list is cached across turns.
-			const toolsWithCache: Tool[] =
-				allTools.length > 0
-					? allTools.map((tool, i) =>
-							i === allTools.length - 1
-								? { ...tool, cache_control: { type: "ephemeral" } }
-								: tool,
-						)
-					: allTools;
-
-			// Cache control: add a cache breakpoint at the second-to-last user message
-			// (i.e. the last user turn before the current one), so that accumulated
-			// conversation history is cached between turns.
-			const messagesWithCache: MessageParam[] =
-				addMessagesCacheControl(messages);
-
-			const createParams = {
-				model,
-				max_tokens: DEFAULT_MAX_TOKENS,
-				system: systemWithCache,
-				messages: messagesWithCache,
-				tools: toolsWithCache,
-			};
-			let response: Anthropic.Messages.Message | undefined;
-			for (let attempt = 0; attempt < 5; attempt++) {
-				try {
-					const stream = this.useOAuth
-						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
-							(this.client.beta.messages as any).stream(createParams)
-						: this.client.messages.stream(createParams);
-
-					// Stream text deltas to UI (throttled to ~12 yields/sec)
-					let textBuffer = "";
-					let lastFlushTime = Date.now();
-					const TEXT_FLUSH_INTERVAL = 80;
-
-					for await (const event of stream) {
-						if (
-							event.type === "content_block_delta" &&
-							(event.delta as { type?: string })?.type === "text_delta" &&
-							!compactionPending
-						) {
-							textBuffer += (event.delta as { text: string }).text;
-							const now = Date.now();
-							if (now - lastFlushTime >= TEXT_FLUSH_INTERVAL) {
-								yield {
-									type: "text_delta" as const,
-									content: textBuffer,
-								};
-								textBuffer = "";
-								lastFlushTime = now;
-							}
-						}
-					}
-					if (textBuffer) {
-						yield {
-							type: "text_delta" as const,
-							content: textBuffer,
-						};
-					}
-					response = await stream.finalMessage();
-					break;
-				} catch (e) {
-					const isTransient =
-						e instanceof Anthropic.RateLimitError ||
-						e instanceof Anthropic.APIConnectionError ||
-						e instanceof Anthropic.InternalServerError ||
-						(e instanceof Anthropic.APIError && e.status === 529) ||
-						// SSE stream errors (overloaded, etc.) have status=undefined
-						(e instanceof Anthropic.APIError && e.status === undefined);
-					if (!isTransient || attempt >= 4) throw e;
-					const delay = Math.min(2000 * 2 ** attempt, 60000);
-					yield {
-						type: "error",
-						message: `API error (retry ${attempt + 1}/4): ${e.message}`,
-					};
-					await new Promise((r) => setTimeout(r, delay));
-				}
-			}
-			if (!response) throw new Error("Failed to get API response");
-
-			totalInputTokens += response.usage.input_tokens;
-			totalOutputTokens += response.usage.output_tokens;
-			totalCacheCreationTokens +=
-				response.usage.cache_creation_input_tokens ?? 0;
-			totalCacheReadTokens += response.usage.cache_read_input_tokens ?? 0;
-
-			// Update estimated token count for next turn's lazy threshold check.
-			// input_tokens is ONLY non-cached tokens; must include cache_read and
-			// cache_creation to get the true context size for threshold comparison.
-			const totalTurnInput =
-				response.usage.input_tokens +
-				(response.usage.cache_creation_input_tokens ?? 0) +
-				(response.usage.cache_read_input_tokens ?? 0);
-			estimatedInputTokens = totalTurnInput + response.usage.output_tokens;
-
-			// Report actual token usage from the API response
-			yield {
-				type: "usage",
-				inputTokens: totalTurnInput,
-				compressThreshold: compressThreshold,
-				contextWindow: contextWindow,
-			};
-
-			// Process response content
-			const toolUses: ToolUseBlock[] = [];
-			for (const block of response.content) {
-				if (block.type === "text") {
-					lastText = block.text;
-					// Yield consolidated text event for persistence (text_delta is not persisted)
-					if (!compactionPending && block.text) {
-						yield { type: "text" as const, content: block.text };
-					}
-				} else if (block.type === "tool_use") {
-					if (!compactionPending) {
-						toolUses.push(block);
-						yield {
-							type: "tool_use",
-							tool: block.name,
-							toolUseId: block.id,
-							input: block.input as Record<string, unknown>,
-						};
-					}
-					// Skip tool uses during compaction — we only want the text checkpoint
-				}
-			}
-
-			// Add assistant message to history
-			messages.push({ role: "assistant", content: response.content });
-			// Record individual Events for each content block
-			if (eventStore) {
-				const contentEvents: Event[] = [];
-				for (const block of response.content) {
-					if (block.type === "text") {
-						contentEvents.push({
-							type: "assistant_text",
-							content: block.text,
-							ts: Date.now(),
-						});
-					} else if (block.type === "tool_use") {
-						contentEvents.push({
-							type: "tool_call",
-							tool: block.name,
-							toolCallId: block.id,
-							input: block.input as Record<string, unknown>,
-							ts: Date.now(),
-						});
-					}
-				}
-				eventStore.appendBatch(sessionId, contentEvents);
-			}
-
-			// If compaction is pending, skip tool execution and continue to next iteration
-			// where the checkpoint will be extracted and context rebuilt
-			if (compactionPending) {
-				continue;
-			}
-
-			// If no tool use, handle end_turn — enter implicit yield
-			if (response.stop_reason === "end_turn" || toolUses.length === 0) {
-				if (!queue) {
-					// No queue — cannot yield, just exit
-					yield {
-						type: "status",
-						message: "Agent ended turn (no queue for yield)",
-					};
-					break;
-				}
-
-				yield {
-					type: "status",
-					message:
-						"Agent ended turn — entering idle state (waiting for messages)",
-				};
-
-				const yieldGen = handleImplicitYield(queue);
-				let yieldStep = await yieldGen.next();
-				while (!yieldStep.done) {
-					yield yieldStep.value;
-					yieldStep = await yieldGen.next();
-				}
-				const yieldResult = yieldStep.value;
-
-				if (yieldResult === null) {
-					// Queue closed — normal exit path (stop was called or done() was called).
-					// Use direct return instead of break (break hangs in Bun async generators
-					// under certain conditions with concurrent I/O).
-					const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
-					return {
-						success: true,
-						output: lastText,
-						costUsd:
-							(totalInputTokens * ip) / 1_000_000 +
-							(totalCacheCreationTokens * ip * 1.25) / 1_000_000 +
-							(totalCacheReadTokens * ip * 0.1) / 1_000_000 +
-							(totalOutputTokens * op) / 1_000_000,
-						turns,
-						sessionId,
-						inputTokens: totalInputTokens,
-						cacheCreationTokens: totalCacheCreationTokens,
-						cacheReadTokens: totalCacheReadTokens,
-						outputTokens: totalOutputTokens,
-					};
-				}
-
-				if (yieldResult.manualCompactRequested) {
-					manualCompactRequested = true;
-				}
-				if (yieldResult.compactOnly) {
-					continue;
-				}
-
-				// Inject messages as a new user turn and continue the loop
-				const { formatted, nonCompact } = yieldResult;
-				const imageBlocks = extractQueueImages(nonCompact);
-				if (imageBlocks.length > 0) {
-					messages.push({
-						role: "user" as const,
-						content: [
-							{
-								type: "text" as const,
-								text: `[Messages received while you were idle:]\n${formatted}`,
-							},
-							...imageBlocks,
-						],
-					});
-				} else {
-					messages.push({
-						role: "user" as const,
-						content: `[Messages received while you were idle:]\n${formatted}`,
-					});
-				}
-				// Record queue events and messages_consumed
-				if (eventStore) {
-					recordQueueEvents(eventStore, sessionId, nonCompact);
-				}
-				continue;
-			}
-
-			// Execute tools concurrently
-			const execResults = await Promise.all(
-				toolUses.map((toolUse) =>
-					executeToolUnified(
-						toolUse.name,
-						toolUse.input as Record<string, unknown>,
-						mcpHandlers,
-						cwd,
-						request.cwd,
-						sessionId,
-						queue,
-					),
-				),
-			);
-
-			// Emit tool_result events and build API result array
-			type ImageMediaType =
-				| "image/jpeg"
-				| "image/png"
-				| "image/gif"
-				| "image/webp";
-			const toolResults: ToolResultBlockParam[] = [];
-			for (let i = 0; i < toolUses.length; i++) {
-				const toolUse = toolUses[i] as ToolUseBlock;
-				const exec = execResults[i] as (typeof execResults)[number];
-
-				// Update cwd if bash tool changed it
-				if (exec.cwd) {
-					cwd = exec.cwd;
-				}
-
-				const text = exec.content;
-				const isError = exec.isError;
-
-				const images = collectToolResultImages(exec);
-
-				yield {
-					type: "tool_result",
-					tool: toolUse.name,
-					toolUseId: toolUse.id,
-					content: text.slice(0, 500),
-					isError,
-					...(images.length > 0 ? { images } : {}),
-					...(exec._consumedMessageIds?.length
-						? { _consumedMessageIds: exec._consumedMessageIds }
-						: {}),
-				};
-
-				if (exec.isImage && exec.imageData && exec.mediaType) {
-					// Image: use array content with image block + text description
-					toolResults.push({
-						type: "tool_result",
-						tool_use_id: toolUse.id,
-						content: [
-							{
-								type: "image",
-								source: {
-									type: "base64",
-									media_type: exec.mediaType as ImageMediaType,
-									data: exec.imageData,
-								},
-							},
-							{ type: "text", text },
-						],
-					});
-				} else {
-					toolResults.push({
-						type: "tool_result",
-						tool_use_id: toolUse.id,
-						content: text,
-						is_error: isError,
-					});
-				}
-			}
-
-			// Cancellation point: drain queue and add messages as text blocks alongside tool results
-			let cancellationQueueMsgs: QueueMessage[] = [];
-			const cancellationTextBlocks: Array<{ type: "text"; text: string }> = [];
-			const cancellationImageBlocks: ReturnType<typeof extractQueueImages> = [];
-			if (queue) {
-				const drained = drainQueueAtCancellationPoint(queue);
-				if (drained) {
-					if (drained.manualCompactRequested) {
-						manualCompactRequested = true;
-					}
-					if (drained.messages.length > 0) {
-						cancellationTextBlocks.push({
-							type: "text" as const,
-							text: `[Messages received while you were working:]\n${drained.formatted}`,
-						});
-						cancellationImageBlocks.push(
-							...extractQueueImages(drained.messages),
-						);
-						cancellationQueueMsgs = drained.messages;
-						yield {
-							type: "queue_message",
-							messages: drained.formatted,
-							rawMessages: drained.messages.map(toRawMessage),
-						};
-					}
-				}
-			}
-
-			// Collect formatted queue messages from yield/done tools (separate from tool_result content)
-			const yieldQueueTextBlocks: Array<{ type: "text"; text: string }> = [];
-			const yieldQueueImageBlocks: Array<{
-				type: "image";
-				data: string;
-				mimeType: string;
-			}> = [];
-			for (const exec of execResults) {
-				if (exec._formattedQueueMessages) {
-					yieldQueueTextBlocks.push({
-						type: "text" as const,
-						text: `[Messages received while you were idle:]\n${exec._formattedQueueMessages}`,
-					});
-					// Images from yield/done are in mcpImages when _formattedQueueMessages is set
-					if (exec.mcpImages?.length) {
-						for (const img of exec.mcpImages) {
-							yieldQueueImageBlocks.push({
-								type: "image",
-								data: img.base64 ?? img.data ?? "",
-								mimeType: img.mediaType,
-							});
-						}
-					}
-				}
-			}
-
-			// Add tool results to history — queue messages as separate text/image blocks
-			// Anthropic user message content can mix tool_result, text, and image blocks
-			const userContentBlocks = [
-				...toolResults,
-				...yieldQueueTextBlocks,
-				...yieldQueueImageBlocks.map((img) => ({
-					type: "image" as const,
-					source: {
-						type: "base64" as const,
-						media_type: img.mimeType as ImageMediaType,
-						data: img.data,
-					},
-				})),
-				...(yieldQueueImageBlocks.length > 0
-					? [
-							{
-								type: "text" as const,
-								text: `[${yieldQueueImageBlocks.length} image(s) attached by user]`,
-							},
-						]
-					: []),
-				...cancellationTextBlocks,
-				...cancellationImageBlocks,
-				...(cancellationImageBlocks.length > 0
-					? [
-							{
-								type: "text" as const,
-								text: `[${cancellationImageBlocks.length} image(s) attached by user]`,
-							},
-						]
-					: []),
-			];
-			messages.push({
-				role: "user" as const,
-				content: userContentBlocks as MessageParam["content"],
-			});
-
-			// Record individual tool_result Events
-			if (eventStore) {
-				const toolEvents = buildToolResultEvents(
-					toolUses.map((tu) => ({ id: tu.id })),
-					execResults,
-					cancellationQueueMsgs,
-				);
-				eventStore.appendBatch(sessionId, toolEvents);
-			}
-
-			// If queue was closed during tool execution (done() was called),
-			// exit after recording events but before sending results to the API.
-			if (queue?.isClosed) {
-				const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
-				const exitCost =
-					(totalInputTokens * ip) / 1_000_000 +
-					(totalCacheCreationTokens * ip * 1.25) / 1_000_000 +
-					(totalCacheReadTokens * ip * 0.1) / 1_000_000 +
-					(totalOutputTokens * op) / 1_000_000;
-				return {
-					success: true,
-					output: lastText,
-					costUsd: exitCost,
-					turns,
-					sessionId,
-					inputTokens: totalInputTokens,
-					cacheCreationTokens: totalCacheCreationTokens,
-					cacheReadTokens: totalCacheReadTokens,
-					outputTokens: totalOutputTokens,
-				};
-			}
-
-			// Budget check: compute running cost and warn the agent if approaching limit
-			if (request.budgetUsd && request.budgetUsd > 0) {
-				const { inputPer1M, outputPer1M } = getModelPricing(model);
-				const runningCost =
-					(totalInputTokens * inputPer1M) / 1_000_000 +
-					(totalCacheCreationTokens * inputPer1M * 1.25) / 1_000_000 +
-					(totalCacheReadTokens * inputPer1M * 0.1) / 1_000_000 +
-					(totalOutputTokens * outputPer1M) / 1_000_000;
-				const budgetResult = checkBudget(request.budgetUsd, runningCost);
-				if (budgetResult) {
-					messages.push({
-						role: "user" as const,
-						content: budgetResult.warning,
-					});
-					recordBudgetWarning(eventStore, sessionId, budgetResult.warning);
-					yield { type: "status", message: budgetResult.warning };
-				}
-			}
-		}
-
-		// Deterministic verification: compare reconstructed messages from Events
-		if (eventStore) {
-			const activeEvents = eventStore.readActive(sessionId);
-			if (activeEvents.length > 0) {
-				const reconstructed = eventsToAnthropicMessages(activeEvents);
-				const match =
-					JSON.stringify(messages) === JSON.stringify(reconstructed);
-				if (!match) {
-					console.error("[EVENTS MISMATCH]", {
-						messagesLen: messages.length,
-						eventsLen: activeEvents.length,
-						reconstructedLen: reconstructed.length,
-					});
-				}
-			}
-		}
-
-		const { inputPer1M, outputPer1M } = getModelPricing(model);
-		// Anthropic API: input_tokens = non-cached tokens only (excludes cache_creation
-		// and cache_read tokens — those are reported separately). Do NOT subtract them.
-		const costUsd =
-			(totalInputTokens * inputPer1M) / 1_000_000 +
-			(totalCacheCreationTokens * inputPer1M * 1.25) / 1_000_000 +
-			(totalCacheReadTokens * inputPer1M * 0.1) / 1_000_000 +
-			(totalOutputTokens * outputPer1M) / 1_000_000;
-
-		return {
-			success: true,
-			output: lastText,
-			costUsd,
-			turns,
-			sessionId,
-			inputTokens: totalInputTokens,
-			cacheCreationTokens: totalCacheCreationTokens,
-			cacheReadTokens: totalCacheReadTokens,
-			outputTokens: totalOutputTokens,
+		const adapter = createAnthropicAdapter(this.client, this.useOAuth);
+		// Override the default model in the request
+		const effectiveRequest = {
+			...request,
+			model: request.model ?? this.model,
 		};
+		return yield* runProviderLoop(adapter, effectiveRequest, sessionId, queue);
 	}
 }

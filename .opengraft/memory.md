@@ -162,3 +162,16 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **Resume error dedup**: Only show errors after last `orchestration_started` or resume event.
 
 
+
+
+## Unified Provider Run Loop (Refactored)
+
+- **`runProviderLoop()`** in `provider-shared.ts` is the SINGLE run loop for both providers.
+- **`ProviderAdapter`** interface defines ~15 hooks for provider-specific operations.
+- Each provider creates an adapter via `createAnthropicAdapter()` / `createOpenAIAdapter()` and delegates to `runProviderLoop()`.
+- The run loop handles ALL control flow: resume, compaction, tool execution, implicit yield, budget check, EventStore recording.
+- Adapters handle: message format, API call + streaming, response parsing, tool result building, cost calculation, verification.
+- OpenAI `callAPI` is an async generator that never yields (no streaming) — needs `biome-ignore lint/correctness/useYield`.
+- Compaction text extraction from `messages` array works for both formats: Anthropic uses `content[]` blocks, OpenAI uses `content: string | null`.
+- Both providers use `{ role: "user", content: string }` for basic user messages — no adapter needed for that.
+- The `prepareTools` adapter also populates the `mcpHandlers` map (passed by reference) — keeps tool registration in one place.

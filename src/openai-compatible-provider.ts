@@ -5,27 +5,15 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
-import { toRawMessage } from "./agent-tools.ts";
-import {
-	type Event,
-	eventsToOpenAIMessages,
-	findOrphanedToolCalls,
-} from "./events.ts";
+import { type Event, eventsToOpenAIMessages } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
-	buildSummarizationInstruction,
-	buildToolResultEvents,
-	COMPACT_BUFFER_RATIO,
-	checkBudget,
-	collectToolResultImages,
-	DEFAULT_MAX_TOKENS,
-	drainQueueAtCancellationPoint,
-	executeToolUnified,
 	extractQueueImageParts,
-	handleImplicitYield,
-	processCompaction,
-	recordBudgetWarning,
-	recordQueueEvents,
+	type ProviderAdapter,
+	type ProviderTokenUsage,
+	type ProviderToolUse,
+	runProviderLoop,
+	type ToolExecResult,
 	zodShapeToJsonSchema,
 } from "./provider-shared.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
@@ -259,11 +247,464 @@ export function convertToolsToOpenAI(tools: typeof TOOLS): OpenAITool[] {
 	}));
 }
 
-// ── Compaction (in-context) ──
-// Compaction is now done in-context: a summarization instruction is pushed as a user
-// message, the model generates the checkpoint in its next response, and the context
-// is rebuilt. No separate API call is needed. See SUMMARIZATION_INSTRUCTION and
-// extractCheckpoint in anthropic-compatible-provider.ts.
+// ── OpenAI API call helper ──
+
+async function callOpenAIAPI(
+	baseUrl: string,
+	apiKey: string,
+	messages: OpenAIMessage[],
+	tools: OpenAITool[],
+	model: string,
+	maxTokens: number,
+): Promise<OpenAIChatResponse> {
+	const body: Record<string, unknown> = {
+		model,
+		messages,
+		max_tokens: maxTokens,
+	};
+	if (tools.length > 0) {
+		body.tools = tools;
+		body.tool_choice = "auto";
+	}
+
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const response = await fetch(`${baseUrl}/chat/completions`, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${apiKey}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify(body),
+		});
+
+		if (response.ok) {
+			return (await response.json()) as OpenAIChatResponse;
+		}
+
+		const status = response.status;
+		const isTransient =
+			status === 429 || status === 500 || status === 503 || status === 529;
+		if (!isTransient || attempt >= 4) {
+			const errorText = await response.text();
+			throw new Error(`OpenAI API error (${status}): ${errorText}`);
+		}
+
+		const delay = Math.min(2000 * 2 ** attempt, 60000);
+		await new Promise((r) => setTimeout(r, delay));
+	}
+
+	throw new Error("Failed to get API response after retries");
+}
+
+// ── OpenAI Provider Adapter ──
+
+/**
+ * Create an OpenAI adapter for the unified run loop.
+ * Encapsulates all OpenAI-specific API call format, response parsing, etc.
+ */
+function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
+	return {
+		async getContextWindow(model: string): Promise<number> {
+			const apiContextWindow = await fetchContextWindowFromAPI(
+				baseUrl,
+				apiKey,
+				model,
+			);
+			return apiContextWindow ?? getContextWindow(model);
+		},
+
+		getModelPricing(model: string) {
+			return getModelPricing(model);
+		},
+
+		convertEventsToMessages(events: Event[]): unknown[] {
+			return eventsToOpenAIMessages(events) as unknown[];
+		},
+
+		prepareTools(
+			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+			mcpToolDefs: Record<string, ToolDefinition<any>[]> | undefined,
+			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+			mcpHandlers: Map<string, ToolDefinition<any>>,
+		): unknown[] {
+			const builtinTools = convertToolsToOpenAI(TOOLS);
+			const allTools: OpenAITool[] = [...builtinTools];
+			if (mcpToolDefs) {
+				for (const [serverName, defs] of Object.entries(mcpToolDefs)) {
+					for (const def of defs) {
+						const toolName = `mcp__${serverName}__${def.name}`;
+						mcpHandlers.set(toolName, def);
+						allTools.push({
+							type: "function",
+							function: {
+								name: toolName,
+								description: def.description,
+								parameters:
+									def.jsonSchema ?? zodShapeToJsonSchema(def.inputSchema),
+							},
+						});
+					}
+				}
+			}
+			return allTools;
+		},
+
+		// biome-ignore lint/correctness/useYield: OpenAI doesn't stream — no text_delta events to yield
+		async *callAPI(params) {
+			const tools = params.tools as OpenAITool[];
+
+			// Build messages for API: system prompt first, then conversation
+			// Append tool-use instruction — models on OpenAI-compatible APIs need explicit guidance
+			const systemContent = params.systemPrompt
+				? `${params.systemPrompt}\n\nIMPORTANT: Always call at least one tool in each response. Use your tools to accomplish the task. Do not generate text responses without making tool calls.`
+				: "IMPORTANT: Always call at least one tool in each response.";
+			const apiMessages: OpenAIMessage[] = [
+				{
+					role: "system",
+					content: systemContent,
+				},
+				...(params.messages as OpenAIMessage[]),
+			];
+
+			const data = await callOpenAIAPI(
+				baseUrl,
+				apiKey,
+				apiMessages,
+				tools,
+				params.model,
+				params.maxTokens,
+			);
+
+			return data;
+		},
+
+		getResponseText(response: unknown): string {
+			const data = response as OpenAIChatResponse;
+			const choice = data.choices[0];
+			return choice?.message.content ?? "";
+		},
+
+		getToolUses(response: unknown): ProviderToolUse[] {
+			const data = response as OpenAIChatResponse;
+			const choice = data.choices[0];
+			const toolCalls = choice?.message.tool_calls ?? [];
+			return toolCalls.map((tc) => {
+				let parsedInput: Record<string, unknown> = {};
+				try {
+					parsedInput = JSON.parse(tc.function.arguments);
+				} catch {
+					// Keep empty
+				}
+				return {
+					id: tc.id,
+					name: tc.function.name,
+					input: parsedInput,
+				};
+			});
+		},
+
+		getTokenUsage(response: unknown): ProviderTokenUsage {
+			const data = response as OpenAIChatResponse;
+			const promptTokens = data.usage?.prompt_tokens ?? 0;
+			const completionTokens = data.usage?.completion_tokens ?? 0;
+			return {
+				inputTokens: promptTokens,
+				outputTokens: completionTokens,
+				totalContextTokens: promptTokens,
+			};
+		},
+
+		getStopReason(response: unknown): "end_turn" | "tool_use" {
+			const data = response as OpenAIChatResponse;
+			const choice = data.choices[0];
+			const toolCalls = choice?.message.tool_calls ?? [];
+			if (toolCalls.length === 0 || choice?.finish_reason === "stop") {
+				return "end_turn";
+			}
+			return "tool_use";
+		},
+
+		supportsTokenCounting: false,
+
+		buildResponseEvents(response: unknown, isCompacting: boolean): Event[] {
+			const data = response as OpenAIChatResponse;
+			const choice = data.choices[0];
+			const events: Event[] = [];
+
+			if (choice?.message.content) {
+				events.push({
+					type: "assistant_text",
+					content: choice.message.content,
+					ts: Date.now(),
+				});
+			}
+
+			if (!isCompacting && choice?.message.tool_calls) {
+				for (const tc of choice.message.tool_calls) {
+					let parsedInput: Record<string, unknown> = {};
+					try {
+						parsedInput = JSON.parse(tc.function.arguments);
+					} catch {
+						// Keep empty
+					}
+					events.push({
+						type: "tool_call",
+						tool: tc.function.name,
+						toolCallId: tc.id,
+						input: parsedInput,
+						ts: Date.now(),
+					});
+				}
+			}
+
+			return events;
+		},
+
+		addAssistantMessage(
+			messages: unknown[],
+			response: unknown,
+			isCompacting: boolean,
+		): void {
+			const data = response as OpenAIChatResponse;
+			const choice = data.choices[0];
+			if (!choice) return;
+
+			const historyMsg: OpenAIMessage = {
+				role: "assistant",
+				content: choice.message.content,
+			};
+			if (
+				!isCompacting &&
+				choice.message.tool_calls &&
+				choice.message.tool_calls.length > 0
+			) {
+				historyMsg.tool_calls = choice.message.tool_calls;
+			}
+			(messages as OpenAIMessage[]).push(historyMsg);
+		},
+
+		buildToolResultsMessage(params): unknown[] {
+			const result: OpenAIMessage[] = [];
+
+			// Image results to inject as user message (OpenAI tool results are text-only)
+			const imageResults: Array<{
+				text: string;
+				dataUri: string;
+			}> = [];
+
+			// Queue messages from yield/done tools
+			const yieldQueueTexts: string[] = [];
+			const yieldQueueImageParts: Array<
+				| { type: "text"; text: string }
+				| {
+						type: "image_url";
+						image_url: { url: string; detail: "auto" };
+				  }
+			> = [];
+
+			for (let i = 0; i < params.toolUses.length; i++) {
+				const toolUse = params.toolUses[i] as ProviderToolUse;
+				const exec = params.execResults[i] as ToolExecResult;
+
+				// OpenAI format: each tool result is a separate message
+				result.push({
+					role: "tool",
+					tool_call_id: toolUse.id,
+					name: toolUse.name,
+					content: exec.content,
+				});
+
+				if (exec._formattedQueueMessages) {
+					yieldQueueTexts.push(
+						`[Messages received while you were idle:]\n${exec._formattedQueueMessages}`,
+					);
+					if (exec.mcpImages?.length) {
+						for (const img of exec.mcpImages) {
+							yieldQueueImageParts.push(
+								{
+									type: "text" as const,
+									text: "[User-attached image]",
+								},
+								{
+									type: "image_url" as const,
+									image_url: {
+										url: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
+										detail: "auto" as const,
+									},
+								},
+							);
+						}
+					}
+				} else {
+					if (exec.isImage && exec.imageData && exec.mediaType) {
+						imageResults.push({
+							text: exec.content,
+							dataUri: `data:${exec.mediaType};base64,${exec.imageData}`,
+						});
+					}
+					if (exec.mcpImages?.length) {
+						for (const img of exec.mcpImages) {
+							imageResults.push({
+								text: "[User-attached image]",
+								dataUri: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
+							});
+						}
+					}
+				}
+			}
+
+			// Inject images as a user message (OpenAI tool results are text-only)
+			if (imageResults.length > 0) {
+				const imageParts: Array<
+					| { type: "text"; text: string }
+					| {
+							type: "image_url";
+							image_url: { url: string; detail: "auto" };
+					  }
+				> = [];
+				for (const img of imageResults) {
+					imageParts.push(
+						{ type: "text", text: img.text },
+						{
+							type: "image_url",
+							image_url: { url: img.dataUri, detail: "auto" },
+						},
+					);
+				}
+				result.push({ role: "user", content: imageParts });
+			}
+
+			// Inject queue messages from yield/done as a separate user message
+			if (yieldQueueTexts.length > 0 || yieldQueueImageParts.length > 0) {
+				const parts: Array<
+					| { type: "text"; text: string }
+					| {
+							type: "image_url";
+							image_url: { url: string; detail: "auto" };
+					  }
+				> = [
+					...yieldQueueTexts.map((t) => ({
+						type: "text" as const,
+						text: t,
+					})),
+					...yieldQueueImageParts,
+				];
+				result.push({ role: "user", content: parts });
+			}
+
+			// Append done() reminder to the last tool result
+			let lastTool: OpenAIMessage | undefined;
+			for (let i = result.length - 1; i >= 0; i--) {
+				if (result[i]?.role === "tool") {
+					lastTool = result[i];
+					break;
+				}
+			}
+			if (lastTool?.role === "tool" && typeof lastTool.content === "string") {
+				lastTool.content +=
+					"\n\n[CRITICAL: If your work is complete, call done() with status 'passed' or 'failed'. Do NOT stop without calling done().]";
+			}
+
+			// Cancellation point: append to last tool result
+			if (
+				params.cancellationQueueMsgs.length > 0 &&
+				params.cancellationFormatted
+			) {
+				if (lastTool?.role === "tool" && typeof lastTool.content === "string") {
+					lastTool.content += `\n\n---\n[Messages received while you were working:]\n${params.cancellationFormatted}`;
+				}
+				// Add any queued images as a user message
+				const queueImageParts = extractQueueImageParts(
+					params.cancellationQueueMsgs,
+				);
+				if (queueImageParts.length > 0) {
+					result.push({
+						role: "user",
+						content: [
+							{
+								type: "text" as const,
+								text: `[${queueImageParts.length} image(s) attached by user]`,
+							},
+							...queueImageParts,
+						],
+					});
+				}
+			}
+
+			return result;
+		},
+
+		buildImplicitYieldMessage(formatted: string, nonCompact: QueueMessage[]) {
+			const imageParts = extractQueueImageParts(nonCompact);
+			if (imageParts.length > 0) {
+				return {
+					role: "user" as const,
+					content: [
+						{
+							type: "text" as const,
+							text: `[Messages received while you were idle:]\n${formatted}`,
+						},
+						...imageParts,
+					],
+				};
+			}
+			return {
+				role: "user" as const,
+				content: `[Messages received while you were idle:]\n${formatted}`,
+			};
+		},
+
+		buildCompactedResumeMessage(content: string) {
+			return { role: "user" as const, content };
+		},
+
+		buildBudgetWarningMessage(warning: string) {
+			return { role: "user" as const, content: warning };
+		},
+
+		computeCost(
+			model: string,
+			totalInputTokens: number,
+			totalOutputTokens: number,
+			_totalCacheCreationTokens: number,
+			_totalCacheReadTokens: number,
+		): number {
+			const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
+			return (
+				(totalInputTokens * ip) / 1_000_000 +
+				(totalOutputTokens * op) / 1_000_000
+			);
+		},
+
+		buildResult(params): AgentResult {
+			return {
+				success: params.success,
+				output: params.output,
+				costUsd: params.costUsd,
+				turns: params.turns,
+				sessionId: params.sessionId,
+				inputTokens: params.totalInputTokens,
+				outputTokens: params.totalOutputTokens,
+			};
+		},
+
+		verifyEvents(params) {
+			const activeEvents = params.eventStore.readActive(params.sessionId);
+			if (activeEvents.length > 0) {
+				const reconstructed = eventsToOpenAIMessages(activeEvents);
+				const match =
+					JSON.stringify(params.messages) === JSON.stringify(reconstructed);
+				if (!match) {
+					console.error("[EVENTS MISMATCH]", {
+						messagesLen: (params.messages as unknown[]).length,
+						eventsLen: activeEvents.length,
+						reconstructedLen: reconstructed.length,
+					});
+				}
+			}
+		},
+	};
+}
 
 // ── Provider ──
 
@@ -351,722 +792,16 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		};
 	}
 
-	private async callAPI(
-		messages: OpenAIMessage[],
-		tools: OpenAITool[],
-		model: string,
-		maxTokens: number,
-	): Promise<OpenAIChatResponse> {
-		const body: Record<string, unknown> = {
-			model,
-			messages,
-			max_tokens: maxTokens,
-		};
-		if (tools.length > 0) {
-			body.tools = tools;
-			body.tool_choice = "auto";
-		}
-
-		for (let attempt = 0; attempt < 5; attempt++) {
-			const response = await fetch(`${this.baseUrl}/chat/completions`, {
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${this.apiKey}`,
-					"Content-Type": "application/json",
-				},
-				body: JSON.stringify(body),
-			});
-
-			if (response.ok) {
-				return (await response.json()) as OpenAIChatResponse;
-			}
-
-			const status = response.status;
-			const isTransient =
-				status === 429 || status === 500 || status === 503 || status === 529;
-			if (!isTransient || attempt >= 4) {
-				const errorText = await response.text();
-				throw new Error(`OpenAI API error (${status}): ${errorText}`);
-			}
-
-			const delay = Math.min(2000 * 2 ** attempt, 60000);
-			await new Promise((r) => setTimeout(r, delay));
-		}
-
-		throw new Error("Failed to get API response after retries");
-	}
-
 	private async *runLoop(
 		request: AgentRequest,
 		sessionId: string,
 		queue?: MessageQueue,
 	): AsyncGenerator<AgentEvent, AgentResult> {
-		const model = request.model ?? this.model;
-		let cwd = request.cwd;
-
-		// Try to fetch context window from API, fall back to static lookup
-		const apiContextWindow = await fetchContextWindowFromAPI(
-			this.baseUrl,
-			this.apiKey,
-			model,
-		);
-		const contextWindow = apiContextWindow ?? getContextWindow(model);
-		const compressThreshold = Math.floor(
-			contextWindow * (1 - COMPACT_BUFFER_RATIO),
-		);
-
-		// ── Event recording via EventStore (JSONL append-only) ──
-		const eventStore = request.eventStore;
-
-		// Load session from EventStore (survives daemon restart)
-		let activeEvents = eventStore ? eventStore.readActive(sessionId) : [];
-		const isResume = activeEvents.length > 0;
-
-		// Fix orphaned tool_calls: persist synthetic tool_results to JSONL so the
-		// fix survives future restarts (no repeated re-fixing on each resume)
-		if (isResume && eventStore) {
-			const orphanFixes = findOrphanedToolCalls(activeEvents);
-			if (orphanFixes.length > 0) {
-				await eventStore.appendBatch(sessionId, orphanFixes);
-				activeEvents = [...activeEvents, ...orphanFixes];
-			}
-		}
-
-		const firstUserContent =
-			cwd && !isResume
-				? `Working directory: ${cwd}\n\n${request.prompt}`
-				: request.prompt;
-
-		// Reconstruct messages from EventStore on resume, or start fresh
-		const messages: OpenAIMessage[] = isResume
-			? [
-					...(eventsToOpenAIMessages(activeEvents) as OpenAIMessage[]),
-					{ role: "user" as const, content: request.prompt },
-				]
-			: [{ role: "user" as const, content: firstUserContent }];
-
-		// Record the new user message event
-		if (eventStore) {
-			if (isResume) {
-				eventStore.append(sessionId, {
-					type: "message",
-					content: request.prompt,
-					isResume: true,
-					ts: Date.now(),
-				});
-			} else {
-				eventStore.append(sessionId, {
-					type: "message",
-					content: firstUserContent,
-					cwd,
-					ts: Date.now(),
-				});
-			}
-		}
-
-		// Build tool list: built-in tools (converted) + MCP tools
-		const builtinTools = convertToolsToOpenAI(TOOLS);
-		const allTools: OpenAITool[] = [...builtinTools];
-		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-		const mcpHandlers = new Map<string, ToolDefinition<any>>();
-
-		if (request.mcpToolDefs) {
-			for (const [serverName, defs] of Object.entries(request.mcpToolDefs)) {
-				for (const def of defs) {
-					const toolName = `mcp__${serverName}__${def.name}`;
-					mcpHandlers.set(toolName, def);
-					allTools.push({
-						type: "function",
-						function: {
-							name: toolName,
-							description: def.description,
-							parameters:
-								def.jsonSchema ?? zodShapeToJsonSchema(def.inputSchema),
-						},
-					});
-				}
-			}
-		}
-
-		let turns = 0;
-		let totalInputTokens = 0;
-		let totalOutputTokens = 0;
-		let estimatedInputTokens = 0;
-		let lastText = "";
-		let manualCompactRequested = false;
-		let compactionPending = false;
-		let preCompactTokenCount = 0;
-
-		yield { type: "status", message: `Starting agent loop (model: ${model})` };
-
-		while (true) {
-			if (request.signal?.aborted) {
-				yield { type: "status", message: "Aborted" };
-				break;
-			}
-
-			// ── Handle compaction response: extract checkpoint and rebuild context ──
-			if (compactionPending) {
-				compactionPending = false;
-				const lastMsg = messages[messages.length - 1];
-				let responseText = "";
-				if (lastMsg?.role === "assistant") {
-					const content = lastMsg.content;
-					if (typeof content === "string") {
-						responseText = content;
-					} else if (content === null) {
-						responseText = "";
-					}
-				}
-
-				const compactGen = processCompaction(
-					responseText,
-					cwd,
-					preCompactTokenCount,
-					eventStore,
-					sessionId,
-					contextWindow,
-					compressThreshold,
-				);
-				let compactStep = await compactGen.next();
-				while (!compactStep.done) {
-					yield compactStep.value;
-					compactStep = await compactGen.next();
-				}
-				const compactResult = compactStep.value;
-
-				if (compactResult) {
-					messages.length = 0;
-					messages.push({
-						role: "user" as const,
-						content: compactResult.userContent,
-					});
-					estimatedInputTokens = compactResult.estimatedInputTokens;
-					manualCompactRequested = false;
-				}
-				continue; // Skip normal processing, go to next API call with rebuilt context
-			}
-
-			// ── Pre-call compression: inject summarization instruction if over threshold ──
-			if (manualCompactRequested && messages.length <= 4) {
-				yield { type: "status", message: "Context is too short to compact" };
-				yield { type: "compact_started" };
-				yield {
-					type: "compact",
-					checkpoint: "Context too short for meaningful compaction",
-					savedTokens: 0,
-				};
-				manualCompactRequested = false;
-				continue;
-			}
-			if (
-				messages.length > 4 &&
-				(manualCompactRequested || estimatedInputTokens > compressThreshold)
-			) {
-				yield { type: "compact_started" };
-				yield {
-					type: "status",
-					message: manualCompactRequested
-						? "Manual compaction triggered"
-						: `Compressing conversation (est. ${estimatedInputTokens} tokens, threshold: ${compressThreshold})`,
-				};
-				// Inject summarization instruction as a user message instead of making a separate API call
-				const summarizationInstruction = buildSummarizationInstruction(cwd);
-				messages.push({
-					role: "user" as const,
-					content: summarizationInstruction,
-				});
-				if (eventStore) {
-					eventStore.append(sessionId, {
-						type: "summarization_request",
-						instruction: summarizationInstruction,
-						ts: Date.now(),
-					});
-				}
-				compactionPending = true;
-				preCompactTokenCount = estimatedInputTokens;
-				// Fall through to the normal API call — the model will generate the checkpoint
-			}
-
-			turns++;
-
-			// Build messages for API: system prompt first, then conversation
-			// Append tool-use instruction — models on OpenAI-compatible APIs need explicit guidance
-			const systemContent = request.systemPrompt
-				? `${request.systemPrompt}\n\nIMPORTANT: Always call at least one tool in each response. Use your tools to accomplish the task. Do not generate text responses without making tool calls.`
-				: "IMPORTANT: Always call at least one tool in each response.";
-			const apiMessages: OpenAIMessage[] = [
-				{
-					role: "system",
-					content: systemContent,
-				},
-				...messages,
-			];
-
-			let data: OpenAIChatResponse;
-			try {
-				data = await this.callAPI(
-					apiMessages,
-					allTools,
-					model,
-					DEFAULT_MAX_TOKENS,
-				);
-			} catch (e) {
-				yield {
-					type: "error",
-					message: `API error: ${e instanceof Error ? e.message : String(e)}`,
-				};
-				break;
-			}
-
-			const promptTokens = data.usage?.prompt_tokens ?? 0;
-			const completionTokens = data.usage?.completion_tokens ?? 0;
-			totalInputTokens += promptTokens;
-			totalOutputTokens += completionTokens;
-			estimatedInputTokens = promptTokens + completionTokens;
-
-			yield {
-				type: "usage",
-				inputTokens: promptTokens,
-				compressThreshold,
-				contextWindow,
-			};
-
-			const choice = data.choices[0];
-			if (!choice) {
-				yield { type: "error", message: "No choices in API response" };
-				break;
-			}
-
-			const assistantMsg = choice.message;
-
-			// Emit text content (skip during compaction — checkpoint text is not user-facing)
-			if (assistantMsg.content) {
-				lastText = assistantMsg.content;
-				if (!compactionPending) {
-					yield { type: "text", content: assistantMsg.content };
-				}
-			}
-
-			// Add assistant message to history
-			const historyMsg: OpenAIMessage = {
-				role: "assistant",
-				content: assistantMsg.content,
-			};
-			if (
-				!compactionPending &&
-				assistantMsg.tool_calls &&
-				assistantMsg.tool_calls.length > 0
-			) {
-				historyMsg.tool_calls = assistantMsg.tool_calls;
-			}
-			messages.push(historyMsg);
-			// Record individual Events for each content block
-			if (eventStore) {
-				const contentEvents: Event[] = [];
-				if (assistantMsg.content) {
-					contentEvents.push({
-						type: "assistant_text",
-						content: assistantMsg.content,
-						ts: Date.now(),
-					});
-				}
-				if (
-					!compactionPending &&
-					assistantMsg.tool_calls &&
-					assistantMsg.tool_calls.length > 0
-				) {
-					for (const tc of assistantMsg.tool_calls) {
-						let parsedInput: Record<string, unknown> = {};
-						try {
-							parsedInput = JSON.parse(tc.function.arguments);
-						} catch {
-							// Keep empty
-						}
-						contentEvents.push({
-							type: "tool_call",
-							tool: tc.function.name,
-							toolCallId: tc.id,
-							input: parsedInput,
-							ts: Date.now(),
-						});
-					}
-				}
-				eventStore.appendBatch(sessionId, contentEvents);
-			}
-
-			// If compaction is pending, skip tool execution and continue to next iteration
-			// where the checkpoint will be extracted and context rebuilt
-			if (compactionPending) {
-				continue;
-			}
-
-			const toolCalls = assistantMsg.tool_calls ?? [];
-
-			// If no tool calls, handle end of turn — enter implicit yield
-			if (toolCalls.length === 0 || choice.finish_reason === "stop") {
-				if (!queue) {
-					// No queue — cannot yield, just exit
-					yield {
-						type: "status",
-						message: "Agent ended turn (no queue for yield)",
-					};
-					break;
-				}
-
-				yield {
-					type: "status",
-					message:
-						"Agent ended turn — entering idle state (waiting for messages)",
-				};
-
-				const yieldGen = handleImplicitYield(queue);
-				let yieldStep = await yieldGen.next();
-				while (!yieldStep.done) {
-					yield yieldStep.value;
-					yieldStep = await yieldGen.next();
-				}
-				const yieldResult = yieldStep.value;
-
-				if (yieldResult === null) {
-					// Queue closed — normal exit path (stop was called)
-					// NOTE: Using direct return instead of break to work around Bun async generator hang.
-					const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
-					const exitCost =
-						(totalInputTokens * ip) / 1_000_000 +
-						(totalOutputTokens * op) / 1_000_000;
-					return {
-						success: true,
-						output: lastText,
-						costUsd: exitCost,
-						turns,
-						sessionId,
-						inputTokens: totalInputTokens,
-						outputTokens: totalOutputTokens,
-					};
-				}
-
-				if (yieldResult.manualCompactRequested) {
-					manualCompactRequested = true;
-				}
-				if (yieldResult.compactOnly) {
-					continue;
-				}
-
-				// Inject messages as a new user turn and continue the loop
-				const { formatted, nonCompact } = yieldResult;
-				const imageParts = extractQueueImageParts(nonCompact);
-				if (imageParts.length > 0) {
-					messages.push({
-						role: "user",
-						content: [
-							{
-								type: "text" as const,
-								text: `[Messages received while you were idle:]\n${formatted}`,
-							},
-							...imageParts,
-						],
-					});
-				} else {
-					messages.push({
-						role: "user",
-						content: `[Messages received while you were idle:]\n${formatted}`,
-					});
-				}
-				// Record queue events and messages_consumed
-				if (eventStore) {
-					recordQueueEvents(eventStore, sessionId, nonCompact);
-				}
-				continue;
-			}
-
-			// Emit tool_use events
-			for (const tc of toolCalls) {
-				let parsedInput: Record<string, unknown> = {};
-				try {
-					parsedInput = JSON.parse(tc.function.arguments);
-				} catch {
-					// Keep empty
-				}
-				yield {
-					type: "tool_use",
-					tool: tc.function.name,
-					toolUseId: tc.id,
-					input: parsedInput,
-				};
-			}
-
-			// Execute tools concurrently
-			const execResults = await Promise.all(
-				toolCalls.map(async (tc) => {
-					let parsedInput: Record<string, unknown> = {};
-					try {
-						parsedInput = JSON.parse(tc.function.arguments);
-					} catch {
-						return {
-							content: `Invalid JSON arguments: ${tc.function.arguments}`,
-							isError: true,
-						};
-					}
-
-					return executeToolUnified(
-						tc.function.name,
-						parsedInput,
-						mcpHandlers,
-						cwd,
-						request.cwd,
-						sessionId,
-						queue,
-					);
-				}),
-			);
-
-			// Emit tool_result events and build response messages
-			// Collect image results to inject as user message after tool results
-			const imageResults: Array<{
-				text: string;
-				dataUri: string;
-			}> = [];
-
-			// Collect formatted queue messages from yield/done tools for separate user message
-			const yieldQueueTexts: string[] = [];
-			const yieldQueueImageParts: Array<
-				| { type: "text"; text: string }
-				| {
-						type: "image_url";
-						image_url: { url: string; detail: "auto" };
-				  }
-			> = [];
-
-			for (let i = 0; i < toolCalls.length; i++) {
-				const tc = toolCalls[i] as OpenAIToolCall;
-				const exec = execResults[i] as (typeof execResults)[number];
-
-				if (exec.cwd) cwd = exec.cwd;
-
-				const images = collectToolResultImages(exec);
-
-				yield {
-					type: "tool_result",
-					tool: tc.function.name,
-					toolUseId: tc.id,
-					content: exec.content.slice(0, 500),
-					isError: exec.isError,
-					...(images.length > 0 ? { images } : {}),
-					...(exec._consumedMessageIds?.length
-						? { _consumedMessageIds: exec._consumedMessageIds }
-						: {}),
-				};
-
-				// OpenAI format: each tool result is a separate message
-				messages.push({
-					role: "tool",
-					tool_call_id: tc.id,
-					name: tc.function.name,
-					content: exec.content,
-				});
-
-				if (exec._formattedQueueMessages) {
-					// Queue messages from yield/done — collect for separate user message
-					yieldQueueTexts.push(
-						`[Messages received while you were idle:]\n${exec._formattedQueueMessages}`,
-					);
-					if (exec.mcpImages?.length) {
-						for (const img of exec.mcpImages) {
-							yieldQueueImageParts.push(
-								{
-									type: "text" as const,
-									text: "[User-attached image]",
-								},
-								{
-									type: "image_url" as const,
-									image_url: {
-										url: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
-										detail: "auto" as const,
-									},
-								},
-							);
-						}
-					}
-				} else {
-					if (exec.isImage && exec.imageData && exec.mediaType) {
-						imageResults.push({
-							text: exec.content,
-							dataUri: `data:${exec.mediaType};base64,${exec.imageData}`,
-						});
-					}
-					// Handle images from MCP tool results (non-yield tools only)
-					if (exec.mcpImages?.length) {
-						for (const img of exec.mcpImages) {
-							imageResults.push({
-								text: "[User-attached image]",
-								dataUri: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
-							});
-						}
-					}
-				}
-			}
-
-			// Inject images as a user message (OpenAI tool results are text-only)
-			if (imageResults.length > 0) {
-				const imageParts: Array<
-					| { type: "text"; text: string }
-					| {
-							type: "image_url";
-							image_url: { url: string; detail: "auto" };
-					  }
-				> = [];
-				for (const img of imageResults) {
-					imageParts.push(
-						{ type: "text", text: img.text },
-						{
-							type: "image_url",
-							image_url: { url: img.dataUri, detail: "auto" },
-						},
-					);
-				}
-				messages.push({ role: "user", content: imageParts });
-			}
-
-			// Inject queue messages from yield/done as a separate user message
-			if (yieldQueueTexts.length > 0 || yieldQueueImageParts.length > 0) {
-				const parts: Array<
-					| { type: "text"; text: string }
-					| {
-							type: "image_url";
-							image_url: { url: string; detail: "auto" };
-					  }
-				> = [
-					...yieldQueueTexts.map((t) => ({
-						type: "text" as const,
-						text: t,
-					})),
-					...yieldQueueImageParts,
-				];
-				messages.push({ role: "user", content: parts });
-			}
-
-			// Append done() reminder to the last tool result
-			const lastToolMsg = messages[messages.length - 1];
-			if (
-				lastToolMsg?.role === "tool" &&
-				typeof lastToolMsg.content === "string"
-			) {
-				lastToolMsg.content +=
-					"\n\n[CRITICAL: If your work is complete, call done() with status 'passed' or 'failed'. Do NOT stop without calling done().]";
-			}
-
-			// Cancellation point: drain queue and append to last tool result
-			let cancellationQueueMsgs: QueueMessage[] = [];
-			if (queue) {
-				const drained = drainQueueAtCancellationPoint(queue);
-				if (drained) {
-					if (drained.manualCompactRequested) {
-						manualCompactRequested = true;
-					}
-					if (drained.messages.length > 0) {
-						cancellationQueueMsgs = drained.messages;
-						if (
-							lastToolMsg?.role === "tool" &&
-							typeof lastToolMsg.content === "string"
-						) {
-							lastToolMsg.content += `\n\n---\n[Messages received while you were working:]\n${drained.formatted}`;
-						}
-						// Add any queued images as a user message
-						const queueImageParts = extractQueueImageParts(drained.messages);
-						if (queueImageParts.length > 0) {
-							messages.push({
-								role: "user",
-								content: [
-									{
-										type: "text" as const,
-										text: `[${queueImageParts.length} image(s) attached by user]`,
-									},
-									...queueImageParts,
-								],
-							});
-						}
-						yield {
-							type: "queue_message",
-							messages: drained.formatted,
-							rawMessages: drained.messages.map(toRawMessage),
-						};
-					}
-				}
-			}
-
-			// Record individual tool_result Events
-			if (eventStore) {
-				const toolEvents = buildToolResultEvents(
-					toolCalls.map((tc) => ({ id: tc.id })),
-					execResults,
-					cancellationQueueMsgs,
-				);
-				eventStore.appendBatch(sessionId, toolEvents);
-			}
-
-			// If queue was closed during tool execution (done() was called),
-			// exit after recording events but before sending results to the API.
-			if (queue?.isClosed) {
-				const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
-				return {
-					success: true,
-					output: lastText,
-					costUsd:
-						(totalInputTokens * ip) / 1_000_000 +
-						(totalOutputTokens * op) / 1_000_000,
-					turns,
-					sessionId,
-					inputTokens: totalInputTokens,
-					outputTokens: totalOutputTokens,
-				};
-			}
-
-			// Budget check
-			if (request.budgetUsd && request.budgetUsd > 0) {
-				const { inputPer1M, outputPer1M } = getModelPricing(model);
-				const runningCost =
-					(totalInputTokens * inputPer1M) / 1_000_000 +
-					(totalOutputTokens * outputPer1M) / 1_000_000;
-				const budgetResult = checkBudget(request.budgetUsd, runningCost);
-				if (budgetResult) {
-					messages.push({ role: "user", content: budgetResult.warning });
-					recordBudgetWarning(eventStore, sessionId, budgetResult.warning);
-					yield { type: "status", message: budgetResult.warning };
-				}
-			}
-		}
-
-		// Deterministic verification: compare reconstructed messages from Events
-		if (eventStore) {
-			const activeEvents = eventStore.readActive(sessionId);
-			if (activeEvents.length > 0) {
-				const reconstructed = eventsToOpenAIMessages(activeEvents);
-				const match =
-					JSON.stringify(messages) === JSON.stringify(reconstructed);
-				if (!match) {
-					console.error("[EVENTS MISMATCH]", {
-						messagesLen: messages.length,
-						eventsLen: activeEvents.length,
-						reconstructedLen: reconstructed.length,
-					});
-				}
-			}
-		}
-
-		const { inputPer1M, outputPer1M } = getModelPricing(model);
-		const costUsd =
-			(totalInputTokens * inputPer1M) / 1_000_000 +
-			(totalOutputTokens * outputPer1M) / 1_000_000;
-
-		return {
-			success: true,
-			output: lastText,
-			costUsd,
-			turns,
-			sessionId,
-			inputTokens: totalInputTokens,
-			outputTokens: totalOutputTokens,
+		const adapter = createOpenAIAdapter(this.baseUrl, this.apiKey);
+		const effectiveRequest = {
+			...request,
+			model: request.model ?? this.model,
 		};
+		return yield* runProviderLoop(adapter, effectiveRequest, sessionId, queue);
 	}
 }

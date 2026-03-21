@@ -2,16 +2,25 @@
  * Shared provider logic extracted from anthropic-compatible-provider.ts and
  * openai-compatible-provider.ts. Both providers import these helpers to avoid
  * code duplication.
+ *
+ * The unified `runProviderLoop()` is the single run loop used by both providers.
+ * Each provider implements a `ProviderAdapter` interface with hooks for the
+ * API-specific operations (message format, API call, response parsing, etc.).
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentEvent } from "./agent-provider.ts";
+import type { AgentEvent, AgentRequest } from "./agent-provider.ts";
 import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
 import type { EventStore } from "./event-store.ts";
-import { type Event, queueMessageToEvent } from "./events.ts";
+import {
+	type Event,
+	findOrphanedToolCalls,
+	queueMessageToEvent,
+} from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import { executeTool } from "./tools/index.ts";
+import type { AgentResult } from "./types.ts";
 
 // ── Constants ──
 
@@ -792,4 +801,684 @@ export function recordBudgetWarning(
 			ts: Date.now(),
 		});
 	}
+}
+
+// ── Unified Provider Adapter Interface ──
+
+/** Tool use extracted from a provider response. */
+export interface ProviderToolUse {
+	id: string;
+	name: string;
+	input: Record<string, unknown>;
+}
+
+/** Token usage from a provider response. */
+export interface ProviderTokenUsage {
+	inputTokens: number;
+	outputTokens: number;
+	/** Total context size (for compaction threshold). For Anthropic, includes cache tokens. */
+	totalContextTokens: number;
+	/** Anthropic-specific: cache creation tokens. */
+	cacheCreationTokens?: number;
+	/** Anthropic-specific: cache read tokens. */
+	cacheReadTokens?: number;
+}
+
+/**
+ * Adapter interface that each provider implements to plug into the unified run loop.
+ * The run loop handles ALL control flow (resume, compaction, tool execution, implicit yield,
+ * budget check, EventStore recording). The adapter only handles provider-specific operations.
+ */
+export interface ProviderAdapter {
+	/** Get context window size for a model. May be async (e.g. OpenAI fetches from API). */
+	getContextWindow(model: string): number | Promise<number>;
+
+	/** Get per-million-token pricing for a model. */
+	getModelPricing(model: string): { inputPer1M: number; outputPer1M: number };
+
+	/** Reconstruct provider messages from JSONL events (for resume). */
+	convertEventsToMessages(events: Event[]): unknown[];
+
+	/** Build provider-specific tool definitions from built-in + MCP tools. */
+	prepareTools(
+		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+		mcpToolDefs: Record<string, ToolDefinition<any>[]> | undefined,
+		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+		mcpHandlers: Map<string, ToolDefinition<any>>,
+	): unknown[];
+
+	/**
+	 * Call the provider API with the given messages and tools.
+	 * Handles retries, streaming text deltas, and error handling internally.
+	 * Yields text_delta events during streaming, then returns the response.
+	 * @param isCompacting - If true, suppress text_delta events (checkpoint text is not user-facing)
+	 */
+	callAPI(params: {
+		model: string;
+		messages: unknown[];
+		tools: unknown[];
+		systemPrompt: string;
+		maxTokens: number;
+		signal?: AbortSignal;
+		isCompacting: boolean;
+	}): AsyncGenerator<AgentEvent, unknown>;
+
+	/** Extract text content from a provider response. */
+	getResponseText(response: unknown): string;
+
+	/** Extract tool uses from a provider response. */
+	getToolUses(response: unknown): ProviderToolUse[];
+
+	/** Get token usage from a provider response. */
+	getTokenUsage(response: unknown): ProviderTokenUsage;
+
+	/**
+	 * Get the stop reason from a provider response.
+	 * Returns "end_turn" if the model stopped naturally, "tool_use" if tools were called.
+	 */
+	getStopReason(response: unknown): "end_turn" | "tool_use";
+
+	/** Whether the provider supports exact token counting (e.g., Anthropic countTokens API). */
+	supportsTokenCounting: boolean;
+
+	/** Count tokens for exact threshold check. Only called if supportsTokenCounting is true. */
+	countTokens?(params: {
+		model: string;
+		system: string;
+		messages: unknown[];
+		tools: unknown[];
+	}): Promise<number>;
+
+	/** Build events to record in JSONL for the response (assistant_text + tool_call events). */
+	buildResponseEvents(response: unknown, isCompacting: boolean): Event[];
+
+	/** Add the assistant response to the messages array. */
+	addAssistantMessage(
+		messages: unknown[],
+		response: unknown,
+		isCompacting: boolean,
+	): void;
+
+	/**
+	 * Build the user message containing tool results + any queue messages.
+	 * This is where provider format differences are most significant:
+	 * - Anthropic: single user message with tool_result + text + image blocks
+	 * - OpenAI: separate tool messages + user message for images/queue
+	 */
+	buildToolResultsMessage(params: {
+		toolUses: ProviderToolUse[];
+		execResults: ToolExecResult[];
+		cancellationQueueMsgs: QueueMessage[];
+		cancellationFormatted: string;
+	}): unknown[];
+
+	/** Build a user message for queue drain during implicit yield. */
+	buildImplicitYieldMessage(
+		formatted: string,
+		nonCompact: QueueMessage[],
+	): unknown;
+
+	/** Build the compacted resume message (user message after compaction). */
+	buildCompactedResumeMessage(content: string): unknown;
+
+	/** Build a budget warning user message. */
+	buildBudgetWarningMessage(warning: string): unknown;
+
+	/** Compute cost from accumulated token counts. */
+	computeCost(
+		model: string,
+		totalInputTokens: number,
+		totalOutputTokens: number,
+		totalCacheCreationTokens: number,
+		totalCacheReadTokens: number,
+	): number;
+
+	/** Build the final AgentResult. */
+	buildResult(params: {
+		success: boolean;
+		output: string;
+		costUsd: number;
+		turns: number;
+		sessionId: string;
+		totalInputTokens: number;
+		totalOutputTokens: number;
+		totalCacheCreationTokens: number;
+		totalCacheReadTokens: number;
+	}): AgentResult;
+
+	/** Verify events match messages (deterministic verification). Optional. */
+	verifyEvents?(params: {
+		eventStore: EventStore;
+		sessionId: string;
+		messages: unknown[];
+	}): void;
+}
+
+/**
+ * Unified run loop for both providers. Handles ALL control flow:
+ * - Resume detection + event conversion
+ * - Main while(true) loop
+ * - Compaction trigger + processing
+ * - API call + response handling
+ * - Tool execution orchestration
+ * - EventStore recording
+ * - Cancellation point drain
+ * - Implicit yield
+ * - Budget check
+ * - Queue closed exit
+ *
+ * Providers implement a ProviderAdapter with hooks for the ~15 things that differ
+ * between Anthropic and OpenAI APIs.
+ */
+export async function* runProviderLoop(
+	adapter: ProviderAdapter,
+	request: AgentRequest,
+	sessionId: string,
+	queue?: MessageQueue,
+): AsyncGenerator<AgentEvent, AgentResult> {
+	const model = request.model ?? "claude-sonnet-4-6"; // default overridden by provider
+	let cwd = request.cwd;
+
+	// ── Context window + compaction thresholds ──
+	const contextWindow = await adapter.getContextWindow(model);
+	const { compressThreshold, lazyCountThreshold } =
+		getCompactionThresholds(contextWindow);
+
+	// ── Event recording via EventStore (JSONL append-only) ──
+	const eventStore = request.eventStore;
+
+	// Load session from EventStore (survives daemon restart)
+	let activeEvents = eventStore ? eventStore.readActive(sessionId) : [];
+	const isResume = activeEvents.length > 0;
+
+	// Fix orphaned tool_calls: persist synthetic tool_results to JSONL so the
+	// fix survives future restarts (no repeated re-fixing on each resume)
+	if (isResume && eventStore) {
+		const orphanFixes = findOrphanedToolCalls(activeEvents);
+		if (orphanFixes.length > 0) {
+			await eventStore.appendBatch(sessionId, orphanFixes);
+			activeEvents = [...activeEvents, ...orphanFixes];
+		}
+	}
+
+	// Prepend working directory to the first user message (not on resume turns) so that
+	// the system prompt stays identical across agents in different worktrees, enabling
+	// prompt caching to cache the system prompt once and share it across agents.
+	const firstUserContent =
+		cwd && !isResume
+			? `Working directory: ${cwd}\n\n${request.prompt}`
+			: request.prompt;
+
+	// Reconstruct messages from EventStore on resume, or start fresh
+	// Both providers use { role: "user", content: string } for user messages
+	const messages: unknown[] = isResume
+		? [
+				...adapter.convertEventsToMessages(activeEvents),
+				{ role: "user" as const, content: request.prompt },
+			]
+		: [{ role: "user" as const, content: firstUserContent }];
+
+	// Record the new user message event
+	if (eventStore) {
+		if (isResume) {
+			eventStore.append(sessionId, {
+				type: "message",
+				content: request.prompt,
+				isResume: true,
+				ts: Date.now(),
+			});
+		} else {
+			eventStore.append(sessionId, {
+				type: "message",
+				content: firstUserContent,
+				cwd,
+				ts: Date.now(),
+			});
+		}
+	}
+
+	// Build MCP tool handlers map and provider-specific tool definitions
+	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
+	const mcpHandlers = new Map<string, ToolDefinition<any>>();
+	if (request.mcpToolDefs) {
+		for (const [serverName, defs] of Object.entries(request.mcpToolDefs)) {
+			for (const def of defs) {
+				const toolName = `mcp__${serverName}__${def.name}`;
+				mcpHandlers.set(toolName, def);
+			}
+		}
+	}
+	const allTools = adapter.prepareTools(request.mcpToolDefs, mcpHandlers);
+
+	let turns = 0;
+	let totalInputTokens = 0;
+	let totalOutputTokens = 0;
+	let totalCacheCreationTokens = 0;
+	let totalCacheReadTokens = 0;
+	let estimatedInputTokens = 0;
+	let lastText = "";
+	let manualCompactRequested = false;
+	let compactionPending = false;
+	let preCompactTokenCount = 0;
+	yield { type: "status", message: `Starting agent loop (model: ${model})` };
+
+	while (true) {
+		// Check abort signal
+		if (request.signal?.aborted) {
+			yield { type: "status", message: "Aborted" };
+			break;
+		}
+
+		// ── Handle compaction response: extract checkpoint and rebuild context ──
+		if (compactionPending) {
+			compactionPending = false;
+			// Extract text from the last assistant message in the array
+			const lastMsg = messages[messages.length - 1] as
+				| { role?: string; content?: unknown }
+				| undefined;
+			let compactionText = "";
+			if (lastMsg?.role === "assistant") {
+				const content = lastMsg.content;
+				if (typeof content === "string") {
+					compactionText = content;
+				} else if (content === null) {
+					compactionText = "";
+				} else if (Array.isArray(content)) {
+					compactionText = (content as Array<{ type?: string; text?: string }>)
+						.filter((b) => b.type === "text")
+						.map((b) => b.text ?? "")
+						.join("\n");
+				}
+			}
+
+			const compactGen = processCompaction(
+				compactionText,
+				cwd,
+				preCompactTokenCount,
+				eventStore,
+				sessionId,
+				contextWindow,
+				compressThreshold,
+			);
+			let compactStep = await compactGen.next();
+			while (!compactStep.done) {
+				yield compactStep.value;
+				compactStep = await compactGen.next();
+			}
+			const compactResult = compactStep.value;
+
+			if (compactResult) {
+				messages.length = 0;
+				messages.push(
+					adapter.buildCompactedResumeMessage(compactResult.userContent),
+				);
+				estimatedInputTokens = compactResult.estimatedInputTokens;
+				manualCompactRequested = false;
+			}
+			continue; // Skip normal processing, go to next API call with rebuilt context
+		}
+
+		// ── Pre-call compression: count tokens, inject summarization instruction if over threshold ──
+		if (manualCompactRequested && messages.length <= 4) {
+			yield { type: "status", message: "Context is too short to compact" };
+			yield { type: "compact_started" };
+			yield {
+				type: "compact",
+				checkpoint: "Context too short for meaningful compaction",
+				savedTokens: 0,
+			};
+			manualCompactRequested = false;
+			continue;
+		}
+		if (messages.length > 4) {
+			let tokenCount = estimatedInputTokens;
+			let isEstimated = true;
+
+			if (
+				manualCompactRequested ||
+				(adapter.supportsTokenCounting
+					? estimatedInputTokens >= lazyCountThreshold
+					: estimatedInputTokens > compressThreshold)
+			) {
+				if (
+					!manualCompactRequested &&
+					adapter.supportsTokenCounting &&
+					adapter.countTokens
+				) {
+					const result = await adapter.countTokens({
+						model,
+						system: request.systemPrompt ?? "",
+						messages,
+						tools: allTools,
+					});
+					tokenCount = result;
+					isEstimated = false;
+				}
+			}
+
+			if (
+				manualCompactRequested ||
+				(!isEstimated && tokenCount > compressThreshold) ||
+				(!adapter.supportsTokenCounting &&
+					estimatedInputTokens > compressThreshold)
+			) {
+				yield { type: "compact_started" };
+				yield {
+					type: "status",
+					message: manualCompactRequested
+						? "Manual compaction triggered"
+						: `Compressing conversation (${adapter.supportsTokenCounting ? "" : "est. "}${tokenCount} tokens, threshold: ${compressThreshold})`,
+				};
+				// Inject summarization instruction as a user message
+				const summarizationInstruction = buildSummarizationInstruction(cwd);
+				(messages as Array<{ role: string; content: string }>).push({
+					role: "user",
+					content: summarizationInstruction,
+				});
+				if (eventStore) {
+					eventStore.append(sessionId, {
+						type: "summarization_request",
+						instruction: summarizationInstruction,
+						ts: Date.now(),
+					});
+				}
+				compactionPending = true;
+				preCompactTokenCount = adapter.supportsTokenCounting
+					? tokenCount
+					: estimatedInputTokens;
+				// Fall through to the normal API call — the model will generate the checkpoint
+			}
+		}
+
+		turns++;
+
+		// ── Call provider API ──
+		const apiGen = adapter.callAPI({
+			model,
+			messages,
+			tools: allTools,
+			systemPrompt: request.systemPrompt ?? "",
+			maxTokens: DEFAULT_MAX_TOKENS,
+			signal: request.signal,
+			isCompacting: compactionPending,
+		});
+
+		let response: unknown;
+		let apiStep = await apiGen.next();
+		while (!apiStep.done) {
+			yield apiStep.value; // Forward text_delta events from streaming
+			apiStep = await apiGen.next();
+		}
+		response = apiStep.value;
+
+		// ── Process response ──
+		const usage = adapter.getTokenUsage(response);
+		totalInputTokens += usage.inputTokens;
+		totalOutputTokens += usage.outputTokens;
+		totalCacheCreationTokens += usage.cacheCreationTokens ?? 0;
+		totalCacheReadTokens += usage.cacheReadTokens ?? 0;
+		estimatedInputTokens = usage.totalContextTokens + usage.outputTokens;
+
+		yield {
+			type: "usage",
+			inputTokens: usage.totalContextTokens,
+			compressThreshold,
+			contextWindow,
+		};
+
+		// Extract text and tool uses from response
+		const responseText = adapter.getResponseText(response);
+		if (responseText) {
+			lastText = responseText;
+			if (!compactionPending) {
+				yield { type: "text", content: responseText };
+			}
+		}
+
+		const toolUses = compactionPending ? [] : adapter.getToolUses(response);
+		if (!compactionPending) {
+			for (const tu of toolUses) {
+				yield {
+					type: "tool_use",
+					tool: tu.name,
+					toolUseId: tu.id,
+					input: tu.input,
+				};
+			}
+		}
+
+		// Add assistant message to history
+		adapter.addAssistantMessage(messages, response, compactionPending);
+
+		// Record individual Events for each content block
+		if (eventStore) {
+			const contentEvents = adapter.buildResponseEvents(
+				response,
+				compactionPending,
+			);
+			eventStore.appendBatch(sessionId, contentEvents);
+		}
+
+		// If compaction is pending, skip tool execution and continue to next iteration
+		// where the checkpoint will be extracted and context rebuilt
+		if (compactionPending) {
+			continue;
+		}
+
+		// ── Handle end_turn (no tool use) — enter implicit yield ──
+		const stopReason = adapter.getStopReason(response);
+		if (stopReason === "end_turn" || toolUses.length === 0) {
+			if (!queue) {
+				yield {
+					type: "status",
+					message: "Agent ended turn (no queue for yield)",
+				};
+				break;
+			}
+
+			yield {
+				type: "status",
+				message:
+					"Agent ended turn — entering idle state (waiting for messages)",
+			};
+
+			const yieldGen = handleImplicitYield(queue);
+			let yieldStep = await yieldGen.next();
+			while (!yieldStep.done) {
+				yield yieldStep.value;
+				yieldStep = await yieldGen.next();
+			}
+			const yieldResult = yieldStep.value;
+
+			if (yieldResult === null) {
+				// Queue closed — normal exit path. Use direct return (Bun async generator hang workaround).
+				const cost = adapter.computeCost(
+					model,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				);
+				return adapter.buildResult({
+					success: true,
+					output: lastText,
+					costUsd: cost,
+					turns,
+					sessionId,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				});
+			}
+
+			if (yieldResult.manualCompactRequested) {
+				manualCompactRequested = true;
+			}
+			if (yieldResult.compactOnly) {
+				continue;
+			}
+
+			// Inject messages as a new user turn and continue the loop
+			const implicitYieldMsg = adapter.buildImplicitYieldMessage(
+				yieldResult.formatted,
+				yieldResult.nonCompact,
+			);
+			messages.push(implicitYieldMsg);
+
+			// Record queue events and messages_consumed
+			if (eventStore) {
+				recordQueueEvents(eventStore, sessionId, yieldResult.nonCompact);
+			}
+			continue;
+		}
+
+		// ── Execute tools concurrently ──
+		const execResults = await Promise.all(
+			toolUses.map(async (toolUse) => {
+				// OpenAI needs JSON.parse for arguments — handled in getToolUses already
+				return executeToolUnified(
+					toolUse.name,
+					toolUse.input,
+					mcpHandlers,
+					cwd,
+					request.cwd,
+					sessionId,
+					queue,
+				);
+			}),
+		);
+
+		// Update cwd if bash tool changed it
+		for (const exec of execResults) {
+			if (exec.cwd) {
+				cwd = exec.cwd;
+			}
+		}
+
+		// Emit tool_result events
+		for (let i = 0; i < toolUses.length; i++) {
+			const toolUse = toolUses[i] as ProviderToolUse;
+			const exec = execResults[i] as ToolExecResult;
+			const images = collectToolResultImages(exec);
+			yield {
+				type: "tool_result",
+				tool: toolUse.name,
+				toolUseId: toolUse.id,
+				content: exec.content.slice(0, 500),
+				isError: exec.isError,
+				...(images.length > 0 ? { images } : {}),
+				...(exec._consumedMessageIds?.length
+					? { _consumedMessageIds: exec._consumedMessageIds }
+					: {}),
+			};
+		}
+
+		// Cancellation point: drain queue
+		let cancellationQueueMsgs: QueueMessage[] = [];
+		let cancellationFormatted = "";
+		if (queue) {
+			const drained = drainQueueAtCancellationPoint(queue);
+			if (drained) {
+				if (drained.manualCompactRequested) {
+					manualCompactRequested = true;
+				}
+				if (drained.messages.length > 0) {
+					cancellationQueueMsgs = drained.messages;
+					cancellationFormatted = drained.formatted;
+					yield {
+						type: "queue_message",
+						messages: drained.formatted,
+						rawMessages: drained.messages.map(toRawMessage),
+					};
+				}
+			}
+		}
+
+		// Build tool result messages (provider-specific format) and push to history
+		const toolResultMsgs = adapter.buildToolResultsMessage({
+			toolUses,
+			execResults,
+			cancellationQueueMsgs,
+			cancellationFormatted,
+		});
+		for (const msg of toolResultMsgs) {
+			messages.push(msg);
+		}
+
+		// Record individual tool_result Events
+		if (eventStore) {
+			const toolEvents = buildToolResultEvents(
+				toolUses.map((tu) => ({ id: tu.id })),
+				execResults,
+				cancellationQueueMsgs,
+			);
+			eventStore.appendBatch(sessionId, toolEvents);
+		}
+
+		// If queue was closed during tool execution (done() was called),
+		// exit after recording events but before sending results to the API.
+		if (queue?.isClosed) {
+			const cost = adapter.computeCost(
+				model,
+				totalInputTokens,
+				totalOutputTokens,
+				totalCacheCreationTokens,
+				totalCacheReadTokens,
+			);
+			return adapter.buildResult({
+				success: true,
+				output: lastText,
+				costUsd: cost,
+				turns,
+				sessionId,
+				totalInputTokens,
+				totalOutputTokens,
+				totalCacheCreationTokens,
+				totalCacheReadTokens,
+			});
+		}
+
+		// Budget check
+		if (request.budgetUsd && request.budgetUsd > 0) {
+			const runningCost = adapter.computeCost(
+				model,
+				totalInputTokens,
+				totalOutputTokens,
+				totalCacheCreationTokens,
+				totalCacheReadTokens,
+			);
+			const budgetResult = checkBudget(request.budgetUsd, runningCost);
+			if (budgetResult) {
+				messages.push(adapter.buildBudgetWarningMessage(budgetResult.warning));
+				recordBudgetWarning(eventStore, sessionId, budgetResult.warning);
+				yield { type: "status", message: budgetResult.warning };
+			}
+		}
+	}
+
+	// Deterministic verification
+	if (eventStore && adapter.verifyEvents) {
+		adapter.verifyEvents({ eventStore, sessionId, messages });
+	}
+
+	const finalCost = adapter.computeCost(
+		model,
+		totalInputTokens,
+		totalOutputTokens,
+		totalCacheCreationTokens,
+		totalCacheReadTokens,
+	);
+
+	return adapter.buildResult({
+		success: true,
+		output: lastText,
+		costUsd: finalCost,
+		turns,
+		sessionId,
+		totalInputTokens,
+		totalOutputTokens,
+		totalCacheCreationTokens,
+		totalCacheReadTokens,
+	});
 }
