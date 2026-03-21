@@ -15,6 +15,7 @@ import {
 	buildCompactedContext,
 	buildSummarizationInstruction,
 	cleanupSessionBackgroundProcesses,
+	eventsToAnthropicMessages,
 	executeBashWithTimeout,
 	executeTool,
 	extractCheckpoint,
@@ -31,7 +32,7 @@ import {
 	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
 import { EventStore } from "./event-store.ts";
-import { type Event, eventsToAnthropicMessages } from "./events.ts";
+import type { Event } from "./events.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { AgentResult } from "./types.ts";

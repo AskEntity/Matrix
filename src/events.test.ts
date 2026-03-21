@@ -1,11 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import {
-	type Event,
-	eventsToAnthropicMessages,
-	eventsToOpenAIMessages,
-	formatEventForAI,
-	queueMessageToEvent,
-} from "./events.ts";
+import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
+import { type Event, formatEventForAI, queueMessageToEvent } from "./events.ts";
+import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
 
 describe("queueMessageToEvent", () => {
 	test("converts user message with body field", () => {
