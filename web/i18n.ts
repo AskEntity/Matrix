@@ -106,6 +106,8 @@ const en: Translations = {
 	"detail.copyId": "Copy task ID",
 	"detail.copied": "Copied!",
 	"detail.clearSession": "Clear Session",
+	"detail.collapse": "Collapse panel",
+	"detail.expand": "Expand panel",
 
 	// Activity
 	"activity.title": "Activity",
@@ -377,6 +379,8 @@ const zh: Translations = {
 	"detail.copyId": "复制任务ID",
 	"detail.copied": "已复制！",
 	"detail.clearSession": "清除会话",
+	"detail.collapse": "折叠面板",
+	"detail.expand": "展开面板",
 
 	// Activity
 	"activity.title": "活动",

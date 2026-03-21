@@ -862,6 +862,30 @@ select {
 	border-bottom: 1px solid var(--border-subtle);
 }
 
+/* Detail collapse toggle button */
+.og-detail-collapse-toggle {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	margin-right: 4px;
+	border: none;
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	border-radius: 3px;
+	transition:
+		color var(--t-fast),
+		background var(--t-fast);
+}
+
+.og-detail-collapse-toggle:hover {
+	color: var(--text-primary);
+	background: var(--bg-overlay);
+}
+
 /* Resize divider */
 .og-resize-divider {
 	flex-shrink: 0;
@@ -897,6 +921,17 @@ select {
 	flex-direction: column;
 	overflow: hidden;
 	min-height: 0;
+}
+
+/* Collapsed detail panel: just the header, no flex grow */
+.og-detail-collapsed .og-detail-panel {
+	flex: none;
+	overflow: hidden;
+}
+
+/* Activity panel fills space when detail is collapsed */
+.og-detail-collapsed .og-activity-panel {
+	flex: 1;
 }
 
 /* =========================================================
@@ -1079,12 +1114,6 @@ select {
 	align-items: center;
 	gap: 10px;
 	margin-bottom: 14px;
-}
-
-.og-orch-toggle {
-	margin-left: auto;
-	padding: 4px 6px;
-	color: var(--text-muted);
 }
 
 .og-orch-icon-lg {

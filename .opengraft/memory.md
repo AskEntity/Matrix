@@ -509,3 +509,11 @@ Event (src/events.ts) — THE source of truth
 - **Bug**: `scrollIntoView({ block: "end" })` on iOS Safari propagates to ancestor containers even with `overflow: hidden`, scrolling the entire page and pushing the input bar out of view.
 - **Fix**: Replaced with `el.scrollTop = el.scrollHeight` on the `og-activity-log` container directly. `scrollTop` only affects the target element, immune to iOS Safari scroll propagation.
 - **Removed**: `bottomRef` sentinel div — no longer needed since we use `scrollTop` instead of `scrollIntoView`.
+
+
+## Collapsible Detail Panel (March 2026)
+
+- **Panel-level collapse** replaces inner OrchestratorDetail stats toggle. Whole panel (OrchestratorDetail or TaskDetail) hides, activity log fills full height.
+- **CSS specificity order**: Biome enforces no descending specificity. `.og-detail-collapsed .og-activity-panel` (0,2,0) must come AFTER `.og-activity-panel` (0,1,0) in the file.
+- **localStorage key**: `og-detail-collapsed`. Old inner toggle key `og-orch-stats-expanded` no longer used.
+- **IconChevron**: `expanded={!detailCollapsed}` — points right when collapsed, rotated 90° (down) when expanded.
