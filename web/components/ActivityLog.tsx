@@ -62,7 +62,7 @@ export function ActivityLog({
 	isActive: boolean;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
-	const bottomRef = useRef<HTMLDivElement>(null);
+
 	const [searchText, setSearchText] = useState("");
 	const lastEventTimeRef = useRef(Date.now());
 	const entriesRef = useRef(entries);
@@ -97,18 +97,21 @@ export function ActivityLog({
 		return items;
 	}, [entries, filterTaskId, rootNodeId, isRootFilter, searchText]);
 
+	// Scroll to bottom using scrollTop instead of scrollIntoView.
+	// iOS Safari propagates scrollIntoView to ancestor containers even with overflow:hidden,
+	// pushing the input bar out of view.
+	const scrollToBottom = useCallback(() => {
+		const el = logRef.current;
+		if (el) el.scrollTop = el.scrollHeight;
+	}, []);
+
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on new visible entries
 	useEffect(() => {
 		lastEventTimeRef.current = Date.now();
 		if (autoScroll) {
-			requestAnimationFrame(() => {
-				bottomRef.current?.scrollIntoView({
-					block: "end",
-					behavior: "instant",
-				});
-			});
+			requestAnimationFrame(scrollToBottom);
 		}
-	}, [visible.length, autoScroll]);
+	}, [visible.length, autoScroll, scrollToBottom]);
 
 	// Show "Thinking..." when agent is active but no events for 1.5s
 	useEffect(() => {
@@ -131,12 +134,7 @@ export function ActivityLog({
 		if (!el) return;
 		const observer = new MutationObserver(() => {
 			if (autoScroll) {
-				requestAnimationFrame(() => {
-					bottomRef.current?.scrollIntoView({
-						block: "end",
-						behavior: "instant",
-					});
-				});
+				requestAnimationFrame(scrollToBottom);
 			}
 		});
 		observer.observe(el, {
@@ -145,7 +143,7 @@ export function ActivityLog({
 			characterData: true,
 		});
 		return () => observer.disconnect();
-	}, [autoScroll]);
+	}, [autoScroll, scrollToBottom]);
 
 	const handleScroll = useCallback(() => {
 		const el = logRef.current;
@@ -326,7 +324,6 @@ export function ActivityLog({
 						{searchText.trim() ? t("activity.noMatch") : t("activity.noEvents")}
 					</div>
 				)}
-				<div ref={bottomRef} />
 			</div>
 		</>
 	);

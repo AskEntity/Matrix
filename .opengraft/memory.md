@@ -503,3 +503,9 @@ Event (src/events.ts) — THE source of truth
 - For root node: also stops project active session via `ctx.activeSessions`
 - Frontend: "Clear Session" button in TaskDetail, shown when task is not running and not pending/draft
 - Existing `POST /projects/:id/sessions/clear` (clear-all) remains unchanged
+
+## iOS Auto-Scroll Fix (March 2026)
+
+- **Bug**: `scrollIntoView({ block: "end" })` on iOS Safari propagates to ancestor containers even with `overflow: hidden`, scrolling the entire page and pushing the input bar out of view.
+- **Fix**: Replaced with `el.scrollTop = el.scrollHeight` on the `og-activity-log` container directly. `scrollTop` only affects the target element, immune to iOS Safari scroll propagation.
+- **Removed**: `bottomRef` sentinel div — no longer needed since we use `scrollTop` instead of `scrollIntoView`.
