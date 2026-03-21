@@ -153,13 +153,17 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 ## Provider Architecture
 
-- **`runProviderLoop()`** in `provider-shared.ts` — ONE run loop for all providers.
-- **`ProviderAdapter`** interface — hooks for provider-specific operations (message format, API call, streaming, response parsing, tool result building, cost calculation).
-- **`walkEventsToMessages()`** in `provider-shared.ts` — shared event walker for JSONL→messages conversion. Providers implement `EventConverterCallbacks` for format-specific message construction.
-- Each provider creates an adapter (`createAnthropicAdapter()` / `createOpenAIAdapter()`) and delegates to `runProviderLoop()`.
-- Converters (`eventsToAnthropicMessages` / `eventsToOpenAIMessages`) live in their respective provider files, not events.ts.
-- `events.ts` is types + helpers only (576 lines). No converter logic.
-- Adding a new provider = implement ProviderAdapter + EventConverterCallbacks.
+- **ONE Event type** (`Event` from events.ts) throughout the entire system. No `AgentEvent`, no conversion layers.
+- **`runProviderLoop()`** in `provider-shared.ts` — ONE run loop. Yields `Event` directly.
+- **`ProviderAdapter`** interface — hooks for API-specific operations.
+- **`walkEventsToMessages()`** + `EventConverterCallbacks` — shared JSONL→messages converter walker.
+- **Provider has zero EventStore access**. All events flow through `emit` callback (`AgentRequest.emit`).
+- `emit` wired to `emitEvent()` by daemon layer — handles SSE broadcast + JSONL persistence.
+- `activeEvents` on AgentRequest provides pre-loaded events for resume (daemon reads from EventStore).
+- Orphan tool_call fixes happen in daemon layer before passing events to provider.
+- Converters live in their respective provider files, not events.ts.
+- `events.ts` is types + helpers only (~576 lines).
+- Adding a new provider = implement `ProviderAdapter` + `EventConverterCallbacks`.
 
 ## Miscellaneous
 
@@ -169,22 +173,3 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **Chrome MCP**: Use `take_screenshot` for root (safe). `take_snapshot` only for child tasks with short logs.
 - **Done counter**: UI counts both `passed` and `closed` tasks as "done".
 - **Resume error dedup**: Only show errors after last `orchestration_started` or resume event.
-
-## Provider Event Architecture (Post-Refactor)
-
-- **Provider has zero EventStore access**. All events flow through `emit` callback (`AgentRequest.emit`).
-- Daemon layer wires `emit` to `emitEvent()` which handles both SSE broadcast + JSONL persistence.
-- `activeEvents` field on AgentRequest provides pre-loaded events for resume (daemon reads from EventStore).
-- Orphan tool_call fixes happen in daemon layer (agent-lifecycle.ts) before passing events to provider.
-- `EMIT_HANDLED_AGENT_EVENTS` set in agent-lifecycle.ts prevents double-broadcast for events handled by both emit() and AgentEvent yields (text, tool_use, tool_result, compact).
-- Provider events (assistant_text, tool_call, tool_result, compact_marker) removed from EPHEMERAL_EVENT_TYPES — emitEvent now persists them since provider no longer writes to EventStore directly.
-- `messages_consumed` events now properly broadcast via SSE (the original bug fix).
-
-## AgentEvent Removal (Phase 3)
-- `AgentEvent` type deleted entirely. ONE event type: `Event` from events.ts.
-- Provider yields `Event` directly. No more AgentEvent→Event conversion.
-- `agentEventToBroadcast` and `broadcastAgentStreamEvent` deleted — emit() is the only broadcast path.
-- `onEvent` callback removed from RunChildCoreParams and all consumer loops.
-- `consumeAgentEvents` is now a simple loop that drives the generator (no callbacks).
-- `ProviderAdapter.callAPI` yields `Event` (text_delta with ts field).
-- Field name alignment: toolUseId→toolCallId, type "text"→"assistant_text", "tool_use"→"tool_call", "compact"→"compact_marker" in yields.
