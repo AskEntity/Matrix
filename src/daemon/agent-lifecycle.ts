@@ -499,10 +499,10 @@ export async function runChildCore(
  * The event converter also has a fix for this (fixOrphanedAnthropicToolUse),
  * but writing to JSONL is cleaner — the fix persists and avoids repeated synthesis.
  */
-function writeOrphanedToolResults(
+async function writeOrphanedToolResults(
 	eventStore: import("../event-store.ts").EventStore,
 	sessionId: string,
-): void {
+): Promise<void> {
 	if (!eventStore.has(sessionId)) return;
 
 	const events = eventStore.readActive(sessionId);
@@ -549,8 +549,8 @@ function writeOrphanedToolResults(
 		}),
 	);
 
-	// Fire-and-forget — if this fails, the converter fix will handle it
-	eventStore.appendBatch(sessionId, syntheticEvents);
+	// Await to ensure write completes before process.exit during shutdown
+	await eventStore.appendBatch(sessionId, syntheticEvents);
 }
 
 /**
@@ -617,7 +617,7 @@ export async function stopAgent(
 	if (tracker) {
 		const eventStore = getEventStore(ctx, projectId);
 		for (const node of tracker.allNodes()) {
-			writeOrphanedToolResults(eventStore, node.id);
+			await writeOrphanedToolResults(eventStore, node.id);
 		}
 	}
 
