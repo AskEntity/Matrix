@@ -586,3 +586,12 @@ Event (src/events.ts) — THE source of truth
 - **Frontend (parent view)**: `child_report` card label shows `↑ {summary}` when available, falls back to `↑ from {taskTitle}`.
 - **No backward compat**: Clean break — old JSONL without summary field just shows fallback labels.
 
+
+
+## SSE Catch-Up Mechanism (March 2026)
+
+- **Ring buffer + Last-Event-ID**: Per-project monotonic counter + 2000-entry ring buffer in `event-system.ts`. Every `broadcast()` assigns `id: seqId` to SSE events.
+- **Reconnect catch-up**: `sse.ts` reads `Last-Event-ID` header on connect. If present, replays missed events from ring buffer. Falls back to full `sendInitialState` if gap too large.
+- **Frontend reconnect**: `useSSE` tracks first-connect vs reconnect. On reconnect, calls `onReconnect` which re-fetches events from REST and pending messages — safety net for gaps the ring buffer cannot cover.
+- **Initial state events have no `id:`**: `sendInitialState` sends without sequence ID so they do not interfere with Last-Event-ID tracking.
+

@@ -10,6 +10,68 @@ import { getEventStore } from "./helpers.ts";
 
 const sseEncoder = new TextEncoder();
 
+// --- Per-project SSE event sequencing + ring buffer for catch-up ---
+
+/** Per-project monotonic event counter. */
+const projectSeqCounters = new Map<string, number>();
+
+/** Ring buffer entry: an SSE event with its sequence ID. */
+interface SSERingEntry {
+	seqId: number;
+	data: string; // JSON-encoded event
+}
+
+/** Per-project ring buffer of recent events for Last-Event-ID catch-up. */
+const projectEventBuffers = new Map<string, SSERingEntry[]>();
+
+const RING_BUFFER_SIZE = 2000;
+
+/** Get the next sequence ID for a project. */
+function nextSeqId(projectId: string): number {
+	const current = projectSeqCounters.get(projectId) ?? 0;
+	const next = current + 1;
+	projectSeqCounters.set(projectId, next);
+	return next;
+}
+
+/** Add an event to the project's ring buffer. */
+function bufferEvent(projectId: string, seqId: number, data: string): void {
+	let buffer = projectEventBuffers.get(projectId);
+	if (!buffer) {
+		buffer = [];
+		projectEventBuffers.set(projectId, buffer);
+	}
+	buffer.push({ seqId, data });
+	// Trim to ring buffer size
+	if (buffer.length > RING_BUFFER_SIZE) {
+		buffer.splice(0, buffer.length - RING_BUFFER_SIZE);
+	}
+}
+
+/**
+ * Get events from the ring buffer after a given sequence ID.
+ * Returns null if the requested ID is too old (not in buffer).
+ */
+export function getEventsSince(
+	projectId: string,
+	lastSeqId: number,
+): SSERingEntry[] | null {
+	const buffer = projectEventBuffers.get(projectId);
+	if (!buffer || buffer.length === 0) return null;
+
+	const firstEntry = buffer[0];
+	if (!firstEntry) return null;
+
+	// If the requested ID is older than our oldest buffered event,
+	// we can't guarantee no gaps — return null to trigger full refresh
+	if (lastSeqId < firstEntry.seqId - 1) return null;
+
+	// Find events after lastSeqId
+	const idx = buffer.findIndex((e) => e.seqId > lastSeqId);
+	if (idx === -1) return []; // All events are <= lastSeqId, client is up to date
+	return buffer.slice(idx);
+}
+
 /** Broadcast an event to all SSE clients subscribed to a project. */
 export function broadcast(
 	clients: Set<SSEClient>,
@@ -23,8 +85,11 @@ export function broadcast(
 		clients.size,
 		"clients",
 	);
+	const seqId = nextSeqId(projectId);
 	const data = JSON.stringify(event);
-	const sseMessage = sseEncoder.encode(`data: ${data}\n\n`);
+	bufferEvent(projectId, seqId, data);
+
+	const sseMessage = sseEncoder.encode(`id: ${seqId}\ndata: ${data}\n\n`);
 	for (const client of clients) {
 		if (client.projectId === projectId) {
 			try {

@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 import { globalAgentQueues } from "../../message-queue.ts";
 import type { DaemonContext, SSEClient } from "../context.ts";
 import {
+	getEventsSince,
 	getPendingClarifications,
 	pendingTextForMessage,
 } from "../event-system.ts";
@@ -9,10 +10,16 @@ import { getTracker } from "../helpers.ts";
 
 const encoder = new TextEncoder();
 
-/** Send an SSE event to a single client. */
-function sendSSE(client: SSEClient, data: Record<string, unknown>): void {
+/** Send an SSE event to a single client, with optional sequence ID. */
+function sendSSE(
+	client: SSEClient,
+	data: Record<string, unknown>,
+	seqId?: number,
+): void {
 	try {
-		const msg = `data: ${JSON.stringify(data)}\n\n`;
+		const json = JSON.stringify(data);
+		const msg =
+			seqId != null ? `id: ${seqId}\ndata: ${json}\n\n` : `data: ${json}\n\n`;
 		client.controller.enqueue(encoder.encode(msg));
 	} catch {
 		// Client disconnected — caller should clean up
@@ -78,18 +85,55 @@ async function sendInitialState(
 	}
 }
 
+/**
+ * Replay buffered events since lastSeqId to a client.
+ * Returns true if catch-up succeeded, false if gap too large (need full refresh).
+ */
+function replayCatchUp(
+	client: SSEClient,
+	projectId: string,
+	lastSeqId: number,
+): boolean {
+	const events = getEventsSince(projectId, lastSeqId);
+	if (events === null) return false; // Gap too large
+
+	for (const entry of events) {
+		try {
+			const msg = `id: ${entry.seqId}\ndata: ${entry.data}\n\n`;
+			client.controller.enqueue(encoder.encode(msg));
+		} catch {
+			return false; // Client disconnected
+		}
+	}
+	return true;
+}
+
 export function registerSSERoute(app: Hono, ctx: DaemonContext) {
 	app.get("/events", (c) => {
 		const projectId = c.req.query("projectId");
 		if (!projectId) return c.text("projectId required", 400);
+
+		// EventSource sends Last-Event-ID on reconnect
+		const lastEventId = c.req.header("Last-Event-ID");
+		const lastSeqId = lastEventId ? Number.parseInt(lastEventId, 10) : null;
 
 		const stream = new ReadableStream({
 			start(controller) {
 				const client: SSEClient = { controller, projectId };
 				ctx.sseClients.add(client);
 
-				// Send initial state (tree, pending messages, pending clarifications)
-				sendInitialState(ctx, client, projectId);
+				let catchUpDone = false;
+
+				// If reconnecting with Last-Event-ID, try ring buffer catch-up
+				if (lastSeqId != null && !Number.isNaN(lastSeqId)) {
+					catchUpDone = replayCatchUp(client, projectId, lastSeqId);
+				}
+
+				// If no Last-Event-ID or catch-up failed (gap too large),
+				// send full initial state
+				if (!catchUpDone) {
+					sendInitialState(ctx, client, projectId);
+				}
 
 				// Clean up on disconnect
 				c.req.raw.signal.addEventListener("abort", () => {
