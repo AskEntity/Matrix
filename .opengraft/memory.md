@@ -343,19 +343,11 @@ Event (src/events.ts) — THE source of truth
 - **Batch processing**: `processEventBatch` in ws-handler.ts resolves two-phase lifecycle locally — collects `user_message` with IDs, materializes them at `messages_consumed` position (or `messagesConsumed` on `tool_result`). Unconsumed messages go to pending state.
 - **Backward compat**: Old `message_injected` events in JSONL still render via ws-handler fallback case.
 
-## Message Delivery Architecture Debt (March 2026)
+## Message Delivery Unification (March 2026) — COMPLETED
 
-**CRITICAL**: No single message delivery abstraction. 4+ code paths implement message delivery with different subsets of behavior. This has caused repeated bugs across 5+ sessions (message_injected timing, pending banner, duplicate messages, disappearing messages).
+**Previous problem**: 4+ code paths implemented message delivery differently (missing JSONL writes, missing broadcasts, inconsistent pending banners). Root cause of repeated bugs across 5+ sessions.
 
-**Current paths (all different):**
-1. **MCP `send_message_to_child`** (agent-tools.ts): source=parent_update, creates worktree, has independent fallback path bypassing deliverMessage, no JSONL write, no UI broadcast
-2. **POST `/tasks/:nodeId/message`** (tasks.ts): source=user, calls deliverMessage, pending broadcast only on "persisted" path, no JSONL write, has notifyParentChain
-3. **`handleInjectMessage`** (agent-lifecycle.ts): ROOT ONLY, source=user+id, writes user_message to JSONL, broadcasts message_injected, pending banner, auto-resume
-4. **POST `/agents/start`** (agent.ts): direct queue.enqueue(source=user), no JSONL, no broadcast, no persistence
-
-**Each path handles differently:** JSONL persistence, WS broadcast, pending banner, worktree creation, agent launch/resume, parent notification, message ID assignment.
-
-**Required fix:** Single `deliverMessage()` that ALL paths call. It should handle: JSONL write (for user source), UI events, pending banner, worktree creation, agent launch. Entry points become thin wrappers.
+**Fix**: `deliverMessage()` is now the single delivery path. All callers are thin wrappers. `globalAgentQueues` is the sole queue registry (root + children). `findParentQueue()` exported for dynamic lookup. `broadcastAgentStreamEvent()` unifies consumption tracking.
 
 ## Unified Agent Queue Registry (March 2026)
 
