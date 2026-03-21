@@ -446,3 +446,13 @@ Event (src/events.ts) — THE source of truth
 - **Legacy backward compat**: Old JSONL with flat fields (source + taskId/title/content at top level, no queueEntry) → constructs a `QueueEntryLike` from flat fields for correct materialization.
 - **`createQueueUIEvent` simplified**: Delegates to `queueEntryToUIEvent` instead of duplicating switch logic.
 
+
+
+## yield/done Queue Messages as Separate Text Blocks (March 2026)
+
+- **Bug**: `waitForQueueMessages()` embedded formatted queue messages in the tool_result content. AI saw them as part of the tool output.
+- **Fix**: Split into two return fields: `content` (just pending section) and `_formattedQueueMessages` (formatted queue text). Both providers add queue messages as separate text/user blocks alongside tool_results.
+- **Anthropic**: Queue text + images added as sibling `text`/`image` blocks in the user message content array (same turn as tool_result).
+- **OpenAI**: Queue text + images added as a separate `user` message after tool result messages.
+- **Image routing**: When `_formattedQueueMessages` is set, `mcpImages` are user queue images — they go alongside queue text, NOT in tool_result. For non-yield MCP tools, `mcpImages` still go in tool_result as before.
+- **Wrapper text**: yield uses `[Messages received while you were idle:]`, cancellation point uses `[Messages received while you were working:]`.

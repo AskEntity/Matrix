@@ -646,6 +646,7 @@ export function createOrchestratorTools(
 		>;
 		isError?: boolean;
 		_consumedMessageIds?: string[];
+		_formattedQueueMessages?: string;
 		_pending?: {
 			runningChildren: Array<{ id: string; title: string }>;
 			pendingClarifications: number;
@@ -795,13 +796,12 @@ export function createOrchestratorTools(
 				content: [
 					{
 						type: "text" as const,
-						text: formatted
-							? formatted + pendingSection
-							: pendingSection.trimStart(),
+						text: pendingSection.trimStart(),
 					},
 					...imageBlocks,
 				],
 				...(consumedIds.length > 0 ? { _consumedMessageIds: consumedIds } : {}),
+				...(formatted ? { _formattedQueueMessages: formatted } : {}),
 				_pending: pendingData,
 			};
 		} catch (e) {

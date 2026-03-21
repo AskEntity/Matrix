@@ -929,7 +929,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 									textParts.push(JSON.stringify(c));
 								}
 							}
-							// Extract consumed message IDs and pending state from yield/done tools
+							// Extract consumed message IDs, pending state, and formatted queue messages from yield/done tools
 							const consumedIds = Array.isArray(mcpResult._consumedMessageIds)
 								? (mcpResult._consumedMessageIds as string[])
 								: undefined;
@@ -942,6 +942,10 @@ export class OpenAICompatibleProvider implements AgentProvider {
 										pendingClarifications: number;
 								  }
 								| undefined;
+							const formattedQueueMessages =
+								typeof mcpResult._formattedQueueMessages === "string"
+									? mcpResult._formattedQueueMessages
+									: undefined;
 							return {
 								content: textParts.join("\n"),
 								isError: mcpResult.isError ?? false,
@@ -952,6 +956,9 @@ export class OpenAICompatibleProvider implements AgentProvider {
 									? { _consumedMessageIds: consumedIds }
 									: {}),
 								...(pending ? { _pending: pending } : {}),
+								...(formattedQueueMessages
+									? { _formattedQueueMessages: formattedQueueMessages }
+									: {}),
 							};
 						} catch (e) {
 							return {
@@ -979,6 +986,16 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				dataUri: string;
 			}> = [];
 
+			// Collect formatted queue messages from yield/done tools for separate user message
+			const yieldQueueTexts: string[] = [];
+			const yieldQueueImageParts: Array<
+				| { type: "text"; text: string }
+				| {
+						type: "image_url";
+						image_url: { url: string; detail: "auto" };
+				  }
+			> = [];
+
 			for (let i = 0; i < toolCalls.length; i++) {
 				const tc = toolCalls[i] as OpenAIToolCall;
 				const exec = execResults[i] as {
@@ -990,13 +1007,16 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					mediaType?: string;
 					mcpImages?: Array<{ mediaType: string; data: string }>;
 					_consumedMessageIds?: string[];
+					_formattedQueueMessages?: string;
 				};
 
 				if (exec.cwd) cwd = exec.cwd;
 
 				// Collect images for the UI event
 				const images: Array<{ base64: string; mediaType: string }> = [];
-				if (exec.mcpImages?.length) {
+				// When _formattedQueueMessages is set, mcpImages are user queue images
+				// — they go alongside the queue text, not in the tool_result
+				if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
 					for (const img of exec.mcpImages) {
 						images.push({ base64: img.data, mediaType: img.mediaType });
 					}
@@ -1024,19 +1044,43 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					content: exec.content,
 				});
 
-				if (exec.isImage && exec.imageData && exec.mediaType) {
-					imageResults.push({
-						text: exec.content,
-						dataUri: `data:${exec.mediaType};base64,${exec.imageData}`,
-					});
-				}
-				// Handle images from MCP tool results (e.g. yield tool with user-attached images)
-				if (exec.mcpImages?.length) {
-					for (const img of exec.mcpImages) {
+				if (exec._formattedQueueMessages) {
+					// Queue messages from yield/done — collect for separate user message
+					yieldQueueTexts.push(
+						`[Messages received while you were idle:]\n${exec._formattedQueueMessages}`,
+					);
+					if (exec.mcpImages?.length) {
+						for (const img of exec.mcpImages) {
+							yieldQueueImageParts.push(
+								{
+									type: "text" as const,
+									text: "[User-attached image]",
+								},
+								{
+									type: "image_url" as const,
+									image_url: {
+										url: `data:${img.mediaType};base64,${img.data}`,
+										detail: "auto" as const,
+									},
+								},
+							);
+						}
+					}
+				} else {
+					if (exec.isImage && exec.imageData && exec.mediaType) {
 						imageResults.push({
-							text: "[User-attached image]",
-							dataUri: `data:${img.mediaType};base64,${img.data}`,
+							text: exec.content,
+							dataUri: `data:${exec.mediaType};base64,${exec.imageData}`,
 						});
+					}
+					// Handle images from MCP tool results (non-yield tools only)
+					if (exec.mcpImages?.length) {
+						for (const img of exec.mcpImages) {
+							imageResults.push({
+								text: "[User-attached image]",
+								dataUri: `data:${img.mediaType};base64,${img.data}`,
+							});
+						}
 					}
 				}
 			}
@@ -1060,6 +1104,24 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					);
 				}
 				messages.push({ role: "user", content: imageParts });
+			}
+
+			// Inject queue messages from yield/done as a separate user message
+			if (yieldQueueTexts.length > 0 || yieldQueueImageParts.length > 0) {
+				const parts: Array<
+					| { type: "text"; text: string }
+					| {
+							type: "image_url";
+							image_url: { url: string; detail: "auto" };
+					  }
+				> = [
+					...yieldQueueTexts.map((t) => ({
+						type: "text" as const,
+						text: t,
+					})),
+					...yieldQueueImageParts,
+				];
+				messages.push({ role: "user", content: parts });
 			}
 
 			// Append done() reminder to the last tool result
@@ -1141,6 +1203,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						imageData?: string;
 						mediaType?: string;
 						_consumedMessageIds?: string[];
+						_formattedQueueMessages?: string;
 						_pending?: {
 							runningChildren: Array<{ id: string; title: string }>;
 							pendingClarifications: number;
@@ -1150,7 +1213,9 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					// The converter reconstructs queue messages from messagesConsumed + user_message events.
 					const resultContent = exec.content;
 					const images: Array<{ base64: string; mediaType: string }> = [];
-					if (exec.mcpImages?.length) {
+					// When _formattedQueueMessages is set, mcpImages are user queue images
+					// — they're already recorded as user_message events, not tool images
+					if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
 						images.push(
 							...exec.mcpImages.map((img) => ({
 								base64: img.data,
