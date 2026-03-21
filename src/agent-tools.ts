@@ -230,6 +230,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
    a. Merge via bash: \`git merge --no-ff <child-branch> -m "Merge task: <title>"\`
    b. Call close_task(taskId) to clean up the child's worktree and branch (node stays in tree for history)
 8. If a child fails: distinguish daemon-restart failures (child was interrupted, work may be complete) from genuine failures (child called done("failed")). **Always resume first** (send_message_to_child) — the child can assess its own state. Only reset_task when the approach was fundamentally wrong.
+   To check a child's progress: \`cd .worktrees/<id>-... && git diff --stat HEAD\` shows uncommitted changes. Do NOT rely on \`git log\` — children may have extensive work without committing.
 9. After ALL children are merged: run full test suite to verify no regressions
 10. If integration issues surface, create new targeted tasks to fix them
 
