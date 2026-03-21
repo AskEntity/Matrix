@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
 	MessageParam,
@@ -15,49 +13,32 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
-import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
+import { toRawMessage } from "./agent-tools.ts";
 import { DEFAULT_MODEL } from "./config.ts";
 import {
 	type Event,
 	eventsToAnthropicMessages,
 	findOrphanedToolCalls,
-	queueMessageToEvent,
 } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
+import {
+	buildSummarizationInstruction,
+	buildToolResultEvents,
+	checkBudget,
+	collectToolResultImages,
+	DEFAULT_MAX_TOKENS,
+	drainQueueAtCancellationPoint,
+	executeToolUnified,
+	extractQueueImages,
+	getCompactionThresholds,
+	handleImplicitYield,
+	processCompaction,
+	recordBudgetWarning,
+	recordQueueEvents,
+	zodShapeToJsonSchema,
+} from "./provider-shared.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
-
-const DEFAULT_MAX_TOKENS = 16384;
-
-type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-
-/** Extract images from queue messages and return Anthropic image content blocks. */
-function extractQueueImages(msgs: QueueMessage[]): Array<{
-	type: "image";
-	source: { type: "base64"; media_type: ImageMediaType; data: string };
-}> {
-	const blocks: Array<{
-		type: "image";
-		source: { type: "base64"; media_type: ImageMediaType; data: string };
-	}> = [];
-	for (const msg of msgs) {
-		if (msg.source === "user" && msg.images) {
-			for (const img of msg.images) {
-				blocks.push({
-					type: "image",
-					source: {
-						type: "base64",
-						media_type: img.mediaType as ImageMediaType,
-						data: img.base64,
-					},
-				});
-			}
-		}
-	}
-	return blocks;
-}
-/** Reserve ~17% as compaction buffer — compress when messages exceed this */
-const COMPACT_BUFFER_RATIO = 0.17;
 
 /**
  * Get context window size for a model.
@@ -69,23 +50,6 @@ export function getContextWindow(model: string): number {
 	// Opus 4.6+ and Sonnet 4.6+ support 1M context natively
 	if (model.includes("opus") || model.includes("sonnet-4")) return 1_000_000;
 	return 200_000;
-}
-
-/**
- * Get compaction thresholds derived from the context window.
- * @internal Exported for testing
- */
-export function getCompactionThresholds(contextWindow: number): {
-	compressThreshold: number;
-	lazyCountThreshold: number;
-} {
-	const compressThreshold = Math.floor(
-		contextWindow * (1 - COMPACT_BUFFER_RATIO),
-	);
-	return {
-		compressThreshold,
-		lazyCountThreshold: compressThreshold - 16_000,
-	};
 }
 
 /** Per-million-token pricing by model family. */
@@ -110,131 +74,15 @@ export function getModelPricing(model: string): {
 	return MODEL_PRICING.sonnet as { inputPer1M: number; outputPer1M: number };
 }
 
-/** Summarization instruction injected as a user message for in-context compaction. */
-export const SUMMARIZATION_INSTRUCTION = `[SYSTEM: Context compression required. Generate a checkpoint summary NOW.
-
-Do NOT use any tools. Respond with ONLY the checkpoint in <summary>...</summary> tags.
-
-Write the checkpoint with these sections IN ORDER. Every section is required.
-
-## 1. User Requests (MOST CRITICAL)
-Chronological timeline of every user message or parent instruction received, with the tasks created/completed in response to each. For each entry:
-- The message (verbatim or close paraphrase)
-- Tasks created in response (IDs, titles)
-- Tasks completed/merged in response (what was accomplished)
-- Decisions made or deferred
-This creates a complete narrative thread. The resuming agent has NO access to previous messages — this is the only record.
-For resolved requests, state the outcome concisely. Do not carry forward debugging narratives or step-by-step problem-solving details from issues that are fully resolved.
-
-## 2. Current Phase
-What the agent is doing RIGHT NOW: planning / implementing / testing / debugging / reviewing / orchestrating / done
-If debugging: include the exact error message and what has been tried.
-
-## 3. Completed Work
-What has been built, tested, committed, and merged — with key architectural and technical decisions.
-Include specific file paths and function names. Note WHY decisions were made, not just what.
-Focus on outcomes and key decisions. Omit debugging journeys and error traces for issues already resolved.
-
-## 4. Task Tree State
-Current live task tree. Only tasks that currently exist (pending/in_progress/failed/draft). For each: ID, title, status, branch. Omit completed/merged tasks (they're recorded in Section 1's timeline). Group: Running → Failed → Pending → Draft.
-
-## 5. Key Insights & Rejected Approaches
-Design principles and mental models discovered during this session — especially from failed approaches.
-Focus on HIGH-LEVEL insights that prevent entire CLASSES of bugs, not one-off technical fixes.
-
-Good examples:
-- "Auth should always be on — 'enforced' only controls registration, not authentication"
-- "MCP and HTTP code paths must share implementation, not duplicate logic"
-- "Cache invariant: all in-memory state is a cache of disk state — destroying and recreating it should be invisible"
-- "Never split by step (types → implementation → tests) — split by module/feature for parallelism"
-
-Bad examples (these belong in code comments, not in the checkpoint):
-- "startRegistration(options) directly doesn't work, need {optionsJSON: options}"
-- "Cookie secure:true doesn't work on HTTP localhost"
-- "CDN path /v3/fonts returns 404, use /v2/fonts instead"
-
-For each insight: state the principle, and briefly note what triggered the discovery.
-If truly nothing was learned, write "None so far."
-
-## 6. Key Context
-Important state and knowledge that is HARD to reconstruct from disk:
-- Constraints or invariants that affect the remaining work
-- Environment or configuration state
-- Communication state: pending clarifications, recent messages to/from parent or children
-
-## 7. Pending Work
-Numbered list of ALL remaining tasks/steps to complete the goal.
-Be specific: "implement X in file Y", "add test for Z", "merge child branch A".
-
-Rules:
-- Be precise: file paths, function names, exact error messages, task IDs
-- Do NOT repeat system prompt or task description content — the agent already has those
-- Do NOT include file contents that can be re-read from disk
-- Focus on context that is HARD to reconstruct: decisions, state, user intent, failures
-- Include ALL user messages/requests — verbatim or close paraphrase, never summarize away
-- Each user request must note: what was asked → what was done → what was the outcome
-- Aim for thoroughness — lost context is far more expensive than a longer checkpoint
-- Length: use as many tokens as needed for complex sessions. Never truncate mid-thought.
-- On re-compaction, resolved issues need only their resolution noted — not the journey to get there. Retain useful architectural and decision context.]`;
-
-/** Build the full summarization instruction with the current working directory appended. */
-export function buildSummarizationInstruction(cwd?: string): string {
-	if (!cwd) return SUMMARIZATION_INSTRUCTION;
-	return `${SUMMARIZATION_INSTRUCTION}\n\nCurrent working directory: ${cwd}`;
-}
-
-/**
- * Extract checkpoint text from an assistant response that should contain <summary>...</summary> tags.
- * If no tags found, uses the full response text as the checkpoint.
- * When `cwd` is provided, appends a system-generated context block with the working directory
- * and resume instructions (these are injected by the system, not written by the AI).
- * @internal Exported for testing
- */
-export function extractCheckpoint(responseText: string, cwd?: string): string {
-	const match = responseText.match(/<summary>([\s\S]*?)<\/summary>/);
-	let checkpoint: string;
-	if (match && match[1] !== undefined) {
-		checkpoint = match[1].trim();
-	} else {
-		// No summary tags found — use full response text as checkpoint
-		checkpoint = responseText.trim();
-	}
-
-	if (cwd) {
-		checkpoint += `\n\n---\n\n## System Context (auto-generated)\nWorking directory: ${cwd}\n\nResume from this checkpoint. Your task is NOT done unless the checkpoint says "Current Phase: done". Continue working — check get_tree, follow the stimulus priority, and drive to completion.\nDo not cd to your current working directory — you are already there.`;
-	}
-
-	return checkpoint;
-}
-
-/**
- * Build the compacted context message after checkpoint generation.
- * Combines fresh memory and checkpoint into a single user message.
- * @internal Exported for testing
- */
-export async function buildCompactedContext(
-	checkpoint: string,
-	cwd?: string,
-): Promise<string> {
-	// Re-read fresh memory from disk (agent may have updated it during session)
-	let freshMemory = "";
-	if (cwd) {
-		try {
-			const memPath = join(cwd, ".opengraft", "memory.md");
-			freshMemory = await readFile(memPath, "utf-8");
-		} catch {
-			// No memory file — that's fine
-		}
-	}
-
-	const parts: string[] = [];
-	if (freshMemory) {
-		parts.push(`## Project Memory (fresh)\n${freshMemory}`);
-	}
-	parts.push(`## Checkpoint Summary\n\n${checkpoint}`);
-
-	return parts.join("\n\n---\n\n");
-}
+// ── Re-exports from provider-shared.ts for backward compatibility ──
+export {
+	buildCompactedContext,
+	buildSummarizationInstruction,
+	extractCheckpoint,
+	getCompactionThresholds,
+	SUMMARIZATION_INSTRUCTION,
+	zodShapeToJsonSchema,
+} from "./provider-shared.ts";
 
 export type { BackgroundProcess } from "./tools/index.ts";
 // ── Re-exports from extracted tool modules ──
@@ -257,136 +105,8 @@ export {
 
 import {
 	cleanupSessionBackgroundProcesses as _cleanupBg,
-	executeTool as _executeTool,
 	TOOLS as _TOOLS,
 } from "./tools/index.ts";
-
-/**
- * Convert a Zod raw shape (from ToolDefinition.inputSchema) to JSON Schema.
- * Handles the types used in our orchestrator tools: string, enum, optional.
- */
-export function zodShapeToJsonSchema(
-	shape: Record<string, unknown>,
-): Record<string, unknown> {
-	const properties: Record<string, unknown> = {};
-	const required: string[] = [];
-
-	for (const [key, zodType] of Object.entries(shape)) {
-		const prop = zodTypeToJsonProp(zodType);
-		properties[key] = prop.schema;
-		if (!prop.optional) {
-			required.push(key);
-		}
-	}
-
-	return {
-		type: "object",
-		properties,
-		...(required.length > 0 ? { required } : {}),
-	};
-}
-
-function zodTypeToJsonProp(zodType: unknown): {
-	schema: Record<string, unknown>;
-	optional: boolean;
-} {
-	// Walk the Zod type to extract JSON Schema info
-	// Uses internal Zod structures — works with both v3 and v4
-	// biome-ignore lint/suspicious/noExplicitAny: introspecting Zod internals
-	const t = zodType as any;
-
-	// Zod v4: _zod.def.type, Zod v3: _def.typeName
-	const def = t._zod?.def ?? t._def ?? {};
-	const typeName: string = def.type ?? def.typeName ?? "";
-	const description: string | undefined =
-		t._zod?.bag?.description ?? def.description ?? t.description;
-
-	if (typeName === "optional" || typeName === "ZodOptional") {
-		const inner = zodTypeToJsonProp(def?.innerType);
-		return {
-			schema: { ...inner.schema, ...(description ? { description } : {}) },
-			optional: true,
-		};
-	}
-
-	if (typeName === "default" || typeName === "ZodDefault") {
-		const inner = zodTypeToJsonProp(def?.innerType);
-		return {
-			schema: { ...inner.schema, ...(description ? { description } : {}) },
-			optional: true,
-		};
-	}
-
-	if (typeName === "enum" || typeName === "ZodEnum") {
-		return {
-			schema: {
-				type: "string",
-				enum: def?.values ?? (def?.entries ? Object.values(def.entries) : []),
-				...(description ? { description } : {}),
-			},
-			optional: false,
-		};
-	}
-
-	if (typeName === "number" || typeName === "ZodNumber") {
-		return {
-			schema: {
-				type: "number",
-				...(description ? { description } : {}),
-			},
-			optional: false,
-		};
-	}
-
-	if (typeName === "boolean" || typeName === "ZodBoolean") {
-		return {
-			schema: {
-				type: "boolean",
-				...(description ? { description } : {}),
-			},
-			optional: false,
-		};
-	}
-
-	if (typeName === "array" || typeName === "ZodArray") {
-		// Zod v4: def.element, Zod v3: def.type (non-string) or def.innerType
-		const elementType =
-			def?.element ??
-			(typeof def?.type !== "string" ? def?.type : undefined) ??
-			def?.innerType;
-		const inner = zodTypeToJsonProp(elementType);
-		return {
-			schema: {
-				type: "array",
-				items: inner.schema,
-				...(description ? { description } : {}),
-			},
-			optional: false,
-		};
-	}
-
-	if (typeName === "object" || typeName === "ZodObject") {
-		const shape = typeof def?.shape === "function" ? def.shape() : def?.shape;
-		if (shape) {
-			return {
-				schema: {
-					...zodShapeToJsonSchema(shape),
-					...(description ? { description } : {}),
-				},
-				optional: false,
-			};
-		}
-	}
-
-	// Default to string
-	return {
-		schema: {
-			type: "string",
-			...(description ? { description } : {}),
-		},
-		optional: false,
-	};
-}
 
 /**
  * Add cache_control breakpoints to the messages array for prompt caching.
@@ -697,61 +417,31 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							.join("\n");
 					}
 				}
-				const checkpoint = extractCheckpoint(responseText, cwd);
 
-				try {
-					const compactedContent = await buildCompactedContext(checkpoint, cwd);
-					const oldTokens = preCompactTokenCount;
+				const compactGen = processCompaction(
+					responseText,
+					cwd,
+					preCompactTokenCount,
+					eventStore,
+					sessionId,
+					contextWindow,
+					compressThreshold,
+				);
+				let compactStep = await compactGen.next();
+				while (!compactStep.done) {
+					yield compactStep.value;
+					compactStep = await compactGen.next();
+				}
+				const compactResult = compactStep.value;
+
+				if (compactResult) {
 					messages.length = 0;
-					const userContent = cwd
-						? `Working directory: ${cwd}\n\n${compactedContent}`
-						: compactedContent;
 					messages.push({
 						role: "user" as const,
-						content: userContent,
+						content: compactResult.userContent,
 					});
-					const postCompactChars = userContent.length;
-					const estimatedPostCompactTokensForSaved = Math.floor(
-						postCompactChars / 4,
-					);
-					const compactSavedTokens = Math.max(
-						0,
-						oldTokens - estimatedPostCompactTokensForSaved,
-					);
-					// Append compact_marker + compacted_resume to EventStore
-					if (eventStore) {
-						eventStore.append(sessionId, {
-							type: "compact_marker",
-							checkpoint,
-							savedTokens: compactSavedTokens,
-							ts: Date.now(),
-						});
-						eventStore.append(sessionId, {
-							type: "compacted_resume",
-							content: userContent,
-							cwd,
-							ts: Date.now(),
-						});
-					}
-					estimatedInputTokens = estimatedPostCompactTokensForSaved;
-					yield {
-						type: "usage",
-						inputTokens: estimatedPostCompactTokensForSaved,
-						compressThreshold: compressThreshold,
-						contextWindow: contextWindow,
-						estimated: true,
-					};
-					yield {
-						type: "compact",
-						checkpoint,
-						savedTokens: compactSavedTokens,
-					};
+					estimatedInputTokens = compactResult.estimatedInputTokens;
 					manualCompactRequested = false;
-				} catch (e) {
-					yield {
-						type: "error",
-						message: `Compaction rebuild failed: ${e instanceof Error ? e.message : String(e)}`,
-					};
 				}
 				continue; // Skip normal processing, go to next API call with rebuilt context
 			}
@@ -1029,74 +719,15 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						"Agent ended turn — entering idle state (waiting for messages)",
 				};
 
-				try {
-					queue.idle = true;
-					yield { type: "agent_idle" };
-					const first = await queue.wait();
-					queue.idle = false;
-					yield { type: "agent_active" };
-					const rest = queue.drain();
-					const all = [first, ...rest];
-					if (all.some((m) => m.source === "compact")) {
-						manualCompactRequested = true;
-					}
-					const nonCompact = all.filter((m) => m.source !== "compact");
-					if (nonCompact.length === 0) {
-						// Only compact signal — no messages to inject, just continue to trigger compaction
-						continue;
-					}
-					const formatted = nonCompact.map(formatQueueMessage).join("\n");
-					yield {
-						type: "queue_message",
-						messages: formatted,
-						rawMessages: nonCompact.map(toRawMessage),
-					};
-					// Inject messages as a new user turn and continue the loop
-					const imageBlocks = extractQueueImages(nonCompact);
-					if (imageBlocks.length > 0) {
-						messages.push({
-							role: "user" as const,
-							content: [
-								{
-									type: "text" as const,
-									text: `[Messages received while you were idle:]\n${formatted}`,
-								},
-								...imageBlocks,
-							],
-						});
-					} else {
-						messages.push({
-							role: "user" as const,
-							content: `[Messages received while you were idle:]\n${formatted}`,
-						});
-					}
-					// Record queue events and messages_consumed
-					if (eventStore) {
-						const newEvents: Event[] = [];
-						const consumedIds: string[] = [];
-						for (const msg of nonCompact) {
-							if (msg.source === "user" && msg.id) {
-								// message already written to JSONL at send time — don't duplicate
-								consumedIds.push(msg.id);
-							} else {
-								const evt = queueMessageToEvent(msg);
-								const evtId = (evt as { id?: string }).id;
-								if (evtId) consumedIds.push(evtId);
-								newEvents.push(evt);
-							}
-						}
-						if (consumedIds.length > 0) {
-							newEvents.push({
-								type: "messages_consumed",
-								messageIds: consumedIds,
-								ts: Date.now(),
-							});
-						}
-						eventStore.appendBatch(sessionId, newEvents);
-					}
-					continue;
-				} catch {
-					queue.idle = false;
+				const yieldGen = handleImplicitYield(queue);
+				let yieldStep = await yieldGen.next();
+				while (!yieldStep.done) {
+					yield yieldStep.value;
+					yieldStep = await yieldGen.next();
+				}
+				const yieldResult = yieldStep.value;
+
+				if (yieldResult === null) {
 					// Queue closed — normal exit path (stop was called or done() was called).
 					// Use direct return instead of break (break hangs in Bun async generators
 					// under certain conditions with concurrent I/O).
@@ -1117,103 +748,66 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						outputTokens: totalOutputTokens,
 					};
 				}
+
+				if (yieldResult.manualCompactRequested) {
+					manualCompactRequested = true;
+				}
+				if (yieldResult.compactOnly) {
+					continue;
+				}
+
+				// Inject messages as a new user turn and continue the loop
+				const { formatted, nonCompact } = yieldResult;
+				const imageBlocks = extractQueueImages(nonCompact);
+				if (imageBlocks.length > 0) {
+					messages.push({
+						role: "user" as const,
+						content: [
+							{
+								type: "text" as const,
+								text: `[Messages received while you were idle:]\n${formatted}`,
+							},
+							...imageBlocks,
+						],
+					});
+				} else {
+					messages.push({
+						role: "user" as const,
+						content: `[Messages received while you were idle:]\n${formatted}`,
+					});
+				}
+				// Record queue events and messages_consumed
+				if (eventStore) {
+					recordQueueEvents(eventStore, sessionId, nonCompact);
+				}
+				continue;
 			}
 
 			// Execute tools concurrently
 			const execResults = await Promise.all(
-				toolUses.map(async (toolUse) => {
-					const mcpHandler = mcpHandlers.get(toolUse.name);
-					if (mcpHandler) {
-						try {
-							const mcpResult = await mcpHandler.handler(
-								toolUse.input as Record<string, unknown>,
-								{},
-							);
-							const parts = Array.isArray(mcpResult.content)
-								? mcpResult.content
-								: [];
-							const textParts: string[] = [];
-							const imageParts: Array<{
-								base64: string;
-								mediaType: string;
-							}> = [];
-							for (const c of parts as Array<Record<string, unknown>>) {
-								if (c.type === "text") {
-									textParts.push((c.text as string) ?? "");
-								} else if (c.type === "image" && c.data) {
-									imageParts.push({
-										base64: c.data as string,
-										mediaType: (c.mimeType as string) ?? "image/png",
-									});
-								} else {
-									textParts.push(JSON.stringify(c));
-								}
-							}
-							// Extract consumed message IDs, pending state, and formatted queue messages from yield/done tools
-							const consumedIds = Array.isArray(mcpResult._consumedMessageIds)
-								? (mcpResult._consumedMessageIds as string[])
-								: undefined;
-							const pending = mcpResult._pending as
-								| {
-										runningChildren: Array<{
-											id: string;
-											title: string;
-										}>;
-										pendingClarifications: number;
-								  }
-								| undefined;
-							const formattedQueueMessages =
-								typeof mcpResult._formattedQueueMessages === "string"
-									? mcpResult._formattedQueueMessages
-									: undefined;
-							return {
-								content: textParts.join("\n"),
-								isError: mcpResult.isError ?? false,
-								isImage: imageParts.length > 0,
-								imageData: imageParts[0]?.base64,
-								mediaType: imageParts[0]?.mediaType,
-								mcpImages: imageParts,
-								...(consumedIds?.length
-									? { _consumedMessageIds: consumedIds }
-									: {}),
-								...(pending ? { _pending: pending } : {}),
-								...(formattedQueueMessages
-									? { _formattedQueueMessages: formattedQueueMessages }
-									: {}),
-							};
-						} catch (e) {
-							return {
-								content: `MCP tool error: ${e instanceof Error ? e.message : String(e)}`,
-								isError: true,
-							};
-						}
-					}
-					return _executeTool(
+				toolUses.map((toolUse) =>
+					executeToolUnified(
 						toolUse.name,
 						toolUse.input as Record<string, unknown>,
+						mcpHandlers,
 						cwd,
 						request.cwd,
 						sessionId,
 						queue,
-					);
-				}),
+					),
+				),
 			);
 
 			// Emit tool_result events and build API result array
+			type ImageMediaType =
+				| "image/jpeg"
+				| "image/png"
+				| "image/gif"
+				| "image/webp";
 			const toolResults: ToolResultBlockParam[] = [];
 			for (let i = 0; i < toolUses.length; i++) {
 				const toolUse = toolUses[i] as ToolUseBlock;
-				const exec = execResults[i] as {
-					content: string;
-					isError: boolean;
-					cwd?: string;
-					isImage?: boolean;
-					imageData?: string;
-					mediaType?: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-					mcpImages?: Array<{ base64: string; mediaType: string }>;
-					_consumedMessageIds?: string[];
-					_formattedQueueMessages?: string;
-				};
+				const exec = execResults[i] as (typeof execResults)[number];
 
 				// Update cwd if bash tool changed it
 				if (exec.cwd) {
@@ -1223,15 +817,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				const text = exec.content;
 				const isError = exec.isError;
 
-				// Collect images for the UI event
-				const images: Array<{ base64: string; mediaType: string }> = [];
-				// When _formattedQueueMessages is set, mcpImages are user queue images
-				// — they go alongside the queue text block, not in the tool_result
-				if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
-					images.push(...exec.mcpImages);
-				} else if (exec.isImage && exec.imageData && exec.mediaType) {
-					images.push({ base64: exec.imageData, mediaType: exec.mediaType });
-				}
+				const images = collectToolResultImages(exec);
 
 				yield {
 					type: "tool_result",
@@ -1255,7 +841,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 								type: "image",
 								source: {
 									type: "base64",
-									media_type: exec.mediaType,
+									media_type: exec.mediaType as ImageMediaType,
 									data: exec.imageData,
 								},
 							},
@@ -1276,25 +862,27 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			let cancellationQueueMsgs: QueueMessage[] = [];
 			const cancellationTextBlocks: Array<{ type: "text"; text: string }> = [];
 			const cancellationImageBlocks: ReturnType<typeof extractQueueImages> = [];
-			if (queue && queue.pending > 0) {
-				const queueMsgs = queue.drain();
-				if (queueMsgs.some((m) => m.source === "compact")) {
-					manualCompactRequested = true;
-				}
-				const nonCompactMsgs = queueMsgs.filter((m) => m.source !== "compact");
-				if (nonCompactMsgs.length > 0) {
-					const formatted = nonCompactMsgs.map(formatQueueMessage).join("\n");
-					cancellationTextBlocks.push({
-						type: "text" as const,
-						text: `[Messages received while you were working:]\n${formatted}`,
-					});
-					cancellationImageBlocks.push(...extractQueueImages(nonCompactMsgs));
-					cancellationQueueMsgs = nonCompactMsgs;
-					yield {
-						type: "queue_message",
-						messages: formatted,
-						rawMessages: nonCompactMsgs.map(toRawMessage),
-					};
+			if (queue) {
+				const drained = drainQueueAtCancellationPoint(queue);
+				if (drained) {
+					if (drained.manualCompactRequested) {
+						manualCompactRequested = true;
+					}
+					if (drained.messages.length > 0) {
+						cancellationTextBlocks.push({
+							type: "text" as const,
+							text: `[Messages received while you were working:]\n${drained.formatted}`,
+						});
+						cancellationImageBlocks.push(
+							...extractQueueImages(drained.messages),
+						);
+						cancellationQueueMsgs = drained.messages;
+						yield {
+							type: "queue_message",
+							messages: drained.formatted,
+							rawMessages: drained.messages.map(toRawMessage),
+						};
+					}
 				}
 			}
 
@@ -1306,22 +894,17 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				mimeType: string;
 			}> = [];
 			for (const exec of execResults) {
-				const e = exec as {
-					_formattedQueueMessages?: string;
-					mcpImages?: Array<{ base64: string; mediaType: string }>;
-					_consumedMessageIds?: string[];
-				};
-				if (e._formattedQueueMessages) {
+				if (exec._formattedQueueMessages) {
 					yieldQueueTextBlocks.push({
 						type: "text" as const,
-						text: `[Messages received while you were idle:]\n${e._formattedQueueMessages}`,
+						text: `[Messages received while you were idle:]\n${exec._formattedQueueMessages}`,
 					});
 					// Images from yield/done are in mcpImages when _formattedQueueMessages is set
-					if (e.mcpImages?.length) {
-						for (const img of e.mcpImages) {
+					if (exec.mcpImages?.length) {
+						for (const img of exec.mcpImages) {
 							yieldQueueImageBlocks.push({
 								type: "image",
-								data: img.base64,
+								data: img.base64 ?? img.data ?? "",
 								mimeType: img.mediaType,
 							});
 						}
@@ -1365,85 +948,14 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				role: "user" as const,
 				content: userContentBlocks as MessageParam["content"],
 			});
+
 			// Record individual tool_result Events
 			if (eventStore) {
-				const toolEvents: Event[] = [];
-
-				// Collect consumed message IDs from cancellation queue messages
-				const consumedIds: string[] = [];
-				const nonUserQueueEvents: Event[] = [];
-				for (const qm of cancellationQueueMsgs) {
-					if (qm.source === "user" && qm.id) {
-						// message already written to JSONL at send time — just track ID
-						consumedIds.push(qm.id);
-					} else {
-						const evt = queueMessageToEvent(qm);
-						const evtId = (evt as { id?: string }).id;
-						if (evtId) consumedIds.push(evtId);
-						nonUserQueueEvents.push(evt);
-					}
-				}
-
-				for (let idx = 0; idx < toolUses.length; idx++) {
-					const toolUse = toolUses[idx] as ToolUseBlock;
-					const exec = execResults[idx] as {
-						content: string;
-						isError: boolean;
-						mcpImages?: Array<{ base64: string; mediaType: string }>;
-						isImage?: boolean;
-						imageData?: string;
-						mediaType?: string;
-						_consumedMessageIds?: string[];
-						_formattedQueueMessages?: string;
-						_pending?: {
-							runningChildren: Array<{ id: string; title: string }>;
-							pendingClarifications: number;
-						};
-					};
-					// Record pure tool output — queue text is NOT embedded.
-					// The converter reconstructs queue messages from messagesConsumed + message events.
-					const resultContent = exec.content;
-					const images: Array<{ base64: string; mediaType: string }> = [];
-					// When _formattedQueueMessages is set, mcpImages are user queue images
-					// — they're already recorded as message events, not tool images
-					if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
-						images.push(...exec.mcpImages);
-					} else if (exec.isImage && exec.imageData && exec.mediaType) {
-						images.push({
-							base64: exec.imageData,
-							mediaType: exec.mediaType,
-						});
-					}
-					const isLast = idx === toolUses.length - 1;
-					toolEvents.push({
-						type: "tool_result",
-						toolCallId: toolUse.id,
-						content: resultContent,
-						isError: exec.isError,
-						...(images.length > 0 ? { images } : {}),
-						...(isLast && exec._pending ? { pending: exec._pending } : {}),
-						ts: Date.now(),
-					});
-				}
-				// Record non-user cancellation-point queue messages as separate Events
-				for (const evt of nonUserQueueEvents) {
-					toolEvents.push(evt);
-				}
-				// Record standalone messages_consumed event AFTER tool_results and queue events
-				const allConsumedIds = [
-					...consumedIds,
-					...execResults.flatMap((exec) => {
-						const e = exec as { _consumedMessageIds?: string[] };
-						return e._consumedMessageIds ?? [];
-					}),
-				];
-				if (allConsumedIds.length > 0) {
-					toolEvents.push({
-						type: "messages_consumed",
-						messageIds: allConsumedIds,
-						ts: Date.now(),
-					});
-				}
+				const toolEvents = buildToolResultEvents(
+					toolUses.map((tu) => ({ id: tu.id })),
+					execResults,
+					cancellationQueueMsgs,
+				);
 				eventStore.appendBatch(sessionId, toolEvents);
 			}
 
@@ -1477,36 +989,14 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					(totalCacheCreationTokens * inputPer1M * 1.25) / 1_000_000 +
 					(totalCacheReadTokens * inputPer1M * 0.1) / 1_000_000 +
 					(totalOutputTokens * outputPer1M) / 1_000_000;
-				const ratio = runningCost / request.budgetUsd;
-
-				if (ratio >= 1.0) {
-					const warning = `⚠️ Budget exceeded (${runningCost.toFixed(4)} / ${request.budgetUsd.toFixed(2)} budget). Call done() now.`;
+				const budgetResult = checkBudget(request.budgetUsd, runningCost);
+				if (budgetResult) {
 					messages.push({
 						role: "user" as const,
-						content: warning,
+						content: budgetResult.warning,
 					});
-					if (eventStore) {
-						eventStore.append(sessionId, {
-							type: "budget_warning",
-							warning,
-							ts: Date.now(),
-						});
-					}
-					yield { type: "status", message: warning };
-				} else if (ratio >= 0.8) {
-					const warning = `⚠️ Warning: task has used ${Math.round(ratio * 100)}% of its ${request.budgetUsd.toFixed(2)} budget (${runningCost.toFixed(4)} spent). Wrap up soon.`;
-					messages.push({
-						role: "user" as const,
-						content: warning,
-					});
-					if (eventStore) {
-						eventStore.append(sessionId, {
-							type: "budget_warning",
-							warning,
-							ts: Date.now(),
-						});
-					}
-					yield { type: "status", message: warning };
+					recordBudgetWarning(eventStore, sessionId, budgetResult.warning);
+					yield { type: "status", message: budgetResult.warning };
 				}
 			}
 		}
