@@ -541,3 +541,12 @@ Event (src/events.ts) — THE source of truth
 - **Never assume a child_complete from a previously-closed task is stale.** User can resume closed tasks via UI. When a closed task reports passed, ALWAYS check the branch for new commits and merge them.
 - **child_report = something happened.** Even if a task was "already done", a child_report means the agent is running. Do NOT close_task while it has running agents.
 - **Always `git log main..<branch>` before close_task** — verify there are truly no unmerged commits.
+
+
+## child_report Activity Log Routing Bug (March 2026)
+
+- **Bug**: After page refresh, `child_report` notifications appeared in the child's activity log instead of the parent's.
+- **Root cause**: `queueEntryToUIEvent()` in `web/ws-handler.ts` used `qe.taskId` (the inner child task ID from the message body) for the `child_report` case, instead of `parentTaskId` (the consuming agent's task ID). Other message types like `parent_update`, `cross_project`, `background_complete` correctly used `parentTaskId`.
+- **Live SSE worked**: In the live path, `toRawMessage()` for `child_report` doesn't include a `taskId` field in rawMessages, so `qe.taskId` was undefined and fell back to `""` (falsy), which the root filter treated as "show in root view". Accidentally correct.
+- **REST/refresh broke**: On page load, events are fetched from REST. `normalizeEventForUI()` sets top-level `taskId = sessionId` (parent's). But the `body` field retains `taskId = childId`. `processEventBatch` stores the event with parent's `taskId` but passes `body` (with child's `taskId`) to `queueEntryToUIEvent`, which used the inner `qe.taskId` instead of the outer `parentTaskId`.
+- **Fix**: Changed `child_report` case in `queueEntryToUIEvent` to use `parentTaskId` (consistent with all other message types).

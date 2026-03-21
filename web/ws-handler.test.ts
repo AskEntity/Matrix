@@ -75,6 +75,8 @@ describe("ws-handler queueEntry handling", () => {
 		expect(childReportEntry).toBeDefined();
 		expect(childReportEntry?.content).toBe("Progress update: 50% done");
 		expect(childReportEntry?.title).toBe("My Child Task");
+		// taskId should be the PARENT's (consuming agent), not the child's
+		expect(childReportEntry?.taskId).toBe("parent-1");
 	});
 
 	it("processEventBatch: user_message with queueEntry.source=parent_update materializes as parent_update", () => {
@@ -306,6 +308,8 @@ describe("ws-handler queueEntry handling", () => {
 		);
 		expect(childReportEntry).toBeDefined();
 		expect(childReportEntry?.content).toBe("I'm done with phase 1");
+		// taskId should be the PARENT's (consuming agent), not the child's
+		expect(childReportEntry?.taskId).toBe("parent-1");
 		// Pending should be cleared
 		expect(capturedPending.length).toBe(0);
 	});
