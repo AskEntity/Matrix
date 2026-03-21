@@ -479,6 +479,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setProjectId(hp);
 				setSelectedTaskId(ht ?? rootNodeId);
 				setLogs([]);
+				setTokenUsage({});
+				setPendingMessages([]);
+				setPendingClarifications([]);
+				setActiveAgents(new Set());
 			} else if (ht && ht !== selectedTaskId) {
 				setSelectedTaskId(ht);
 			} else if (!ht && selectedTaskId !== rootNodeId) {
@@ -487,7 +491,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		};
 		window.addEventListener("hashchange", onHashChange);
 		return () => window.removeEventListener("hashchange", onHashChange);
-	}, [projectId, selectedTaskId, rootNodeId]);
+	}, [projectId, selectedTaskId, rootNodeId, setActiveAgents]);
 
 	useEffect(() => {
 		if (projectId) checkStatus();
@@ -619,6 +623,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					setSelectedTaskId(null);
 					setRootNodeId(null);
 					setLogs([]);
+					setTokenUsage({});
+					setPendingMessages([]);
+					setPendingClarifications([]);
+					setActiveAgents(new Set());
 				}}
 				onDeleteProject={handleDeleteProject}
 				onShowAddProject={() => setShowAddProject(true)}
