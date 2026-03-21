@@ -742,7 +742,10 @@ export async function runChildAgentInBackground(
 		// Create the queue first — shared between MCP tools and runChildCore
 		const childQueue = new MessageQueue();
 		childQueue.onEnqueue = (msg) =>
-			broadcastPendingFromQueue(ctx, project.id, [msg]);
+			broadcastPendingFromQueue(ctx, project.id, [
+				...childQueue.peekMessages(),
+				msg,
+			]);
 		childQueue.onDrain = () => broadcastPendingCleared(ctx, project.id);
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
@@ -963,7 +966,11 @@ export async function launchAgent(
 	const queue = new MessageQueue();
 
 	// Wire up enqueue/drain callbacks for pending message indicators
-	queue.onEnqueue = (msg) => broadcastPendingFromQueue(ctx, project.id, [msg]);
+	queue.onEnqueue = (msg) =>
+		broadcastPendingFromQueue(ctx, project.id, [
+			...queue.peekMessages(),
+			msg,
+		]);
 	queue.onDrain = () => broadcastPendingCleared(ctx, project.id);
 
 	// Load any persisted messages from disk and enqueue them
