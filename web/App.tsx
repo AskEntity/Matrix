@@ -400,7 +400,43 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		],
 	);
 
-	const { connected } = useSSE(projectId, handleWS, checkStatus);
+	// Re-fetch full event history + pending state on SSE reconnect.
+	// The SSE ring buffer handles short disconnects via Last-Event-ID,
+	// but for longer gaps we need to re-fetch everything.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: processEventBatch is stable within useMemo
+	const handleReconnect = useCallback(() => {
+		if (!projectId) return;
+		// Re-fetch events
+		authFetch(`/projects/${projectId}/events`)
+			.then((r) => r.json())
+			.then((data: { events?: Record<string, unknown>[] }) => {
+				if (data.events && data.events.length > 0) {
+					processEventBatch(data.events);
+				}
+			})
+			.catch(() => {});
+		// Re-fetch pending messages
+		authFetch(`/projects/${projectId}/pending-messages`)
+			.then((r) => r.json())
+			.then(
+				(data: {
+					messages: {
+						id: string;
+						taskId: string | null;
+						text: string;
+						timestamp: number;
+					}[];
+				}) => setPendingMessages(data.messages ?? []),
+			)
+			.catch(() => {});
+	}, [projectId]);
+
+	const { connected } = useSSE(
+		projectId,
+		handleWS,
+		checkStatus,
+		handleReconnect,
+	);
 
 	useEffect(() => {
 		if (projects.length === 0) return;

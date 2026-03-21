@@ -54,6 +54,7 @@ export function useSSE(
 	projectId: string,
 	onMessage: (msg: Record<string, unknown>) => void,
 	onConnect?: () => void,
+	onReconnect?: () => void,
 ) {
 	const [connected, setConnected] = useState(false);
 	const [lastMessageAt, setLastMessageAt] = useState<Date | null>(null);
@@ -66,8 +67,17 @@ export function useSSE(
 		if (token) url += `&token=${encodeURIComponent(token)}`;
 		const source = new EventSource(url);
 
+		// Track whether this is the first connect or a reconnect
+		let hasConnectedBefore = false;
+
 		source.onopen = () => {
 			setConnected(true);
+			if (hasConnectedBefore) {
+				// Reconnect — ring buffer may have caught up, but we also need
+				// to re-fetch events in case the gap was too large
+				onReconnect?.();
+			}
+			hasConnectedBefore = true;
 			onConnect?.();
 		};
 
@@ -88,7 +98,7 @@ export function useSSE(
 		return () => {
 			source.close();
 		};
-	}, [projectId, onMessage, onConnect]);
+	}, [projectId, onMessage, onConnect, onReconnect]);
 
 	return { connected, lastMessageAt };
 }
