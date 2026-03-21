@@ -1,13 +1,10 @@
 /**
  * Auth routes for WebAuthn/Passkey authentication.
  *
- * Main port routes (registerAuthRoutes):
+ * Routes (registerAuthRoutes):
  *   /auth/status, /auth/login/options, /auth/login/verify, /auth/logout
  *   /auth/register/options, /auth/register/verify (blocked when enforced)
  *   /auth/credentials, DELETE /auth/credentials/:id (blocked when enforced)
- *
- * Admin port routes (registerAdminAuthRoutes):
- *   /auth/register/options, /auth/register/verify, /auth/credentials (localhost-only, no guard)
  */
 
 import { join } from "node:path";
@@ -337,108 +334,6 @@ export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
 				403,
 			);
 		}
-		const authPath = getAuthPath(ctx);
-		const credId = c.req.param("id");
-		const removed = await removeCredential(authPath, credId);
-		if (!removed) {
-			return c.json({ error: "Credential not found" }, 404);
-		}
-		return c.json({ ok: true });
-	});
-}
-
-// ── Registration Routes (Admin Port) ──────────────────────────────────────
-
-export function registerAdminAuthRoutes(app: Hono, ctx: DaemonContext) {
-	// Check if credentials exist
-	app.get("/auth/credentials", async (c) => {
-		const authPath = getAuthPath(ctx);
-		const creds = await getCredentials(authPath);
-		return c.json({
-			count: creds.length,
-			credentials: creds.map((cr) => ({
-				id: cr.credentialID,
-				createdAt: cr.createdAt,
-			})),
-		});
-	});
-
-	// Generate registration options
-	app.post("/auth/register/options", async (c) => {
-		const authPath = getAuthPath(ctx);
-		const existingCredentials = await getCredentials(authPath);
-
-		const config = getAuthConfig(ctx);
-		const rpID = config.rpID ?? "localhost";
-		const rpName = resolveRpName(ctx);
-
-		const options = await generateRegistrationOptions({
-			rpName,
-			rpID,
-			userName: "admin",
-			userDisplayName: "OpenGraft Admin",
-			excludeCredentials: existingCredentials.map((c) => ({
-				id: c.credentialID,
-				transports: c.transports,
-			})),
-			authenticatorSelection: {
-				residentKey: "preferred",
-				userVerification: "preferred",
-			},
-			attestationType: "none",
-		});
-
-		// Store challenge for verification
-		storeChallenge(`register:${options.challenge}`, options.challenge);
-
-		return c.json(options);
-	});
-
-	// Verify registration response
-	app.post("/auth/register/verify", async (c) => {
-		const authPath = getAuthPath(ctx);
-		const body = (await c.req.json()) as RegistrationResponseJSON;
-
-		const config = getAuthConfig(ctx);
-		const rpID = config.rpID ?? "localhost";
-		const origin = resolveOrigin(c.req.raw);
-
-		try {
-			const verification = await verifyRegistrationResponse({
-				response: body,
-				expectedChallenge: (challenge: string) => {
-					const stored = getAndRemoveChallenge(`register:${challenge}`);
-					return stored !== null;
-				},
-				expectedOrigin: origin,
-				expectedRPID: rpID,
-			});
-
-			if (!verification.verified || !verification.registrationInfo) {
-				return c.json({ error: "Verification failed" }, 400);
-			}
-
-			const { credential } = verification.registrationInfo;
-
-			await addCredential(authPath, {
-				credentialID: credential.id,
-				publicKey: uint8ArrayToBase64url(credential.publicKey),
-				counter: credential.counter,
-				transports: credential.transports,
-				createdAt: new Date().toISOString(),
-			});
-
-			return c.json({ verified: true });
-		} catch (err) {
-			return c.json(
-				{ error: err instanceof Error ? err.message : "Verification failed" },
-				400,
-			);
-		}
-	});
-
-	// Delete a credential
-	app.delete("/auth/credentials/:id", async (c) => {
 		const authPath = getAuthPath(ctx);
 		const credId = c.req.param("id");
 		const removed = await removeCredential(authPath, credId);

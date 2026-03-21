@@ -4,7 +4,6 @@ import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import { serveStatic, websocket } from "hono/bun";
-import { ADMIN_REGISTRATION_PAGE } from "./admin-page.ts";
 import type { AgentSession } from "./agent-provider.ts";
 import { ORCHESTRATION_KNOWLEDGE } from "./agent-tools.ts";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
@@ -24,7 +23,6 @@ import {
 import { registerAgentRoutes } from "./daemon/routes/agent.ts";
 import {
 	createAuthMiddleware,
-	registerAdminAuthRoutes,
 	registerAuthRoutes,
 } from "./daemon/routes/auth.ts";
 import { registerConfigRoutes } from "./daemon/routes/config.ts";
@@ -314,18 +312,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		ctx.globalConfig = await loadGlobalConfig(ctx.config.globalConfigPath);
 	}
 
-	// Build admin app for passkey registration (localhost-only)
-	const adminApp = new Hono();
-	adminApp.get("/health", (c) => c.json({ status: "ok", admin: true }));
-	registerAdminAuthRoutes(adminApp, ctx);
-	// Serve a simple registration page
-	adminApp.get("/", (c) => {
-		return c.html(ADMIN_REGISTRATION_PAGE);
-	});
-
 	return {
 		app,
-		adminApp,
 		pm: ctx.pm,
 		dataDir: config.dataDir,
 		wsClients: ctx.wsClients,
@@ -430,7 +418,6 @@ ${ORCHESTRATION_KNOWLEDGE}`;
 if (import.meta.main) {
 	const {
 		app,
-		adminApp,
 		pm,
 		dataDir,
 		autoResumeProjects,
@@ -473,19 +460,6 @@ if (import.meta.main) {
 				? { hmr: true, console: true }
 				: false,
 	});
-
-	// Admin server for passkey management (always runs, localhost-only)
-	{
-		const adminPort = getConfig().auth?.adminPort ?? 7434;
-		Bun.serve({
-			fetch: adminApp.fetch,
-			port: adminPort,
-			hostname: "127.0.0.1", // localhost only
-		});
-		console.log(
-			`Admin server (passkey registration): http://localhost:${adminPort}`,
-		);
-	}
 
 	// Graceful shutdown: save sessions before exit
 	const handleShutdown = async () => {
