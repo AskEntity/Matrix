@@ -15,6 +15,10 @@ import type { EventStore } from "./event-store.ts";
 import {
 	type Event,
 	findOrphanedToolCalls,
+	formatEventForAI,
+	isQueueEvent,
+	type MessageBody,
+	type MessageEvent,
 	queueMessageToEvent,
 } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
@@ -803,6 +807,320 @@ export function recordBudgetWarning(
 	}
 }
 
+// ── Shared Event Converter Walker ──
+
+/** Image data extracted from events (provider-agnostic). */
+export interface EventImageData {
+	base64: string;
+	mediaType: string;
+}
+
+/** Collected assistant content: text blocks and tool calls. */
+export interface AssistantContent {
+	texts: string[];
+	toolCalls: Array<{
+		id: string;
+		name: string;
+		input: Record<string, unknown>;
+	}>;
+}
+
+/** A single tool result extracted from events. */
+export interface ToolResultData {
+	toolCallId: string;
+	content: string | undefined;
+	isError: boolean;
+	images?: EventImageData[];
+	pending?: {
+		runningChildren: Array<{ id: string; title: string }>;
+		pendingClarifications: number;
+	};
+}
+
+/** Consumed messages resolved from a messages_consumed event. */
+export interface ConsumedMessages {
+	formattedTexts: string[];
+	images: EventImageData[];
+	isWorkingContext: boolean;
+}
+
+/**
+ * Callbacks that each provider implements to handle provider-specific message formatting.
+ * The shared walker calls these at the right points during event traversal.
+ */
+export interface EventConverterCallbacks {
+	/** Build a user message from plain content (message/user_message without id, compacted_resume, etc.). */
+	onUserMessage(content: string): unknown;
+
+	/** Build an assistant message from collected text + tool_call blocks. */
+	onAssistantContent(content: AssistantContent): unknown;
+
+	/**
+	 * Build message(s) for a batch of tool results.
+	 * Called with consecutive tool_results, any interleaved messages_consumed data,
+	 * and accumulated queue images.
+	 */
+	onToolResults(
+		results: ToolResultData[],
+		interleaved: Array<{ type: "text"; text: string }>,
+		queueImages: EventImageData[],
+	): unknown[];
+
+	/**
+	 * Handle consumed messages (from messages_consumed event).
+	 * Called in non-tool-result context (idle or standalone).
+	 * `messages` is the current message array — the callback may append to the last message
+	 * or push new messages.
+	 */
+	onConsumedMessages(messages: unknown[], consumed: ConsumedMessages): void;
+
+	/** Fix orphaned tool uses in the final message array. */
+	fixOrphans(messages: unknown[]): void;
+
+	/**
+	 * Determine if the current message context is "working" (between tool results).
+	 * Used to decide "[Messages received while you were working/idle:]" wrapper.
+	 */
+	isWorkingContext(messages: unknown[]): boolean;
+}
+
+/**
+ * Build an index of events by ID for messages_consumed resolution.
+ */
+export function buildEventIndex(events: Event[]): Map<string, Event> {
+	const index = new Map<string, Event>();
+	for (const e of events) {
+		const eid = (e as { id?: string }).id;
+		if (eid) {
+			index.set(eid, e);
+		}
+	}
+	return index;
+}
+
+/**
+ * Extract images from a consumed event (message/user_message with images).
+ */
+export function extractConsumedEventImages(event: Event): EventImageData[] {
+	if (event.type !== "message" && event.type !== "user_message") return [];
+	const imgs =
+		(event as MessageEvent).images ??
+		(event as MessageEvent).body?.images ??
+		(event as { queueEntry?: MessageBody }).queueEntry?.images ??
+		[];
+	return imgs.map((img) => ({ base64: img.base64, mediaType: img.mediaType }));
+}
+
+/**
+ * Resolve consumed events from a messages_consumed event using the event index.
+ * Returns formatted text contents and extracted images.
+ */
+export function resolveConsumedMessages(
+	messageIds: string[],
+	eventIndex: Map<string, Event>,
+	isWorking: boolean,
+): ConsumedMessages | null {
+	const consumedEvents: Event[] = [];
+	for (const id of messageIds) {
+		const msg = eventIndex.get(id);
+		if (msg) consumedEvents.push(msg);
+	}
+	if (consumedEvents.length === 0) return null;
+
+	const formattedTexts: string[] = [];
+	const images: EventImageData[] = [];
+	for (const msg of consumedEvents) {
+		formattedTexts.push(formatEventForAI(msg));
+		images.push(...extractConsumedEventImages(msg));
+	}
+
+	return { formattedTexts, images, isWorkingContext: isWorking };
+}
+
+/**
+ * Generic event walker that converts JSONL events to provider messages.
+ * Handles all shared control flow: event index, two-phase skip/materialize,
+ * queue event skipping, compaction skip, and the main while-loop structure.
+ *
+ * Provider-specific formatting is delegated to callbacks.
+ */
+export function walkEventsToMessages(
+	events: Event[],
+	callbacks: EventConverterCallbacks,
+): unknown[] {
+	const messages: unknown[] = [];
+	const eventIndex = buildEventIndex(events);
+	let i = 0;
+
+	while (i < events.length) {
+		const event = events[i] as Event;
+
+		switch (event.type) {
+			case "message":
+			case "user_message": {
+				// Events with id = injected message, skip here — materialized at messages_consumed
+				if ((event as { id?: string }).id) {
+					i++;
+					break;
+				}
+				// Defensive: ensure content is never undefined
+				let msgContent = (event as { content?: string }).content;
+				if (!msgContent) {
+					msgContent = formatEventForAI(event);
+					if (!msgContent) {
+						console.warn(
+							"[event-converter] Empty content fallback triggered for event:",
+							event.type,
+							event,
+						);
+						msgContent = "(empty)";
+					}
+				}
+				messages.push(callbacks.onUserMessage(msgContent));
+				i++;
+				break;
+			}
+
+			case "messages_consumed": {
+				const isWorking = callbacks.isWorkingContext(messages);
+				const consumed = resolveConsumedMessages(
+					event.messageIds,
+					eventIndex,
+					isWorking,
+				);
+				if (consumed) {
+					callbacks.onConsumedMessages(messages, consumed);
+				}
+				i++;
+				break;
+			}
+
+			case "compacted_resume":
+				messages.push(callbacks.onUserMessage(event.content));
+				i++;
+				break;
+
+			case "summarization_request":
+				messages.push(callbacks.onUserMessage(event.instruction));
+				i++;
+				break;
+
+			case "budget_warning":
+				messages.push(callbacks.onUserMessage(event.warning));
+				i++;
+				break;
+
+			case "assistant_text":
+			case "tool_call": {
+				const content: AssistantContent = { texts: [], toolCalls: [] };
+
+				// Collect consecutive assistant_text events
+				while (
+					i < events.length &&
+					(events[i] as Event).type === "assistant_text"
+				) {
+					const e = events[i] as Event & { type: "assistant_text" };
+					content.texts.push(e.content);
+					i++;
+				}
+
+				// Collect consecutive tool_call events
+				while (i < events.length && (events[i] as Event).type === "tool_call") {
+					const e = events[i] as Event & { type: "tool_call" };
+					content.toolCalls.push({
+						id: e.toolCallId,
+						name: e.tool,
+						input: e.input,
+					});
+					i++;
+				}
+
+				messages.push(callbacks.onAssistantContent(content));
+				break;
+			}
+
+			case "tool_result": {
+				const results: ToolResultData[] = [];
+				const interleavedText: Array<{ type: "text"; text: string }> = [];
+				const queueImages: EventImageData[] = [];
+
+				while (i < events.length) {
+					const current = events[i] as Event;
+					if (current.type === "tool_result") {
+						results.push({
+							toolCallId: current.toolCallId,
+							content: current.content,
+							isError: current.isError,
+							images: current.images?.map((img) => ({
+								base64: img.base64,
+								mediaType: img.mediaType,
+							})),
+							pending: current.pending,
+						});
+						i++;
+					} else if (current.type === "messages_consumed") {
+						// messages_consumed between tool_results → working context
+						const consumed = resolveConsumedMessages(
+							current.messageIds,
+							eventIndex,
+							true,
+						);
+						if (consumed) {
+							const mcText = `[Messages received while you were working:]\n${consumed.formattedTexts.join("\n")}`;
+							interleavedText.push({ type: "text", text: mcText });
+							queueImages.push(...consumed.images);
+						}
+						i++;
+					} else if (
+						isQueueEvent(current) ||
+						current.type === "message" ||
+						current.type === "user_message"
+					) {
+						// Queue events with IDs — skip, materialized by messages_consumed
+						i++;
+					} else {
+						break;
+					}
+				}
+
+				const toolMsgs = callbacks.onToolResults(
+					results,
+					interleavedText,
+					queueImages,
+				);
+				for (const msg of toolMsgs) {
+					messages.push(msg);
+				}
+				break;
+			}
+
+			// Queue-originated events (standalone) — skip, materialized by messages_consumed
+			case "child_complete":
+			case "parent_update":
+			case "clarify_response":
+			case "child_report":
+			case "cross_project":
+			case "background_complete":
+			case "system_notification":
+			case "compact_request":
+				i++;
+				break;
+
+			case "compact_marker":
+				i++;
+				break;
+
+			default:
+				// Skip lifecycle/broadcast events
+				i++;
+				break;
+		}
+	}
+
+	callbacks.fixOrphans(messages);
+	return messages;
+}
+
 // ── Unified Provider Adapter Interface ──
 
 /** Tool use extracted from a provider response. */
@@ -918,12 +1236,6 @@ export interface ProviderAdapter {
 		nonCompact: QueueMessage[],
 	): unknown;
 
-	/** Build the compacted resume message (user message after compaction). */
-	buildCompactedResumeMessage(content: string): unknown;
-
-	/** Build a budget warning user message. */
-	buildBudgetWarningMessage(warning: string): unknown;
-
 	/** Compute cost from accumulated token counts. */
 	computeCost(
 		model: string,
@@ -933,8 +1245,11 @@ export interface ProviderAdapter {
 		totalCacheReadTokens: number,
 	): number;
 
-	/** Build the final AgentResult. */
-	buildResult(params: {
+	/**
+	 * Build the final AgentResult. Optional — default returns base fields.
+	 * Override to include provider-specific fields (e.g. Anthropic cache tokens).
+	 */
+	buildResult?(params: {
 		success: boolean;
 		output: string;
 		costUsd: number;
@@ -945,13 +1260,29 @@ export interface ProviderAdapter {
 		totalCacheCreationTokens: number;
 		totalCacheReadTokens: number;
 	}): AgentResult;
+}
 
-	/** Verify events match messages (deterministic verification). Optional. */
-	verifyEvents?(params: {
-		eventStore: EventStore;
-		sessionId: string;
-		messages: unknown[];
-	}): void;
+/** Default buildResult — used when adapter doesn't override. */
+function defaultBuildResult(params: {
+	success: boolean;
+	output: string;
+	costUsd: number;
+	turns: number;
+	sessionId: string;
+	totalInputTokens: number;
+	totalOutputTokens: number;
+	totalCacheCreationTokens: number;
+	totalCacheReadTokens: number;
+}): AgentResult {
+	return {
+		success: params.success,
+		output: params.output,
+		costUsd: params.costUsd,
+		turns: params.turns,
+		sessionId: params.sessionId,
+		inputTokens: params.totalInputTokens,
+		outputTokens: params.totalOutputTokens,
+	};
 }
 
 /**
@@ -1109,9 +1440,10 @@ export async function* runProviderLoop(
 
 			if (compactResult) {
 				messages.length = 0;
-				messages.push(
-					adapter.buildCompactedResumeMessage(compactResult.userContent),
-				);
+				messages.push({
+					role: "user" as const,
+					content: compactResult.userContent,
+				});
 				estimatedInputTokens = compactResult.estimatedInputTokens;
 				manualCompactRequested = false;
 			}
@@ -1299,7 +1631,8 @@ export async function* runProviderLoop(
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
 				);
-				return adapter.buildResult({
+				const buildResult = adapter.buildResult ?? defaultBuildResult;
+				return buildResult({
 					success: true,
 					output: lastText,
 					costUsd: cost,
@@ -1426,7 +1759,8 @@ export async function* runProviderLoop(
 				totalCacheCreationTokens,
 				totalCacheReadTokens,
 			);
-			return adapter.buildResult({
+			const buildResult2 = adapter.buildResult ?? defaultBuildResult;
+			return buildResult2({
 				success: true,
 				output: lastText,
 				costUsd: cost,
@@ -1450,16 +1784,30 @@ export async function* runProviderLoop(
 			);
 			const budgetResult = checkBudget(request.budgetUsd, runningCost);
 			if (budgetResult) {
-				messages.push(adapter.buildBudgetWarningMessage(budgetResult.warning));
+				messages.push({
+					role: "user" as const,
+					content: budgetResult.warning,
+				});
 				recordBudgetWarning(eventStore, sessionId, budgetResult.warning);
 				yield { type: "status", message: budgetResult.warning };
 			}
 		}
 	}
 
-	// Deterministic verification
-	if (eventStore && adapter.verifyEvents) {
-		adapter.verifyEvents({ eventStore, sessionId, messages });
+	// Deterministic verification — inlined since both providers do the same thing
+	if (eventStore) {
+		const activeEvents = eventStore.readActive(sessionId);
+		if (activeEvents.length > 0) {
+			const reconstructed = adapter.convertEventsToMessages(activeEvents);
+			const match = JSON.stringify(messages) === JSON.stringify(reconstructed);
+			if (!match) {
+				console.error("[EVENTS MISMATCH]", {
+					messagesLen: (messages as unknown[]).length,
+					eventsLen: activeEvents.length,
+					reconstructedLen: reconstructed.length,
+				});
+			}
+		}
 	}
 
 	const finalCost = adapter.computeCost(
@@ -1470,7 +1818,8 @@ export async function* runProviderLoop(
 		totalCacheReadTokens,
 	);
 
-	return adapter.buildResult({
+	const buildResultFinal = adapter.buildResult ?? defaultBuildResult;
+	return buildResultFinal({
 		success: true,
 		output: lastText,
 		costUsd: finalCost,

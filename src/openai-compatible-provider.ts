@@ -5,15 +5,20 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
-import { type Event, eventsToOpenAIMessages } from "./events.ts";
+import { type Event, formatPendingSection } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
+	type AssistantContent,
+	type ConsumedMessages,
+	type EventImageData,
 	extractQueueImageParts,
 	type ProviderAdapter,
 	type ProviderTokenUsage,
 	type ProviderToolUse,
 	runProviderLoop,
 	type ToolExecResult,
+	type ToolResultData,
+	walkEventsToMessages,
 	zodShapeToJsonSchema,
 } from "./provider-shared.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
@@ -294,6 +299,250 @@ async function callOpenAIAPI(
 	}
 
 	throw new Error("Failed to get API response after retries");
+}
+
+// ── OpenAI Event Converter ──
+
+/** Build an OpenAI image_url part from event image data. */
+function openaiImagePart(img: EventImageData): unknown {
+	return {
+		type: "image_url",
+		image_url: {
+			url: `data:${img.mediaType};base64,${img.base64}`,
+			detail: "auto",
+		},
+	};
+}
+
+/**
+ * Reconstruct OpenAI-format messages from JSONL events.
+ * Uses the shared event walker with OpenAI-specific callbacks.
+ * @internal Exported for testing
+ */
+export function eventsToOpenAIMessages(events: Event[]): unknown[] {
+	// Map toolCallId → tool name for resolving tool_result.name
+	const toolNames = new Map<string, string>();
+
+	return walkEventsToMessages(events, {
+		onUserMessage(content: string): unknown {
+			return { role: "user", content };
+		},
+
+		onAssistantContent(content: AssistantContent): unknown {
+			let textContent: string | null = null;
+			if (content.texts.length > 0) {
+				textContent = content.texts.join("\n");
+			}
+
+			const toolCalls = content.toolCalls.map((tc) => {
+				// Register tool name for later tool_result resolution
+				toolNames.set(tc.id, tc.name);
+				return {
+					id: tc.id,
+					type: "function" as const,
+					function: {
+						name: tc.name,
+						arguments: JSON.stringify(tc.input),
+					},
+				};
+			});
+
+			// Defensive: ensure assistant message has content or tool_calls
+			if (textContent === null && toolCalls.length === 0) {
+				console.warn(
+					"[event-converter] Empty assistant content — inserting (empty) fallback",
+				);
+				textContent = "(empty)";
+			}
+
+			const msg: Record<string, unknown> = {
+				role: "assistant",
+				content: textContent,
+			};
+			if (toolCalls.length > 0) {
+				msg.tool_calls = toolCalls;
+			}
+			return msg;
+		},
+
+		onToolResults(
+			results: ToolResultData[],
+			interleaved: Array<{ type: "text"; text: string }>,
+			queueImages: EventImageData[],
+		): unknown[] {
+			const msgs: unknown[] = [];
+			const toolImageResults: Array<{ text: string; dataUri: string }> = [];
+
+			for (const result of results) {
+				const toolName = toolNames.get(result.toolCallId) ?? "unknown";
+				msgs.push({
+					role: "tool",
+					tool_call_id: result.toolCallId,
+					name: toolName,
+					content: result.content ?? "(empty)",
+				});
+
+				if (result.images) {
+					for (const img of result.images) {
+						toolImageResults.push({
+							text: result.content ?? "(empty)",
+							dataUri: `data:${img.mediaType};base64,${img.base64}`,
+						});
+					}
+				}
+
+				if (result.pending) {
+					const pendingText = formatPendingSection(result.pending);
+					const lastToolMsg = msgs[msgs.length - 1] as
+						| { role: string; content: string }
+						| undefined;
+					if (
+						lastToolMsg?.role === "tool" &&
+						typeof lastToolMsg.content === "string"
+					) {
+						lastToolMsg.content += pendingText;
+					}
+				}
+			}
+
+			// Append interleaved messages_consumed to last tool result
+			for (const textBlock of interleaved) {
+				const lastToolMsg = msgs[msgs.length - 1] as
+					| { role: string; content: string }
+					| undefined;
+				if (
+					lastToolMsg?.role === "tool" &&
+					typeof lastToolMsg.content === "string"
+				) {
+					lastToolMsg.content += `\n\n---\n${textBlock.text}`;
+				}
+			}
+
+			// Inject tool images + queue images as user message
+			const allImages = [
+				...toolImageResults,
+				...queueImages.map((img) => ({
+					text: "[User-attached image]",
+					dataUri: `data:${img.mediaType};base64,${img.base64}`,
+				})),
+			];
+			if (allImages.length > 0) {
+				const imageParts: unknown[] = [];
+				for (const img of allImages) {
+					imageParts.push(
+						{ type: "text", text: img.text },
+						{
+							type: "image_url",
+							image_url: { url: img.dataUri, detail: "auto" },
+						},
+					);
+				}
+				msgs.push({ role: "user", content: imageParts });
+			}
+
+			return msgs;
+		},
+
+		onConsumedMessages(messages: unknown[], consumed: ConsumedMessages): void {
+			const wrapper = consumed.isWorkingContext
+				? "[Messages received while you were working:]"
+				: "[Messages received while you were idle:]";
+			const text = `${wrapper}\n${consumed.formattedTexts.join("\n")}`;
+
+			if (consumed.isWorkingContext) {
+				const lastMsg = messages[messages.length - 1] as
+					| { role: string; content: string }
+					| undefined;
+				if (lastMsg?.role === "tool" && typeof lastMsg.content === "string") {
+					lastMsg.content += `\n\n---\n${text}`;
+					return;
+				}
+			}
+
+			if (consumed.images.length > 0) {
+				const imageParts: unknown[] = consumed.images.flatMap((img) => [
+					{ type: "text", text: "[User-attached image]" },
+					openaiImagePart(img),
+				]);
+				messages.push({
+					role: "user",
+					content: [{ type: "text", text }, ...imageParts],
+				});
+			} else {
+				messages.push({ role: "user", content: text });
+			}
+		},
+
+		isWorkingContext(messages: unknown[]): boolean {
+			const lastMsg = messages[messages.length - 1] as
+				| { role: string }
+				| undefined;
+			return lastMsg?.role === "tool";
+		},
+
+		fixOrphans: fixOrphanedOpenAIToolCalls,
+	});
+}
+
+/**
+ * Detect and fix orphaned tool_calls in OpenAI message arrays.
+ * Scans ALL assistant messages for tool_calls without matching tool role messages.
+ */
+function fixOrphanedOpenAIToolCalls(messages: unknown[]): void {
+	for (let mi = messages.length - 1; mi >= 0; mi--) {
+		const msg = messages[mi] as {
+			role?: string;
+			tool_calls?: Array<{
+				id: string;
+				type: string;
+				function: { name: string; arguments: string };
+			}>;
+		};
+		if (msg.role !== "assistant" || !msg.tool_calls?.length) continue;
+
+		const existingResultIds = new Set<string>();
+		for (let j = mi + 1; j < messages.length; j++) {
+			const followingMsg = messages[j] as {
+				role?: string;
+				tool_call_id?: string;
+			};
+			if (followingMsg.role === "tool" && followingMsg.tool_call_id) {
+				existingResultIds.add(followingMsg.tool_call_id);
+			} else if (followingMsg.role !== "tool" && followingMsg.role !== "user") {
+				break;
+			}
+		}
+
+		const orphanedCalls = msg.tool_calls.filter(
+			(tc) => !existingResultIds.has(tc.id),
+		);
+		if (orphanedCalls.length === 0) continue;
+
+		console.warn(
+			"[event-converter] Orphaned tool_calls found at message index",
+			mi,
+			"- ids:",
+			orphanedCalls.map((tc) => tc.id),
+		);
+
+		let insertAt = mi + 1;
+		while (
+			insertAt < messages.length &&
+			(messages[insertAt] as { role?: string }).role === "tool"
+		) {
+			insertAt++;
+		}
+
+		const syntheticResults = orphanedCalls.map((tc) => ({
+			role: "tool",
+			tool_call_id: tc.id,
+			name: tc.function.name,
+			content:
+				"Tool execution was interrupted by daemon restart. Results were lost.",
+		}));
+
+		messages.splice(insertAt, 0, ...syntheticResults);
+	}
 }
 
 // ── OpenAI Provider Adapter ──
@@ -654,14 +903,6 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 			};
 		},
 
-		buildCompactedResumeMessage(content: string) {
-			return { role: "user" as const, content };
-		},
-
-		buildBudgetWarningMessage(warning: string) {
-			return { role: "user" as const, content: warning };
-		},
-
 		computeCost(
 			model: string,
 			totalInputTokens: number,
@@ -674,34 +915,6 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 				(totalInputTokens * ip) / 1_000_000 +
 				(totalOutputTokens * op) / 1_000_000
 			);
-		},
-
-		buildResult(params): AgentResult {
-			return {
-				success: params.success,
-				output: params.output,
-				costUsd: params.costUsd,
-				turns: params.turns,
-				sessionId: params.sessionId,
-				inputTokens: params.totalInputTokens,
-				outputTokens: params.totalOutputTokens,
-			};
-		},
-
-		verifyEvents(params) {
-			const activeEvents = params.eventStore.readActive(params.sessionId);
-			if (activeEvents.length > 0) {
-				const reconstructed = eventsToOpenAIMessages(activeEvents);
-				const match =
-					JSON.stringify(params.messages) === JSON.stringify(reconstructed);
-				if (!match) {
-					console.error("[EVENTS MISMATCH]", {
-						messagesLen: (params.messages as unknown[]).length,
-						eventsLen: activeEvents.length,
-						reconstructedLen: reconstructed.length,
-					});
-				}
-			}
 		},
 	};
 }

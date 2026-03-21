@@ -13,15 +13,20 @@ import type {
 	AgentSession,
 } from "./agent-provider.ts";
 import { DEFAULT_MODEL } from "./config.ts";
-import { type Event, eventsToAnthropicMessages } from "./events.ts";
+import { type Event, formatPendingSection } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import {
+	type AssistantContent,
+	type ConsumedMessages,
+	type EventImageData,
 	extractQueueImages,
 	type ProviderAdapter,
 	type ProviderTokenUsage,
 	type ProviderToolUse,
 	runProviderLoop,
 	type ToolExecResult,
+	type ToolResultData,
+	walkEventsToMessages,
 	zodShapeToJsonSchema,
 } from "./provider-shared.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
@@ -175,6 +180,242 @@ export function addMessagesCacheControl(
 
 		return msg;
 	});
+}
+
+// ── Anthropic Event Converter ──
+
+/** Build an Anthropic image block from event image data. */
+function anthropicImageBlock(img: EventImageData): unknown {
+	return {
+		type: "image",
+		source: { type: "base64", media_type: img.mediaType, data: img.base64 },
+	};
+}
+
+/**
+ * Reconstruct Anthropic-format messages from JSONL events.
+ * Uses the shared event walker with Anthropic-specific callbacks.
+ * @internal Exported for testing
+ */
+export function eventsToAnthropicMessages(events: Event[]): unknown[] {
+	return walkEventsToMessages(events, {
+		onUserMessage(content: string): unknown {
+			return { role: "user", content };
+		},
+
+		onAssistantContent(content: AssistantContent): unknown {
+			const blocks: unknown[] = [];
+			for (const text of content.texts) {
+				blocks.push({ type: "text", text });
+			}
+			for (const tc of content.toolCalls) {
+				blocks.push({
+					type: "tool_use",
+					id: tc.id,
+					name: tc.name,
+					input: tc.input,
+					caller: { type: "direct" },
+				});
+			}
+			// Defensive: ensure content array is never empty (causes Anthropic 400)
+			if (blocks.length === 0) {
+				console.warn(
+					"[event-converter] Empty assistant content blocks — inserting (empty) fallback",
+				);
+				blocks.push({ type: "text", text: "(empty)" });
+			}
+			return { role: "assistant", content: blocks };
+		},
+
+		onToolResults(
+			results: ToolResultData[],
+			interleaved: Array<{ type: "text"; text: string }>,
+			queueImages: EventImageData[],
+		): unknown[] {
+			const resultBlocks: unknown[] = [];
+
+			for (const result of results) {
+				if (result.images && result.images.length > 0) {
+					const contentParts: unknown[] = [];
+					for (const img of result.images) {
+						contentParts.push(anthropicImageBlock(img));
+					}
+					contentParts.push({
+						type: "text",
+						text: result.content ?? "(empty)",
+					});
+					resultBlocks.push({
+						type: "tool_result",
+						tool_use_id: result.toolCallId,
+						content: contentParts,
+					});
+				} else {
+					resultBlocks.push({
+						type: "tool_result",
+						tool_use_id: result.toolCallId,
+						content: result.content ?? "(empty)",
+						is_error: result.isError,
+					});
+				}
+
+				if (result.pending) {
+					resultBlocks.push({
+						type: "text",
+						text: formatPendingSection(result.pending),
+					});
+				}
+			}
+
+			// Add interleaved messages_consumed text blocks
+			resultBlocks.push(...interleaved);
+
+			// Defensive: ensure content array is never empty
+			if (resultBlocks.length === 0) {
+				console.warn(
+					"[event-converter] Empty tool_result blocks — inserting (empty) fallback",
+				);
+				resultBlocks.push({ type: "text", text: "(empty)" });
+			}
+
+			if (queueImages.length > 0) {
+				return [
+					{
+						role: "user",
+						content: [
+							...resultBlocks,
+							...queueImages.map(anthropicImageBlock),
+							{
+								type: "text",
+								text: `[${queueImages.length} image(s) attached by user]`,
+							},
+						],
+					},
+				];
+			}
+			return [{ role: "user", content: resultBlocks }];
+		},
+
+		onConsumedMessages(messages: unknown[], consumed: ConsumedMessages): void {
+			const wrapper = consumed.isWorkingContext
+				? "[Messages received while you were working:]"
+				: "[Messages received while you were idle:]";
+			const text = `${wrapper}\n${consumed.formattedTexts.join("\n")}`;
+			const imageBlocks = consumed.images.map(anthropicImageBlock);
+
+			if (consumed.isWorkingContext) {
+				const lastMsg = messages[messages.length - 1] as
+					| { role: string; content: unknown[] }
+					| undefined;
+				if (lastMsg && Array.isArray(lastMsg.content)) {
+					(lastMsg.content as unknown[]).push({ type: "text", text });
+					if (imageBlocks.length > 0) {
+						(lastMsg.content as unknown[]).push(...imageBlocks);
+						(lastMsg.content as unknown[]).push({
+							type: "text",
+							text: `[${imageBlocks.length} image(s) attached by user]`,
+						});
+					}
+					return;
+				}
+			}
+
+			if (imageBlocks.length > 0) {
+				messages.push({
+					role: "user",
+					content: [{ type: "text", text }, ...imageBlocks],
+				});
+			} else {
+				messages.push({ role: "user", content: text });
+			}
+		},
+
+		isWorkingContext(messages: unknown[]): boolean {
+			const lastMsg = messages[messages.length - 1] as
+				| { role: string; content: unknown }
+				| undefined;
+			return (
+				lastMsg?.role === "user" &&
+				Array.isArray(lastMsg.content) &&
+				(lastMsg.content as unknown[]).some(
+					(b) =>
+						b &&
+						typeof b === "object" &&
+						(b as Record<string, unknown>).type === "tool_result",
+				)
+			);
+		},
+
+		fixOrphans: fixOrphanedAnthropicToolUse,
+	});
+}
+
+/**
+ * Detect and fix orphaned tool_use blocks in Anthropic message arrays.
+ * Scans ALL assistant messages for tool_use blocks without matching
+ * tool_result blocks in the following user message.
+ */
+function fixOrphanedAnthropicToolUse(messages: unknown[]): void {
+	for (let mi = messages.length - 1; mi >= 0; mi--) {
+		const msg = messages[mi] as { role?: string; content?: unknown[] };
+		if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+
+		const toolUseIds: string[] = [];
+		for (const block of msg.content) {
+			if (
+				block &&
+				typeof block === "object" &&
+				(block as Record<string, unknown>).type === "tool_use"
+			) {
+				toolUseIds.push((block as Record<string, unknown>).id as string);
+			}
+		}
+		if (toolUseIds.length === 0) continue;
+
+		const nextMsg = messages[mi + 1] as
+			| { role?: string; content?: unknown[] }
+			| undefined;
+		const existingResultIds = new Set<string>();
+		if (nextMsg?.role === "user" && Array.isArray(nextMsg.content)) {
+			for (const block of nextMsg.content) {
+				if (
+					block &&
+					typeof block === "object" &&
+					(block as Record<string, unknown>).type === "tool_result"
+				) {
+					existingResultIds.add(
+						(block as Record<string, unknown>).tool_use_id as string,
+					);
+				}
+			}
+		}
+
+		const orphanedIds = toolUseIds.filter((id) => !existingResultIds.has(id));
+		if (orphanedIds.length === 0) continue;
+
+		console.warn(
+			"[event-converter] Orphaned tool_use blocks found at message index",
+			mi,
+			"- ids:",
+			orphanedIds,
+		);
+
+		const syntheticResults: unknown[] = orphanedIds.map((id) => ({
+			type: "tool_result",
+			tool_use_id: id,
+			content:
+				"Tool execution was interrupted by daemon restart. Results were lost.",
+			is_error: true,
+		}));
+
+		if (nextMsg?.role === "user" && Array.isArray(nextMsg.content)) {
+			(nextMsg.content as unknown[]).push(...syntheticResults);
+		} else {
+			messages.splice(mi + 1, 0, {
+				role: "user",
+				content: syntheticResults,
+			});
+		}
+	}
 }
 
 // ── Anthropic Provider Adapter ──
@@ -572,14 +813,6 @@ function createAnthropicAdapter(
 			};
 		},
 
-		buildCompactedResumeMessage(content: string) {
-			return { role: "user" as const, content };
-		},
-
-		buildBudgetWarningMessage(warning: string) {
-			return { role: "user" as const, content: warning };
-		},
-
 		computeCost(
 			model: string,
 			totalInputTokens: number,
@@ -610,22 +843,6 @@ function createAnthropicAdapter(
 				cacheReadTokens: params.totalCacheReadTokens,
 				outputTokens: params.totalOutputTokens,
 			};
-		},
-
-		verifyEvents(params) {
-			const activeEvents = params.eventStore.readActive(params.sessionId);
-			if (activeEvents.length > 0) {
-				const reconstructed = eventsToAnthropicMessages(activeEvents);
-				const match =
-					JSON.stringify(params.messages) === JSON.stringify(reconstructed);
-				if (!match) {
-					console.error("[EVENTS MISMATCH]", {
-						messagesLen: (params.messages as unknown[]).length,
-						eventsLen: activeEvents.length,
-						reconstructedLen: reconstructed.length,
-					});
-				}
-			}
 		},
 	};
 }

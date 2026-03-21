@@ -931,8 +931,8 @@ describe("Event recording via EventStore", () => {
 });
 
 import { EventStore } from "./event-store.ts";
-import { eventsToOpenAIMessages } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
+import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
 // Import AgentResult for type assertion
 import type { AgentResult } from "./types.ts";
 
