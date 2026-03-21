@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentEvent, AgentProvider } from "./agent-provider.ts";
+import type { AgentProvider } from "./agent-provider.ts";
 import { createOrchestratorTools, isDescendantOf } from "./agent-tools.ts";
 import { createApp } from "./daemon.ts";
+import type { Event } from "./events.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type {
@@ -32,7 +33,7 @@ function createMockProvider(
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
 			// biome-ignore lint/correctness/useYield: mock session never streams
-			async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+			async function* events(): AsyncGenerator<Event, AgentResult> {
 				return { success: true, output: "" };
 			}
 			return {
@@ -808,7 +809,7 @@ describe("daemon tasks API", () => {
 			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
 				// biome-ignore lint/correctness/useYield: mock session never streams
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					return { success: true, output: "done" };
 				}
 				return {
@@ -1422,7 +1423,7 @@ describe("POST /projects/:id/clarify", () => {
 			},
 			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return { success: true, output: "" };
 				}
@@ -1506,7 +1507,7 @@ describe("POST /projects/:id/clarify", () => {
 			},
 			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return { success: true, output: "" };
 				}
@@ -1622,7 +1623,7 @@ describe("POST /projects/:id/clarify", () => {
 			},
 			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return { success: true, output: "" };
 				}
@@ -1742,7 +1743,7 @@ describe("daemon orchestrate/agent API", () => {
 				}
 				const queue = req.queue ?? new MessageQueue();
 				// biome-ignore lint/correctness/useYield: mock session never streams
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					return { success: true, output: "orchestrated" };
 				}
 				return {
@@ -2076,7 +2077,7 @@ describe("POST /projects/:id/stop", () => {
 			},
 			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return { success: true, output: "" };
 				}
@@ -2737,7 +2738,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
 				// biome-ignore lint/correctness/useYield: mock session never streams
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					return { success: true, output: "done" };
 				}
 				return {
@@ -3357,7 +3358,7 @@ describe("POST /projects/:id/restart", () => {
 			startSession(req) {
 				sessionCount++;
 				const queue = req.queue ?? new MessageQueue();
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					// Keep the session alive long enough for the restart test
 					await new Promise((resolve) => setTimeout(resolve, 5000));
 					return {
@@ -3439,7 +3440,7 @@ describe("POST /projects/:id/restart", () => {
 			startSession(req) {
 				sessionCount++;
 				const queue = req.queue ?? new MessageQueue();
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 5000));
 					return {
 						success: true,
@@ -3509,7 +3510,7 @@ describe("POST /projects/:id/restart", () => {
 			startSession(req) {
 				sessionCount++;
 				const queue = req.queue ?? new MessageQueue();
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 5000));
 					return {
 						success: true,
@@ -3600,7 +3601,7 @@ describe("POST /projects/:id/restart", () => {
 				const currentNum = sessionCount;
 				const queue = req.queue ?? new MessageQueue();
 
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					// Keep alive long enough for restart test, but short enough to trigger cleanup
 					try {
 						await new Promise((resolve) => setTimeout(resolve, 5000));
@@ -3694,7 +3695,7 @@ describe("POST /projects/:id/restart", () => {
 				sessionCount++;
 				const currentSessionId = `test-session-${sessionCount}`;
 				const queue = req.queue ?? new MessageQueue();
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 5000));
 					return { success: true, output: "", sessionId: currentSessionId };
 				}
@@ -3797,7 +3798,7 @@ describe("lifecycle edge cases", () => {
 			},
 			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					// Keep the session alive
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return { success: true, output: "" };
@@ -3864,7 +3865,7 @@ describe("lifecycle edge cases", () => {
 			},
 			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return { success: true, output: "" };
 				}
@@ -3927,7 +3928,7 @@ describe("lifecycle edge cases", () => {
 			},
 			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
-				async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return { success: true, output: "" };
 				}

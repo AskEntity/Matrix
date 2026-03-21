@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type {
-	AgentEvent,
 	AgentProvider,
 	AgentRequest,
 	AgentSession,
@@ -953,9 +952,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		return result.value;
 	}
 
-	async *stream(
-		request: AgentRequest,
-	): AsyncGenerator<AgentEvent, AgentResult> {
+	async *stream(request: AgentRequest): AsyncGenerator<Event, AgentResult> {
 		const sessionId = request.resumeSessionId ?? randomUUID();
 		const gen = this.runLoop(request, sessionId, request.queue);
 		let result = await gen.next();
@@ -972,7 +969,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		const abortController = new AbortController();
 		const self = this;
 
-		async function* eventStream(): AsyncGenerator<AgentEvent, AgentResult> {
+		async function* eventStream(): AsyncGenerator<Event, AgentResult> {
 			const gen = self.runLoop(
 				{ ...request, signal: abortController.signal },
 				sessionId,
@@ -1009,7 +1006,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		request: AgentRequest,
 		sessionId: string,
 		queue?: MessageQueue,
-	): AsyncGenerator<AgentEvent, AgentResult> {
+	): AsyncGenerator<Event, AgentResult> {
 		const adapter = createOpenAIAdapter(this.baseUrl, this.apiKey);
 		const effectiveRequest = {
 			...request,

@@ -2,11 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-	AgentEvent,
-	AgentProvider,
-	AgentRequest,
-} from "./agent-provider.ts";
+import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { runChildCore } from "./daemon/agent-lifecycle.ts";
 import { createApp } from "./daemon.ts";
 import { EventStore } from "./event-store.ts";
@@ -33,7 +29,7 @@ function createInstantProvider(): AgentProvider {
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
 			// biome-ignore lint/correctness/useYield: mock session never streams
-			async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+			async function* events(): AsyncGenerator<Event, AgentResult> {
 				return { success: true, output: "" };
 			}
 			return {
@@ -61,7 +57,7 @@ function createLongRunningProvider(): AgentProvider {
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
 			// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
-			async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+			async function* events(): AsyncGenerator<Event, AgentResult> {
 				// Keep the session alive until queue is closed
 				try {
 					await queue.wait();
@@ -102,7 +98,7 @@ function createRecordingProvider(): {
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
 			// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
-			async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+			async function* events(): AsyncGenerator<Event, AgentResult> {
 				// Drain any initial messages
 				for (const msg of queue.drain()) {
 					receivedMessages.push({
@@ -1969,7 +1965,11 @@ describe("lifecycle: child completion notification paths", () => {
 				const queue = req.queue ?? new MessageQueue();
 
 				// Step 1: Agent does some work
-				yield { type: "text" as const, content: "Working..." };
+				yield {
+					type: "assistant_text" as const,
+					content: "Working...",
+					ts: Date.now(),
+				};
 
 				// Step 2: Agent calls done("passed") — handler updates tracker
 				tracker.updateStatus(childId, "passed");
@@ -2071,10 +2071,18 @@ describe("lifecycle: child completion notification paths", () => {
 			execute: async () => ({ success: true, output: "" }),
 			stream: async function* (req) {
 				const queue = req.queue ?? new MessageQueue();
-				yield { type: "text" as const, content: "Working..." };
+				yield {
+					type: "assistant_text" as const,
+					content: "Working...",
+					ts: Date.now(),
+				};
 
 				tracker.updateStatus(childId, "passed");
-				yield { type: "status" as const, message: "task_completed" };
+				yield {
+					type: "status" as const,
+					message: "task_completed",
+					ts: Date.now(),
+				};
 
 				// Block forever — no one closes the queue
 				try {
@@ -2250,7 +2258,7 @@ function createCapturingProvider(): {
 			sessionRequests.push(req);
 			const queue = req.queue ?? new MessageQueue();
 			// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
-			async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+			async function* events(): AsyncGenerator<Event, AgentResult> {
 				try {
 					while (true) {
 						await queue.wait();
@@ -2294,7 +2302,7 @@ function createInstantCapturingProvider(): {
 			sessionRequests.push(req);
 			const queue = req.queue ?? new MessageQueue();
 			// biome-ignore lint/correctness/useYield: mock session exits immediately
-			async function* events(): AsyncGenerator<AgentEvent, AgentResult> {
+			async function* events(): AsyncGenerator<Event, AgentResult> {
 				return { success: true, output: "" };
 			}
 			return {

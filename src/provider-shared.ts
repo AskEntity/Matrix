@@ -9,7 +9,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentEvent, AgentRequest } from "./agent-provider.ts";
+import type { AgentRequest } from "./agent-provider.ts";
 import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
 import {
 	type Event,
@@ -481,7 +481,7 @@ export async function* handleImplicitYield(
 	queue: MessageQueue,
 	emit?: (event: Event) => void,
 ): AsyncGenerator<
-	AgentEvent,
+	Event,
 	{
 		formatted: string;
 		nonCompact: QueueMessage[];
@@ -489,14 +489,20 @@ export async function* handleImplicitYield(
 		compactOnly: boolean;
 	} | null
 > {
-	emit?.({ type: "agent_idle", taskId: "", ts: Date.now() });
-	yield { type: "agent_idle" };
+	const idleEvt: Event = { type: "agent_idle", taskId: "", ts: Date.now() };
+	emit?.(idleEvt);
+	yield idleEvt;
 	try {
 		queue.idle = true;
 		const first = await queue.wait();
 		queue.idle = false;
-		emit?.({ type: "agent_active", taskId: "", ts: Date.now() });
-		yield { type: "agent_active" };
+		const activeEvt: Event = {
+			type: "agent_active",
+			taskId: "",
+			ts: Date.now(),
+		};
+		emit?.(activeEvt);
+		yield activeEvt;
 		const rest = queue.drain();
 		const all = [first, ...rest];
 		const manualCompactRequested = all.some((m) => m.source === "compact");
@@ -510,17 +516,14 @@ export async function* handleImplicitYield(
 			};
 		}
 		const formatted = nonCompact.map(formatQueueMessage).join("\n");
-		emit?.({
+		const qmEvt: Event = {
 			type: "queue_message",
 			messages: formatted,
 			rawMessages: nonCompact.map(toRawMessage),
 			ts: Date.now(),
-		});
-		yield {
-			type: "queue_message",
-			messages: formatted,
-			rawMessages: nonCompact.map(toRawMessage),
 		};
+		emit?.(qmEvt);
+		yield qmEvt;
 		return {
 			formatted,
 			nonCompact,
@@ -707,9 +710,8 @@ export async function* processCompaction(
 	preCompactTokenCount: number,
 	emit: ((event: Event) => void) | undefined,
 	contextWindow: number,
-	compressThreshold: number,
 ): AsyncGenerator<
-	AgentEvent,
+	Event,
 	{
 		userContent: string;
 		estimatedInputTokens: number;
@@ -745,37 +747,32 @@ export async function* processCompaction(
 			});
 		}
 
-		emit?.({
+		const usageEvt: Event = {
 			type: "usage",
 			inputTokens: estimatedPostCompactTokens,
 			contextWindow,
 			estimated: true,
 			ts: Date.now(),
-		});
-		yield {
-			type: "usage",
-			inputTokens: estimatedPostCompactTokens,
-			compressThreshold,
-			contextWindow,
-			estimated: true,
 		};
+		emit?.(usageEvt);
+		yield usageEvt;
+		// compact_marker already emitted above — yield for consumer loop
 		yield {
-			type: "compact",
+			type: "compact_marker",
 			checkpoint,
 			savedTokens: compactSavedTokens,
+			ts: Date.now(),
 		};
 
 		return { userContent, estimatedInputTokens: estimatedPostCompactTokens };
 	} catch (e) {
-		emit?.({
+		const errEvt: Event = {
 			type: "error",
 			message: `Compaction rebuild failed: ${e instanceof Error ? e.message : String(e)}`,
 			ts: Date.now(),
-		});
-		yield {
-			type: "error",
-			message: `Compaction rebuild failed: ${e instanceof Error ? e.message : String(e)}`,
 		};
+		emit?.(errEvt);
+		yield errEvt;
 		return null;
 	}
 }
@@ -1194,7 +1191,7 @@ export interface ProviderAdapter {
 		maxTokens: number;
 		signal?: AbortSignal;
 		isCompacting: boolean;
-	}): AsyncGenerator<AgentEvent, unknown>;
+	}): AsyncGenerator<Event, unknown>;
 
 	/** Extract text content from a provider response. */
 	getResponseText(response: unknown): string;
@@ -1324,7 +1321,7 @@ export async function* runProviderLoop(
 	request: AgentRequest,
 	sessionId: string,
 	queue?: MessageQueue,
-): AsyncGenerator<AgentEvent, AgentResult> {
+): AsyncGenerator<Event, AgentResult> {
 	const model = request.model ?? "claude-sonnet-4-6"; // default overridden by provider
 	let cwd = request.cwd;
 
@@ -1399,18 +1396,22 @@ export async function* runProviderLoop(
 	let manualCompactRequested = false;
 	let compactionPending = false;
 	let preCompactTokenCount = 0;
-	emit?.({
-		type: "status",
-		message: `Starting agent loop (model: ${model})`,
-		ts: Date.now(),
-	});
-	yield { type: "status", message: `Starting agent loop (model: ${model})` };
+	{
+		const evt: Event = {
+			type: "status",
+			message: `Starting agent loop (model: ${model})`,
+			ts: Date.now(),
+		};
+		emit?.(evt);
+		yield evt;
+	}
 
 	while (true) {
 		// Check abort signal
 		if (request.signal?.aborted) {
-			emit?.({ type: "status", message: "Aborted", ts: Date.now() });
-			yield { type: "status", message: "Aborted" };
+			const evt: Event = { type: "status", message: "Aborted", ts: Date.now() };
+			emit?.(evt);
+			yield evt;
 			break;
 		}
 
@@ -1442,7 +1443,6 @@ export async function* runProviderLoop(
 				preCompactTokenCount,
 				emit,
 				contextWindow,
-				compressThreshold,
 			);
 			let compactStep = await compactGen.next();
 			while (!compactStep.done) {
@@ -1465,25 +1465,24 @@ export async function* runProviderLoop(
 
 		// ── Pre-call compression: count tokens, inject summarization instruction if over threshold ──
 		if (manualCompactRequested && messages.length <= 4) {
-			emit?.({
+			const s1: Event = {
 				type: "status",
 				message: "Context is too short to compact",
 				ts: Date.now(),
-			});
-			yield { type: "status", message: "Context is too short to compact" };
-			emit?.({ type: "compact_started", taskId: "", ts: Date.now() });
-			yield { type: "compact_started" };
-			emit?.({
+			};
+			emit?.(s1);
+			yield s1;
+			const s2: Event = { type: "compact_started", taskId: "", ts: Date.now() };
+			emit?.(s2);
+			yield s2;
+			const s3: Event = {
 				type: "compact_marker",
 				checkpoint: "Context too short for meaningful compaction",
 				savedTokens: 0,
 				ts: Date.now(),
-			});
-			yield {
-				type: "compact",
-				checkpoint: "Context too short for meaningful compaction",
-				savedTokens: 0,
 			};
+			emit?.(s3);
+			yield s3;
 			manualCompactRequested = false;
 			continue;
 		}
@@ -1519,16 +1518,23 @@ export async function* runProviderLoop(
 				(!adapter.supportsTokenCounting &&
 					estimatedInputTokens > compressThreshold)
 			) {
-				emit?.({ type: "compact_started", taskId: "", ts: Date.now() });
-				yield { type: "compact_started" };
+				const cs1: Event = {
+					type: "compact_started",
+					taskId: "",
+					ts: Date.now(),
+				};
+				emit?.(cs1);
+				yield cs1;
 				const compactStatusMsg = manualCompactRequested
 					? "Manual compaction triggered"
 					: `Compressing conversation (${adapter.supportsTokenCounting ? "" : "est. "}${tokenCount} tokens, threshold: ${compressThreshold})`;
-				emit?.({ type: "status", message: compactStatusMsg, ts: Date.now() });
-				yield {
+				const cs2: Event = {
 					type: "status",
 					message: compactStatusMsg,
+					ts: Date.now(),
 				};
+				emit?.(cs2);
+				yield cs2;
 				// Inject summarization instruction as a user message
 				const summarizationInstruction = buildSummarizationInstruction(cwd);
 				(messages as Array<{ role: string; content: string }>).push({
@@ -1588,36 +1594,36 @@ export async function* runProviderLoop(
 		totalCacheReadTokens += usage.cacheReadTokens ?? 0;
 		estimatedInputTokens = usage.totalContextTokens + usage.outputTokens;
 
-		emit?.({
+		const usageEvt: Event = {
 			type: "usage",
 			inputTokens: usage.totalContextTokens,
 			contextWindow,
 			ts: Date.now(),
-		});
-		yield {
-			type: "usage",
-			inputTokens: usage.totalContextTokens,
-			compressThreshold,
-			contextWindow,
 		};
+		emit?.(usageEvt);
+		yield usageEvt;
 
 		// Extract text and tool uses from response
 		const responseText = adapter.getResponseText(response);
 		if (responseText) {
 			lastText = responseText;
 			if (!compactionPending) {
-				yield { type: "text", content: responseText };
+				// assistant_text is also emitted via buildResponseEvents — this yield
+				// is only for consumer loop advancement
+				yield { type: "assistant_text", content: responseText, ts: Date.now() };
 			}
 		}
 
 		const toolUses = compactionPending ? [] : adapter.getToolUses(response);
 		if (!compactionPending) {
 			for (const tu of toolUses) {
+				// tool_call is also emitted via buildResponseEvents — yield for control flow
 				yield {
-					type: "tool_use",
+					type: "tool_call",
 					tool: tu.name,
-					toolUseId: tu.id,
+					toolCallId: tu.id,
 					input: tu.input,
+					ts: Date.now(),
 				};
 			}
 		}
@@ -1646,29 +1652,24 @@ export async function* runProviderLoop(
 		const stopReason = adapter.getStopReason(response);
 		if (stopReason === "end_turn" || toolUses.length === 0) {
 			if (!queue) {
-				emit?.({
+				const noQEvt: Event = {
 					type: "status",
 					message: "Agent ended turn (no queue for yield)",
 					ts: Date.now(),
-				});
-				yield {
-					type: "status",
-					message: "Agent ended turn (no queue for yield)",
 				};
+				emit?.(noQEvt);
+				yield noQEvt;
 				break;
 			}
 
-			emit?.({
+			const idleStatusEvt: Event = {
 				type: "status",
 				message:
 					"Agent ended turn — entering idle state (waiting for messages)",
 				ts: Date.now(),
-			});
-			yield {
-				type: "status",
-				message:
-					"Agent ended turn — entering idle state (waiting for messages)",
 			};
+			emit?.(idleStatusEvt);
+			yield idleStatusEvt;
 
 			const yieldGen = handleImplicitYield(queue, emit);
 			let yieldStep = await yieldGen.next();
@@ -1745,21 +1746,19 @@ export async function* runProviderLoop(
 			}
 		}
 
-		// Emit tool_result events
+		// Yield tool_result events for consumer loop (full events emitted via buildToolResultEvents below)
 		for (let i = 0; i < toolUses.length; i++) {
 			const toolUse = toolUses[i] as ProviderToolUse;
 			const exec = execResults[i] as ToolExecResult;
 			const images = collectToolResultImages(exec);
 			yield {
-				type: "tool_result",
+				type: "tool_result" as const,
 				tool: toolUse.name,
-				toolUseId: toolUse.id,
+				toolCallId: toolUse.id,
 				content: exec.content.slice(0, 500),
 				isError: exec.isError,
 				...(images.length > 0 ? { images } : {}),
-				...(exec._consumedMessageIds?.length
-					? { _consumedMessageIds: exec._consumedMessageIds }
-					: {}),
+				ts: Date.now(),
 			};
 		}
 
@@ -1775,17 +1774,14 @@ export async function* runProviderLoop(
 				if (drained.messages.length > 0) {
 					cancellationQueueMsgs = drained.messages;
 					cancellationFormatted = drained.formatted;
-					emit?.({
+					const cqEvt: Event = {
 						type: "queue_message",
 						messages: drained.formatted,
 						rawMessages: drained.messages.map(toRawMessage),
 						ts: Date.now(),
-					});
-					yield {
-						type: "queue_message",
-						messages: drained.formatted,
-						rawMessages: drained.messages.map(toRawMessage),
 					};
+					emit?.(cqEvt);
+					yield cqEvt;
 				}
 			}
 		}
@@ -1853,12 +1849,13 @@ export async function* runProviderLoop(
 					content: budgetResult.warning,
 				});
 				recordBudgetWarning(emit, budgetResult.warning);
-				emit?.({
+				const bwEvt: Event = {
 					type: "status",
 					message: budgetResult.warning,
 					ts: Date.now(),
-				});
-				yield { type: "status", message: budgetResult.warning };
+				};
+				emit?.(bwEvt);
+				yield bwEvt;
 			}
 		}
 	}

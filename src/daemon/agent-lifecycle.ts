@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type {
-	AgentEvent,
-	AgentProvider,
-	AgentRequest,
-} from "../agent-provider.ts";
+import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
 import {
 	buildTaskPrompt,
 	createOrchestratorTools,
@@ -195,7 +191,7 @@ async function createAgentContext(
  * This just drives the generator to completion and returns the final result.
  */
 async function consumeAgentEvents(
-	events: AsyncGenerator<AgentEvent, AgentResult>,
+	events: AsyncGenerator<Event, AgentResult>,
 ): Promise<AgentResult> {
 	let result = await events.next();
 	while (!result.done) {
@@ -272,16 +268,16 @@ export async function runChildCore(
 		const stream = provider.stream(sessionRequest);
 		let result = await stream.next();
 		while (!result.done) {
-			const { type: eventType, ...eventData } = result.value;
+			const event = result.value;
 
 			// Fallback done() detection via tool_result. The primary detection path
 			// is in onTaskEvent (task_completed event closes the queue before
 			// waitForQueueMessages blocks). This fallback handles edge cases where
 			// done() completes without blocking (e.g., no queue available).
 			if (
-				eventType === "tool_result" &&
-				"tool" in eventData &&
-				eventData.tool === "mcp__opengraft__done"
+				event.type === "tool_result" &&
+				"tool" in event &&
+				event.tool === "mcp__opengraft__done"
 			) {
 				const nodeStatus = tracker.get(taskId)?.status;
 				if (nodeStatus === "passed" || nodeStatus === "failed") {

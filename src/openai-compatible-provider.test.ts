@@ -420,10 +420,10 @@ describe("runLoop integration", () => {
 			expect(agentResult.turns).toBeGreaterThanOrEqual(1);
 
 			// Verify we got the expected events
-			const textEvents = events.filter((e) => e.type === "text");
+			const textEvents = events.filter((e) => e.type === "assistant_text");
 			expect(textEvents.length).toBeGreaterThanOrEqual(1);
 
-			const toolUseEvents = events.filter((e) => e.type === "tool_use");
+			const toolUseEvents = events.filter((e) => e.type === "tool_call");
 			expect(toolUseEvents.length).toBe(1);
 		} finally {
 			clearContextWindowCache();
