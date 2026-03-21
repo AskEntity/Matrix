@@ -50,6 +50,7 @@ export interface ActionHandlerDeps {
 	) => Promise<void>;
 	sendMessageToTask: (taskId: string, msg: string) => Promise<void>;
 	deleteTask: (taskId: string) => Promise<void>;
+	clearTaskSession: (taskId: string) => Promise<void>;
 	initProject: (path: string) => Promise<{ id: string }>;
 	deleteProject: (id: string) => Promise<void>;
 	refreshTasks: () => void;
@@ -90,6 +91,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		sendMessage,
 		sendMessageToTask,
 		deleteTask,
+		clearTaskSession,
 		initProject,
 		deleteProject,
 		refreshTasks,
@@ -286,6 +288,21 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		}
 	}
 
+	async function handleClearTaskSession() {
+		if (!selectedTaskId || !selectedNode) return;
+		if (!confirm(t("confirm.clearTaskSession", { title: selectedNode.title })))
+			return;
+		try {
+			await clearTaskSession(selectedTaskId);
+		} catch (err) {
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				ts: Date.now(),
+			});
+		}
+	}
+
 	async function handleAddProject(e: React.FormEvent) {
 		e.preventDefault();
 		const path = newProjectPath.trim();
@@ -386,6 +403,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		handleClearSessions,
 		handleDeleteTask,
 		handlePauseTask,
+		handleClearTaskSession,
 		handleAddProject,
 		handleDeleteProject,
 		handleAddTask,

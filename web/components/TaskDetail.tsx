@@ -46,12 +46,14 @@ export function TaskDetail({
 	isActive,
 	onDelete,
 	onPause,
+	onClearSession,
 }: {
 	node: TaskNode;
 	projectId: string;
 	isActive?: boolean;
 	onDelete: () => void;
 	onPause?: () => void;
+	onClearSession?: () => void;
 }) {
 	const { t } = useLocale();
 	const [showHistory, setShowHistory] = useState(false);
@@ -299,6 +301,19 @@ export function TaskDetail({
 						{t("detail.history")}
 					</button>
 				)}
+				{!isRunning &&
+					node.status !== "pending" &&
+					node.status !== "draft" &&
+					onClearSession && (
+						<button
+							type="button"
+							className="og-btn og-btn-ghost og-btn-sm"
+							onClick={onClearSession}
+						>
+							<IconTrash size={12} />
+							{t("detail.clearSession")}
+						</button>
+					)}
 				<button
 					type="button"
 					className="og-btn og-btn-danger og-btn-sm"

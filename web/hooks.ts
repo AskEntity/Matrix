@@ -268,6 +268,17 @@ export function useAgent(projectId: string) {
 		[projectId],
 	);
 
+	const clearTaskSession = useCallback(
+		async (taskId: string) => {
+			const res = await fetch(
+				`/projects/${projectId}/tasks/${taskId}/sessions/clear`,
+				{ method: "POST" },
+			);
+			if (!res.ok) throw new Error((await res.json()).error);
+		},
+		[projectId],
+	);
+
 	const sendMessage = useCallback(
 		async (
 			message: string,
@@ -348,6 +359,7 @@ export function useAgent(projectId: string) {
 		checkStatus,
 		continueTask,
 		deleteTask,
+		clearTaskSession,
 		sendMessage,
 		sendMessageToTask,
 		reorderTasks,
