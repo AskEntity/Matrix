@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { QueueMessage } from "./message-queue.ts";
 
 /**
@@ -7,15 +8,43 @@ import type { QueueMessage } from "./message-queue.ts";
  * Queue-originated events (previously nested under queue_message) are now
  * independent types. They can be identified by isQueueEvent() for batching.
  */
+/**
+ * UserMessageEvent — unified format for ALL messages that flow through the queue.
+ * Uses a `source` field to indicate the message type. Written to JSONL with `id` for tracking.
+ *
+ * Base form (no source): initial prompt, resume messages — written by provider.
+ * Source-typed form: queue-originated messages — written at enqueue time.
+ *
+ * All fields are optional at the type level. Source-based narrowing happens at runtime.
+ * This keeps the type simple and avoids complex discriminated unions.
+ */
+export interface UserMessageEvent {
+	type: "user_message";
+	id?: string;
+	/** Message source. Absent for initial prompt/resume. Present for queue messages. */
+	source?: string;
+	content?: string;
+	cwd?: string;
+	isResume?: boolean;
+	images?: Array<{ base64: string; mediaType: string }>;
+	// Queue-specific fields (present based on source)
+	taskId?: string;
+	title?: string;
+	success?: boolean;
+	output?: string;
+	requestReply?: boolean;
+	answer?: string;
+	fromProjectId?: string;
+	fromProjectName?: string;
+	command?: string;
+	commandId?: string;
+	exitCode?: number | null;
+	durationMs?: number;
+	ts: number;
+}
+
 export type Event =
-	| {
-			type: "user_message";
-			content: string;
-			cwd?: string;
-			isResume?: boolean;
-			images?: Array<{ base64: string; mediaType: string }>;
-			ts: number;
-	  }
+	| UserMessageEvent
 	| { type: "assistant_text"; content: string; ts: number }
 	| {
 			type: "tool_call";
@@ -30,10 +59,15 @@ export type Event =
 			content: string;
 			isError: boolean;
 			images?: Array<{ base64: string; mediaType: string }>;
+			/** IDs of queue messages consumed at this cancellation point. */
+			messagesConsumed?: string[];
 			ts: number;
 	  }
+	// Legacy event types — kept for backward compat with old JSONL files.
+	// New writes use user_message with source field instead.
 	| {
 			type: "child_complete";
+			id?: string;
 			taskId: string;
 			title: string;
 			success: boolean;
@@ -42,13 +76,15 @@ export type Event =
 	  }
 	| {
 			type: "parent_update";
+			id?: string;
 			content: string;
 			requestReply?: boolean;
 			ts: number;
 	  }
-	| { type: "clarify_response"; answer: string; ts: number }
+	| { type: "clarify_response"; id?: string; answer: string; ts: number }
 	| {
 			type: "child_report";
+			id?: string;
 			taskId: string;
 			title: string;
 			content: string;
@@ -57,6 +93,7 @@ export type Event =
 	  }
 	| {
 			type: "cross_project";
+			id?: string;
 			fromProjectId: string;
 			fromProjectName: string;
 			content: string;
@@ -64,14 +101,15 @@ export type Event =
 	  }
 	| {
 			type: "background_complete";
+			id?: string;
 			command: string;
 			commandId: string;
 			exitCode: number | null;
 			durationMs: number;
 			ts: number;
 	  }
-	| { type: "system_notification"; content: string; ts: number }
-	| { type: "compact_request"; ts: number }
+	| { type: "system_notification"; id?: string; content: string; ts: number }
+	| { type: "compact_request"; id?: string; ts: number }
 	| { type: "compacted_resume"; content: string; cwd?: string; ts: number }
 	| { type: "summarization_request"; instruction: string; ts: number }
 	| { type: "budget_warning"; warning: string; ts: number }
@@ -153,6 +191,11 @@ export type Event =
 			message: string;
 			images?: Array<{ base64: string; mediaType: string }>;
 			ts: number;
+	  }
+	| {
+			type: "messages_consumed";
+			messageIds: string[];
+			ts: number;
 	  };
 
 /** Event types that originate from the message queue (idle drain or cancellation points). */
@@ -169,11 +212,18 @@ const QUEUE_EVENT_TYPES = new Set([
 
 /**
  * Check if an event originated from the message queue.
- * user_message is ambiguous (can be provider or queue) — NOT included here.
- * The converter handles user_message specially based on context.
+ * Legacy concrete types (child_complete, parent_update, etc.) are checked by type.
+ * Unified user_message events with a source field are also queue events.
+ * user_message WITHOUT source is ambiguous (can be provider or queue) — NOT included here.
  */
 export function isQueueEvent(event: Event): boolean {
-	return QUEUE_EVENT_TYPES.has(event.type);
+	if (QUEUE_EVENT_TYPES.has(event.type)) return true;
+	// Unified format: user_message with source field (except "user" which is ambiguous)
+	if (event.type === "user_message") {
+		const src = (event as { source?: string }).source;
+		return src !== undefined && src !== "user";
+	}
+	return false;
 }
 
 /**
@@ -314,13 +364,16 @@ export type BroadcastEvent =
 			ts: number;
 	  };
 
-/** Convert a QueueMessage to a concrete Event type. */
-export function queueMessageToEvent(msg: QueueMessage): Event {
+/** Convert a QueueMessage to a unified user_message Event with source. */
+export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 	const ts = Date.now();
+	const base = { type: "user_message" as const, id: randomUUID(), ts };
 	switch (msg.source) {
 		case "user":
 			return {
-				type: "user_message",
+				...base,
+				id: msg.id ?? base.id,
+				source: "user",
 				content: msg.content,
 				...(msg.images?.length
 					? {
@@ -330,64 +383,63 @@ export function queueMessageToEvent(msg: QueueMessage): Event {
 							})),
 						}
 					: {}),
-				ts,
 			};
 		case "child_complete":
 			return {
-				type: "child_complete",
+				...base,
+				source: "child_complete",
 				taskId: msg.taskId,
 				title: msg.title,
 				success: msg.success,
 				output: msg.output,
-				ts,
 			};
 		case "parent_update":
 			return {
-				type: "parent_update",
+				...base,
+				source: "parent_update",
 				content: msg.content,
 				...(msg.requestReply ? { requestReply: true } : {}),
-				ts,
 			};
 		case "clarify_response":
 			return {
-				type: "clarify_response",
+				...base,
+				source: "clarify_response",
 				answer: msg.answer,
-				ts,
 			};
 		case "child_report":
 			return {
-				type: "child_report",
+				...base,
+				source: "child_report",
 				taskId: msg.taskId,
 				title: msg.title,
 				content: msg.content,
 				...(msg.requestReply ? { requestReply: true } : {}),
-				ts,
 			};
 		case "cross_project":
 			return {
-				type: "cross_project",
+				...base,
+				source: "cross_project",
 				fromProjectId: msg.fromProjectId,
 				fromProjectName: msg.fromProjectName,
 				content: msg.content,
-				ts,
 			};
 		case "background_complete":
 			return {
-				type: "background_complete",
+				...base,
+				source: "background_complete",
 				command: msg.command,
 				commandId: msg.commandId,
 				exitCode: msg.exitCode,
 				durationMs: msg.durationMs,
-				ts,
 			};
 		case "system":
 			return {
-				type: "system_notification",
+				...base,
+				source: "system",
 				content: msg.content,
-				ts,
 			};
 		case "compact":
-			return { type: "compact_request", ts };
+			return { ...base, source: "compact" };
 	}
 }
 
@@ -399,8 +451,66 @@ export function queueMessageToEvent(msg: QueueMessage): Event {
  */
 export function formatEventForAI(event: Event): string {
 	switch (event.type) {
-		case "user_message":
-			return event.content;
+		case "user_message": {
+			// Unified user_message with source field
+			const src = (event as { source?: string }).source;
+			if (!src || src === "user") {
+				return (event as { content: string }).content;
+			}
+			// Format based on source — same formatting as legacy concrete types
+			switch (src) {
+				case "child_complete": {
+					const e = event as {
+						taskId: string;
+						title: string;
+						success: boolean;
+						output: string;
+					};
+					return `<child_complete task="${e.title}" id="${e.taskId}" status="${e.success ? "passed" : "failed"}">${e.output.slice(0, 500)}</child_complete>`;
+				}
+				case "parent_update": {
+					const e = event as { content: string; requestReply?: boolean };
+					return `<parent_update${e.requestReply ? ' requestReply="true"' : ""}>${e.content}</parent_update>`;
+				}
+				case "clarify_response": {
+					const e = event as { answer: string };
+					return `<clarify_response>${e.answer}</clarify_response>`;
+				}
+				case "child_report": {
+					const e = event as {
+						taskId: string;
+						title: string;
+						content: string;
+						requestReply?: boolean;
+					};
+					return `<child_report from="${e.title}" id="${e.taskId}"${e.requestReply ? ' requestReply="true"' : ""}>${e.content}</child_report>`;
+				}
+				case "cross_project": {
+					const e = event as {
+						fromProjectId: string;
+						fromProjectName: string;
+						content: string;
+					};
+					return `<cross_project from="${e.fromProjectName}" projectId="${e.fromProjectId}">${e.content}</cross_project>`;
+				}
+				case "background_complete": {
+					const e = event as {
+						command: string;
+						commandId: string;
+						exitCode: number | null;
+						durationMs: number;
+					};
+					return `<background_complete command="${e.command}" id="${e.commandId}" exit="${e.exitCode}" duration="${e.durationMs}ms">Command completed. Use bg_action="status" with background_id="${e.commandId}" or read_file on output files to see results.</background_complete>`;
+				}
+				case "system":
+					return `<system_notification>${(event as { content: string }).content}</system_notification>`;
+				case "compact":
+					return "Manual compaction requested";
+				default:
+					return "";
+			}
+		}
+		// Legacy concrete types — backward compat for old JSONL files
 		case "clarify_response":
 			return `<clarify_response>${event.answer}</clarify_response>`;
 		case "system_notification":
@@ -517,14 +627,101 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 	const messages: unknown[] = [];
 	let i = 0;
 
+	// Build index of events by ID for messages_consumed resolution.
+	// All queue-originated events can have IDs — user_message, child_complete, etc.
+	const eventIndex = new Map<string, Event>();
+	for (const e of events) {
+		const eid = (e as { id?: string }).id;
+		if (eid) {
+			eventIndex.set(eid, e);
+		}
+	}
+
 	while (i < events.length) {
 		const event = events[i] as Event;
 
 		switch (event.type) {
 			case "user_message":
+				// user_message with id = injected message (written at enqueue time).
+				// Skip here — it will be materialized at the messages_consumed point.
+				if (event.id) {
+					i++;
+					break;
+				}
 				messages.push({ role: "user", content: event.content });
 				i++;
 				break;
+
+			case "messages_consumed": {
+				// Resolve referenced events and inject with appropriate wrapper
+				const consumedEvents: Event[] = [];
+				for (const id of event.messageIds) {
+					const msg = eventIndex.get(id);
+					if (msg) consumedEvents.push(msg);
+				}
+				if (consumedEvents.length > 0) {
+					// Check context: are we between tool_results?
+					const lastMsg = messages[messages.length - 1] as
+						| { role: string; content: unknown }
+						| undefined;
+					const isWorkingContext =
+						lastMsg?.role === "user" &&
+						Array.isArray(lastMsg.content) &&
+						(lastMsg.content as unknown[]).some(
+							(b) =>
+								b &&
+								typeof b === "object" &&
+								(b as Record<string, unknown>).type === "tool_result",
+						);
+
+					const wrapper = isWorkingContext
+						? "[Messages received while you were working:]"
+						: "[Messages received while you were idle:]";
+
+					const contents: string[] = [];
+					const imageBlocks: unknown[] = [];
+					for (const msg of consumedEvents) {
+						contents.push(formatEventForAI(msg));
+						if (msg.type === "user_message" && msg.images) {
+							for (const img of msg.images) {
+								imageBlocks.push({
+									type: "image",
+									source: {
+										type: "base64",
+										media_type: img.mediaType,
+										data: img.base64,
+									},
+								});
+							}
+						}
+					}
+
+					const text = `${wrapper}\n${contents.join("\n")}`;
+					if (isWorkingContext && Array.isArray(lastMsg?.content)) {
+						// Append to existing tool_result user message
+						(lastMsg.content as unknown[]).push({
+							type: "text",
+							text,
+						});
+						if (imageBlocks.length > 0) {
+							(lastMsg.content as unknown[]).push(...imageBlocks);
+							(lastMsg.content as unknown[]).push({
+								type: "text",
+								text: `[${imageBlocks.length} image(s) attached by user]`,
+							});
+						}
+					} else if (imageBlocks.length > 0) {
+						messages.push({
+							role: "user",
+							content: [{ type: "text", text }, ...imageBlocks],
+						});
+					} else {
+						messages.push({ role: "user", content: text });
+					}
+				}
+				i++;
+				break;
+			}
 
 			case "compacted_resume":
 				messages.push({ role: "user", content: event.content });
@@ -611,26 +808,88 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 								is_error: current.isError,
 							});
 						}
-						i++;
-					} else if (isQueueEvent(current) || current.type === "user_message") {
-						// Queue events at cancellation points (between tool_results)
-						// user_message between tool_results is always queue-originated
-						const formatted = formatEventForAI(current);
-						const queueText = `[Messages received while you were working:]\n${formatted}`;
-						resultBlocks.push({ type: "text", text: queueText });
-						if (current.type === "user_message" && current.images) {
-							for (const img of current.images) {
-								queueImageBlocks.push({
-									type: "image",
-									source: {
-										type: "base64",
-										media_type: img.mediaType,
-										data: img.base64,
-									},
-								});
+						// Handle messagesConsumed on tool_result (cancellation point)
+						if (current.messagesConsumed?.length) {
+							const mcEvents: Event[] = [];
+							for (const mcId of current.messagesConsumed) {
+								const mcEvt = eventIndex.get(mcId);
+								if (mcEvt) mcEvents.push(mcEvt);
+							}
+							if (mcEvents.length > 0) {
+								const mcContents = mcEvents.map(formatEventForAI);
+								const mcText = `[Messages received while you were working:]\n${mcContents.join("\n")}`;
+								resultBlocks.push({ type: "text", text: mcText });
+								for (const mcEvt of mcEvents) {
+									if (mcEvt.type === "user_message" && mcEvt.images) {
+										for (const img of mcEvt.images) {
+											queueImageBlocks.push({
+												type: "image",
+												source: {
+													type: "base64",
+													media_type: img.mediaType,
+													data: img.base64,
+												},
+											});
+										}
+									}
+								}
 							}
 						}
 						i++;
+					} else if (current.type === "messages_consumed") {
+						// Standalone messages_consumed between tool_results
+						const mcEvents: Event[] = [];
+						for (const mcId of (
+							current as Event & { type: "messages_consumed" }
+						).messageIds) {
+							const mcEvt = eventIndex.get(mcId);
+							if (mcEvt) mcEvents.push(mcEvt);
+						}
+						if (mcEvents.length > 0) {
+							const mcContents = mcEvents.map(formatEventForAI);
+							const mcText = `[Messages received while you were working:]\n${mcContents.join("\n")}`;
+							resultBlocks.push({ type: "text", text: mcText });
+							for (const mcEvt of mcEvents) {
+								if (mcEvt.type === "user_message" && mcEvt.images) {
+									for (const img of mcEvt.images) {
+										queueImageBlocks.push({
+											type: "image",
+											source: {
+												type: "base64",
+												media_type: img.mediaType,
+												data: img.base64,
+											},
+										});
+									}
+								}
+							}
+						}
+						i++;
+					} else if (isQueueEvent(current) || current.type === "user_message") {
+						// Legacy: queue events without IDs at cancellation points
+						// (backward compat for old JSONL files)
+						const eid = (current as { id?: string }).id;
+						if (eid) {
+							// Has ID — skip, will be materialized by messages_consumed
+							i++;
+						} else {
+							const formatted = formatEventForAI(current);
+							const queueText = `[Messages received while you were working:]\n${formatted}`;
+							resultBlocks.push({ type: "text", text: queueText });
+							if (current.type === "user_message" && current.images) {
+								for (const img of current.images) {
+									queueImageBlocks.push({
+										type: "image",
+										source: {
+											type: "base64",
+											media_type: img.mediaType,
+											data: img.base64,
+										},
+									});
+								}
+							}
+							i++;
+						}
 					} else {
 						break;
 					}
@@ -663,13 +922,25 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 			case "background_complete":
 			case "system_notification":
 			case "compact_request": {
-				// Collect consecutive queue events into a single user message
+				// Events with IDs are consumed via messages_consumed — skip them here
+				const eid = (event as { id?: string }).id;
+				if (eid) {
+					i++;
+					break;
+				}
+				// Legacy: collect consecutive queue events without IDs into a single user message
 				const queueContents: string[] = [];
 				const queueImageBlocks: unknown[] = [];
 
 				while (i < events.length) {
 					const current = events[i] as Event;
 					if (isQueueEvent(current) || current.type === "user_message") {
+						const cid = (current as { id?: string }).id;
+						if (cid) {
+							// Has ID — skip
+							i++;
+							continue;
+						}
 						queueContents.push(formatEventForAI(current));
 						if (current.type === "user_message" && current.images) {
 							for (const img of current.images) {
@@ -688,6 +959,8 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 						break;
 					}
 				}
+
+				if (queueContents.length === 0) break;
 
 				const joined = queueContents.join("\n");
 				const idleText = `[Messages received while you were idle:]\n${joined}`;
@@ -735,14 +1008,88 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 	const toolNames = new Map<string, string>();
 	let i = 0;
 
+	// Build index of events by ID for messages_consumed resolution
+	const oaiEventIndex = new Map<string, Event>();
+	for (const e of events) {
+		const eid = (e as { id?: string }).id;
+		if (eid) {
+			oaiEventIndex.set(eid, e);
+		}
+	}
+
 	while (i < events.length) {
 		const event = events[i] as Event;
 
 		switch (event.type) {
 			case "user_message":
+				// user_message with id = injected message (written at enqueue time).
+				// Skip here — it will be materialized at the messages_consumed point.
+				if (event.id) {
+					i++;
+					break;
+				}
 				messages.push({ role: "user", content: event.content });
 				i++;
 				break;
+
+			case "messages_consumed": {
+				// Resolve referenced events and inject with appropriate wrapper
+				const consumedEvents: Event[] = [];
+				for (const id of event.messageIds) {
+					const msg = oaiEventIndex.get(id);
+					if (msg) consumedEvents.push(msg);
+				}
+				if (consumedEvents.length > 0) {
+					// Check context: is the last message a tool result?
+					const lastMsg = messages[messages.length - 1] as
+						| { role: string; content: string }
+						| undefined;
+					const isWorkingContext = lastMsg?.role === "tool";
+
+					const wrapper = isWorkingContext
+						? "[Messages received while you were working:]"
+						: "[Messages received while you were idle:]";
+
+					const contents: string[] = [];
+					const imageParts: unknown[] = [];
+					for (const msg of consumedEvents) {
+						contents.push(formatEventForAI(msg));
+						if (msg.type === "user_message" && msg.images) {
+							for (const img of msg.images) {
+								imageParts.push(
+									{ type: "text", text: "[User-attached image]" },
+									{
+										type: "image_url",
+										image_url: {
+											url: `data:${img.mediaType};base64,${img.base64}`,
+											detail: "auto",
+										},
+									},
+								);
+							}
+						}
+					}
+
+					const text = `${wrapper}\n${contents.join("\n")}`;
+					if (
+						isWorkingContext &&
+						lastMsg &&
+						typeof lastMsg.content === "string"
+					) {
+						// Append to last tool result content
+						lastMsg.content += `\n\n---\n${text}`;
+					} else if (imageParts.length > 0) {
+						messages.push({
+							role: "user",
+							content: [{ type: "text", text }, ...imageParts],
+						});
+					} else {
+						messages.push({ role: "user", content: text });
+					}
+				}
+				i++;
+				break;
+			}
 
 			case "compacted_resume":
 				messages.push({ role: "user", content: event.content });
@@ -841,29 +1188,97 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 								});
 							}
 						}
-						i++;
-					} else if (isQueueEvent(current) || current.type === "user_message") {
-						// Queue events at cancellation points are appended to last tool result
-						// user_message between tool_results is always queue-originated
-						const formatted = formatEventForAI(current);
-						const lastMsg = messages[messages.length - 1] as
-							| { role: string; content: string }
-							| undefined;
-						if (
-							lastMsg?.role === "tool" &&
-							typeof lastMsg.content === "string"
-						) {
-							lastMsg.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
-						}
-						if (current.type === "user_message" && current.images) {
-							for (const img of current.images) {
-								queueImageResults.push({
-									text: "[User-attached image]",
-									dataUri: `data:${img.mediaType};base64,${img.base64}`,
-								});
+						// Handle messagesConsumed on tool_result (cancellation point)
+						if (current.messagesConsumed?.length) {
+							const mcEvents: Event[] = [];
+							for (const mcId of current.messagesConsumed) {
+								const mcEvt = oaiEventIndex.get(mcId);
+								if (mcEvt) mcEvents.push(mcEvt);
+							}
+							if (mcEvents.length > 0) {
+								const mcContents = mcEvents.map(formatEventForAI);
+								const mcText = `[Messages received while you were working:]\n${mcContents.join("\n")}`;
+								const lastToolMsg = messages[messages.length - 1] as
+									| { role: string; content: string }
+									| undefined;
+								if (
+									lastToolMsg?.role === "tool" &&
+									typeof lastToolMsg.content === "string"
+								) {
+									lastToolMsg.content += `\n\n---\n${mcText}`;
+								}
+								for (const mcEvt of mcEvents) {
+									if (mcEvt.type === "user_message" && mcEvt.images) {
+										for (const img of mcEvt.images) {
+											queueImageResults.push({
+												text: "[User-attached image]",
+												dataUri: `data:${img.mediaType};base64,${img.base64}`,
+											});
+										}
+									}
+								}
 							}
 						}
 						i++;
+					} else if (current.type === "messages_consumed") {
+						// Standalone messages_consumed between tool_results
+						const mcEvents: Event[] = [];
+						for (const mcId of (
+							current as Event & { type: "messages_consumed" }
+						).messageIds) {
+							const mcEvt = oaiEventIndex.get(mcId);
+							if (mcEvt) mcEvents.push(mcEvt);
+						}
+						if (mcEvents.length > 0) {
+							const mcContents = mcEvents.map(formatEventForAI);
+							const mcText = `[Messages received while you were working:]\n${mcContents.join("\n")}`;
+							const lastToolMsg = messages[messages.length - 1] as
+								| { role: string; content: string }
+								| undefined;
+							if (
+								lastToolMsg?.role === "tool" &&
+								typeof lastToolMsg.content === "string"
+							) {
+								lastToolMsg.content += `\n\n---\n${mcText}`;
+							}
+							for (const mcEvt of mcEvents) {
+								if (mcEvt.type === "user_message" && mcEvt.images) {
+									for (const img of mcEvt.images) {
+										queueImageResults.push({
+											text: "[User-attached image]",
+											dataUri: `data:${img.mediaType};base64,${img.base64}`,
+										});
+									}
+								}
+							}
+						}
+						i++;
+					} else if (isQueueEvent(current) || current.type === "user_message") {
+						// Legacy: queue events without IDs at cancellation points
+						const eid = (current as { id?: string }).id;
+						if (eid) {
+							i++;
+						} else {
+							const formatted = formatEventForAI(current);
+							const lastMsg = messages[messages.length - 1] as
+								| { role: string; content: string }
+								| undefined;
+							if (
+								lastMsg?.role === "tool" &&
+								typeof lastMsg.content === "string"
+							) {
+								lastMsg.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
+							}
+							if (current.type === "user_message" && current.images) {
+								for (const img of current.images) {
+									queueImageResults.push({
+										text: "[User-attached image]",
+										dataUri: `data:${img.mediaType};base64,${img.base64}`,
+									});
+								}
+							}
+							i++;
+						}
 					} else {
 						break;
 					}
@@ -896,12 +1311,24 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 			case "background_complete":
 			case "system_notification":
 			case "compact_request": {
+				// Events with IDs are consumed via messages_consumed — skip them here
+				const eid = (event as { id?: string }).id;
+				if (eid) {
+					i++;
+					break;
+				}
+				// Legacy: collect consecutive queue events without IDs
 				const oaiQueueContents: string[] = [];
 				const oaiQueueImageParts: unknown[] = [];
 
 				while (i < events.length) {
 					const current = events[i] as Event;
 					if (isQueueEvent(current) || current.type === "user_message") {
+						const cid = (current as { id?: string }).id;
+						if (cid) {
+							i++;
+							continue;
+						}
 						oaiQueueContents.push(formatEventForAI(current));
 						if (current.type === "user_message" && current.images) {
 							for (const img of current.images) {
@@ -922,6 +1349,8 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 						break;
 					}
 				}
+
+				if (oaiQueueContents.length === 0) break;
 
 				const oaiJoined = oaiQueueContents.join("\n");
 				const oaiIdleText = `[Messages received while you were idle:]\n${oaiJoined}`;

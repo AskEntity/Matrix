@@ -812,12 +812,29 @@ export class OpenAICompatibleProvider implements AgentProvider {
 							content: `[Messages received while you were idle:]\n${formatted}`,
 						});
 					}
-					// Record individual queue_message Events
+					// Record queue events and messages_consumed
 					if (eventStore) {
-						const queueEvents: Event[] = nonCompact.map((msg) =>
-							queueMessageToEvent(msg),
-						);
-						eventStore.appendBatch(sessionId, queueEvents);
+						const newEvents: Event[] = [];
+						const consumedIds: string[] = [];
+						for (const msg of nonCompact) {
+							if (msg.source === "user" && msg.id) {
+								// user_message already written to JSONL at send time — don't duplicate
+								consumedIds.push(msg.id);
+							} else {
+								const evt = queueMessageToEvent(msg);
+								const evtId = (evt as { id?: string }).id;
+								if (evtId) consumedIds.push(evtId);
+								newEvents.push(evt);
+							}
+						}
+						if (consumedIds.length > 0) {
+							newEvents.push({
+								type: "messages_consumed",
+								messageIds: consumedIds,
+								ts: Date.now(),
+							});
+						}
+						eventStore.appendBatch(sessionId, newEvents);
 					}
 					continue;
 				} catch {
@@ -1035,6 +1052,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			}
 
 			// Cancellation point: drain queue and append to last tool result
+			let cancellationQueueMsgs: QueueMessage[] = [];
 			if (queue && queue.pending > 0) {
 				const queueMsgs = queue.drain();
 				if (queueMsgs.some((m) => m.source === "compact")) {
@@ -1042,6 +1060,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				}
 				const nonCompactMsgs = queueMsgs.filter((m) => m.source !== "compact");
 				if (nonCompactMsgs.length > 0) {
+					cancellationQueueMsgs = nonCompactMsgs;
 					const formatted = nonCompactMsgs.map(formatQueueMessage).join("\n");
 					if (
 						lastToolMsg?.role === "tool" &&
@@ -1074,6 +1093,23 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			// Record individual tool_result Events
 			if (eventStore) {
 				const toolEvents: Event[] = [];
+
+				// Collect consumed message IDs from cancellation queue messages
+				const consumedIds: string[] = [];
+				const nonUserQueueEvents: Event[] = [];
+				if (cancellationQueueMsgs.length > 0) {
+					for (const qm of cancellationQueueMsgs) {
+						if (qm.source === "user" && qm.id) {
+							consumedIds.push(qm.id);
+						} else {
+							const evt = queueMessageToEvent(qm);
+							const evtId = (evt as { id?: string }).id;
+							if (evtId) consumedIds.push(evtId);
+							nonUserQueueEvents.push(evt);
+						}
+					}
+				}
+
 				for (let j = 0; j < toolCalls.length; j++) {
 					const tc = toolCalls[j] as OpenAIToolCall;
 					const exec = execResults[j] as {
@@ -1106,14 +1142,23 @@ export class OpenAICompatibleProvider implements AgentProvider {
 							mediaType: exec.mediaType,
 						});
 					}
+					// Attach messagesConsumed to the LAST tool_result (cancellation point)
+					const isLast = j === toolCalls.length - 1;
 					toolEvents.push({
 						type: "tool_result",
 						toolCallId: tc.id,
 						content: resultContent,
 						isError: exec.isError,
 						...(images.length > 0 ? { images } : {}),
+						...(isLast && consumedIds.length > 0
+							? { messagesConsumed: consumedIds }
+							: {}),
 						ts: Date.now(),
 					});
+				}
+				// Record non-user cancellation-point queue messages
+				for (const evt of nonUserQueueEvents) {
+					toolEvents.push(evt);
 				}
 				eventStore.appendBatch(sessionId, toolEvents);
 			}

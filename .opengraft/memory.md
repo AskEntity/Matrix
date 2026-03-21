@@ -309,17 +309,13 @@ Event (src/events.ts) — THE source of truth
 - **Both idle drain and cancellation point work**: Both yield `queue_message` with `rawMessages`, so user messages consumed either way trigger `message_injected`.
 
 
-## Core Architectural Insight: Cancellation Points (March 2026)
+## Unified Message Abstraction (March 2026)
 
-**The fundamental complexity of the agent lifecycle comes from ONE fact**: User messages can only be injected into the AI conversation at cancellation points (between tool calls). This is an API constraint, not a design choice.
+**Core insight**: User messages can only be injected at cancellation points (API constraint). Two-phase lifecycle separates this constraint from user-facing abstraction.
 
-**The mistake we kept making**: Conflating the API constraint (messages arrive at cancellation points) with our abstraction (how we represent and persist messages). We built multiple overlapping event types (message_injected, queue_message source:user, user_message) because we didnt clearly separate:
-1. **When the user sent the message** (UI concern — pending banner)
-2. **When the message was persisted** (durability concern — JSONL)  
-3. **When the agent consumed it** (API constraint — cancellation point)
-
-**The clean abstraction**: Two events per user message lifecycle:
-- `user_message { id, content, ts }` — written to JSONL at send time. Appears in pending banner.
-- `messages_consumed { messageIds, ts }` — written at cancellation point. Marks injection into AI conversation.
-
-This separates the architectural constraint (cancellation points) from the user-facing abstraction (message sent → message consumed).
+- **UserMessageEvent**: Single interface for ALL queue messages. `source` field discriminates (user, child_complete, parent_update, clarify_response, cross_project, background_complete, system, compact).
+- **Two-phase lifecycle**: Phase 1 = `user_message { id, content, ts }` written to JSONL at send time. Phase 2 = `messages_consumed { messageIds, ts }` (or `messagesConsumed` on `tool_result`) marks consumption at cancellation point.
+- **Converter**: Events with `id` are skipped at original position, materialized at `messages_consumed` point. Backward-compatible: events without `id` work as before.
+- **`queueMessageToEvent`**: Returns `UserMessageEvent` with `source` field. All queue types unified under `type: "user_message"`.
+- **`handleInjectMessage`**: Writes user_message to JSONL BEFORE delivery. Checks `eventStore.has()` BEFORE writing.
+- **Legacy types preserved**: child_complete, parent_update, etc. kept in Event union for old JSONL backward compat.

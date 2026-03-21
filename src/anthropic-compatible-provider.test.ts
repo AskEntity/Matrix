@@ -2021,7 +2021,8 @@ describe("Event deterministic verification", () => {
 
 		expect(result.success).toBe(true);
 
-		// Read events from EventStore
+		// Read events from EventStore (flush pending writes first)
+		await eventStore.flush();
 		const events = eventStore.readActive(result.sessionId ?? "");
 		expect(events.length).toBeGreaterThanOrEqual(2);
 
@@ -2118,6 +2119,7 @@ describe("Event deterministic verification", () => {
 		const agentResult = await consumePromise;
 		expect(agentResult.success).toBe(true);
 
+		await eventStore.flush();
 		const events = eventStore.readActive(agentResult.sessionId ?? "");
 		const types = events.map((e) => e.type);
 		expect(types).toContain("user_message");
@@ -2238,6 +2240,7 @@ describe("Event deterministic verification", () => {
 		const agentResult = await consumePromise;
 		expect(agentResult.success).toBe(true);
 
+		await eventStore.flush();
 		const events = eventStore.readActive(agentResult.sessionId ?? "");
 
 		// Verify error flag is preserved
@@ -2328,13 +2331,15 @@ describe("Event deterministic verification", () => {
 		expect(agentResult.success).toBe(true);
 		expect(idleCount).toBe(2);
 
+		await eventStore.flush();
 		const events = eventStore.readActive(agentResult.sessionId ?? "");
 		const types = events.map((e) => e.type);
 
 		// Must have user_message events (from queue)
 		expect(types).toContain("user_message");
 		const queueMsgEvent = events.find(
-			(e) => e.type === "user_message" && e.content.includes("new instruction"),
+			(e) =>
+				e.type === "user_message" && e.content?.includes("new instruction"),
 		);
 		expect(queueMsgEvent).toBeDefined();
 		if (queueMsgEvent?.type === "user_message") {
@@ -2450,6 +2455,7 @@ describe("Event deterministic verification", () => {
 		const agentResult = await consumePromise;
 		expect(agentResult.success).toBe(true);
 
+		await eventStore.flush();
 		const events = eventStore.readActive(agentResult.sessionId ?? "");
 		const toolCalls = events.filter((e) => e.type === "tool_call");
 		const toolResults = events.filter((e) => e.type === "tool_result");
@@ -2542,6 +2548,7 @@ describe("Event deterministic verification", () => {
 		await eventStore.appendBatch(sessionId, postEvents);
 
 		// readActive should only return post-marker events
+		await eventStore.flush();
 		const active = eventStore.readActive(sessionId);
 		expect(active.length).toBe(2);
 		expect(active[0]?.type).toBe("compacted_resume");
@@ -2607,6 +2614,7 @@ describe("Event deterministic verification", () => {
 			},
 		];
 		await eventStore.appendBatch(sessionId, events);
+		await eventStore.flush();
 
 		const active = eventStore.readActive(sessionId);
 		const reconstructed = eventsToAnthropicMessages(active);
@@ -2705,6 +2713,7 @@ describe("Event deterministic verification", () => {
 		const agentResult = await consumePromise;
 		expect(agentResult.success).toBe(true);
 
+		await eventStore.flush();
 		const events = eventStore.readActive(agentResult.sessionId ?? "");
 
 		// The tool_result content should contain the appended cancellation message

@@ -97,6 +97,14 @@ export class EventStore {
 		return existsSync(this.path(sessionId));
 	}
 
+	/** Wait for all pending writes across all sessions to complete */
+	async flush(): Promise<void> {
+		const pending = Array.from(this.writeQueues.values());
+		if (pending.length > 0) {
+			await Promise.all(pending);
+		}
+	}
+
 	/** Delete all event files in the directory */
 	async clearAll(): Promise<void> {
 		try {
