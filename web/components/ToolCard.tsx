@@ -15,7 +15,7 @@ function getEntryText(entry: LogEntry): string {
 	switch (entry.type) {
 		case "assistant_text":
 		case "text_delta":
-			return entry.content;
+			return entry.content.trimStart();
 		case "tool_call":
 			return entry.tool;
 		case "tool_result":
