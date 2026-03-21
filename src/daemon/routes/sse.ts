@@ -135,8 +135,34 @@ export function registerSSERoute(app: Hono, ctx: DaemonContext) {
 					sendInitialState(ctx, client, projectId);
 				}
 
+				// Two-tier heartbeat:
+				// 1. SSE comment every 15s — keeps TCP alive through proxies
+				//    (CF Tunnel kills idle connections ~100s)
+				// 2. Data heartbeat every 120s — triggers onmessage so client
+				//    watchdog can detect dead connections
+				const commentHeartbeat = setInterval(() => {
+					try {
+						controller.enqueue(encoder.encode(": heartbeat\n\n"));
+					} catch {
+						// Client disconnected — interval will be cleared below
+					}
+				}, 15_000);
+				const dataHeartbeat = setInterval(() => {
+					try {
+						controller.enqueue(
+							encoder.encode(
+								`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`,
+							),
+						);
+					} catch {
+						// Client disconnected — interval will be cleared below
+					}
+				}, 120_000);
+
 				// Clean up on disconnect
 				c.req.raw.signal.addEventListener("abort", () => {
+					clearInterval(commentHeartbeat);
+					clearInterval(dataHeartbeat);
 					ctx.sseClients.delete(client);
 				});
 			},
