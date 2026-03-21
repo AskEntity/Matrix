@@ -401,8 +401,8 @@ describe("ws-handler queueEntry handling", () => {
 	});
 });
 
-describe("ws-handler pending_messages race condition", () => {
-	it("handleWS: user message appears in log even when pending_messages:[] clears before messages_consumed", () => {
+describe("ws-handler JSONL-driven pending state", () => {
+	it("pending state is derived from deferredMessages map — no race condition possible", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -438,8 +438,7 @@ describe("ws-handler pending_messages race condition", () => {
 
 		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
 
-		// Step 1: user_message arrives → goes to pending + deferredUserMsgs
-		// taskId: null = root orchestrator message
+		// Step 1: message arrives → deferred in map, shown in pending banner
 		handleWS({
 			type: "message",
 			id: "msg-race",
@@ -451,18 +450,8 @@ describe("ws-handler pending_messages race condition", () => {
 		expect(capturedPending[0]?.id).toBe("msg-race");
 		expect(capturedLogs.length).toBe(0);
 
-		// Step 2: pending_messages:[] arrives for root (taskId=null) BEFORE messages_consumed
-		// This simulates the race: queue drains immediately when agent wakes, clearing the banner
-		handleWS({
-			type: "pending_messages",
-			projectId: "proj-1",
-			taskId: null,
-			messages: [],
-		});
-		expect(capturedPending.length).toBe(0); // Banner cleared!
-
-		// Step 3: messages_consumed arrives — should STILL create the log entry
-		// even though pendingMessages was cleared
+		// Step 2: messages_consumed arrives — materializes in log, clears from pending
+		// No pending_messages:[] race — pending state is derived from deferredMessages map
 		handleWS({
 			type: "messages_consumed",
 			messageIds: ["msg-race"],
@@ -473,6 +462,8 @@ describe("ws-handler pending_messages race condition", () => {
 		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
 		expect(userEntry).toBeDefined();
 		expect(userEntry?.content).toBe("Hello world");
+		// Pending should be cleared
+		expect(capturedPending.length).toBe(0);
 	});
 });
 
