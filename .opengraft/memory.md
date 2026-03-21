@@ -559,3 +559,11 @@ Event (src/events.ts) — THE source of truth
 - **Frontend merge logic**: `pending_messages` events replace entries matching the incoming `taskId`, keeping other tasks' pending intact.
 - **stopAgent clears per-task**: Iterates all tracker nodes and broadcasts clear for each, since `queue.close()` does NOT trigger `onDrain` callbacks.
 - **SSE initial state + REST endpoint**: Now scan ALL agent queues via `tracker.allNodes()`, not just root.
+
+
+## Child Task User Message Live Display Fix (March 2026)
+
+- **Bug**: User messages sent to child tasks via REST endpoint (`POST /projects/:id/tasks/:nodeId/message`) were not visible live in the child's activity log. Only appeared after page refresh.
+- **Root cause**: The child task message endpoint was missing the two-phase message lifecycle that `handleInjectMessage` implements for root messages. Specifically: (1) No `message` event written to JSONL at send time, (2) No `message` SSE broadcast for frontend pending/deferred state, (3) No `id` field in the `QueueMessage` so `messages_consumed` could not reference it.
+- **Why refresh worked**: Without an `id`, the provider's `queueMessageToEvent()` generated a new UUID and wrote the `message` event to JSONL during queue drain. `processEventBatch` on refresh found this event and rendered it. But the live SSE path requires the two-phase lifecycle (broadcast `message` with ID → frontend defers → broadcast `messages_consumed` → frontend materializes).
+- **Fix**: Added three things to the child task message endpoint: (1) Generate `msgId` via `randomUUID()`, (2) Write `message` event to JSONL and broadcast via SSE, (3) Include `id` in `QueueMessage` passed to `deliverMessage`. Now matches `handleInjectMessage` behavior.
