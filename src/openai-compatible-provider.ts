@@ -5,51 +5,32 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
-import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
-import {
-	buildCompactedContext,
-	buildSummarizationInstruction,
-	extractCheckpoint,
-	zodShapeToJsonSchema,
-} from "./anthropic-compatible-provider.ts";
+import { toRawMessage } from "./agent-tools.ts";
 import {
 	type Event,
 	eventsToOpenAIMessages,
 	findOrphanedToolCalls,
-	queueMessageToEvent,
 } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
-import type { ToolDefinition } from "./tool-definition.ts";
 import {
-	cleanupSessionBackgroundProcesses,
-	executeTool,
-	TOOLS,
-} from "./tools/index.ts";
+	buildSummarizationInstruction,
+	buildToolResultEvents,
+	COMPACT_BUFFER_RATIO,
+	checkBudget,
+	collectToolResultImages,
+	DEFAULT_MAX_TOKENS,
+	drainQueueAtCancellationPoint,
+	executeToolUnified,
+	extractQueueImageParts,
+	handleImplicitYield,
+	processCompaction,
+	recordBudgetWarning,
+	recordQueueEvents,
+	zodShapeToJsonSchema,
+} from "./provider-shared.ts";
+import type { ToolDefinition } from "./tool-definition.ts";
+import { cleanupSessionBackgroundProcesses, TOOLS } from "./tools/index.ts";
 import type { AgentResult } from "./types.ts";
-
-/** Extract image_url parts from queue messages for OpenAI format. */
-function extractQueueImageParts(
-	msgs: QueueMessage[],
-): Array<{ type: "image_url"; image_url: { url: string; detail: "auto" } }> {
-	const parts: Array<{
-		type: "image_url";
-		image_url: { url: string; detail: "auto" };
-	}> = [];
-	for (const msg of msgs) {
-		if (msg.source === "user" && msg.images) {
-			for (const img of msg.images) {
-				parts.push({
-					type: "image_url",
-					image_url: {
-						url: `data:${img.mediaType};base64,${img.base64}`,
-						detail: "auto",
-					},
-				});
-			}
-		}
-	}
-	return parts;
-}
 
 // ── Types ──
 
@@ -155,8 +136,6 @@ const CONTEXT_WINDOWS: Record<string, number> = {
 };
 
 const DEFAULT_CONTEXT_WINDOW = 128_000;
-const COMPACT_BUFFER_RATIO = 0.17;
-const DEFAULT_MAX_TOKENS = 16384;
 
 // ── Dynamic context window cache ──
 
@@ -539,59 +518,31 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						responseText = "";
 					}
 				}
-				const checkpoint = extractCheckpoint(responseText, cwd);
 
-				try {
-					const compactedContent = await buildCompactedContext(checkpoint, cwd);
-					const oldTokens = preCompactTokenCount;
+				const compactGen = processCompaction(
+					responseText,
+					cwd,
+					preCompactTokenCount,
+					eventStore,
+					sessionId,
+					contextWindow,
+					compressThreshold,
+				);
+				let compactStep = await compactGen.next();
+				while (!compactStep.done) {
+					yield compactStep.value;
+					compactStep = await compactGen.next();
+				}
+				const compactResult = compactStep.value;
+
+				if (compactResult) {
 					messages.length = 0;
-					const userContent = cwd
-						? `Working directory: ${cwd}\n\n${compactedContent}`
-						: compactedContent;
 					messages.push({
 						role: "user" as const,
-						content: userContent,
+						content: compactResult.userContent,
 					});
-					const postCompactChars = userContent.length;
-					const estimatedPostCompactTokens = Math.floor(postCompactChars / 4);
-					const compactSavedTokens = Math.max(
-						0,
-						oldTokens - estimatedPostCompactTokens,
-					);
-					// Append compact_marker + compacted_resume to EventStore
-					if (eventStore) {
-						eventStore.append(sessionId, {
-							type: "compact_marker",
-							checkpoint,
-							savedTokens: compactSavedTokens,
-							ts: Date.now(),
-						});
-						eventStore.append(sessionId, {
-							type: "compacted_resume",
-							content: userContent,
-							cwd,
-							ts: Date.now(),
-						});
-					}
-					estimatedInputTokens = estimatedPostCompactTokens;
-					yield {
-						type: "usage",
-						inputTokens: estimatedPostCompactTokens,
-						compressThreshold,
-						contextWindow,
-						estimated: true,
-					};
-					yield {
-						type: "compact",
-						checkpoint,
-						savedTokens: compactSavedTokens,
-					};
+					estimatedInputTokens = compactResult.estimatedInputTokens;
 					manualCompactRequested = false;
-				} catch (e) {
-					yield {
-						type: "error",
-						message: `Compaction rebuild failed: ${e instanceof Error ? e.message : String(e)}`,
-					};
 				}
 				continue; // Skip normal processing, go to next API call with rebuilt context
 			}
@@ -769,75 +720,17 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						"Agent ended turn — entering idle state (waiting for messages)",
 				};
 
-				try {
-					queue.idle = true;
-					yield { type: "agent_idle" };
-					const first = await queue.wait();
-					queue.idle = false;
-					yield { type: "agent_active" };
-					const rest = queue.drain();
-					const all = [first, ...rest];
-					if (all.some((m) => m.source === "compact")) {
-						manualCompactRequested = true;
-					}
-					const nonCompact = all.filter((m) => m.source !== "compact");
-					if (nonCompact.length === 0) {
-						continue;
-					}
-					const formatted = nonCompact.map(formatQueueMessage).join("\n");
-					yield {
-						type: "queue_message",
-						messages: formatted,
-						rawMessages: nonCompact.map(toRawMessage),
-					};
-					const imageParts = extractQueueImageParts(nonCompact);
-					if (imageParts.length > 0) {
-						messages.push({
-							role: "user",
-							content: [
-								{
-									type: "text" as const,
-									text: `[Messages received while you were idle:]\n${formatted}`,
-								},
-								...imageParts,
-							],
-						});
-					} else {
-						messages.push({
-							role: "user",
-							content: `[Messages received while you were idle:]\n${formatted}`,
-						});
-					}
-					// Record queue events and messages_consumed
-					if (eventStore) {
-						const newEvents: Event[] = [];
-						const consumedIds: string[] = [];
-						for (const msg of nonCompact) {
-							if (msg.source === "user" && msg.id) {
-								// message already written to JSONL at send time — don't duplicate
-								consumedIds.push(msg.id);
-							} else {
-								const evt = queueMessageToEvent(msg);
-								const evtId = (evt as { id?: string }).id;
-								if (evtId) consumedIds.push(evtId);
-								newEvents.push(evt);
-							}
-						}
-						if (consumedIds.length > 0) {
-							newEvents.push({
-								type: "messages_consumed",
-								messageIds: consumedIds,
-								ts: Date.now(),
-							});
-						}
-						eventStore.appendBatch(sessionId, newEvents);
-					}
-					continue;
-				} catch {
-					queue.idle = false;
+				const yieldGen = handleImplicitYield(queue);
+				let yieldStep = await yieldGen.next();
+				while (!yieldStep.done) {
+					yield yieldStep.value;
+					yieldStep = await yieldGen.next();
+				}
+				const yieldResult = yieldStep.value;
+
+				if (yieldResult === null) {
 					// Queue closed — normal exit path (stop was called)
 					// NOTE: Using direct return instead of break to work around Bun async generator hang.
-					// break from catch inside an async generator resumed via .next() hangs in Bun.
 					const { inputPer1M: ip, outputPer1M: op } = getModelPricing(model);
 					const exitCost =
 						(totalInputTokens * ip) / 1_000_000 +
@@ -852,6 +745,39 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						outputTokens: totalOutputTokens,
 					};
 				}
+
+				if (yieldResult.manualCompactRequested) {
+					manualCompactRequested = true;
+				}
+				if (yieldResult.compactOnly) {
+					continue;
+				}
+
+				// Inject messages as a new user turn and continue the loop
+				const { formatted, nonCompact } = yieldResult;
+				const imageParts = extractQueueImageParts(nonCompact);
+				if (imageParts.length > 0) {
+					messages.push({
+						role: "user",
+						content: [
+							{
+								type: "text" as const,
+								text: `[Messages received while you were idle:]\n${formatted}`,
+							},
+							...imageParts,
+						],
+					});
+				} else {
+					messages.push({
+						role: "user",
+						content: `[Messages received while you were idle:]\n${formatted}`,
+					});
+				}
+				// Record queue events and messages_consumed
+				if (eventStore) {
+					recordQueueEvents(eventStore, sessionId, nonCompact);
+				}
+				continue;
 			}
 
 			// Emit tool_use events
@@ -883,90 +809,10 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						};
 					}
 
-					const mcpHandler = mcpHandlers.get(tc.function.name);
-					if (mcpHandler) {
-						try {
-							const mcpResult = await mcpHandler.handler(parsedInput, {});
-							const parts = Array.isArray(mcpResult.content)
-								? mcpResult.content
-								: [];
-							// Separate text and image parts
-							const textParts: string[] = [];
-							const mcpImages: Array<{
-								mediaType: string;
-								data: string;
-							}> = [];
-							for (const c of parts as Array<{
-								type: string;
-								text?: string;
-								data?: string;
-								mimeType?: string;
-								source?: {
-									type: string;
-									media_type: string;
-									data: string;
-								};
-							}>) {
-								if (c.type === "text") {
-									textParts.push(c.text ?? "");
-								} else if (c.type === "image" && c.data) {
-									// MCP format: { type: "image", data, mimeType }
-									mcpImages.push({
-										mediaType: c.mimeType ?? "image/png",
-										data: c.data,
-									});
-								} else if (c.type === "image" && c.source?.type === "base64") {
-									// Anthropic format: { type: "image", source: { type: "base64", media_type, data } }
-									mcpImages.push({
-										mediaType: c.source.media_type,
-										data: c.source.data,
-									});
-								} else {
-									textParts.push(JSON.stringify(c));
-								}
-							}
-							// Extract consumed message IDs, pending state, and formatted queue messages from yield/done tools
-							const consumedIds = Array.isArray(mcpResult._consumedMessageIds)
-								? (mcpResult._consumedMessageIds as string[])
-								: undefined;
-							const pending = mcpResult._pending as
-								| {
-										runningChildren: Array<{
-											id: string;
-											title: string;
-										}>;
-										pendingClarifications: number;
-								  }
-								| undefined;
-							const formattedQueueMessages =
-								typeof mcpResult._formattedQueueMessages === "string"
-									? mcpResult._formattedQueueMessages
-									: undefined;
-							return {
-								content: textParts.join("\n"),
-								isError: mcpResult.isError ?? false,
-								// Pass images through for injection as user message
-								isImage: mcpImages.length > 0,
-								mcpImages,
-								...(consumedIds?.length
-									? { _consumedMessageIds: consumedIds }
-									: {}),
-								...(pending ? { _pending: pending } : {}),
-								...(formattedQueueMessages
-									? { _formattedQueueMessages: formattedQueueMessages }
-									: {}),
-							};
-						} catch (e) {
-							return {
-								content: `MCP tool error: ${e instanceof Error ? e.message : String(e)}`,
-								isError: true,
-							};
-						}
-					}
-
-					return executeTool(
+					return executeToolUnified(
 						tc.function.name,
 						parsedInput,
+						mcpHandlers,
 						cwd,
 						request.cwd,
 						sessionId,
@@ -994,31 +840,11 @@ export class OpenAICompatibleProvider implements AgentProvider {
 
 			for (let i = 0; i < toolCalls.length; i++) {
 				const tc = toolCalls[i] as OpenAIToolCall;
-				const exec = execResults[i] as {
-					content: string;
-					isError: boolean;
-					cwd?: string;
-					isImage?: boolean;
-					imageData?: string;
-					mediaType?: string;
-					mcpImages?: Array<{ mediaType: string; data: string }>;
-					_consumedMessageIds?: string[];
-					_formattedQueueMessages?: string;
-				};
+				const exec = execResults[i] as (typeof execResults)[number];
 
 				if (exec.cwd) cwd = exec.cwd;
 
-				// Collect images for the UI event
-				const images: Array<{ base64: string; mediaType: string }> = [];
-				// When _formattedQueueMessages is set, mcpImages are user queue images
-				// — they go alongside the queue text, not in the tool_result
-				if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
-					for (const img of exec.mcpImages) {
-						images.push({ base64: img.data, mediaType: img.mediaType });
-					}
-				} else if (exec.isImage && exec.imageData && exec.mediaType) {
-					images.push({ base64: exec.imageData, mediaType: exec.mediaType });
-				}
+				const images = collectToolResultImages(exec);
 
 				yield {
 					type: "tool_result",
@@ -1055,7 +881,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 								{
 									type: "image_url" as const,
 									image_url: {
-										url: `data:${img.mediaType};base64,${img.data}`,
+										url: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
 										detail: "auto" as const,
 									},
 								},
@@ -1074,7 +900,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						for (const img of exec.mcpImages) {
 							imageResults.push({
 								text: "[User-attached image]",
-								dataUri: `data:${img.mediaType};base64,${img.data}`,
+								dataUri: `data:${img.mediaType};base64,${img.data ?? img.base64}`,
 							});
 						}
 					}
@@ -1132,128 +958,50 @@ export class OpenAICompatibleProvider implements AgentProvider {
 
 			// Cancellation point: drain queue and append to last tool result
 			let cancellationQueueMsgs: QueueMessage[] = [];
-			if (queue && queue.pending > 0) {
-				const queueMsgs = queue.drain();
-				if (queueMsgs.some((m) => m.source === "compact")) {
-					manualCompactRequested = true;
-				}
-				const nonCompactMsgs = queueMsgs.filter((m) => m.source !== "compact");
-				if (nonCompactMsgs.length > 0) {
-					cancellationQueueMsgs = nonCompactMsgs;
-					const formatted = nonCompactMsgs.map(formatQueueMessage).join("\n");
-					if (
-						lastToolMsg?.role === "tool" &&
-						typeof lastToolMsg.content === "string"
-					) {
-						lastToolMsg.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
+			if (queue) {
+				const drained = drainQueueAtCancellationPoint(queue);
+				if (drained) {
+					if (drained.manualCompactRequested) {
+						manualCompactRequested = true;
 					}
-					// Add any queued images as a user message
-					const queueImageParts = extractQueueImageParts(nonCompactMsgs);
-					if (queueImageParts.length > 0) {
-						messages.push({
-							role: "user",
-							content: [
-								{
-									type: "text" as const,
-									text: `[${queueImageParts.length} image(s) attached by user]`,
-								},
-								...queueImageParts,
-							],
-						});
+					if (drained.messages.length > 0) {
+						cancellationQueueMsgs = drained.messages;
+						if (
+							lastToolMsg?.role === "tool" &&
+							typeof lastToolMsg.content === "string"
+						) {
+							lastToolMsg.content += `\n\n---\n[Messages received while you were working:]\n${drained.formatted}`;
+						}
+						// Add any queued images as a user message
+						const queueImageParts = extractQueueImageParts(drained.messages);
+						if (queueImageParts.length > 0) {
+							messages.push({
+								role: "user",
+								content: [
+									{
+										type: "text" as const,
+										text: `[${queueImageParts.length} image(s) attached by user]`,
+									},
+									...queueImageParts,
+								],
+							});
+						}
+						yield {
+							type: "queue_message",
+							messages: drained.formatted,
+							rawMessages: drained.messages.map(toRawMessage),
+						};
 					}
-					yield {
-						type: "queue_message",
-						messages: formatted,
-						rawMessages: nonCompactMsgs.map(toRawMessage),
-					};
 				}
 			}
 
 			// Record individual tool_result Events
 			if (eventStore) {
-				const toolEvents: Event[] = [];
-
-				// Collect consumed message IDs from cancellation queue messages
-				const consumedIds: string[] = [];
-				const nonUserQueueEvents: Event[] = [];
-				if (cancellationQueueMsgs.length > 0) {
-					for (const qm of cancellationQueueMsgs) {
-						if (qm.source === "user" && qm.id) {
-							consumedIds.push(qm.id);
-						} else {
-							const evt = queueMessageToEvent(qm);
-							const evtId = (evt as { id?: string }).id;
-							if (evtId) consumedIds.push(evtId);
-							nonUserQueueEvents.push(evt);
-						}
-					}
-				}
-
-				for (let j = 0; j < toolCalls.length; j++) {
-					const tc = toolCalls[j] as OpenAIToolCall;
-					const exec = execResults[j] as {
-						content: string;
-						isError: boolean;
-						mcpImages?: Array<{ mediaType: string; data: string }>;
-						isImage?: boolean;
-						imageData?: string;
-						mediaType?: string;
-						_consumedMessageIds?: string[];
-						_formattedQueueMessages?: string;
-						_pending?: {
-							runningChildren: Array<{ id: string; title: string }>;
-							pendingClarifications: number;
-						};
-					};
-					// Record pure tool output — queue text and done() reminders are NOT embedded.
-					// The converter reconstructs queue messages from messagesConsumed + message events.
-					const resultContent = exec.content;
-					const images: Array<{ base64: string; mediaType: string }> = [];
-					// When _formattedQueueMessages is set, mcpImages are user queue images
-					// — they're already recorded as message events, not tool images
-					if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
-						images.push(
-							...exec.mcpImages.map((img) => ({
-								base64: img.data,
-								mediaType: img.mediaType,
-							})),
-						);
-					} else if (exec.isImage && exec.imageData && exec.mediaType) {
-						images.push({
-							base64: exec.imageData,
-							mediaType: exec.mediaType,
-						});
-					}
-					const isLast = j === toolCalls.length - 1;
-					toolEvents.push({
-						type: "tool_result",
-						toolCallId: tc.id,
-						content: resultContent,
-						isError: exec.isError,
-						...(images.length > 0 ? { images } : {}),
-						...(isLast && exec._pending ? { pending: exec._pending } : {}),
-						ts: Date.now(),
-					});
-				}
-				// Record non-user cancellation-point queue messages
-				for (const evt of nonUserQueueEvents) {
-					toolEvents.push(evt);
-				}
-				// Record standalone messages_consumed event AFTER tool_results and queue events
-				const allConsumedIds = [
-					...consumedIds,
-					...execResults.flatMap((exec) => {
-						const e = exec as { _consumedMessageIds?: string[] };
-						return e._consumedMessageIds ?? [];
-					}),
-				];
-				if (allConsumedIds.length > 0) {
-					toolEvents.push({
-						type: "messages_consumed",
-						messageIds: allConsumedIds,
-						ts: Date.now(),
-					});
-				}
+				const toolEvents = buildToolResultEvents(
+					toolCalls.map((tc) => ({ id: tc.id })),
+					execResults,
+					cancellationQueueMsgs,
+				);
 				eventStore.appendBatch(sessionId, toolEvents);
 			}
 
@@ -1280,30 +1028,11 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				const runningCost =
 					(totalInputTokens * inputPer1M) / 1_000_000 +
 					(totalOutputTokens * outputPer1M) / 1_000_000;
-				const ratio = runningCost / request.budgetUsd;
-
-				if (ratio >= 1.0) {
-					const warning = `⚠️ Budget exceeded (${runningCost.toFixed(4)} / ${request.budgetUsd.toFixed(2)} budget). Call done() now.`;
-					messages.push({ role: "user", content: warning });
-					if (eventStore) {
-						eventStore.append(sessionId, {
-							type: "budget_warning",
-							warning,
-							ts: Date.now(),
-						});
-					}
-					yield { type: "status", message: warning };
-				} else if (ratio >= 0.8) {
-					const warning = `⚠️ Warning: task has used ${Math.round(ratio * 100)}% of its ${request.budgetUsd.toFixed(2)} budget (${runningCost.toFixed(4)} spent). Wrap up soon.`;
-					messages.push({ role: "user", content: warning });
-					if (eventStore) {
-						eventStore.append(sessionId, {
-							type: "budget_warning",
-							warning,
-							ts: Date.now(),
-						});
-					}
-					yield { type: "status", message: warning };
+				const budgetResult = checkBudget(request.budgetUsd, runningCost);
+				if (budgetResult) {
+					messages.push({ role: "user", content: budgetResult.warning });
+					recordBudgetWarning(eventStore, sessionId, budgetResult.warning);
+					yield { type: "status", message: budgetResult.warning };
 				}
 			}
 		}
