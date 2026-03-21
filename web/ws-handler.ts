@@ -1150,14 +1150,20 @@ export function createWSHandler(deps: WSHandlerDeps) {
 	function handleWS(msg: Record<string, unknown>) {
 		// pending_messages / pending_clarifications: pass-through
 		if (msg.type === "pending_messages") {
-			setPendingMessages(
+			const incomingTaskId = (msg.taskId as string | null) ?? null;
+			const incomingMessages =
 				(msg.messages as {
 					id: string;
 					taskId: string | null;
 					text: string;
 					timestamp: number;
-				}[]) ?? [],
-			);
+				}[]) ?? [];
+
+			setPendingMessages((prev) => {
+				// Replace messages for this specific taskId, keep others
+				const kept = prev.filter((m) => m.taskId !== incomingTaskId);
+				return [...kept, ...incomingMessages];
+			});
 			return;
 		}
 		if (msg.type === "pending_clarifications") {

@@ -534,8 +534,16 @@ export async function stopAgent(
 		broadcastTreeUpdate(ctx, projectId, tracker);
 	}
 
-	// Clear pending state — queue is gone, no pending messages
-	broadcastPendingCleared(ctx, projectId);
+	// Clear pending state — all queues are gone, no pending messages
+	// Clear each task's pending individually since queue.close() doesn't fire onDrain
+	if (tracker) {
+		for (const node of tracker.allNodes()) {
+			const taskId = node.id === tracker.rootNodeId ? null : node.id;
+			broadcastPendingCleared(ctx, projectId, taskId);
+		}
+	} else {
+		broadcastPendingCleared(ctx, projectId, null);
+	}
 	ctx.pendingClarifications.delete(projectId);
 	broadcast(ctx.sseClients, projectId, {
 		type: "pending_clarifications",
@@ -742,11 +750,11 @@ export async function runChildAgentInBackground(
 		// Create the queue first — shared between MCP tools and runChildCore
 		const childQueue = new MessageQueue();
 		childQueue.onEnqueue = (msg) =>
-			broadcastPendingFromQueue(ctx, project.id, [
+			broadcastPendingFromQueue(ctx, project.id, nodeId, [
 				...childQueue.peekMessages(),
 				msg,
 			]);
-		childQueue.onDrain = () => broadcastPendingCleared(ctx, project.id);
+		childQueue.onDrain = () => broadcastPendingCleared(ctx, project.id, nodeId);
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
 			projectPath: node.worktreePath as string,
@@ -967,8 +975,11 @@ export async function launchAgent(
 
 	// Wire up enqueue/drain callbacks for pending message indicators
 	queue.onEnqueue = (msg) =>
-		broadcastPendingFromQueue(ctx, project.id, [...queue.peekMessages(), msg]);
-	queue.onDrain = () => broadcastPendingCleared(ctx, project.id);
+		broadcastPendingFromQueue(ctx, project.id, null, [
+			...queue.peekMessages(),
+			msg,
+		]);
+	queue.onDrain = () => broadcastPendingCleared(ctx, project.id, null);
 
 	// Load any persisted messages from disk and enqueue them
 	const persistedMsgs = await loadPersistedMessages(

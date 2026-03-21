@@ -576,10 +576,20 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		});
 		if (deliveryResult === "persisted") {
 			// Message went to disk — broadcast as pending until agent loads it
+			const rootNodeId = tracker.rootNodeId;
+			const taskId = nodeId === rootNodeId ? null : nodeId;
 			broadcast(ctx.sseClients, project.id, {
 				type: "pending_messages",
 				projectId: project.id,
-				messages: [{ text: body.content, timestamp: Date.now() }],
+				taskId,
+				messages: [
+					{
+						id: `pending-${Date.now()}`,
+						taskId,
+						text: body.content,
+						timestamp: Date.now(),
+					},
+				],
 			});
 		}
 

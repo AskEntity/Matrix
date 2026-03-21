@@ -42,23 +42,27 @@ async function sendInitialState(
 		});
 	}
 
-	// Send current pending messages — derived from queue state
-	const rootNodeId = tracker?.rootNodeId;
-	if (rootNodeId) {
-		const agentQueue = globalAgentQueues.get(rootNodeId);
-		if (agentQueue) {
-			const pending = agentQueue.peekMessages().map((m, i) => ({
-				id: `pending-${Date.now()}-${i}`,
-				taskId: null,
-				text: pendingTextForMessage(m),
-				timestamp: Date.now(),
-			}));
-			if (pending.length > 0) {
-				sendSSE(client, {
-					type: "pending_messages",
-					projectId,
-					messages: pending,
-				});
+	// Send current pending messages — derived from queue state for ALL agents
+	if (tracker) {
+		for (const node of tracker.allNodes()) {
+			const agentQueue = globalAgentQueues.get(node.id);
+			if (agentQueue) {
+				const msgs = agentQueue.peekMessages();
+				if (msgs.length > 0) {
+					const taskId = node.id === tracker.rootNodeId ? null : node.id;
+					const pending = msgs.map((m, i) => ({
+						id: `pending-${Date.now()}-${i}`,
+						taskId,
+						text: pendingTextForMessage(m),
+						timestamp: Date.now(),
+					}));
+					sendSSE(client, {
+						type: "pending_messages",
+						projectId,
+						taskId,
+						messages: pending,
+					});
+				}
 			}
 		}
 	}

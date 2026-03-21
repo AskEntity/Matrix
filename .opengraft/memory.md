@@ -550,3 +550,12 @@ Event (src/events.ts) — THE source of truth
 - **Live SSE worked**: In the live path, `toRawMessage()` for `child_report` doesn't include a `taskId` field in rawMessages, so `qe.taskId` was undefined and fell back to `""` (falsy), which the root filter treated as "show in root view". Accidentally correct.
 - **REST/refresh broke**: On page load, events are fetched from REST. `normalizeEventForUI()` sets top-level `taskId = sessionId` (parent's). But the `body` field retains `taskId = childId`. `processEventBatch` stores the event with parent's `taskId` but passes `body` (with child's `taskId`) to `queueEntryToUIEvent`, which used the inner `qe.taskId` instead of the outer `parentTaskId`.
 - **Fix**: Changed `child_report` case in `queueEntryToUIEvent` to use `parentTaskId` (consistent with all other message types).
+
+
+## Per-Task Pending Messages (March 2026)
+
+- **Root cause**: `broadcastPendingFromQueue/broadcastPendingCleared` had no `taskId` — all pending messages appeared as root-only. Child task pending messages were invisible.
+- **Convention**: Root orchestrator uses `taskId: null`, child agents use their `nodeId`. This matches frontend `targetNodeId` which is `null` when viewing root.
+- **Frontend merge logic**: `pending_messages` events replace entries matching the incoming `taskId`, keeping other tasks' pending intact.
+- **stopAgent clears per-task**: Iterates all tracker nodes and broadcasts clear for each, since `queue.close()` does NOT trigger `onDrain` callbacks.
+- **SSE initial state + REST endpoint**: Now scan ALL agent queues via `tracker.allNodes()`, not just root.

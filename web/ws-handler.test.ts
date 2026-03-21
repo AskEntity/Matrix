@@ -440,22 +440,24 @@ describe("ws-handler pending_messages race condition", () => {
 		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
 
 		// Step 1: user_message arrives → goes to pending + deferredUserMsgs
+		// taskId: null = root orchestrator message
 		handleWS({
 			type: "message",
 			id: "msg-race",
 			content: "Hello world",
-			taskId: "root-1",
+			taskId: null,
 			ts: 1000,
 		});
 		expect(capturedPending.length).toBe(1);
 		expect(capturedPending[0]?.id).toBe("msg-race");
 		expect(capturedLogs.length).toBe(0);
 
-		// Step 2: pending_messages:[] arrives (queue onDrain clears it) BEFORE messages_consumed
+		// Step 2: pending_messages:[] arrives for root (taskId=null) BEFORE messages_consumed
 		// This simulates the race: queue drains immediately when agent wakes, clearing the banner
 		handleWS({
 			type: "pending_messages",
 			projectId: "proj-1",
+			taskId: null,
 			messages: [],
 		});
 		expect(capturedPending.length).toBe(0); // Banner cleared!

@@ -2951,7 +2951,7 @@ describe("GET /projects/:id/pending-messages", () => {
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
-		// Register a queue for this task
+		// Register a queue for this task (simulates a running child agent)
 		const taskQueue = new MessageQueue();
 		globalAgentQueues.set(task.id, taskQueue);
 
@@ -2967,7 +2967,7 @@ describe("GET /projects/:id/pending-messages", () => {
 			);
 			expect(msgRes.status).toBe(200);
 
-			// Pending messages should be empty — message was enqueued to running agent
+			// Pending messages includes the child's queued message with correct taskId
 			const res = await app.request(`/projects/${projectId}/pending-messages`);
 			expect(res.status).toBe(200);
 			const body = (await res.json()) as {
@@ -2978,7 +2978,9 @@ describe("GET /projects/:id/pending-messages", () => {
 					timestamp: number;
 				}[];
 			};
-			expect(body.messages.length).toBe(0);
+			expect(body.messages.length).toBe(1);
+			expect(body.messages[0]?.taskId).toBe(task.id);
+			expect(body.messages[0]?.text).toBe("task message");
 		} finally {
 			globalAgentQueues.delete(task.id);
 		}
