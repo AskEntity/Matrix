@@ -2031,7 +2031,7 @@ describe("Event deterministic verification", () => {
 
 		// Should have: user_message, assistant_text
 		const types = events.map((e) => e.type);
-		expect(types[0]).toBe("user_message");
+		expect(types[0]).toBe("message");
 		expect(types).toContain("assistant_text");
 
 		// Verify reconstruction matches
@@ -2125,7 +2125,7 @@ describe("Event deterministic verification", () => {
 		await eventStore.flush();
 		const events = eventStore.readActive(agentResult.sessionId ?? "");
 		const types = events.map((e) => e.type);
-		expect(types).toContain("user_message");
+		expect(types).toContain("message");
 		expect(types).toContain("assistant_text");
 		expect(types).toContain("tool_call");
 		expect(types).toContain("tool_result");
@@ -2339,10 +2339,9 @@ describe("Event deterministic verification", () => {
 		const types = events.map((e) => e.type);
 
 		// Must have user_message events (from queue)
-		expect(types).toContain("user_message");
+		expect(types).toContain("message");
 		const queueMsgEvent = events.find(
-			(e) =>
-				e.type === "user_message" && e.content?.includes("new instruction"),
+			(e) => e.type === "message" && e.content?.includes("new instruction"),
 		);
 		expect(queueMsgEvent).toBeDefined();
 		if (queueMsgEvent?.type === "user_message") {
@@ -2514,7 +2513,7 @@ describe("Event deterministic verification", () => {
 		// Manually write pre-compaction events
 		const preEvents: Event[] = [
 			{
-				type: "user_message",
+				type: "message",
 				content: "Old message before compaction",
 				ts: 1000,
 			},
@@ -2582,7 +2581,7 @@ describe("Event deterministic verification", () => {
 		// Write a conversation with a budget warning
 		const events: Event[] = [
 			{
-				type: "user_message",
+				type: "message",
 				content: "Start working",
 				ts: 1000,
 			},
@@ -2742,7 +2741,7 @@ describe("Event deterministic verification", () => {
 		// The queue message should be a separate user_message event with queueEntry
 		const userMsgEvent = events.find(
 			(e) =>
-				e.type === "user_message" &&
+				e.type === "message" &&
 				e.source === "user" &&
 				e.content === "Urgent update during tool execution",
 		);

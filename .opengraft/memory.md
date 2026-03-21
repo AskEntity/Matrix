@@ -474,3 +474,17 @@ Event (src/events.ts) — THE source of truth
 - **Timestamps matter**: Messages formatted for AI now include `[HH:MM:SS]` timestamps so the AI can correlate with the user's UI timestamps when discussing specific events.
 - **Session format ≠ UI format**: What the AI sees (formatted text in tool_result) is different from what the user sees (individual cards with timestamps in the activity log). The AI must understand both formats and be able to reason about the mapping.
 - **Restart daemon**: Via Settings button in UI (Chrome MCP) or POST /restart-daemon with auth cookie. System daemon (LaunchAgent), not bun --watch. Commits do NOT auto-restart.
+
+
+## Message Type Unification (March 2026)
+
+- **`user_message` → `message`**: Renamed in Event union, providers, converters, agent-tools, frontend.
+- **`queueEntry` → `body`**: Field name on MessageEvent (was UserMessageEvent).
+- **`QueueEntry` → `MessageBody`**: Interface name for structured message body.
+- **`UserMessageEvent` → `MessageEvent`**: Interface name for message events.
+- **Deprecated aliases**: `UserMessageEvent = MessageEvent` and `QueueEntry = MessageBody` kept for backward compat.
+- **Legacy `user_message` in Event union**: Old JSONL may have `type: "user_message"`. Both converters handle it via `case "message": case "user_message":`.
+- **Legacy `queueEntry` field**: Old JSONL may have `queueEntry` instead of `body`. Frontend ws-handler reads both `msg.body` and `msg.queueEntry`.
+- **Standalone queue types preserved**: `child_complete`, `parent_update`, etc. kept in Event union as legacy for old JSONL. `isQueueEvent()` handles both legacy types and new `message` type.
+- **`tree_mutation` kept as-is**: Not converted to `message` — it carries structured UI data and changing it would alter frontend rendering logic.
+

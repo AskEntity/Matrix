@@ -3558,7 +3558,7 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
 		const events = [
-			{ type: "user_message", content: "Help me build a feature", ts: 1 },
+			{ type: "message", content: "Help me build a feature", ts: 1 },
 			{ type: "assistant_text", content: "I'll help you", ts: 2 },
 			{
 				type: "tool_call",
@@ -3625,7 +3625,7 @@ describe("GET /projects/:id/tasks/:nodeId/conversation", () => {
 		const sessionsDir = join(dataDir, "sessions", projectId);
 		await mkdir(sessionsDir, { recursive: true });
 		const events = Array.from({ length: 110 }, (_, i) => ({
-			type: i % 2 === 0 ? "user_message" : "assistant_text",
+			type: i % 2 === 0 ? "message" : "assistant_text",
 			content: `Message ${i}`,
 			ts: i,
 		}));

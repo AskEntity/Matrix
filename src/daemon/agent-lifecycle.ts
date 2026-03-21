@@ -1202,16 +1202,16 @@ export async function handleOrchestrate(
 		const rootQueue = globalAgentQueues.get(orchRootNodeId);
 		if (rootQueue) {
 			const orchMsgId = randomUUID();
-			// Write user_message to JSONL at send time
+			// Write message to JSONL at send time
 			const orchEventStore = getEventStore(ctx, projectId);
 			const orchUserMsg: Event = {
-				type: "user_message",
+				type: "message",
 				id: orchMsgId,
 				content: prompt,
 				ts: Date.now(),
 			};
 			orchEventStore.append(orchRootNodeId, orchUserMsg);
-			// Broadcast user_message so frontend can show it in pending area
+			// Broadcast message so frontend can show it in pending area
 			broadcast(ctx.wsClients, projectId, {
 				...orchUserMsg,
 				taskId: orchRootNodeId,
@@ -1273,19 +1273,19 @@ export async function handleInjectMessage(
 				{ prompt: message },
 				orchestratorSystemPrompt,
 			);
-			// Write user_message to JSONL at send time (Phase 1 of two-phase lifecycle)
+			// Write message to JSONL at send time (Phase 1 of two-phase lifecycle)
 			const eventStore = getEventStore(ctx, projectId);
 			const freshRootNodeId = tracker.rootNodeId;
 			if (freshRootNodeId) {
 				const userMsgEvent: Event = {
-					type: "user_message",
+					type: "message",
 					id: randomUUID(),
 					content: message,
 					...(images?.length ? { images } : {}),
 					ts: Date.now(),
 				};
 				eventStore.append(freshRootNodeId, userMsgEvent);
-				// Broadcast user_message so frontend can show it in pending area
+				// Broadcast message so frontend can show it in pending area
 				broadcast(ctx.wsClients, projectId, {
 					...userMsgEvent,
 					taskId: freshRootNodeId,
@@ -1303,13 +1303,13 @@ export async function handleInjectMessage(
 	const msgId = randomUUID();
 	const eventStore = getEventStore(ctx, projectId);
 
-	// Check resume BEFORE writing user_message (the event we're about to write
+	// Check resume BEFORE writing message (the event we're about to write
 	// shouldn't influence the fresh-vs-resume decision)
 	const shouldResume = eventStore.has(rootNodeId);
 
-	// Write user_message to JSONL at send time (Phase 1 of two-phase lifecycle)
+	// Write message to JSONL at send time (Phase 1 of two-phase lifecycle)
 	const userMsgEvent: Event = {
-		type: "user_message",
+		type: "message",
 		id: msgId,
 		content: message,
 		...(images?.length ? { images } : {}),
@@ -1317,7 +1317,7 @@ export async function handleInjectMessage(
 	};
 	eventStore.append(rootNodeId, userMsgEvent);
 
-	// Broadcast user_message so frontend can show it in pending area
+	// Broadcast message so frontend can show it in pending area
 	broadcast(ctx.wsClients, projectId, {
 		...userMsgEvent,
 		taskId: rootNodeId,

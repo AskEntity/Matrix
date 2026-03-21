@@ -2449,7 +2449,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		const sessionId = firstReq.resumeSessionId ?? "unknown";
 		const eventStore = new EventStore(sessionsDir);
 		await eventStore.append(sessionId, {
-			type: "user_message",
+			type: "message",
 			content: "hello",
 			ts: Date.now(),
 		} as Event);
@@ -2491,8 +2491,8 @@ describe("lifecycle edge cases — session continuity", () => {
 			// Events may exist from the new launch but should NOT contain old "hello" message
 			const hasOldMessage = events.some(
 				(e) =>
-					e.type === "user_message" &&
-					(e as Event & { type: "user_message" }).content === "hello",
+					e.type === "message" &&
+					(e as Event & { type: "message" }).content === "hello",
 			);
 			expect(hasOldMessage).toBe(false);
 		}
@@ -2531,7 +2531,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		const sessionsDir = join(dataDir, "sessions", project.id);
 		const eventStore2 = new EventStore(sessionsDir);
 		await eventStore2.append(sessionId, {
-			type: "user_message",
+			type: "message",
 			content: "initial work",
 			ts: Date.now(),
 		} as Event);
@@ -2799,7 +2799,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		const sessionsDir = join(dataDir, "sessions", project.id);
 		const eventStore2 = new EventStore(sessionsDir);
 		await eventStore2.append(sessionId, {
-			type: "user_message",
+			type: "message",
 			content: "do work",
 			ts: Date.now(),
 		} as Event);

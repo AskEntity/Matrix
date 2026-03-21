@@ -5,24 +5,14 @@ import type { QueueMessage } from "./message-queue.ts";
  * Strongly-typed event — provider-agnostic, one event per action.
  * Each event represents a single atomic action (no batching).
  *
- * Queue-originated events (previously nested under queue_message) are now
- * independent types. They can be identified by isQueueEvent() for batching.
+ * All injected content uses `type: "message"` with a `body` field.
+ * `body.source` discriminates: "user", "system", "child_complete", etc.
  */
 /**
- * UserMessageEvent — unified format for ALL messages that flow through the queue.
- * Uses a `source` field to indicate the message type. Written to JSONL with `id` for tracking.
- *
- * Base form (no source): initial prompt, resume messages — written by provider.
- * Source-typed form: queue-originated messages — written at enqueue time.
- *
- * All fields are optional at the type level. Source-based narrowing happens at runtime.
- * This keeps the type simple and avoids complex discriminated unions.
- */
-/**
- * Structured queue entry — carries the full data of a queue message.
+ * MessageBody — structured body of a message event.
  * The `source` field discriminates the shape. Format for AI happens at conversion time.
  */
-export interface QueueEntry {
+export interface MessageBody {
 	source: string;
 	content?: string;
 	taskId?: string;
@@ -40,8 +30,15 @@ export interface QueueEntry {
 	images?: Array<{ base64: string; mediaType: string }>;
 }
 
-export interface UserMessageEvent {
-	type: "user_message";
+/**
+ * MessageEvent — unified format for ALL messages that flow through the queue.
+ * Uses `body.source` to indicate the message type. Written to JSONL with `id` for tracking.
+ *
+ * Base form (no body): initial prompt, resume messages — written by provider.
+ * Body-typed form: queue-originated messages — written at enqueue time.
+ */
+export interface MessageEvent {
+	type: "message";
 	id?: string;
 	/** Message source. Absent for initial prompt/resume. Present for queue messages. */
 	source?: string;
@@ -50,16 +47,21 @@ export interface UserMessageEvent {
 	isResume?: boolean;
 	images?: Array<{ base64: string; mediaType: string }>;
 	/**
-	 * Structured queue entry — present when this user_message represents a queue message.
+	 * Structured message body — present when this message represents a queue message.
 	 * Contains the full structured data (source, taskId, title, etc.).
 	 * Format for AI happens at conversion time via formatEventForAI().
 	 */
-	queueEntry?: QueueEntry;
+	body?: MessageBody;
 	ts: number;
 }
 
+/** @deprecated Use MessageEvent instead */
+export type UserMessageEvent = MessageEvent;
+/** @deprecated Use MessageBody instead */
+export type QueueEntry = MessageBody;
+
 export type Event =
-	| UserMessageEvent
+	| MessageEvent
 	| { type: "assistant_text"; content: string; taskId?: string; ts: number }
 	| {
 			type: "tool_call";
@@ -116,8 +118,9 @@ export type Event =
 			timeoutMs: number;
 			ts: number;
 	  }
-	// Queue-originated event types — stored as standalone events in JSONL.
-	// Produced by queueMessageToEvent() when queue messages are consumed.
+	// Legacy queue-originated event types — kept for backward compat with old JSONL.
+	// New code produces `message` events with `body.source` instead.
+	// normalizeLegacyEvent() converts these to `message` on read.
 	| {
 			type: "child_complete";
 			id?: string;
@@ -163,6 +166,19 @@ export type Event =
 	  }
 	| { type: "system_notification"; id?: string; content: string; ts: number }
 	| { type: "compact_request"; id?: string; ts: number }
+	// Legacy user_message — old JSONL may have this type. Normalized to "message" on read.
+	| {
+			type: "user_message";
+			id?: string;
+			source?: string;
+			content?: string;
+			cwd?: string;
+			isResume?: boolean;
+			images?: Array<{ base64: string; mediaType: string }>;
+			queueEntry?: MessageBody;
+			body?: MessageBody;
+			ts: number;
+	  }
 	| { type: "compacted_resume"; content: string; cwd?: string; ts: number }
 	| { type: "summarization_request"; instruction: string; ts: number }
 	| { type: "budget_warning"; warning: string; ts: number }
@@ -246,8 +262,8 @@ export type Event =
 			ts: number;
 	  };
 
-/** Event types that originate from the message queue (idle drain or cancellation points). */
-const QUEUE_EVENT_TYPES = new Set([
+/** Legacy event types that originate from the message queue (for backward compat). */
+const LEGACY_QUEUE_EVENT_TYPES = new Set([
 	"child_complete",
 	"parent_update",
 	"clarify_response",
@@ -260,26 +276,33 @@ const QUEUE_EVENT_TYPES = new Set([
 
 /**
  * Check if an event originated from the message queue.
- * Concrete queue types (child_complete, parent_update, etc.) are checked by type.
- * user_message events with a source/queueEntry field are also queue events.
- * user_message WITHOUT source is a direct user message — NOT included here.
+ * A `message` event is a queue event if `body.source` is present and not "user".
+ * Legacy standalone types (child_complete, parent_update, etc.) are also detected.
+ * Legacy `user_message` events with source/queueEntry are also detected.
  */
 export function isQueueEvent(event: Event): boolean {
-	if (QUEUE_EVENT_TYPES.has(event.type)) return true;
-	// Unified format: user_message with source or queueEntry field (except "user" which is ambiguous)
+	if (LEGACY_QUEUE_EVENT_TYPES.has(event.type)) return true;
+	if (event.type === "message") {
+		const src =
+			(event as { source?: string }).source ??
+			(event as MessageEvent).body?.source;
+		return src !== undefined && src !== "user";
+	}
+	// Legacy: user_message with source or queueEntry field
 	if (event.type === "user_message") {
 		const src =
 			(event as { source?: string }).source ??
-			(event as UserMessageEvent).queueEntry?.source;
+			(event as { queueEntry?: { source?: string } }).queueEntry?.source ??
+			(event as { body?: { source?: string } }).body?.source;
 		return src !== undefined && src !== "user";
 	}
 	return false;
 }
 
-/** Convert a QueueMessage to a unified user_message Event with source. */
-export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
+/** Convert a QueueMessage to a unified `message` Event with body. */
+export function queueMessageToEvent(msg: QueueMessage): MessageEvent {
 	const ts = Date.now();
-	const base = { type: "user_message" as const, id: randomUUID(), ts };
+	const base = { type: "message" as const, id: randomUUID(), ts };
 	switch (msg.source) {
 		case "user":
 			return {
@@ -287,7 +310,7 @@ export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 				id: msg.id ?? base.id,
 				source: "user",
 				content: msg.content,
-				queueEntry: {
+				body: {
 					source: "user",
 					content: msg.content,
 					...(msg.images?.length
@@ -312,7 +335,7 @@ export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 			return {
 				...base,
 				source: "child_complete",
-				queueEntry: {
+				body: {
 					source: "child_complete",
 					taskId: msg.taskId,
 					title: msg.title,
@@ -324,7 +347,7 @@ export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 			return {
 				...base,
 				source: "parent_update",
-				queueEntry: {
+				body: {
 					source: "parent_update",
 					content: msg.content,
 					...(msg.requestReply ? { requestReply: true } : {}),
@@ -334,7 +357,7 @@ export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 			return {
 				...base,
 				source: "clarify_response",
-				queueEntry: {
+				body: {
 					source: "clarify_response",
 					answer: msg.answer,
 				},
@@ -343,7 +366,7 @@ export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 			return {
 				...base,
 				source: "child_report",
-				queueEntry: {
+				body: {
 					source: "child_report",
 					taskId: msg.taskId,
 					title: msg.title,
@@ -355,7 +378,7 @@ export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 			return {
 				...base,
 				source: "cross_project",
-				queueEntry: {
+				body: {
 					source: "cross_project",
 					fromProjectId: msg.fromProjectId,
 					fromProjectName: msg.fromProjectName,
@@ -366,7 +389,7 @@ export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 			return {
 				...base,
 				source: "background_complete",
-				queueEntry: {
+				body: {
 					source: "background_complete",
 					command: msg.command,
 					commandId: msg.commandId,
@@ -378,7 +401,7 @@ export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 			return {
 				...base,
 				source: "system",
-				queueEntry: {
+				body: {
 					source: "system",
 					content: msg.content,
 				},
@@ -387,48 +410,69 @@ export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 			return {
 				...base,
 				source: "compact",
-				queueEntry: { source: "compact" },
+				body: { source: "compact" },
 			};
 	}
 }
 
 /**
+ * Format a MessageBody for AI consumption based on source.
+ * Used by formatEventForAI for message events.
+ */
+function formatBodyForAI(body: MessageBody): string {
+	switch (body.source) {
+		case "child_complete":
+			return `<child_complete task="${body.title}" id="${body.taskId}" status="${body.success ? "passed" : "failed"}">${(body.output ?? "").slice(0, 500)}</child_complete>`;
+		case "parent_update":
+			return `<parent_update${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</parent_update>`;
+		case "clarify_response":
+			return `<clarify_response>${body.answer}</clarify_response>`;
+		case "child_report":
+			return `<child_report from="${body.title}" id="${body.taskId}"${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</child_report>`;
+		case "cross_project":
+			return `<cross_project from="${body.fromProjectName}" projectId="${body.fromProjectId}">${body.content}</cross_project>`;
+		case "background_complete":
+			return `<background_complete command="${body.command}" id="${body.commandId}" exit="${body.exitCode}" duration="${body.durationMs}ms">Command completed. Use bg_action="status" with background_id="${body.commandId}" or read_file on output files to see results.</background_complete>`;
+		case "system":
+			return `<system_notification>${body.content}</system_notification>`;
+		case "compact":
+			return "Manual compaction requested";
+		case "user":
+			return body.content ?? "";
+		default:
+			return "";
+	}
+}
+
+/**
  * Format a concrete Event for inclusion in provider messages.
- * Simple messages (user_message) use raw content.
- * Single-field messages (clarify_response, system_notification) use XML tags for semantic clarity.
- * Multi-field messages (child_complete, parent_update, etc.) use XML tags for structured data.
+ * `message` events use body.source to determine formatting.
+ * Legacy standalone types (child_complete, etc.) are also supported for backward compat.
  */
 export function formatEventForAI(event: Event): string {
 	switch (event.type) {
+		case "message": {
+			const src = (event as { source?: string }).source;
+			if (!src || src === "user") {
+				return (event as { content: string }).content;
+			}
+			const body = (event as MessageEvent).body;
+			if (!body) return "";
+			return formatBodyForAI(body);
+		}
+		// Legacy: user_message (old JSONL)
 		case "user_message": {
 			const src = (event as { source?: string }).source;
 			if (!src || src === "user") {
 				return (event as { content: string }).content;
 			}
-			const qe = (event as UserMessageEvent).queueEntry;
-			if (!qe) return "";
-			switch (src) {
-				case "child_complete":
-					return `<child_complete task="${qe.title}" id="${qe.taskId}" status="${qe.success ? "passed" : "failed"}">${(qe.output ?? "").slice(0, 500)}</child_complete>`;
-				case "parent_update":
-					return `<parent_update${qe.requestReply ? ' requestReply="true"' : ""}>${qe.content}</parent_update>`;
-				case "clarify_response":
-					return `<clarify_response>${qe.answer}</clarify_response>`;
-				case "child_report":
-					return `<child_report from="${qe.title}" id="${qe.taskId}"${qe.requestReply ? ' requestReply="true"' : ""}>${qe.content}</child_report>`;
-				case "cross_project":
-					return `<cross_project from="${qe.fromProjectName}" projectId="${qe.fromProjectId}">${qe.content}</cross_project>`;
-				case "background_complete":
-					return `<background_complete command="${qe.command}" id="${qe.commandId}" exit="${qe.exitCode}" duration="${qe.durationMs}ms">Command completed. Use bg_action="status" with background_id="${qe.commandId}" or read_file on output files to see results.</background_complete>`;
-				case "system":
-					return `<system_notification>${qe.content}</system_notification>`;
-				case "compact":
-					return "Manual compaction requested";
-				default:
-					return "";
-			}
+			const body =
+				(event as { body?: MessageBody }).body ??
+				(event as { queueEntry?: MessageBody }).queueEntry;
+			if (!body) return "";
+			return formatBodyForAI(body);
 		}
-		// Standalone queue event types (produced by queueMessageToEvent)
+		// Legacy standalone queue event types (old JSONL)
 		case "clarify_response":
 			return `<clarify_response>${event.answer}</clarify_response>`;
 		case "system_notification":
@@ -502,14 +546,18 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 		const event = events[i] as Event;
 
 		switch (event.type) {
+			case "message":
 			case "user_message":
-				// user_message with id = injected message (written at enqueue time).
+				// message/user_message with id = injected message (written at enqueue time).
 				// Skip here — it will be materialized at the messages_consumed point.
-				if (event.id) {
+				if ((event as { id?: string }).id) {
 					i++;
 					break;
 				}
-				messages.push({ role: "user", content: event.content });
+				messages.push({
+					role: "user",
+					content: (event as { content?: string }).content,
+				});
 				i++;
 				break;
 
@@ -543,8 +591,12 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 					const imageBlocks: unknown[] = [];
 					for (const msg of consumedEvents) {
 						contents.push(formatEventForAI(msg));
-						if (msg.type === "user_message") {
-							const imgs = msg.images ?? msg.queueEntry?.images ?? [];
+						if (msg.type === "message" || msg.type === "user_message") {
+							const imgs =
+								(msg as MessageEvent).images ??
+								(msg as MessageEvent).body?.images ??
+								(msg as { queueEntry?: MessageBody }).queueEntry?.images ??
+								[];
 							for (const img of imgs) {
 								imageBlocks.push({
 									type: "image",
@@ -695,10 +747,17 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 							resultBlocks.push({ type: "text", text: mcText });
 							for (const mcEvt of mcEvents) {
 								if (
-									mcEvt.type === "user_message" &&
-									(mcEvt.images || mcEvt.queueEntry?.images)
+									(mcEvt.type === "message" || mcEvt.type === "user_message") &&
+									((mcEvt as MessageEvent).images ||
+										(mcEvt as MessageEvent).body?.images ||
+										(mcEvt as { queueEntry?: MessageBody }).queueEntry?.images)
 								) {
-									const imgs = mcEvt.images ?? mcEvt.queueEntry?.images ?? [];
+									const imgs =
+										(mcEvt as MessageEvent).images ??
+										(mcEvt as MessageEvent).body?.images ??
+										(mcEvt as { queueEntry?: MessageBody }).queueEntry
+											?.images ??
+										[];
 									for (const img of imgs) {
 										queueImageBlocks.push({
 											type: "image",
@@ -713,7 +772,11 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 							}
 						}
 						i++;
-					} else if (isQueueEvent(current) || current.type === "user_message") {
+					} else if (
+						isQueueEvent(current) ||
+						current.type === "message" ||
+						current.type === "user_message"
+					) {
 						// Queue events with IDs — skip, will be materialized by messages_consumed
 						i++;
 					} else {
@@ -845,14 +908,18 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 		const event = events[i] as Event;
 
 		switch (event.type) {
+			case "message":
 			case "user_message":
-				// user_message with id = injected message (written at enqueue time).
+				// message/user_message with id = injected message (written at enqueue time).
 				// Skip here — it will be materialized at the messages_consumed point.
-				if (event.id) {
+				if ((event as { id?: string }).id) {
 					i++;
 					break;
 				}
-				messages.push({ role: "user", content: event.content });
+				messages.push({
+					role: "user",
+					content: (event as { content?: string }).content,
+				});
 				i++;
 				break;
 
@@ -878,8 +945,11 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 					const imageParts: unknown[] = [];
 					for (const msg of consumedEvents) {
 						contents.push(formatEventForAI(msg));
-						if (msg.type === "user_message" && msg.images) {
-							for (const img of msg.images) {
+						if (
+							(msg.type === "message" || msg.type === "user_message") &&
+							(msg as MessageEvent).images
+						) {
+							for (const img of (msg as MessageEvent).images ?? []) {
 								imageParts.push(
 									{ type: "text", text: "[User-attached image]" },
 									{
@@ -1050,10 +1120,17 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 							}
 							for (const mcEvt of mcEvents) {
 								if (
-									mcEvt.type === "user_message" &&
-									(mcEvt.images || mcEvt.queueEntry?.images)
+									(mcEvt.type === "message" || mcEvt.type === "user_message") &&
+									((mcEvt as MessageEvent).images ||
+										(mcEvt as MessageEvent).body?.images ||
+										(mcEvt as { queueEntry?: MessageBody }).queueEntry?.images)
 								) {
-									const imgs = mcEvt.images ?? mcEvt.queueEntry?.images ?? [];
+									const imgs =
+										(mcEvt as MessageEvent).images ??
+										(mcEvt as MessageEvent).body?.images ??
+										(mcEvt as { queueEntry?: MessageBody }).queueEntry
+											?.images ??
+										[];
 									for (const img of imgs) {
 										queueImageResults.push({
 											text: "[User-attached image]",
@@ -1064,7 +1141,11 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 							}
 						}
 						i++;
-					} else if (isQueueEvent(current) || current.type === "user_message") {
+					} else if (
+						isQueueEvent(current) ||
+						current.type === "message" ||
+						current.type === "user_message"
+					) {
 						// Queue events with IDs — skip, materialized by messages_consumed
 						i++;
 					} else {

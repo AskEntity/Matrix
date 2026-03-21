@@ -15,6 +15,7 @@ function getSearchableText(entry: LogEntry): string {
 			return entry.content;
 		case "error":
 			return entry.message;
+		case "message":
 		case "user_message":
 		case "lifecycle":
 		case "parent_update":

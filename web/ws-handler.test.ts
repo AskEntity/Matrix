@@ -50,10 +50,10 @@ describe("ws-handler queueEntry handling", () => {
 
 		processEventBatch([
 			{
-				type: "user_message",
+				type: "message",
 				id: "msg-1",
 				source: "child_report",
-				queueEntry: {
+				body: {
 					source: "child_report",
 					taskId: "child-1",
 					title: "My Child Task",
@@ -89,10 +89,10 @@ describe("ws-handler queueEntry handling", () => {
 
 		processEventBatch([
 			{
-				type: "user_message",
+				type: "message",
 				id: "msg-2",
 				source: "parent_update",
-				queueEntry: {
+				body: {
 					source: "parent_update",
 					content: "Please also fix bug #42",
 				},
@@ -125,11 +125,11 @@ describe("ws-handler queueEntry handling", () => {
 
 		processEventBatch([
 			{
-				type: "user_message",
+				type: "message",
 				id: "msg-3",
 				source: "user",
 				content: "Hello world",
-				queueEntry: {
+				body: {
 					source: "user",
 					content: "Hello world",
 				},
@@ -143,9 +143,7 @@ describe("ws-handler queueEntry handling", () => {
 			},
 		]);
 
-		const userEntry = capturedLogs.find(
-			(e: LogEntry) => e.type === "user_message",
-		);
+		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
 		expect(userEntry).toBeDefined();
 		expect(userEntry?.content).toBe("Hello world");
 	});
@@ -164,10 +162,10 @@ describe("ws-handler queueEntry handling", () => {
 
 		processEventBatch([
 			{
-				type: "user_message",
+				type: "message",
 				id: "msg-4",
 				source: "child_report",
-				queueEntry: {
+				body: {
 					source: "child_report",
 					taskId: "child-1",
 					title: "Worker",
@@ -200,7 +198,7 @@ describe("ws-handler queueEntry handling", () => {
 
 		processEventBatch([
 			{
-				type: "user_message",
+				type: "message",
 				id: "msg-5",
 				content: "Please check this",
 				ts: 1000,
@@ -227,7 +225,7 @@ describe("ws-handler queueEntry handling", () => {
 		// Legacy format: source + flat fields, no queueEntry
 		processEventBatch([
 			{
-				type: "user_message",
+				type: "message",
 				id: "msg-6",
 				source: "child_report",
 				taskId: "child-1",
@@ -274,10 +272,10 @@ describe("ws-handler queueEntry handling", () => {
 
 		// 1. Receive user_message with queueEntry (non-user source)
 		handleWS({
-			type: "user_message",
+			type: "message",
 			id: "msg-7",
 			source: "child_report",
-			queueEntry: {
+			body: {
 				source: "child_report",
 				taskId: "child-1",
 				title: "Worker Task",
@@ -336,7 +334,7 @@ describe("ws-handler queueEntry handling", () => {
 
 		// 1. Receive user_message (actual user)
 		handleWS({
-			type: "user_message",
+			type: "message",
 			id: "msg-8",
 			content: "Build a feature",
 			taskId: "task-1",
@@ -355,9 +353,7 @@ describe("ws-handler queueEntry handling", () => {
 		});
 
 		// Should be moved to activity log
-		const userEntry = capturedLogs.find(
-			(e: LogEntry) => e.type === "user_message",
-		);
+		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
 		expect(userEntry).toBeDefined();
 		expect(userEntry?.content).toBe("Build a feature");
 
@@ -377,10 +373,10 @@ describe("ws-handler queueEntry handling", () => {
 
 		processEventBatch([
 			{
-				type: "user_message",
+				type: "message",
 				id: "msg-9",
 				source: "clarify_response",
-				queueEntry: {
+				body: {
 					source: "clarify_response",
 					answer: "Yes, go ahead with approach A",
 				},
@@ -441,7 +437,7 @@ describe("ws-handler pending_messages race condition", () => {
 
 		// Step 1: user_message arrives → goes to pending + deferredUserMsgs
 		handleWS({
-			type: "user_message",
+			type: "message",
 			id: "msg-race",
 			content: "Hello world",
 			taskId: "root-1",
@@ -469,9 +465,7 @@ describe("ws-handler pending_messages race condition", () => {
 		});
 
 		// The user message MUST appear in the activity log
-		const userEntry = capturedLogs.find(
-			(e: LogEntry) => e.type === "user_message",
-		);
+		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
 		expect(userEntry).toBeDefined();
 		expect(userEntry?.content).toBe("Hello world");
 	});

@@ -30,7 +30,7 @@ describe("EventStore", () => {
 
 	test("append + read single event", async () => {
 		const event: Event = {
-			type: "user_message",
+			type: "message",
 			content: "hello",
 			ts: 1000,
 		};
@@ -41,7 +41,7 @@ describe("EventStore", () => {
 
 	test("append multiple events sequentially", async () => {
 		const e1: Event = {
-			type: "user_message",
+			type: "message",
 			content: "hello",
 			ts: 1000,
 		};
@@ -57,7 +57,7 @@ describe("EventStore", () => {
 
 	test("appendBatch writes multiple events", async () => {
 		const events: Event[] = [
-			{ type: "user_message", content: "hello", ts: 1000 },
+			{ type: "message", content: "hello", ts: 1000 },
 			{ type: "assistant_text", content: "hi", ts: 1001 },
 			{
 				type: "tool_call",
@@ -82,7 +82,7 @@ describe("EventStore", () => {
 
 	test("clear removes the file", async () => {
 		await store.append("s1", {
-			type: "user_message",
+			type: "message",
 			content: "hello",
 			ts: 1000,
 		});
@@ -99,7 +99,7 @@ describe("EventStore", () => {
 
 	test("readActive returns all events when no compact_marker", async () => {
 		const events: Event[] = [
-			{ type: "user_message", content: "hello", ts: 1000 },
+			{ type: "message", content: "hello", ts: 1000 },
 			{ type: "assistant_text", content: "hi", ts: 1001 },
 		];
 		await store.appendBatch("s1", events);
@@ -108,7 +108,7 @@ describe("EventStore", () => {
 
 	test("readActive returns events after last compact_marker", async () => {
 		const events: Event[] = [
-			{ type: "user_message", content: "old msg", ts: 1000 },
+			{ type: "message", content: "old msg", ts: 1000 },
 			{ type: "assistant_text", content: "old response", ts: 1001 },
 			{
 				type: "compact_marker",
@@ -130,14 +130,14 @@ describe("EventStore", () => {
 
 	test("readActive with multiple compact_markers uses the last one", async () => {
 		const events: Event[] = [
-			{ type: "user_message", content: "very old", ts: 1000 },
+			{ type: "message", content: "very old", ts: 1000 },
 			{
 				type: "compact_marker",
 				checkpoint: "first",
 				savedTokens: 1000,
 				ts: 2000,
 			},
-			{ type: "user_message", content: "somewhat old", ts: 2001 },
+			{ type: "message", content: "somewhat old", ts: 2001 },
 			{
 				type: "compact_marker",
 				checkpoint: "second",
@@ -173,12 +173,12 @@ describe("EventStore", () => {
 
 	test("separate sessions do not interfere", async () => {
 		const e1: Event = {
-			type: "user_message",
+			type: "message",
 			content: "session 1",
 			ts: 1000,
 		};
 		const e2: Event = {
-			type: "user_message",
+			type: "message",
 			content: "session 2",
 			ts: 2000,
 		};
