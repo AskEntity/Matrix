@@ -380,3 +380,14 @@ Event (src/events.ts) — THE source of truth
 - **Fix**: Post-processing in both `eventsToAnthropicMessages()` and `eventsToOpenAIMessages()`. After building messages, check if last assistant message has tool_use/tool_calls without matching results. Synthesize error tool_results with "interrupted by daemon restart" message.
 - **Helper functions**: `fixOrphanedAnthropicToolUse()` and `fixOrphanedOpenAIToolCalls()` — mutate messages array in place.
 - **Approach**: Option 1 (converter fix) chosen over JSONL cleanup or write-ordering changes — handles any JSONL state gracefully without side effects.
+
+
+## yield/done messagesConsumed Fix (March 2026)
+
+- **Bug**: yield/done tool_result events had no `messagesConsumed` field. User messages consumed via these tools were invisible in the UI (stuck in pending state forever).
+- **Root cause**: `waitForQueueMessages()` in agent-tools.ts drained the queue and returned formatted text, but the consumed message IDs were lost. The provider recorded tool_result to JSONL without `messagesConsumed`.
+- **Fix**: Three-layer propagation:
+  1. `waitForQueueMessages()` extracts user message IDs from drained messages, returns `_consumedMessageIds` alongside content
+  2. Both providers (Anthropic + OpenAI) extract `_consumedMessageIds` from MCP tool result, merge with cancellation-point IDs, and write `messagesConsumed` to JSONL tool_result event
+  3. `broadcastAgentStreamEvent()` checks tool_result events for `_consumedMessageIds` and broadcasts `messages_consumed` to WS clients
+- **Key insight**: The `_consumedMessageIds` prefix convention avoids polluting the MCP tool result schema while allowing custom metadata to flow from tool handler → provider → JSONL → broadcast.

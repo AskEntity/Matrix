@@ -929,12 +929,19 @@ export class OpenAICompatibleProvider implements AgentProvider {
 									textParts.push(JSON.stringify(c));
 								}
 							}
+							// Extract consumed message IDs from yield/done tools
+							const consumedIds = Array.isArray(mcpResult._consumedMessageIds)
+								? (mcpResult._consumedMessageIds as string[])
+								: undefined;
 							return {
 								content: textParts.join("\n"),
 								isError: mcpResult.isError ?? false,
 								// Pass images through for injection as user message
 								isImage: mcpImages.length > 0,
 								mcpImages,
+								...(consumedIds?.length
+									? { _consumedMessageIds: consumedIds }
+									: {}),
 							};
 						} catch (e) {
 							return {
@@ -972,6 +979,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					imageData?: string;
 					mediaType?: string;
 					mcpImages?: Array<{ mediaType: string; data: string }>;
+					_consumedMessageIds?: string[];
 				};
 
 				if (exec.cwd) cwd = exec.cwd;
@@ -993,6 +1001,9 @@ export class OpenAICompatibleProvider implements AgentProvider {
 					content: exec.content.slice(0, 500),
 					isError: exec.isError,
 					...(images.length > 0 ? { images } : {}),
+					...(exec._consumedMessageIds?.length
+						? { _consumedMessageIds: exec._consumedMessageIds }
+						: {}),
 				};
 
 				// OpenAI format: each tool result is a separate message
@@ -1119,6 +1130,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						isImage?: boolean;
 						imageData?: string;
 						mediaType?: string;
+						_consumedMessageIds?: string[];
 					};
 					// Find the actual tool result message content (includes done() reminder and queue text appended)
 					const toolMsg = messages.find(
@@ -1142,6 +1154,11 @@ export class OpenAICompatibleProvider implements AgentProvider {
 							mediaType: exec.mediaType,
 						});
 					}
+					// Merge consumed IDs: cancellation-point queue IDs + yield/done tool IDs
+					const allConsumedIds = [
+						...consumedIds,
+						...(exec._consumedMessageIds ?? []),
+					];
 					// Attach messagesConsumed to the LAST tool_result (cancellation point)
 					const isLast = j === toolCalls.length - 1;
 					toolEvents.push({
@@ -1150,8 +1167,8 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						content: resultContent,
 						isError: exec.isError,
 						...(images.length > 0 ? { images } : {}),
-						...(isLast && consumedIds.length > 0
-							? { messagesConsumed: consumedIds }
+						...(isLast && allConsumedIds.length > 0
+							? { messagesConsumed: allConsumedIds }
 							: {}),
 						ts: Date.now(),
 					});

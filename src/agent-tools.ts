@@ -645,6 +645,7 @@ export function createOrchestratorTools(
 			| { type: "image"; data: string; mimeType: string }
 		>;
 		isError?: boolean;
+		_consumedMessageIds?: string[];
 	} | null> {
 		if (!deps.queue) return null;
 		try {
@@ -762,6 +763,18 @@ export function createOrchestratorTools(
 				}
 			}
 
+			// Collect consumed message IDs for provider to attach to tool_result event
+			const consumedIds: string[] = [];
+			for (const msg of all) {
+				if (msg.source === "user" && msg.id) {
+					consumedIds.push(msg.id);
+				} else {
+					const evt = queueMessageToEvent(msg);
+					const evtId = (evt as { id?: string }).id;
+					if (evtId) consumedIds.push(evtId);
+				}
+			}
+
 			return {
 				content: [
 					{
@@ -772,6 +785,7 @@ export function createOrchestratorTools(
 					},
 					...imageBlocks,
 				],
+				...(consumedIds.length > 0 ? { _consumedMessageIds: consumedIds } : {}),
 			};
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
