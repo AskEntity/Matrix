@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
-import { serveStatic, websocket } from "hono/bun";
+import { serveStatic } from "hono/bun";
 import type { AgentSession } from "./agent-provider.ts";
 import { ORCHESTRATION_KNOWLEDGE } from "./agent-tools.ts";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
@@ -12,7 +12,7 @@ import type {
 	DaemonConfig,
 	DaemonContext,
 	PendingClarification,
-	WSClient,
+	SSEClient,
 } from "./daemon/context.ts";
 
 import {
@@ -27,8 +27,8 @@ import {
 } from "./daemon/routes/auth.ts";
 import { registerConfigRoutes } from "./daemon/routes/config.ts";
 import { registerProjectRoutes } from "./daemon/routes/projects.ts";
+import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
-import { registerWebSocketRoute } from "./daemon/routes/websocket.ts";
 import { runEventMigrations } from "./event-store.ts";
 import { ProjectManager } from "./project-manager.ts";
 import type {
@@ -72,7 +72,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		pm: new ProjectManager(config.dataDir),
 		trackers: new Map(),
 		restartingProjects: new Set(),
-		wsClients: new Set<WSClient>(),
+		sseClients: new Set<SSEClient>(),
 		activeSessions: new Map<string, AgentSession>(),
 		pendingClarifications: new Map<string, PendingClarification[]>(),
 		eventStores: new Map(),
@@ -227,7 +227,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	registerTaskRoutes(app, ctx);
 	registerConfigRoutes(app, ctx);
 	registerAgentRoutes(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
-	registerWebSocketRoute(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
+	registerSSERoute(app, ctx);
 
 	// Static file serving for the web UI (fallback for non-Bun environments)
 	app.use("/web/*", serveStatic({ root: "./" }));
@@ -316,7 +316,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		app,
 		pm: ctx.pm,
 		dataDir: config.dataDir,
-		wsClients: ctx.wsClients,
+		sseClients: ctx.sseClients,
 		activeSessions: ctx.activeSessions,
 		autoResumeProjects,
 		shutdown,
@@ -454,7 +454,6 @@ if (import.meta.main) {
 		},
 		fetch: app.fetch,
 		port,
-		websocket,
 		development:
 			process.env.NODE_ENV === "development"
 				? { hmr: true, console: true }

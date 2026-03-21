@@ -550,9 +550,9 @@ export interface OrchestratorToolsDeps {
 	currentTaskId?: string | null;
 	/** Recursion depth (0 = top-level orchestrator). Max depth limits MCP tool injection. */
 	depth?: number;
-	/** Optional callback for broadcasting task events (e.g., to WebSocket clients). */
+	/** Optional callback for broadcasting task events (e.g., to SSE clients). */
 	onTaskEvent?: (event: Record<string, unknown>) => void;
-	/** Optional callback to broadcast tree updates to WebSocket clients after task mutations. */
+	/** Optional callback to broadcast tree updates to SSE clients after task mutations. */
 	broadcastTreeUpdate?: () => void;
 	/** Model for child agent execution (defaults to provider's default). */
 	childModel?: string;

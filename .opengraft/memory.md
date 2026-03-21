@@ -482,3 +482,14 @@ Event (src/events.ts) — THE source of truth
 - **`queueEntry` → `body`**: Field on MessageEvent. `QueueEntry` → `MessageBody`.
 - **Migration runner**: `ACTIVE_MIGRATIONS: EventMigration[]` in `src/event-store.ts`. Called at daemon startup. Idempotent. Add new transforms, remove old ones when confident → `[]`.
 
+
+
+## SSE Migration (March 2026)
+
+- **WebSocket → SSE**: Server→client push now uses SSE (`GET /events?projectId=X`) instead of WebSocket.
+- **SSEClient type**: `{ controller: ReadableStreamDefaultController, projectId: string }`. No more `WSContext`.
+- **broadcast()**: Encodes `data: JSON\n\n` and enqueues to controller. Dead clients caught via try/catch and removed from Set.
+- **No onMessage handlers**: WS had subscribe/orchestrate/inject/clarify message types. All eliminated — projectId comes from query param, other actions use REST endpoints.
+- **Initial state on connect**: Tree, pending messages, and pending clarifications sent immediately in `sendInitialState()`.
+- **Cleanup on disconnect**: `c.req.raw.signal.addEventListener("abort", ...)` removes client from Set.
+- **No special Bun dependencies**: SSE uses standard `ReadableStream` + `Response` — no `hono/bun` websocket import needed.

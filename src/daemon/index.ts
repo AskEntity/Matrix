@@ -1,1 +1,1 @@
-export type { DaemonConfig, DaemonContext, WSClient } from "./context.ts";
+export type { DaemonConfig, DaemonContext, SSEClient } from "./context.ts";
