@@ -2184,6 +2184,14 @@ button.og-tool-card-header:hover {
 	gap: 8px;
 }
 
+/* On mobile, vertically center input row and tighten gap */
+@media (max-width: 768px) {
+	.og-footer-form {
+		align-items: center;
+		gap: 6px;
+	}
+}
+
 /* Image preview thumbnails */
 .og-image-previews {
 	display: flex;
@@ -2257,6 +2265,20 @@ button.og-tool-card-header:hover {
 	border-color: var(--accent);
 	box-shadow: 0 0 0 3px var(--accent-muted);
 	background: var(--bg-overlay);
+}
+
+/* Mobile input: subtle focus, consistent height with buttons */
+@media (max-width: 768px) {
+	.og-prompt-input {
+		min-height: 36px;
+		padding: 7px 12px;
+		font-size: 16px;
+		border-radius: var(--radius-md);
+	}
+
+	.og-prompt-input:focus {
+		box-shadow: 0 0 0 1px var(--accent-muted);
+	}
 }
 
 .og-prompt-input::placeholder {
@@ -2385,6 +2407,16 @@ button.og-tool-card-header:hover {
 	cursor: not-allowed;
 }
 
+/* Mobile: uniform square icon buttons */
+@media (max-width: 768px) {
+	.og-btn-attach {
+		width: 36px;
+		height: 36px;
+		padding: 0;
+		border-radius: var(--radius-md);
+	}
+}
+
 /* Footer run/send button */
 .og-btn-run {
 	display: inline-flex;
@@ -2410,6 +2442,22 @@ button.og-tool-card-header:hover {
 .og-btn-run:disabled {
 	opacity: 0.4;
 	cursor: not-allowed;
+}
+
+/* Mobile: compact send button matching attach button size */
+@media (max-width: 768px) {
+	.og-btn-run {
+		width: 36px;
+		height: 36px;
+		padding: 0;
+		justify-content: center;
+		border-radius: var(--radius-md);
+	}
+
+	/* Hide text label, show only icon */
+	.og-btn-run-label {
+		display: none;
+	}
 }
 
 .og-btn-stop-lg {
