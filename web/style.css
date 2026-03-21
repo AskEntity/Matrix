@@ -2389,7 +2389,9 @@ button.og-tool-card-header:hover {
 	background: transparent;
 	border: 1px solid var(--border);
 	color: var(--fg-dim);
-	padding: 7px;
+	width: 36px;
+	height: 36px;
+	padding: 0;
 	border-radius: var(--radius-lg);
 	cursor: pointer;
 	outline: none;
@@ -2407,12 +2409,9 @@ button.og-tool-card-header:hover {
 	cursor: not-allowed;
 }
 
-/* Mobile: uniform square icon buttons */
+/* Mobile: tighter border-radius */
 @media (max-width: 768px) {
 	.og-btn-attach {
-		width: 36px;
-		height: 36px;
-		padding: 0;
 		border-radius: var(--radius-md);
 	}
 }
@@ -2421,11 +2420,13 @@ button.og-tool-card-header:hover {
 .og-btn-run {
 	display: inline-flex;
 	align-items: center;
+	justify-content: center;
 	gap: 5px;
 	background: var(--accent);
 	border: 1px solid var(--accent);
 	color: #fff;
-	padding: 7px 18px;
+	height: 36px;
+	padding: 0 14px;
 	border-radius: var(--radius-lg);
 	font-size: 13px;
 	font-weight: 600;
@@ -2444,13 +2445,11 @@ button.og-tool-card-header:hover {
 	cursor: not-allowed;
 }
 
-/* Mobile: compact send button matching attach button size */
+/* Mobile: icon-only send button */
 @media (max-width: 768px) {
 	.og-btn-run {
 		width: 36px;
-		height: 36px;
 		padding: 0;
-		justify-content: center;
 		border-radius: var(--radius-md);
 	}
 
