@@ -402,6 +402,81 @@ describe("ws-handler queueEntry handling", () => {
 	});
 });
 
+describe("ws-handler pending_messages race condition", () => {
+	it("handleWS: user message appears in log even when pending_messages:[] clears before messages_consumed", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		let capturedPending: Array<{
+			id: string;
+			text: string;
+			taskId: string | null;
+			timestamp: number;
+		}> = [];
+		(deps as Record<string, unknown>).setPendingMessages = mock(
+			(
+				updater: React.SetStateAction<
+					Array<{
+						id: string;
+						text: string;
+						taskId: string | null;
+						timestamp: number;
+					}>
+				>,
+			) => {
+				capturedPending =
+					typeof updater === "function" ? updater(capturedPending) : updater;
+			},
+		);
+
+		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
+
+		// Step 1: user_message arrives → goes to pending + deferredUserMsgs
+		handleWS({
+			type: "user_message",
+			id: "msg-race",
+			content: "Hello world",
+			taskId: "root-1",
+			ts: 1000,
+		});
+		expect(capturedPending.length).toBe(1);
+		expect(capturedPending[0]?.id).toBe("msg-race");
+		expect(capturedLogs.length).toBe(0);
+
+		// Step 2: pending_messages:[] arrives (queue onDrain clears it) BEFORE messages_consumed
+		// This simulates the race: queue drains immediately when agent wakes, clearing the banner
+		handleWS({
+			type: "pending_messages",
+			projectId: "proj-1",
+			messages: [],
+		});
+		expect(capturedPending.length).toBe(0); // Banner cleared!
+
+		// Step 3: messages_consumed arrives — should STILL create the log entry
+		// even though pendingMessages was cleared
+		handleWS({
+			type: "messages_consumed",
+			messageIds: ["msg-race"],
+			ts: 2000,
+		});
+
+		// The user message MUST appear in the activity log
+		const userEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "user_message",
+		);
+		expect(userEntry).toBeDefined();
+		expect(userEntry?.content).toBe("Hello world");
+	});
+});
+
 describe("ws-handler compact_marker savedTokens", () => {
 	it("processEvent returns savedTokens in the complete_compact UpdateOp", () => {
 		const { deps } = makeDeps();

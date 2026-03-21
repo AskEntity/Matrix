@@ -252,6 +252,21 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		}
 	>();
 
+	// --- Deferred user messages (for two-phase lifecycle) ---
+	// All user_message events with IDs are stored here so messages_consumed can
+	// retrieve the content even after pending_messages:[] clears the React state.
+	// The pending_messages banner (queue-driven) can clear before messages_consumed
+	// arrives, so we need a separate store that survives that clearing.
+	const deferredUserMsgs = new Map<
+		string,
+		{
+			content: string;
+			images?: Array<{ base64: string; mediaType: string }>;
+			taskId?: string | null;
+			ts: number;
+		}
+	>();
+
 	// --- Unified event processing ---
 
 	interface ProcessResult {
@@ -626,6 +641,14 @@ export function createWSHandler(deps: WSHandlerDeps) {
 									images: umImages,
 								},
 							]);
+							// Store user message data in durable map so messages_consumed
+							// can retrieve it even after pending_messages:[] clears React state
+							deferredUserMsgs.set(umId, {
+								content: umContent,
+								images: umImages,
+								taskId: umTaskId,
+								ts: umTs,
+							});
 							// Also store queueEntry for non-user sources so
 							// messages_consumed can materialize the correct card type
 							if (queueEntry && source && source !== "user") {
@@ -691,9 +714,10 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					entries: [],
 					updates: [],
 					sideEffects: () => {
-						// 1. Materialize deferred non-user queue messages
-						const deferredEntries: LogEntry[] = [];
+						const newEntries: LogEntry[] = [];
+
 						for (const id of consumedIds) {
+							// 1. Check deferred non-user queue messages (child_report, parent_update, etc.)
 							const deferred = deferredQueueMsgs.get(id);
 							if (deferred) {
 								const uiEvent = queueEntryToUIEvent(
@@ -702,35 +726,39 @@ export function createWSHandler(deps: WSHandlerDeps) {
 									consumeTs,
 								);
 								if (uiEvent) {
-									deferredEntries.push(createLogEntry(uiEvent));
+									newEntries.push(createLogEntry(uiEvent));
 								}
 								deferredQueueMsgs.delete(id);
+								deferredUserMsgs.delete(id);
+								continue;
 							}
-						}
-						if (deferredEntries.length > 0) {
-							setLogs((prevLogs) => [...prevLogs, ...deferredEntries]);
+
+							// 2. Check deferred user messages (stored durably, survives pending_messages clearing)
+							const userMsg = deferredUserMsgs.get(id);
+							if (userMsg) {
+								newEntries.push(
+									createLogEntry({
+										type: "user_message",
+										content: userMsg.content,
+										...(userMsg.images?.length
+											? { images: userMsg.images }
+											: {}),
+										taskId: userMsg.taskId ?? undefined,
+										ts: consumeTs,
+									}),
+								);
+								deferredUserMsgs.delete(id);
+							}
 						}
 
-						// 2. Move pending user messages from pending banner to activity log
-						setPendingMessages((prev) => {
-							const consumed = prev.filter((p) => consumedIds.has(p.id));
-							const remaining = prev.filter((p) => !consumedIds.has(p.id));
-							if (consumed.length > 0) {
-								setLogs((prevLogs) => [
-									...prevLogs,
-									...consumed.map((p) =>
-										createLogEntry({
-											type: "user_message",
-											content: p.text,
-											...(p.images?.length ? { images: p.images } : {}),
-											taskId: p.taskId ?? undefined,
-											ts: consumeTs,
-										}),
-									),
-								]);
-							}
-							return remaining;
-						});
+						if (newEntries.length > 0) {
+							setLogs((prevLogs) => [...prevLogs, ...newEntries]);
+						}
+
+						// Clear consumed messages from pending banner (if still there)
+						setPendingMessages((prev) =>
+							prev.filter((p) => !consumedIds.has(p.id)),
+						);
 					},
 				};
 			}
