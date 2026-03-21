@@ -106,6 +106,8 @@ const en: Translations = {
 	"detail.runningHint": "Task is running — send a message to update it",
 	"detail.noDescription": "No description",
 	"detail.pause": "Pause",
+	"detail.copyId": "Copy task ID",
+	"detail.copied": "Copied!",
 
 	// Activity
 	"activity.title": "Activity",
@@ -379,6 +381,8 @@ const zh: Translations = {
 	"detail.runningHint": "任务正在运行 — 发送消息来更新",
 	"detail.noDescription": "暂无描述",
 	"detail.pause": "暂停",
+	"detail.copyId": "复制任务ID",
+	"detail.copied": "已复制！",
 
 	// Activity
 	"activity.title": "活动",
