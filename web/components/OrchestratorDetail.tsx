@@ -41,6 +41,9 @@ export function OrchestratorDetail({
 		: nodes;
 	const nodeCount = childNodes.length;
 	const passed = childNodes.filter((n) => n.status === "passed").length;
+	const done = childNodes.filter(
+		(n) => n.status === "passed" || n.status === "closed",
+	).length;
 	const failed = childNodes.filter(
 		(n) => n.status === "failed" || n.status === "stuck",
 	).length;
@@ -83,7 +86,7 @@ export function OrchestratorDetail({
 					<div className="og-stat-card">
 						<span className="og-stat-label">{t("orch.done")}</span>
 						<span className="og-stat-value" style={{ fontSize: "14px" }}>
-							<span style={{ color: "var(--color-passed)" }}>{passed}</span>
+							<span style={{ color: "var(--color-passed)" }}>{done}</span>
 							<span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
 								{" "}
 								/ {nodeCount}
