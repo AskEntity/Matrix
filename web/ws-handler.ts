@@ -613,8 +613,16 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				return { entries, updates: [], sideEffects: NO_SIDE_EFFECTS };
 			}
 
+			case "compacted_resume":
+				// Internal compaction state — not user content
+				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
+
 			case "message":
 			case "user_message": {
+				// Skip provider-internal prompt events (have `cwd`, no `id`)
+				if (msg.cwd && !msg.id) {
+					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
+				}
 				const umId = msg.id as string | undefined;
 				const bodyField =
 					(msg.body as QueueEntryLike | undefined) ??
@@ -1036,6 +1044,21 @@ export function createWSHandler(deps: WSHandlerDeps) {
 
 		for (const evt of events) {
 			const evtType = evt.type as string;
+
+			// Skip provider-internal prompt events (initial prompt or compacted resume).
+			// These have a `cwd` field and no `id` — they are NOT user messages.
+			if (
+				(evtType === "message" || evtType === "user_message") &&
+				evt.cwd &&
+				!evt.id
+			) {
+				continue;
+			}
+
+			// Skip compacted_resume events — internal compaction state, not user content
+			if (evtType === "compacted_resume") {
+				continue;
+			}
 
 			// Two-phase message: collect with-id messages for later resolution
 			if ((evtType === "message" || evtType === "user_message") && evt.id) {
