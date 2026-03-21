@@ -561,10 +561,23 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 					i++;
 					break;
 				}
-				messages.push({
-					role: "user",
-					content: (event as { content?: string }).content,
-				});
+				{
+					// Defensive: ensure content is never undefined (causes Anthropic 400)
+					let msgContent = (event as { content?: string }).content;
+					if (!msgContent) {
+						// Try to generate content from body/queueEntry for queue messages
+						msgContent = formatEventForAI(event);
+						if (!msgContent) {
+							console.warn(
+								"[event-converter] Empty content fallback triggered for event:",
+								event.type,
+								event,
+							);
+							msgContent = "(empty)";
+						}
+					}
+					messages.push({ role: "user", content: msgContent });
+				}
 				i++;
 				break;
 
@@ -689,6 +702,16 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 					i++;
 				}
 
+				// Defensive: ensure content array is never empty (causes Anthropic 400)
+				if (contentBlocks.length === 0) {
+					console.warn(
+						"[event-converter] Empty assistant content blocks at index",
+						i,
+						"- nearby events:",
+						events.slice(Math.max(0, i - 2), i + 1).map((e) => e.type),
+					);
+					contentBlocks.push({ type: "text", text: "(empty)" });
+				}
 				// Always use array content format (matches Anthropic API response.content)
 				messages.push({ role: "assistant", content: contentBlocks });
 				break;
@@ -715,7 +738,10 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 									},
 								});
 							}
-							contentParts.push({ type: "text", text: current.content });
+							contentParts.push({
+								type: "text",
+								text: current.content ?? "(empty)",
+							});
 							resultBlocks.push({
 								type: "tool_result",
 								tool_use_id: current.toolCallId,
@@ -725,7 +751,8 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 							resultBlocks.push({
 								type: "tool_result",
 								tool_use_id: current.toolCallId,
-								content: current.content,
+								// Defensive: ensure content is never undefined
+								content: current.content ?? "(empty)",
 								is_error: current.isError,
 							});
 						}
@@ -791,6 +818,17 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 					}
 				}
 
+				// Defensive: ensure content array is never empty (causes Anthropic 400)
+				if (resultBlocks.length === 0) {
+					console.warn(
+						"[event-converter] Empty tool_result blocks at index",
+						i,
+						"- nearby events:",
+						events.slice(Math.max(0, i - 3), i + 1).map((e) => e.type),
+					);
+					resultBlocks.push({ type: "text", text: "(empty)" });
+				}
+
 				if (queueImageBlocks.length > 0) {
 					messages.push({
 						role: "user",
@@ -846,42 +884,83 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 
 /**
  * Detect and fix orphaned tool_use blocks in Anthropic message arrays.
- * If the last assistant message has tool_use blocks, check for matching
- * tool_result blocks in the following user message. Synthesize missing ones.
+ * Scans ALL assistant messages (not just the last one) for tool_use blocks
+ * without matching tool_result blocks in the following user message.
+ * This handles cases where daemon restarts mid-tool, the orphan gets fixed,
+ * then more events append, and another restart leaves the first orphan
+ * in the middle of the conversation.
  */
 function fixOrphanedAnthropicToolUse(messages: unknown[]): void {
-	if (messages.length === 0) return;
+	// Scan in reverse so insertions don't shift indices of unprocessed messages
+	for (let mi = messages.length - 1; mi >= 0; mi--) {
+		const msg = messages[mi] as { role?: string; content?: unknown[] };
+		if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
 
-	const lastMsg = messages[messages.length - 1] as {
-		role?: string;
-		content?: unknown[];
-	};
-	if (lastMsg.role !== "assistant" || !Array.isArray(lastMsg.content)) return;
+		// Collect tool_use IDs from this assistant message
+		const toolUseIds: string[] = [];
+		for (const block of msg.content) {
+			if (
+				block &&
+				typeof block === "object" &&
+				(block as Record<string, unknown>).type === "tool_use"
+			) {
+				toolUseIds.push((block as Record<string, unknown>).id as string);
+			}
+		}
+		if (toolUseIds.length === 0) continue;
 
-	// Collect all tool_use IDs from the last assistant message
-	const toolUseIds: string[] = [];
-	for (const block of lastMsg.content) {
-		if (
-			block &&
-			typeof block === "object" &&
-			(block as Record<string, unknown>).type === "tool_use"
-		) {
-			toolUseIds.push((block as Record<string, unknown>).id as string);
+		// Check the next message for matching tool_results
+		const nextMsg = messages[mi + 1] as
+			| {
+					role?: string;
+					content?: unknown[];
+			  }
+			| undefined;
+		const existingResultIds = new Set<string>();
+		if (nextMsg?.role === "user" && Array.isArray(nextMsg.content)) {
+			for (const block of nextMsg.content) {
+				if (
+					block &&
+					typeof block === "object" &&
+					(block as Record<string, unknown>).type === "tool_result"
+				) {
+					existingResultIds.add(
+						(block as Record<string, unknown>).tool_use_id as string,
+					);
+				}
+			}
+		}
+
+		// Find orphaned tool_use IDs (no matching tool_result)
+		const orphanedIds = toolUseIds.filter((id) => !existingResultIds.has(id));
+		if (orphanedIds.length === 0) continue;
+
+		console.warn(
+			"[event-converter] Orphaned tool_use blocks found at message index",
+			mi,
+			"- ids:",
+			orphanedIds,
+		);
+
+		const syntheticResults: unknown[] = orphanedIds.map((id) => ({
+			type: "tool_result",
+			tool_use_id: id,
+			content:
+				"Tool execution was interrupted by daemon restart. Results were lost.",
+			is_error: true,
+		}));
+
+		if (nextMsg?.role === "user" && Array.isArray(nextMsg.content)) {
+			// Append synthetic results to existing user message
+			(nextMsg.content as unknown[]).push(...syntheticResults);
+		} else {
+			// Insert a new user message right after this assistant message
+			messages.splice(mi + 1, 0, {
+				role: "user",
+				content: syntheticResults,
+			});
 		}
 	}
-
-	if (toolUseIds.length === 0) return;
-
-	// All tool_use blocks at the end are orphaned (no following user message with tool_results)
-	const syntheticResults: unknown[] = toolUseIds.map((id) => ({
-		type: "tool_result",
-		tool_use_id: id,
-		content:
-			"Tool execution was interrupted by daemon restart. Results were lost.",
-		is_error: true,
-	}));
-
-	messages.push({ role: "user", content: syntheticResults });
 }
 
 /**
@@ -923,10 +1002,22 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 					i++;
 					break;
 				}
-				messages.push({
-					role: "user",
-					content: (event as { content?: string }).content,
-				});
+				{
+					// Defensive: ensure content is never undefined (causes API errors)
+					let msgContent = (event as { content?: string }).content;
+					if (!msgContent) {
+						msgContent = formatEventForAI(event);
+						if (!msgContent) {
+							console.warn(
+								"[event-converter] Empty content fallback triggered for event:",
+								event.type,
+								event,
+							);
+							msgContent = "(empty)";
+						}
+					}
+					messages.push({ role: "user", content: msgContent });
+				}
 				i++;
 				break;
 
@@ -1048,6 +1139,16 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 					i++;
 				}
 
+				// Defensive: ensure assistant message has content or tool_calls
+				if (textContent === null && toolCalls.length === 0) {
+					console.warn(
+						"[event-converter] Empty assistant content at index",
+						i,
+						"- nearby events:",
+						events.slice(Math.max(0, i - 2), i + 1).map((e) => e.type),
+					);
+					textContent = "(empty)";
+				}
 				const msg: Record<string, unknown> = {
 					role: "assistant",
 					content: textContent,
@@ -1070,7 +1171,6 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 					text: string;
 					dataUri: string;
 				}> = [];
-
 				while (i < events.length) {
 					const current = events[i] as Event;
 					if (current.type === "tool_result") {
@@ -1079,7 +1179,8 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 							role: "tool",
 							tool_call_id: current.toolCallId,
 							name: toolName,
-							content: current.content,
+							// Defensive: ensure content is never undefined
+							content: current.content ?? "(empty)",
 						});
 						if (current.images) {
 							for (const img of current.images) {
@@ -1214,30 +1315,69 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 
 /**
  * Detect and fix orphaned tool_calls in OpenAI message arrays.
- * If the last assistant message has tool_calls, check for matching
- * tool role messages following it. Synthesize missing ones.
+ * Scans ALL assistant messages (not just the last one) for tool_calls
+ * without matching tool role messages following them.
  */
 function fixOrphanedOpenAIToolCalls(messages: unknown[]): void {
-	if (messages.length === 0) return;
+	// Scan in reverse so insertions don't shift indices of unprocessed messages
+	for (let mi = messages.length - 1; mi >= 0; mi--) {
+		const msg = messages[mi] as {
+			role?: string;
+			tool_calls?: Array<{
+				id: string;
+				type: string;
+				function: { name: string; arguments: string };
+			}>;
+		};
+		if (msg.role !== "assistant" || !msg.tool_calls?.length) continue;
 
-	const lastMsg = messages[messages.length - 1] as {
-		role?: string;
-		tool_calls?: Array<{
-			id: string;
-			type: string;
-			function: { name: string; arguments: string };
-		}>;
-	};
-	if (lastMsg.role !== "assistant" || !lastMsg.tool_calls?.length) return;
+		// Collect existing tool result IDs from messages following this assistant message
+		const existingResultIds = new Set<string>();
+		for (let j = mi + 1; j < messages.length; j++) {
+			const followingMsg = messages[j] as {
+				role?: string;
+				tool_call_id?: string;
+			};
+			if (followingMsg.role === "tool" && followingMsg.tool_call_id) {
+				existingResultIds.add(followingMsg.tool_call_id);
+			} else if (followingMsg.role !== "tool" && followingMsg.role !== "user") {
+				// Stop at next assistant message — tool results must come before
+				break;
+			}
+		}
 
-	// All tool_calls at the end are orphaned (no following tool role messages)
-	for (const tc of lastMsg.tool_calls) {
-		messages.push({
+		// Find orphaned tool_calls (no matching tool result)
+		const orphanedCalls = msg.tool_calls.filter(
+			(tc) => !existingResultIds.has(tc.id),
+		);
+		if (orphanedCalls.length === 0) continue;
+
+		console.warn(
+			"[event-converter] Orphaned tool_calls found at message index",
+			mi,
+			"- ids:",
+			orphanedCalls.map((tc) => tc.id),
+		);
+
+		// Find insertion point: after all existing tool results for this assistant message
+		let insertAt = mi + 1;
+		while (
+			insertAt < messages.length &&
+			(messages[insertAt] as { role?: string }).role === "tool"
+		) {
+			insertAt++;
+		}
+		// Also skip user messages that might be image wrappers between tool results
+		// (OpenAI tool results are individual messages, images follow as user messages)
+
+		const syntheticResults = orphanedCalls.map((tc) => ({
 			role: "tool",
 			tool_call_id: tc.id,
 			name: tc.function.name,
 			content:
 				"Tool execution was interrupted by daemon restart. Results were lost.",
-		});
+		}));
+
+		messages.splice(insertAt, 0, ...syntheticResults);
 	}
 }
