@@ -2359,6 +2359,32 @@ button.og-tool-card-header:hover {
 	}
 }
 
+/* Footer attach-image button */
+.og-btn-attach {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: transparent;
+	border: 1px solid var(--border);
+	color: var(--fg-dim);
+	padding: 7px;
+	border-radius: var(--radius-lg);
+	cursor: pointer;
+	outline: none;
+	transition: all var(--t-fast);
+}
+
+.og-btn-attach:hover:not(:disabled) {
+	background: var(--bg-hover);
+	color: var(--fg);
+	border-color: var(--fg-dim);
+}
+
+.og-btn-attach:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
 /* Footer run/send button */
 .og-btn-run {
 	display: inline-flex;
