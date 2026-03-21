@@ -645,3 +645,13 @@ Event (src/events.ts) — THE source of truth
 - **`console.warn` on fallback**: Every fallback triggers a warning log for production debugging.
 - **fixOrphanedAnthropicToolUse/fixOrphanedOpenAIToolCalls now scan ALL messages**: Previously only checked the last assistant message. After double-restart (daemon stops mid-tool, agent resumes and continues, daemon stops again), orphaned tool_use blocks end up in the MIDDLE of the conversation. Fix now iterates all assistant messages in reverse, checking each for matching tool_results in the following message.
 - **stopAgent writes synthetic tool_result to JSONL**: Defense-in-depth — `writeOrphanedToolResults()` scans JSONL at stop time and writes synthetic error tool_result events for any trailing unpaired tool_call. Prevents orphans from ever existing in JSONL.
+
+
+## Orphan Tool Call Fix — Persistent (March 2026)
+
+- **Three-layer defense**: (1) `writeOrphanedToolResults()` in `stopAgent()` writes synthetic tool_results on shutdown, (2) `findOrphanedToolCalls()` in provider resume path persists fixes to JSONL, (3) `fixOrphanedAnthropicToolUse/fixOrphanedOpenAIToolCalls` full-scan in converter as runtime safety net.
+- **Key insight**: Converter fixes are in-memory only — they must be persisted to JSONL or they repeat on every resume. `findOrphanedToolCalls()` runs once on resume, writes synthetic tool_results back to JSONL, then converter never sees orphans again.
+- **Resume error deduplication**: `daemon.ts` auto-resume only shows errors that occurred AFTER the last `orchestration_started` or resume `message` event. Stale errors from previous sessions are not re-injected.
+- **Never modify own JSONL from agent**: Scanning JSONL from inside a running tool creates a false orphan (the current tool_call has no result yet). JSONL fixes must happen at stopAgent time or provider resume time, never from agent tool execution.
+- **Done counter**: UI `OrchestratorDetail` counts both `passed` and `closed` tasks as "done" (previously only counted `passed`, showing 0/33 when most tasks were closed after merge).
+
