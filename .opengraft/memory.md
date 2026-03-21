@@ -20,7 +20,7 @@ Pre-commit hooks run typecheck + lint + unit tests.
 ## Architecture
 
 ```
-Daemon (Hono: HTTP + WS on :7433, admin :7434)
+Daemon (Hono: HTTP + SSE on :7433)
     ↑               ↑
    CLI            Web UI (React, bundled by Bun)
 ```
@@ -28,7 +28,7 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 - Two providers: AnthropicCompatibleProvider, OpenAICompatibleProvider. Both share `src/tools/` and compaction.
 - Three-layer config: global > repo > local. Auth groups define provider+credentials.
 - Agent tree = Task tree. Each agent gets worktree + branch. Lifecycle = branch lifecycle.
-- All mutable APIs fire-and-forget. Observe via WebSocket.
+- All mutable APIs fire-and-forget. Observe via SSE.
 - External MCP servers: `McpClientManager` (src/mcp-client.ts), tools get `jsonSchema` (not Zod).
 
 ## Key Files
@@ -48,8 +48,9 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 | src/events.ts | Event types + provider converters (eventsToAnthropicMessages, eventsToOpenAIMessages) |
 | src/event-store.ts | JSONL EventStore — sole persistence for events (session resume + activity log) |
 | src/daemon/routes/auth.ts | WebAuthn/Passkey auth middleware + endpoints |
-| web/App.tsx | Web UI main, WS/handlers |
-| web/ws-handler.ts | WS event processing (processEvent, UpdateOp) |
+| src/daemon/routes/sse.ts | SSE endpoint + initial state push |
+| web/App.tsx | Web UI main, SSE/handlers |
+| web/ws-handler.ts | Event processing (processEvent, UpdateOp) |
 | web/components/ | 15+ components (ActivityLog, ToolCard, SettingsPanel, etc.) |
 
 ## Core Design Principles
@@ -93,7 +94,7 @@ Daemon (Hono: HTTP + WS on :7433, admin :7434)
 ## WebAuthn/Passkey Authentication
 
 - Auth is ALWAYS on when credentials exist. `enforced` only controls whether registration is allowed.
-- Main port (7433) requires auth. Admin port (7434) localhost-only, no auth.
+- Main port (7433) requires auth.
 - Middleware exempts `/`, `/web/*`, `/auth/*`. First-run bypass when no credentials.
 - `resolveOrigin` respects `X-Forwarded-Proto` for CF Tunnel.
 - simplewebauthn v13: `Uint8Array<ArrayBuffer>` type, `{optionsJSON}` wrapper for `startRegistration`.
