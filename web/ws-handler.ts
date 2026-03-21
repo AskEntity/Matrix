@@ -84,88 +84,173 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		nodeMapRef,
 	} = deps;
 
+	/** Shape of a QueueEntry / rawMessage — shared by both formats. */
+	interface QueueEntryLike {
+		source: string;
+		content?: string;
+		images?: Array<{ base64: string; mediaType: string }>;
+		taskId?: string;
+		title?: string;
+		success?: boolean;
+		output?: string;
+		requestReply?: boolean;
+		answer?: string;
+		fromProjectId?: string;
+		fromProjectName?: string;
+		command?: string;
+		commandId?: string;
+		exitCode?: number | null;
+		durationMs?: number;
+	}
+
+	/**
+	 * Convert a QueueEntry (or rawMessage) into a UIEvent for rendering.
+	 * Works for both live WS rawMessages AND JSONL queueEntry fields.
+	 * Returns null for sources that should be skipped.
+	 */
+	function queueEntryToUIEvent(
+		qe: QueueEntryLike,
+		parentTaskId?: string,
+		ts?: number,
+	): UIEvent | null {
+		const eventTs = ts ?? Date.now();
+		switch (qe.source) {
+			// These don't show as separate log entries in the activity log
+			case "child_complete":
+			case "system":
+			case "compact":
+				return null;
+			case "user":
+				// User messages use the two-phase lifecycle (pending → consumed)
+				// When called from materialization, we DO want to show them
+				return {
+					type: "user_message",
+					content: qe.content ?? "",
+					...(qe.images?.length ? { images: qe.images } : {}),
+					taskId: parentTaskId,
+					ts: eventTs,
+				} as UIEvent;
+			case "parent_update":
+				return {
+					type: "parent_update",
+					content: qe.content ?? "",
+					taskId: parentTaskId,
+					ts: eventTs,
+				} as UIEvent;
+			case "child_report":
+				return {
+					type: "child_report",
+					taskId: qe.taskId ?? "",
+					title: qe.title ?? "",
+					content: qe.content ?? "",
+					...(qe.requestReply ? { requestReply: true } : {}),
+					ts: eventTs,
+				} as UIEvent;
+			case "background_complete":
+				return {
+					type: "background_complete",
+					command: qe.command ?? "",
+					commandId: qe.commandId ?? "",
+					exitCode: qe.exitCode ?? null,
+					durationMs: qe.durationMs ?? 0,
+					taskId: parentTaskId,
+					ts: eventTs,
+				} as UIEvent;
+			case "cross_project":
+				return {
+					type: "cross_project",
+					fromProjectId: qe.fromProjectId ?? "",
+					fromProjectName: qe.fromProjectName ?? "",
+					content: qe.content ?? "",
+					taskId: parentTaskId,
+					ts: eventTs,
+				} as UIEvent;
+			case "clarify_response":
+				return {
+					type: "clarify_response",
+					answer: qe.answer ?? qe.content ?? "",
+					taskId: parentTaskId,
+					ts: eventTs,
+				} as UIEvent;
+			default:
+				return {
+					type: "generic_queue_message",
+					content: qe.content ?? "",
+					source: qe.source,
+					taskId: parentTaskId,
+					ts: eventTs,
+				};
+		}
+	}
+
+	/**
+	 * Build display text for the pending message chip.
+	 * User messages show their content; non-user sources show a descriptive label.
+	 */
+	function pendingChipText(
+		source: string | undefined,
+		content: string,
+		queueEntry?: QueueEntryLike,
+	): string {
+		if (!source || source === "user") return content;
+		switch (source) {
+			case "child_report": {
+				const title = queueEntry?.title;
+				const body = queueEntry?.content ?? content;
+				return title ? `↑ ${title}: ${body}` : `↑ ${body}`;
+			}
+			case "child_complete": {
+				const title = queueEntry?.title ?? "";
+				const ok = queueEntry?.success ? "✓" : "✗";
+				return `${ok} ${title}`;
+			}
+			case "parent_update":
+				return `← Parent: ${queueEntry?.content ?? content}`;
+			case "clarify_response":
+				return `💬 ${queueEntry?.answer ?? content}`;
+			case "cross_project": {
+				const name = queueEntry?.fromProjectName ?? "";
+				return `← ${name}: ${queueEntry?.content ?? content}`;
+			}
+			case "background_complete":
+				return `⚙ bg: ${queueEntry?.command ?? "done"}`;
+			default:
+				return content || `[${source}]`;
+		}
+	}
+
 	/**
 	 * Convert a raw queue message into a UIEvent.
 	 * Maps structured rawMessage fields directly to concrete Event types.
 	 * Returns null for messages that should be skipped (child_complete, system_notification).
 	 */
 	function createQueueUIEvent(
-		rm: {
-			source: string;
-			content?: string;
-			images?: { base64: string; mediaType: string }[];
-			taskId?: string;
-			title?: string;
-			success?: boolean;
-			output?: string;
-			requestReply?: boolean;
-			fromProjectId?: string;
-			fromProjectName?: string;
-			command?: string;
-			commandId?: string;
-			exitCode?: number | null;
-			durationMs?: number;
-		},
+		rm: QueueEntryLike,
 		parentTaskId?: string,
 	): UIEvent | null {
-		const ts = Date.now();
-		// child_complete, system_notification, and user messages don't show as separate log entries.
-		// User messages are displayed via the user_message → messages_consumed lifecycle,
-		// not via queue_message events.
+		// For live WS queue_message events: skip child_complete, system, user
+		// (user messages use two-phase lifecycle, child_complete/system are handled elsewhere)
 		if (
 			rm.source === "child_complete" ||
 			rm.source === "system" ||
 			rm.source === "user"
 		)
 			return null;
-		if (rm.source === "parent_update") {
-			return {
-				type: "parent_update",
-				content: rm.content ?? "",
-				taskId: parentTaskId,
-				ts,
-			} as UIEvent;
-		}
-		if (rm.source === "child_report") {
-			return {
-				type: "child_report",
-				taskId: rm.taskId ?? "",
-				title: rm.title ?? "",
-				content: rm.content ?? "",
-				...(rm.requestReply ? { requestReply: true } : {}),
-				ts,
-			} as UIEvent;
-		}
-		if (rm.source === "background_complete") {
-			return {
-				type: "background_complete",
-				command: rm.command ?? "",
-				commandId: rm.commandId ?? "",
-				exitCode: rm.exitCode ?? null,
-				durationMs: rm.durationMs ?? 0,
-				taskId: parentTaskId,
-				ts,
-			} as UIEvent;
-		}
-		if (rm.source === "cross_project") {
-			return {
-				type: "cross_project",
-				fromProjectId: rm.fromProjectId ?? "",
-				fromProjectName: rm.fromProjectName ?? "",
-				content: rm.content ?? "",
-				taskId: parentTaskId,
-				ts,
-			} as UIEvent;
-		}
-		// Generic fallback
-		return {
-			type: "generic_queue_message",
-			content: rm.content ?? "",
-			source: rm.source,
-			taskId: parentTaskId,
-			ts,
-		};
+		return queueEntryToUIEvent(rm, parentTaskId);
 	}
+
+	// --- Deferred non-user queue messages (for two-phase lifecycle) ---
+	// Non-user messages (child_report, parent_update, etc.) with IDs are deferred
+	// until messages_consumed. They should NOT appear in the pending banner (user-facing).
+	// This internal map stores them for materialization at consumption time.
+	const deferredQueueMsgs = new Map<
+		string,
+		{
+			queueEntry: QueueEntryLike;
+			taskId?: string;
+			ts: number;
+		}
+	>();
 
 	// --- Unified event processing ---
 
@@ -323,7 +408,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				if (rawMessages && rawMessages.length > 0) {
 					for (const rm of rawMessages) {
 						const event = createQueueUIEvent(
-							rm as Parameters<typeof createQueueUIEvent>[0],
+							rm as unknown as QueueEntryLike,
 							msg.taskId as string | undefined,
 						);
 						if (event) entries.push(createLogEntry(event));
@@ -512,15 +597,21 @@ export function createWSHandler(deps: WSHandlerDeps) {
 			}
 
 			case "user_message": {
-				// user_message with an id = injected message awaiting consumption.
-				// Show as pending, not in activity log — messages_consumed will move it.
 				const umId = msg.id as string | undefined;
+				const queueEntry = msg.queueEntry as QueueEntryLike | undefined;
+				const source = queueEntry?.source ?? (msg.source as string | undefined);
+				const umTaskId = msg.taskId as string | null | undefined;
+				const umTs = (msg.ts as number) ?? Date.now();
+
 				if (umId) {
+					// user_message with id = deferred until messages_consumed.
+					// Show ALL sources in pending banner + store queueEntry for materialization.
 					const umContent = (msg.content as string) || "";
 					const umImages = msg.images as
 						| Array<{ base64: string; mediaType: string }>
 						| undefined;
-					const umTaskId = msg.taskId as string | null | undefined;
+					// Build display text for the pending chip
+					const pendingText = pendingChipText(source, umContent, queueEntry);
 					return {
 						entries: [],
 						updates: [],
@@ -530,15 +621,43 @@ export function createWSHandler(deps: WSHandlerDeps) {
 								{
 									id: umId,
 									taskId: umTaskId ?? null,
-									text: umContent,
-									timestamp: (msg.ts as number) ?? Date.now(),
+									text: pendingText,
+									timestamp: umTs,
 									images: umImages,
 								},
 							]);
+							// Also store queueEntry for non-user sources so
+							// messages_consumed can materialize the correct card type
+							if (queueEntry && source && source !== "user") {
+								deferredQueueMsgs.set(umId, {
+									queueEntry,
+									taskId: umTaskId ?? undefined,
+									ts: umTs,
+								});
+							}
 						},
 					};
 				}
-				// user_message without id = initial prompt, show directly in activity log
+
+				// user_message without id = initial prompt or legacy event
+				// If it has a queueEntry with non-user source, render as the appropriate card type
+				if (queueEntry && source && source !== "user") {
+					const uiEvent = queueEntryToUIEvent(
+						queueEntry,
+						umTaskId ?? undefined,
+						umTs,
+					);
+					if (uiEvent) {
+						return {
+							entries: [createLogEntry(uiEvent)],
+							updates: [],
+							sideEffects: NO_SIDE_EFFECTS,
+						};
+					}
+					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
+				}
+
+				// Plain user message → show directly in activity log
 				return {
 					entries: [
 						createLogEntry({
@@ -552,8 +671,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 										}>,
 									}
 								: {}),
-							taskId: msg.taskId as string | undefined,
-							ts: (msg.ts as number) ?? Date.now(),
+							taskId: umTaskId ?? undefined,
+							ts: umTs,
 						}),
 					],
 					updates: [],
@@ -562,19 +681,40 @@ export function createWSHandler(deps: WSHandlerDeps) {
 			}
 
 			case "messages_consumed": {
-				// Move consumed messages from pending to activity log
+				// Move consumed messages from pending/deferred to activity log
 				const consumedIds = new Set((msg.messageIds as string[]) ?? []);
 				if (consumedIds.size === 0) {
 					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 				}
+				const consumeTs = (msg.ts as number) ?? Date.now();
 				return {
 					entries: [],
 					updates: [],
 					sideEffects: () => {
+						// 1. Materialize deferred non-user queue messages
+						const deferredEntries: LogEntry[] = [];
+						for (const id of consumedIds) {
+							const deferred = deferredQueueMsgs.get(id);
+							if (deferred) {
+								const uiEvent = queueEntryToUIEvent(
+									deferred.queueEntry,
+									deferred.taskId,
+									consumeTs,
+								);
+								if (uiEvent) {
+									deferredEntries.push(createLogEntry(uiEvent));
+								}
+								deferredQueueMsgs.delete(id);
+							}
+						}
+						if (deferredEntries.length > 0) {
+							setLogs((prevLogs) => [...prevLogs, ...deferredEntries]);
+						}
+
+						// 2. Move pending user messages from pending banner to activity log
 						setPendingMessages((prev) => {
 							const consumed = prev.filter((p) => consumedIds.has(p.id));
 							const remaining = prev.filter((p) => !consumedIds.has(p.id));
-							// Add consumed messages to activity log
 							if (consumed.length > 0) {
 								setLogs((prevLogs) => [
 									...prevLogs,
@@ -582,17 +722,9 @@ export function createWSHandler(deps: WSHandlerDeps) {
 										createLogEntry({
 											type: "user_message",
 											content: p.text,
-											...((p as Record<string, unknown>).images
-												? {
-														images: (p as Record<string, unknown>)
-															.images as Array<{
-															base64: string;
-															mediaType: string;
-														}>,
-													}
-												: {}),
+											...(p.images?.length ? { images: p.images } : {}),
 											taskId: p.taskId ?? undefined,
-											ts: (msg.ts as number) ?? Date.now(),
+											ts: consumeTs,
 										}),
 									),
 								]);
@@ -881,7 +1013,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		const entries: LogEntry[] = [];
 		const deferredSideEffects: (() => void)[] = [];
 
-		// Track user_message events with IDs for two-phase resolution
+		// Track user_message events with IDs for two-phase resolution.
+		// Stores queueEntry so we can render the correct card type at materialization.
 		const pendingUserMsgs = new Map<
 			string,
 			{
@@ -889,16 +1022,72 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				images?: Array<{ base64: string; mediaType: string }>;
 				taskId?: string;
 				ts: number;
+				source?: string;
+				queueEntry?: QueueEntryLike;
 			}
 		>();
 		// Track which IDs have been consumed (by messages_consumed events)
 		const consumedIds = new Set<string>();
+
+		/** Materialize a deferred user_message as the appropriate LogEntry. */
+		function materialize(
+			userMsg: {
+				content: string;
+				images?: Array<{ base64: string; mediaType: string }>;
+				taskId?: string;
+				ts: number;
+				source?: string;
+				queueEntry?: QueueEntryLike;
+			},
+			ts: number,
+		): LogEntry | null {
+			// Non-user sources: render as the appropriate card type from queueEntry
+			if (userMsg.queueEntry && userMsg.source && userMsg.source !== "user") {
+				const uiEvent = queueEntryToUIEvent(
+					userMsg.queueEntry,
+					userMsg.taskId,
+					ts,
+				);
+				return uiEvent ? createLogEntry(uiEvent) : null;
+			}
+			// User messages (or no source): render as user_message
+			return createLogEntry({
+				type: "user_message",
+				content: userMsg.content,
+				...(userMsg.images?.length ? { images: userMsg.images } : {}),
+				taskId: userMsg.taskId,
+				ts,
+			});
+		}
 
 		for (const evt of events) {
 			const evtType = evt.type as string;
 
 			// Two-phase user message: collect with-id user_messages for later resolution
 			if (evtType === "user_message" && evt.id) {
+				const queueEntry = evt.queueEntry as QueueEntryLike | undefined;
+				const source = queueEntry?.source ?? (evt.source as string | undefined);
+				// For legacy events without queueEntry, build one from flat fields
+				const effectiveQueueEntry: QueueEntryLike | undefined =
+					queueEntry ??
+					(source
+						? {
+								source,
+								content: evt.content as string | undefined,
+								taskId: evt.taskId as string | undefined,
+								title: evt.title as string | undefined,
+								success: evt.success as boolean | undefined,
+								output: evt.output as string | undefined,
+								requestReply: evt.requestReply as boolean | undefined,
+								answer: evt.answer as string | undefined,
+								fromProjectId: evt.fromProjectId as string | undefined,
+								fromProjectName: evt.fromProjectName as string | undefined,
+								command: evt.command as string | undefined,
+								commandId: evt.commandId as string | undefined,
+								exitCode: evt.exitCode as number | null | undefined,
+								durationMs: evt.durationMs as number | undefined,
+							}
+						: undefined);
 				pendingUserMsgs.set(evt.id as string, {
 					content: (evt.content as string) || "",
 					images: evt.images as
@@ -906,6 +1095,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						| undefined,
 					taskId: evt.taskId as string | undefined,
 					ts: (evt.ts as number) ?? Date.now(),
+					source,
+					queueEntry: effectiveQueueEntry,
 				});
 				continue;
 			}
@@ -918,15 +1109,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					consumedIds.add(id);
 					const userMsg = pendingUserMsgs.get(id);
 					if (userMsg) {
-						entries.push(
-							createLogEntry({
-								type: "user_message",
-								content: userMsg.content,
-								...(userMsg.images ? { images: userMsg.images } : {}),
-								taskId: userMsg.taskId,
-								ts,
-							}),
-						);
+						const entry = materialize(userMsg, ts);
+						if (entry) entries.push(entry);
 					}
 				}
 				continue;
@@ -940,15 +1124,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					consumedIds.add(id);
 					const userMsg = pendingUserMsgs.get(id);
 					if (userMsg) {
-						entries.push(
-							createLogEntry({
-								type: "user_message",
-								content: userMsg.content,
-								...(userMsg.images ? { images: userMsg.images } : {}),
-								taskId: userMsg.taskId,
-								ts,
-							}),
-						);
+						const entry = materialize(userMsg, ts);
+						if (entry) entries.push(entry);
 					}
 				}
 			}
@@ -964,16 +1141,33 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		setLogs(entries);
 		for (const fn of deferredSideEffects) fn();
 
-		// Any unconsumed user messages with IDs go to pending
-		const unconsumed = [...pendingUserMsgs.entries()]
-			.filter(([id]) => !consumedIds.has(id))
-			.map(([id, m]) => ({
+		// Any unconsumed user messages with IDs go to pending banner.
+		// Non-user sources also stored in deferredQueueMsgs for correct materialization.
+		const unconsumed: Array<{
+			id: string;
+			taskId: string | null;
+			text: string;
+			timestamp: number;
+			images?: Array<{ base64: string; mediaType: string }>;
+		}> = [];
+		for (const [id, m] of pendingUserMsgs) {
+			if (consumedIds.has(id)) continue;
+			unconsumed.push({
 				id,
 				taskId: m.taskId ?? null,
-				text: m.content,
+				text: pendingChipText(m.source, m.content, m.queueEntry),
 				timestamp: m.ts,
 				images: m.images,
-			}));
+			});
+			// Also store queueEntry for non-user sources
+			if (m.queueEntry && m.source && m.source !== "user") {
+				deferredQueueMsgs.set(id, {
+					queueEntry: m.queueEntry,
+					taskId: m.taskId,
+					ts: m.ts,
+				});
+			}
+		}
 		if (unconsumed.length > 0) {
 			setPendingMessages(unconsumed);
 		}

@@ -435,3 +435,14 @@ Event (src/events.ts) — THE source of truth
 - `waitForQueueMessages()` writes user_message events to JSONL directly
 - Cancellation queue messages → separate text blocks alongside tool_results
 - Backward compat: old JSONL with flat fields or embedded text still works
+
+
+## Frontend queueEntry Handling (March 2026)
+
+- **Root cause of blank cards**: `processEventBatch` stored `user_message` events with only `{ content, images, taskId, ts }`, losing the `queueEntry` field. On materialization at `messages_consumed` time, it always created `user_message` LogEntry. For non-user sources (child_report, parent_update, etc.), `content` was empty → blank card.
+- **Fix**: `queueEntryToUIEvent()` helper converts `QueueEntry` (or raw message) to the appropriate UIEvent type based on `source` field. Used by both `processEvent` (live WS) and `processEventBatch` (refresh).
+- **`pendingChipText()`**: Formats descriptive text for the pending banner. User messages show content; non-user sources show labeled text (e.g., "↑ Worker: Phase 1 done", "← Parent: ...", "💬 answer").
+- **Two stores for deferred messages**: `pendingMessages` state (visible in UI banner) holds ALL deferred messages. `deferredQueueMsgs` Map (internal) holds `queueEntry` data for non-user sources so `messages_consumed` can materialize the correct card type.
+- **Legacy backward compat**: Old JSONL with flat fields (source + taskId/title/content at top level, no queueEntry) → constructs a `QueueEntryLike` from flat fields for correct materialization.
+- **`createQueueUIEvent` simplified**: Delegates to `queueEntryToUIEvent` instead of duplicating switch logic.
+

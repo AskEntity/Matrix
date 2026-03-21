@@ -37,6 +37,371 @@ function makeDeps() {
 	};
 }
 
+describe("ws-handler queueEntry handling", () => {
+	it("processEventBatch: user_message with queueEntry.source=child_report materializes as child_report", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "user_message",
+				id: "msg-1",
+				source: "child_report",
+				queueEntry: {
+					source: "child_report",
+					taskId: "child-1",
+					title: "My Child Task",
+					content: "Progress update: 50% done",
+				},
+				taskId: "parent-1",
+				ts: 1000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-1"],
+				ts: 2000,
+			},
+		]);
+
+		const childReportEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "child_report",
+		);
+		expect(childReportEntry).toBeDefined();
+		expect(childReportEntry?.content).toBe("Progress update: 50% done");
+		expect(childReportEntry?.title).toBe("My Child Task");
+	});
+
+	it("processEventBatch: user_message with queueEntry.source=parent_update materializes as parent_update", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "user_message",
+				id: "msg-2",
+				source: "parent_update",
+				queueEntry: {
+					source: "parent_update",
+					content: "Please also fix bug #42",
+				},
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-2"],
+				ts: 2000,
+			},
+		]);
+
+		const parentEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "parent_update",
+		);
+		expect(parentEntry).toBeDefined();
+		expect(parentEntry?.content).toBe("Please also fix bug #42");
+	});
+
+	it("processEventBatch: user_message with queueEntry.source=user still renders as user_message", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "user_message",
+				id: "msg-3",
+				source: "user",
+				content: "Hello world",
+				queueEntry: {
+					source: "user",
+					content: "Hello world",
+				},
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-3"],
+				ts: 2000,
+			},
+		]);
+
+		const userEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "user_message",
+		);
+		expect(userEntry).toBeDefined();
+		expect(userEntry?.content).toBe("Hello world");
+	});
+
+	it("processEventBatch: unconsumed non-user user_message goes to pendingMessages with descriptive text", () => {
+		const { deps } = makeDeps();
+
+		let capturedPending: unknown[] = [];
+		(deps as Record<string, unknown>).setPendingMessages = mock(
+			(updater: React.SetStateAction<unknown[]>) => {
+				capturedPending = typeof updater === "function" ? updater([]) : updater;
+			},
+		);
+
+		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "user_message",
+				id: "msg-4",
+				source: "child_report",
+				queueEntry: {
+					source: "child_report",
+					taskId: "child-1",
+					title: "Worker",
+					content: "Phase 1 done",
+				},
+				taskId: "parent-1",
+				ts: 1000,
+			},
+			// No messages_consumed — message is unconsumed
+		]);
+
+		// Non-user messages also appear in pending banner with descriptive text
+		expect(capturedPending.length).toBe(1);
+		expect((capturedPending[0] as { text: string }).text).toBe(
+			"↑ Worker: Phase 1 done",
+		);
+	});
+
+	it("processEventBatch: unconsumed user-typed user_message goes to pendingMessages", () => {
+		const { deps } = makeDeps();
+
+		let capturedPending: unknown[] = [];
+		(deps as Record<string, unknown>).setPendingMessages = mock(
+			(updater: React.SetStateAction<unknown[]>) => {
+				capturedPending = typeof updater === "function" ? updater([]) : updater;
+			},
+		);
+
+		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "user_message",
+				id: "msg-5",
+				content: "Please check this",
+				ts: 1000,
+			},
+			// No messages_consumed — message is unconsumed
+		]);
+
+		expect(capturedPending.length).toBe(1);
+		expect((capturedPending[0] as { text: string }).text).toBe(
+			"Please check this",
+		);
+	});
+
+	it("processEventBatch: legacy flat-field user_message (no queueEntry) materializes correctly", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+
+		// Legacy format: source + flat fields, no queueEntry
+		processEventBatch([
+			{
+				type: "user_message",
+				id: "msg-6",
+				source: "child_report",
+				taskId: "child-1",
+				title: "Legacy Task",
+				content: "Legacy report content",
+				ts: 1000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-6"],
+				ts: 2000,
+			},
+		]);
+
+		const childReportEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "child_report",
+		);
+		expect(childReportEntry).toBeDefined();
+		expect(childReportEntry?.content).toBe("Legacy report content");
+		expect(childReportEntry?.title).toBe("Legacy Task");
+	});
+
+	it("handleWS: live user_message with queueEntry.source=child_report deferred, then messages_consumed renders card", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		let capturedPending: unknown[] = [];
+		(deps as Record<string, unknown>).setPendingMessages = mock(
+			(updater: React.SetStateAction<unknown[]>) => {
+				capturedPending =
+					typeof updater === "function" ? updater(capturedPending) : updater;
+			},
+		);
+
+		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
+
+		// 1. Receive user_message with queueEntry (non-user source)
+		handleWS({
+			type: "user_message",
+			id: "msg-7",
+			source: "child_report",
+			queueEntry: {
+				source: "child_report",
+				taskId: "child-1",
+				title: "Worker Task",
+				content: "I'm done with phase 1",
+			},
+			taskId: "parent-1",
+			ts: 1000,
+		});
+
+		// Should be in pending banner with descriptive text
+		expect(capturedPending.length).toBe(1);
+		expect((capturedPending[0] as { text: string }).text).toBe(
+			"↑ Worker Task: I'm done with phase 1",
+		);
+		// Should NOT be in activity log yet
+		expect(capturedLogs.length).toBe(0);
+
+		// 2. Receive messages_consumed
+		handleWS({
+			type: "messages_consumed",
+			messageIds: ["msg-7"],
+			ts: 2000,
+		});
+
+		// Now should appear in activity log as child_report
+		const childReportEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "child_report",
+		);
+		expect(childReportEntry).toBeDefined();
+		expect(childReportEntry?.content).toBe("I'm done with phase 1");
+		// Pending should be cleared
+		expect(capturedPending.length).toBe(0);
+	});
+
+	it("handleWS: live user_message (actual user) goes to pending, then messages_consumed moves to log", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		let capturedPending: Array<{ id: string; text: string }> = [];
+		(deps as Record<string, unknown>).setPendingMessages = mock(
+			(updater: React.SetStateAction<Array<{ id: string; text: string }>>) => {
+				capturedPending =
+					typeof updater === "function" ? updater(capturedPending) : updater;
+			},
+		);
+
+		const { handleWS } = createWSHandler(deps as WSHandlerDeps);
+
+		// 1. Receive user_message (actual user)
+		handleWS({
+			type: "user_message",
+			id: "msg-8",
+			content: "Build a feature",
+			taskId: "task-1",
+			ts: 1000,
+		});
+
+		// Should be in pending banner
+		expect(capturedPending.length).toBe(1);
+		expect(capturedPending[0]?.text).toBe("Build a feature");
+
+		// 2. Receive messages_consumed
+		handleWS({
+			type: "messages_consumed",
+			messageIds: ["msg-8"],
+			ts: 2000,
+		});
+
+		// Should be moved to activity log
+		const userEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "user_message",
+		);
+		expect(userEntry).toBeDefined();
+		expect(userEntry?.content).toBe("Build a feature");
+
+		// Should be removed from pending
+		expect(capturedPending.length).toBe(0);
+	});
+
+	it("processEventBatch: user_message with queueEntry.source=clarify_response materializes correctly", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createWSHandler(deps as WSHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "user_message",
+				id: "msg-9",
+				source: "clarify_response",
+				queueEntry: {
+					source: "clarify_response",
+					answer: "Yes, go ahead with approach A",
+				},
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-9"],
+				ts: 2000,
+			},
+		]);
+
+		const clarifyEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "clarify_response",
+		);
+		expect(clarifyEntry).toBeDefined();
+		expect(clarifyEntry?.answer).toBe("Yes, go ahead with approach A");
+	});
+});
+
 describe("ws-handler compact_marker savedTokens", () => {
 	it("processEvent returns savedTokens in the complete_compact UpdateOp", () => {
 		const { deps } = makeDeps();
