@@ -523,6 +523,7 @@ function TaskNodeView({
 			<button
 				type="button"
 				className={`og-task-node${isSelected ? " selected" : ""}${node.status === "draft" ? " og-task-draft" : ""}${isDragging ? " og-task-dragging" : ""}${isReparentTarget ? " og-reparent-target" : ""}${node.status === "closed" ? " og-task-closed" : ""}`}
+				style={node.color ? { borderLeftColor: node.color } : undefined}
 				draggable
 				onDragStart={(e) => onDragStart(node.id, parentId, e)}
 				onDragOver={(e) => onDragOver(node.id, parentId, siblingIds, e)}
@@ -554,12 +555,7 @@ function TaskNodeView({
 					<span
 						className={`og-task-status-dot ${statusDotClass(node.status)}`}
 					/>
-					{node.color && (
-						<span
-							className="og-task-color-dot"
-							style={{ backgroundColor: node.color }}
-						/>
-					)}
+
 					<span className="og-task-title">{node.title}</span>
 					{activeAgents?.has(node.id) && <span className="og-task-spinner" />}
 					{node.status === "draft" && (

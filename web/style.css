@@ -420,7 +420,7 @@ select {
 	padding: 0;
 	outline: none;
 	cursor: pointer;
-	border-left: 2px solid transparent;
+	border-left: 3px solid transparent;
 	transition:
 		background var(--t-fast),
 		border-color var(--t-fast);
@@ -681,13 +681,6 @@ select {
 	padding: 0 4px;
 	border-radius: var(--radius-sm);
 	font-style: italic;
-}
-
-.og-task-color-dot {
-	flex-shrink: 0;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
 }
 
 .og-color-picker {
