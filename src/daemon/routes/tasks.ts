@@ -32,6 +32,7 @@ async function notifyParentChain(
 	projectId: string,
 	taskId: string,
 	taskTitle: string,
+	messageContent: string,
 ): Promise<void> {
 	const tracker = await getTracker(ctx, projectId);
 	const node = tracker.get(taskId);
@@ -46,7 +47,7 @@ async function notifyParentChain(
 			source: "child_report" as const,
 			taskId,
 			title: taskTitle,
-			content: `User sent a message to child task '${taskTitle}' (${taskId})`,
+			content: `User sent a message to child task '${taskTitle}' (${taskId}): ${messageContent}`,
 		};
 
 		// All agent queues (root + children) are in unified globalAgentQueues
@@ -566,7 +567,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 
 		// Notify parent chain that user sent a message to this task (REST-only)
-		await notifyParentChain(ctx, project.id, nodeId, taskTitle);
+		await notifyParentChain(ctx, project.id, nodeId, taskTitle, body.content);
 
 		return c.json({ ok: true, taskId: nodeId });
 	});
