@@ -418,3 +418,17 @@ Event (src/events.ts) — THE source of truth
 **Current mess**: Types 1-3 are all in one `createOrchestratorTools()` with a big deps bag. Queue message text is pre-formatted and embedded in tool_result. Two separate event callbacks (onEvent from provider, onTaskEvent from agent-tools emit) handle the same thing differently.
 
 **Fix path**: Task 297eacb7 (structured JSONL) + 064df856 (yield/done separation) + 51d1e79e (provider refactor).
+
+
+## Anthropic API: Mixed Content Blocks in User Messages (Confirmed March 2026)
+
+**Confirmed by official docs**: User messages can contain BOTH `tool_result` and `text` blocks:
+```json
+{"role": "user", "content": [
+  {"type": "tool_result", "tool_use_id": "X", "content": "tool output"},
+  {"type": "text", "text": "user instruction alongside tool results"}
+]}
+```
+This means queue messages should be text blocks alongside tool_results, NOT embedded in tool_result content. The AI treats text blocks as user instructions it must respond to.
+
+**Key design implication**: `messages_consumed` should be a standalone JSONL event. Converter groups events into turns and places consumed queue messages as text blocks alongside tool_results. No `messagesConsumed` field needed on tool_result events.
