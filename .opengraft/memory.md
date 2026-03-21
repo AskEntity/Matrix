@@ -474,3 +474,9 @@ Event (src/events.ts) — THE source of truth
 - **Timestamps matter**: Messages formatted for AI now include `[HH:MM:SS]` timestamps so the AI can correlate with the user's UI timestamps when discussing specific events.
 - **Session format ≠ UI format**: What the AI sees (formatted text in tool_result) is different from what the user sees (individual cards with timestamps in the activity log). The AI must understand both formats and be able to reason about the mapping.
 - **Restart daemon**: Via Settings button in UI (Chrome MCP) or POST /restart-daemon with auth cookie. System daemon (LaunchAgent), not bun --watch. Commits do NOT auto-restart.
+
+
+## Checking Child Progress (March 2026)
+
+- **Use `git diff` in worktree, NOT `git log` for commits**: Check `cd .worktrees/<id>-... && git diff --stat HEAD` to see in-progress work. Children may have extensive uncommitted changes. Never judge child state by commit count — they may have done significant work without committing.
+- **Never blindly reset failed children**: Always `send_message_to_child` first. The child has session context (planning, analysis, file changes) even without commits. Only `reset_task` when the approach is fundamentally wrong.
