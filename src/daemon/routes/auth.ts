@@ -5,6 +5,10 @@
  *   /auth/status, /auth/login/options, /auth/login/verify, /auth/logout
  *   /auth/register/options, /auth/register/verify (blocked when enforced)
  *   /auth/credentials, DELETE /auth/credentials/:id (blocked when enforced)
+ *
+ * Post-auth: JWT tokens (stateless, survives daemon restarts).
+ * Frontend sends JWT via Authorization: Bearer header.
+ * SSE passes token as query param (?token=...).
  */
 
 import { join } from "node:path";
@@ -19,18 +23,16 @@ import {
 	verifyRegistrationResponse,
 } from "@simplewebauthn/server";
 import type { Context, Hono, Next } from "hono";
-import { getCookie, setCookie } from "hono/cookie";
 import {
 	addCredential,
-	createSession,
 	getAndRemoveChallenge,
 	getCredentials,
 	hasCredentials,
 	removeCredential,
-	removeSession,
+	signJWT,
 	storeChallenge,
 	updateCredentialCounter,
-	verifySession,
+	verifyJWT,
 } from "../../auth.ts";
 import { isAuthEnforced, type WebAuthnConfig } from "../../config.ts";
 import type { DaemonContext } from "../context.ts";
@@ -63,6 +65,19 @@ function resolveOrigin(req: Request): string {
 	return `${proto}://${host}`;
 }
 
+/** Extract JWT from Authorization: Bearer header or query param. */
+function extractToken(c: Context): string | null {
+	// Try Authorization header first
+	const authHeader = c.req.header("authorization");
+	if (authHeader?.startsWith("Bearer ")) {
+		return authHeader.slice(7);
+	}
+	// Fall back to query param (for SSE EventSource which can't set headers)
+	const queryToken = c.req.query("token");
+	if (queryToken) return queryToken;
+	return null;
+}
+
 // ── Login Routes (Main Port) ───────────────────────────────────────────────
 
 export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
@@ -72,12 +87,12 @@ export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
 		const enforced = isAuthEnforced(config);
 		const authPath = getAuthPath(ctx);
 		const hasCreds = await hasCredentials(authPath);
-		const token = getCookie(c, "og_session") ?? "";
-		const hasValidSession = token
-			? await verifySession(authPath, token)
+		const token = extractToken(c);
+		const hasValidToken = token
+			? (await verifyJWT(authPath, token)) !== null
 			: false;
-		// Authenticated if: valid session, or no credentials registered yet (first-run)
-		const authenticated = hasValidSession || !hasCreds;
+		// Authenticated if: valid JWT, or no credentials registered yet (first-run)
+		const authenticated = hasValidToken || !hasCreds;
 
 		return c.json({
 			enabled: hasCreds,
@@ -114,7 +129,7 @@ export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
 		return c.json(options);
 	});
 
-	// Verify authentication response
+	// Verify authentication response — returns JWT token
 	app.post("/auth/login/verify", async (c) => {
 		const authPath = getAuthPath(ctx);
 		const body = (await c.req.json()) as AuthenticationResponseJSON;
@@ -159,18 +174,10 @@ export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
 				verification.authenticationInfo.newCounter,
 			);
 
-			// Create session
-			const token = await createSession(authPath);
-			const isSecure = c.req.url.startsWith("https");
-			setCookie(c, "og_session", token, {
-				httpOnly: true,
-				secure: isSecure,
-				sameSite: isSecure ? "Strict" : "Lax",
-				path: "/",
-				maxAge: 30 * 24 * 60 * 60, // 30 days
-			});
+			// Issue JWT token
+			const token = await signJWT(authPath, credential.credentialID);
 
-			return c.json({ verified: true });
+			return c.json({ verified: true, token });
 		} catch (err) {
 			return c.json(
 				{ error: err instanceof Error ? err.message : "Verification failed" },
@@ -179,22 +186,10 @@ export function registerAuthRoutes(app: Hono, ctx: DaemonContext) {
 		}
 	});
 
-	// Logout
-	app.post("/auth/logout", async (c) => {
-		const authPath = getAuthPath(ctx);
-		const token = getCookie(c, "og_session");
-		if (token) {
-			await removeSession(authPath, token);
-		}
-		const isSecureLogout = c.req.url.startsWith("https");
-		setCookie(c, "og_session", "", {
-			httpOnly: true,
-			secure: isSecureLogout,
-			sameSite: isSecureLogout ? "Strict" : "Lax",
-			path: "/",
-			maxAge: 0,
-		});
-		return c.json({ ok: true });
+	// Logout — JWT is stateless, so logout is client-side (remove stored token).
+	// This endpoint exists for API consistency; it's a no-op on the server.
+	app.post("/auth/logout", (_c) => {
+		return _c.json({ ok: true });
 	});
 
 	// ── Registration routes (blocked when enforced, unless no credentials exist) ──
@@ -361,16 +356,15 @@ export function createAuthMiddleware(ctx: DaemonContext) {
 		const authPath = getAuthPath(ctx);
 		if (!(await hasCredentials(authPath))) return next();
 
-		// Check session cookie
-		const cookieHeader = c.req.header("cookie") ?? "";
-		const token = parseCookieValue(cookieHeader, "og_session");
+		// Check JWT from Authorization header or query param (SSE)
+		const token = extractToken(c);
 
 		if (!token) {
 			return c.json({ error: "Unauthorized" }, 401);
 		}
 
-		const valid = await verifySession(authPath, token);
-		if (!valid) {
+		const payload = await verifyJWT(authPath, token);
+		if (!payload) {
 			return c.json({ error: "Unauthorized" }, 401);
 		}
 
@@ -379,14 +373,6 @@ export function createAuthMiddleware(ctx: DaemonContext) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-function parseCookieValue(
-	cookieHeader: string,
-	name: string,
-): string | undefined {
-	const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-	return match?.[1];
-}
 
 function base64urlToUint8Array(base64url: string): Uint8Array<ArrayBuffer> {
 	const base64 = base64url.replace(/-/g, "+").replace(/_/g, "/");

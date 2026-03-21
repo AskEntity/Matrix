@@ -4,6 +4,7 @@ import {
 	startAuthentication,
 } from "@simplewebauthn/browser";
 import { useCallback, useState } from "react";
+import { setToken } from "../auth.ts";
 
 interface LoginPageProps {
 	onAuthenticated: () => void;
@@ -63,8 +64,12 @@ export function LoginPage({
 				);
 			}
 
-			const result = (await verifyRes.json()) as { verified: boolean };
-			if (result.verified) {
+			const result = (await verifyRes.json()) as {
+				verified: boolean;
+				token?: string;
+			};
+			if (result.verified && result.token) {
+				setToken(result.token);
 				setStatus("Authenticated!");
 				setIsError(false);
 				onAuthenticated();

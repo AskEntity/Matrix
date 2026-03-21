@@ -1,5 +1,6 @@
 import type React from "react";
 import { useEffect, useState } from "react";
+import { authFetch } from "../auth.ts";
 import type { Project } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import {
@@ -54,7 +55,7 @@ export function AppHeader({
 	const [versionInfo, setVersionInfo] = useState<string>("");
 
 	useEffect(() => {
-		fetch("/version")
+		authFetch("/version")
 			.then((r) => r.json())
 			.then((data: { version?: string; gitHash?: string }) => {
 				const hash =
