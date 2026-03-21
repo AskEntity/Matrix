@@ -195,7 +195,7 @@ function broadcastAgentStreamEvent(
 	if (eventType === "queue_message") {
 		const consumedIds = extractConsumedUserIds(eventData);
 		if (consumedIds.length > 0) {
-			broadcast(ctx.wsClients, projectId, {
+			broadcast(ctx.sseClients, projectId, {
 				type: "messages_consumed",
 				messageIds: consumedIds,
 				taskId,
@@ -209,7 +209,7 @@ function broadcastAgentStreamEvent(
 		Array.isArray(eventData._consumedMessageIds) &&
 		eventData._consumedMessageIds.length > 0
 	) {
-		broadcast(ctx.wsClients, projectId, {
+		broadcast(ctx.sseClients, projectId, {
 			type: "messages_consumed",
 			messageIds: eventData._consumedMessageIds as string[],
 			taskId,
@@ -537,7 +537,7 @@ export async function stopAgent(
 	// Clear pending state — queue is gone, no pending messages
 	broadcastPendingCleared(ctx, projectId);
 	ctx.pendingClarifications.delete(projectId);
-	broadcast(ctx.wsClients, projectId, {
+	broadcast(ctx.sseClients, projectId, {
 		type: "pending_clarifications",
 		projectId,
 		clarifications: [],
@@ -1212,7 +1212,7 @@ export async function handleOrchestrate(
 			};
 			orchEventStore.append(orchRootNodeId, orchUserMsg);
 			// Broadcast message so frontend can show it in pending area
-			broadcast(ctx.wsClients, projectId, {
+			broadcast(ctx.sseClients, projectId, {
 				...orchUserMsg,
 				taskId: orchRootNodeId,
 			} as unknown as Record<string, unknown>);
@@ -1286,7 +1286,7 @@ export async function handleInjectMessage(
 				};
 				eventStore.append(freshRootNodeId, userMsgEvent);
 				// Broadcast message so frontend can show it in pending area
-				broadcast(ctx.wsClients, projectId, {
+				broadcast(ctx.sseClients, projectId, {
 					...userMsgEvent,
 					taskId: freshRootNodeId,
 				} as unknown as Record<string, unknown>);
@@ -1318,7 +1318,7 @@ export async function handleInjectMessage(
 	eventStore.append(rootNodeId, userMsgEvent);
 
 	// Broadcast message so frontend can show it in pending area
-	broadcast(ctx.wsClients, projectId, {
+	broadcast(ctx.sseClients, projectId, {
 		...userMsgEvent,
 		taskId: rootNodeId,
 	} as unknown as Record<string, unknown>);
@@ -1340,7 +1340,7 @@ export async function handleInjectMessage(
 	}
 
 	// Message was persisted — broadcast as pending until agent loads it
-	broadcast(ctx.wsClients, projectId, {
+	broadcast(ctx.sseClients, projectId, {
 		type: "pending_messages",
 		projectId,
 		messages: [

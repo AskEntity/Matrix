@@ -4,13 +4,15 @@ import type { TaskTracker } from "../task-tracker.ts";
 import type {
 	DaemonContext,
 	PendingClarification,
-	WSClient,
+	SSEClient,
 } from "./context.ts";
 import { getEventStore } from "./helpers.ts";
 
-/** Broadcast an event to all WebSocket clients subscribed to a project. */
+const sseEncoder = new TextEncoder();
+
+/** Broadcast an event to all SSE clients subscribed to a project. */
 export function broadcast(
-	clients: Set<WSClient>,
+	clients: Set<SSEClient>,
 	projectId: string,
 	event: Record<string, unknown>,
 ) {
@@ -21,11 +23,12 @@ export function broadcast(
 		clients.size,
 		"clients",
 	);
-	const msg = JSON.stringify(event);
+	const data = JSON.stringify(event);
+	const sseMessage = sseEncoder.encode(`data: ${data}\n\n`);
 	for (const client of clients) {
 		if (client.projectId === projectId) {
 			try {
-				client.ws.send(msg);
+				client.controller.enqueue(sseMessage);
 			} catch {
 				clients.delete(client);
 			}
@@ -39,7 +42,7 @@ export function broadcastTreeUpdate(
 	projectId: string,
 	tracker: TaskTracker,
 ) {
-	broadcast(ctx.wsClients, projectId, {
+	broadcast(ctx.sseClients, projectId, {
 		type: "tree_updated",
 		nodes: tracker.allNodes(),
 		rootNodeId: tracker.rootNodeId,
@@ -102,7 +105,7 @@ export function broadcastEvent(
 	}
 
 	broadcast(
-		ctx.wsClients,
+		ctx.sseClients,
 		projectId,
 		event as unknown as Record<string, unknown>,
 	);
@@ -129,7 +132,7 @@ export function broadcastPendingFromQueue(
 			text: (m as Extract<QueueMessage, { source: "user" }>).content,
 			timestamp: Date.now(),
 		}));
-	broadcast(ctx.wsClients, projectId, {
+	broadcast(ctx.sseClients, projectId, {
 		type: "pending_messages",
 		projectId,
 		messages: pending,
@@ -141,7 +144,7 @@ export function broadcastPendingCleared(
 	ctx: DaemonContext,
 	projectId: string,
 ): void {
-	broadcast(ctx.wsClients, projectId, {
+	broadcast(ctx.sseClients, projectId, {
 		type: "pending_messages",
 		projectId,
 		messages: [],
@@ -173,7 +176,7 @@ export function addPendingClarification(
 		timestamp: Date.now(),
 	};
 	clarifications.push(entry);
-	broadcast(ctx.wsClients, projectId, {
+	broadcast(ctx.sseClients, projectId, {
 		type: "pending_clarifications",
 		projectId,
 		clarifications,
@@ -193,7 +196,7 @@ export function removePendingClarification(
 		: clarifications.findIndex((c) => c.taskId === taskId);
 	if (idx !== -1) {
 		clarifications.splice(idx, 1);
-		broadcast(ctx.wsClients, projectId, {
+		broadcast(ctx.sseClients, projectId, {
 			type: "pending_clarifications",
 			projectId,
 			clarifications,

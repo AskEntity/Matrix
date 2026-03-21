@@ -616,7 +616,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		});
 		if (deliveryResult === "persisted") {
 			// Message went to disk — broadcast as pending until agent loads it
-			broadcast(ctx.wsClients, project.id, {
+			broadcast(ctx.sseClients, project.id, {
 				type: "pending_messages",
 				projectId: project.id,
 				messages: [{ text: body.content, timestamp: Date.now() }],
