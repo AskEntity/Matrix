@@ -610,3 +610,11 @@ Event (src/events.ts) — THE source of truth
 - **Bug**: First message on fresh/cleared session stays in pending banner forever. Agent responds, message shows in activity log, but pending chip never clears.
 - **Root cause**: `handleInjectMessage` `!rootNodeId` branch writes `message` event (Phase 1) but never emits `messages_consumed` (Phase 2). The message becomes the initial prompt, not a queue message, so no queue drain triggers `messages_consumed`.
 - **Fix**: Broadcast `messages_consumed` immediately after the `message` broadcast in the `!rootNodeId` path — the message was consumed instantly as the prompt.
+
+
+## Clarify Banner Dismissal Fix (March 2026)
+
+- **Root cause**: `handleClarifySubmit` in `web/handlers.ts` only cleared the answer input text (`setClarifyAnswers`) after successful POST, but did NOT remove the answered clarification from `pendingClarifications` state. Banner relied entirely on backend SSE broadcast of `pending_clarifications:[]` to dismiss.
+- **Why intermittent**: If SSE event was delayed or EventSource was recreated (React effect re-run due to dependency changes), the `pending_clarifications:[]` broadcast could be missed.
+- **Fix 1 (optimistic removal)**: After successful POST to `/clarify`, immediately `setPendingClarifications(prev => prev.filter(c => c.id !== clarificationId))`. Added `setPendingClarifications` to `ActionHandlerDeps`.
+- **Fix 2 (reconnect safety net)**: `handleReconnect` in App.tsx now re-fetches pending clarifications (`GET /projects/:id/clarifications`) alongside events and pending messages.

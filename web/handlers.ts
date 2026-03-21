@@ -37,6 +37,18 @@ export interface ActionHandlerDeps {
 	setClarifyAnswers: React.Dispatch<
 		React.SetStateAction<Record<string, string>>
 	>;
+	setPendingClarifications: React.Dispatch<
+		React.SetStateAction<
+			{
+				id: string;
+				taskId: string;
+				question: string;
+				title?: string;
+				body?: string;
+				timestamp: number;
+			}[]
+		>
+	>;
 	setCreatingProject: React.Dispatch<React.SetStateAction<boolean>>;
 	setNewProjectPath: React.Dispatch<React.SetStateAction<string>>;
 	setShowAddProject: React.Dispatch<React.SetStateAction<boolean>>;
@@ -82,6 +94,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		setSelectedTaskId,
 		setRootNodeId,
 		setClarifyAnswers,
+		setPendingClarifications,
 		setCreatingProject,
 		setNewProjectPath,
 		setShowAddProject,
@@ -220,6 +233,12 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				});
 				return;
 			}
+			// Optimistically remove the answered clarification from the banner
+			// immediately, rather than waiting for the SSE broadcast which may
+			// be delayed or lost during brief disconnects.
+			setPendingClarifications((prev) =>
+				prev.filter((c) => c.id !== clarificationId),
+			);
 			setClarifyAnswers((prev) => {
 				const next = { ...prev };
 				delete next[clarificationId];
