@@ -1088,6 +1088,12 @@ select {
 	margin-bottom: 14px;
 }
 
+.og-orch-toggle {
+	margin-left: auto;
+	padding: 4px 6px;
+	color: var(--text-muted);
+}
+
 .og-orch-icon-lg {
 	width: 36px;
 	height: 36px;
