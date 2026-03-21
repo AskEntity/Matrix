@@ -1205,9 +1205,10 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		// Verify message was enqueued (now includes id for two-phase lifecycle)
 		const msgs = taskQueue.drain();
 		expect(msgs).toHaveLength(1);
-		expect(msgs[0]?.source).toBe("user");
-		expect(msgs[0]?.content).toBe("ping from UI");
-		expect(msgs[0]?.id).toBeString();
+		const msg = msgs[0] as { source: "user"; content: string; id: string };
+		expect(msg.source).toBe("user");
+		expect(msg.content).toBe("ping from UI");
+		expect(msg.id).toBeString();
 	});
 
 	test("returns 400 when content is missing", async () => {
