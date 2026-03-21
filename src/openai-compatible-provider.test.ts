@@ -878,6 +878,7 @@ describe("Event recording via EventStore", () => {
 			expect(agentResult.success).toBe(true);
 
 			// Verify Events were recorded
+			await eventStore.flush();
 			const strongEvents = eventStore.readActive(session.sessionId);
 			expect(strongEvents.length).toBeGreaterThanOrEqual(4);
 
@@ -1068,6 +1069,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 				expect(result.success).toBe(true);
 
+				await eventStore.flush();
 				const events = eventStore.readActive(result.sessionId ?? "");
 				expect(events.length).toBeGreaterThanOrEqual(2);
 				expect(events[0]?.type).toBe("user_message");
@@ -1170,6 +1172,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const agentResult = await consumePromise;
 				expect(agentResult.success).toBe(true);
 
+				await eventStore.flush();
 				const events = eventStore.readActive(agentResult.sessionId ?? "");
 				const types = events.map((e) => e.type);
 				expect(types).toContain("user_message");
@@ -1262,6 +1265,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				expect(agentResult.success).toBe(true);
 				expect(idleCount).toBe(2);
 
+				await eventStore.flush();
 				const events = eventStore.readActive(agentResult.sessionId ?? "");
 				const types = events.map((e) => e.type);
 
@@ -1365,6 +1369,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const agentResult = await consumePromise;
 				expect(agentResult.success).toBe(true);
 
+				await eventStore.flush();
 				const events = eventStore.readActive(agentResult.sessionId ?? "");
 				const toolResult = events.find((e) => e.type === "tool_result");
 				expect(toolResult).toBeDefined();
@@ -1476,6 +1481,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const agentResult = await consumePromise;
 				expect(agentResult.success).toBe(true);
 
+				await eventStore.flush();
 				const events = eventStore.readActive(agentResult.sessionId ?? "");
 				const toolCalls = events.filter((e) => e.type === "tool_call");
 				const toolResults = events.filter((e) => e.type === "tool_result");
