@@ -618,3 +618,13 @@ Event (src/events.ts) — THE source of truth
 - **Why intermittent**: If SSE event was delayed or EventSource was recreated (React effect re-run due to dependency changes), the `pending_clarifications:[]` broadcast could be missed.
 - **Fix 1 (optimistic removal)**: After successful POST to `/clarify`, immediately `setPendingClarifications(prev => prev.filter(c => c.id !== clarificationId))`. Added `setPendingClarifications` to `ActionHandlerDeps`.
 - **Fix 2 (reconnect safety net)**: `handleReconnect` in App.tsx now re-fetches pending clarifications (`GET /projects/:id/clarifications`) alongside events and pending messages.
+
+
+## SSE Heartbeat (March 2026)
+
+- **Two-tier heartbeat** prevents SSE connections from silently dying (especially through CF Tunnel which kills idle connections ~100s):
+  1. SSE comment (`": heartbeat\n\n"`) every 15s — standard SSE keepalive, keeps TCP alive through proxies. Invisible to `EventSource.onmessage`.
+  2. Data heartbeat (`data: {"type":"heartbeat"}`) every 120s — triggers `onmessage`, updates `lastMessageRef` for client-side dead connection detection.
+- **Client watchdog** in `useSSE` (`web/hooks.ts`): checks every 10s. Force-reconnects (via `reconnectKey` state bump) if no data event in 150s OR if `EventSource.readyState === CLOSED` (CF Tunnel clean close won't auto-reconnect).
+- **`reconnectKey`**: State variable in `useSSE`. Bumping it triggers effect cleanup (close old source) + re-run (create new source). `reconnectKey > 0` means watchdog-forced reconnect — `hasConnectedBefore` starts `true` so `onReconnect` fires on first open.
+- **`handleWS` ignoring heartbeat**: Heartbeat data events are filtered in `onmessage` before reaching `handleWS` — just `return` after updating `lastMessageRef`.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch, getToken } from "./auth.ts";
 
 export type { TaskNode, TaskStatus } from "../src/types.ts";
@@ -50,6 +50,17 @@ let logIdCounter = 0;
 
 // --- useSSE ---
 
+/** How often the watchdog checks for dead connections (ms). */
+const WATCHDOG_CHECK_INTERVAL = 10_000;
+/**
+ * If no SSE data event received within this window, consider connection dead (ms).
+ * Server sends two tiers of heartbeat:
+ * 1. SSE comments every 15s — keeps TCP alive (invisible to EventSource)
+ * 2. Data heartbeat every 120s — triggers onmessage, updates lastMessageRef
+ * Watchdog timeout is 150s (~1.25x data heartbeat interval).
+ */
+const WATCHDOG_TIMEOUT = 150_000;
+
 export function useSSE(
 	projectId: string,
 	onMessage: (msg: Record<string, unknown>) => void,
@@ -57,7 +68,10 @@ export function useSSE(
 	onReconnect?: () => void,
 ) {
 	const [connected, setConnected] = useState(false);
-	const [lastMessageAt, setLastMessageAt] = useState<Date | null>(null);
+	// Bump to force EventSource re-creation when watchdog detects stale connection
+	const [reconnectKey, setReconnectKey] = useState(0);
+	// Use ref for watchdog timestamp — avoids re-renders on every heartbeat
+	const lastMessageRef = useRef<number>(Date.now());
 
 	useEffect(() => {
 		if (!projectId) return;
@@ -66,12 +80,15 @@ export function useSSE(
 		const token = getToken();
 		if (token) url += `&token=${encodeURIComponent(token)}`;
 		const source = new EventSource(url);
+		lastMessageRef.current = Date.now();
 
-		// Track whether this is the first connect or a reconnect
-		let hasConnectedBefore = false;
+		// Track whether this is the first connect or a reconnect.
+		// reconnectKey > 0 means the watchdog forced re-creation — treat as reconnect.
+		let hasConnectedBefore = reconnectKey > 0;
 
 		source.onopen = () => {
 			setConnected(true);
+			lastMessageRef.current = Date.now();
 			if (hasConnectedBefore) {
 				// Reconnect — ring buffer may have caught up, but we also need
 				// to re-fetch events in case the gap was too large
@@ -82,9 +99,12 @@ export function useSSE(
 		};
 
 		source.onmessage = (evt) => {
+			lastMessageRef.current = Date.now();
 			try {
-				setLastMessageAt(new Date());
-				onMessage(JSON.parse(evt.data));
+				const data = JSON.parse(evt.data);
+				// Data heartbeats update lastMessageRef but aren't processed
+				if (data.type === "heartbeat") return;
+				onMessage(data);
 			} catch {
 				/* ignore */
 			}
@@ -95,12 +115,28 @@ export function useSSE(
 			// EventSource auto-reconnects — no manual retry logic needed
 		};
 
+		// Watchdog: detect silently dead connections and force reconnect.
+		// Two cases:
+		// 1. No data event (real or heartbeat) in 150s — connection silently died
+		// 2. EventSource entered CLOSED state (e.g. CF Tunnel clean close) — won't auto-reconnect
+		// In both cases, bump reconnectKey to tear down and re-create EventSource.
+		const watchdog = setInterval(() => {
+			const elapsed = Date.now() - lastMessageRef.current;
+			const isClosed = source.readyState === EventSource.CLOSED;
+			if (isClosed || elapsed > WATCHDOG_TIMEOUT) {
+				source.close();
+				setConnected(false);
+				setReconnectKey((k) => k + 1);
+			}
+		}, WATCHDOG_CHECK_INTERVAL);
+
 		return () => {
+			clearInterval(watchdog);
 			source.close();
 		};
-	}, [projectId, onMessage, onConnect, onReconnect]);
+	}, [projectId, reconnectKey, onMessage, onConnect, onReconnect]);
 
-	return { connected, lastMessageAt };
+	return { connected };
 }
 
 // --- useProjects ---
