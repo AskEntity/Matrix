@@ -203,6 +203,19 @@ function broadcastAgentStreamEvent(
 			});
 		}
 	}
+	// Also handle yield/done tool_result events that carry consumed message IDs
+	if (
+		eventType === "tool_result" &&
+		Array.isArray(eventData._consumedMessageIds) &&
+		eventData._consumedMessageIds.length > 0
+	) {
+		broadcast(ctx.wsClients, projectId, {
+			type: "messages_consumed",
+			messageIds: eventData._consumedMessageIds as string[],
+			taskId,
+			ts: Date.now(),
+		});
+	}
 }
 
 // ---------------------------------------------------------------------------

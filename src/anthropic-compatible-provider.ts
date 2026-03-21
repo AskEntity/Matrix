@@ -1157,6 +1157,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 									textParts.push(JSON.stringify(c));
 								}
 							}
+							// Extract consumed message IDs from yield/done tools
+							const consumedIds = Array.isArray(mcpResult._consumedMessageIds)
+								? (mcpResult._consumedMessageIds as string[])
+								: undefined;
 							return {
 								content: textParts.join("\n"),
 								isError: mcpResult.isError ?? false,
@@ -1164,6 +1168,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 								imageData: imageParts[0]?.base64,
 								mediaType: imageParts[0]?.mediaType,
 								mcpImages: imageParts,
+								...(consumedIds?.length
+									? { _consumedMessageIds: consumedIds }
+									: {}),
 							};
 						} catch (e) {
 							return {
@@ -1195,6 +1202,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					imageData?: string;
 					mediaType?: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 					mcpImages?: Array<{ base64: string; mediaType: string }>;
+					_consumedMessageIds?: string[];
 				};
 
 				// Update cwd if bash tool changed it
@@ -1220,6 +1228,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					content: text.slice(0, 500),
 					isError,
 					...(images.length > 0 ? { images } : {}),
+					...(exec._consumedMessageIds?.length
+						? { _consumedMessageIds: exec._consumedMessageIds }
+						: {}),
 				};
 
 				if (exec.isImage && exec.imageData && exec.mediaType) {
@@ -1319,6 +1330,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						isImage?: boolean;
 						imageData?: string;
 						mediaType?: string;
+						_consumedMessageIds?: string[];
 					};
 					// Use the actual content from toolResults (includes cancellation text appended by queue drain)
 					const resultContent =
@@ -1334,6 +1346,11 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							mediaType: exec.mediaType,
 						});
 					}
+					// Merge consumed IDs: cancellation-point queue IDs + yield/done tool IDs
+					const allConsumedIds = [
+						...consumedIds,
+						...(exec._consumedMessageIds ?? []),
+					];
 					// Attach messagesConsumed to the LAST tool_result (cancellation point)
 					const isLast = idx === toolUses.length - 1;
 					toolEvents.push({
@@ -1342,8 +1359,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						content: resultContent,
 						isError: exec.isError,
 						...(images.length > 0 ? { images } : {}),
-						...(isLast && consumedIds.length > 0
-							? { messagesConsumed: consumedIds }
+						...(isLast && allConsumedIds.length > 0
+							? { messagesConsumed: allConsumedIds }
 							: {}),
 						ts: Date.now(),
 					});
