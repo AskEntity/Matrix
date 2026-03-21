@@ -1492,6 +1492,13 @@ export function createOrchestratorTools(
 					type: "clarification_requested",
 					taskId,
 					question: args.question,
+					// Title is the first line; body is the rest (if multi-line)
+					...(args.question.includes("\n")
+						? {
+								title: args.question.split("\n")[0],
+								body: args.question.split("\n").slice(1).join("\n").trim(),
+							}
+						: { title: args.question }),
 				});
 
 				return {

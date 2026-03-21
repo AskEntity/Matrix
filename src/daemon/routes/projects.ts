@@ -4,7 +4,10 @@ import type { Hono } from "hono";
 import { globalAgentQueues } from "../../message-queue.ts";
 import { stopAgent } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
-import { getPendingClarifications } from "../event-system.ts";
+import {
+	getPendingClarifications,
+	pendingTextForMessage,
+} from "../event-system.ts";
 import { getEventStore, normalizeEventForUI } from "../helpers.ts";
 
 export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
@@ -106,15 +109,12 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 			// All agent queues (root + children) are in unified globalAgentQueues
 			const queue = globalAgentQueues.get(rootNodeId);
 			if (queue) {
-				pending = queue
-					.peekMessages()
-					.filter((m) => m.source === "user")
-					.map((m, i) => ({
-						id: `pending-${Date.now()}-${i}`,
-						taskId: null,
-						text: (m as { content: string }).content,
-						timestamp: Date.now(),
-					}));
+				pending = queue.peekMessages().map((m, i) => ({
+					id: `pending-${Date.now()}-${i}`,
+					taskId: null,
+					text: pendingTextForMessage(m),
+					timestamp: Date.now(),
+				}));
 			}
 		}
 		return c.json({ messages: pending });

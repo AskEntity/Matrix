@@ -1,7 +1,10 @@
 import type { Hono } from "hono";
 import { globalAgentQueues } from "../../message-queue.ts";
 import type { DaemonContext, SSEClient } from "../context.ts";
-import { getPendingClarifications } from "../event-system.ts";
+import {
+	getPendingClarifications,
+	pendingTextForMessage,
+} from "../event-system.ts";
 import { getTracker } from "../helpers.ts";
 
 const encoder = new TextEncoder();
@@ -44,13 +47,12 @@ async function sendInitialState(
 	if (rootNodeId) {
 		const agentQueue = globalAgentQueues.get(rootNodeId);
 		if (agentQueue) {
-			const pending = agentQueue
-				.peekMessages()
-				.filter((m) => m.source === "user")
-				.map((m) => ({
-					text: (m as { content: string }).content,
-					timestamp: Date.now(),
-				}));
+			const pending = agentQueue.peekMessages().map((m, i) => ({
+				id: `pending-${Date.now()}-${i}`,
+				taskId: null,
+				text: pendingTextForMessage(m),
+				timestamp: Date.now(),
+			}));
 			if (pending.length > 0) {
 				sendSSE(client, {
 					type: "pending_messages",

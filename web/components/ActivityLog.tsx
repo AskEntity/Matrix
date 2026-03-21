@@ -36,7 +36,7 @@ function getSearchableText(entry: LogEntry): string {
 		case "compact_started":
 			return "Compressing context...";
 		case "clarification_requested":
-			return entry.question;
+			return entry.title ?? entry.question;
 		case "clarification_answered":
 			return entry.answer;
 		default:

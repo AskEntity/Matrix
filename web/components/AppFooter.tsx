@@ -29,6 +29,8 @@ export function AppFooter({
 		id: string;
 		taskId: string;
 		question: string;
+		title?: string;
+		body?: string;
 		timestamp: number;
 	}[];
 	clarifyAnswers: Record<string, string>;
@@ -60,7 +62,10 @@ export function AppFooter({
 										{t("clarify.from")} {taskTitle}
 									</span>
 								</div>
-								<p className="og-clarification-question">{c.question}</p>
+								<p className="og-clarification-question">
+									{c.title ?? c.question}
+								</p>
+								{c.body && <p className="og-clarification-body">{c.body}</p>}
 								<form
 									className="og-clarification-form"
 									onSubmit={(e) => {

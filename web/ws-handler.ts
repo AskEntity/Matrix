@@ -1166,6 +1166,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					id: string;
 					taskId: string;
 					question: string;
+					title?: string;
+					body?: string;
 					timestamp: number;
 				}[]) ?? [],
 			);

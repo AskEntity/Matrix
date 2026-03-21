@@ -210,7 +210,14 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		}[]
 	>([]);
 	const [pendingClarifications, setPendingClarifications] = useState<
-		{ id: string; taskId: string; question: string; timestamp: number }[]
+		{
+			id: string;
+			taskId: string;
+			question: string;
+			title?: string;
+			body?: string;
+			timestamp: number;
+		}[]
 	>([]);
 	const [clarifyAnswers, setClarifyAnswers] = useState<Record<string, string>>(
 		{},
