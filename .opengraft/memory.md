@@ -559,3 +559,11 @@ Event (src/events.ts) — THE source of truth
 - **Frontend merge logic**: `pending_messages` events replace entries matching the incoming `taskId`, keeping other tasks' pending intact.
 - **stopAgent clears per-task**: Iterates all tracker nodes and broadcasts clear for each, since `queue.close()` does NOT trigger `onDrain` callbacks.
 - **SSE initial state + REST endpoint**: Now scan ALL agent queues via `tracker.allNodes()`, not just root.
+
+
+## Chrome MCP: take_snapshot vs take_screenshot (March 2026)
+
+- **take_snapshot is OK for child task views** — child tasks have short activity logs, snapshot size is manageable.
+- **take_snapshot is DANGEROUS for root/orchestrator view** — root has thousands of activity log entries, snapshot blows up context (hundreds of thousands of tokens).
+- **Rule**: Use take_screenshot for root/orchestrator. Use take_snapshot for child tasks when you need to interact with specific UI elements (click, type, etc.).
+- **take_screenshot is always safe** — fixed size regardless of page content.
