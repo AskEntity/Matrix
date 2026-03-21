@@ -535,3 +535,9 @@ Event (src/events.ts) — THE source of truth
 - **Logout**: Now stateless — server endpoint is a no-op. Client-side `clearToken()` removes JWT from localStorage.
 - **Backward compat**: Old `sessions` array in auth.json is ignored (not written back). `auth.json` migrates cleanly — existing credentials preserved, sessions dropped.
 - **JWT payload**: `{ sub: credentialID, iat: seconds, exp: seconds }`. 30-day TTL. Expiry checked on every verify.
+
+## Orchestrator Pitfall: Closed Task Resume (March 2026)
+
+- **Never assume a child_complete from a previously-closed task is stale.** User can resume closed tasks via UI. When a closed task reports passed, ALWAYS check the branch for new commits and merge them.
+- **child_report = something happened.** Even if a task was "already done", a child_report means the agent is running. Do NOT close_task while it has running agents.
+- **Always `git log main..<branch>` before close_task** — verify there are truly no unmerged commits.
