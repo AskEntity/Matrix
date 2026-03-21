@@ -103,9 +103,8 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 			timestamp: number;
 		}[] = [];
 		if (rootNodeId) {
-			const queue =
-				globalAgentQueues.get(rootNodeId) ??
-				ctx.activeSessions.get(project.id)?.queue;
+			// All agent queues (root + children) are in unified globalAgentQueues
+			const queue = globalAgentQueues.get(rootNodeId);
 			if (queue) {
 				pending = queue
 					.peekMessages()

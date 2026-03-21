@@ -6,7 +6,6 @@ import type {
 	AgentEvent,
 	AgentProvider,
 	AgentRequest,
-	AgentSession,
 } from "./agent-provider.ts";
 import { runChildCore } from "./daemon/agent-lifecycle.ts";
 import { createApp } from "./daemon.ts";
@@ -981,8 +980,8 @@ describe("lifecycle: parent chain notifications", () => {
 		globalAgentQueues.delete(child.id);
 	});
 
-	test("user message to child notifies root orchestrator via activeSessions queue", async () => {
-		const { app, pm, markReady, activeSessions } = createApp({
+	test("user message to child notifies root orchestrator via globalAgentQueues", async () => {
+		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
@@ -997,24 +996,15 @@ describe("lifecycle: parent chain notifications", () => {
 			parentId: root.id,
 		});
 
-		// Root orchestrator's queue lives in activeSessions (not globalAgentQueues)
+		// Root orchestrator's queue is in the unified globalAgentQueues registry
 		const rootQueue = new MessageQueue();
-		activeSessions.set(project.id, {
-			sessionId: "test-session",
-			queue: rootQueue,
-			sendMessage: async () => {},
-			stop: () => {},
-			events: (async function* () {
-				yield { type: "text" as const, text: "" };
-				return { success: true } as AgentResult;
-			})(),
-		} as AgentSession);
+		globalAgentQueues.set(root.id, rootQueue);
 
 		// Child has a queue in globalAgentQueues
 		const childQueue = new MessageQueue();
 		globalAgentQueues.set(child.id, childQueue);
 
-		// Send message to child — should notify root via activeSessions
+		// Send message to child — should notify root via globalAgentQueues
 		const res = await sendTaskMessage(app, project.id, child.id, "hello child");
 		expect(res.status).toBe(200);
 
@@ -1023,7 +1013,7 @@ describe("lifecycle: parent chain notifications", () => {
 		expect(childMsgs).toHaveLength(1);
 		expect(childMsgs[0]?.source).toBe("user");
 
-		// Root orchestrator should have a child_report notification via activeSessions queue
+		// Root orchestrator should have a child_report notification via globalAgentQueues
 		const rootMsgs = rootQueue.drain();
 		expect(rootMsgs.length).toBeGreaterThanOrEqual(1);
 		const notification = rootMsgs.find((m) => m.source === "child_report");
@@ -1035,7 +1025,7 @@ describe("lifecycle: parent chain notifications", () => {
 		childQueue.close();
 		rootQueue.close();
 		globalAgentQueues.delete(child.id);
-		activeSessions.delete(project.id);
+		globalAgentQueues.delete(root.id);
 	});
 });
 

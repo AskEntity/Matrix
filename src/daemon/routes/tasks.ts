@@ -49,15 +49,8 @@ async function notifyParentChain(
 			content: `User sent a message to child task '${taskTitle}' (${taskId})`,
 		};
 
-		let ancestorQueue = globalAgentQueues.get(currentId);
-
-		// Root orchestrator's queue is in activeSessions, not globalAgentQueues
-		if (!ancestorQueue && !ancestor.parentId) {
-			const session = ctx.activeSessions.get(projectId);
-			if (session?.queue) {
-				ancestorQueue = session.queue;
-			}
-		}
+		// All agent queues (root + children) are in unified globalAgentQueues
+		const ancestorQueue = globalAgentQueues.get(currentId);
 
 		if (ancestorQueue) {
 			try {
@@ -97,15 +90,20 @@ function notifyAgentOfTreeChange(
 	});
 
 	// Non-waking queue message for agent awareness — picked up on next drain(), doesn't interrupt yield
-	const session = ctx.activeSessions.get(projectId);
-	if (session) {
-		try {
-			session.queue.enqueueQuiet({
-				source: "system",
-				content: `Tree ${action.replace("task_", "")}${title ? `: "${title}"` : ""} (${nodeId}). Call get_tree to see the latest state.`,
-			});
-		} catch {
-			/* queue may be closed */
+	// Look up root queue in unified registry
+	const tracker = ctx.trackers.get(projectId);
+	const rootNodeId = tracker?.rootNodeId;
+	if (rootNodeId) {
+		const rootQueue = globalAgentQueues.get(rootNodeId);
+		if (rootQueue) {
+			try {
+				rootQueue.enqueueQuiet({
+					source: "system",
+					content: `Tree ${action.replace("task_", "")}${title ? `: "${title}"` : ""} (${nodeId}). Call get_tree to see the latest state.`,
+				});
+			} catch {
+				/* queue may be closed */
+			}
 		}
 	}
 }
