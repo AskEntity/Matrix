@@ -33,6 +33,7 @@ async function notifyParentChain(
 	taskId: string,
 	taskTitle: string,
 	messageContent: string,
+	statusBeforeDelivery?: string,
 ): Promise<void> {
 	const tracker = await getTracker(ctx, projectId);
 	const node = tracker.get(taskId);
@@ -43,11 +44,26 @@ async function notifyParentChain(
 		const ancestor = tracker.get(currentId);
 		if (!ancestor) break;
 
+		const wasResumed =
+			statusBeforeDelivery === "closed" ||
+			statusBeforeDelivery === "passed" ||
+			statusBeforeDelivery === "failed";
+		let content: string;
+		if (wasResumed) {
+			const details: string[] = [];
+			if (node.worktreePath) details.push(`worktree: ${node.worktreePath}`);
+			if (node.branch) details.push(`branch: ${node.branch}`);
+			const detailStr = details.length > 0 ? ` (${details.join(", ")})` : "";
+			content = `User RESUMED ${statusBeforeDelivery} task '${taskTitle}'${detailStr} with message: ${messageContent}`;
+		} else {
+			content = `User sent a message to child task '${taskTitle}' (${taskId}): ${messageContent}`;
+		}
+
 		const notification = {
 			source: "child_report" as const,
 			taskId,
 			title: taskTitle,
-			content: `User sent a message to child task '${taskTitle}' (${taskId}): ${messageContent}`,
+			content,
 		};
 
 		// All agent queues (root + children) are in unified globalAgentQueues
@@ -551,6 +567,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const tracker = await getTracker(ctx, project.id);
 		const node = tracker.get(nodeId);
 		const taskTitle = node?.title ?? nodeId;
+		const statusBeforeDelivery = node?.status;
 
 		// Unified delivery: enqueue (if running) or persist + launch (if not)
 		const deliveryResult = await deliverMessage(ctx, project, nodeId, {
@@ -567,7 +584,14 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 
 		// Notify parent chain that user sent a message to this task (REST-only)
-		await notifyParentChain(ctx, project.id, nodeId, taskTitle, body.content);
+		await notifyParentChain(
+			ctx,
+			project.id,
+			nodeId,
+			taskTitle,
+			body.content,
+			statusBeforeDelivery,
+		);
 
 		return c.json({ ok: true, taskId: nodeId });
 	});
