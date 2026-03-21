@@ -84,7 +84,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		nodeMapRef,
 	} = deps;
 
-	/** Shape of a QueueEntry / rawMessage — shared by both formats. */
+	/** Shape of a MessageBody / rawMessage — shared by both formats. */
 	interface QueueEntryLike {
 		source: string;
 		content?: string;
@@ -104,8 +104,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 	}
 
 	/**
-	 * Convert a QueueEntry (or rawMessage) into a UIEvent for rendering.
-	 * Works for both live WS rawMessages AND JSONL queueEntry fields.
+	 * Convert a MessageBody (or rawMessage) into a UIEvent for rendering.
+	 * Works for both live WS rawMessages AND JSONL body fields.
 	 * Returns null for sources that should be skipped.
 	 */
 	function queueEntryToUIEvent(
@@ -124,7 +124,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				// User messages use the two-phase lifecycle (pending → consumed)
 				// When called from materialization, we DO want to show them
 				return {
-					type: "user_message",
+					type: "message",
 					content: qe.content ?? "",
 					...(qe.images?.length ? { images: qe.images } : {}),
 					taskId: parentTaskId,
@@ -464,7 +464,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				if (msg.prompt) {
 					entries.push(
 						createLogEntry({
-							type: "user_message",
+							type: "message",
 							content: msg.prompt as string,
 							taskId: startRootId,
 							ts: (msg.ts as number) ?? Date.now(),
@@ -609,22 +609,25 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				return { entries, updates: [], sideEffects: NO_SIDE_EFFECTS };
 			}
 
+			case "message":
 			case "user_message": {
 				const umId = msg.id as string | undefined;
-				const queueEntry = msg.queueEntry as QueueEntryLike | undefined;
-				const source = queueEntry?.source ?? (msg.source as string | undefined);
+				const bodyField =
+					(msg.body as QueueEntryLike | undefined) ??
+					(msg.queueEntry as QueueEntryLike | undefined);
+				const source = bodyField?.source ?? (msg.source as string | undefined);
 				const umTaskId = msg.taskId as string | null | undefined;
 				const umTs = (msg.ts as number) ?? Date.now();
 
 				if (umId) {
-					// user_message with id = deferred until messages_consumed.
-					// Show ALL sources in pending banner + store queueEntry for materialization.
+					// message with id = deferred until messages_consumed.
+					// Show ALL sources in pending banner + store body for materialization.
 					const umContent = (msg.content as string) || "";
 					const umImages = msg.images as
 						| Array<{ base64: string; mediaType: string }>
 						| undefined;
 					// Build display text for the pending chip
-					const pendingText = pendingChipText(source, umContent, queueEntry);
+					const pendingText = pendingChipText(source, umContent, bodyField);
 					return {
 						entries: [],
 						updates: [],
@@ -647,11 +650,11 @@ export function createWSHandler(deps: WSHandlerDeps) {
 								taskId: umTaskId,
 								ts: umTs,
 							});
-							// Also store queueEntry for non-user sources so
+							// Also store body for non-user sources so
 							// messages_consumed can materialize the correct card type
-							if (queueEntry && source && source !== "user") {
+							if (bodyField && source && source !== "user") {
 								deferredQueueMsgs.set(umId, {
-									queueEntry,
+									queueEntry: bodyField,
 									taskId: umTaskId ?? undefined,
 									ts: umTs,
 								});
@@ -660,11 +663,11 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					};
 				}
 
-				// user_message without id = initial prompt or legacy event
-				// If it has a queueEntry with non-user source, render as the appropriate card type
-				if (queueEntry && source && source !== "user") {
+				// message without id = initial prompt or legacy event
+				// If it has a body with non-user source, render as the appropriate card type
+				if (bodyField && source && source !== "user") {
 					const uiEvent = queueEntryToUIEvent(
-						queueEntry,
+						bodyField,
 						umTaskId ?? undefined,
 						umTs,
 					);
@@ -682,7 +685,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				return {
 					entries: [
 						createLogEntry({
-							type: "user_message",
+							type: "message",
 							content: (msg.content as string) || "",
 							...(msg.images
 								? {
@@ -736,7 +739,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 							if (userMsg) {
 								newEntries.push(
 									createLogEntry({
-										type: "user_message",
+										type: "message",
 										content: userMsg.content,
 										...(userMsg.images?.length
 											? { images: userMsg.images }
@@ -972,16 +975,16 @@ export function createWSHandler(deps: WSHandlerDeps) {
 
 	/**
 	 * Process a batch of events into log entries (used for REST-fetched event history).
-	 * Handles two-phase user message lifecycle: user_message (with id) events are held
+	 * Handles two-phase message lifecycle: message (with id) events are held
 	 * until a messages_consumed event references them, at which point they appear in the
-	 * activity log at the consumption position. Unconsumed user_messages go to pending.
+	 * activity log at the consumption position. Unconsumed messages go to pending.
 	 */
 	function processEventBatch(events: Record<string, unknown>[]): void {
 		const entries: LogEntry[] = [];
 		const deferredSideEffects: (() => void)[] = [];
 
-		// Track user_message events with IDs for two-phase resolution.
-		// Stores queueEntry so we can render the correct card type at materialization.
+		// Track message events with IDs for two-phase resolution.
+		// Stores body so we can render the correct card type at materialization.
 		const pendingUserMsgs = new Map<
 			string,
 			{
@@ -996,7 +999,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		// Track which IDs have been consumed (by messages_consumed events)
 		const consumedIds = new Set<string>();
 
-		/** Materialize a deferred user_message as the appropriate LogEntry. */
+		/** Materialize a deferred message as the appropriate LogEntry. */
 		function materialize(
 			userMsg: {
 				content: string;
@@ -1008,7 +1011,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 			},
 			ts: number,
 		): LogEntry | null {
-			// Non-user sources: render as the appropriate card type from queueEntry
+			// Non-user sources: render as the appropriate card type from body
 			if (userMsg.queueEntry && userMsg.source && userMsg.source !== "user") {
 				const uiEvent = queueEntryToUIEvent(
 					userMsg.queueEntry,
@@ -1017,9 +1020,9 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				);
 				return uiEvent ? createLogEntry(uiEvent) : null;
 			}
-			// User messages (or no source): render as user_message
+			// User messages (or no source): render as message
 			return createLogEntry({
-				type: "user_message",
+				type: "message",
 				content: userMsg.content,
 				...(userMsg.images?.length ? { images: userMsg.images } : {}),
 				taskId: userMsg.taskId,
@@ -1030,13 +1033,15 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		for (const evt of events) {
 			const evtType = evt.type as string;
 
-			// Two-phase user message: collect with-id user_messages for later resolution
-			if (evtType === "user_message" && evt.id) {
-				const queueEntry = evt.queueEntry as QueueEntryLike | undefined;
-				const source = queueEntry?.source ?? (evt.source as string | undefined);
-				// For legacy events without queueEntry, build one from flat fields
+			// Two-phase message: collect with-id messages for later resolution
+			if ((evtType === "message" || evtType === "user_message") && evt.id) {
+				const bodyField =
+					(evt.body as QueueEntryLike | undefined) ??
+					(evt.queueEntry as QueueEntryLike | undefined);
+				const source = bodyField?.source ?? (evt.source as string | undefined);
+				// For legacy events without body/queueEntry, build one from flat fields
 				const effectiveQueueEntry: QueueEntryLike | undefined =
-					queueEntry ??
+					bodyField ??
 					(source
 						? {
 								source,

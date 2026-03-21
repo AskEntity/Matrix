@@ -884,7 +884,7 @@ describe("Event recording via EventStore", () => {
 
 			// Should have: user_message, assistant_text, tool_call, tool_result, assistant_text
 			const types = strongEvents.map((e) => e.type);
-			expect(types[0]).toBe("user_message");
+			expect(types[0]).toBe("message");
 			expect(types).toContain("assistant_text");
 			expect(types).toContain("tool_call");
 			expect(types).toContain("tool_result");
@@ -1072,7 +1072,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				await eventStore.flush();
 				const events = eventStore.readActive(result.sessionId ?? "");
 				expect(events.length).toBeGreaterThanOrEqual(2);
-				expect(events[0]?.type).toBe("user_message");
+				expect(events[0]?.type).toBe("message");
 				expect(events[1]?.type).toBe("assistant_text");
 
 				// Verify reconstruction
@@ -1175,7 +1175,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				await eventStore.flush();
 				const events = eventStore.readActive(agentResult.sessionId ?? "");
 				const types = events.map((e) => e.type);
-				expect(types).toContain("user_message");
+				expect(types).toContain("message");
 				expect(types).toContain("assistant_text");
 				expect(types).toContain("tool_call");
 				expect(types).toContain("tool_result");
@@ -1270,10 +1270,9 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const types = events.map((e) => e.type);
 
 				// Must have user_message events (from queue)
-				expect(types).toContain("user_message");
+				expect(types).toContain("message");
 				const queueMsgEvent = events.find(
-					(e) =>
-						e.type === "user_message" && e.content?.includes("New instruction"),
+					(e) => e.type === "message" && e.content?.includes("New instruction"),
 				);
 				if (queueMsgEvent?.type === "user_message") {
 					expect(queueMsgEvent.content).toContain("New instruction for you");

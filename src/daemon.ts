@@ -31,6 +31,7 @@ import { registerConfigRoutes } from "./daemon/routes/config.ts";
 import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
 import { registerWebSocketRoute } from "./daemon/routes/websocket.ts";
+import { runEventMigrations } from "./event-store.ts";
 import { ProjectManager } from "./project-manager.ts";
 import type {
 	HealthResponse,
@@ -326,6 +327,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		app,
 		adminApp,
 		pm: ctx.pm,
+		dataDir: config.dataDir,
 		wsClients: ctx.wsClients,
 		activeSessions: ctx.activeSessions,
 		autoResumeProjects,
@@ -430,6 +432,7 @@ if (import.meta.main) {
 		app,
 		adminApp,
 		pm,
+		dataDir,
 		autoResumeProjects,
 		shutdown,
 		markReady,
@@ -492,6 +495,13 @@ if (import.meta.main) {
 	};
 	process.on("SIGTERM", handleShutdown);
 	process.on("SIGINT", handleShutdown);
+
+	// Run event migrations on JSONL files (transforms old formats at startup)
+	const sessionsDir = join(dataDir, "sessions");
+	const migrated = runEventMigrations(sessionsDir);
+	if (migrated > 0) {
+		console.log(`Migrated ${migrated} JSONL event file(s) to current format`);
+	}
 
 	// Auto-resume any orchestrations that were running before daemon restart
 	await autoResumeProjects();

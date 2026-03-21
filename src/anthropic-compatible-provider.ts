@@ -610,14 +610,14 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		if (eventStore) {
 			if (isResume) {
 				eventStore.append(sessionId, {
-					type: "user_message",
+					type: "message",
 					content: request.prompt,
 					isResume: true,
 					ts: Date.now(),
 				});
 			} else {
 				eventStore.append(sessionId, {
-					type: "user_message",
+					type: "message",
 					content: firstUserContent,
 					cwd,
 					ts: Date.now(),
@@ -626,11 +626,13 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		}
 
 		// For context compression: use the original task prompt, not the resume prompt.
-		// On resume, find the first user_message in the FULL event history.
+		// On resume, find the first message in the FULL event history.
 		let taskContext = request.prompt;
 		if (isResume && eventStore) {
 			const allEvents = eventStore.read(sessionId);
-			const firstUserMsg = allEvents.find((e) => e.type === "user_message");
+			const firstUserMsg = allEvents.find(
+				(e) => e.type === "message" || e.type === "user_message",
+			);
 			if (firstUserMsg && "content" in firstUserMsg) {
 				taskContext = firstUserMsg.content as string;
 			}
@@ -1084,7 +1086,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						const consumedIds: string[] = [];
 						for (const msg of nonCompact) {
 							if (msg.source === "user" && msg.id) {
-								// user_message already written to JSONL at send time — don't duplicate
+								// message already written to JSONL at send time — don't duplicate
 								consumedIds.push(msg.id);
 							} else {
 								const evt = queueMessageToEvent(msg);
@@ -1382,7 +1384,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				const nonUserQueueEvents: Event[] = [];
 				for (const qm of cancellationQueueMsgs) {
 					if (qm.source === "user" && qm.id) {
-						// user_message already written to JSONL at send time — just track ID
+						// message already written to JSONL at send time — just track ID
 						consumedIds.push(qm.id);
 					} else {
 						const evt = queueMessageToEvent(qm);
@@ -1409,11 +1411,11 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						};
 					};
 					// Record pure tool output — queue text is NOT embedded.
-					// The converter reconstructs queue messages from messagesConsumed + user_message events.
+					// The converter reconstructs queue messages from messagesConsumed + message events.
 					const resultContent = exec.content;
 					const images: Array<{ base64: string; mediaType: string }> = [];
 					// When _formattedQueueMessages is set, mcpImages are user queue images
-					// — they're already recorded as user_message events, not tool images
+					// — they're already recorded as message events, not tool images
 					if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
 						images.push(...exec.mcpImages);
 					} else if (exec.isImage && exec.imageData && exec.mediaType) {

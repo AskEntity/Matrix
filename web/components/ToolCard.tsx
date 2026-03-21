@@ -22,6 +22,7 @@ function getEntryText(entry: LogEntry): string {
 			return entry.content;
 		case "error":
 			return entry.message;
+		case "message":
 		case "user_message":
 			return entry.content ?? "";
 		case "lifecycle":
@@ -1193,7 +1194,7 @@ export function LogEntryView({
 		);
 	}
 
-	if (entry.type === "user_message") {
+	if (entry.type === "message" || entry.type === "user_message") {
 		return (
 			<div className="og-log-entry og-event-user_message">
 				<span className="og-log-time">{formatTime(entry.ts)}</span>

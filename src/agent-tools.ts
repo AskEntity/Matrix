@@ -781,7 +781,7 @@ export function createOrchestratorTools(
 				}
 			}
 
-			// Write structured user_message events to JSONL for each consumed queue message.
+			// Write structured message events to JSONL for each consumed queue message.
 			// The provider writes tool_result + standalone messages_consumed events.
 			const consumedIds: string[] = [];
 			const sessionId = currentTaskId ?? "orchestrator";
@@ -793,7 +793,7 @@ export function createOrchestratorTools(
 					const evt = queueMessageToEvent(msg);
 					const evtId = (evt as { id?: string }).id;
 					if (evtId) consumedIds.push(evtId);
-					// Write the structured user_message event to JSONL
+					// Write the structured message event to JSONL
 					if (deps.eventStore) {
 						deps.eventStore.append(sessionId, evt);
 					}

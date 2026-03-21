@@ -536,6 +536,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			}> = [];
 			for (const event of events) {
 				if (
+					event.type === "message" ||
 					event.type === "user_message" ||
 					event.type === "compacted_resume"
 				) {

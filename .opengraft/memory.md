@@ -476,4 +476,9 @@ Event (src/events.ts) — THE source of truth
 - **Restart daemon**: Via Settings button in UI (Chrome MCP) or POST /restart-daemon with auth cookie. System daemon (LaunchAgent), not bun --watch. Commits do NOT auto-restart.
 
 
+## Message Type Unification (March 2026)
+
+- **`user_message` → `message`**: All injected content is `{type: "message", id, ts, body: {source, ...}}`.
+- **`queueEntry` → `body`**: Field on MessageEvent. `QueueEntry` → `MessageBody`.
+- **Migration runner**: `ACTIVE_MIGRATIONS: EventMigration[]` in `src/event-store.ts`. Called at daemon startup. Idempotent. Add new transforms, remove old ones when confident → `[]`.
 
