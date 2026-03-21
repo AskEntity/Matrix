@@ -97,7 +97,14 @@ async function isGitClean(projectPath: string): Promise<{
 
 /** Format a QueueMessage for display to the agent. */
 export function formatQueueMessage(msg: QueueMessage): string {
-	return formatEventForAI(queueMessageToEvent(msg));
+	const evt = queueMessageToEvent(msg);
+	const time = new Date(evt.ts).toLocaleTimeString("en-GB", {
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		hour12: false,
+	});
+	return `[${time}] ${formatEventForAI(evt)}`;
 }
 
 /** Convert a QueueMessage to a simplified { source, content } for structured WS events. */

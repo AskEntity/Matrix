@@ -465,3 +465,12 @@ Event (src/events.ts) — THE source of truth
 - **Fix**: Added `deferredUserMsgs` Map in ws-handler.ts — stores user message data (content, images, taskId, ts) keyed by message ID. This map is NOT affected by `pending_messages:[]` clearing. `messages_consumed` handler reads from this durable map instead of React state.
 - **Key insight**: `pendingMessages` React state serves two masters (pending banner display AND consumption data). Separating the data store from the display state fixes the race.
 
+
+
+## Agent Self-Awareness: UI and Session Format (March 2026)
+
+- **Use take_screenshot, NOT take_snapshot** for Chrome MCP — snapshots of pages with long activity logs blow up context instantly (hundreds of thousands of tokens). Screenshots are always safe.
+- **Meta-awareness**: When the user describes a UI behavior (blank card, message appearing in wrong view, pending banner not clearing), map it to the corresponding JSONL event, WS broadcast event, and frontend processEvent code path. The user sees cards — I need to think in terms of what events produce those cards.
+- **Timestamps matter**: Messages formatted for AI now include `[HH:MM:SS]` timestamps so the AI can correlate with the user's UI timestamps when discussing specific events.
+- **Session format ≠ UI format**: What the AI sees (formatted text in tool_result) is different from what the user sees (individual cards with timestamps in the activity log). The AI must understand both formats and be able to reason about the mapping.
+- **Restart daemon**: Via Settings button in UI (Chrome MCP) or POST /restart-daemon with auth cookie. System daemon (LaunchAgent), not bun --watch. Commits do NOT auto-restart.
