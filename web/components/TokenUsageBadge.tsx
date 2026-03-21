@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { useLocale } from "../i18n.ts";
 
 /** Format a token count compactly: 1234 → "1.2k", 1234567 → "1.2M" */
@@ -7,7 +8,7 @@ export function formatTokenCount(n: number): string {
 	return String(n);
 }
 
-export function TokenUsageBadge({
+export const TokenUsageBadge = memo(function TokenUsageBadge({
 	inputTokens,
 	contextWindow,
 	estimated,
@@ -40,4 +41,4 @@ export function TokenUsageBadge({
 			</span>
 		</>
 	);
-}
+});

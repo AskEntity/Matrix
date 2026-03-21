@@ -551,46 +551,128 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		handleCreateTask,
 		handleCancelCreate,
 		handleDeleteTaskByDrag,
-	} = createActionHandlers({
-		projectId,
-		selectedTaskId,
-		rootNodeId,
-		selectedNode,
-		isOrchestratorNode,
-		targetNodeId,
-		clarifyAnswers,
-		pendingClarifications,
-		newProjectPath,
-		creatingProject,
-		projects,
-		addLog,
-		setLogs,
-		setLastTurns,
-		setLastInputTokens,
-		setLastCacheCreationTokens,
-		setLastCacheReadTokens,
-		setLastOutputTokens,
-		setProjectId,
-		setSelectedTaskId,
-		setRootNodeId,
-		setClarifyAnswers,
-		setPendingClarifications,
-		setCreatingProject,
-		setNewProjectPath,
-		setShowAddProject,
-		setIsCreatingTask,
-		start,
-		stop,
-		compact,
-		sendMessage,
-		sendMessageToTask,
-		deleteTask,
-		clearTaskSession,
-		initProject,
-		deleteProject,
-		refreshTasks,
-		t,
-	});
+	} = useMemo(
+		() =>
+			createActionHandlers({
+				projectId,
+				selectedTaskId,
+				rootNodeId,
+				selectedNode,
+				isOrchestratorNode,
+				targetNodeId,
+				clarifyAnswers,
+				pendingClarifications,
+				newProjectPath,
+				creatingProject,
+				projects,
+				addLog,
+				setLogs,
+				setLastTurns,
+				setLastInputTokens,
+				setLastCacheCreationTokens,
+				setLastCacheReadTokens,
+				setLastOutputTokens,
+				setProjectId,
+				setSelectedTaskId,
+				setRootNodeId,
+				setClarifyAnswers,
+				setPendingClarifications,
+				setCreatingProject,
+				setNewProjectPath,
+				setShowAddProject,
+				setIsCreatingTask,
+				start,
+				stop,
+				compact,
+				sendMessage,
+				sendMessageToTask,
+				deleteTask,
+				clearTaskSession,
+				initProject,
+				deleteProject,
+				refreshTasks,
+				t,
+			}),
+		[
+			projectId,
+			selectedTaskId,
+			rootNodeId,
+			selectedNode,
+			isOrchestratorNode,
+			targetNodeId,
+			clarifyAnswers,
+			pendingClarifications,
+			newProjectPath,
+			creatingProject,
+			projects,
+			addLog,
+			start,
+			stop,
+			compact,
+			sendMessage,
+			sendMessageToTask,
+			deleteTask,
+			clearTaskSession,
+			initProject,
+			deleteProject,
+			refreshTasks,
+			t,
+		],
+	);
+
+	// ── Stabilized callbacks for memoized child components ───────────────────
+
+	const handleProjectChange = useCallback(
+		(id: string) => {
+			setProjectId(id);
+			setSelectedTaskId(null);
+			setRootNodeId(null);
+			setLogs([]);
+			setTokenUsage({});
+			setPendingMessages([]);
+			setPendingClarifications([]);
+			setActiveAgents(new Set());
+		},
+		[setActiveAgents],
+	);
+
+	const handleShowAddProject = useCallback(() => setShowAddProject(true), []);
+
+	const handleCancelAddProject = useCallback(() => {
+		setShowAddProject(false);
+		setNewProjectPath("");
+	}, []);
+
+	const handleToggleSettings = useCallback(
+		() => setShowSettings((s) => !s),
+		[],
+	);
+
+	const handleThemeChange = useCallback(
+		(t: string) => setThemeState(t as typeof theme),
+		[],
+	);
+
+	const handleToggleSidebar = useCallback(() => setSidebarOpen((s) => !s), []);
+
+	const handleTaskSelect = useCallback((id: string | null) => {
+		setSelectedTaskId(id);
+		setSidebarOpen(false);
+	}, []);
+
+	const handleClearTarget = useCallback(() => {
+		setTargetNodeId(null);
+		setSelectedTaskId(rootNodeId);
+	}, [rootNodeId]);
+
+	const handleClarifyAnswerChange = useCallback(
+		(clarificationId: string, value: string) =>
+			setClarifyAnswers((prev) => ({
+				...prev,
+				[clarificationId]: value,
+			})),
+		[],
+	);
 
 	const filterLabel = isOrchestratorNode
 		? t("orch.label")
@@ -611,28 +693,16 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				creatingProject={creatingProject}
 				showSettings={showSettings}
 				theme={theme}
-				onProjectChange={(id) => {
-					setProjectId(id);
-					setSelectedTaskId(null);
-					setRootNodeId(null);
-					setLogs([]);
-					setTokenUsage({});
-					setPendingMessages([]);
-					setPendingClarifications([]);
-					setActiveAgents(new Set());
-				}}
+				onProjectChange={handleProjectChange}
 				onDeleteProject={handleDeleteProject}
-				onShowAddProject={() => setShowAddProject(true)}
+				onShowAddProject={handleShowAddProject}
 				onAddProject={handleAddProject}
 				onNewProjectPathChange={setNewProjectPath}
-				onCancelAddProject={() => {
-					setShowAddProject(false);
-					setNewProjectPath("");
-				}}
-				onToggleSettings={() => setShowSettings((s) => !s)}
-				onThemeChange={(t) => setThemeState(t as typeof theme)}
+				onCancelAddProject={handleCancelAddProject}
+				onToggleSettings={handleToggleSettings}
+				onThemeChange={handleThemeChange}
 				onLogout={onLogout}
-				onToggleSidebar={() => setSidebarOpen((s) => !s)}
+				onToggleSidebar={handleToggleSidebar}
 			/>
 
 			{showSettings && projectId && (
@@ -715,10 +785,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						selectedTaskId={selectedTaskId}
 						rootNodeId={rootNodeId}
 						activeAgents={activeAgents}
-						onSelect={(id) => {
-							setSelectedTaskId(id);
-							setSidebarOpen(false);
-						}}
+						onSelect={handleTaskSelect}
 						onReorder={reorderTasks}
 						onReparent={reparentTask}
 						isCreating={isCreatingTask}
@@ -916,17 +983,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				pendingClarifications={pendingClarifications}
 				clarifyAnswers={clarifyAnswers}
 				onSend={handleSend}
-				onClearTarget={() => {
-					setTargetNodeId(null);
-					setSelectedTaskId(rootNodeId);
-				}}
+				onClearTarget={handleClearTarget}
 				onClarifySubmit={handleClarifySubmit}
-				onClarifyAnswerChange={(clarificationId, value) =>
-					setClarifyAnswers((prev) => ({
-						...prev,
-						[clarificationId]: value,
-					}))
-				}
+				onClarifyAnswerChange={handleClarifyAnswerChange}
 			/>
 
 			{themes[theme]?.hasCat && <CuteCat />}

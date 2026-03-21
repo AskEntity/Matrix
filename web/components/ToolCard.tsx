@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
 	formatTime,
 	getLogTaskId,
@@ -31,7 +31,7 @@ export {
 } from "./tools/utils.ts";
 
 /** Merged tool_use + tool_result card */
-export function ToolCard({
+export const ToolCard = memo(function ToolCard({
 	useEntry,
 	resultEntry,
 	nodeMap,
@@ -143,4 +143,4 @@ export function ToolCard({
 			</div>
 		</div>
 	);
-}
+});
