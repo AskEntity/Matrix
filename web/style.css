@@ -3421,3 +3421,26 @@ button.og-tool-card-header:hover {
 	background: var(--bg-overlay);
 	color: var(--text-primary);
 }
+
+/* =========================================================
+   Fullscreen Mode — activity log fills entire viewport
+   ========================================================= */
+
+.og-fullscreen .og-sidebar,
+.og-fullscreen .og-sidebar-backdrop {
+	display: none;
+}
+
+.og-fullscreen .og-content {
+	flex: 1;
+	width: 100%;
+}
+
+.og-fullscreen .og-detail-panel,
+.og-fullscreen .og-resize-divider {
+	display: none;
+}
+
+.og-fullscreen .og-activity-panel {
+	flex: 1;
+}
