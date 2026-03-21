@@ -60,7 +60,6 @@ export interface WSHandlerDeps {
 	>;
 	setLastCacheReadTokens: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastOutputTokens: React.Dispatch<React.SetStateAction<number | null>>;
-	nodeMapRef: React.MutableRefObject<Map<string, TaskNode>>;
 	t: (key: string, params?: Record<string, string>) => string;
 }
 
@@ -81,7 +80,6 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		setLastCacheCreationTokens,
 		setLastCacheReadTokens,
 		setLastOutputTokens,
-		nodeMapRef,
 	} = deps;
 
 	/** Shape of a MessageBody / rawMessage — shared by both formats. */
@@ -116,11 +114,26 @@ export function createWSHandler(deps: WSHandlerDeps) {
 	): UIEvent | null {
 		const eventTs = ts ?? Date.now();
 		switch (qe.source) {
-			// These don't show as separate log entries in the activity log
-			case "child_complete":
-			case "system":
+			// Compact messages are internal — never shown in activity log
 			case "compact":
 				return null;
+			case "child_complete":
+				// Render as task_completed card at consumption time
+				return {
+					type: "task_completed",
+					taskId: parentTaskId,
+					title: qe.title ?? "",
+					success: qe.success ?? true,
+					output: qe.output,
+					ts: eventTs,
+				} as UIEvent;
+			case "system":
+				return {
+					type: "lifecycle",
+					content: qe.content ?? "",
+					taskId: parentTaskId,
+					ts: eventTs,
+				} as UIEvent;
 			case "user":
 				// User messages use the two-phase lifecycle (pending → consumed)
 				// When called from materialization, we DO want to show them
@@ -232,14 +245,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		rm: QueueEntryLike,
 		parentTaskId?: string,
 	): UIEvent | null {
-		// For live WS queue_message events: skip child_complete, system, user
-		// (user messages use two-phase lifecycle, child_complete/system are handled elsewhere)
-		if (
-			rm.source === "child_complete" ||
-			rm.source === "system" ||
-			rm.source === "user"
-		)
-			return null;
+		// User messages use two-phase lifecycle (pending → consumed) — skip here
+		if (rm.source === "user") return null;
 		return queueEntryToUIEvent(rm, parentTaskId);
 	}
 
@@ -559,58 +566,41 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				};
 
 			case "task_started": {
-				const startedParentId =
-					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
 				const ts = (msg.ts as number) ?? Date.now();
-				const entries = [
-					createLogEntry({
-						type: "task_started",
-						taskId: msg.taskId as string,
-						title: msg.title as string,
-						ts,
-					}),
-				];
-				if (startedParentId) {
-					entries.push(
+				// Only show in the child task's own view — parent sees it via
+				// queue message two-phase lifecycle (pending → consumed)
+				return {
+					entries: [
 						createLogEntry({
 							type: "task_started",
-							taskId: startedParentId,
+							taskId: msg.taskId as string,
 							title: msg.title as string,
 							ts,
 						}),
-					);
-				}
-
-				return { entries, updates: [], sideEffects: NO_SIDE_EFFECTS };
+					],
+					updates: [],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
 			}
 
 			case "task_completed": {
-				const completedParentId =
-					nodeMapRef.current.get(msg.taskId as string)?.parentId ?? undefined;
 				const ts = (msg.ts as number) ?? Date.now();
-				const entries = [
-					createLogEntry({
-						type: "task_completed",
-						taskId: msg.taskId as string,
-						title: msg.title as string,
-						success: msg.success as boolean,
-						output: (msg.output as string) || undefined,
-						ts,
-					}),
-				];
-				if (completedParentId) {
-					entries.push(
+				// Only show in the child task's own view — parent sees it via
+				// child_complete queue message two-phase lifecycle (pending → consumed)
+				return {
+					entries: [
 						createLogEntry({
 							type: "task_completed",
-							taskId: completedParentId,
+							taskId: msg.taskId as string,
 							title: msg.title as string,
 							success: msg.success as boolean,
 							output: (msg.output as string) || undefined,
 							ts,
 						}),
-					);
-				}
-				return { entries, updates: [], sideEffects: NO_SIDE_EFFECTS };
+					],
+					updates: [],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
 			}
 
 			case "compacted_resume":

@@ -628,3 +628,11 @@ Event (src/events.ts) — THE source of truth
 - **Client watchdog** in `useSSE` (`web/hooks.ts`): checks every 10s. Force-reconnects (via `reconnectKey` state bump) if no data event in 150s OR if `EventSource.readyState === CLOSED` (CF Tunnel clean close won't auto-reconnect).
 - **`reconnectKey`**: State variable in `useSSE`. Bumping it triggers effect cleanup (close old source) + re-run (create new source). `reconnectKey > 0` means watchdog-forced reconnect — `hasConnectedBefore` starts `true` so `onReconnect` fires on first open.
 - **`handleWS` ignoring heartbeat**: Heartbeat data events are filtered in `onmessage` before reaching `handleWS` — just `return` after updating `lastMessageRef`.
+
+
+## Unified Activity Log Display (March 2026)
+
+- **Problem**: `task_completed` and `task_started` standalone SSE events created duplicate log entries in the parent's activity log immediately, while the same info was also delivered via queue messages (`child_complete` source) through the two-phase lifecycle. During long tool calls (e.g., `bash sleep 60`), child events appeared immediately instead of showing in the pending banner first.
+- **Fix**: (1) `task_started`/`task_completed` in `processEvent` no longer create entries in the parent's view — only in the child's own view. (2) `child_complete` and `system` sources in `queueEntryToUIEvent` now render proper cards (`task_completed` and `lifecycle` respectively) instead of returning null. (3) `createQueueUIEvent` no longer skips `child_complete`/`system` — they flow through the two-phase lifecycle like all other queue messages.
+- **Result**: ALL queue messages follow the same lifecycle: fire → pending banner → consumption → activity log card. No more immediate display bypassing the pending phase.
+- **Removed `nodeMapRef`**: No longer needed since `task_started`/`task_completed` don't look up parent IDs. Removed from `WSHandlerDeps`, `createWSHandler`, and `App.tsx`.
