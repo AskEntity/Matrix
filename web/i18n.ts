@@ -95,12 +95,9 @@ const en: Translations = {
 	"detail.cost": "Cost",
 	"detail.message": "Message",
 	"detail.commits": "Commits",
-	"detail.history": "History",
 	"detail.delete": "Delete",
 	"detail.budget": "budget",
 	"detail.selectTask": "Select a task to view details",
-	"detail.loadingHistory": "Loading history…",
-	"detail.noHistory": "No conversation history found.",
 	"detail.editDescription": "Edit description",
 	"detail.clickToEdit": "Click to edit",
 	"detail.runningHint": "Task is running — send a message to update it",
@@ -209,10 +206,6 @@ const en: Translations = {
 		"Clear session history? The orchestrator will start fresh next time.",
 	"confirm.deleteTask": 'Delete task "{title}"?',
 	"confirm.removeProject": 'Remove project "{name}"?',
-
-	// Conversation roles
-	"conv.user": "USER",
-	"conv.assistant": "ASSISTANT",
 
 	// Compact boundary
 	"compact.notVisible": "↑ Content above is not visible to the agent",
@@ -370,12 +363,9 @@ const zh: Translations = {
 	"detail.cost": "费用",
 	"detail.message": "消息",
 	"detail.commits": "提交",
-	"detail.history": "历史",
 	"detail.delete": "删除",
 	"detail.budget": "预算",
 	"detail.selectTask": "选择一个任务查看详情",
-	"detail.loadingHistory": "加载历史…",
-	"detail.noHistory": "未找到对话历史。",
 	"detail.editDescription": "编辑描述",
 	"detail.clickToEdit": "点击编辑",
 	"detail.runningHint": "任务正在运行 — 发送消息来更新",
@@ -481,10 +471,6 @@ const zh: Translations = {
 	"confirm.clearSessions": "清除会话历史？编排器下次将重新开始。",
 	"confirm.deleteTask": '删除任务 "{title}"？',
 	"confirm.removeProject": '移除项目 "{name}"？',
-
-	// Conversation roles
-	"conv.user": "用户",
-	"conv.assistant": "助手",
 
 	// Compact boundary
 	"compact.notVisible": "↑ 以上内容对代理不可见",
