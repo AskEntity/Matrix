@@ -90,31 +90,33 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 		return c.json({ events: all });
 	});
 
-	// Pending messages — derived from queue state
+	// Pending messages — derived from queue state for ALL agents
 	app.get("/projects/:id/pending-messages", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		// Check the root orchestrator's queue for pending user messages
 		const tracker = ctx.trackers.get(project.id);
-		const rootNodeId = tracker?.rootNodeId;
-		let pending: {
+		const pending: {
 			id: string;
 			taskId: string | null;
 			text: string;
 			timestamp: number;
 		}[] = [];
-		if (rootNodeId) {
-			// All agent queues (root + children) are in unified globalAgentQueues
-			const queue = globalAgentQueues.get(rootNodeId);
-			if (queue) {
-				pending = queue.peekMessages().map((m, i) => ({
-					id: `pending-${Date.now()}-${i}`,
-					taskId: null,
-					text: pendingTextForMessage(m),
-					timestamp: Date.now(),
-				}));
+		if (tracker) {
+			for (const node of tracker.allNodes()) {
+				const queue = globalAgentQueues.get(node.id);
+				if (queue) {
+					const taskId = node.id === tracker.rootNodeId ? null : node.id;
+					for (const [i, m] of queue.peekMessages().entries()) {
+						pending.push({
+							id: `pending-${Date.now()}-${i}`,
+							taskId,
+							text: pendingTextForMessage(m),
+							timestamp: Date.now(),
+						});
+					}
+				}
 			}
 		}
 		return c.json({ messages: pending });

@@ -153,29 +153,33 @@ export function pendingTextForMessage(m: QueueMessage): string {
 export function broadcastPendingFromQueue(
 	ctx: DaemonContext,
 	projectId: string,
+	taskId: string | null,
 	messages: QueueMessage[],
 ): void {
 	const pending = messages.map((m, i) => ({
 		id: `pending-${Date.now()}-${i}`,
-		taskId: null,
+		taskId,
 		text: pendingTextForMessage(m),
 		timestamp: Date.now(),
 	}));
 	broadcast(ctx.sseClients, projectId, {
 		type: "pending_messages",
 		projectId,
+		taskId,
 		messages: pending,
 	});
 }
 
-/** Broadcast empty pending messages to WS clients (queue drained). */
+/** Broadcast empty pending messages to SSE clients (queue drained). */
 export function broadcastPendingCleared(
 	ctx: DaemonContext,
 	projectId: string,
+	taskId: string | null,
 ): void {
 	broadcast(ctx.sseClients, projectId, {
 		type: "pending_messages",
 		projectId,
+		taskId,
 		messages: [],
 	});
 }
