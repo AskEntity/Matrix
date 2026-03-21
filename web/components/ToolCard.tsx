@@ -45,7 +45,7 @@ function getEntryText(entry: LogEntry): string {
 		case "compact_marker":
 			return `Context compacted (saved ~${entry.savedTokens} tokens)`;
 		case "compact_started":
-			return "Compressing context...";
+			return "Compacting context...";
 		case "clarify_response":
 			return entry.answer;
 		case "clarification_requested":
@@ -880,7 +880,7 @@ export function LogEntryView({
 			<div className="og-compact-boundary">
 				<div className="og-compact-hint">{t("compact.notVisible")}</div>
 				<div className="og-compact-bar og-compact-bar-loading">
-					<span className="og-compact-label">◈ Compressing context...</span>
+					<span className="og-compact-label">◈ Compacting context...</span>
 				</div>
 			</div>
 		);
