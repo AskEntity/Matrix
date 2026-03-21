@@ -203,7 +203,7 @@ export function InputBar({
 					disabled={!projectId || !prompt.trim()}
 				>
 					<IconSend size={13} />
-					{t("footer.send")}
+					<span className="og-btn-run-label">{t("footer.send")}</span>
 				</button>
 			</div>
 		</form>
