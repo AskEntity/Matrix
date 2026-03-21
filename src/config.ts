@@ -23,8 +23,6 @@ export interface WebAuthnConfig {
 	rpName?: string;
 	/** Relying Party ID (domain). Defaults to request host. */
 	rpID?: string;
-	/** Port for the admin server (localhost-only, used for passkey registration). */
-	adminPort?: number;
 }
 
 export interface OpenGraftConfig {
