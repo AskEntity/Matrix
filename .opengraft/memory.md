@@ -161,8 +161,3 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **Resume error dedup**: Only show errors after last `orchestration_started` or resume event.
 
 
-
-## ToolCard Refactor
-- `web/components/ToolCard.tsx` was split into `tools/utils.ts`, `tools/McpToolCard.tsx`, `tools/ToolResultImages.tsx`, `tools/LogEntryView.tsx`.
-- ToolCard.tsx re-exports everything for backward compat — ActivityLog.tsx import unchanged.
-- Bash/file/search tools use generic args+result rendering (no per-tool body component needed). Only MCP orchestrator tools have structured body rendering via McpToolCardBody.
