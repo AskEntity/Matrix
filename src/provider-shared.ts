@@ -11,10 +11,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentEvent, AgentRequest } from "./agent-provider.ts";
 import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
-import type { EventStore } from "./event-store.ts";
 import {
 	type Event,
-	findOrphanedToolCalls,
 	formatEventForAI,
 	isQueueEvent,
 	type MessageBody,
@@ -548,20 +546,18 @@ export function drainQueueAtCancellationPoint(queue: MessageQueue): {
 	return { messages: nonCompactMsgs, formatted, manualCompactRequested };
 }
 
-// ── EventStore recording helpers ──
+// ── Event emission helpers ──
 
 /**
- * Record queue events and messages_consumed event to EventStore.
+ * Emit queue events and messages_consumed event via the emit callback.
  * Handles the two-phase message lifecycle: user messages with IDs are already
  * written at send time — just track their IDs. Other messages get converted.
  */
 export function recordQueueEvents(
-	eventStore: EventStore,
-	sessionId: string,
+	emit: (event: Event) => void,
 	queueMsgs: QueueMessage[],
 	additionalConsumedIds?: string[],
 ): void {
-	const newEvents: Event[] = [];
 	const consumedIds: string[] = [...(additionalConsumedIds ?? [])];
 
 	for (const msg of queueMsgs) {
@@ -572,19 +568,17 @@ export function recordQueueEvents(
 			const evt = queueMessageToEvent(msg);
 			const evtId = (evt as { id?: string }).id;
 			if (evtId) consumedIds.push(evtId);
-			newEvents.push(evt);
+			emit(evt);
 		}
 	}
 
 	if (consumedIds.length > 0) {
-		newEvents.push({
+		emit({
 			type: "messages_consumed",
 			messageIds: consumedIds,
 			ts: Date.now(),
 		});
 	}
-
-	eventStore.appendBatch(sessionId, newEvents);
 }
 
 /**
@@ -610,7 +604,7 @@ export function collectToolResultImages(
 }
 
 /**
- * Build tool_result events for EventStore recording.
+ * Build tool_result events for emission.
  * Returns the events array with tool_result events, cancellation queue events,
  * and a messages_consumed event combining all consumed IDs.
  */
@@ -700,8 +694,7 @@ export async function* processCompaction(
 	responseText: string,
 	cwd: string | undefined,
 	preCompactTokenCount: number,
-	eventStore: EventStore | undefined,
-	sessionId: string,
+	emit: ((event: Event) => void) | undefined,
 	contextWindow: number,
 	compressThreshold: number,
 ): AsyncGenerator<
@@ -725,15 +718,15 @@ export async function* processCompaction(
 			preCompactTokenCount - estimatedPostCompactTokens,
 		);
 
-		// Append compact_marker + compacted_resume to EventStore
-		if (eventStore) {
-			eventStore.append(sessionId, {
+		// Emit compact_marker + compacted_resume events
+		if (emit) {
+			emit({
 				type: "compact_marker",
 				checkpoint,
 				savedTokens: compactSavedTokens,
 				ts: Date.now(),
 			});
-			eventStore.append(sessionId, {
+			emit({
 				type: "compacted_resume",
 				content: userContent,
 				cwd,
@@ -791,15 +784,14 @@ export function checkBudget(
 }
 
 /**
- * Record a budget warning to EventStore and yield status.
+ * Emit a budget warning event.
  */
 export function recordBudgetWarning(
-	eventStore: EventStore | undefined,
-	sessionId: string,
+	emit: ((event: Event) => void) | undefined,
 	warning: string,
 ): void {
-	if (eventStore) {
-		eventStore.append(sessionId, {
+	if (emit) {
+		emit({
 			type: "budget_warning",
 			warning,
 			ts: Date.now(),
@@ -1145,7 +1137,7 @@ export interface ProviderTokenUsage {
 /**
  * Adapter interface that each provider implements to plug into the unified run loop.
  * The run loop handles ALL control flow (resume, compaction, tool execution, implicit yield,
- * budget check, EventStore recording). The adapter only handles provider-specific operations.
+ * budget check, event emission). The adapter only handles provider-specific operations.
  */
 export interface ProviderAdapter {
 	/** Get context window size for a model. May be async (e.g. OpenAI fetches from API). */
@@ -1292,11 +1284,14 @@ function defaultBuildResult(params: {
  * - Compaction trigger + processing
  * - API call + response handling
  * - Tool execution orchestration
- * - EventStore recording
+ * - Event emission (via emit callback)
  * - Cancellation point drain
  * - Implicit yield
  * - Budget check
  * - Queue closed exit
+ *
+ * Provider has zero EventStore access. All events flow through the `emit` callback
+ * (wired by daemon layer to emitEvent which handles broadcast + persistence).
  *
  * Providers implement a ProviderAdapter with hooks for the ~15 things that differ
  * between Anthropic and OpenAI APIs.
@@ -1315,22 +1310,12 @@ export async function* runProviderLoop(
 	const { compressThreshold, lazyCountThreshold } =
 		getCompactionThresholds(contextWindow);
 
-	// ── Event recording via EventStore (JSONL append-only) ──
-	const eventStore = request.eventStore;
+	// ── Event emission — all events flow through this callback ──
+	const emit = request.emit;
 
-	// Load session from EventStore (survives daemon restart)
-	let activeEvents = eventStore ? eventStore.readActive(sessionId) : [];
+	// Resume from pre-loaded active events (daemon layer reads these from EventStore)
+	const activeEvents = request.activeEvents ?? [];
 	const isResume = activeEvents.length > 0;
-
-	// Fix orphaned tool_calls: persist synthetic tool_results to JSONL so the
-	// fix survives future restarts (no repeated re-fixing on each resume)
-	if (isResume && eventStore) {
-		const orphanFixes = findOrphanedToolCalls(activeEvents);
-		if (orphanFixes.length > 0) {
-			await eventStore.appendBatch(sessionId, orphanFixes);
-			activeEvents = [...activeEvents, ...orphanFixes];
-		}
-	}
 
 	// Prepend working directory to the first user message (not on resume turns) so that
 	// the system prompt stays identical across agents in different worktrees, enabling
@@ -1340,7 +1325,7 @@ export async function* runProviderLoop(
 			? `Working directory: ${cwd}\n\n${request.prompt}`
 			: request.prompt;
 
-	// Reconstruct messages from EventStore on resume, or start fresh
+	// Reconstruct messages from active events on resume, or start fresh
 	// Both providers use { role: "user", content: string } for user messages
 	const messages: unknown[] = isResume
 		? [
@@ -1349,17 +1334,17 @@ export async function* runProviderLoop(
 			]
 		: [{ role: "user" as const, content: firstUserContent }];
 
-	// Record the new user message event
-	if (eventStore) {
+	// Emit the new user message event
+	if (emit) {
 		if (isResume) {
-			eventStore.append(sessionId, {
+			emit({
 				type: "message",
 				content: request.prompt,
 				isResume: true,
 				ts: Date.now(),
 			});
 		} else {
-			eventStore.append(sessionId, {
+			emit({
 				type: "message",
 				content: firstUserContent,
 				cwd,
@@ -1426,8 +1411,7 @@ export async function* runProviderLoop(
 				compactionText,
 				cwd,
 				preCompactTokenCount,
-				eventStore,
-				sessionId,
+				emit,
 				contextWindow,
 				compressThreshold,
 			);
@@ -1507,8 +1491,8 @@ export async function* runProviderLoop(
 					role: "user",
 					content: summarizationInstruction,
 				});
-				if (eventStore) {
-					eventStore.append(sessionId, {
+				if (emit) {
+					emit({
 						type: "summarization_request",
 						instruction: summarizationInstruction,
 						ts: Date.now(),
@@ -1582,13 +1566,15 @@ export async function* runProviderLoop(
 		// Add assistant message to history
 		adapter.addAssistantMessage(messages, response, compactionPending);
 
-		// Record individual Events for each content block
-		if (eventStore) {
+		// Emit individual Events for each content block
+		if (emit) {
 			const contentEvents = adapter.buildResponseEvents(
 				response,
 				compactionPending,
 			);
-			eventStore.appendBatch(sessionId, contentEvents);
+			for (const evt of contentEvents) {
+				emit(evt);
+			}
 		}
 
 		// If compaction is pending, skip tool execution and continue to next iteration
@@ -1659,9 +1645,9 @@ export async function* runProviderLoop(
 			);
 			messages.push(implicitYieldMsg);
 
-			// Record queue events and messages_consumed
-			if (eventStore) {
-				recordQueueEvents(eventStore, sessionId, yieldResult.nonCompact);
+			// Emit queue events and messages_consumed
+			if (emit) {
+				recordQueueEvents(emit, yieldResult.nonCompact);
 			}
 			continue;
 		}
@@ -1739,14 +1725,16 @@ export async function* runProviderLoop(
 			messages.push(msg);
 		}
 
-		// Record individual tool_result Events
-		if (eventStore) {
+		// Emit individual tool_result Events
+		if (emit) {
 			const toolEvents = buildToolResultEvents(
 				toolUses.map((tu) => ({ id: tu.id })),
 				execResults,
 				cancellationQueueMsgs,
 			);
-			eventStore.appendBatch(sessionId, toolEvents);
+			for (const evt of toolEvents) {
+				emit(evt);
+			}
 		}
 
 		// If queue was closed during tool execution (done() was called),
@@ -1788,24 +1776,8 @@ export async function* runProviderLoop(
 					role: "user" as const,
 					content: budgetResult.warning,
 				});
-				recordBudgetWarning(eventStore, sessionId, budgetResult.warning);
+				recordBudgetWarning(emit, budgetResult.warning);
 				yield { type: "status", message: budgetResult.warning };
-			}
-		}
-	}
-
-	// Deterministic verification — inlined since both providers do the same thing
-	if (eventStore) {
-		const activeEvents = eventStore.readActive(sessionId);
-		if (activeEvents.length > 0) {
-			const reconstructed = adapter.convertEventsToMessages(activeEvents);
-			const match = JSON.stringify(messages) === JSON.stringify(reconstructed);
-			if (!match) {
-				console.error("[EVENTS MISMATCH]", {
-					messagesLen: (messages as unknown[]).length,
-					eventsLen: activeEvents.length,
-					reconstructedLen: reconstructed.length,
-				});
 			}
 		}
 	}

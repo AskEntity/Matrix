@@ -1,4 +1,4 @@
-import type { EventStore } from "./event-store.ts";
+import type { Event } from "./events.ts";
 import type { MessageQueue } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
@@ -28,8 +28,18 @@ export interface AgentRequest {
 	hasRunningChildren?: () => boolean;
 	/** Budget limit in USD — provider will inject warnings at 80% and 100%. */
 	budgetUsd?: number;
-	/** EventStore for strongly-typed event persistence (Event JSONL). */
-	eventStore?: EventStore;
+	/**
+	 * Emit callback for provider events (broadcast + persist).
+	 * Provider calls this instead of writing to EventStore directly.
+	 * The daemon layer wires this to emitEvent() which handles persistence.
+	 */
+	emit?: (event: Event) => void;
+	/**
+	 * Pre-loaded active events for session resume.
+	 * The daemon layer reads these from EventStore and passes them in.
+	 * Provider uses them to reconstruct the conversation on resume.
+	 */
+	activeEvents?: Event[];
 }
 
 /** Streaming event emitted by an agent during execution. */
