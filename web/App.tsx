@@ -10,7 +10,9 @@ import {
 	IconArrowDown,
 	IconChevron,
 	IconClose,
+	IconExpand,
 	IconHexagon,
+	IconMinimize,
 	IconPlus,
 	IconRefresh,
 } from "./components/icons.tsx";
@@ -183,6 +185,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [detailCollapsed, setDetailCollapsed] = useState(
 		() => localStorage.getItem("og-detail-collapsed") === "true",
 	);
+	const [fullscreen, setFullscreen] = useState(false);
 	const [theme, setThemeState] = useState<
 		"dark" | "light" | "cute-light" | "cute-dark"
 	>(() => {
@@ -339,8 +342,12 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				target.tagName === "TEXTAREA" ||
 				target.isContentEditable;
 			if (e.key === "Escape" && !isInput) {
-				setSelectedTaskId(rootNodeId);
-				setTargetNodeId(null);
+				if (fullscreen) {
+					setFullscreen(false);
+				} else {
+					setSelectedTaskId(rootNodeId);
+					setTargetNodeId(null);
+				}
 			}
 			if (e.key === "/" && !isInput) {
 				e.preventDefault();
@@ -351,7 +358,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		};
 		document.addEventListener("keydown", handleKeyDown);
 		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [rootNodeId]);
+	}, [rootNodeId, fullscreen]);
 
 	// ── SSE handler ──────────────────────────────────────────────────────────
 
@@ -612,7 +619,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				/>
 			)}
 
-			<main className="og-main">
+			<main className={`og-main${fullscreen ? " og-fullscreen" : ""}`}>
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop is a visual overlay, not a focusable control */}
 				{/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop is dismissed by Escape key or clicking outside */}
 				<div
@@ -825,6 +832,22 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 										{t("activity.follow")}
 									</button>
 								)}
+								<button
+									type="button"
+									className="og-btn-icon"
+									onClick={() => setFullscreen((f) => !f)}
+									title={
+										fullscreen
+											? t("activity.exitFullscreen")
+											: t("activity.fullscreen")
+									}
+								>
+									{fullscreen ? (
+										<IconMinimize size={12} />
+									) : (
+										<IconExpand size={12} />
+									)}
+								</button>
 							</div>
 						</div>
 						<ActivityLog

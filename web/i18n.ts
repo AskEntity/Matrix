@@ -115,6 +115,8 @@ const en: Translations = {
 	"activity.noMatch": "No matching entries",
 	"activity.noEvents": "No events yet",
 	"activity.follow": "Follow",
+	"activity.fullscreen": "Fullscreen",
+	"activity.exitFullscreen": "Exit fullscreen",
 
 	// Settings
 	"settings.title": "Settings",
@@ -388,6 +390,8 @@ const zh: Translations = {
 	"activity.noMatch": "没有匹配的条目",
 	"activity.noEvents": "暂无事件",
 	"activity.follow": "跟踪",
+	"activity.fullscreen": "全屏",
+	"activity.exitFullscreen": "退出全屏",
 
 	// Settings
 	"settings.title": "设置",
