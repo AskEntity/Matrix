@@ -34,7 +34,7 @@ function getSearchableText(entry: LogEntry): string {
 		case "compact_marker":
 			return entry.checkpoint;
 		case "compact_started":
-			return "Compressing context...";
+			return "Compacting context...";
 		case "clarification_requested":
 			return entry.title ?? entry.question;
 		case "clarification_answered":
