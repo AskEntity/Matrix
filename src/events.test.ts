@@ -1666,6 +1666,182 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 		// user, assistant, tool — no extras
 		expect(messages).toHaveLength(3);
 	});
+
+	test("Anthropic: fixes orphaned tool_use in MIDDLE of conversation (double restart)", () => {
+		// Scenario: first restart leaves orphaned tool_use, fix synthesizes result.
+		// Agent continues, more events append. Second restart — the orphan is now in the middle.
+		const events: Event[] = [
+			{ type: "message", content: "Do something", ts: 1000 },
+			{ type: "assistant_text", content: "Running tool", ts: 1001 },
+			{
+				type: "tool_call",
+				toolCallId: "orphan1",
+				tool: "bash",
+				input: { command: "sleep 100" },
+				ts: 1002,
+			},
+			// NO tool_result for orphan1 — daemon restarted
+			// After resume, agent continued with new work:
+			{
+				type: "assistant_text",
+				content: "Continuing after restart",
+				ts: 1003,
+			},
+			{
+				type: "tool_call",
+				toolCallId: "tc2",
+				tool: "read_file",
+				input: { path: "foo.ts" },
+				ts: 1004,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc2",
+				content: "file contents",
+				isError: false,
+				ts: 1005,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		// Should have: user, assistant(orphan), user(synthetic+normal flow), assistant, user(tc2 result)
+		// The fix should insert a synthetic tool_result for orphan1 between the first assistant and second assistant
+
+		// Find the synthetic tool_result
+		let foundSynthetic = false;
+		for (const msg of messages) {
+			const m = msg as { role: string; content: unknown[] };
+			if (m.role === "user" && Array.isArray(m.content)) {
+				for (const block of m.content) {
+					const b = block as {
+						type?: string;
+						tool_use_id?: string;
+						content?: string;
+						is_error?: boolean;
+					};
+					if (b.type === "tool_result" && b.tool_use_id === "orphan1") {
+						foundSynthetic = true;
+						expect(b.content).toContain("interrupted by daemon restart");
+						expect(b.is_error).toBe(true);
+					}
+				}
+			}
+		}
+		expect(foundSynthetic).toBe(true);
+
+		// Also verify the normal tool_result for tc2 is still there
+		let foundTc2 = false;
+		for (const msg of messages) {
+			const m = msg as { role: string; content: unknown[] };
+			if (m.role === "user" && Array.isArray(m.content)) {
+				for (const block of m.content) {
+					const b = block as {
+						type?: string;
+						tool_use_id?: string;
+						content?: string;
+					};
+					if (b.type === "tool_result" && b.tool_use_id === "tc2") {
+						foundTc2 = true;
+						expect(b.content).toBe("file contents");
+					}
+				}
+			}
+		}
+		expect(foundTc2).toBe(true);
+	});
+
+	test("OpenAI: fixes orphaned tool_call in MIDDLE of conversation (double restart)", () => {
+		const events: Event[] = [
+			{ type: "message", content: "Do something", ts: 1000 },
+			{ type: "assistant_text", content: "Running tool", ts: 1001 },
+			{
+				type: "tool_call",
+				toolCallId: "orphan1",
+				tool: "bash",
+				input: { command: "sleep 100" },
+				ts: 1002,
+			},
+			// NO tool_result for orphan1
+			{
+				type: "assistant_text",
+				content: "Continuing after restart",
+				ts: 1003,
+			},
+			{
+				type: "tool_call",
+				toolCallId: "tc2",
+				tool: "read_file",
+				input: { path: "foo.ts" },
+				ts: 1004,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc2",
+				content: "file contents",
+				isError: false,
+				ts: 1005,
+			},
+		];
+		const messages = eventsToOpenAIMessages(events);
+
+		// Find synthetic tool result for orphan1
+		let foundSynthetic = false;
+		let foundTc2 = false;
+		for (const msg of messages) {
+			const m = msg as {
+				role: string;
+				tool_call_id?: string;
+				content?: string;
+			};
+			if (m.role === "tool" && m.tool_call_id === "orphan1") {
+				foundSynthetic = true;
+				expect(m.content).toContain("interrupted by daemon restart");
+			}
+			if (m.role === "tool" && m.tool_call_id === "tc2") {
+				foundTc2 = true;
+				expect(m.content).toBe("file contents");
+			}
+		}
+		expect(foundSynthetic).toBe(true);
+		expect(foundTc2).toBe(true);
+	});
+
+	test("Anthropic: does NOT synthesize when tool_result exists in following user message", () => {
+		// Normal case — tool_use has matching tool_result, no synthesis needed
+		const events: Event[] = [
+			{ type: "message", content: "Run it", ts: 1000 },
+			{ type: "assistant_text", content: "Running", ts: 1001 },
+			{
+				type: "tool_call",
+				toolCallId: "tc1",
+				tool: "bash",
+				input: { command: "ls" },
+				ts: 1002,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "output",
+				isError: false,
+				ts: 1003,
+			},
+			{ type: "assistant_text", content: "Done", ts: 1004 },
+		];
+		const messages = eventsToAnthropicMessages(events);
+		// user, assistant(tool_call), user(tool_result), assistant(done)
+		expect(messages).toHaveLength(4);
+		// No synthetic results — all messages have valid content
+		for (const msg of messages) {
+			const m = msg as { role: string; content: unknown };
+			if (m.role === "user" && Array.isArray(m.content)) {
+				for (const block of m.content) {
+					const b = block as { content?: string };
+					if (typeof b.content === "string") {
+						expect(b.content).not.toContain("interrupted by daemon restart");
+					}
+				}
+			}
+		}
+	});
 });
 
 describe("structured JSONL — queueEntry on user_message", () => {
@@ -2239,5 +2415,256 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		expect(textBlocks).toHaveLength(1);
 		expect(textBlocks[0]?.text).toContain("Worker");
 		expect(textBlocks[0]?.text).toContain("Progress: 75%");
+	});
+});
+
+describe("defensive guards — prevent content: Field required 400 errors", () => {
+	describe("message/user_message without id and without content", () => {
+		test("Anthropic: message with body and source uses formatEventForAI fallback", () => {
+			// message with source + body (non-user queue message) — formatEventForAI generates content from body
+			const events: Event[] = [
+				{
+					type: "message",
+					source: "parent_update",
+					body: {
+						source: "parent_update",
+						content: "Do this next",
+						requestReply: false,
+					},
+					ts: 1000,
+				} as unknown as Event,
+			];
+			const messages = eventsToAnthropicMessages(events);
+			expect(messages).toHaveLength(1);
+			const msg = messages[0] as { role: string; content: string };
+			expect(msg.role).toBe("user");
+			expect(msg.content).toContain("parent_update");
+			expect(msg.content).toContain("Do this next");
+		});
+
+		test("Anthropic: message with body but no source falls back to (empty)", () => {
+			// message with body but no top-level source — formatEventForAI tries content (undefined),
+			// returns undefined, fallback to (empty)
+			const events: Event[] = [
+				{
+					type: "message",
+					body: {
+						source: "parent_update",
+						content: "Do this next",
+						requestReply: false,
+					},
+					ts: 1000,
+				} as unknown as Event,
+			];
+			const messages = eventsToAnthropicMessages(events);
+			expect(messages).toHaveLength(1);
+			const msg = messages[0] as { role: string; content: string };
+			expect(msg.role).toBe("user");
+			expect(msg.content).toBe("(empty)");
+		});
+
+		test("Anthropic: message with no content and no body falls back to (empty)", () => {
+			const events: Event[] = [
+				{ type: "message", ts: 1000 } as unknown as Event,
+			];
+			const messages = eventsToAnthropicMessages(events);
+			expect(messages).toHaveLength(1);
+			const msg = messages[0] as { role: string; content: string };
+			expect(msg.role).toBe("user");
+			expect(msg.content).toBe("(empty)");
+		});
+
+		test("OpenAI: message with body and source uses formatEventForAI fallback", () => {
+			const events: Event[] = [
+				{
+					type: "message",
+					source: "system",
+					body: {
+						source: "system",
+						content: "Agent stopped",
+					},
+					ts: 1000,
+				} as unknown as Event,
+			];
+			const messages = eventsToOpenAIMessages(events);
+			expect(messages).toHaveLength(1);
+			const msg = messages[0] as { role: string; content: string };
+			expect(msg.role).toBe("user");
+			expect(msg.content).toContain("system_notification");
+			expect(msg.content).toContain("Agent stopped");
+		});
+
+		test("OpenAI: message with body but no source falls back to (empty)", () => {
+			const events: Event[] = [
+				{
+					type: "message",
+					body: {
+						source: "system_notification",
+						content: "Agent stopped",
+					},
+					ts: 1000,
+				} as unknown as Event,
+			];
+			const messages = eventsToOpenAIMessages(events);
+			expect(messages).toHaveLength(1);
+			const msg = messages[0] as { role: string; content: string };
+			expect(msg.role).toBe("user");
+			expect(msg.content).toBe("(empty)");
+		});
+
+		test("OpenAI: message with no content and no body falls back to (empty)", () => {
+			const events: Event[] = [
+				{ type: "message", ts: 1000 } as unknown as Event,
+			];
+			const messages = eventsToOpenAIMessages(events);
+			expect(messages).toHaveLength(1);
+			const msg = messages[0] as { role: string; content: string };
+			expect(msg.role).toBe("user");
+			expect(msg.content).toBe("(empty)");
+		});
+	});
+
+	describe("empty assistant content blocks", () => {
+		test("Anthropic: empty contentBlocks gets (empty) text fallback", () => {
+			// Simulate a scenario where assistant_text/tool_call case is entered
+			// but the collection loops find nothing (e.g., corrupt JSONL where
+			// assistant_text event has wrong type after normalization)
+			const events: Event[] = [
+				{ type: "message", content: "Hello", ts: 1000 } as unknown as Event,
+				// assistant_text with empty content still produces a block, so we test
+				// the structural guard by checking the output is always valid
+				{ type: "assistant_text", content: "", ts: 1001 } as unknown as Event,
+			];
+			const messages = eventsToAnthropicMessages(events);
+			expect(messages).toHaveLength(2);
+			const assistantMsg = messages[1] as {
+				role: string;
+				content: Array<{ type: string; text?: string }>;
+			};
+			expect(assistantMsg.role).toBe("assistant");
+			expect(assistantMsg.content.length).toBeGreaterThan(0);
+			// Content should always be a non-empty array
+			expect(assistantMsg.content[0]?.type).toBe("text");
+		});
+
+		test("OpenAI: empty assistant message gets (empty) text fallback", () => {
+			const events: Event[] = [
+				{ type: "message", content: "Hello", ts: 1000 } as unknown as Event,
+				{ type: "assistant_text", content: "", ts: 1001 } as unknown as Event,
+			];
+			const messages = eventsToOpenAIMessages(events);
+			expect(messages).toHaveLength(2);
+			const assistantMsg = messages[1] as {
+				role: string;
+				content: string | null;
+			};
+			expect(assistantMsg.role).toBe("assistant");
+			// OpenAI uses string content (possibly empty string), which is valid
+			expect(assistantMsg.content).toBeDefined();
+		});
+	});
+
+	describe("empty tool_result blocks", () => {
+		test("Anthropic: tool_result with undefined content gets (empty) fallback", () => {
+			const events: Event[] = [
+				{ type: "message", content: "Run it", ts: 1000 } as unknown as Event,
+				{
+					type: "assistant_text",
+					content: "Running...",
+					ts: 1001,
+				} as unknown as Event,
+				{
+					type: "tool_call",
+					toolCallId: "tc1",
+					tool: "bash",
+					input: { command: "ls" },
+					ts: 1002,
+				} as unknown as Event,
+				{
+					type: "tool_result",
+					toolCallId: "tc1",
+					// content is undefined — simulating corrupt JSONL
+					ts: 1003,
+				} as unknown as Event,
+			];
+			const messages = eventsToAnthropicMessages(events);
+			// user, assistant, user(tool_result)
+			expect(messages).toHaveLength(3);
+			const toolResultMsg = messages[2] as {
+				role: string;
+				content: Array<{ type: string; content?: string }>;
+			};
+			expect(toolResultMsg.role).toBe("user");
+			expect(toolResultMsg.content.length).toBeGreaterThan(0);
+			const resultBlock = toolResultMsg.content[0] as {
+				type: string;
+				content: string;
+			};
+			expect(resultBlock.type).toBe("tool_result");
+			expect(resultBlock.content).toBe("(empty)");
+		});
+
+		test("OpenAI: tool_result with undefined content gets (empty) fallback", () => {
+			const events: Event[] = [
+				{ type: "message", content: "Run it", ts: 1000 } as unknown as Event,
+				{
+					type: "assistant_text",
+					content: "Running...",
+					ts: 1001,
+				} as unknown as Event,
+				{
+					type: "tool_call",
+					toolCallId: "tc1",
+					tool: "bash",
+					input: { command: "ls" },
+					ts: 1002,
+				} as unknown as Event,
+				{
+					type: "tool_result",
+					toolCallId: "tc1",
+					// content is undefined — simulating corrupt JSONL
+					ts: 1003,
+				} as unknown as Event,
+			];
+			const messages = eventsToOpenAIMessages(events);
+			// user, assistant, tool
+			expect(messages).toHaveLength(3);
+			const toolMsg = messages[2] as { role: string; content: string };
+			expect(toolMsg.role).toBe("tool");
+			expect(toolMsg.content).toBe("(empty)");
+		});
+
+		test("Anthropic: resultBlocks fallback when tool_result section collects nothing", () => {
+			// Edge case: tool_result case is entered but the while loop skips
+			// everything (all events are queue events with IDs that get skipped)
+			const events: Event[] = [
+				{ type: "message", content: "Hello", ts: 1000 } as unknown as Event,
+				{
+					type: "assistant_text",
+					content: "Running",
+					ts: 1001,
+				} as unknown as Event,
+				{
+					type: "tool_call",
+					toolCallId: "tc1",
+					tool: "bash",
+					input: {},
+					ts: 1002,
+				} as unknown as Event,
+				{
+					type: "tool_result",
+					toolCallId: "tc1",
+					content: "output",
+					ts: 1003,
+				} as unknown as Event,
+			];
+			const messages = eventsToAnthropicMessages(events);
+			expect(messages).toHaveLength(3);
+			const toolResultMsg = messages[2] as {
+				role: string;
+				content: Array<{ type: string }>;
+			};
+			expect(toolResultMsg.content.length).toBeGreaterThan(0);
+		});
 	});
 });

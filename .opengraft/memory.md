@@ -636,3 +636,12 @@ Event (src/events.ts) — THE source of truth
 - **Fix**: (1) `task_started`/`task_completed` in `processEvent` no longer create entries in the parent's view — only in the child's own view. (2) `child_complete` and `system` sources in `queueEntryToUIEvent` now render proper cards (`task_completed` and `lifecycle` respectively) instead of returning null. (3) `createQueueUIEvent` no longer skips `child_complete`/`system` — they flow through the two-phase lifecycle like all other queue messages.
 - **Result**: ALL queue messages follow the same lifecycle: fire → pending banner → consumption → activity log card. No more immediate display bypassing the pending phase.
 - **Removed `nodeMapRef`**: No longer needed since `task_started`/`task_completed` don't look up parent IDs. Removed from `WSHandlerDeps`, `createWSHandler`, and `App.tsx`.
+
+
+## Defensive Converter Guards (March 2026)
+
+- **"(empty)" fallback**: All event converters now use `"(empty)"` string instead of `undefined`/empty for message content. Prevents Anthropic 400 "content: Field required" errors from corrupt/incomplete JSONL.
+- **Three guard sites per converter**: (1) `message`/`user_message` without content → try `formatEventForAI()`, fallback to `"(empty)"`, (2) empty assistant `contentBlocks` → push `{type:"text",text:"(empty)"}`, (3) empty `resultBlocks` in tool_result → push `{type:"text",text:"(empty)"}`. Also `?? "(empty)"` on individual tool_result content fields.
+- **`console.warn` on fallback**: Every fallback triggers a warning log for production debugging.
+- **fixOrphanedAnthropicToolUse/fixOrphanedOpenAIToolCalls now scan ALL messages**: Previously only checked the last assistant message. After double-restart (daemon stops mid-tool, agent resumes and continues, daemon stops again), orphaned tool_use blocks end up in the MIDDLE of the conversation. Fix now iterates all assistant messages in reverse, checking each for matching tool_results in the following message.
+- **stopAgent writes synthetic tool_result to JSONL**: Defense-in-depth — `writeOrphanedToolResults()` scans JSONL at stop time and writes synthetic error tool_result events for any trailing unpaired tool_call. Prevents orphans from ever existing in JSONL.

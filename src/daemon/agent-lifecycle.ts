@@ -494,6 +494,66 @@ export async function runChildCore(
 // ---------------------------------------------------------------------------
 
 /**
+ * Write synthetic tool_result events for any unpaired tool_call at the end of JSONL.
+ * Called during stopAgent to prevent orphaned tool_use errors on resume.
+ * The event converter also has a fix for this (fixOrphanedAnthropicToolUse),
+ * but writing to JSONL is cleaner — the fix persists and avoids repeated synthesis.
+ */
+function writeOrphanedToolResults(
+	eventStore: import("../event-store.ts").EventStore,
+	sessionId: string,
+): void {
+	if (!eventStore.has(sessionId)) return;
+
+	const events = eventStore.readActive(sessionId);
+	if (events.length === 0) return;
+
+	// Scan backwards for trailing tool_call events without matching tool_result
+	const orphanedToolCallIds: Array<{ toolCallId: string; tool: string }> = [];
+	for (let i = events.length - 1; i >= 0; i--) {
+		const event = events[i] as Event;
+		if (event.type === "tool_call") {
+			orphanedToolCallIds.push({
+				toolCallId: event.toolCallId,
+				tool: event.tool,
+			});
+		} else if (event.type === "tool_result") {
+			// Found a tool_result — everything before this is already paired
+			break;
+		} else if (
+			event.type === "assistant_text" ||
+			event.type === "message" ||
+			event.type === "user_message"
+		) {
+			// Hit a non-tool event — stop scanning
+			break;
+		}
+		// Skip lifecycle events and continue scanning
+	}
+
+	if (orphanedToolCallIds.length === 0) return;
+
+	console.warn(
+		`[stopAgent] Writing synthetic tool_result for ${orphanedToolCallIds.length} orphaned tool_call(s) in session ${sessionId}:`,
+		orphanedToolCallIds.map((t) => t.toolCallId),
+	);
+
+	const syntheticEvents: Event[] = orphanedToolCallIds.map(
+		({ toolCallId }) => ({
+			type: "tool_result" as const,
+			toolCallId,
+			content:
+				"Tool execution was interrupted by daemon restart. Results were lost.",
+			isError: true,
+			ts: Date.now(),
+		}),
+	);
+
+	// Fire-and-forget — if this fails, the converter fix will handle it
+	eventStore.appendBatch(sessionId, syntheticEvents);
+}
+
+/**
  * Stop a running agent and clean up all associated state.
  * Single path for all stop operations (explicit stop, restart, project delete).
  */
@@ -550,6 +610,16 @@ export async function stopAgent(
 		projectId,
 		clarifications: [],
 	});
+
+	// Defense-in-depth: write synthetic tool_result for any unpaired tool_call at end of JSONL.
+	// This prevents orphaned tool_use errors on resume — the converter fix handles it too,
+	// but writing to JSONL is cleaner since it persists the fix.
+	if (tracker) {
+		const eventStore = getEventStore(ctx, projectId);
+		for (const node of tracker.allNodes()) {
+			writeOrphanedToolResults(eventStore, node.id);
+		}
+	}
 
 	const rootNodeId = tracker?.rootNodeId;
 	broadcastEvent(ctx, projectId, {
