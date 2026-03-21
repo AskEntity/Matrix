@@ -1,13 +1,9 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Hono } from "hono";
-import { globalAgentQueues } from "../../message-queue.ts";
 import { stopAgent } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
-import {
-	getPendingClarifications,
-	pendingTextForMessage,
-} from "../event-system.ts";
+import { getPendingClarifications } from "../event-system.ts";
 import { getEventStore, normalizeEventForUI } from "../helpers.ts";
 
 export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
@@ -88,38 +84,6 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 		}
 		all.sort((a, b) => ((a.ts as number) ?? 0) - ((b.ts as number) ?? 0));
 		return c.json({ events: all });
-	});
-
-	// Pending messages — derived from queue state for ALL agents
-	app.get("/projects/:id/pending-messages", async (c) => {
-		const project = ctx.pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const tracker = ctx.trackers.get(project.id);
-		const pending: {
-			id: string;
-			taskId: string | null;
-			text: string;
-			timestamp: number;
-		}[] = [];
-		if (tracker) {
-			for (const node of tracker.allNodes()) {
-				const queue = globalAgentQueues.get(node.id);
-				if (queue) {
-					const taskId = node.id === tracker.rootNodeId ? null : node.id;
-					for (const [i, m] of queue.peekMessages().entries()) {
-						pending.push({
-							id: `pending-${Date.now()}-${i}`,
-							taskId,
-							text: pendingTextForMessage(m),
-							timestamp: Date.now(),
-						});
-					}
-				}
-			}
-		}
-		return c.json({ messages: pending });
 	});
 
 	// Pending clarifications

@@ -28,10 +28,8 @@ import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
 import {
 	broadcast,
-	broadcastEvent,
-	broadcastPendingCleared,
-	broadcastPendingFromQueue,
 	broadcastTreeUpdate,
+	emitEvent,
 	removePendingClarification,
 } from "./event-system.ts";
 import {
@@ -154,26 +152,12 @@ function agentEventToBroadcast(
 }
 
 /**
- * Extract consumed user message IDs from a queue_message event's rawMessages.
- * Used to broadcast messages_consumed when the agent drains its queue.
- */
-function extractConsumedUserIds(eventData: Record<string, unknown>): string[] {
-	const rawMessages = eventData.rawMessages as
-		| Array<{ source: string; id?: string }>
-		| undefined;
-	if (!rawMessages) return [];
-	const ids: string[] = [];
-	for (const rm of rawMessages) {
-		if (rm.source === "user" && rm.id) {
-			ids.push(rm.id);
-		}
-	}
-	return ids;
-}
-
-/**
- * Broadcast an agent event and handle messages_consumed for queue_message events.
- * This is the SINGLE path for all queue message consumption tracking.
+ * Emit an agent stream event via the unified emitEvent path.
+ * Converts provider AgentEvent format to typed Event and emits.
+ *
+ * messages_consumed events are written to JSONL by the providers directly —
+ * they flow to the frontend when the provider's EventStore writes trigger
+ * emitEvent via the provider's onEvent callback path.
  *
  * Called from both:
  * 1. Provider stream events (onEvent callback) — idle drain / cancellation points
@@ -186,36 +170,11 @@ function broadcastAgentStreamEvent(
 	eventData: Record<string, unknown>,
 	taskId: string,
 ): void {
-	broadcastEvent(
+	emitEvent(
 		ctx,
 		projectId,
 		agentEventToBroadcast(eventType, eventData, taskId),
 	);
-	// Broadcast messages_consumed when queue messages with user IDs are consumed
-	if (eventType === "queue_message") {
-		const consumedIds = extractConsumedUserIds(eventData);
-		if (consumedIds.length > 0) {
-			broadcast(ctx.sseClients, projectId, {
-				type: "messages_consumed",
-				messageIds: consumedIds,
-				taskId,
-				ts: Date.now(),
-			});
-		}
-	}
-	// Also handle yield/done tool_result events that carry consumed message IDs
-	if (
-		eventType === "tool_result" &&
-		Array.isArray(eventData._consumedMessageIds) &&
-		eventData._consumedMessageIds.length > 0
-	) {
-		broadcast(ctx.sseClients, projectId, {
-			type: "messages_consumed",
-			messageIds: eventData._consumedMessageIds as string[],
-			taskId,
-			ts: Date.now(),
-		});
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -293,7 +252,6 @@ async function createAgentContext(
 				const taskId = (event.taskId as string) || "";
 				const eventType = event.eventType as string;
 				const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
-				// Unified path: broadcast event + messages_consumed for queue_message
 				broadcastAgentStreamEvent(
 					ctx,
 					project.id,
@@ -304,7 +262,7 @@ async function createAgentContext(
 			} else {
 				// Already a valid Event shape — just ensure ts
 				const withTs = event.ts ? event : { ...event, ts };
-				broadcastEvent(ctx, project.id, withTs as unknown as Event);
+				emitEvent(ctx, project.id, withTs as unknown as Event);
 			}
 			broadcastTreeUpdate(ctx, project.id, opts.tracker);
 
@@ -594,16 +552,7 @@ export async function stopAgent(
 		broadcastTreeUpdate(ctx, projectId, tracker);
 	}
 
-	// Clear pending state — all queues are gone, no pending messages
-	// Clear each task's pending individually since queue.close() doesn't fire onDrain
-	if (tracker) {
-		for (const node of tracker.allNodes()) {
-			const taskId = node.id === tracker.rootNodeId ? null : node.id;
-			broadcastPendingCleared(ctx, projectId, taskId);
-		}
-	} else {
-		broadcastPendingCleared(ctx, projectId, null);
-	}
+	// Clear pending clarifications
 	ctx.pendingClarifications.delete(projectId);
 	broadcast(ctx.sseClients, projectId, {
 		type: "pending_clarifications",
@@ -622,7 +571,7 @@ export async function stopAgent(
 	}
 
 	const rootNodeId = tracker?.rootNodeId;
-	broadcastEvent(ctx, projectId, {
+	emitEvent(ctx, projectId, {
 		type: "agent_stopped",
 		...(rootNodeId ? { taskId: rootNodeId } : {}),
 		ts: Date.now(),
@@ -660,7 +609,6 @@ export async function deliverMessage(
 	if (queue) {
 		try {
 			queue.enqueue(message);
-			// onEnqueue callback handles pending broadcast (set at queue creation)
 			return "enqueued";
 		} catch {
 			// Queue was closed — fall through to persist + launch
@@ -675,7 +623,7 @@ export async function deliverMessage(
 	const node = tracker.get(nodeId);
 	if (node?.parentId) {
 		ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
-			broadcastEvent(ctx, project.id, {
+			emitEvent(ctx, project.id, {
 				type: "error",
 				taskId: nodeId,
 				message: `Auto-launch failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -720,7 +668,7 @@ export async function ensureChildAgentRunning(
 	tracker.updateStatus(nodeId, "in_progress");
 	await tracker.save();
 
-	broadcastEvent(ctx, project.id, {
+	emitEvent(ctx, project.id, {
 		type: "task_started",
 		taskId: nodeId,
 		title: node.title,
@@ -819,12 +767,6 @@ export async function runChildAgentInBackground(
 
 		// Create the queue first — shared between MCP tools and runChildCore
 		const childQueue = new MessageQueue();
-		childQueue.onEnqueue = (msg) =>
-			broadcastPendingFromQueue(ctx, project.id, nodeId, [
-				...childQueue.peekMessages(),
-				msg,
-			]);
-		childQueue.onDrain = () => broadcastPendingCleared(ctx, project.id, nodeId);
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
 			projectPath: node.worktreePath as string,
@@ -851,13 +793,13 @@ export async function runChildAgentInBackground(
 			},
 			onEvent: (eventType, eventData) => {
 				if (eventType === "agent_idle") {
-					broadcastEvent(ctx, project.id, {
+					emitEvent(ctx, project.id, {
 						type: "agent_idle",
 						taskId: nodeId,
 						ts: Date.now(),
 					});
 				} else if (eventType === "agent_active") {
-					broadcastEvent(ctx, project.id, {
+					emitEvent(ctx, project.id, {
 						type: "agent_active",
 						taskId: nodeId,
 						ts: Date.now(),
@@ -893,7 +835,7 @@ export async function runChildAgentInBackground(
 			updatedNode.costUsd &&
 			updatedNode.costUsd > updatedNode.budgetUsd
 		) {
-			broadcastEvent(ctx, project.id, {
+			emitEvent(ctx, project.id, {
 				type: "budget_exceeded",
 				taskId: nodeId,
 				title: node.title,
@@ -927,7 +869,7 @@ export async function runChildAgentInBackground(
 
 		// Only emit task_completed if done() wasn't called (it already emitted)
 		if (!doneWasCalled) {
-			broadcastEvent(ctx, project.id, {
+			emitEvent(ctx, project.id, {
 				type: "task_completed",
 				taskId: nodeId,
 				title: node.title,
@@ -971,7 +913,7 @@ export async function runChildAgentInBackground(
 		tracker.updateStatus(nodeId, "stuck");
 		await tracker.save();
 		const errorMsg = e instanceof Error ? e.message : String(e);
-		broadcastEvent(ctx, project.id, {
+		emitEvent(ctx, project.id, {
 			type: "task_completed",
 			taskId: nodeId,
 			title: node.title,
@@ -1043,14 +985,6 @@ export async function launchAgent(
 
 	const queue = new MessageQueue();
 
-	// Wire up enqueue/drain callbacks for pending message indicators
-	queue.onEnqueue = (msg) =>
-		broadcastPendingFromQueue(ctx, project.id, null, [
-			...queue.peekMessages(),
-			msg,
-		]);
-	queue.onDrain = () => broadcastPendingCleared(ctx, project.id, null);
-
 	// Load any persisted messages from disk and enqueue them
 	const persistedMsgs = await loadPersistedMessages(
 		ctx.config.dataDir,
@@ -1079,7 +1013,7 @@ export async function launchAgent(
 	// Priority: API param > resolved config
 	const effectiveModel = opts.model ?? agentCtx.effectiveCfg.model;
 
-	broadcastEvent(ctx, project.id, {
+	emitEvent(ctx, project.id, {
 		type: "orchestration_started",
 		taskId: rootNodeId,
 		resume: opts.resume ?? false,
@@ -1139,13 +1073,13 @@ export async function launchAgent(
 				session.events,
 				(eventType, eventData) => {
 					if (eventType === "agent_idle") {
-						broadcastEvent(ctx, project.id, {
+						emitEvent(ctx, project.id, {
 							type: "agent_idle",
 							taskId: rootNodeId,
 							ts: Date.now(),
 						});
 					} else if (eventType === "agent_active") {
-						broadcastEvent(ctx, project.id, {
+						emitEvent(ctx, project.id, {
 							type: "agent_active",
 							taskId: rootNodeId,
 							ts: Date.now(),
@@ -1188,7 +1122,7 @@ export async function launchAgent(
 				0,
 			);
 			const totalCostUsd = (finalResult.costUsd ?? 0) + childCostUsd;
-			broadcastEvent(ctx, project.id, {
+			emitEvent(ctx, project.id, {
 				type: "orchestration_completed",
 				taskId: rootNodeId,
 				success: didPass ?? true,
@@ -1210,7 +1144,7 @@ export async function launchAgent(
 			caughtError = true;
 			const message = e instanceof Error ? e.message : "Unknown error";
 			tracker.updateStatus(rootNodeId, "failed");
-			broadcastEvent(ctx, project.id, {
+			emitEvent(ctx, project.id, {
 				type: "error",
 				taskId: rootNodeId,
 				message: `Agent failed: ${message}`,
@@ -1234,7 +1168,7 @@ export async function launchAgent(
 				// the running state. (Normal completions already broadcast
 				// orchestration_completed which handles this.)
 				if (caughtError) {
-					broadcastEvent(ctx, project.id, {
+					emitEvent(ctx, project.id, {
 						type: "agent_stopped",
 						taskId: rootNodeId,
 						ts: Date.now(),
@@ -1283,20 +1217,15 @@ export async function handleOrchestrate(
 		const rootQueue = globalAgentQueues.get(orchRootNodeId);
 		if (rootQueue) {
 			const orchMsgId = randomUUID();
-			// Write message to JSONL at send time
-			const orchEventStore = getEventStore(ctx, projectId);
+			// Write + broadcast message at send time (Phase 1)
 			const orchUserMsg: Event = {
 				type: "message",
 				id: orchMsgId,
 				content: prompt,
+				taskId: orchRootNodeId,
 				ts: Date.now(),
 			};
-			orchEventStore.append(orchRootNodeId, orchUserMsg);
-			// Broadcast message so frontend can show it in pending area
-			broadcast(ctx.sseClients, projectId, {
-				...orchUserMsg,
-				taskId: orchRootNodeId,
-			} as unknown as Record<string, unknown>);
+			emitEvent(ctx, projectId, orchUserMsg);
 			try {
 				rootQueue.enqueue({
 					source: "user",
@@ -1306,7 +1235,6 @@ export async function handleOrchestrate(
 			} catch {
 				return { ok: false, error: "Queue closed", status: 409 };
 			}
-			// onEnqueue callback handles pending broadcast
 			return { ok: true };
 		}
 	}
@@ -1354,27 +1282,23 @@ export async function handleInjectMessage(
 				{ prompt: message },
 				orchestratorSystemPrompt,
 			);
-			// Write message to JSONL at send time (Phase 1 of two-phase lifecycle)
-			const eventStore = getEventStore(ctx, projectId);
+			// Write + broadcast message at send time (Phase 1 of two-phase lifecycle)
 			const freshRootNodeId = tracker.rootNodeId;
 			if (freshRootNodeId) {
+				const freshMsgId = randomUUID();
 				const userMsgEvent: Event = {
 					type: "message",
-					id: randomUUID(),
+					id: freshMsgId,
 					content: message,
 					...(images?.length ? { images } : {}),
+					taskId: freshRootNodeId,
 					ts: Date.now(),
 				};
-				eventStore.append(freshRootNodeId, userMsgEvent);
-				// Broadcast message so frontend can show it in pending area
-				broadcast(ctx.sseClients, projectId, {
-					...userMsgEvent,
-					taskId: freshRootNodeId,
-				} as unknown as Record<string, unknown>);
-				// Broadcast messages_consumed immediately — message was consumed as the initial prompt
-				broadcast(ctx.sseClients, projectId, {
+				emitEvent(ctx, projectId, userMsgEvent);
+				// Emit messages_consumed immediately — message was consumed as the initial prompt
+				emitEvent(ctx, projectId, {
 					type: "messages_consumed",
-					messageIds: [userMsgEvent.id],
+					messageIds: [freshMsgId],
 					taskId: freshRootNodeId,
 					ts: Date.now(),
 				});
@@ -1395,21 +1319,17 @@ export async function handleInjectMessage(
 	// shouldn't influence the fresh-vs-resume decision)
 	const shouldResume = eventStore.has(rootNodeId);
 
-	// Write message to JSONL at send time (Phase 1 of two-phase lifecycle)
+	// Write + broadcast message at send time (Phase 1 of two-phase lifecycle)
+	// Frontend derives pending state from message events without matching messages_consumed.
 	const userMsgEvent: Event = {
 		type: "message",
 		id: msgId,
 		content: message,
 		...(images?.length ? { images } : {}),
+		taskId: rootNodeId,
 		ts: Date.now(),
 	};
-	eventStore.append(rootNodeId, userMsgEvent);
-
-	// Broadcast message so frontend can show it in pending area
-	broadcast(ctx.sseClients, projectId, {
-		...userMsgEvent,
-		taskId: rootNodeId,
-	} as unknown as Record<string, unknown>);
+	emitEvent(ctx, projectId, userMsgEvent);
 
 	// Unified delivery: enqueue if running, persist if not
 	// Pass msgId through QueueMessage so providers can write messages_consumed
@@ -1423,23 +1343,8 @@ export async function handleInjectMessage(
 	const result = await deliverMessage(ctx, project, rootNodeId, msg);
 
 	if (result === "enqueued") {
-		// deliverMessage already broadcast pending state from queue.
 		return { ok: true };
 	}
-
-	// Message was persisted — broadcast as pending until agent loads it
-	broadcast(ctx.sseClients, projectId, {
-		type: "pending_messages",
-		projectId,
-		messages: [
-			{
-				id: `pending-${Date.now()}`,
-				taskId: null,
-				text: message,
-				timestamp: Date.now(),
-			},
-		],
-	});
 
 	// Message was persisted (agent not running) — auto-resume if possible.
 	// Don't pass the user message as prompt — it's already persisted to disk
@@ -1485,7 +1390,7 @@ export async function handleClarifyResponse(
 			return { ok: false, error: "Queue closed", status: 409 };
 		}
 		removePendingClarification(ctx, projectId, taskId, clarificationId);
-		broadcastEvent(ctx, projectId, {
+		emitEvent(ctx, projectId, {
 			type: "clarification_answered",
 			taskId,
 			answer,
@@ -1509,7 +1414,7 @@ export async function handleClarifyResponse(
 		answer,
 	});
 	removePendingClarification(ctx, projectId, taskId, clarificationId);
-	broadcastEvent(ctx, projectId, {
+	emitEvent(ctx, projectId, {
 		type: "clarification_answered",
 		taskId,
 		answer,

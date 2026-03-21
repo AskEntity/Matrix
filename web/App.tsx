@@ -396,13 +396,14 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		],
 	);
 
-	// Re-fetch full event history + pending state on SSE reconnect.
+	// Re-fetch full event history on SSE reconnect.
 	// The SSE ring buffer handles short disconnects via Last-Event-ID,
 	// but for longer gaps we need to re-fetch everything.
+	// Pending messages are derived from JSONL events (no separate endpoint).
 	// biome-ignore lint/correctness/useExhaustiveDependencies: processEventBatch is stable within useMemo
 	const handleReconnect = useCallback(() => {
 		if (!projectId) return;
-		// Re-fetch events
+		// Re-fetch events — processEventBatch derives pending state from JSONL events
 		authFetch(`/projects/${projectId}/events`)
 			.then((r) => r.json())
 			.then((data: { events?: Record<string, unknown>[] }) => {
@@ -411,21 +412,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				}
 			})
 			.catch(() => {});
-		// Re-fetch pending messages
-		authFetch(`/projects/${projectId}/pending-messages`)
-			.then((r) => r.json())
-			.then(
-				(data: {
-					messages: {
-						id: string;
-						taskId: string | null;
-						text: string;
-						timestamp: number;
-					}[];
-				}) => setPendingMessages(data.messages ?? []),
-			)
-			.catch(() => {});
-		// Re-fetch pending clarifications
+		// Re-fetch pending clarifications (still ephemeral/in-memory)
 		authFetch(`/projects/${projectId}/clarifications`)
 			.then((r) => r.json())
 			.then(
@@ -509,17 +496,12 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		if (projectId) checkStatus();
 	}, [projectId, checkStatus]);
 
+	// Pending messages are derived from JSONL events by processEventBatch.
+	// Clear on project change — the event fetch will repopulate.
 	useEffect(() => {
 		if (!projectId) {
 			setPendingMessages([]);
-			return;
 		}
-		authFetch(`/projects/${projectId}/pending-messages`)
-			.then((r) => r.json())
-			.then((data: { messages: typeof pendingMessages }) =>
-				setPendingMessages(data.messages ?? []),
-			)
-			.catch(() => setPendingMessages([]));
 	}, [projectId]);
 
 	useEffect(() => {

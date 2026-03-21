@@ -655,3 +655,37 @@ Event (src/events.ts) — THE source of truth
 - **Never modify own JSONL from agent**: Scanning JSONL from inside a running tool creates a false orphan (the current tool_call has no result yet). JSONL fixes must happen at stopAgent time or provider resume time, never from agent tool execution.
 - **Done counter**: UI `OrchestratorDetail` counts both `passed` and `closed` tasks as "done" (previously only counted `passed`, showing 0/33 when most tasks were closed after merge).
 
+
+
+## JSONL-Driven Frontend Architecture (March 2026)
+
+**Core change**: ONE unified event path replaces the dual live-SSE + REST-batch system.
+
+**`emitEvent(ctx, projectId, event)`** — THE single function all events flow through:
+1. Always broadcasts to SSE clients
+2. Persists non-ephemeral events to JSONL EventStore
+3. Ephemeral types: text_delta, usage, agent_idle, agent_active, status, queue_message, tree_updated, heartbeat + provider events (already written by provider)
+
+**What was removed**:
+- `broadcastEvent()` — replaced by `emitEvent()`
+- `broadcastPendingFromQueue()` / `broadcastPendingCleared()` — pending state now derived from JSONL events on frontend
+- `pendingTextForMessage()` — no longer needed
+- `onEnqueue` / `onDrain` callback wiring on MessageQueue — no longer set
+- `pending_messages` SSE broadcasts (type `"pending_messages"`)
+- Explicit `messages_consumed` SSE broadcasts (from `broadcastAgentStreamEvent`) — providers write these to JSONL, `emitEvent` streams them
+- `GET /projects/:id/pending-messages` REST endpoint — removed entirely
+- `deferredUserMsgs` / `deferredQueueMsgs` Maps in ws-handler — replaced by single `deferredMessages` Map
+- Separate `processEvent` (live) and `processEventBatch` (batch) logic — unified into one `processEvent` used by both paths
+
+**Frontend pending state derivation**:
+- `message` events with `id` go into `deferredMessages` Map immediately (not as side effect, so batch processing works)
+- `messages_consumed` events materialize referenced messages from the map into log entries
+- `syncPendingBanner()` derives the pending banner from `deferredMessages` contents
+- On page load/reconnect: `processEventBatch` reprocesses all events through `processEvent`, naturally rebuilding pending state
+
+**Key design decisions**:
+- `tree_updated` stays as ephemeral (carries full tree payload). `tree_mutation` in JSONL is the persistent record.
+- `pending_clarifications` stays as ephemeral/in-memory (not JSONL-driven yet)
+- MessageEvent and messages_consumed types got `taskId?: string` for SSE routing
+- `deferredMessages` mutations happen immediately (not as React side effects) so batch processing works correctly
+

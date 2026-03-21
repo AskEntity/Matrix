@@ -74,7 +74,7 @@ export class MessageQueue {
 	/** Optional callback fired whenever a message is enqueued (before delivery to waiter or array). */
 	onEnqueue?: (msg: QueueMessage) => void;
 
-	/** Optional callback fired after messages are drained from the queue. */
+	/** Optional callback fired after messages are drained (consumed) from the queue. */
 	onDrain?: () => void;
 
 	/** Add a message to the queue. If someone is waiting via wait(), resolve them immediately. */
@@ -89,7 +89,6 @@ export class MessageQueue {
 			const { resolve } = this.waiter;
 			this.waiter = null;
 			resolve(msg);
-			// Message was consumed immediately — clear pending banner
 			this.onDrain?.();
 		} else {
 			this.messages.push(msg);

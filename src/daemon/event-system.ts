@@ -1,5 +1,4 @@
 import type { Event } from "../events.ts";
-import type { QueueMessage } from "../message-queue.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type {
 	DaemonContext,
@@ -72,19 +71,12 @@ export function getEventsSince(
 	return buffer.slice(idx);
 }
 
-/** Broadcast an event to all SSE clients subscribed to a project. */
+/** Broadcast an event to all SSE clients subscribed to a project (SSE transport only, no persistence). */
 export function broadcast(
 	clients: Set<SSEClient>,
 	projectId: string,
 	event: Record<string, unknown>,
 ) {
-	console.error(
-		event.type,
-		event.type === "tool_call" ? event.tool : "",
-		event.type === "tool_result" ? event.tool : "",
-		clients.size,
-		"clients",
-	);
 	const seqId = nextSeqId(projectId);
 	const data = JSON.stringify(event);
 	bufferEvent(projectId, seqId, data);
@@ -101,20 +93,13 @@ export function broadcast(
 	}
 }
 
-/** Broadcast a tree update to all subscribers of a project. */
-export function broadcastTreeUpdate(
-	ctx: DaemonContext,
-	projectId: string,
-	tracker: TaskTracker,
-) {
-	broadcast(ctx.sseClients, projectId, {
-		type: "tree_updated",
-		nodes: tracker.allNodes(),
-		rootNodeId: tracker.rootNodeId,
-	});
-}
+// --- Ephemeral event detection ---
 
-/** Ephemeral event types that should NOT be persisted to JSONL. */
+/**
+ * Ephemeral events are NOT persisted to JSONL — they're live-only.
+ * Provider events (assistant_text, tool_call, tool_result, compact_marker) are
+ * already written to JSONL by the provider — emitEvent skips them to prevent double-write.
+ */
 const EPHEMERAL_EVENT_TYPES = new Set([
 	"text_delta",
 	"usage",
@@ -123,59 +108,51 @@ const EPHEMERAL_EVENT_TYPES = new Set([
 	"status",
 	"queue_message",
 	"clarification_timeout",
-	// Provider events are already written to JSONL by the provider — don't double-write
+	"heartbeat",
+	// tree_updated carries full tree payload — ephemeral push, not JSONL
+	"tree_updated",
+	// Provider events already written to JSONL by the provider
 	"assistant_text",
 	"tool_call",
 	"tool_result",
 	"compact_marker",
 ]);
 
-/**
- * Convert a Event to a persistable Event for JSONL storage.
- * Returns null for ephemeral events that should not be persisted.
- * Also returns the taskId (sessionId) to store under.
- *
- * Since Event and Event now share field names (toolCallId, etc.),
- * non-ephemeral events can be stored directly — no field mapping needed.
- */
-function broadcastToEvent(
-	event: Event,
-	rootNodeId: string | undefined,
-): { event: Event; sessionId: string } | null {
-	if (EPHEMERAL_EVENT_TYPES.has(event.type)) return null;
-
-	// Extract taskId for session routing
-	const taskId =
-		"taskId" in event ? (event.taskId as string | undefined) : undefined;
-	const sessionId = taskId || rootNodeId;
-	if (!sessionId) return null;
-
-	// All non-ephemeral types can be stored as-is (field names match Event)
-	return { event: event as unknown as Event, sessionId };
+function isEphemeral(type: string): boolean {
+	return EPHEMERAL_EVENT_TYPES.has(type);
 }
 
-/** Broadcast an agent event to subscribers and persist lifecycle events to JSONL. */
-export function broadcastEvent(
-	ctx: DaemonContext,
-	projectId: string,
-	event: Event,
-) {
-	// Persist lifecycle events to JSONL EventStore (fire-and-forget async write)
-	const rootNodeId = ctx.trackers.get(projectId)?.rootNodeId ?? undefined;
-	const persistable = broadcastToEvent(event, rootNodeId);
-	if (persistable) {
-		const eventStore = getEventStore(ctx, projectId);
-		// append() is async with internal .catch() — safe to fire-and-forget
-		eventStore.append(persistable.sessionId, persistable.event);
-	}
+// --- Unified event emission ---
 
+/**
+ * THE single path for all events in the system.
+ *
+ * 1. Always broadcasts to SSE clients (with taskId for routing)
+ * 2. Persists to JSONL for non-ephemeral events
+ *
+ * All callers use this instead of separate broadcast + persist calls.
+ */
+export function emitEvent(ctx: DaemonContext, projectId: string, event: Event) {
+	// Broadcast to all SSE clients
 	broadcast(
 		ctx.sseClients,
 		projectId,
 		event as unknown as Record<string, unknown>,
 	);
 
-	// Track clarification_requested events for Web UI display
+	// Persist non-ephemeral events to JSONL
+	if (!isEphemeral(event.type)) {
+		const rootNodeId = ctx.trackers.get(projectId)?.rootNodeId ?? undefined;
+		const taskId =
+			"taskId" in event ? (event.taskId as string | undefined) : undefined;
+		const sessionId = taskId || rootNodeId;
+		if (sessionId) {
+			const eventStore = getEventStore(ctx, projectId);
+			eventStore.append(sessionId, event);
+		}
+	}
+
+	// Track clarification_requested events for pending clarifications state
 	if (event.type === "clarification_requested") {
 		addPendingClarification(
 			ctx,
@@ -188,64 +165,20 @@ export function broadcastEvent(
 	}
 }
 
-// --- Pending Messages (data-driven from queue) ---
-
-/** Format a queue message into display text for the pending banner. */
-export function pendingTextForMessage(m: QueueMessage): string {
-	switch (m.source) {
-		case "user":
-			return m.content;
-		case "child_complete":
-			return `${m.success ? "✓" : "✗"} ${m.title}`;
-		case "child_report":
-			return `↑ ${m.title}: ${m.content}`;
-		case "parent_update":
-			return `← Parent: ${m.content}`;
-		case "clarify_response":
-			return `💬 ${m.answer}`;
-		case "cross_project":
-			return `← ${m.fromProjectName}: ${m.content}`;
-		case "background_complete":
-			return `⚙ ${m.command} (exit ${m.exitCode})`;
-		case "system":
-			return `⚙ ${m.content}`;
-		case "compact":
-			return "Compact requested";
-	}
-}
-
-/** Broadcast current queue contents as pending messages to SSE clients. */
-export function broadcastPendingFromQueue(
+/**
+ * Broadcast a tree update to all subscribers of a project.
+ * This is ephemeral — carries full tree data for immediate UI update.
+ * The tree_mutation lifecycle events in JSONL provide the persistent record.
+ */
+export function broadcastTreeUpdate(
 	ctx: DaemonContext,
 	projectId: string,
-	taskId: string | null,
-	messages: QueueMessage[],
-): void {
-	const pending = messages.map((m, i) => ({
-		id: `pending-${Date.now()}-${i}`,
-		taskId,
-		text: pendingTextForMessage(m),
-		timestamp: Date.now(),
-	}));
+	tracker: TaskTracker,
+) {
 	broadcast(ctx.sseClients, projectId, {
-		type: "pending_messages",
-		projectId,
-		taskId,
-		messages: pending,
-	});
-}
-
-/** Broadcast empty pending messages to SSE clients (queue drained). */
-export function broadcastPendingCleared(
-	ctx: DaemonContext,
-	projectId: string,
-	taskId: string | null,
-): void {
-	broadcast(ctx.sseClients, projectId, {
-		type: "pending_messages",
-		projectId,
-		taskId,
-		messages: [],
+		type: "tree_updated",
+		nodes: tracker.allNodes(),
+		rootNodeId: tracker.rootNodeId,
 	});
 }
 

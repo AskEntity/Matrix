@@ -15,11 +15,7 @@ import {
 	runChildAgentInBackground,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
-import {
-	broadcast,
-	broadcastEvent,
-	broadcastTreeUpdate,
-} from "../event-system.ts";
+import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
 import {
 	collectDescendants,
 	getEventStore,
@@ -100,7 +96,7 @@ function notifyAgentOfTreeChange(
 	title?: string,
 ): void {
 	// Structured WS event for UI rendering
-	broadcastEvent(ctx, projectId, {
+	emitEvent(ctx, projectId, {
 		type: "tree_mutation",
 		action,
 		nodeId,
@@ -332,7 +328,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			tracker.updateStatus(nodeId, "in_progress");
 			await tracker.save();
 
-			broadcastEvent(ctx, project.id, {
+			emitEvent(ctx, project.id, {
 				type: "task_started",
 				taskId: nodeId,
 				title: node.title,
@@ -376,7 +372,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				tracker.updateStatus(nodeId, "in_progress");
 				await tracker.save();
 
-				broadcastEvent(ctx, project.id, {
+				emitEvent(ctx, project.id, {
 					type: "task_started",
 					taskId: nodeId,
 					title: node.title,
@@ -572,48 +568,25 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const statusBeforeDelivery = node?.status;
 
 		const msgId = randomUUID();
-		const eventStore = getEventStore(ctx, project.id);
-		const rootNodeId = tracker.rootNodeId;
-		const taskId = nodeId === rootNodeId ? null : nodeId;
 
-		// Phase 1 of two-phase lifecycle: write message event to JSONL at send time
+		// Phase 1 of two-phase lifecycle: write + broadcast message at send time.
+		// Frontend derives pending state from message events without matching messages_consumed.
 		const userMsgEvent: Event = {
 			type: "message",
 			id: msgId,
 			content: body.content,
+			taskId: nodeId,
 			ts: Date.now(),
 		};
-		eventStore.append(nodeId, userMsgEvent);
-
-		// Broadcast message so frontend can show it in pending area
-		broadcast(ctx.sseClients, project.id, {
-			...userMsgEvent,
-			taskId: nodeId,
-		} as unknown as Record<string, unknown>);
+		emitEvent(ctx, project.id, userMsgEvent);
 
 		// Unified delivery: enqueue (if running) or persist + launch (if not)
 		// Include msgId so provider can write messages_consumed referencing it
-		const deliveryResult = await deliverMessage(ctx, project, nodeId, {
+		await deliverMessage(ctx, project, nodeId, {
 			source: "user",
 			id: msgId,
 			content: body.content,
 		});
-		if (deliveryResult === "persisted") {
-			// Message went to disk — broadcast as pending until agent loads it
-			broadcast(ctx.sseClients, project.id, {
-				type: "pending_messages",
-				projectId: project.id,
-				taskId,
-				messages: [
-					{
-						id: `pending-${Date.now()}`,
-						taskId,
-						text: body.content,
-						timestamp: Date.now(),
-					},
-				],
-			});
-		}
 
 		// Notify parent chain that user sent a message to this task (REST-only)
 		await notifyParentChain(

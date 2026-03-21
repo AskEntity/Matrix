@@ -1,11 +1,6 @@
 import type { Hono } from "hono";
-import { globalAgentQueues } from "../../message-queue.ts";
 import type { DaemonContext, SSEClient } from "../context.ts";
-import {
-	getEventsSince,
-	getPendingClarifications,
-	pendingTextForMessage,
-} from "../event-system.ts";
+import { getEventsSince, getPendingClarifications } from "../event-system.ts";
 import { getTracker } from "../helpers.ts";
 
 const encoder = new TextEncoder();
@@ -26,7 +21,7 @@ function sendSSE(
 	}
 }
 
-/** Send initial state (tree, pending messages, pending clarifications) on SSE connect. */
+/** Send initial state (tree + pending clarifications) on SSE connect. */
 async function sendInitialState(
 	ctx: DaemonContext,
 	client: SSEClient,
@@ -49,30 +44,9 @@ async function sendInitialState(
 		});
 	}
 
-	// Send current pending messages — derived from queue state for ALL agents
-	if (tracker) {
-		for (const node of tracker.allNodes()) {
-			const agentQueue = globalAgentQueues.get(node.id);
-			if (agentQueue) {
-				const msgs = agentQueue.peekMessages();
-				if (msgs.length > 0) {
-					const taskId = node.id === tracker.rootNodeId ? null : node.id;
-					const pending = msgs.map((m, i) => ({
-						id: `pending-${Date.now()}-${i}`,
-						taskId,
-						text: pendingTextForMessage(m),
-						timestamp: Date.now(),
-					}));
-					sendSSE(client, {
-						type: "pending_messages",
-						projectId,
-						taskId,
-						messages: pending,
-					});
-				}
-			}
-		}
-	}
+	// Pending messages are derived from JSONL events on the frontend.
+	// The frontend fetches events from REST and processes them to determine
+	// which messages are pending (have IDs but no matching messages_consumed).
 
 	// Send current pending clarifications
 	const clarifications = getPendingClarifications(ctx, projectId);

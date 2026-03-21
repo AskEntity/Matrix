@@ -47,6 +47,8 @@ export interface MessageEvent {
 	cwd?: string;
 	isResume?: boolean;
 	images?: Array<{ base64: string; mediaType: string }>;
+	/** Task/session ID — used for JSONL routing and SSE broadcast targeting. */
+	taskId?: string;
 	/**
 	 * Structured message body — present when this message represents a queue message.
 	 * Contains the full structured data (source, taskId, title, etc.).
@@ -265,6 +267,7 @@ export type Event =
 	| {
 			type: "messages_consumed";
 			messageIds: string[];
+			taskId?: string;
 			ts: number;
 	  };
 
