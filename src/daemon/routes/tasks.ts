@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { buildTaskPrompt, slugify } from "../../agent-tools.ts";
+import type { Event } from "../../events.ts";
 import { globalAgentQueues } from "../../message-queue.ts";
 import {
 	clearPersistedMessages,
@@ -569,15 +571,35 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const taskTitle = node?.title ?? nodeId;
 		const statusBeforeDelivery = node?.status;
 
+		const msgId = randomUUID();
+		const eventStore = getEventStore(ctx, project.id);
+		const rootNodeId = tracker.rootNodeId;
+		const taskId = nodeId === rootNodeId ? null : nodeId;
+
+		// Phase 1 of two-phase lifecycle: write message event to JSONL at send time
+		const userMsgEvent: Event = {
+			type: "message",
+			id: msgId,
+			content: body.content,
+			ts: Date.now(),
+		};
+		eventStore.append(nodeId, userMsgEvent);
+
+		// Broadcast message so frontend can show it in pending area
+		broadcast(ctx.sseClients, project.id, {
+			...userMsgEvent,
+			taskId: nodeId,
+		} as unknown as Record<string, unknown>);
+
 		// Unified delivery: enqueue (if running) or persist + launch (if not)
+		// Include msgId so provider can write messages_consumed referencing it
 		const deliveryResult = await deliverMessage(ctx, project, nodeId, {
 			source: "user",
+			id: msgId,
 			content: body.content,
 		});
 		if (deliveryResult === "persisted") {
 			// Message went to disk — broadcast as pending until agent loads it
-			const rootNodeId = tracker.rootNodeId;
-			const taskId = nodeId === rootNodeId ? null : nodeId;
 			broadcast(ctx.sseClients, project.id, {
 				type: "pending_messages",
 				projectId: project.id,
