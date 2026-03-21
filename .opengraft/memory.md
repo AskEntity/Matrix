@@ -157,3 +157,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **Inline styles vs media queries**: CSS custom properties for flex ratios so media queries can override.
 - **Done counter**: UI counts both `passed` and `closed` tasks as "done".
 - **Resume error dedup**: Only show errors after last `orchestration_started` or resume event.
+
+## File Renames
+- `web/ws-handler.ts` → `web/event-handler.ts` (exports: `EventHandlerDeps`, `createEventHandler`, returns `handleEvent`)
+- `web/ws-handler.test.ts` → `web/event-handler.test.ts`
