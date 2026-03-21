@@ -1157,10 +1157,19 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 									textParts.push(JSON.stringify(c));
 								}
 							}
-							// Extract consumed message IDs from yield/done tools
+							// Extract consumed message IDs and pending state from yield/done tools
 							const consumedIds = Array.isArray(mcpResult._consumedMessageIds)
 								? (mcpResult._consumedMessageIds as string[])
 								: undefined;
+							const pending = mcpResult._pending as
+								| {
+										runningChildren: Array<{
+											id: string;
+											title: string;
+										}>;
+										pendingClarifications: number;
+								  }
+								| undefined;
 							return {
 								content: textParts.join("\n"),
 								isError: mcpResult.isError ?? false,
@@ -1171,6 +1180,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 								...(consumedIds?.length
 									? { _consumedMessageIds: consumedIds }
 									: {}),
+								...(pending ? { _pending: pending } : {}),
 							};
 						} catch (e) {
 							return {
@@ -1260,9 +1270,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				}
 			}
 
-			// Cancellation point: drain queue and append messages to tool results
-			let cancellationImages: ReturnType<typeof extractQueueImages> = [];
+			// Cancellation point: drain queue and add messages as text blocks alongside tool results
 			let cancellationQueueMsgs: QueueMessage[] = [];
+			const cancellationTextBlocks: Array<{ type: "text"; text: string }> = [];
+			const cancellationImageBlocks: ReturnType<typeof extractQueueImages> = [];
 			if (queue && queue.pending > 0) {
 				const queueMsgs = queue.drain();
 				if (queueMsgs.some((m) => m.source === "compact")) {
@@ -1271,11 +1282,11 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				const nonCompactMsgs = queueMsgs.filter((m) => m.source !== "compact");
 				if (nonCompactMsgs.length > 0) {
 					const formatted = nonCompactMsgs.map(formatQueueMessage).join("\n");
-					const lastResult = toolResults[toolResults.length - 1];
-					if (lastResult && typeof lastResult.content === "string") {
-						lastResult.content += `\n\n---\n[Messages received while you were working:]\n${formatted}`;
-					}
-					cancellationImages = extractQueueImages(nonCompactMsgs);
+					cancellationTextBlocks.push({
+						type: "text" as const,
+						text: `[Messages received while you were working:]\n${formatted}`,
+					});
+					cancellationImageBlocks.push(...extractQueueImages(nonCompactMsgs));
 					cancellationQueueMsgs = nonCompactMsgs;
 					yield {
 						type: "queue_message",
@@ -1285,22 +1296,25 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				}
 			}
 
-			// Add tool results to history (with any queued images appended)
-			if (cancellationImages.length > 0) {
-				messages.push({
-					role: "user",
-					content: [
-						...toolResults,
-						...cancellationImages,
-						{
-							type: "text" as const,
-							text: `[${cancellationImages.length} image(s) attached by user]`,
-						},
-					],
-				});
-			} else {
-				messages.push({ role: "user", content: toolResults });
-			}
+			// Add tool results to history — queue messages as separate text/image blocks
+			// Anthropic user message content can mix tool_result, text, and image blocks
+			const userContentBlocks = [
+				...toolResults,
+				...cancellationTextBlocks,
+				...cancellationImageBlocks,
+				...(cancellationImageBlocks.length > 0
+					? [
+							{
+								type: "text" as const,
+								text: `[${cancellationImageBlocks.length} image(s) attached by user]`,
+							},
+						]
+					: []),
+			];
+			messages.push({
+				role: "user" as const,
+				content: userContentBlocks as MessageParam["content"],
+			});
 			// Record individual tool_result Events
 			if (eventStore) {
 				const toolEvents: Event[] = [];
@@ -1322,7 +1336,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 				for (let idx = 0; idx < toolUses.length; idx++) {
 					const toolUse = toolUses[idx] as ToolUseBlock;
-					const toolResult = toolResults[idx] as ToolResultBlockParam;
 					const exec = execResults[idx] as {
 						content: string;
 						isError: boolean;
@@ -1331,12 +1344,14 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						imageData?: string;
 						mediaType?: string;
 						_consumedMessageIds?: string[];
+						_pending?: {
+							runningChildren: Array<{ id: string; title: string }>;
+							pendingClarifications: number;
+						};
 					};
-					// Use the actual content from toolResults (includes cancellation text appended by queue drain)
-					const resultContent =
-						typeof toolResult.content === "string"
-							? toolResult.content
-							: exec.content;
+					// Record pure tool output — queue text is NOT embedded.
+					// The converter reconstructs queue messages from messagesConsumed + user_message events.
+					const resultContent = exec.content;
 					const images: Array<{ base64: string; mediaType: string }> = [];
 					if (exec.mcpImages?.length) {
 						images.push(...exec.mcpImages);
@@ -1346,12 +1361,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 							mediaType: exec.mediaType,
 						});
 					}
-					// Merge consumed IDs: cancellation-point queue IDs + yield/done tool IDs
-					const allConsumedIds = [
-						...consumedIds,
-						...(exec._consumedMessageIds ?? []),
-					];
-					// Attach messagesConsumed to the LAST tool_result (cancellation point)
 					const isLast = idx === toolUses.length - 1;
 					toolEvents.push({
 						type: "tool_result",
@@ -1359,15 +1368,28 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						content: resultContent,
 						isError: exec.isError,
 						...(images.length > 0 ? { images } : {}),
-						...(isLast && allConsumedIds.length > 0
-							? { messagesConsumed: allConsumedIds }
-							: {}),
+						...(isLast && exec._pending ? { pending: exec._pending } : {}),
 						ts: Date.now(),
 					});
 				}
 				// Record non-user cancellation-point queue messages as separate Events
 				for (const evt of nonUserQueueEvents) {
 					toolEvents.push(evt);
+				}
+				// Record standalone messages_consumed event AFTER tool_results and queue events
+				const allConsumedIds = [
+					...consumedIds,
+					...execResults.flatMap((exec) => {
+						const e = exec as { _consumedMessageIds?: string[] };
+						return e._consumedMessageIds ?? [];
+					}),
+				];
+				if (allConsumedIds.length > 0) {
+					toolEvents.push({
+						type: "messages_consumed",
+						messageIds: allConsumedIds,
+						ts: Date.now(),
+					});
 				}
 				eventStore.appendBatch(sessionId, toolEvents);
 			}

@@ -2716,19 +2716,33 @@ describe("Event deterministic verification", () => {
 		await eventStore.flush();
 		const events = eventStore.readActive(agentResult.sessionId ?? "");
 
-		// The tool_result content should contain the appended cancellation message
+		// The tool_result content should contain ONLY the pure tool output (no queue text)
 		const toolResult = events.find((e) => e.type === "tool_result");
 		expect(toolResult).toBeDefined();
 		if (toolResult?.type === "tool_result") {
 			expect(toolResult.content).toContain(
 				"Task marked as passed. Entering idle state.",
 			);
-			expect(toolResult.content).toContain(
+			// Queue text is NOT embedded in tool_result.content anymore
+			expect(toolResult.content).not.toContain(
 				"[Messages received while you were working:]",
 			);
-			expect(toolResult.content).toContain(
-				"Urgent update during tool execution",
-			);
 		}
+
+		// The queue message should be tracked via a standalone messages_consumed event
+		const msgConsumed = events.find((e) => e.type === "messages_consumed");
+		expect(msgConsumed).toBeDefined();
+		if (msgConsumed?.type === "messages_consumed") {
+			expect(msgConsumed.messageIds.length).toBeGreaterThan(0);
+		}
+
+		// The queue message should be a separate user_message event with queueEntry
+		const userMsgEvent = events.find(
+			(e) =>
+				e.type === "user_message" &&
+				e.source === "user" &&
+				e.content === "Urgent update during tool execution",
+		);
+		expect(userMsgEvent).toBeDefined();
 	});
 });

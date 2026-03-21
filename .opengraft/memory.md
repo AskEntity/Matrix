@@ -418,3 +418,30 @@ Event (src/events.ts) — THE source of truth
 **Current mess**: Types 1-3 are all in one `createOrchestratorTools()` with a big deps bag. Queue message text is pre-formatted and embedded in tool_result. Two separate event callbacks (onEvent from provider, onTaskEvent from agent-tools emit) handle the same thing differently.
 
 **Fix path**: Task 297eacb7 (structured JSONL) + 064df856 (yield/done separation) + 51d1e79e (provider refactor).
+
+## Structured JSONL Refactor (March 2026)
+
+**Core change**: Queue messages are now structured `user_message` events with `queueEntry` field in JSONL, not pre-formatted text embedded in tool_result content. Converters format at conversion time.
+
+**JSONL format**:
+```jsonl
+{"type":"user_message","id":"X","source":"child_complete","queueEntry":{"source":"child_complete","taskId":"T","title":"Bug","success":true,"output":"Done"}}
+{"type":"tool_result","toolCallId":"Y","content":"<pure tool output>"}
+{"type":"messages_consumed","messageIds":["X"]}
+```
+
+**Key changes**:
+- `QueueEntry` interface added to `src/events.ts` — structured data for queue messages
+- `queueMessageToEvent()` now populates `queueEntry` on `UserMessageEvent`
+- `formatEventForAI()` reads from `queueEntry` first, falls back to flat fields for backward compat
+- `tool_result.content` in JSONL is now PURE tool output (no queue text, no done() reminders)
+- `messages_consumed` is always a STANDALONE event (not embedded as `messagesConsumed` on tool_result)
+- `tool_result.pending` field for structured running children + clarifications state
+- `formatPendingSection()` helper formats pending struct into `## Pending` text
+- `waitForQueueMessages()` writes user_message events to JSONL directly (has access to `deps.eventStore`)
+- Anthropic provider: cancellation queue messages → separate text blocks (not embedded in tool_result.content)
+
+**Backward compat**:
+- Old JSONL with flat fields (no `queueEntry`) still works via fallback in `formatEventForAI()`
+- Old JSONL with `messagesConsumed` on tool_result still handled by converter
+- Legacy concrete types (child_complete, parent_update, etc.) still in Event union

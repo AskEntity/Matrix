@@ -929,10 +929,19 @@ export class OpenAICompatibleProvider implements AgentProvider {
 									textParts.push(JSON.stringify(c));
 								}
 							}
-							// Extract consumed message IDs from yield/done tools
+							// Extract consumed message IDs and pending state from yield/done tools
 							const consumedIds = Array.isArray(mcpResult._consumedMessageIds)
 								? (mcpResult._consumedMessageIds as string[])
 								: undefined;
+							const pending = mcpResult._pending as
+								| {
+										runningChildren: Array<{
+											id: string;
+											title: string;
+										}>;
+										pendingClarifications: number;
+								  }
+								| undefined;
 							return {
 								content: textParts.join("\n"),
 								isError: mcpResult.isError ?? false,
@@ -942,6 +951,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 								...(consumedIds?.length
 									? { _consumedMessageIds: consumedIds }
 									: {}),
+								...(pending ? { _pending: pending } : {}),
 							};
 						} catch (e) {
 							return {
@@ -1131,15 +1141,14 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						imageData?: string;
 						mediaType?: string;
 						_consumedMessageIds?: string[];
+						_pending?: {
+							runningChildren: Array<{ id: string; title: string }>;
+							pendingClarifications: number;
+						};
 					};
-					// Find the actual tool result message content (includes done() reminder and queue text appended)
-					const toolMsg = messages.find(
-						(m) => m.role === "tool" && m.tool_call_id === tc.id,
-					);
-					const resultContent =
-						toolMsg && typeof toolMsg.content === "string"
-							? toolMsg.content
-							: exec.content;
+					// Record pure tool output — queue text and done() reminders are NOT embedded.
+					// The converter reconstructs queue messages from messagesConsumed + user_message events.
+					const resultContent = exec.content;
 					const images: Array<{ base64: string; mediaType: string }> = [];
 					if (exec.mcpImages?.length) {
 						images.push(
@@ -1154,12 +1163,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 							mediaType: exec.mediaType,
 						});
 					}
-					// Merge consumed IDs: cancellation-point queue IDs + yield/done tool IDs
-					const allConsumedIds = [
-						...consumedIds,
-						...(exec._consumedMessageIds ?? []),
-					];
-					// Attach messagesConsumed to the LAST tool_result (cancellation point)
 					const isLast = j === toolCalls.length - 1;
 					toolEvents.push({
 						type: "tool_result",
@@ -1167,15 +1170,28 @@ export class OpenAICompatibleProvider implements AgentProvider {
 						content: resultContent,
 						isError: exec.isError,
 						...(images.length > 0 ? { images } : {}),
-						...(isLast && allConsumedIds.length > 0
-							? { messagesConsumed: allConsumedIds }
-							: {}),
+						...(isLast && exec._pending ? { pending: exec._pending } : {}),
 						ts: Date.now(),
 					});
 				}
 				// Record non-user cancellation-point queue messages
 				for (const evt of nonUserQueueEvents) {
 					toolEvents.push(evt);
+				}
+				// Record standalone messages_consumed event AFTER tool_results and queue events
+				const allConsumedIds = [
+					...consumedIds,
+					...execResults.flatMap((exec) => {
+						const e = exec as { _consumedMessageIds?: string[] };
+						return e._consumedMessageIds ?? [];
+					}),
+				];
+				if (allConsumedIds.length > 0) {
+					toolEvents.push({
+						type: "messages_consumed",
+						messageIds: allConsumedIds,
+						ts: Date.now(),
+					});
 				}
 				eventStore.appendBatch(sessionId, toolEvents);
 			}

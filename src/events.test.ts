@@ -8,18 +8,22 @@ import {
 } from "./events.ts";
 
 describe("queueMessageToEvent", () => {
-	test("converts user message", () => {
+	test("converts user message with queueEntry", () => {
 		const event = queueMessageToEvent({
 			source: "user",
 			content: "hello",
 			images: [{ base64: "abc", mediaType: "image/png" }],
 		});
 		expect(event.type).toBe("user_message");
-		expect((event as { content: string }).content).toBe("hello");
-		expect((event as { images: unknown[] }).images).toHaveLength(1);
+		expect(event.content).toBe("hello");
+		expect(event.images).toHaveLength(1);
+		expect(event.queueEntry).toBeDefined();
+		expect(event.queueEntry?.source).toBe("user");
+		expect(event.queueEntry?.content).toBe("hello");
+		expect(event.queueEntry?.images).toHaveLength(1);
 	});
 
-	test("converts child_complete to unified user_message", () => {
+	test("converts child_complete to unified user_message with queueEntry", () => {
 		const event = queueMessageToEvent({
 			source: "child_complete",
 			taskId: "t1",
@@ -28,33 +32,45 @@ describe("queueMessageToEvent", () => {
 			output: "done",
 		});
 		expect(event.type).toBe("user_message");
-		expect((event as { source: string }).source).toBe("child_complete");
-		expect((event as { taskId: string }).taskId).toBe("t1");
-		expect((event as { id: string }).id).toBeTruthy();
+		expect(event.source).toBe("child_complete");
+		expect(event.id).toBeTruthy();
+		expect(event.queueEntry).toBeDefined();
+		expect(event.queueEntry?.source).toBe("child_complete");
+		expect(event.queueEntry?.taskId).toBe("t1");
+		expect(event.queueEntry?.title).toBe("Auth");
+		expect(event.queueEntry?.success).toBe(true);
+		expect(event.queueEntry?.output).toBe("done");
 	});
 
-	test("converts compact to unified user_message", () => {
+	test("converts compact to unified user_message with queueEntry", () => {
 		const event = queueMessageToEvent({ source: "compact" });
 		expect(event.type).toBe("user_message");
-		expect((event as { source: string }).source).toBe("compact");
+		expect(event.source).toBe("compact");
+		expect(event.queueEntry).toBeDefined();
+		expect(event.queueEntry?.source).toBe("compact");
 	});
 
-	test("converts system to unified user_message", () => {
+	test("converts system to unified user_message with queueEntry", () => {
 		const event = queueMessageToEvent({ source: "system", content: "hi" });
 		expect(event.type).toBe("user_message");
-		expect((event as { source: string }).source).toBe("system");
-		expect((event as { content: string }).content).toBe("hi");
+		expect(event.source).toBe("system");
+		expect(event.queueEntry).toBeDefined();
+		expect(event.queueEntry?.source).toBe("system");
+		expect(event.queueEntry?.content).toBe("hi");
 	});
 
-	test("converts parent_update to unified user_message", () => {
+	test("converts parent_update to unified user_message with queueEntry", () => {
 		const event = queueMessageToEvent({
 			source: "parent_update",
 			content: "update",
 			requestReply: true,
 		});
 		expect(event.type).toBe("user_message");
-		expect((event as { source: string }).source).toBe("parent_update");
-		expect((event as { requestReply?: boolean }).requestReply).toBe(true);
+		expect(event.source).toBe("parent_update");
+		expect(event.queueEntry).toBeDefined();
+		expect(event.queueEntry?.source).toBe("parent_update");
+		expect(event.queueEntry?.content).toBe("update");
+		expect(event.queueEntry?.requestReply).toBe(true);
 	});
 });
 
@@ -2050,5 +2066,375 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 		const messages = eventsToOpenAIMessages(events);
 		// user, assistant, tool — no extras
 		expect(messages).toHaveLength(3);
+	});
+});
+
+describe("structured JSONL — queueEntry on user_message", () => {
+	test("Anthropic: user_message with queueEntry.source=child_complete formats correctly via standalone messages_consumed", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "Working...",
+				ts: 1001,
+			},
+			{
+				type: "tool_call",
+				toolCallId: "tc1",
+				tool: "bash",
+				input: { command: "echo hi" },
+				ts: 1002,
+			},
+			{
+				type: "user_message",
+				id: "msg-child",
+				source: "child_complete",
+				queueEntry: {
+					source: "child_complete",
+					taskId: "t1",
+					title: "Auth module",
+					success: true,
+					output: "All tests pass",
+				},
+				ts: 1003,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "hi",
+				isError: false,
+				ts: 1004,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-child"],
+				ts: 1005,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		// Message 0: user (prompt)
+		// Message 1: assistant (text + tool_use)
+		// Message 2: user (tool_result + queue text)
+		expect(messages).toHaveLength(3);
+		const userMsg = messages[2] as { role: string; content: unknown[] };
+		expect(userMsg.role).toBe("user");
+		// Should have tool_result + text block with formatted queue message
+		const textBlocks = (
+			userMsg.content as { type: string; text?: string }[]
+		).filter((b) => b.type === "text");
+		const queueTextBlock = textBlocks.find((b) =>
+			b.text?.includes("[Messages received while you were working:]"),
+		);
+		expect(queueTextBlock).toBeDefined();
+		expect(queueTextBlock?.text).toContain(
+			'<child_complete task="Auth module" id="t1" status="passed">All tests pass</child_complete>',
+		);
+	});
+
+	test("Anthropic: user_message with queueEntry formats correctly at idle drain", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "Done for now",
+				ts: 1001,
+			},
+			{
+				type: "user_message",
+				id: "msg-parent",
+				source: "parent_update",
+				queueEntry: {
+					source: "parent_update",
+					content: "New instructions here",
+					requestReply: true,
+				},
+				ts: 1002,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-parent"],
+				ts: 1003,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		// Message 0: user (prompt)
+		// Message 1: assistant (text)
+		// Message 2: user (idle queue message)
+		expect(messages).toHaveLength(3);
+		const idleMsg = messages[2] as { role: string; content: string };
+		expect(idleMsg.role).toBe("user");
+		expect(idleMsg.content).toContain(
+			"[Messages received while you were idle:]",
+		);
+		expect(idleMsg.content).toContain(
+			'<parent_update requestReply="true">New instructions here</parent_update>',
+		);
+	});
+
+	test("OpenAI: user_message with queueEntry.source=child_complete formats at cancellation point via standalone messages_consumed", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "Working...",
+				ts: 1001,
+			},
+			{
+				type: "tool_call",
+				toolCallId: "tc1",
+				tool: "bash",
+				input: { command: "echo hi" },
+				ts: 1002,
+			},
+			{
+				type: "user_message",
+				id: "msg-child",
+				source: "child_complete",
+				queueEntry: {
+					source: "child_complete",
+					taskId: "t1",
+					title: "Auth module",
+					success: true,
+					output: "All tests pass",
+				},
+				ts: 1003,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "hi",
+				isError: false,
+				ts: 1004,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-child"],
+				ts: 1005,
+			},
+		];
+		const messages = eventsToOpenAIMessages(events);
+		// Message 0: user (prompt)
+		// Message 1: assistant (text + tool_calls)
+		// Message 2: tool result with queue text appended
+		expect(messages).toHaveLength(3);
+		const toolMsg = messages[2] as { role: string; content: string };
+		expect(toolMsg.role).toBe("tool");
+		expect(toolMsg.content).toContain("hi");
+		expect(toolMsg.content).toContain(
+			"[Messages received while you were working:]",
+		);
+		expect(toolMsg.content).toContain(
+			'<child_complete task="Auth module" id="t1" status="passed">All tests pass</child_complete>',
+		);
+	});
+
+	test("Anthropic: tool_result with pending section formats correctly", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "Yielding",
+				ts: 1001,
+			},
+			{
+				type: "tool_call",
+				toolCallId: "tc-yield",
+				tool: "mcp__opengraft__yield",
+				input: {},
+				ts: 1002,
+			},
+			{
+				type: "user_message",
+				id: "msg-report",
+				source: "child_report",
+				queueEntry: {
+					source: "child_report",
+					taskId: "t2",
+					title: "Build",
+					content: "50% done",
+				},
+				ts: 1003,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc-yield",
+				content:
+					'<child_report from="Build" id="t2">50% done</child_report>\n\n## Pending\n- Running children: "Build" (t2)\n- Pending clarifications: none',
+				isError: false,
+				messagesConsumed: ["msg-report"],
+				pending: {
+					runningChildren: [{ id: "t2", title: "Build" }],
+					pendingClarifications: 0,
+				},
+				ts: 1004,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(3);
+		const userMsg = messages[2] as { role: string; content: unknown[] };
+		expect(userMsg.role).toBe("user");
+		// Should have tool_result + queue text + pending section
+		const allText = (userMsg.content as { type: string; text?: string }[])
+			.filter((b) => b.type === "text")
+			.map((b) => b.text)
+			.join("");
+		expect(allText).toContain("[Messages received while you were working:]");
+		expect(allText).toContain("## Pending");
+		expect(allText).toContain('"Build" (t2)');
+	});
+
+	test("OpenAI: tool_result with pending section formats correctly", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "Yielding",
+				ts: 1001,
+			},
+			{
+				type: "tool_call",
+				toolCallId: "tc-yield",
+				tool: "mcp__opengraft__yield",
+				input: {},
+				ts: 1002,
+			},
+			{
+				type: "user_message",
+				id: "msg-report",
+				source: "child_report",
+				queueEntry: {
+					source: "child_report",
+					taskId: "t2",
+					title: "Build",
+					content: "50% done",
+				},
+				ts: 1003,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc-yield",
+				content:
+					'<child_report from="Build" id="t2">50% done</child_report>\n\n## Pending\n- Running children: "Build" (t2)\n- Pending clarifications: none',
+				isError: false,
+				messagesConsumed: ["msg-report"],
+				pending: {
+					runningChildren: [{ id: "t2", title: "Build" }],
+					pendingClarifications: 0,
+				},
+				ts: 1004,
+			},
+		];
+		const messages = eventsToOpenAIMessages(events);
+		expect(messages).toHaveLength(3);
+		const toolMsg = messages[2] as { role: string; content: string };
+		expect(toolMsg.role).toBe("tool");
+		// The tool content should have the pure yield content + queue text + pending
+		expect(toolMsg.content).toContain(
+			"[Messages received while you were working:]",
+		);
+		expect(toolMsg.content).toContain("## Pending");
+		expect(toolMsg.content).toContain('"Build" (t2)');
+	});
+
+	test("backward compat: user_message with flat fields (no queueEntry) still works", () => {
+		// Old JSONL files have flat fields without queueEntry
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "Done",
+				ts: 1001,
+			},
+			{
+				type: "user_message",
+				id: "msg-old",
+				source: "child_complete",
+				// No queueEntry — old format with flat fields
+				taskId: "t1",
+				title: "Old Task",
+				success: false,
+				output: "Failed with errors",
+				ts: 1002,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-old"],
+				ts: 1003,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(3);
+		const idleMsg = messages[2] as { role: string; content: string };
+		expect(idleMsg.content).toContain(
+			"[Messages received while you were idle:]",
+		);
+		expect(idleMsg.content).toContain(
+			'<child_complete task="Old Task" id="t1" status="failed">Failed with errors</child_complete>',
+		);
+	});
+
+	test("formatEventForAI prefers queueEntry over flat fields", () => {
+		const event: Event = {
+			type: "user_message",
+			source: "child_complete",
+			// Legacy flat fields (should be ignored when queueEntry present)
+			taskId: "old-id",
+			title: "Old Title",
+			success: false,
+			output: "Old output",
+			// New structured queueEntry (should be used)
+			queueEntry: {
+				source: "child_complete",
+				taskId: "new-id",
+				title: "New Title",
+				success: true,
+				output: "New output",
+			},
+			ts: 1000,
+		};
+		const formatted = formatEventForAI(event);
+		expect(formatted).toContain("new-id");
+		expect(formatted).toContain("New Title");
+		expect(formatted).toContain("passed");
+		expect(formatted).toContain("New output");
+		// Should NOT contain old values
+		expect(formatted).not.toContain("old-id");
+		expect(formatted).not.toContain("Old Title");
+	});
+
+	test("Anthropic: user_message with queueEntry.images gets image blocks", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "Done",
+				ts: 1001,
+			},
+			{
+				type: "user_message",
+				id: "msg-img",
+				source: "user",
+				queueEntry: {
+					source: "user",
+					content: "Look at this",
+					images: [{ base64: "abc123", mediaType: "image/png" }],
+				},
+				ts: 1002,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-img"],
+				ts: 1003,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(3);
+		const idleMsg = messages[2] as { role: string; content: unknown[] };
+		// Should be array content with text + image block
+		expect(Array.isArray(idleMsg.content)).toBe(true);
+		const imgBlock = (idleMsg.content as { type: string }[]).find(
+			(b) => b.type === "image",
+		);
+		expect(imgBlock).toBeDefined();
 	});
 });
