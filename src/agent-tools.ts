@@ -179,6 +179,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   Closed tasks can be resumed later via send_message_to_child (auto-creates new worktree).
   Use after merging a passed child, or to defer a task and reclaim disk space.
 - delete_task: Full removal — deletes worktree, session file, and task node from the tree. Use for abandoned tasks.
+  WARNING: Also deletes ALL children recursively. Verify all children are completed and merged before deleting.
 - reset_task: Remove worktree + session file but keep node. Sets status to pending. Use to start over with a different approach.
 - clarify: Send a clarification question to the user. Returns immediately —
   you can continue doing other work that doesn't need the answer, then call yield() when ready
@@ -1294,6 +1295,7 @@ export function createOrchestratorTools(
 		tool(
 			"delete_task",
 			"Fully remove a child task — deletes worktree, session file, and task node from the tree. " +
+				"WARNING: Also deletes ALL children recursively. Verify all children are completed and merged before deleting. " +
 				"Use for abandoned tasks you no longer need.",
 			{
 				taskId: z.string().describe("ID of the task to delete"),
