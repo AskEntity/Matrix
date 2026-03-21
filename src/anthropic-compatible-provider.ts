@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
 	MessageParam,
@@ -30,6 +29,7 @@ import {
 } from "./provider-shared.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
+import { ulid } from "./ulid.ts";
 
 /**
  * Get context window size for a model.
@@ -883,7 +883,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	}
 
 	async execute(request: AgentRequest): Promise<AgentResult> {
-		const sessionId = request.resumeSessionId ?? randomUUID();
+		const sessionId = request.resumeSessionId ?? ulid();
 		const gen = this.runLoop(request, sessionId);
 		let lastResult: AgentResult = { success: false, output: "", sessionId };
 		let result = await gen.next();
@@ -895,7 +895,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	}
 
 	async *stream(request: AgentRequest): AsyncGenerator<Event, AgentResult> {
-		const sessionId = request.resumeSessionId ?? randomUUID();
+		const sessionId = request.resumeSessionId ?? ulid();
 		const gen = this.runLoop(request, sessionId, request.queue);
 		let result = await gen.next();
 		while (!result.done) {
@@ -906,7 +906,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	}
 
 	startSession(request: AgentRequest): AgentSession {
-		const sessionId = request.resumeSessionId ?? randomUUID();
+		const sessionId = request.resumeSessionId ?? ulid();
 		const queue = request.queue ?? new MessageQueue();
 		const abortController = new AbortController();
 

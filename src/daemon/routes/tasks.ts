@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { buildTaskPrompt, slugify } from "../../agent-tools.ts";
@@ -9,6 +8,7 @@ import {
 	persistMessage,
 } from "../../persistent-queue.ts";
 import type { TaskStatus } from "../../types.ts";
+import { ulid } from "../../ulid.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
 	deliverMessage,
@@ -567,7 +567,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const taskTitle = node?.title ?? nodeId;
 		const statusBeforeDelivery = node?.status;
 
-		const msgId = randomUUID();
+		const msgId = ulid();
 
 		// Phase 1 of two-phase lifecycle: write + broadcast message at send time.
 		// Frontend derives pending state from message events without matching messages_consumed.

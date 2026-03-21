@@ -181,3 +181,10 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `createActionHandlers()` in App.tsx wrapped in `useMemo` to stabilize handler references.
 - Inline arrow callbacks in App.tsx render extracted to `useCallback` (onProjectChange, onSelect, onClearTarget, etc.) to prevent busting React.memo on child components.
 - State setters (from useState) are stable references — no need to include them in useMemo/useCallback deps.
+
+## ULID Migration
+
+- `src/ulid.ts`: Monotonic ULID generator. 26-char Crockford base32, lexicographically sortable.
+- All `randomUUID()` calls replaced with `ulid()`. Old UUID strings in JSONL/task files still work (just strings).
+- Background process IDs changed from `bg-{hex8}` to `bg-{ULID8}` — test regex updated from `[a-f0-9]` to `[A-Z0-9]`.
+- `noUncheckedIndexedAccess`: Uint8Array indexing needs `as number` casts. `(arr[i] as number)++` works for increment.

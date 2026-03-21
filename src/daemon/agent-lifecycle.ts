@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
 import {
@@ -20,6 +19,7 @@ import {
 import type { TaskTracker } from "../task-tracker.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
 import type { AgentResult } from "../types.ts";
+import { ulid } from "../ulid.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
 import {
@@ -1057,7 +1057,7 @@ export async function handleOrchestrate(
 	if (orchRootNodeId) {
 		const rootQueue = globalAgentQueues.get(orchRootNodeId);
 		if (rootQueue) {
-			const orchMsgId = randomUUID();
+			const orchMsgId = ulid();
 			// Write + broadcast message at send time (Phase 1)
 			const orchUserMsg: Event = {
 				type: "message",
@@ -1126,7 +1126,7 @@ export async function handleInjectMessage(
 			// Write + broadcast message at send time (Phase 1 of two-phase lifecycle)
 			const freshRootNodeId = tracker.rootNodeId;
 			if (freshRootNodeId) {
-				const freshMsgId = randomUUID();
+				const freshMsgId = ulid();
 				const userMsgEvent: Event = {
 					type: "message",
 					id: freshMsgId,
@@ -1153,7 +1153,7 @@ export async function handleInjectMessage(
 		};
 	}
 
-	const msgId = randomUUID();
+	const msgId = ulid();
 	const eventStore = getEventStore(ctx, projectId);
 
 	// Check resume BEFORE writing message (the event we're about to write

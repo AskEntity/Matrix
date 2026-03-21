@@ -876,7 +876,7 @@ describe("executeBashWithTimeout", () => {
 			sessionId,
 			queue,
 		);
-		const bgId = result.content.match(/bg-[a-f0-9]+/)?.[0] ?? "";
+		const bgId = result.content.match(/bg-[A-Z0-9]+/)?.[0] ?? "";
 		expect(bgId).toBeTruthy();
 
 		expect(getRunningBackgroundCount(sessionId)).toBe(1);
