@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { ConversationHistory } from "./ConversationHistory.tsx";
 import { IconCopy, IconPause, IconTrash } from "./icons.tsx";
 import { StatusBadge, statusDotClass } from "./StatusBadge.tsx";
 
@@ -56,7 +55,6 @@ export function TaskDetail({
 	onClearSession?: () => void;
 }) {
 	const { t } = useLocale();
-	const [showHistory, setShowHistory] = useState(false);
 	const isRunning =
 		isActive ?? (node.status === "in_progress" || node.status === "testing");
 	const [editingTitle, setEditingTitle] = useState(false);
@@ -313,15 +311,6 @@ export function TaskDetail({
 						{t("detail.pause")}
 					</button>
 				)}
-				{node.status !== "pending" && (
-					<button
-						type="button"
-						className={`og-btn og-btn-sm ${showHistory ? "og-btn-active" : "og-btn-ghost"}`}
-						onClick={() => setShowHistory((v) => !v)}
-					>
-						{t("detail.history")}
-					</button>
-				)}
 				{!isRunning &&
 					node.status !== "pending" &&
 					node.status !== "draft" &&
@@ -344,10 +333,6 @@ export function TaskDetail({
 					{t("detail.delete")}
 				</button>
 			</div>
-
-			{showHistory && node.status !== "pending" && (
-				<ConversationHistory projectId={projectId} nodeId={node.id} />
-			)}
 		</div>
 	);
 }
