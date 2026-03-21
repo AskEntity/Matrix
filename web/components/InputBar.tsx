@@ -1,12 +1,12 @@
 import type React from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconImage, IconSend } from "./icons.tsx";
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
-export function InputBar({
+export const InputBar = memo(function InputBar({
 	projectId,
 	targetNodeId,
 	nodeMap,
@@ -208,4 +208,4 @@ export function InputBar({
 			</div>
 		</form>
 	);
-}
+});

@@ -1,9 +1,10 @@
+import { memo } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { InputBar } from "./InputBar.tsx";
 import { IconClose } from "./icons.tsx";
 
-export function AppFooter({
+export const AppFooter = memo(function AppFooter({
 	projectId,
 	targetNodeId,
 	rootNodeId,
@@ -145,4 +146,4 @@ export function AppFooter({
 			/>
 		</footer>
 	);
-}
+});

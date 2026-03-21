@@ -1,8 +1,9 @@
+import { memo } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconHexagon, IconPause, IconTrash } from "./icons.tsx";
 
-export function OrchestratorDetail({
+export const OrchestratorDetail = memo(function OrchestratorDetail({
 	running,
 	isRootActive,
 	nodes,
@@ -202,4 +203,4 @@ export function OrchestratorDetail({
 			</div>
 		</div>
 	);
-}
+});

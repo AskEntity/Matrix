@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
 	formatTime,
 	getLogTaskId,
@@ -78,7 +78,7 @@ function QueueMessageCard({
 	);
 }
 
-export function LogEntryView({
+export const LogEntryView = memo(function LogEntryView({
 	entry,
 	nodeMap,
 }: {
@@ -522,4 +522,4 @@ export function LogEntryView({
 			</div>
 		</div>
 	);
-}
+});

@@ -1,5 +1,5 @@
 import type React from "react";
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { authFetch } from "../auth.ts";
 import type { Project } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
@@ -12,7 +12,7 @@ import {
 	IconTrash,
 } from "./icons.tsx";
 
-export function AppHeader({
+export const AppHeader = memo(function AppHeader({
 	connected,
 	projects,
 	projectId,
@@ -258,4 +258,4 @@ export function AppHeader({
 			</div>
 		</header>
 	);
-}
+});

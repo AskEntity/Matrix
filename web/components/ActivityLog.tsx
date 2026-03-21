@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getLogTaskId, type LogEntry, type TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { LogEntryView, ToolCard } from "./ToolCard.tsx";
@@ -44,7 +44,7 @@ function getSearchableText(entry: LogEntry): string {
 	}
 }
 
-export function ActivityLog({
+export const ActivityLog = memo(function ActivityLog({
 	entries,
 	filterTaskId,
 	rootNodeId,
@@ -327,4 +327,4 @@ export function ActivityLog({
 			</div>
 		</>
 	);
-}
+});

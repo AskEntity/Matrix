@@ -173,3 +173,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **Chrome MCP**: Use `take_screenshot` for root (safe). `take_snapshot` only for child tasks with short logs.
 - **Done counter**: UI counts both `passed` and `closed` tasks as "done".
 - **Resume error dedup**: Only show errors after last `orchestration_started` or resume event.
+
+## React Memo + Performance
+
+- All major UI components wrapped with `React.memo`: InputBar, AppFooter, AppHeader, ActivityLog, ToolCard, LogEntryView, OrchestratorDetail, TaskDetail, TaskTree, TokenUsageBadge, SettingsPanel.
+- Pattern: `export const Foo = memo(function Foo(props) { ... });` — import `memo` from react.
+- `createActionHandlers()` in App.tsx wrapped in `useMemo` to stabilize handler references.
+- Inline arrow callbacks in App.tsx render extracted to `useCallback` (onProjectChange, onSelect, onClearTarget, etc.) to prevent busting React.memo on child components.
+- State setters (from useState) are stable references — no need to include them in useMemo/useCallback deps.

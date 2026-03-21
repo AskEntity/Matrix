@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron, IconEyeOff, IconHexagon, IconTrash } from "./icons.tsx";
@@ -20,7 +20,7 @@ interface DropIndicator {
 
 type DropZone = "before" | "center" | "after";
 
-export function TaskTree({
+export const TaskTree = memo(function TaskTree({
 	nodes,
 	selectedTaskId,
 	rootNodeId,
@@ -429,7 +429,7 @@ export function TaskTree({
 			)}
 		</div>
 	);
-}
+});
 
 function TaskNodeView({
 	node,

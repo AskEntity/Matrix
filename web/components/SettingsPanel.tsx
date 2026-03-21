@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import type { ThreeLayerConfig } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconPlus, IconRefresh, IconTrash } from "./icons.tsx";
@@ -918,7 +918,7 @@ function buildPatch(
 
 // ---- Main SettingsPanel ----
 
-export function SettingsPanel({
+export const SettingsPanel = memo(function SettingsPanel({
 	layers,
 	loading,
 	updateGlobal,
@@ -1115,4 +1115,4 @@ export function SettingsPanel({
 			)}
 		</div>
 	);
-}
+});

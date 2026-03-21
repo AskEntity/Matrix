@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "../auth.ts";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
@@ -40,7 +40,7 @@ function formatRunningDuration(dateStr: string | null | undefined): string {
 	return `${hours}h ${mins % 60}m`;
 }
 
-export function TaskDetail({
+export const TaskDetail = memo(function TaskDetail({
 	node,
 	projectId,
 	isActive,
@@ -336,4 +336,4 @@ export function TaskDetail({
 			</div>
 		</div>
 	);
-}
+});
