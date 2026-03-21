@@ -534,6 +534,44 @@ export function formatPendingSection(pending: {
  * - consecutive tool_results (with optional queue events) → single user message
  * - compact_marker → skipped (readActive handles filtering)
  */
+
+/**
+ * Scan events for orphaned tool_call events (no matching tool_result).
+ * Returns synthetic tool_result events that should be persisted to JSONL.
+ * Call this BEFORE eventsToAnthropicMessages/eventsToOpenAIMessages on resume
+ * to fix orphans once and persist the fix.
+ */
+export function findOrphanedToolCalls(events: Event[]): Event[] {
+	// Build sets of tool_call IDs and tool_result IDs
+	const toolCallIds = new Map<string, string>(); // id → tool name
+	const toolResultIds = new Set<string>();
+	for (const e of events) {
+		if (e.type === "tool_call") {
+			toolCallIds.set(e.toolCallId, e.tool);
+		} else if (e.type === "tool_result") {
+			toolResultIds.add(e.toolCallId);
+		}
+	}
+	// Find tool_calls without matching tool_results
+	const orphans: Event[] = [];
+	for (const [id, tool] of toolCallIds) {
+		if (!toolResultIds.has(id)) {
+			console.warn(
+				`[findOrphanedToolCalls] Orphaned tool_call: ${id} (${tool})`,
+			);
+			orphans.push({
+				type: "tool_result" as const,
+				toolCallId: id,
+				content:
+					"Tool execution was interrupted by daemon restart. Results were lost.",
+				isError: true,
+				ts: Date.now(),
+			});
+		}
+	}
+	return orphans;
+}
+
 export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 	const events = rawEvents;
 	const messages: unknown[] = [];

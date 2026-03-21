@@ -20,6 +20,7 @@ import { DEFAULT_MODEL } from "./config.ts";
 import {
 	type Event,
 	eventsToAnthropicMessages,
+	findOrphanedToolCalls,
 	queueMessageToEvent,
 } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
@@ -583,8 +584,18 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		const eventStore = request.eventStore;
 
 		// Load session from EventStore (survives daemon restart)
-		const activeEvents = eventStore ? eventStore.readActive(sessionId) : [];
+		let activeEvents = eventStore ? eventStore.readActive(sessionId) : [];
 		const isResume = activeEvents.length > 0;
+
+		// Fix orphaned tool_calls: persist synthetic tool_results to JSONL so the
+		// fix survives future restarts (no repeated re-fixing on each resume)
+		if (isResume && eventStore) {
+			const orphanFixes = findOrphanedToolCalls(activeEvents);
+			if (orphanFixes.length > 0) {
+				await eventStore.appendBatch(sessionId, orphanFixes);
+				activeEvents = [...activeEvents, ...orphanFixes];
+			}
+		}
 
 		// Prepend working directory to the first user message (not on resume turns) so that
 		// the system prompt stays identical across agents in different worktrees, enabling

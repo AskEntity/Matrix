@@ -266,7 +266,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				const rootEvents = tracker.rootNodeId
 					? eventStore.read(tracker.rootNodeId)
 					: [];
-				const errorMessages = rootEvents
+				// Only show errors that occurred after the last successful resume.
+				// Find the last resume message — errors before it were already shown.
+				const lastResumeIdx = rootEvents.findLastIndex(
+					(e) =>
+						(e.type === "message" && (e as { isResume?: boolean }).isResume) ||
+						e.type === "orchestration_started",
+				);
+				const recentEvents =
+					lastResumeIdx >= 0 ? rootEvents.slice(lastResumeIdx + 1) : rootEvents;
+				const errorMessages = recentEvents
 					.filter(
 						(e): e is Extract<typeof e, { type: "error" }> =>
 							e.type === "error",
