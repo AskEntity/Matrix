@@ -348,72 +348,9 @@ describe("eventsToAnthropicMessages", () => {
 		]);
 	});
 
-	test("queue events between tool_results merge into user message", () => {
-		const events: Event[] = [
-			{
-				type: "tool_result",
-				toolCallId: "tc1",
-				content: "ok",
-				isError: false,
-				ts: 1000,
-			},
-			{
-				type: "parent_update",
-				content: "New instructions here",
-				ts: 1001,
-			},
-			{
-				type: "tool_result",
-				toolCallId: "tc2",
-				content: "done",
-				isError: false,
-				ts: 1002,
-			},
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{
-				role: "user",
-				content: [
-					{
-						type: "tool_result",
-						tool_use_id: "tc1",
-						content: "ok",
-						is_error: false,
-					},
-					{
-						type: "text",
-						text: "[Messages received while you were working:]\n<parent_update>New instructions here</parent_update>",
-					},
-					{
-						type: "tool_result",
-						tool_use_id: "tc2",
-						content: "done",
-						is_error: false,
-					},
-				],
-			},
-		]);
-	});
-
-	test("standalone queue event → user message with idle wrapper", () => {
-		const events: Event[] = [
-			{
-				type: "child_complete",
-				taskId: "t1",
-				title: "Auth",
-				success: true,
-				output: "All done",
-				ts: 1000,
-			},
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{
-				role: "user",
-				content:
-					'[Messages received while you were idle:]\n<child_complete task="Auth" id="t1" status="passed">All done</child_complete>',
-			},
-		]);
-	});
+	// Legacy tests for queue events without IDs removed — new format uses
+	// user_message with id + queueEntry, materialized by messages_consumed.
+	// See "messages_consumed" test suite below for comprehensive coverage.
 
 	test("standalone user_message from queue → idle wrapper", () => {
 		// When user_message appears after an assistant message (idle context),
@@ -618,98 +555,6 @@ describe("eventsToAnthropicMessages", () => {
 		});
 	});
 
-	test("queue event with images between tool_results", () => {
-		const events: Event[] = [
-			{
-				type: "tool_result",
-				toolCallId: "tc1",
-				content: "ok",
-				isError: false,
-				ts: 1000,
-			},
-			{
-				type: "user_message",
-				content: "Look at this",
-				images: [{ base64: "qimg", mediaType: "image/png" }],
-				ts: 1001,
-			},
-		];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages).toHaveLength(1);
-		const content = (messages[0] as { content: unknown[] }).content;
-		// 1 tool_result + 1 text (queue msg) + 1 image + 1 annotation
-		expect(content).toHaveLength(4);
-		expect(content[1]).toEqual({
-			type: "text",
-			text: "[Messages received while you were working:]\nLook at this",
-		});
-		expect(content[2]).toEqual({
-			type: "image",
-			source: { type: "base64", media_type: "image/png", data: "qimg" },
-		});
-		expect(content[3]).toEqual({
-			type: "text",
-			text: "[1 image(s) attached by user]",
-		});
-	});
-
-	test("tool images and queue images separated correctly", () => {
-		const events: Event[] = [
-			{
-				type: "tool_result",
-				toolCallId: "tc1",
-				content: "screenshot captured",
-				isError: false,
-				images: [{ base64: "tool_img", mediaType: "image/png" }],
-				ts: 1000,
-			},
-			{
-				type: "user_message",
-				content: "Check this out",
-				images: [{ base64: "user_img", mediaType: "image/jpeg" }],
-				ts: 1001,
-			},
-		];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages).toHaveLength(1);
-		const content = (messages[0] as { content: unknown[] }).content;
-		expect(content).toHaveLength(4);
-		// Tool images embedded INSIDE tool_result content
-		expect(content[0]).toEqual({
-			type: "tool_result",
-			tool_use_id: "tc1",
-			content: [
-				{
-					type: "image",
-					source: {
-						type: "base64",
-						media_type: "image/png",
-						data: "tool_img",
-					},
-				},
-				{ type: "text", text: "screenshot captured" },
-			],
-		});
-		// Queue message text
-		expect(content[1]).toEqual({
-			type: "text",
-			text: "[Messages received while you were working:]\nCheck this out",
-		});
-		// Queue images as sibling blocks with annotation
-		expect(content[2]).toEqual({
-			type: "image",
-			source: {
-				type: "base64",
-				media_type: "image/jpeg",
-				data: "user_img",
-			},
-		});
-		expect(content[3]).toEqual({
-			type: "text",
-			text: "[1 image(s) attached by user]",
-		});
-	});
-
 	test("handles resume user_message", () => {
 		const events: Event[] = [
 			{
@@ -721,31 +566,6 @@ describe("eventsToAnthropicMessages", () => {
 		];
 		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "Continue the task" },
-		]);
-	});
-
-	test("consecutive queue events batched into idle wrapper", () => {
-		const events: Event[] = [
-			{
-				type: "child_complete",
-				taskId: "t1",
-				title: "Auth",
-				success: true,
-				output: "done",
-				ts: 1000,
-			},
-			{
-				type: "parent_update",
-				content: "New instructions",
-				ts: 1001,
-			},
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
-			{
-				role: "user",
-				content:
-					'[Messages received while you were idle:]\n<child_complete task="Auth" id="t1" status="passed">done</child_complete>\n<parent_update>New instructions</parent_update>',
-			},
 		]);
 	});
 });
@@ -975,53 +795,6 @@ describe("eventsToOpenAIMessages", () => {
 				},
 			],
 		});
-	});
-
-	test("queue event between tool_results appends to last tool content", () => {
-		const events: Event[] = [
-			{
-				type: "tool_call",
-				tool: "bash",
-				toolCallId: "call_1",
-				input: { command: "ls" },
-				ts: 1000,
-			},
-			{
-				type: "tool_call",
-				tool: "read_file",
-				toolCallId: "call_2",
-				input: { path: "a.ts" },
-				ts: 1001,
-			},
-			{
-				type: "tool_result",
-				toolCallId: "call_1",
-				content: "ok",
-				isError: false,
-				ts: 1002,
-			},
-			{
-				type: "parent_update",
-				content: "New instructions",
-				ts: 1003,
-			},
-			{
-				type: "tool_result",
-				toolCallId: "call_2",
-				content: "done",
-				isError: false,
-				ts: 1004,
-			},
-		];
-		const messages = eventsToOpenAIMessages(events);
-		expect(messages).toHaveLength(3);
-		// Queue message should be appended to the first tool result
-		expect((messages[1] as { content: string }).content).toContain(
-			"<parent_update>New instructions</parent_update>",
-		);
-		expect((messages[1] as { content: string }).content).toContain(
-			"[Messages received while you were working:]",
-		);
 	});
 
 	test("compact_marker is skipped", () => {
@@ -1275,186 +1048,6 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 					caller: { type: "direct" },
 				},
 			],
-		});
-	});
-
-	test("Bug 2: standalone queue event formats from structured data", () => {
-		const events: Event[] = [
-			{
-				type: "parent_update",
-				content: "Hello from parent",
-				ts: 1000,
-			},
-		];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content:
-				"[Messages received while you were idle:]\n<parent_update>Hello from parent</parent_update>",
-		});
-	});
-
-	test("Bug 2: multiple queue events are joined and wrapped correctly", () => {
-		const events: Event[] = [
-			{
-				type: "child_report",
-				taskId: "t1",
-				title: "Auth",
-				content: "Progress update",
-				ts: 1000,
-			},
-			{
-				type: "parent_update",
-				content: "Second message",
-				ts: 1001,
-			},
-		];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content:
-				'[Messages received while you were idle:]\n<child_report from="Auth" id="t1">Progress update</child_report>\n<parent_update>Second message</parent_update>',
-		});
-	});
-
-	test("Bug 2: queue event with images uses array content format", () => {
-		// user_message with images between queue events
-		const events: Event[] = [
-			{
-				type: "child_complete",
-				taskId: "t1",
-				title: "Task",
-				success: true,
-				output: "done",
-				ts: 999,
-			},
-			{
-				type: "user_message",
-				content: "Check this image",
-				images: [{ base64: "abc123", mediaType: "image/png" }],
-				ts: 1000,
-			},
-		];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content: [
-				{
-					type: "text",
-					text: '[Messages received while you were idle:]\n<child_complete task="Task" id="t1" status="passed">done</child_complete>\nCheck this image',
-				},
-				{
-					type: "image",
-					source: {
-						type: "base64",
-						media_type: "image/png",
-						data: "abc123",
-					},
-				},
-			],
-		});
-	});
-
-	test("Bug fix: queue event between tool_results uses working wrapper", () => {
-		const events: Event[] = [
-			{
-				type: "tool_result",
-				toolCallId: "tc1",
-				content: "ok",
-				isError: false,
-				ts: 1000,
-			},
-			{
-				type: "parent_update",
-				content: "New instructions",
-				ts: 1001,
-			},
-			{
-				type: "tool_result",
-				toolCallId: "tc2",
-				content: "done",
-				isError: false,
-				ts: 1002,
-			},
-		];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages).toHaveLength(1);
-		const content = (messages[0] as { content: unknown[] }).content;
-		expect(content).toHaveLength(3);
-		expect(content[1]).toEqual({
-			type: "text",
-			text: "[Messages received while you were working:]\n<parent_update>New instructions</parent_update>",
-		});
-	});
-
-	test("backward compat: legacy queue_message events are normalized", () => {
-		// Old JSONL files contain events with type: "queue_message", source: "..."
-		// The converter should normalize them to concrete types
-		const events = [
-			{
-				type: "queue_message",
-				source: "user",
-				content: "Old format message",
-				ts: 1000,
-			},
-		] as unknown as Event[];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content: "Old format message",
-		});
-	});
-
-	test("backward compat: legacy queue_message child_complete normalized", () => {
-		const events = [
-			{
-				type: "queue_message",
-				source: "child_complete",
-				taskId: "t1",
-				title: "Auth",
-				success: true,
-				output: "done",
-				ts: 1000,
-			},
-		] as unknown as Event[];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content:
-				'[Messages received while you were idle:]\n<child_complete task="Auth" id="t1" status="passed">done</child_complete>',
-		});
-	});
-
-	test("backward compat: legacy queue_message system normalized", () => {
-		const events = [
-			{
-				type: "queue_message",
-				source: "system",
-				content: "System message",
-				ts: 1000,
-			},
-		] as unknown as Event[];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content:
-				"[Messages received while you were idle:]\n<system_notification>System message</system_notification>",
-		});
-	});
-
-	test("backward compat: legacy queue_message compact normalized", () => {
-		const events = [
-			{
-				type: "queue_message",
-				source: "compact",
-				ts: 1000,
-			},
-		] as unknown as Event[];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages[0]).toEqual({
-			role: "user",
-			content:
-				"[Messages received while you were idle:]\nManual compaction requested",
 		});
 	});
 });
@@ -1719,7 +1312,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		});
 	});
 
-	test("Anthropic: messagesConsumed field on tool_result (embedded cancellation point)", () => {
+	test("Anthropic: messages_consumed at cancellation point materializes user_message", () => {
 		const events: Event[] = [
 			{ type: "user_message", content: "Do a task", ts: 1000 },
 			{ type: "assistant_text", content: "OK", ts: 1001 },
@@ -1741,8 +1334,12 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				toolCallId: "tc1",
 				content: "ok",
 				isError: false,
-				messagesConsumed: ["msg-1"],
 				ts: 2000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-1"],
+				ts: 2001,
 			},
 			{ type: "assistant_text", content: "I see Y.", ts: 2002 },
 		];
@@ -1763,7 +1360,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		});
 	});
 
-	test("OpenAI: messagesConsumed field on tool_result (embedded cancellation point)", () => {
+	test("OpenAI: messages_consumed at cancellation point materializes user_message", () => {
 		const events: Event[] = [
 			{ type: "user_message", content: "Do a task", ts: 1000 },
 			{ type: "assistant_text", content: "OK", ts: 1001 },
@@ -1785,8 +1382,12 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				toolCallId: "call_1",
 				content: "ok",
 				isError: false,
-				messagesConsumed: ["msg-1"],
 				ts: 2000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-1"],
+				ts: 2001,
 			},
 			{ type: "assistant_text", content: "I see Y.", ts: 2002 },
 		];
@@ -1799,7 +1400,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		expect(toolResult.content).toContain("Also do Y");
 	});
 
-	test("user_message without id still works as direct message (backward compat)", () => {
+	test("user_message without id works as direct message", () => {
 		const events: Event[] = [
 			{
 				type: "user_message",
@@ -2258,15 +1859,18 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "tool_result",
 				toolCallId: "tc-yield",
-				content:
-					'<child_report from="Build" id="t2">50% done</child_report>\n\n## Pending\n- Running children: "Build" (t2)\n- Pending clarifications: none',
+				content: "",
 				isError: false,
-				messagesConsumed: ["msg-report"],
 				pending: {
 					runningChildren: [{ id: "t2", title: "Build" }],
 					pendingClarifications: 0,
 				},
 				ts: 1004,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-report"],
+				ts: 1005,
 			},
 		];
 		const messages = eventsToAnthropicMessages(events);
@@ -2313,15 +1917,18 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "tool_result",
 				toolCallId: "tc-yield",
-				content:
-					'<child_report from="Build" id="t2">50% done</child_report>\n\n## Pending\n- Running children: "Build" (t2)\n- Pending clarifications: none',
+				content: "",
 				isError: false,
-				messagesConsumed: ["msg-report"],
 				pending: {
 					runningChildren: [{ id: "t2", title: "Build" }],
 					pendingClarifications: 0,
 				},
 				ts: 1004,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-report"],
+				ts: 1005,
 			},
 		];
 		const messages = eventsToOpenAIMessages(events);
@@ -2334,72 +1941,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		);
 		expect(toolMsg.content).toContain("## Pending");
 		expect(toolMsg.content).toContain('"Build" (t2)');
-	});
-
-	test("backward compat: user_message with flat fields (no queueEntry) still works", () => {
-		// Old JSONL files have flat fields without queueEntry
-		const events: Event[] = [
-			{ type: "user_message", content: "Start", ts: 1000 },
-			{
-				type: "assistant_text",
-				content: "Done",
-				ts: 1001,
-			},
-			{
-				type: "user_message",
-				id: "msg-old",
-				source: "child_complete",
-				// No queueEntry — old format with flat fields
-				taskId: "t1",
-				title: "Old Task",
-				success: false,
-				output: "Failed with errors",
-				ts: 1002,
-			},
-			{
-				type: "messages_consumed",
-				messageIds: ["msg-old"],
-				ts: 1003,
-			},
-		];
-		const messages = eventsToAnthropicMessages(events);
-		expect(messages).toHaveLength(3);
-		const idleMsg = messages[2] as { role: string; content: string };
-		expect(idleMsg.content).toContain(
-			"[Messages received while you were idle:]",
-		);
-		expect(idleMsg.content).toContain(
-			'<child_complete task="Old Task" id="t1" status="failed">Failed with errors</child_complete>',
-		);
-	});
-
-	test("formatEventForAI prefers queueEntry over flat fields", () => {
-		const event: Event = {
-			type: "user_message",
-			source: "child_complete",
-			// Legacy flat fields (should be ignored when queueEntry present)
-			taskId: "old-id",
-			title: "Old Title",
-			success: false,
-			output: "Old output",
-			// New structured queueEntry (should be used)
-			queueEntry: {
-				source: "child_complete",
-				taskId: "new-id",
-				title: "New Title",
-				success: true,
-				output: "New output",
-			},
-			ts: 1000,
-		};
-		const formatted = formatEventForAI(event);
-		expect(formatted).toContain("new-id");
-		expect(formatted).toContain("New Title");
-		expect(formatted).toContain("passed");
-		expect(formatted).toContain("New output");
-		// Should NOT contain old values
-		expect(formatted).not.toContain("old-id");
-		expect(formatted).not.toContain("Old Title");
 	});
 
 	test("Anthropic: user_message with queueEntry.images gets image blocks", () => {

@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type { TaskNode, TaskStatus } from "../src/types.ts";
 
-import type { BroadcastEvent, Event } from "../src/events.ts";
+import type { Event } from "../src/events.ts";
 import type { TaskNode } from "../src/types.ts";
 
-export type { BroadcastEvent, Event } from "../src/events.ts";
+export type { Event } from "../src/events.ts";
 
 // --- Types ---
 
@@ -30,13 +30,13 @@ export type UIOnlyEvent =
 	  };
 
 /** All event types the UI can display. */
-export type UIEvent = Event | BroadcastEvent | UIOnlyEvent;
+export type UIEvent = Event | UIOnlyEvent;
 
 /**
  * LogEntry = UIEvent + display metadata.
  * `id` for keying. Time is derived from `ts` on render.
  * `taskId` is added by ws-handler to route entries to the correct task log.
- * Some UIEvent variants already have taskId (BroadcastEvent); for others it's
+ * Some UIEvent variants already have taskId (Event); for others it's
  * added as extra metadata via the intersection.
  */
 export type LogEntry = UIEvent & {

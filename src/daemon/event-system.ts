@@ -1,4 +1,4 @@
-import type { BroadcastEvent, Event } from "../events.ts";
+import type { Event } from "../events.ts";
 import type { QueueMessage } from "../message-queue.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type {
@@ -63,15 +63,15 @@ const EPHEMERAL_EVENT_TYPES = new Set([
 ]);
 
 /**
- * Convert a BroadcastEvent to a persistable Event for JSONL storage.
+ * Convert a Event to a persistable Event for JSONL storage.
  * Returns null for ephemeral events that should not be persisted.
  * Also returns the taskId (sessionId) to store under.
  *
- * Since BroadcastEvent and Event now share field names (toolCallId, etc.),
+ * Since Event and Event now share field names (toolCallId, etc.),
  * non-ephemeral events can be stored directly — no field mapping needed.
  */
 function broadcastToEvent(
-	event: BroadcastEvent,
+	event: Event,
 	rootNodeId: string | undefined,
 ): { event: Event; sessionId: string } | null {
 	if (EPHEMERAL_EVENT_TYPES.has(event.type)) return null;
@@ -90,7 +90,7 @@ function broadcastToEvent(
 export function broadcastEvent(
 	ctx: DaemonContext,
 	projectId: string,
-	event: BroadcastEvent,
+	event: Event,
 ) {
 	// Persist lifecycle events to JSONL EventStore (fire-and-forget async write)
 	const rootNodeId = ctx.trackers.get(projectId)?.rootNodeId ?? undefined;

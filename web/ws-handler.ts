@@ -293,7 +293,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					},
 				};
 
-			// --- Provider events (flat, from BroadcastEvent) ---
+			// --- Provider events (flat Event types) ---
 
 			case "tool_call":
 				return {
@@ -301,8 +301,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						createLogEntry({
 							type: "tool_call",
 							tool: msg.tool as string,
-							toolCallId:
-								(msg.toolCallId as string) || (msg.toolUseId as string) || "",
+							toolCallId: (msg.toolCallId as string) || "",
 							input: (msg.input as Record<string, unknown>) ?? {},
 							taskId: msg.taskId as string,
 							ts: (msg.ts as number) ?? Date.now(),
@@ -318,8 +317,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						createLogEntry({
 							type: "tool_result",
 							tool: msg.tool as string,
-							toolCallId:
-								(msg.toolCallId as string) || (msg.toolUseId as string) || "",
+							toolCallId: (msg.toolCallId as string) || "",
 							content: (msg.content as string) || "",
 							isError: (msg.isError as boolean) || false,
 							images: msg.images as
@@ -763,29 +761,6 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				};
 			}
 
-			// Backward compat: old JSONL files may have message_injected events
-			case "message_injected":
-				return {
-					entries: [
-						createLogEntry({
-							type: "user_message",
-							content: (msg.message as string) || "",
-							...(msg.images
-								? {
-										images: msg.images as Array<{
-											base64: string;
-											mediaType: string;
-										}>,
-									}
-								: {}),
-							taskId: msg.taskId as string | undefined,
-							ts: (msg.ts as number) ?? Date.now(),
-						}),
-					],
-					updates: [],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-
 			case "error":
 				return {
 					entries: [
@@ -818,45 +793,9 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				};
 			}
 
-			// Backward compat: handle old-format agent_event from persisted event history
-			case "agent_event":
-				return processLegacyAgentEvent(msg);
-
 			default:
 				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 		}
-	}
-
-	/**
-	 * Handle legacy agent_event format from persisted event history.
-	 * Transforms the old wrapped format into the new flat format and re-processes.
-	 */
-	function processLegacyAgentEvent(
-		msg: Record<string, unknown>,
-	): ProcessResult {
-		const et = msg.eventType as string;
-		const ts = msg.ts ?? msg.timestamp ?? Date.now();
-
-		// Map old eventType names to new flat event types
-		const mapped: Record<string, unknown> = { ...msg, ts };
-		switch (et) {
-			case "tool_use":
-				mapped.type = "tool_call";
-				break;
-			case "text":
-				mapped.type = "assistant_text";
-				break;
-			case "compact":
-				mapped.type = "compact_marker";
-				break;
-			default:
-				// Most eventTypes map directly to the new type names
-				mapped.type = et;
-				break;
-		}
-		// Remove the wrapper fields
-		delete mapped.eventType;
-		return processEvent(mapped);
 	}
 
 	// --- Update application helpers ---

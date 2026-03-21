@@ -12,7 +12,7 @@ import {
 	TASK_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
 import { DEFAULT_MODEL } from "../config.ts";
-import type { BroadcastEvent, Event } from "../events.ts";
+import type { Event } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { globalAgentQueues, MessageQueue } from "../message-queue.ts";
@@ -43,14 +43,14 @@ import {
 } from "./helpers.ts";
 
 // ---------------------------------------------------------------------------
-// Map provider AgentEvent → typed BroadcastEvent for WS emission
+// Map provider AgentEvent → typed Event for WS emission
 // ---------------------------------------------------------------------------
 
 function agentEventToBroadcast(
 	eventType: string,
 	eventData: Record<string, unknown>,
 	taskId: string,
-): BroadcastEvent {
+): Event {
 	const ts = Date.now();
 	switch (eventType) {
 		case "text_delta":
@@ -288,7 +288,7 @@ async function createAgentContext(
 		onTaskEvent: (event) => {
 			console.error(event.type, event.taskId);
 			const ts = (event.ts as number) || Date.now();
-			// Transform agent_event wrappers into flat BroadcastEvents
+			// Transform agent_event wrappers into flat Events
 			if (event.type === "agent_event") {
 				const taskId = (event.taskId as string) || "";
 				const eventType = event.eventType as string;
@@ -302,9 +302,9 @@ async function createAgentContext(
 					taskId,
 				);
 			} else {
-				// Already a valid BroadcastEvent shape — just ensure ts
+				// Already a valid Event shape — just ensure ts
 				const withTs = event.ts ? event : { ...event, ts };
-				broadcastEvent(ctx, project.id, withTs as unknown as BroadcastEvent);
+				broadcastEvent(ctx, project.id, withTs as unknown as Event);
 			}
 			broadcastTreeUpdate(ctx, project.id, opts.tracker);
 
@@ -967,10 +967,7 @@ export async function launchAgent(
 
 	// Wire up enqueue/drain callbacks for pending message indicators
 	queue.onEnqueue = (msg) =>
-		broadcastPendingFromQueue(ctx, project.id, [
-			...queue.peekMessages(),
-			msg,
-		]);
+		broadcastPendingFromQueue(ctx, project.id, [...queue.peekMessages(), msg]);
 	queue.onDrain = () => broadcastPendingCleared(ctx, project.id);
 
 	// Load any persisted messages from disk and enqueue them
