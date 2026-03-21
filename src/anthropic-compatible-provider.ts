@@ -208,11 +208,10 @@ export function extractCheckpoint(responseText: string, cwd?: string): string {
 
 /**
  * Build the compacted context message after checkpoint generation.
- * Combines task context, fresh memory, checkpoint, and recent transcript into a single user message.
+ * Combines fresh memory and checkpoint into a single user message.
  * @internal Exported for testing
  */
 export async function buildCompactedContext(
-	taskContext: string | undefined,
 	checkpoint: string,
 	cwd?: string,
 ): Promise<string> {
@@ -228,9 +227,6 @@ export async function buildCompactedContext(
 	}
 
 	const parts: string[] = [];
-	if (taskContext) {
-		parts.push(`## Original Task\n${taskContext}`);
-	}
 	if (freshMemory) {
 		parts.push(`## Project Memory (fresh)\n${freshMemory}`);
 	}
@@ -625,19 +621,6 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			}
 		}
 
-		// For context compression: use the original task prompt, not the resume prompt.
-		// On resume, find the first message in the FULL event history.
-		let taskContext = request.prompt;
-		if (isResume && eventStore) {
-			const allEvents = eventStore.read(sessionId);
-			const firstUserMsg = allEvents.find(
-				(e) => e.type === "message" || e.type === "user_message",
-			);
-			if (firstUserMsg && "content" in firstUserMsg) {
-				taskContext = firstUserMsg.content as string;
-			}
-		}
-
 		// Add MCP tool definitions from mcpToolDefs
 		const allTools: Tool[] = [..._TOOLS];
 		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
@@ -706,11 +689,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				const checkpoint = extractCheckpoint(responseText, cwd);
 
 				try {
-					const compactedContent = await buildCompactedContext(
-						taskContext,
-						checkpoint,
-						cwd,
-					);
+					const compactedContent = await buildCompactedContext(checkpoint, cwd);
 					const oldTokens = preCompactTokenCount;
 					messages.length = 0;
 					const userContent = cwd

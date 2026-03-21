@@ -455,19 +455,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				]
 			: [{ role: "user" as const, content: firstUserContent }];
 
-		// For context compression: use the original task prompt, not the resume prompt.
-		// On resume, find the first message in the FULL event history.
-		let taskContext = request.prompt;
-		if (isResume && eventStore) {
-			const allEvents = eventStore.read(sessionId);
-			const firstUserMsg = allEvents.find(
-				(e) => e.type === "message" || e.type === "user_message",
-			);
-			if (firstUserMsg && "content" in firstUserMsg) {
-				taskContext = firstUserMsg.content as string;
-			}
-		}
-
 		// Record the new user message event
 		if (eventStore) {
 			if (isResume) {
@@ -544,11 +531,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 				const checkpoint = extractCheckpoint(responseText, cwd);
 
 				try {
-					const compactedContent = await buildCompactedContext(
-						taskContext,
-						checkpoint,
-						cwd,
-					);
+					const compactedContent = await buildCompactedContext(checkpoint, cwd);
 					const oldTokens = preCompactTokenCount;
 					messages.length = 0;
 					const userContent = cwd

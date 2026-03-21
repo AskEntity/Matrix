@@ -1194,14 +1194,13 @@ describe("extractCheckpoint", () => {
 });
 
 describe("buildCompactedContext", () => {
-	test("includes task context and checkpoint", async () => {
+	test("includes checkpoint", async () => {
 		const result = await buildCompactedContext(
-			"Build a calculator app",
 			"## Current Phase\nimplementation",
 		);
-		expect(result).toContain("Build a calculator app");
 		expect(result).toContain("Checkpoint Summary");
 		expect(result).toContain("## Current Phase");
+		expect(result).not.toContain("Original Task");
 	});
 
 	test("includes fresh memory when cwd has memory file", async () => {
@@ -1213,11 +1212,7 @@ describe("buildCompactedContext", () => {
 				"# Project Memory\n- important note",
 			);
 
-			const result = await buildCompactedContext(
-				"Some task",
-				"checkpoint content",
-				tempDir,
-			);
+			const result = await buildCompactedContext("checkpoint content", tempDir);
 			expect(result).toContain("Project Memory (fresh)");
 			expect(result).toContain("important note");
 		} finally {
@@ -1225,17 +1220,10 @@ describe("buildCompactedContext", () => {
 		}
 	});
 
-	test("works without task context", async () => {
-		const result = await buildCompactedContext(undefined, "checkpoint text");
-		expect(result).toContain("Checkpoint Summary");
-		expect(result).toContain("checkpoint text");
-		expect(result).not.toContain("Original Task");
-	});
-
 	test("works when memory file does not exist", async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "og-nomem-test-"));
 		try {
-			const result = await buildCompactedContext("task", "checkpoint", tempDir);
+			const result = await buildCompactedContext("checkpoint", tempDir);
 			expect(result).toContain("Checkpoint Summary");
 			expect(result).not.toContain("Project Memory");
 		} finally {
