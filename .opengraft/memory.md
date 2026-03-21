@@ -391,3 +391,30 @@ Event (src/events.ts) — THE source of truth
   2. Both providers (Anthropic + OpenAI) extract `_consumedMessageIds` from MCP tool result, merge with cancellation-point IDs, and write `messagesConsumed` to JSONL tool_result event
   3. `broadcastAgentStreamEvent()` checks tool_result events for `_consumedMessageIds` and broadcasts `messages_consumed` to WS clients
 - **Key insight**: The `_consumedMessageIds` prefix convention avoids polluting the MCP tool result schema while allowing custom metadata to flow from tool handler → provider → JSONL → broadcast.
+
+
+## JSONL Architecture Vision (March 2026)
+
+**Core problem**: Queue messages are formatted as text and embedded in tool_result content. This loses structure, makes the JSONL format unmaintainable, and breaks frontend rendering (messages_consumed can't reference IDs of things embedded as text).
+
+**Target JSONL structure**:
+```
+{"type":"user_message","id":"X","queueEntry":{"source":"child_complete","taskId":"...","success":true,...}}
+{"type":"tool_result","toolCallId":"Y","content":"<pure tool output>","messagesConsumed":["X"],"pending":{"children":[...],"clarifications":[...]}}
+```
+
+**Principles**:
+1. `user_message` with `queueEntry` = structured record of ANY queue message (user text, child_complete, clarify_response, parent_update, etc.)
+2. `tool_result.content` = ONLY the tool's actual output (no queue messages embedded)  
+3. `tool_result.messagesConsumed` = references consumed user_message IDs
+4. `tool_result.pending` = structured state (not `## Pending` text)
+5. Converter formats queue messages as XML/text for AI at conversion time
+
+**Three types of tools**:
+1. **Built-in tools** (bash, read_file, etc.): Pure I/O, no state changes, no context needed
+2. **Runtime API tools** (create_task, send_message_to_child, report_to_parent, etc.): Conceptually HTTP API calls to OpenGraft runtime. Request/response, no queue state changes.
+3. **Queue-state tools** (yield, done): Fundamentally different — they block/close the queue. Need dedicated provider callbacks.
+
+**Current mess**: Types 1-3 are all in one `createOrchestratorTools()` with a big deps bag. Queue message text is pre-formatted and embedded in tool_result. Two separate event callbacks (onEvent from provider, onTaskEvent from agent-tools emit) handle the same thing differently.
+
+**Fix path**: Task 297eacb7 (structured JSONL) + 064df856 (yield/done separation) + 51d1e79e (provider refactor).
