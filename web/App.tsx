@@ -261,9 +261,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		for (const n of nodes) map.set(n.id, n);
 		return map;
 	}, [nodes]);
-	const nodeMapRef = useRef(nodeMap);
-	nodeMapRef.current = nodeMap;
-
 	const totalCost = useMemo(() => {
 		const sum = nodes.reduce((acc, n) => acc + (n.costUsd ?? 0), 0);
 		return sum > 0 ? sum : null;
@@ -387,7 +384,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setLastCacheCreationTokens,
 				setLastCacheReadTokens,
 				setLastOutputTokens,
-				nodeMapRef,
 				t,
 			}),
 		[

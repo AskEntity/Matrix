@@ -30,7 +30,6 @@ function makeDeps() {
 			setLastCacheCreationTokens: mock(() => {}),
 			setLastCacheReadTokens: mock(() => {}),
 			setLastOutputTokens: mock(() => {}),
-			nodeMapRef: { current: new Map() },
 			t: (key: string) => key,
 		},
 		logs,
