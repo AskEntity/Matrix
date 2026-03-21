@@ -151,7 +151,12 @@ export function readProjectMemory(
 		// No memory file, that's fine
 	}
 
-	return parts.join("\n\n");
+	if (parts.length === 0) return "";
+
+	if (includeHeaders) {
+		return `## Pre-loaded Project Context\nThe following CLAUDE.md and project memory have been pre-loaded for you. Do NOT read these files again — they are already included below.\n\n${parts.join("\n\n")}`;
+	}
+	return `--- Pre-loaded: CLAUDE.md + .opengraft/memory.md (do not re-read) ---\n\n${parts.join("\n\n")}`;
 }
 
 /**
