@@ -140,7 +140,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 			case "child_report":
 				return {
 					type: "child_report",
-					taskId: qe.taskId ?? "",
+					taskId: parentTaskId,
 					title: qe.title ?? "",
 					content: qe.content ?? "",
 					...(qe.requestReply ? { requestReply: true } : {}),
