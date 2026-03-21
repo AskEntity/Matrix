@@ -161,3 +161,12 @@ Daemon (Hono: HTTP + SSE on :7433)
 ## File Renames
 - `web/ws-handler.ts` → `web/event-handler.ts` (exports: `EventHandlerDeps`, `createEventHandler`, returns `handleEvent`)
 - `web/ws-handler.test.ts` → `web/event-handler.test.ts`
+
+## agent-tools.ts Split
+
+- `src/agent-tools.ts` (was 1917 lines) split into 3 files:
+  - `src/system-prompts.ts` — ORCHESTRATION_KNOWLEDGE, TASK_SYSTEM_PROMPT
+  - `src/orchestrator-tools.ts` — OrchestratorToolsDeps, CostAccumulator, OrchestratorToolsResult, createOrchestratorTools (all tool defs + handlers + waitForQueueMessages + isGitClean)
+  - `src/agent-tools.ts` — thin re-export layer + helper functions (resolveColor, isDescendantOf, getDescendantIds, formatQueueMessage, toRawMessage, buildTaskPrompt, slugify)
+- All existing imports from `./agent-tools` continue to work unchanged via re-exports.
+- orchestrator-tools.ts imports helpers from agent-tools.ts (no circular deps).
