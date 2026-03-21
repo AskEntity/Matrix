@@ -28,6 +28,7 @@ export type QueueMessage =
 			source: "child_report";
 			taskId: string;
 			title: string;
+			summary?: string;
 			content: string;
 			requestReply?: boolean;
 	  }

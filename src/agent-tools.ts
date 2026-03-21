@@ -1523,9 +1523,14 @@ export function createOrchestratorTools(
 				"Use this to keep the parent informed about important intermediate progress, " +
 				"blockers, or results without waiting for acknowledgement.",
 			{
+				title: z
+					.string()
+					.describe(
+						"Short summary of the report (shown as card title in parent's activity log)",
+					),
 				message: z
 					.string()
-					.describe("The message content to send to the parent agent"),
+					.describe("The detailed message content to send to the parent agent"),
 				requestReply: z
 					.boolean()
 					.optional()
@@ -1556,6 +1561,7 @@ export function createOrchestratorTools(
 						source: "child_report",
 						taskId: currentTaskId ?? "unknown",
 						title: taskTitle,
+						summary: args.title,
 						content: args.message,
 						...(args.requestReply ? { requestReply: true } : {}),
 					});
