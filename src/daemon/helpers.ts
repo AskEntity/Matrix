@@ -190,27 +190,16 @@ export async function pruneSessionFiles(
 }
 
 /**
- * Normalize an Event from JSONL to UI-compatible format.
- * Maps Event field names to BroadcastEvent field names that the frontend processEvent expects:
- * - toolCallId → toolUseId (for tool_call and tool_result)
- * - Adds taskId to events that don't have it
+ * Normalize an Event from JSONL for UI consumption.
+ * Adds taskId to events that don't have it (all events need taskId for routing).
  */
 export function normalizeEventForUI(
 	event: Event,
 	sessionId: string,
 ): Record<string, unknown> {
 	const base = event as unknown as Record<string, unknown>;
-	const result: Record<string, unknown> = {
+	return {
 		...base,
 		taskId: base.taskId ?? sessionId,
 	};
-
-	// Map toolCallId → toolUseId for frontend compatibility
-	if (event.type === "tool_call") {
-		result.toolUseId = event.toolCallId;
-	} else if (event.type === "tool_result") {
-		result.toolUseId = event.toolCallId;
-	}
-
-	return result;
 }

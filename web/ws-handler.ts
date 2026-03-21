@@ -195,7 +195,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						createLogEntry({
 							type: "tool_call",
 							tool: msg.tool as string,
-							toolUseId: (msg.toolUseId as string) || "",
+							toolCallId:
+								(msg.toolCallId as string) || (msg.toolUseId as string) || "",
 							input: (msg.input as Record<string, unknown>) ?? {},
 							taskId: msg.taskId as string,
 							ts: (msg.ts as number) ?? Date.now(),
@@ -211,7 +212,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 						createLogEntry({
 							type: "tool_result",
 							tool: msg.tool as string,
-							toolUseId: (msg.toolUseId as string) || "",
+							toolCallId:
+								(msg.toolCallId as string) || (msg.toolUseId as string) || "",
 							content: (msg.content as string) || "",
 							isError: (msg.isError as boolean) || false,
 							images: msg.images as
