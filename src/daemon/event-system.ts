@@ -82,15 +82,7 @@ function broadcastToEvent(
 	const sessionId = taskId || rootNodeId;
 	if (!sessionId) return null;
 
-	// message_injected routes to root session
-	if (event.type === "message_injected") {
-		return {
-			event: event as unknown as Event,
-			sessionId: rootNodeId ?? sessionId,
-		};
-	}
-
-	// All other non-ephemeral types can be stored as-is (field names match Event)
+	// All non-ephemeral types can be stored as-is (field names match Event)
 	return { event: event as unknown as Event, sessionId };
 }
 

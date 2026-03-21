@@ -39,7 +39,13 @@ export interface WSHandlerDeps {
 	>;
 	setPendingMessages: React.Dispatch<
 		React.SetStateAction<
-			{ id: string; taskId: string | null; text: string; timestamp: number }[]
+			{
+				id: string;
+				taskId: string | null;
+				text: string;
+				timestamp: number;
+				images?: Array<{ base64: string; mediaType: string }>;
+			}[]
 		>
 	>;
 	setPendingClarifications: React.Dispatch<
@@ -104,8 +110,8 @@ export function createWSHandler(deps: WSHandlerDeps) {
 	): UIEvent | null {
 		const ts = Date.now();
 		// child_complete, system_notification, and user messages don't show as separate log entries.
-		// User messages are already displayed via message_injected — queue_message source:user
-		// is just an internal delivery confirmation, not a second visible entry.
+		// User messages are displayed via the user_message → messages_consumed lifecycle,
+		// not via queue_message events.
 		if (
 			rm.source === "child_complete" ||
 			rm.source === "system" ||
@@ -505,6 +511,99 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				return { entries, updates: [], sideEffects: NO_SIDE_EFFECTS };
 			}
 
+			case "user_message": {
+				// user_message with an id = injected message awaiting consumption.
+				// Show as pending, not in activity log — messages_consumed will move it.
+				const umId = msg.id as string | undefined;
+				if (umId) {
+					const umContent = (msg.content as string) || "";
+					const umImages = msg.images as
+						| Array<{ base64: string; mediaType: string }>
+						| undefined;
+					const umTaskId = msg.taskId as string | null | undefined;
+					return {
+						entries: [],
+						updates: [],
+						sideEffects: () => {
+							setPendingMessages((prev) => [
+								...prev,
+								{
+									id: umId,
+									taskId: umTaskId ?? null,
+									text: umContent,
+									timestamp: (msg.ts as number) ?? Date.now(),
+									images: umImages,
+								},
+							]);
+						},
+					};
+				}
+				// user_message without id = initial prompt, show directly in activity log
+				return {
+					entries: [
+						createLogEntry({
+							type: "user_message",
+							content: (msg.content as string) || "",
+							...(msg.images
+								? {
+										images: msg.images as Array<{
+											base64: string;
+											mediaType: string;
+										}>,
+									}
+								: {}),
+							taskId: msg.taskId as string | undefined,
+							ts: (msg.ts as number) ?? Date.now(),
+						}),
+					],
+					updates: [],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
+			}
+
+			case "messages_consumed": {
+				// Move consumed messages from pending to activity log
+				const consumedIds = new Set((msg.messageIds as string[]) ?? []);
+				if (consumedIds.size === 0) {
+					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
+				}
+				return {
+					entries: [],
+					updates: [],
+					sideEffects: () => {
+						setPendingMessages((prev) => {
+							const consumed = prev.filter((p) => consumedIds.has(p.id));
+							const remaining = prev.filter((p) => !consumedIds.has(p.id));
+							// Add consumed messages to activity log
+							if (consumed.length > 0) {
+								setLogs((prevLogs) => [
+									...prevLogs,
+									...consumed.map((p) =>
+										createLogEntry({
+											type: "user_message",
+											content: p.text,
+											...((p as Record<string, unknown>).images
+												? {
+														images: (p as Record<string, unknown>)
+															.images as Array<{
+															base64: string;
+															mediaType: string;
+														}>,
+													}
+												: {}),
+											taskId: p.taskId ?? undefined,
+											ts: (msg.ts as number) ?? Date.now(),
+										}),
+									),
+								]);
+							}
+							return remaining;
+						});
+					},
+				};
+			}
+
+			// Backward compat: old JSONL files may have message_injected events
 			case "message_injected":
 				return {
 					entries: [
@@ -774,12 +873,86 @@ export function createWSHandler(deps: WSHandlerDeps) {
 
 	/**
 	 * Process a batch of events into log entries (used for REST-fetched event history).
-	 * Returns the log entries with all side effects applied.
+	 * Handles two-phase user message lifecycle: user_message (with id) events are held
+	 * until a messages_consumed event references them, at which point they appear in the
+	 * activity log at the consumption position. Unconsumed user_messages go to pending.
 	 */
 	function processEventBatch(events: Record<string, unknown>[]): void {
 		const entries: LogEntry[] = [];
 		const deferredSideEffects: (() => void)[] = [];
+
+		// Track user_message events with IDs for two-phase resolution
+		const pendingUserMsgs = new Map<
+			string,
+			{
+				content: string;
+				images?: Array<{ base64: string; mediaType: string }>;
+				taskId?: string;
+				ts: number;
+			}
+		>();
+		// Track which IDs have been consumed (by messages_consumed events)
+		const consumedIds = new Set<string>();
+
 		for (const evt of events) {
+			const evtType = evt.type as string;
+
+			// Two-phase user message: collect with-id user_messages for later resolution
+			if (evtType === "user_message" && evt.id) {
+				pendingUserMsgs.set(evt.id as string, {
+					content: (evt.content as string) || "",
+					images: evt.images as
+						| Array<{ base64: string; mediaType: string }>
+						| undefined,
+					taskId: evt.taskId as string | undefined,
+					ts: (evt.ts as number) ?? Date.now(),
+				});
+				continue;
+			}
+
+			// messages_consumed: materialize referenced user messages at this position
+			if (evtType === "messages_consumed") {
+				const ids = (evt.messageIds as string[]) ?? [];
+				const ts = (evt.ts as number) ?? Date.now();
+				for (const id of ids) {
+					consumedIds.add(id);
+					const userMsg = pendingUserMsgs.get(id);
+					if (userMsg) {
+						entries.push(
+							createLogEntry({
+								type: "user_message",
+								content: userMsg.content,
+								...(userMsg.images ? { images: userMsg.images } : {}),
+								taskId: userMsg.taskId,
+								ts,
+							}),
+						);
+					}
+				}
+				continue;
+			}
+
+			// tool_result with messagesConsumed: materialize before the tool_result
+			if (evtType === "tool_result" && evt.messagesConsumed) {
+				const ids = (evt.messagesConsumed as string[]) ?? [];
+				const ts = (evt.ts as number) ?? Date.now();
+				for (const id of ids) {
+					consumedIds.add(id);
+					const userMsg = pendingUserMsgs.get(id);
+					if (userMsg) {
+						entries.push(
+							createLogEntry({
+								type: "user_message",
+								content: userMsg.content,
+								...(userMsg.images ? { images: userMsg.images } : {}),
+								taskId: userMsg.taskId,
+								ts,
+							}),
+						);
+					}
+				}
+			}
+
 			const result = processEvent(evt);
 			for (const entry of result.entries) entries.push(entry);
 			for (const op of result.updates) applyUpdateToArray(entries, op);
@@ -787,8 +960,23 @@ export function createWSHandler(deps: WSHandlerDeps) {
 				deferredSideEffects.push(result.sideEffects);
 			}
 		}
+
 		setLogs(entries);
 		for (const fn of deferredSideEffects) fn();
+
+		// Any unconsumed user messages with IDs go to pending
+		const unconsumed = [...pendingUserMsgs.entries()]
+			.filter(([id]) => !consumedIds.has(id))
+			.map(([id, m]) => ({
+				id,
+				taskId: m.taskId ?? null,
+				text: m.content,
+				timestamp: m.ts,
+				images: m.images,
+			}));
+		if (unconsumed.length > 0) {
+			setPendingMessages(unconsumed);
+		}
 	}
 
 	// --- Main handler ---

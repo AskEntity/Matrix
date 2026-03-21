@@ -128,6 +128,7 @@ function agentEventToBroadcast(
 					| Array<{
 							source: string;
 							content: string;
+							id?: string;
 							images?: { base64: string; mediaType: string }[];
 					  }>
 					| undefined,
@@ -150,6 +151,24 @@ function agentEventToBroadcast(
 				ts,
 			};
 	}
+}
+
+/**
+ * Extract consumed user message IDs from a queue_message event's rawMessages.
+ * Used to broadcast messages_consumed when the agent drains its queue.
+ */
+function extractConsumedUserIds(eventData: Record<string, unknown>): string[] {
+	const rawMessages = eventData.rawMessages as
+		| Array<{ source: string; id?: string }>
+		| undefined;
+	if (!rawMessages) return [];
+	const ids: string[] = [];
+	for (const rm of rawMessages) {
+		if (rm.source === "user" && rm.id) {
+			ids.push(rm.id);
+		}
+	}
+	return ids;
 }
 
 // ---------------------------------------------------------------------------
@@ -727,6 +746,18 @@ export async function runChildAgentInBackground(
 						project.id,
 						agentEventToBroadcast(eventType, eventData, nodeId),
 					);
+					// Broadcast messages_consumed when queue messages with user IDs are consumed
+					if (eventType === "queue_message") {
+						const consumedIds = extractConsumedUserIds(eventData);
+						if (consumedIds.length > 0) {
+							broadcast(ctx.wsClients, project.id, {
+								type: "messages_consumed",
+								messageIds: consumedIds,
+								taskId: nodeId,
+								ts: Date.now(),
+							});
+						}
+					}
 				}
 			},
 			persistedMessages: {
@@ -1006,11 +1037,19 @@ export async function launchAgent(
 							project.id,
 							agentEventToBroadcast(eventType, eventData, rootNodeId),
 						);
+						// Broadcast messages_consumed when queue messages with user IDs are consumed
+						if (eventType === "queue_message") {
+							const consumedIds = extractConsumedUserIds(eventData);
+							if (consumedIds.length > 0) {
+								broadcast(ctx.wsClients, project.id, {
+									type: "messages_consumed",
+									messageIds: consumedIds,
+									taskId: rootNodeId,
+									ts: Date.now(),
+								});
+							}
+						}
 					}
-
-					// User messages are now written to JSONL at send time (handleInjectMessage).
-					// The activity log entry appears immediately via message_injected broadcast
-					// at send time, not at consumption time.
 				},
 			);
 
@@ -1134,17 +1173,18 @@ export async function handleOrchestrate(
 		// Write user_message to JSONL at send time
 		if (orchRootNodeId) {
 			const orchEventStore = getEventStore(ctx, projectId);
-			orchEventStore.append(orchRootNodeId, {
+			const orchUserMsg: Event = {
 				type: "user_message",
 				id: orchMsgId,
 				content: prompt,
 				ts: Date.now(),
-			});
-			broadcastEvent(ctx, projectId, {
-				type: "message_injected",
-				message: prompt,
-				ts: Date.now(),
-			});
+			};
+			orchEventStore.append(orchRootNodeId, orchUserMsg);
+			// Broadcast user_message so frontend can show it in pending area
+			broadcast(ctx.wsClients, projectId, {
+				...orchUserMsg,
+				taskId: orchRootNodeId,
+			} as unknown as Record<string, unknown>);
 		}
 		try {
 			existingSession.queue.enqueue({
@@ -1214,12 +1254,11 @@ export async function handleInjectMessage(
 					ts: Date.now(),
 				};
 				eventStore.append(freshRootNodeId, userMsgEvent);
-				broadcastEvent(ctx, projectId, {
-					type: "message_injected",
-					message,
-					...(images?.length ? { images } : {}),
-					ts: Date.now(),
-				});
+				// Broadcast user_message so frontend can show it in pending area
+				broadcast(ctx.wsClients, projectId, {
+					...userMsgEvent,
+					taskId: freshRootNodeId,
+				} as unknown as Record<string, unknown>);
 			}
 			return { ok: true };
 		}
@@ -1247,13 +1286,11 @@ export async function handleInjectMessage(
 	};
 	eventStore.append(rootNodeId, userMsgEvent);
 
-	// Broadcast user_message for activity log — shows immediately at send time
-	broadcastEvent(ctx, projectId, {
-		type: "message_injected",
-		message,
-		...(images?.length ? { images } : {}),
-		ts: Date.now(),
-	});
+	// Broadcast user_message so frontend can show it in pending area
+	broadcast(ctx.wsClients, projectId, {
+		...userMsgEvent,
+		taskId: rootNodeId,
+	} as unknown as Record<string, unknown>);
 
 	// Unified delivery: enqueue if running, persist if not
 	// Pass msgId through QueueMessage so providers can write messages_consumed
