@@ -35,9 +35,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 | File | Purpose |
 |------|---------|
-| src/daemon.ts | Hono app, routes, ORCHESTRATOR_SYSTEM_PROMPT |
+| src/daemon.ts | Hono app, routes |
 | src/daemon/ | context, event-system, helpers, agent-lifecycle, routes/ |
-| src/agent-tools.ts | MCP tools, system prompts, ORCHESTRATION_KNOWLEDGE |
+| src/system-prompts.ts | ORCHESTRATOR_SYSTEM_PROMPT, ORCHESTRATION_KNOWLEDGE, child prompt |
+| src/orchestrator-tools.ts | MCP tool definitions + handlers (createOrchestratorTools) |
+| src/agent-tools.ts | Re-exports from system-prompts + orchestrator-tools, helpers |
 | src/anthropic-compatible-provider.ts | Anthropic provider, compaction, retry |
 | src/tools/ | definitions.ts, search.ts, bash.ts, executor.ts |
 | src/config.ts | Config system, auth groups, DEFAULT_MODEL |
@@ -50,7 +52,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 | src/daemon/routes/auth.ts | WebAuthn/Passkey auth middleware + endpoints |
 | src/daemon/routes/sse.ts | SSE endpoint + initial state push |
 | web/App.tsx | Web UI main, SSE/handlers |
-| web/ws-handler.ts | Event processing (processEvent — unified for both live and batch) |
+| web/event-handler.ts | Event processing (processEvent — unified for both live and batch) |
 | web/components/ | 15+ components (ActivityLog, ToolCard, SettingsPanel, etc.) |
 
 ## Core Design Principles
@@ -158,15 +160,4 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **Done counter**: UI counts both `passed` and `closed` tasks as "done".
 - **Resume error dedup**: Only show errors after last `orchestration_started` or resume event.
 
-## File Renames
-- `web/ws-handler.ts` → `web/event-handler.ts` (exports: `EventHandlerDeps`, `createEventHandler`, returns `handleEvent`)
-- `web/ws-handler.test.ts` → `web/event-handler.test.ts`
 
-## agent-tools.ts Split
-
-- `src/agent-tools.ts` (was 1917 lines) split into 3 files:
-  - `src/system-prompts.ts` — ORCHESTRATION_KNOWLEDGE, TASK_SYSTEM_PROMPT
-  - `src/orchestrator-tools.ts` — OrchestratorToolsDeps, CostAccumulator, OrchestratorToolsResult, createOrchestratorTools (all tool defs + handlers + waitForQueueMessages + isGitClean)
-  - `src/agent-tools.ts` — thin re-export layer + helper functions (resolveColor, isDescendantOf, getDescendantIds, formatQueueMessage, toRawMessage, buildTaskPrompt, slugify)
-- All existing imports from `./agent-tools` continue to work unchanged via re-exports.
-- orchestrator-tools.ts imports helpers from agent-tools.ts (no circular deps).
