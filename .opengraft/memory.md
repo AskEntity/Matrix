@@ -456,3 +456,12 @@ Event (src/events.ts) — THE source of truth
 - **OpenAI**: Queue text + images added as a separate `user` message after tool result messages.
 - **Image routing**: When `_formattedQueueMessages` is set, `mcpImages` are user queue images — they go alongside queue text, NOT in tool_result. For non-yield MCP tools, `mcpImages` still go in tool_result as before.
 - **Wrapper text**: yield uses `[Messages received while you were idle:]`, cancellation point uses `[Messages received while you were working:]`.
+
+
+## User Message Live Visibility Race Condition Fix (March 2026)
+
+- **Root cause**: Two systems managed the same lifecycle conflicting. Queue-driven `pending_messages:[]` (from `onDrain` callback) cleared React `pendingMessages` state BEFORE `messages_consumed` WS event arrived. When `messages_consumed` handler tried to read from `pendingMessages`, it was empty → no log entry created.
+- **Race sequence**: (1) `user_message` broadcast → frontend adds to pendingMessages, (2) Queue `onDrain` fires immediately on agent wake → broadcasts `pending_messages:[]` → clears pendingMessages, (3) `messages_consumed` broadcast → reads pendingMessages → EMPTY → nothing added to logs.
+- **Fix**: Added `deferredUserMsgs` Map in ws-handler.ts — stores user message data (content, images, taskId, ts) keyed by message ID. This map is NOT affected by `pending_messages:[]` clearing. `messages_consumed` handler reads from this durable map instead of React state.
+- **Key insight**: `pendingMessages` React state serves two masters (pending banner display AND consumption data). Separating the data store from the display state fixes the race.
+
