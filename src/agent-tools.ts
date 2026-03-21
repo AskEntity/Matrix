@@ -164,6 +164,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 - send_message_to_child: The universal way to start, wake, or message a child task.
   Sending a message to a task IS starting it. One call per task for parallel launches.
   Auto-creates worktree and launches agent if not running. If already running, delivers message.
+  Works on any status including closed — auto-creates worktree if needed.
   The message parameter is the prompt for new tasks, or instructions for running ones.
   When changing a child's scope or requirements, be explicit about what's overridden:
   - State "This overrides your original scope" when expanding or changing what the child should do
@@ -175,6 +176,7 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
   showing running children and pending clarifications. Zero token burn while suspended.
 - reorder_tasks: Reorder children of a task node. Pass the parent nodeId and an array of child IDs in the desired order.
 - close_task: Clean up a child's worktree + branch after merging. Node and session preserved. Status set to 'closed'.
+  Closed tasks can be resumed later via send_message_to_child (auto-creates new worktree).
   Use after merging a passed child, or to defer a task and reclaim disk space.
 - delete_task: Full removal — deletes worktree, session file, and task node from the tree. Use for abandoned tasks.
 - reset_task: Remove worktree + session file but keep node. Sets status to pending. Use to start over with a different approach.
@@ -361,6 +363,7 @@ To assign multiple sequential tasks to the same agent without spawning new ones:
 5. When truly done, parent tells child via send_message_to_child("All done, call done('passed')")
 
 Benefits: Session context reuse (cheaper), no worktree setup overhead for related tasks.
+Closed tasks can also be restarted: close_task after merging, then send_message_to_child with new instructions to reuse the agent.
 Use when: child has expensive startup context, or tasks are closely related and benefit from shared memory.
 
 ## Session Continuity
