@@ -595,3 +595,11 @@ Event (src/events.ts) — THE source of truth
 - **Frontend reconnect**: `useSSE` tracks first-connect vs reconnect. On reconnect, calls `onReconnect` which re-fetches events from REST and pending messages — safety net for gaps the ring buffer cannot cover.
 - **Initial state events have no `id:`**: `sendInitialState` sends without sequence ID so they do not interfere with Last-Event-ID tracking.
 
+
+
+## Clarify Banner Dismissal Fix (March 2026)
+
+- **Root cause**: `handleClarifySubmit` in `web/handlers.ts` only cleared the answer input text (`setClarifyAnswers`) after successful POST, but did NOT remove the answered clarification from `pendingClarifications` state. Banner relied entirely on backend SSE broadcast of `pending_clarifications:[]` to dismiss.
+- **Why intermittent**: If SSE event was delayed or EventSource was recreated (React effect re-run due to dependency changes), the `pending_clarifications:[]` broadcast could be missed.
+- **Fix 1 (optimistic removal)**: After successful POST to `/clarify`, immediately `setPendingClarifications(prev => prev.filter(c => c.id !== clarificationId))`. Added `setPendingClarifications` to `ActionHandlerDeps`.
+- **Fix 2 (reconnect safety net)**: `handleReconnect` in App.tsx now re-fetches pending clarifications (`GET /projects/:id/clarifications`) alongside events and pending messages.

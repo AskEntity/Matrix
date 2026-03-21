@@ -429,6 +429,22 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				}) => setPendingMessages(data.messages ?? []),
 			)
 			.catch(() => {});
+		// Re-fetch pending clarifications
+		authFetch(`/projects/${projectId}/clarifications`)
+			.then((r) => r.json())
+			.then(
+				(data: {
+					clarifications: {
+						id: string;
+						taskId: string;
+						question: string;
+						title?: string;
+						body?: string;
+						timestamp: number;
+					}[];
+				}) => setPendingClarifications(data.clarifications ?? []),
+			)
+			.catch(() => {});
 	}, [projectId]);
 
 	const { connected } = useSSE(
@@ -582,6 +598,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		setSelectedTaskId,
 		setRootNodeId,
 		setClarifyAnswers,
+		setPendingClarifications,
 		setCreatingProject,
 		setNewProjectPath,
 		setShowAddProject,
