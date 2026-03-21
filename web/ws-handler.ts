@@ -91,6 +91,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		images?: Array<{ base64: string; mediaType: string }>;
 		taskId?: string;
 		title?: string;
+		summary?: string;
 		success?: boolean;
 		output?: string;
 		requestReply?: boolean;
@@ -142,6 +143,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 					type: "child_report",
 					taskId: parentTaskId,
 					title: qe.title ?? "",
+					summary: qe.summary ?? "",
 					content: qe.content ?? "",
 					...(qe.requestReply ? { requestReply: true } : {}),
 					ts: eventTs,
@@ -195,8 +197,10 @@ export function createWSHandler(deps: WSHandlerDeps) {
 		if (!source || source === "user") return content;
 		switch (source) {
 			case "child_report": {
+				const summary = queueEntry?.summary;
 				const title = queueEntry?.title;
 				const body = queueEntry?.content ?? content;
+				if (summary) return `↑ ${summary}`;
 				return title ? `↑ ${title}: ${body}` : `↑ ${body}`;
 			}
 			case "child_complete": {
@@ -1048,6 +1052,7 @@ export function createWSHandler(deps: WSHandlerDeps) {
 								content: evt.content as string | undefined,
 								taskId: evt.taskId as string | undefined,
 								title: evt.title as string | undefined,
+								summary: evt.summary as string | undefined,
 								success: evt.success as boolean | undefined,
 								output: evt.output as string | undefined,
 								requestReply: evt.requestReply as boolean | undefined,

@@ -426,8 +426,14 @@ export function getToolCardTitle(
 					? `→ Cross-project: ${projectId.slice(0, 8)}…`
 					: "→ Cross-project";
 			}
-			case "report_to_parent":
+			case "report_to_parent": {
+				const title = getArg(toolArgs, "title");
+				if (title) {
+					const display = title.length > 60 ? `${title.slice(0, 60)}…` : title;
+					return `← ${display}`;
+				}
 				return "← Report to Parent";
+			}
 			case "clarify": {
 				const question = getArg(toolArgs, "question");
 				if (question) {
@@ -463,8 +469,9 @@ export function isTitleOnlyCard(
 		case "list_projects":
 			return true;
 		case "report_to_parent": {
+			// Always expandable — title is in header, message is in body
 			const msg = getArg(toolArgs, "message");
-			return !msg || msg.length <= 80;
+			return !msg;
 		}
 		default:
 			return false;
@@ -637,11 +644,12 @@ function McpToolCardBody({
 		}
 		case "report_to_parent": {
 			const msg = getArg(toolArgs, "message") ?? "";
-			return msg.length > 80 ? (
+			if (!msg) return null;
+			return (
 				<div className="og-mcp-body">
 					<div className="og-mcp-task-desc">{msg}</div>
 				</div>
-			) : null;
+			);
 		}
 		case "send_message_to_project": {
 			const msg = getArg(toolArgs, "message") ?? "";
@@ -1094,7 +1102,12 @@ export function LogEntryView({
 
 	if (entry.type === "child_report") {
 		const childTitle = entry.title ?? "";
-		const label = childTitle ? `↑ from ${childTitle}` : "↑ Child Report";
+		const summary = entry.summary ?? "";
+		const label = summary
+			? `↑ ${summary}`
+			: childTitle
+				? `↑ from ${childTitle}`
+				: "↑ Child Report";
 		return (
 			<QueueMessageCard
 				entry={entry}

@@ -574,3 +574,15 @@ Event (src/events.ts) — THE source of truth
 - **Root cause**: The child task message endpoint was missing the two-phase message lifecycle that `handleInjectMessage` implements for root messages. Specifically: (1) No `message` event written to JSONL at send time, (2) No `message` SSE broadcast for frontend pending/deferred state, (3) No `id` field in the `QueueMessage` so `messages_consumed` could not reference it.
 - **Why refresh worked**: Without an `id`, the provider's `queueMessageToEvent()` generated a new UUID and wrote the `message` event to JSONL during queue drain. `processEventBatch` on refresh found this event and rendered it. But the live SSE path requires the two-phase lifecycle (broadcast `message` with ID → frontend defers → broadcast `messages_consumed` → frontend materializes).
 - **Fix**: Added three things to the child task message endpoint: (1) Generate `msgId` via `randomUUID()`, (2) Write `message` event to JSONL and broadcast via SSE, (3) Include `id` in `QueueMessage` passed to `deliverMessage`. Now matches `handleInjectMessage` behavior.
+
+
+## report_to_parent Title Field (March 2026)
+
+- **Added `title` parameter** to `report_to_parent` MCP tool (required). Short summary shown as card header.
+- **`message` parameter** remains as the detailed body content (expanded on click).
+- **Backend flow**: `args.title` → `summary` field on `child_report` QueueMessage/Event. Kept separate from existing `title` (task name).
+- **XML format**: `<child_report from="taskName" id="taskId" summary="reportTitle">message</child_report>`.
+- **Frontend (child view)**: `getToolCardTitle` shows `← {title}`. `isTitleOnlyCard` returns false when message exists (always expandable). `McpToolCardBody` shows full message.
+- **Frontend (parent view)**: `child_report` card label shows `↑ {summary}` when available, falls back to `↑ from {taskTitle}`.
+- **No backward compat**: Clean break — old JSONL without summary field just shows fallback labels.
+

@@ -17,6 +17,7 @@ export interface MessageBody {
 	content?: string;
 	taskId?: string;
 	title?: string;
+	summary?: string;
 	success?: boolean;
 	output?: string;
 	requestReply?: boolean;
@@ -143,6 +144,7 @@ export type Event =
 			id?: string;
 			taskId: string;
 			title: string;
+			summary?: string;
 			content: string;
 			requestReply?: boolean;
 			ts: number;
@@ -374,6 +376,7 @@ export function queueMessageToEvent(msg: QueueMessage): MessageEvent {
 					source: "child_report",
 					taskId: msg.taskId,
 					title: msg.title,
+					...(msg.summary ? { summary: msg.summary } : {}),
 					content: msg.content,
 					...(msg.requestReply ? { requestReply: true } : {}),
 				},
@@ -432,7 +435,7 @@ function formatBodyForAI(body: MessageBody): string {
 		case "clarify_response":
 			return `<clarify_response>${body.answer}</clarify_response>`;
 		case "child_report":
-			return `<child_report from="${body.title}" id="${body.taskId}"${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</child_report>`;
+			return `<child_report from="${body.title}" id="${body.taskId}"${body.summary ? ` summary="${body.summary}"` : ""}${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</child_report>`;
 		case "cross_project":
 			return `<cross_project from="${body.fromProjectName}" projectId="${body.fromProjectId}">${body.content}</cross_project>`;
 		case "background_complete":
@@ -488,7 +491,7 @@ export function formatEventForAI(event: Event): string {
 		case "parent_update":
 			return `<parent_update${event.requestReply ? ' requestReply="true"' : ""}>${event.content}</parent_update>`;
 		case "child_report":
-			return `<child_report from="${event.title}" id="${event.taskId}"${event.requestReply ? ' requestReply="true"' : ""}>${event.content}</child_report>`;
+			return `<child_report from="${event.title}" id="${event.taskId}"${event.summary ? ` summary="${event.summary}"` : ""}${event.requestReply ? ' requestReply="true"' : ""}>${event.content}</child_report>`;
 		case "cross_project":
 			return `<cross_project from="${event.fromProjectName}" projectId="${event.fromProjectId}">${event.content}</cross_project>`;
 		case "background_complete":
