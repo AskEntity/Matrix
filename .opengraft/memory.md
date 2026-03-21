@@ -494,3 +494,12 @@ Event (src/events.ts) — THE source of truth
 - **Initial state on connect**: Tree, pending messages, and pending clarifications sent immediately in `sendInitialState()`.
 - **Cleanup on disconnect**: `c.req.raw.signal.addEventListener("abort", ...)` removes client from Set.
 - **No special Bun dependencies**: SSE uses standard `ReadableStream` + `Response` — no `hono/bun` websocket import needed.
+
+
+## Per-Task Session Clearing (March 2026)
+
+- **Endpoint**: `POST /projects/:id/tasks/:nodeId/sessions/clear` in `src/daemon/routes/tasks.ts`
+- Stops agent for that task (closes its queue in `globalAgentQueues`), clears JSONL events via `eventStore.clear(nodeId)`, clears persisted messages
+- For root node: also stops project active session via `ctx.activeSessions`
+- Frontend: "Clear Session" button in TaskDetail, shown when task is not running and not pending/draft
+- Existing `POST /projects/:id/sessions/clear` (clear-all) remains unchanged
