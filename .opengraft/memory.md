@@ -179,3 +179,12 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `EMIT_HANDLED_AGENT_EVENTS` set in agent-lifecycle.ts prevents double-broadcast for events handled by both emit() and AgentEvent yields (text, tool_use, tool_result, compact).
 - Provider events (assistant_text, tool_call, tool_result, compact_marker) removed from EPHEMERAL_EVENT_TYPES — emitEvent now persists them since provider no longer writes to EventStore directly.
 - `messages_consumed` events now properly broadcast via SSE (the original bug fix).
+
+## AgentEvent Removal (Phase 3)
+- `AgentEvent` type deleted entirely. ONE event type: `Event` from events.ts.
+- Provider yields `Event` directly. No more AgentEvent→Event conversion.
+- `agentEventToBroadcast` and `broadcastAgentStreamEvent` deleted — emit() is the only broadcast path.
+- `onEvent` callback removed from RunChildCoreParams and all consumer loops.
+- `consumeAgentEvents` is now a simple loop that drives the generator (no callbacks).
+- `ProviderAdapter.callAPI` yields `Event` (text_delta with ts field).
+- Field name alignment: toolUseId→toolCallId, type "text"→"assistant_text", "tool_use"→"tool_call", "compact"→"compact_marker" in yields.
