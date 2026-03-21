@@ -552,12 +552,15 @@ function TaskNodeView({
 					) : (
 						<span className="og-tree-toggle-placeholder" />
 					)}
-					<span
-						className={`og-task-status-dot ${statusDotClass(node.status)}`}
-					/>
+					{activeAgents?.has(node.id) ? (
+						<span className="og-task-spinner" />
+					) : (
+						<span
+							className={`og-task-status-dot ${statusDotClass(node.status)}`}
+						/>
+					)}
 
 					<span className="og-task-title">{node.title}</span>
-					{activeAgents?.has(node.id) && <span className="og-task-spinner" />}
 					{node.status === "draft" && (
 						<span className="og-task-draft-badge">draft</span>
 					)}

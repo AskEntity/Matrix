@@ -610,8 +610,8 @@ select {
 
 .og-task-spinner {
 	flex-shrink: 0;
-	width: 10px;
-	height: 10px;
+	width: 8px;
+	height: 8px;
 	border: 1.5px solid var(--border);
 	border-top-color: var(--color-in-progress);
 	border-radius: 50%;
