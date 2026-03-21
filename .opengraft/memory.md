@@ -330,3 +330,18 @@ Event (src/events.ts) — THE source of truth
 - **broadcastToEvent simplified**: No field-by-field conversion. Just filter ephemeral types and use Event directly.
 - **normalizeEventForUI simplified**: Only adds `taskId` (no more toolCallId→toolUseId mapping).
 - **ws-handler backward compat**: Reads both `toolCallId` and `toolUseId` from incoming messages for compatibility with old cached WS data.
+
+
+## Message Delivery Architecture Debt (March 2026)
+
+**CRITICAL**: No single message delivery abstraction. 4+ code paths implement message delivery with different subsets of behavior. This has caused repeated bugs across 5+ sessions (message_injected timing, pending banner, duplicate messages, disappearing messages).
+
+**Current paths (all different):**
+1. **MCP `send_message_to_child`** (agent-tools.ts): source=parent_update, creates worktree, has independent fallback path bypassing deliverMessage, no JSONL write, no UI broadcast
+2. **POST `/tasks/:nodeId/message`** (tasks.ts): source=user, calls deliverMessage, pending broadcast only on "persisted" path, no JSONL write, has notifyParentChain
+3. **`handleInjectMessage`** (agent-lifecycle.ts): ROOT ONLY, source=user+id, writes user_message to JSONL, broadcasts message_injected, pending banner, auto-resume
+4. **POST `/agents/start`** (agent.ts): direct queue.enqueue(source=user), no JSONL, no broadcast, no persistence
+
+**Each path handles differently:** JSONL persistence, WS broadcast, pending banner, worktree creation, agent launch/resume, parent notification, message ID assignment.
+
+**Required fix:** Single `deliverMessage()` that ALL paths call. It should handle: JSONL write (for user source), UI events, pending banner, worktree creation, agent launch. Entry points become thin wrappers.
