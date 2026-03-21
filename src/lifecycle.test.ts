@@ -1865,7 +1865,6 @@ describe("lifecycle: child completion notification paths", () => {
 				prompt: "do work",
 				cwd: projectDir,
 			},
-			onEvent: () => {},
 		});
 		expect(result1.success).toBe(true);
 
@@ -1902,7 +1901,6 @@ describe("lifecycle: child completion notification paths", () => {
 				prompt: "try again",
 				cwd: projectDir,
 			},
-			onEvent: () => {},
 		});
 		expect(result2.success).toBe(true);
 
@@ -1978,11 +1976,12 @@ describe("lifecycle: child completion notification paths", () => {
 
 				// Step 3: done() handler calls emit({ type: "task_completed" })
 				// In production, this triggers onTaskEvent which closes the queue.
-				// We yield a status event that our onEvent callback can detect.
-				yield {
-					type: "status" as const,
+				// Provider calls emit() which flows to emitEvent → onTaskEvent.
+				req.emit?.({
+					type: "status",
 					message: `task_completed:${childId}`,
-				};
+					ts: Date.now(),
+				});
 
 				// Step 4: done() handler calls waitForQueueMessages()
 				// which blocks on queue.wait() — if queue is closed, it rejects
@@ -2010,9 +2009,24 @@ describe("lifecycle: child completion notification paths", () => {
 
 		const eventLog: string[] = [];
 
-		// Run runChildCore with an onEvent that simulates the fix:
-		// When it sees the task_completed status event AND tracker shows passed/failed,
+		// Build emit callback that simulates the fix:
+		// When it sees the task_completed event AND tracker shows passed/failed,
 		// it closes the queue. This is what createAgentContext's onTaskEvent does.
+		const emit = (event: Event) => {
+			eventLog.push(event.type);
+
+			if (event.type === "status" && "message" in event) {
+				const msg = event.message as string;
+				if (msg.startsWith("task_completed:")) {
+					const nodeStatus = tracker.get(childId)?.status;
+					if (nodeStatus === "passed" || nodeStatus === "failed") {
+						const q = globalAgentQueues.get(childId);
+						if (q) q.close();
+					}
+				}
+			}
+		};
+
 		const corePromise = runChildCore({
 			provider: doneYieldProvider,
 			tracker,
@@ -2020,22 +2034,7 @@ describe("lifecycle: child completion notification paths", () => {
 			sessionRequest: {
 				prompt: "test",
 				cwd: projectDir,
-			},
-			onEvent: (type, data) => {
-				eventLog.push(type);
-
-				// Simulate the fix: detect task_completed and close the queue
-				if (
-					type === "status" &&
-					typeof data.message === "string" &&
-					data.message.startsWith("task_completed:")
-				) {
-					const nodeStatus = tracker.get(childId)?.status;
-					if (nodeStatus === "passed" || nodeStatus === "failed") {
-						const q = globalAgentQueues.get(childId);
-						if (q) q.close();
-					}
-				}
+				emit,
 			},
 		});
 
@@ -2046,7 +2045,6 @@ describe("lifecycle: child completion notification paths", () => {
 		// With the fix in place, runChildCore should complete (not timeout)
 		expect(result).not.toBe("timeout");
 		expect(tracker.get(childId)?.status).toBe("passed");
-		expect(eventLog).toContain("text");
 		expect(eventLog).toContain("status");
 
 		// Cleanup
@@ -2105,9 +2103,7 @@ describe("lifecycle: child completion notification paths", () => {
 			sessionRequest: {
 				prompt: "test",
 				cwd: projectDir,
-			},
-			onEvent: () => {
-				// No fix — onEvent does nothing with task_completed
+				// No emit callback — nothing closes the queue on task_completed
 			},
 		});
 

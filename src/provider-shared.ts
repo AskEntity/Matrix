@@ -477,7 +477,10 @@ export function extractQueueImageParts(
  *
  * @returns Object with formatted messages and image data, or null if queue closed
  */
-export async function* handleImplicitYield(queue: MessageQueue): AsyncGenerator<
+export async function* handleImplicitYield(
+	queue: MessageQueue,
+	emit?: (event: Event) => void,
+): AsyncGenerator<
 	AgentEvent,
 	{
 		formatted: string;
@@ -486,11 +489,13 @@ export async function* handleImplicitYield(queue: MessageQueue): AsyncGenerator<
 		compactOnly: boolean;
 	} | null
 > {
+	emit?.({ type: "agent_idle", taskId: "", ts: Date.now() });
 	yield { type: "agent_idle" };
 	try {
 		queue.idle = true;
 		const first = await queue.wait();
 		queue.idle = false;
+		emit?.({ type: "agent_active", taskId: "", ts: Date.now() });
 		yield { type: "agent_active" };
 		const rest = queue.drain();
 		const all = [first, ...rest];
@@ -505,6 +510,12 @@ export async function* handleImplicitYield(queue: MessageQueue): AsyncGenerator<
 			};
 		}
 		const formatted = nonCompact.map(formatQueueMessage).join("\n");
+		emit?.({
+			type: "queue_message",
+			messages: formatted,
+			rawMessages: nonCompact.map(toRawMessage),
+			ts: Date.now(),
+		});
 		yield {
 			type: "queue_message",
 			messages: formatted,
@@ -734,6 +745,13 @@ export async function* processCompaction(
 			});
 		}
 
+		emit?.({
+			type: "usage",
+			inputTokens: estimatedPostCompactTokens,
+			contextWindow,
+			estimated: true,
+			ts: Date.now(),
+		});
 		yield {
 			type: "usage",
 			inputTokens: estimatedPostCompactTokens,
@@ -749,6 +767,11 @@ export async function* processCompaction(
 
 		return { userContent, estimatedInputTokens: estimatedPostCompactTokens };
 	} catch (e) {
+		emit?.({
+			type: "error",
+			message: `Compaction rebuild failed: ${e instanceof Error ? e.message : String(e)}`,
+			ts: Date.now(),
+		});
 		yield {
 			type: "error",
 			message: `Compaction rebuild failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -1376,11 +1399,17 @@ export async function* runProviderLoop(
 	let manualCompactRequested = false;
 	let compactionPending = false;
 	let preCompactTokenCount = 0;
+	emit?.({
+		type: "status",
+		message: `Starting agent loop (model: ${model})`,
+		ts: Date.now(),
+	});
 	yield { type: "status", message: `Starting agent loop (model: ${model})` };
 
 	while (true) {
 		// Check abort signal
 		if (request.signal?.aborted) {
+			emit?.({ type: "status", message: "Aborted", ts: Date.now() });
 			yield { type: "status", message: "Aborted" };
 			break;
 		}
@@ -1436,8 +1465,20 @@ export async function* runProviderLoop(
 
 		// ── Pre-call compression: count tokens, inject summarization instruction if over threshold ──
 		if (manualCompactRequested && messages.length <= 4) {
+			emit?.({
+				type: "status",
+				message: "Context is too short to compact",
+				ts: Date.now(),
+			});
 			yield { type: "status", message: "Context is too short to compact" };
+			emit?.({ type: "compact_started", taskId: "", ts: Date.now() });
 			yield { type: "compact_started" };
+			emit?.({
+				type: "compact_marker",
+				checkpoint: "Context too short for meaningful compaction",
+				savedTokens: 0,
+				ts: Date.now(),
+			});
 			yield {
 				type: "compact",
 				checkpoint: "Context too short for meaningful compaction",
@@ -1478,12 +1519,15 @@ export async function* runProviderLoop(
 				(!adapter.supportsTokenCounting &&
 					estimatedInputTokens > compressThreshold)
 			) {
+				emit?.({ type: "compact_started", taskId: "", ts: Date.now() });
 				yield { type: "compact_started" };
+				const compactStatusMsg = manualCompactRequested
+					? "Manual compaction triggered"
+					: `Compressing conversation (${adapter.supportsTokenCounting ? "" : "est. "}${tokenCount} tokens, threshold: ${compressThreshold})`;
+				emit?.({ type: "status", message: compactStatusMsg, ts: Date.now() });
 				yield {
 					type: "status",
-					message: manualCompactRequested
-						? "Manual compaction triggered"
-						: `Compressing conversation (${adapter.supportsTokenCounting ? "" : "est. "}${tokenCount} tokens, threshold: ${compressThreshold})`,
+					message: compactStatusMsg,
 				};
 				// Inject summarization instruction as a user message
 				const summarizationInstruction = buildSummarizationInstruction(cwd);
@@ -1522,7 +1566,16 @@ export async function* runProviderLoop(
 		let response: unknown;
 		let apiStep = await apiGen.next();
 		while (!apiStep.done) {
-			yield apiStep.value; // Forward text_delta events from streaming
+			// Forward text_delta events from streaming — emit for broadcast
+			const streamEvent = apiStep.value;
+			if (streamEvent.type === "text_delta" && emit) {
+				emit({
+					type: "text_delta",
+					content: streamEvent.content,
+					ts: Date.now(),
+				});
+			}
+			yield streamEvent;
 			apiStep = await apiGen.next();
 		}
 		response = apiStep.value;
@@ -1535,6 +1588,12 @@ export async function* runProviderLoop(
 		totalCacheReadTokens += usage.cacheReadTokens ?? 0;
 		estimatedInputTokens = usage.totalContextTokens + usage.outputTokens;
 
+		emit?.({
+			type: "usage",
+			inputTokens: usage.totalContextTokens,
+			contextWindow,
+			ts: Date.now(),
+		});
 		yield {
 			type: "usage",
 			inputTokens: usage.totalContextTokens,
@@ -1587,6 +1646,11 @@ export async function* runProviderLoop(
 		const stopReason = adapter.getStopReason(response);
 		if (stopReason === "end_turn" || toolUses.length === 0) {
 			if (!queue) {
+				emit?.({
+					type: "status",
+					message: "Agent ended turn (no queue for yield)",
+					ts: Date.now(),
+				});
 				yield {
 					type: "status",
 					message: "Agent ended turn (no queue for yield)",
@@ -1594,13 +1658,19 @@ export async function* runProviderLoop(
 				break;
 			}
 
+			emit?.({
+				type: "status",
+				message:
+					"Agent ended turn — entering idle state (waiting for messages)",
+				ts: Date.now(),
+			});
 			yield {
 				type: "status",
 				message:
 					"Agent ended turn — entering idle state (waiting for messages)",
 			};
 
-			const yieldGen = handleImplicitYield(queue);
+			const yieldGen = handleImplicitYield(queue, emit);
 			let yieldStep = await yieldGen.next();
 			while (!yieldStep.done) {
 				yield yieldStep.value;
@@ -1705,6 +1775,12 @@ export async function* runProviderLoop(
 				if (drained.messages.length > 0) {
 					cancellationQueueMsgs = drained.messages;
 					cancellationFormatted = drained.formatted;
+					emit?.({
+						type: "queue_message",
+						messages: drained.formatted,
+						rawMessages: drained.messages.map(toRawMessage),
+						ts: Date.now(),
+					});
 					yield {
 						type: "queue_message",
 						messages: drained.formatted,
@@ -1777,6 +1853,11 @@ export async function* runProviderLoop(
 					content: budgetResult.warning,
 				});
 				recordBudgetWarning(emit, budgetResult.warning);
+				emit?.({
+					type: "status",
+					message: budgetResult.warning,
+					ts: Date.now(),
+				});
 				yield { type: "status", message: budgetResult.warning };
 			}
 		}

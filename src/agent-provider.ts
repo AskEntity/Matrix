@@ -1,5 +1,6 @@
 import type { Event } from "./events.ts";
 import type { MessageQueue } from "./message-queue.ts";
+
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 
@@ -32,6 +33,7 @@ export interface AgentRequest {
 	 * Emit callback for provider events (broadcast + persist).
 	 * Provider calls this instead of writing to EventStore directly.
 	 * The daemon layer wires this to emitEvent() which handles persistence.
+	 * Provider emits events without taskId — the daemon layer injects it.
 	 */
 	emit?: (event: Event) => void;
 	/**

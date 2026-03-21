@@ -169,3 +169,13 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **Chrome MCP**: Use `take_screenshot` for root (safe). `take_snapshot` only for child tasks with short logs.
 - **Done counter**: UI counts both `passed` and `closed` tasks as "done".
 - **Resume error dedup**: Only show errors after last `orchestration_started` or resume event.
+
+## Provider Event Architecture (Post-Refactor)
+
+- **Provider has zero EventStore access**. All events flow through `emit` callback (`AgentRequest.emit`).
+- Daemon layer wires `emit` to `emitEvent()` which handles both SSE broadcast + JSONL persistence.
+- `activeEvents` field on AgentRequest provides pre-loaded events for resume (daemon reads from EventStore).
+- Orphan tool_call fixes happen in daemon layer (agent-lifecycle.ts) before passing events to provider.
+- `EMIT_HANDLED_AGENT_EVENTS` set in agent-lifecycle.ts prevents double-broadcast for events handled by both emit() and AgentEvent yields (text, tool_use, tool_result, compact).
+- Provider events (assistant_text, tool_call, tool_result, compact_marker) removed from EPHEMERAL_EVENT_TYPES — emitEvent now persists them since provider no longer writes to EventStore directly.
+- `messages_consumed` events now properly broadcast via SSE (the original bug fix).

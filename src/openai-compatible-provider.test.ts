@@ -1076,11 +1076,15 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 				const events = emittedEvents;
 				expect(events.length).toBeGreaterThanOrEqual(2);
-				expect(events[0]?.type).toBe("message");
-				expect(events[1]?.type).toBe("assistant_text");
+				// Filter to persistable events (skip ephemeral status/usage events)
+				const persistable = events.filter(
+					(e) => !["status", "usage", "text_delta"].includes(e.type),
+				);
+				expect(persistable[0]?.type).toBe("message");
+				expect(persistable[1]?.type).toBe("assistant_text");
 
 				// Verify reconstruction
-				const reconstructed = eventsToOpenAIMessages(events);
+				const reconstructed = eventsToOpenAIMessages(persistable);
 				expect(reconstructed.length).toBe(2);
 				expect(reconstructed[0]).toEqual({
 					role: "user",
