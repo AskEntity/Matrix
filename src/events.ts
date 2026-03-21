@@ -885,7 +885,54 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 				break;
 		}
 	}
+
+	// Fix orphaned tool_use: if the last assistant message has tool_use blocks
+	// without matching tool_result blocks, synthesize tool_results.
+	// This happens when the daemon stops mid-tool execution — tool_call is written
+	// to JSONL before execution, but tool_result never gets written.
+	fixOrphanedAnthropicToolUse(messages);
+
 	return messages;
+}
+
+/**
+ * Detect and fix orphaned tool_use blocks in Anthropic message arrays.
+ * If the last assistant message has tool_use blocks, check for matching
+ * tool_result blocks in the following user message. Synthesize missing ones.
+ */
+function fixOrphanedAnthropicToolUse(messages: unknown[]): void {
+	if (messages.length === 0) return;
+
+	const lastMsg = messages[messages.length - 1] as {
+		role?: string;
+		content?: unknown[];
+	};
+	if (lastMsg.role !== "assistant" || !Array.isArray(lastMsg.content)) return;
+
+	// Collect all tool_use IDs from the last assistant message
+	const toolUseIds: string[] = [];
+	for (const block of lastMsg.content) {
+		if (
+			block &&
+			typeof block === "object" &&
+			(block as Record<string, unknown>).type === "tool_use"
+		) {
+			toolUseIds.push((block as Record<string, unknown>).id as string);
+		}
+	}
+
+	if (toolUseIds.length === 0) return;
+
+	// All tool_use blocks at the end are orphaned (no following user message with tool_results)
+	const syntheticResults: unknown[] = toolUseIds.map((id) => ({
+		type: "tool_result",
+		tool_use_id: id,
+		content:
+			"Tool execution was interrupted by daemon restart. Results were lost.",
+		is_error: true,
+	}));
+
+	messages.push({ role: "user", content: syntheticResults });
 }
 
 /**
@@ -1278,5 +1325,41 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 				break;
 		}
 	}
+
+	// Fix orphaned tool_calls: if the last assistant message has tool_calls
+	// without matching tool role messages, synthesize them.
+	// This happens when the daemon stops mid-tool execution.
+	fixOrphanedOpenAIToolCalls(messages);
+
 	return messages;
+}
+
+/**
+ * Detect and fix orphaned tool_calls in OpenAI message arrays.
+ * If the last assistant message has tool_calls, check for matching
+ * tool role messages following it. Synthesize missing ones.
+ */
+function fixOrphanedOpenAIToolCalls(messages: unknown[]): void {
+	if (messages.length === 0) return;
+
+	const lastMsg = messages[messages.length - 1] as {
+		role?: string;
+		tool_calls?: Array<{
+			id: string;
+			type: string;
+			function: { name: string; arguments: string };
+		}>;
+	};
+	if (lastMsg.role !== "assistant" || !lastMsg.tool_calls?.length) return;
+
+	// All tool_calls at the end are orphaned (no following tool role messages)
+	for (const tc of lastMsg.tool_calls) {
+		messages.push({
+			role: "tool",
+			tool_call_id: tc.id,
+			name: tc.function.name,
+			content:
+				"Tool execution was interrupted by daemon restart. Results were lost.",
+		});
+	}
 }
