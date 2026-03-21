@@ -2723,15 +2723,15 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.message).toBe("Add tests for edge cases");
 	});
 
-	test("passes eventStore to stream for child agent persistence", async () => {
-		let receivedEventStore: unknown;
+	test("passes emit callback to stream for child agent event emission", async () => {
+		let receivedEmit: unknown;
 
 		const agentProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({ success: true, output: "" }),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* (req) {
-				receivedEventStore = req.eventStore;
+				receivedEmit = req.emit;
 				return { success: true, output: "" };
 			},
 			startSession(req) {
@@ -2803,7 +2803,8 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 
 		await new Promise((r) => setTimeout(r, 100));
 
-		expect(receivedEventStore).toBeDefined();
+		expect(receivedEmit).toBeDefined();
+		expect(typeof receivedEmit).toBe("function");
 
 		await rm(localDataDir, { recursive: true });
 	});
