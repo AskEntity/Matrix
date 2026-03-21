@@ -226,6 +226,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		checkStatus,
 		compact,
 		deleteTask,
+		clearTaskSession,
 		sendMessage,
 		sendMessageToTask,
 		reorderTasks,
@@ -491,6 +492,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		handleClearSessions,
 		handleDeleteTask,
 		handlePauseTask,
+		handleClearTaskSession,
 		handleAddProject,
 		handleDeleteProject,
 		handleAddTask,
@@ -530,6 +532,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		sendMessage,
 		sendMessageToTask,
 		deleteTask,
+		clearTaskSession,
 		initProject,
 		deleteProject,
 		refreshTasks,
@@ -714,6 +717,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								isActive={activeAgents.has(selectedNode.id)}
 								onDelete={handleDeleteTask}
 								onPause={handlePauseTask}
+								onClearSession={handleClearTaskSession}
 							/>
 						) : (
 							<div className="og-detail-empty">

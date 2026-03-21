@@ -628,4 +628,46 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 
 		return c.json({ ok: true, taskId: nodeId });
 	});
+
+	// Clear session (JSONL events) for a single task
+	app.post("/projects/:id/tasks/:nodeId/sessions/clear", async (c) => {
+		const project = ctx.pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const tracker = await getTracker(ctx, project.id);
+		const nodeId = c.req.param("nodeId");
+		const node = tracker.get(nodeId);
+		if (!node) {
+			return c.json({ error: "Task not found" }, 404);
+		}
+
+		// Stop the agent if running for this task
+		const activeQueue = globalAgentQueues.get(nodeId);
+		if (activeQueue) {
+			globalAgentQueues.delete(nodeId);
+			activeQueue.close();
+		}
+
+		// If this is the root node, also stop the project's active session
+		if (nodeId === tracker.rootNodeId && ctx.activeSessions.has(project.id)) {
+			const session = ctx.activeSessions.get(project.id);
+			if (session) {
+				session.stop();
+				ctx.activeSessions.delete(project.id);
+			}
+		}
+
+		// Clear the JSONL events file for this task
+		const eventStore = getEventStore(ctx, project.id);
+		eventStore.clear(nodeId);
+
+		// Also clear any persisted (pending) messages for this task
+		await clearPersistedMessages(ctx.config.dataDir, project.id, nodeId);
+
+		// Broadcast tree update so UI reflects any status changes
+		broadcastTreeUpdate(ctx, project.id, tracker);
+
+		return c.json({ cleared: true, taskId: nodeId });
+	});
 }

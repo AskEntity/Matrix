@@ -108,6 +108,7 @@ const en: Translations = {
 	"detail.pause": "Pause",
 	"detail.copyId": "Copy task ID",
 	"detail.copied": "Copied!",
+	"detail.clearSession": "Clear Session",
 
 	// Activity
 	"activity.title": "Activity",
@@ -207,6 +208,8 @@ const en: Translations = {
 	// Confirmations
 	"confirm.clearSessions":
 		"Clear session history? The orchestrator will start fresh next time.",
+	"confirm.clearTaskSession":
+		'Clear session for "{title}"? The task will start fresh next time.',
 	"confirm.deleteTask": 'Delete task "{title}"?',
 	"confirm.removeProject": 'Remove project "{name}"?',
 
@@ -383,6 +386,7 @@ const zh: Translations = {
 	"detail.pause": "暂停",
 	"detail.copyId": "复制任务ID",
 	"detail.copied": "已复制！",
+	"detail.clearSession": "清除会话",
 
 	// Activity
 	"activity.title": "活动",
@@ -479,6 +483,7 @@ const zh: Translations = {
 
 	// Confirmations
 	"confirm.clearSessions": "清除会话历史？编排器下次将重新开始。",
+	"confirm.clearTaskSession": '清除 "{title}" 的会话？任务下次将重新开始。',
 	"confirm.deleteTask": '删除任务 "{title}"？',
 	"confirm.removeProject": '移除项目 "{name}"？',
 
