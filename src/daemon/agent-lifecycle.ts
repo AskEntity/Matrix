@@ -1301,6 +1301,13 @@ export async function handleInjectMessage(
 					...userMsgEvent,
 					taskId: freshRootNodeId,
 				} as unknown as Record<string, unknown>);
+				// Broadcast messages_consumed immediately — message was consumed as the initial prompt
+				broadcast(ctx.sseClients, projectId, {
+					type: "messages_consumed",
+					messageIds: [userMsgEvent.id],
+					taskId: freshRootNodeId,
+					ts: Date.now(),
+				});
 			}
 			return { ok: true };
 		}

@@ -603,3 +603,10 @@ Event (src/events.ts) — THE source of truth
 - **Root cause**: Provider writes full `firstUserContent` as `{type: "message", content: ..., cwd: ...}` to JSONL. Frontend rendered ALL `message` events as user cards.
 - **Fix**: In `web/ws-handler.ts`, skip `message`/`user_message` events that have a `cwd` field and no `id` field — these are provider-internal prompt events. Also skip `compacted_resume` events (internal compaction state). Applied in both `processEvent` (live) and `processEventBatch` (refresh).
 - **Key distinguishing field**: `cwd` — only provider-written prompt events have it. User-injected messages never have `cwd`.
+
+
+## Fresh Session Pending Banner Fix (March 2026)
+
+- **Bug**: First message on fresh/cleared session stays in pending banner forever. Agent responds, message shows in activity log, but pending chip never clears.
+- **Root cause**: `handleInjectMessage` `!rootNodeId` branch writes `message` event (Phase 1) but never emits `messages_consumed` (Phase 2). The message becomes the initial prompt, not a queue message, so no queue drain triggers `messages_consumed`.
+- **Fix**: Broadcast `messages_consumed` immediately after the `message` broadcast in the `!rootNodeId` path — the message was consumed instantly as the prompt.
