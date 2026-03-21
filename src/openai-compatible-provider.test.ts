@@ -420,10 +420,10 @@ describe("runLoop integration", () => {
 			expect(agentResult.turns).toBeGreaterThanOrEqual(1);
 
 			// Verify we got the expected events
-			const textEvents = events.filter((e) => e.type === "text");
+			const textEvents = events.filter((e) => e.type === "assistant_text");
 			expect(textEvents.length).toBeGreaterThanOrEqual(1);
 
-			const toolUseEvents = events.filter((e) => e.type === "tool_use");
+			const toolUseEvents = events.filter((e) => e.type === "tool_call");
 			expect(toolUseEvents.length).toBe(1);
 		} finally {
 			clearContextWindowCache();
@@ -712,9 +712,9 @@ describe("fetchContextWindowFromAPI", () => {
 
 // Old CanonicalEvent recording tests removed — system deleted in Event migration.
 
-// ── Event recording via EventStore ──
+// ── Event recording via emit callback ──
 
-describe("Event recording via EventStore", () => {
+describe("Event recording via emit callback", () => {
 	let tmpDir: string;
 
 	beforeAll(async () => {
@@ -728,7 +728,7 @@ describe("Event recording via EventStore", () => {
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
-	test("records Events to EventStore", async () => {
+	test("records Events via emit callback", async () => {
 		const originalKey = process.env.OPENAI_API_KEY;
 		const originalBase = process.env.OPENAI_BASE_URL;
 		const originalFetch = globalThis.fetch;
@@ -821,13 +821,16 @@ describe("Event recording via EventStore", () => {
 		}) as unknown as typeof fetch;
 
 		try {
-			const eventStore = new EventStore(join(tmpDir, "sessions-se"));
+			const emittedEvents: Event[] = [];
+			const emit = (event: Event) => {
+				emittedEvents.push(event);
+			};
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const session = provider.startSession({
 				prompt: "Do something",
 				cwd: tmpDir,
 				systemPrompt: "You are a helpful agent.",
-				eventStore,
+				emit,
 				mcpToolDefs: {
 					opengraft: [
 						{
@@ -878,8 +881,7 @@ describe("Event recording via EventStore", () => {
 			expect(agentResult.success).toBe(true);
 
 			// Verify Events were recorded
-			await eventStore.flush();
-			const strongEvents = eventStore.readActive(session.sessionId);
+			const strongEvents = emittedEvents;
 			expect(strongEvents.length).toBeGreaterThanOrEqual(4);
 
 			// Should have: user_message, assistant_text, tool_call, tool_result, assistant_text
@@ -930,7 +932,7 @@ describe("Event recording via EventStore", () => {
 	});
 });
 
-import { EventStore } from "./event-store.ts";
+import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
 // Import AgentResult for type assertion
@@ -1040,7 +1042,10 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 	test("basic conversation: text only → stop", async () => {
 		const testDir = join(tmpDir, "basic");
-		const eventStore = new EventStore(testDir);
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
 
 		await withMockFetch(
 			mock(async (url: string | URL | Request) => {
@@ -1064,19 +1069,22 @@ describe("Event deterministic verification (OpenAI)", () => {
 					prompt: "Say hello",
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
-					eventStore,
+					emit,
 				});
 
 				expect(result.success).toBe(true);
 
-				await eventStore.flush();
-				const events = eventStore.readActive(result.sessionId ?? "");
+				const events = emittedEvents;
 				expect(events.length).toBeGreaterThanOrEqual(2);
-				expect(events[0]?.type).toBe("message");
-				expect(events[1]?.type).toBe("assistant_text");
+				// Filter to persistable events (skip ephemeral status/usage events)
+				const persistable = events.filter(
+					(e) => !["status", "usage", "text_delta"].includes(e.type),
+				);
+				expect(persistable[0]?.type).toBe("message");
+				expect(persistable[1]?.type).toBe("assistant_text");
 
 				// Verify reconstruction
-				const reconstructed = eventsToOpenAIMessages(events);
+				const reconstructed = eventsToOpenAIMessages(persistable);
 				expect(reconstructed.length).toBe(2);
 				expect(reconstructed[0]).toEqual({
 					role: "user",
@@ -1092,7 +1100,10 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 	test("tool calls: text + tool_use → tool_result → stop", async () => {
 		const testDir = join(tmpDir, "tool-calls");
-		const eventStore = new EventStore(testDir);
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
 
 		let chatCallCount = 0;
 		await withMockFetch(
@@ -1133,7 +1144,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 					prompt: "Do the task",
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
-					eventStore,
+					emit,
 					mcpToolDefs: {
 						opengraft: [
 							{
@@ -1172,8 +1183,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const agentResult = await consumePromise;
 				expect(agentResult.success).toBe(true);
 
-				await eventStore.flush();
-				const events = eventStore.readActive(agentResult.sessionId ?? "");
+				const events = emittedEvents;
 				const types = events.map((e) => e.type);
 				expect(types).toContain("message");
 				expect(types).toContain("assistant_text");
@@ -1204,7 +1214,10 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 	test("implicit yield: stop → queue drain → continue", async () => {
 		const testDir = join(tmpDir, "implicit-yield");
-		const eventStore = new EventStore(testDir);
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
 
 		let chatCallCount = 0;
 		await withMockFetch(
@@ -1237,7 +1250,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 					prompt: "Start working",
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
-					eventStore,
+					emit,
 					queue,
 				});
 
@@ -1265,8 +1278,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				expect(agentResult.success).toBe(true);
 				expect(idleCount).toBe(2);
 
-				await eventStore.flush();
-				const events = eventStore.readActive(agentResult.sessionId ?? "");
+				const events = emittedEvents;
 				const types = events.map((e) => e.type);
 
 				// Must have user_message events (from queue)
@@ -1287,7 +1299,10 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 	test("error tool results: isError preserved", async () => {
 		const testDir = join(tmpDir, "error-tool");
-		const eventStore = new EventStore(testDir);
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
 
 		let chatCallCount = 0;
 		await withMockFetch(
@@ -1328,7 +1343,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 					prompt: "Try something",
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
-					eventStore,
+					emit,
 					mcpToolDefs: {
 						opengraft: [
 							{
@@ -1368,8 +1383,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const agentResult = await consumePromise;
 				expect(agentResult.success).toBe(true);
 
-				await eventStore.flush();
-				const events = eventStore.readActive(agentResult.sessionId ?? "");
+				const events = emittedEvents;
 				const toolResult = events.find((e) => e.type === "tool_result");
 				expect(toolResult).toBeDefined();
 				if (toolResult?.type === "tool_result") {
@@ -1382,7 +1396,10 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 	test("multiple parallel tool calls: 3 tool_use → 3 tool_results", async () => {
 		const testDir = join(tmpDir, "parallel-tools");
-		const eventStore = new EventStore(testDir);
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
 
 		let chatCallCount = 0;
 		await withMockFetch(
@@ -1430,7 +1447,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 					prompt: "Run three tools",
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
-					eventStore,
+					emit,
 					mcpToolDefs: {
 						test: [
 							{
@@ -1480,8 +1497,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const agentResult = await consumePromise;
 				expect(agentResult.success).toBe(true);
 
-				await eventStore.flush();
-				const events = eventStore.readActive(agentResult.sessionId ?? "");
+				const events = emittedEvents;
 				const toolCalls = events.filter((e) => e.type === "tool_call");
 				const toolResults = events.filter((e) => e.type === "tool_result");
 

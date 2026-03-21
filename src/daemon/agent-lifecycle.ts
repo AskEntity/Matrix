@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type {
-	AgentEvent,
-	AgentProvider,
-	AgentRequest,
-} from "../agent-provider.ts";
+import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
 import {
 	buildTaskPrompt,
 	createOrchestratorTools,
@@ -12,7 +8,7 @@ import {
 	TASK_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
 import { DEFAULT_MODEL } from "../config.ts";
-import type { Event } from "../events.ts";
+import { type Event, findOrphanedToolCalls } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { globalAgentQueues, MessageQueue } from "../message-queue.ts";
@@ -40,142 +36,10 @@ import {
 	resolveProjectConfig,
 } from "./helpers.ts";
 
-// ---------------------------------------------------------------------------
-// Map provider AgentEvent → typed Event for WS emission
-// ---------------------------------------------------------------------------
-
-function agentEventToBroadcast(
-	eventType: string,
-	eventData: Record<string, unknown>,
-	taskId: string,
-): Event {
-	const ts = Date.now();
-	switch (eventType) {
-		case "text_delta":
-			return {
-				type: "text_delta",
-				content: (eventData.content as string) || "",
-				taskId,
-				ts,
-			};
-		case "text":
-			return {
-				type: "assistant_text",
-				content: (eventData.content as string) || "",
-				taskId,
-				ts,
-			};
-		case "tool_use":
-			return {
-				type: "tool_call",
-				tool: eventData.tool as string,
-				toolCallId: eventData.toolUseId as string,
-				input: eventData.input as Record<string, unknown>,
-				taskId,
-				ts,
-			};
-		case "tool_result":
-			return {
-				type: "tool_result",
-				tool: eventData.tool as string,
-				toolCallId: eventData.toolUseId as string,
-				content: (eventData.content as string) || "",
-				isError: (eventData.isError as boolean) || false,
-				...(eventData.images
-					? {
-							images: eventData.images as Array<{
-								base64: string;
-								mediaType: string;
-							}>,
-						}
-					: {}),
-				taskId,
-				ts,
-			};
-		case "error":
-			return {
-				type: "error",
-				message: (eventData.message as string) || "",
-				taskId,
-				ts,
-			};
-		case "usage":
-			return {
-				type: "usage",
-				taskId,
-				inputTokens: eventData.inputTokens as number,
-				contextWindow: eventData.contextWindow as number,
-				estimated: (eventData.estimated as boolean) || undefined,
-				ts,
-			};
-		case "compact_started":
-			return { type: "compact_started", taskId, ts };
-		case "compact":
-			return {
-				type: "compact_marker",
-				checkpoint: eventData.checkpoint as string,
-				savedTokens: eventData.savedTokens as number,
-				taskId,
-				ts,
-			};
-		case "queue_message":
-			return {
-				type: "queue_message",
-				messages: (eventData.messages as string) || "",
-				rawMessages: eventData.rawMessages as
-					| Array<{
-							source: string;
-							content: string;
-							id?: string;
-							images?: { base64: string; mediaType: string }[];
-					  }>
-					| undefined,
-				taskId,
-				ts,
-			};
-		case "status":
-			return {
-				type: "status",
-				message: (eventData.message as string) || "",
-				taskId,
-				ts,
-			};
-		default:
-			// Unknown event type — pass through as status
-			return {
-				type: "status",
-				message: JSON.stringify({ eventType, ...eventData }),
-				taskId,
-				ts,
-			};
-	}
-}
-
-/**
- * Emit an agent stream event via the unified emitEvent path.
- * Converts provider AgentEvent format to typed Event and emits.
- *
- * messages_consumed events are written to JSONL by the providers directly —
- * they flow to the frontend when the provider's EventStore writes trigger
- * emitEvent via the provider's onEvent callback path.
- *
- * Called from both:
- * 1. Provider stream events (onEvent callback) — idle drain / cancellation points
- * 2. MCP tool events (onTaskEvent callback) — yield/done via agent_event wrapper
- */
-function broadcastAgentStreamEvent(
-	ctx: DaemonContext,
-	projectId: string,
-	eventType: string,
-	eventData: Record<string, unknown>,
-	taskId: string,
-): void {
-	emitEvent(
-		ctx,
-		projectId,
-		agentEventToBroadcast(eventType, eventData, taskId),
-	);
-}
+// All provider events flow through the emit() callback → emitEvent().
+// No more AgentEvent→Event conversion layer.
+// The onTaskEvent callback in createAgentContext still handles agent_event
+// wrappers from MCP tools (child agents forwarding events to parent).
 
 // ---------------------------------------------------------------------------
 // Shared helpers — extracted from launchAgent / runChildAgentInBackground
@@ -252,13 +116,13 @@ async function createAgentContext(
 				const taskId = (event.taskId as string) || "";
 				const eventType = event.eventType as string;
 				const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
-				broadcastAgentStreamEvent(
-					ctx,
-					project.id,
-					eventType,
-					rest as Record<string, unknown>,
+				// Construct a proper Event from the wrapper fields
+				emitEvent(ctx, project.id, {
+					type: eventType,
 					taskId,
-				);
+					ts,
+					...rest,
+				} as unknown as Event);
 			} else {
 				// Already a valid Event shape — just ensure ts
 				const withTs = event.ts ? event : { ...event, ts };
@@ -322,17 +186,15 @@ async function createAgentContext(
 }
 
 /**
- * Consume all events from a session's async generator, broadcasting each one.
- * Returns the final AgentResult when the generator is done.
+ * Consume all events from a session's async generator.
+ * All broadcasting is handled by the provider's emit() callback.
+ * This just drives the generator to completion and returns the final result.
  */
 async function consumeAgentEvents(
-	events: AsyncGenerator<AgentEvent, AgentResult>,
-	onEvent: (eventType: string, eventData: Record<string, unknown>) => void,
+	events: AsyncGenerator<Event, AgentResult>,
 ): Promise<AgentResult> {
 	let result = await events.next();
 	while (!result.done) {
-		const { type: eventType, ...eventData } = result.value;
-		onEvent(eventType, eventData as Record<string, unknown>);
 		result = await events.next();
 	}
 	return result.value;
@@ -354,8 +216,6 @@ export interface RunChildCoreParams {
 	queue?: MessageQueue;
 	/** Full AgentRequest to pass to provider.stream(). Queue will be set on the request. */
 	sessionRequest: AgentRequest;
-	/** Event callback — called for each agent event. */
-	onEvent: (eventType: string, eventData: Record<string, unknown>) => void;
 	/** Config for loading persisted messages from disk. Omit to skip. */
 	persistedMessages?: {
 		dataDir: string;
@@ -377,14 +237,8 @@ export interface RunChildCoreParams {
 export async function runChildCore(
 	params: RunChildCoreParams,
 ): Promise<AgentResult> {
-	const {
-		provider,
-		tracker,
-		taskId,
-		sessionRequest,
-		onEvent,
-		persistedMessages,
-	} = params;
+	const { provider, tracker, taskId, sessionRequest, persistedMessages } =
+		params;
 
 	// Use pre-created queue or create a new one
 	const childQueue = params.queue ?? new MessageQueue();
@@ -414,17 +268,16 @@ export async function runChildCore(
 		const stream = provider.stream(sessionRequest);
 		let result = await stream.next();
 		while (!result.done) {
-			const { type: eventType, ...eventData } = result.value;
-			onEvent(eventType, eventData as Record<string, unknown>);
+			const event = result.value;
 
 			// Fallback done() detection via tool_result. The primary detection path
 			// is in onTaskEvent (task_completed event closes the queue before
 			// waitForQueueMessages blocks). This fallback handles edge cases where
 			// done() completes without blocking (e.g., no queue available).
 			if (
-				eventType === "tool_result" &&
-				"tool" in eventData &&
-				eventData.tool === "mcp__opengraft__done"
+				event.type === "tool_result" &&
+				"tool" in event &&
+				event.tool === "mcp__opengraft__done"
 			) {
 				const nodeStatus = tracker.get(taskId)?.status;
 				if (nodeStatus === "passed" || nodeStatus === "failed") {
@@ -432,8 +285,6 @@ export async function runChildCore(
 					// Drain remaining events until the generator exits
 					result = await stream.next();
 					while (!result.done) {
-						const { type: et, ...ed } = result.value;
-						onEvent(et, ed as Record<string, unknown>);
 						result = await stream.next();
 					}
 					return result.value;
@@ -776,6 +627,25 @@ export async function runChildAgentInBackground(
 			mcpManager,
 		});
 
+		// Read active events for resume and fix orphaned tool_calls
+		const eventStore = getEventStore(ctx, project.id);
+		let activeEvents = eventStore.has(nodeId)
+			? eventStore.readActive(nodeId)
+			: [];
+		if (activeEvents.length > 0) {
+			const orphanFixes = findOrphanedToolCalls(activeEvents);
+			if (orphanFixes.length > 0) {
+				await eventStore.appendBatch(nodeId, orphanFixes);
+				activeEvents = [...activeEvents, ...orphanFixes];
+			}
+		}
+
+		// Build emit callback: emitEvent with taskId injected
+		const emitWithTask = (event: Event) => {
+			const withTaskId = { ...event, taskId: nodeId };
+			emitEvent(ctx, project.id, withTaskId as Event);
+		};
+
 		const agentResult = await runChildCore({
 			provider: agentCtx.provider,
 			tracker,
@@ -784,36 +654,13 @@ export async function runChildAgentInBackground(
 			sessionRequest: {
 				prompt,
 				cwd: node.worktreePath as string,
-				eventStore: getEventStore(ctx, project.id),
+				emit: emitWithTask,
+				activeEvents,
 				systemPrompt: TASK_SYSTEM_PROMPT,
 				resumeSessionId: nodeId,
 				model: agentCtx.effectiveCfg.model,
 				mcpToolDefs: agentCtx.mcpToolDefs,
 				hasRunningChildren: agentCtx.hasRunningChildren,
-			},
-			onEvent: (eventType, eventData) => {
-				if (eventType === "agent_idle") {
-					emitEvent(ctx, project.id, {
-						type: "agent_idle",
-						taskId: nodeId,
-						ts: Date.now(),
-					});
-				} else if (eventType === "agent_active") {
-					emitEvent(ctx, project.id, {
-						type: "agent_active",
-						taskId: nodeId,
-						ts: Date.now(),
-					});
-				} else {
-					// Unified path: broadcast event + messages_consumed for queue_message
-					broadcastAgentStreamEvent(
-						ctx,
-						project.id,
-						eventType,
-						eventData,
-						nodeId,
-					);
-				}
 			},
 			persistedMessages: {
 				dataDir: ctx.config.dataDir,
@@ -1048,11 +895,31 @@ export async function launchAgent(
 			"\n\n## Self-Bootstrap Mode\nThis project is the tool's own codebase. The user may ask you to test features by interacting with the system in unconventional ways (e.g., testing resume on passed tasks, calling tools in unexpected sequences). When the user gives explicit instructions that conflict with your standard workflow, prioritize the user's instructions. You are modifying your own source code — be extra careful but also extra flexible.\n\nWhen running in self-bootstrap mode, bugs you introduced may break features you depend on. The system may not behave as documented — your own changes may have altered its behavior in ways you can't observe from inside. The user can see the actual system state via the UI. When they give you instructions that seem redundant, illogical, or contradictory to how the system should work, follow them immediately — they're guiding you through a workaround for a bug in your own code. Don't argue or explain how it should work; just do what they say. The workarounds are temporary until the fix is merged and the daemon restarts with new code.";
 	}
 
+	// Read active events for resume and fix orphaned tool_calls
+	const eventStore = getEventStore(ctx, project.id);
+	let rootActiveEvents = eventStore.has(rootNodeId)
+		? eventStore.readActive(rootNodeId)
+		: [];
+	if (rootActiveEvents.length > 0) {
+		const orphanFixes = findOrphanedToolCalls(rootActiveEvents);
+		if (orphanFixes.length > 0) {
+			await eventStore.appendBatch(rootNodeId, orphanFixes);
+			rootActiveEvents = [...rootActiveEvents, ...orphanFixes];
+		}
+	}
+
+	// Build emit callback: emitEvent with taskId injected
+	const rootEmit = (event: Event) => {
+		const withTaskId = { ...event, taskId: rootNodeId };
+		emitEvent(ctx, project.id, withTaskId as Event);
+	};
+
 	const session = agentCtx.provider.startSession({
 		prompt,
 		cwd: project.path,
 		projectPath: project.path,
-		eventStore: getEventStore(ctx, project.id),
+		emit: rootEmit,
+		activeEvents: rootActiveEvents,
 		systemPrompt,
 		mcpToolDefs: agentCtx.mcpToolDefs,
 		resumeSessionId,
@@ -1069,33 +936,7 @@ export async function launchAgent(
 	(async () => {
 		let caughtError = false;
 		try {
-			const finalResult = await consumeAgentEvents(
-				session.events,
-				(eventType, eventData) => {
-					if (eventType === "agent_idle") {
-						emitEvent(ctx, project.id, {
-							type: "agent_idle",
-							taskId: rootNodeId,
-							ts: Date.now(),
-						});
-					} else if (eventType === "agent_active") {
-						emitEvent(ctx, project.id, {
-							type: "agent_active",
-							taskId: rootNodeId,
-							ts: Date.now(),
-						});
-					} else {
-						// Unified path: broadcast event + messages_consumed for queue_message
-						broadcastAgentStreamEvent(
-							ctx,
-							project.id,
-							eventType,
-							eventData,
-							rootNodeId,
-						);
-					}
-				},
-			);
+			const finalResult = await consumeAgentEvents(session.events);
 
 			// done() tool now updates status directly in the tracker.
 			// If agent exited without calling done(), check current status.

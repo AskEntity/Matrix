@@ -1993,7 +1993,10 @@ describe("Event deterministic verification", () => {
 
 	test("basic conversation: user → assistant text → done", async () => {
 		const testDir = join(tmpDir, "basic");
-		const eventStore = new EventStore(testDir);
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
 
 		const response = buildAnthropicResponse({
 			text: "Hello! How can I help?",
@@ -2008,14 +2011,13 @@ describe("Event deterministic verification", () => {
 			prompt: "Say hello",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
-			eventStore,
+			emit,
 		});
 
 		expect(result.success).toBe(true);
 
-		// Read events from EventStore (flush pending writes first)
-		await eventStore.flush();
-		const events = eventStore.readActive(result.sessionId ?? "");
+		// Read directly from emitted events
+		const events = emittedEvents;
 		expect(events.length).toBeGreaterThanOrEqual(2);
 
 		// Should have: user_message, assistant_text
@@ -2039,7 +2041,10 @@ describe("Event deterministic verification", () => {
 
 	test("tool calls: user → assistant + tool_use → tool_result → assistant", async () => {
 		const testDir = join(tmpDir, "tool-calls");
-		const eventStore = new EventStore(testDir);
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
 
 		let callCount = 0;
 		const provider = createMockedProvider(() => {
@@ -2074,7 +2079,7 @@ describe("Event deterministic verification", () => {
 			prompt: "Do the task",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
-			eventStore,
+			emit,
 			mcpToolDefs: {
 				opengraft: [
 					{
@@ -2111,8 +2116,7 @@ describe("Event deterministic verification", () => {
 		const agentResult = await consumePromise;
 		expect(agentResult.success).toBe(true);
 
-		await eventStore.flush();
-		const events = eventStore.readActive(agentResult.sessionId ?? "");
+		const events = emittedEvents;
 		const types = events.map((e) => e.type);
 		expect(types).toContain("message");
 		expect(types).toContain("assistant_text");
@@ -2161,7 +2165,10 @@ describe("Event deterministic verification", () => {
 
 	test("error tool results: isError flag preserved in events", async () => {
 		const testDir = join(tmpDir, "error-tool");
-		const eventStore = new EventStore(testDir);
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
 
 		let callCount = 0;
 		const provider = createMockedProvider(() => {
@@ -2194,7 +2201,7 @@ describe("Event deterministic verification", () => {
 			prompt: "Try something",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
-			eventStore,
+			emit,
 			mcpToolDefs: {
 				opengraft: [
 					{
@@ -2232,8 +2239,7 @@ describe("Event deterministic verification", () => {
 		const agentResult = await consumePromise;
 		expect(agentResult.success).toBe(true);
 
-		await eventStore.flush();
-		const events = eventStore.readActive(agentResult.sessionId ?? "");
+		const events = emittedEvents;
 
 		// Verify error flag is preserved
 		const toolResult = events.find((e) => e.type === "tool_result");
@@ -2262,7 +2268,10 @@ describe("Event deterministic verification", () => {
 
 	test("implicit yield: end_turn → queue.wait → queue drain → continue", async () => {
 		const testDir = join(tmpDir, "implicit-yield");
-		const eventStore = new EventStore(testDir);
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
 
 		let callCount = 0;
 		const provider = createMockedProvider(() => {
@@ -2292,7 +2301,7 @@ describe("Event deterministic verification", () => {
 			prompt: "Start working",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
-			eventStore,
+			emit,
 			queue,
 		});
 
@@ -2323,8 +2332,7 @@ describe("Event deterministic verification", () => {
 		expect(agentResult.success).toBe(true);
 		expect(idleCount).toBe(2);
 
-		await eventStore.flush();
-		const events = eventStore.readActive(agentResult.sessionId ?? "");
+		const events = emittedEvents;
 		const types = events.map((e) => e.type);
 
 		// Must have user_message events (from queue)
@@ -2355,7 +2363,10 @@ describe("Event deterministic verification", () => {
 
 	test("multiple parallel tool calls: 3 tool_use blocks → 3 tool_results", async () => {
 		const testDir = join(tmpDir, "parallel-tools");
-		const eventStore = new EventStore(testDir);
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
 
 		let callCount = 0;
 		const provider = createMockedProvider(() => {
@@ -2398,7 +2409,7 @@ describe("Event deterministic verification", () => {
 			prompt: "Run three tools",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
-			eventStore,
+			emit,
 			mcpToolDefs: {
 				test: [
 					{
@@ -2446,8 +2457,7 @@ describe("Event deterministic verification", () => {
 		const agentResult = await consumePromise;
 		expect(agentResult.success).toBe(true);
 
-		await eventStore.flush();
-		const events = eventStore.readActive(agentResult.sessionId ?? "");
+		const events = emittedEvents;
 		const toolCalls = events.filter((e) => e.type === "tool_call");
 		const toolResults = events.filter((e) => e.type === "tool_result");
 
@@ -2625,7 +2635,10 @@ describe("Event deterministic verification", () => {
 
 	test("cancellation point queue drain: messages between tool_call and tool_result", async () => {
 		const testDir = join(tmpDir, "cancellation-point");
-		const eventStore = new EventStore(testDir);
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
 
 		let callCount = 0;
 		const provider = createMockedProvider(() => {
@@ -2659,7 +2672,7 @@ describe("Event deterministic verification", () => {
 			prompt: "Do task",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
-			eventStore,
+			emit,
 			queue,
 			mcpToolDefs: {
 				opengraft: [
@@ -2704,8 +2717,7 @@ describe("Event deterministic verification", () => {
 		const agentResult = await consumePromise;
 		expect(agentResult.success).toBe(true);
 
-		await eventStore.flush();
-		const events = eventStore.readActive(agentResult.sessionId ?? "");
+		const events = emittedEvents;
 
 		// The tool_result content should contain ONLY the pure tool output (no queue text)
 		const toolResult = events.find((e) => e.type === "tool_result");

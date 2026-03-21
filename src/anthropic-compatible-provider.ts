@@ -7,7 +7,6 @@ import type {
 	ToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/messages/messages";
 import type {
-	AgentEvent,
 	AgentProvider,
 	AgentRequest,
 	AgentSession,
@@ -545,6 +544,7 @@ function createAnthropicAdapter(
 								yield {
 									type: "text_delta" as const,
 									content: textBuffer,
+									ts: Date.now(),
 								};
 								textBuffer = "";
 								lastFlushTime = now;
@@ -555,6 +555,7 @@ function createAnthropicAdapter(
 						yield {
 							type: "text_delta" as const,
 							content: textBuffer,
+							ts: Date.now(),
 						};
 					}
 					response = await stream.finalMessage();
@@ -570,8 +571,9 @@ function createAnthropicAdapter(
 					if (!isTransient || attempt >= 4) throw e;
 					const delay = Math.min(2000 * 2 ** attempt, 60000);
 					yield {
-						type: "error",
+						type: "error" as const,
 						message: `API error (retry ${attempt + 1}/4): ${e.message}`,
+						ts: Date.now(),
 					};
 					await new Promise((r) => setTimeout(r, delay));
 				}
@@ -892,9 +894,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		return lastResult;
 	}
 
-	async *stream(
-		request: AgentRequest,
-	): AsyncGenerator<AgentEvent, AgentResult> {
+	async *stream(request: AgentRequest): AsyncGenerator<Event, AgentResult> {
 		const sessionId = request.resumeSessionId ?? randomUUID();
 		const gen = this.runLoop(request, sessionId, request.queue);
 		let result = await gen.next();
@@ -912,7 +912,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 		const self = this;
 
-		async function* eventStream(): AsyncGenerator<AgentEvent, AgentResult> {
+		async function* eventStream(): AsyncGenerator<Event, AgentResult> {
 			const gen = self.runLoop(
 				{ ...request, signal: abortController.signal },
 				sessionId,
@@ -949,7 +949,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		request: AgentRequest,
 		sessionId: string,
 		queue?: MessageQueue,
-	): AsyncGenerator<AgentEvent, AgentResult> {
+	): AsyncGenerator<Event, AgentResult> {
 		const adapter = createAnthropicAdapter(this.client, this.useOAuth);
 		// Override the default model in the request
 		const effectiveRequest = {

@@ -1,5 +1,6 @@
-import type { EventStore } from "./event-store.ts";
+import type { Event } from "./events.ts";
 import type { MessageQueue } from "./message-queue.ts";
+
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 
@@ -28,58 +29,27 @@ export interface AgentRequest {
 	hasRunningChildren?: () => boolean;
 	/** Budget limit in USD — provider will inject warnings at 80% and 100%. */
 	budgetUsd?: number;
-	/** EventStore for strongly-typed event persistence (Event JSONL). */
-	eventStore?: EventStore;
+	/**
+	 * Emit callback for provider events (broadcast + persist).
+	 * Provider calls this instead of writing to EventStore directly.
+	 * The daemon layer wires this to emitEvent() which handles persistence.
+	 * Provider emits events without taskId — the daemon layer injects it.
+	 */
+	emit?: (event: Event) => void;
+	/**
+	 * Pre-loaded active events for session resume.
+	 * The daemon layer reads these from EventStore and passes them in.
+	 * Provider uses them to reconstruct the conversation on resume.
+	 */
+	activeEvents?: Event[];
 }
-
-/** Streaming event emitted by an agent during execution. */
-export type AgentEvent =
-	| { type: "status"; message: string }
-	| {
-			type: "tool_use";
-			tool: string;
-			toolUseId: string;
-			input: Record<string, unknown>;
-	  }
-	| {
-			type: "tool_result";
-			tool: string;
-			toolUseId: string;
-			content: string;
-			isError: boolean;
-	  }
-	| { type: "text"; content: string }
-	| { type: "text_delta"; content: string }
-	| { type: "error"; message: string }
-	| { type: "compact_started" }
-	| {
-			type: "compact";
-			checkpoint: string;
-			savedTokens: number;
-	  }
-	| {
-			type: "queue_message";
-			/** Formatted queue messages injected at cancellation points */
-			messages: string;
-			/** Structured raw messages for UI consumption (avoids text parsing) */
-			rawMessages?: Array<{ source: string; content: string }>;
-	  }
-	| {
-			type: "usage";
-			inputTokens: number;
-			compressThreshold: number;
-			contextWindow: number;
-			estimated?: boolean;
-	  }
-	| { type: "agent_idle" }
-	| { type: "agent_active" };
 
 /** Handle to a running agent session that supports message injection. */
 export interface AgentSession {
 	/** Unique session ID for this running agent. */
 	readonly sessionId: string;
-	/** Stream of agent events. Consume this to drive the session. */
-	events: AsyncGenerator<AgentEvent, AgentResult>;
+	/** Stream of events. Consume this to drive the session. */
+	events: AsyncGenerator<Event, AgentResult>;
 	/** Message queue for async event delivery (user messages, child completions, etc.) */
 	readonly queue: MessageQueue;
 	/** @deprecated Use queue.enqueue({ source: "user", content: text }) instead */
@@ -105,7 +75,7 @@ export interface AgentProvider {
 	 * Execute a task with streaming events.
 	 * The last yielded value is always the final AgentResult.
 	 */
-	stream(request: AgentRequest): AsyncGenerator<AgentEvent, AgentResult>;
+	stream(request: AgentRequest): AsyncGenerator<Event, AgentResult>;
 
 	/**
 	 * Start an interactive agent session that supports mid-execution message injection.
