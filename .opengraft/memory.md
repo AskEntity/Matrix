@@ -372,3 +372,11 @@ Event (src/events.ts) — THE source of truth
 **`broadcastAgentStreamEvent()`**: Unified helper for all queue message consumption tracking. Both provider stream events (onEvent) and MCP tool events (onTaskEvent/agent_event wrapper) go through this single function for event broadcast + messages_consumed.
 
 **Bug fix**: `messages_consumed` was never broadcast for messages consumed via yield/done MCP tools. The onTaskEvent callback (agent_event wrapper path) didn't check for queue_message events. Fixed by routing both paths through `broadcastAgentStreamEvent()`.
+
+
+## Orphaned Tool Use Fix (March 2026)
+
+- **Bug**: Daemon stop mid-tool leaves JSONL with tool_call but no tool_result. On resume, converter produces orphaned tool_use → Anthropic 400 error.
+- **Fix**: Post-processing in both `eventsToAnthropicMessages()` and `eventsToOpenAIMessages()`. After building messages, check if last assistant message has tool_use/tool_calls without matching results. Synthesize error tool_results with "interrupted by daemon restart" message.
+- **Helper functions**: `fixOrphanedAnthropicToolUse()` and `fixOrphanedOpenAIToolCalls()` — mutate messages array in place.
+- **Approach**: Option 1 (converter fix) chosen over JSONL cleanup or write-ordering changes — handles any JSONL state gracefully without side effects.

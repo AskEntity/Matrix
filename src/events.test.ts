@@ -189,29 +189,42 @@ describe("eventsToAnthropicMessages", () => {
 				input: { path: "src/main.ts" },
 				ts: 1002,
 			},
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
-				role: "assistant",
-				content: [
-					{ type: "text", text: "Let me check." },
-					{
-						type: "tool_use",
-						id: "tc1",
-						name: "bash",
-						input: { command: "ls" },
-						caller: { type: "direct" },
-					},
-					{
-						type: "tool_use",
-						id: "tc2",
-						name: "read_file",
-						input: { path: "src/main.ts" },
-						caller: { type: "direct" },
-					},
-				],
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "file.ts",
+				isError: false,
+				ts: 1003,
 			},
-		]);
+			{
+				type: "tool_result",
+				toolCallId: "tc2",
+				content: "contents",
+				isError: false,
+				ts: 1004,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: [
+				{ type: "text", text: "Let me check." },
+				{
+					type: "tool_use",
+					id: "tc1",
+					name: "bash",
+					input: { command: "ls" },
+					caller: { type: "direct" },
+				},
+				{
+					type: "tool_use",
+					id: "tc2",
+					name: "read_file",
+					input: { path: "src/main.ts" },
+					caller: { type: "direct" },
+				},
+			],
+		});
 	});
 
 	test("converts tool_calls without assistant_text", () => {
@@ -223,21 +236,27 @@ describe("eventsToAnthropicMessages", () => {
 				input: { command: "echo hi" },
 				ts: 1000,
 			},
-		];
-		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
-				role: "assistant",
-				content: [
-					{
-						type: "tool_use",
-						id: "tc1",
-						name: "bash",
-						input: { command: "echo hi" },
-						caller: { type: "direct" },
-					},
-				],
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "hi",
+				isError: false,
+				ts: 1001,
 			},
-		]);
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: [
+				{
+					type: "tool_use",
+					id: "tc1",
+					name: "bash",
+					input: { command: "echo hi" },
+					caller: { type: "direct" },
+				},
+			],
+		});
 	});
 
 	test("converts tool_results → single user message", () => {
@@ -787,31 +806,44 @@ describe("eventsToOpenAIMessages", () => {
 				input: { path: "src/main.ts" },
 				ts: 1002,
 			},
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
 			{
-				role: "assistant",
-				content: "Let me check.",
-				tool_calls: [
-					{
-						id: "call_1",
-						type: "function",
-						function: {
-							name: "bash",
-							arguments: JSON.stringify({ command: "ls" }),
-						},
-					},
-					{
-						id: "call_2",
-						type: "function",
-						function: {
-							name: "read_file",
-							arguments: JSON.stringify({ path: "src/main.ts" }),
-						},
-					},
-				],
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "file.ts",
+				isError: false,
+				ts: 1003,
 			},
-		]);
+			{
+				type: "tool_result",
+				toolCallId: "call_2",
+				content: "contents",
+				isError: false,
+				ts: 1004,
+			},
+		];
+		const messages = eventsToOpenAIMessages(events);
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: "Let me check.",
+			tool_calls: [
+				{
+					id: "call_1",
+					type: "function",
+					function: {
+						name: "bash",
+						arguments: JSON.stringify({ command: "ls" }),
+					},
+				},
+				{
+					id: "call_2",
+					type: "function",
+					function: {
+						name: "read_file",
+						arguments: JSON.stringify({ path: "src/main.ts" }),
+					},
+				},
+			],
+		});
 	});
 
 	test("converts tool_calls without assistant_text → null content", () => {
@@ -823,23 +855,29 @@ describe("eventsToOpenAIMessages", () => {
 				input: { command: "echo hi" },
 				ts: 1000,
 			},
-		];
-		expect(eventsToOpenAIMessages(events)).toEqual([
 			{
-				role: "assistant",
-				content: null,
-				tool_calls: [
-					{
-						id: "call_1",
-						type: "function",
-						function: {
-							name: "bash",
-							arguments: JSON.stringify({ command: "echo hi" }),
-						},
-					},
-				],
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "hi",
+				isError: false,
+				ts: 1001,
 			},
-		]);
+		];
+		const messages = eventsToOpenAIMessages(events);
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: null,
+			tool_calls: [
+				{
+					id: "call_1",
+					type: "function",
+					function: {
+						name: "bash",
+						arguments: JSON.stringify({ command: "echo hi" }),
+					},
+				},
+			],
+		});
 	});
 
 	test("converts tool_results → individual tool messages with name lookup", () => {
@@ -1806,5 +1844,211 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 		];
 		const messages = eventsToOpenAIMessages(events);
 		expect(messages.length).toBe(2);
+	});
+});
+
+describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
+	test("Anthropic: synthesizes tool_result for orphaned tool_call at end", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Run a command", ts: 1000 },
+			{ type: "assistant_text", content: "I'll run that.", ts: 1001 },
+			{
+				type: "tool_call",
+				toolCallId: "toolu_abc123",
+				tool: "bash",
+				input: { command: "ls -la" },
+				ts: 1002,
+			},
+			// No tool_result — daemon died during execution
+		];
+		const messages = eventsToAnthropicMessages(events);
+		// Should have: user, assistant (text + tool_use), synthetic tool_result
+		expect(messages).toHaveLength(3);
+
+		// Last message should be the synthetic tool_result
+		const lastMsg = messages[2] as { role: string; content: unknown[] };
+		expect(lastMsg.role).toBe("user");
+		expect(Array.isArray(lastMsg.content)).toBe(true);
+		expect(lastMsg.content).toHaveLength(1);
+		const result = lastMsg.content[0] as {
+			type: string;
+			tool_use_id: string;
+			content: string;
+			is_error: boolean;
+		};
+		expect(result.type).toBe("tool_result");
+		expect(result.tool_use_id).toBe("toolu_abc123");
+		expect(result.content).toContain("interrupted by daemon restart");
+		expect(result.is_error).toBe(true);
+	});
+
+	test("Anthropic: synthesizes tool_results for multiple orphaned tool_calls", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Do both", ts: 1000 },
+			{ type: "assistant_text", content: "Running two tools.", ts: 1001 },
+			{
+				type: "tool_call",
+				toolCallId: "toolu_first",
+				tool: "bash",
+				input: { command: "echo hi" },
+				ts: 1002,
+			},
+			{
+				type: "tool_call",
+				toolCallId: "toolu_second",
+				tool: "read_file",
+				input: { path: "foo.ts" },
+				ts: 1003,
+			},
+			// Daemon died — no tool_results
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(3);
+
+		const lastMsg = messages[2] as { role: string; content: unknown[] };
+		expect(lastMsg.role).toBe("user");
+		expect(lastMsg.content).toHaveLength(2);
+
+		const r1 = lastMsg.content[0] as { tool_use_id: string };
+		const r2 = lastMsg.content[1] as { tool_use_id: string };
+		expect(r1.tool_use_id).toBe("toolu_first");
+		expect(r2.tool_use_id).toBe("toolu_second");
+	});
+
+	test("Anthropic: no synthetic results when tool_results exist", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Run something", ts: 1000 },
+			{
+				type: "tool_call",
+				toolCallId: "toolu_ok",
+				tool: "bash",
+				input: { command: "echo ok" },
+				ts: 1001,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "toolu_ok",
+				content: "ok",
+				isError: false,
+				ts: 1002,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		// user, assistant (tool_use), user (tool_result) — no extras
+		expect(messages).toHaveLength(3);
+		const lastMsg = messages[2] as { role: string; content: unknown[] };
+		expect(lastMsg.role).toBe("user");
+		const result = lastMsg.content[0] as { type: string };
+		expect(result.type).toBe("tool_result");
+	});
+
+	test("Anthropic: no synthetic results when last message is not assistant", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Hello", ts: 1000 },
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(1);
+		expect((messages[0] as { role: string }).role).toBe("user");
+	});
+
+	test("Anthropic: assistant with text-only (no tool_use) gets no synthetic results", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Hi", ts: 1000 },
+			{ type: "assistant_text", content: "Hello!", ts: 1001 },
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(2);
+	});
+
+	test("OpenAI: synthesizes tool response for orphaned tool_call at end", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Run a command", ts: 1000 },
+			{ type: "assistant_text", content: "I'll run that.", ts: 1001 },
+			{
+				type: "tool_call",
+				toolCallId: "call_abc123",
+				tool: "bash",
+				input: { command: "ls -la" },
+				ts: 1002,
+			},
+			// No tool_result — daemon died
+		];
+		const messages = eventsToOpenAIMessages(events);
+		// user, assistant (content + tool_calls), synthetic tool response
+		expect(messages).toHaveLength(3);
+
+		const lastMsg = messages[2] as {
+			role: string;
+			tool_call_id: string;
+			name: string;
+			content: string;
+		};
+		expect(lastMsg.role).toBe("tool");
+		expect(lastMsg.tool_call_id).toBe("call_abc123");
+		expect(lastMsg.name).toBe("bash");
+		expect(lastMsg.content).toContain("interrupted by daemon restart");
+	});
+
+	test("OpenAI: synthesizes tool responses for multiple orphaned tool_calls", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Do both", ts: 1000 },
+			{
+				type: "tool_call",
+				toolCallId: "call_first",
+				tool: "bash",
+				input: { command: "echo hi" },
+				ts: 1001,
+			},
+			{
+				type: "tool_call",
+				toolCallId: "call_second",
+				tool: "read_file",
+				input: { path: "foo.ts" },
+				ts: 1002,
+			},
+		];
+		const messages = eventsToOpenAIMessages(events);
+		// user, assistant (with tool_calls), tool (first), tool (second)
+		expect(messages).toHaveLength(4);
+
+		const tool1 = messages[2] as {
+			role: string;
+			tool_call_id: string;
+			name: string;
+		};
+		const tool2 = messages[3] as {
+			role: string;
+			tool_call_id: string;
+			name: string;
+		};
+		expect(tool1.role).toBe("tool");
+		expect(tool1.tool_call_id).toBe("call_first");
+		expect(tool1.name).toBe("bash");
+		expect(tool2.role).toBe("tool");
+		expect(tool2.tool_call_id).toBe("call_second");
+		expect(tool2.name).toBe("read_file");
+	});
+
+	test("OpenAI: no synthetic results when tool_results exist", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Run", ts: 1000 },
+			{
+				type: "tool_call",
+				toolCallId: "call_ok",
+				tool: "bash",
+				input: { command: "echo ok" },
+				ts: 1001,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_ok",
+				content: "ok",
+				isError: false,
+				ts: 1002,
+			},
+		];
+		const messages = eventsToOpenAIMessages(events);
+		// user, assistant, tool — no extras
+		expect(messages).toHaveLength(3);
 	});
 });
