@@ -40,7 +40,8 @@ Daemon (Hono: HTTP + SSE on :7433)
 | src/system-prompts.ts | ORCHESTRATOR_SYSTEM_PROMPT, ORCHESTRATION_KNOWLEDGE, child prompt |
 | src/orchestrator-tools.ts | MCP tool definitions + handlers (createOrchestratorTools) |
 | src/agent-tools.ts | Re-exports from system-prompts + orchestrator-tools, helpers |
-| src/anthropic-compatible-provider.ts | Anthropic provider, compaction, retry |
+| src/provider-shared.ts | Shared provider logic: compaction, tool execution, queue handling, budget |
+| src/anthropic-compatible-provider.ts | Anthropic provider: API client, message format, streaming |
 | src/tools/ | definitions.ts, search.ts, bash.ts, executor.ts |
 | src/config.ts | Config system, auth groups, DEFAULT_MODEL |
 | src/task-tracker.ts | Task tree CRUD, JSON persistence |
@@ -161,14 +162,3 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **Resume error dedup**: Only show errors after last `orchestration_started` or resume event.
 
 
-
-
-## Provider Shared Refactor (2026-03-21)
-
-- Extracted shared provider logic into `src/provider-shared.ts` (795 lines)
-- Shared: compaction (SUMMARIZATION_INSTRUCTION, extractCheckpoint, buildCompactedContext, processCompaction), Zod-to-JSON-Schema, queue image extraction, tool execution (executeToolUnified), EventStore recording (buildToolResultEvents, recordQueueEvents), implicit yield (handleImplicitYield), cancellation point drain (drainQueueAtCancellationPoint), budget check (checkBudget/recordBudgetWarning)
-- Anthropic provider re-exports from provider-shared.ts for backward compat (tests + other importers unchanged)
-- OpenAI provider now imports from provider-shared.ts instead of anthropic-compatible-provider.ts
-- Each provider keeps: API client, message format, streaming, response processing, pricing tables, context window lookup
-- ToolExecResult interface unifies the tool execution return type across both providers
-- `handleImplicitYield` is an async generator that yields AgentEvent and returns the yield result — consumers drive it with a while(!done) loop
