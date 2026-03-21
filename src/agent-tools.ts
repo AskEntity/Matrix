@@ -646,6 +646,10 @@ export function createOrchestratorTools(
 		>;
 		isError?: boolean;
 		_consumedMessageIds?: string[];
+		_pending?: {
+			runningChildren: Array<{ id: string; title: string }>;
+			pendingClarifications: number;
+		};
 	} | null> {
 		if (!deps.queue) return null;
 		try {
@@ -728,14 +732,19 @@ export function createOrchestratorTools(
 			const runningChildren = myDescendants.filter(
 				(id) => globalAgentQueues.has(id) && !completedIds.has(id),
 			);
+			// Build structured pending data
+			const runningChildrenData = runningChildren.map((id) => ({
+				id,
+				title: tracker.get(id)?.title ?? id,
+			}));
+			const pendingData = {
+				runningChildren: runningChildrenData,
+				pendingClarifications,
+			};
+
 			const runningChildrenText =
-				runningChildren.length > 0
-					? runningChildren
-							.map((id) => {
-								const title = tracker.get(id)?.title ?? id;
-								return `"${title}" (${id})`;
-							})
-							.join(", ")
+				runningChildrenData.length > 0
+					? runningChildrenData.map((c) => `"${c.title}" (${c.id})`).join(", ")
 					: "none";
 			const clarifyText =
 				pendingClarifications > 0 ? String(pendingClarifications) : "none";
@@ -763,15 +772,22 @@ export function createOrchestratorTools(
 				}
 			}
 
-			// Collect consumed message IDs for provider to attach to tool_result event
+			// Write structured user_message events to JSONL for each consumed queue message.
+			// The provider writes tool_result + standalone messages_consumed events.
 			const consumedIds: string[] = [];
+			const sessionId = currentTaskId ?? "orchestrator";
 			for (const msg of all) {
 				if (msg.source === "user" && msg.id) {
+					// User messages are already written to JSONL at send time
 					consumedIds.push(msg.id);
 				} else {
 					const evt = queueMessageToEvent(msg);
 					const evtId = (evt as { id?: string }).id;
 					if (evtId) consumedIds.push(evtId);
+					// Write the structured user_message event to JSONL
+					if (deps.eventStore) {
+						deps.eventStore.append(sessionId, evt);
+					}
 				}
 			}
 
@@ -786,6 +802,7 @@ export function createOrchestratorTools(
 					...imageBlocks,
 				],
 				...(consumedIds.length > 0 ? { _consumedMessageIds: consumedIds } : {}),
+				_pending: pendingData,
 			};
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";

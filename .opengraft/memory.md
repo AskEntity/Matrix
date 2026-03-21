@@ -419,16 +419,19 @@ Event (src/events.ts) — THE source of truth
 
 **Fix path**: Task 297eacb7 (structured JSONL) + 064df856 (yield/done separation) + 51d1e79e (provider refactor).
 
-
 ## Anthropic API: Mixed Content Blocks in User Messages (Confirmed March 2026)
 
-**Confirmed by official docs**: User messages can contain BOTH `tool_result` and `text` blocks:
-```json
-{"role": "user", "content": [
-  {"type": "tool_result", "tool_use_id": "X", "content": "tool output"},
-  {"type": "text", "text": "user instruction alongside tool results"}
-]}
-```
-This means queue messages should be text blocks alongside tool_results, NOT embedded in tool_result content. The AI treats text blocks as user instructions it must respond to.
+**Confirmed by official docs**: User messages can contain BOTH `tool_result` and `text` blocks in the same user turn. Queue messages are now text blocks alongside tool_results, NOT embedded in tool_result content.
 
-**Key design implication**: `messages_consumed` should be a standalone JSONL event. Converter groups events into turns and places consumed queue messages as text blocks alongside tool_results. No `messagesConsumed` field needed on tool_result events.
+## Structured JSONL Refactor (March 2026)
+
+**Core change**: Queue messages are structured `user_message` events with `queueEntry` field. Converters format at conversion time. `messages_consumed` is always standalone.
+
+**Key changes**:
+- `QueueEntry` interface — structured data for all queue message types
+- `tool_result.content` = PURE tool output (no embedded queue text)
+- `messages_consumed` = standalone event (not field on tool_result)
+- `tool_result.pending` = structured running children + clarifications
+- `waitForQueueMessages()` writes user_message events to JSONL directly
+- Cancellation queue messages → separate text blocks alongside tool_results
+- Backward compat: old JSONL with flat fields or embedded text still works

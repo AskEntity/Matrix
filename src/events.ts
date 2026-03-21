@@ -18,6 +18,28 @@ import type { QueueMessage } from "./message-queue.ts";
  * All fields are optional at the type level. Source-based narrowing happens at runtime.
  * This keeps the type simple and avoids complex discriminated unions.
  */
+/**
+ * Structured queue entry — carries the full data of a queue message.
+ * The `source` field discriminates the shape. Format for AI happens at conversion time.
+ */
+export interface QueueEntry {
+	source: string;
+	content?: string;
+	taskId?: string;
+	title?: string;
+	success?: boolean;
+	output?: string;
+	requestReply?: boolean;
+	answer?: string;
+	fromProjectId?: string;
+	fromProjectName?: string;
+	command?: string;
+	commandId?: string;
+	exitCode?: number | null;
+	durationMs?: number;
+	images?: Array<{ base64: string; mediaType: string }>;
+}
+
 export interface UserMessageEvent {
 	type: "user_message";
 	id?: string;
@@ -27,7 +49,13 @@ export interface UserMessageEvent {
 	cwd?: string;
 	isResume?: boolean;
 	images?: Array<{ base64: string; mediaType: string }>;
-	// Queue-specific fields (present based on source)
+	/**
+	 * Structured queue entry — present when this user_message represents a queue message.
+	 * Contains the full structured data (source, taskId, title, etc.).
+	 * Format for AI happens at conversion time via formatEventForAI().
+	 */
+	queueEntry?: QueueEntry;
+	// Legacy flat queue-specific fields (present in old JSONL files without queueEntry)
 	taskId?: string;
 	title?: string;
 	success?: boolean;
@@ -61,7 +89,12 @@ export type Event =
 			content: string;
 			isError: boolean;
 			images?: Array<{ base64: string; mediaType: string }>;
-			/** IDs of queue messages consumed at this cancellation point. */
+			/** Structured pending state (running children + clarifications). */
+			pending?: {
+				runningChildren: Array<{ id: string; title: string }>;
+				pendingClarifications: number;
+			};
+			/** @deprecated Use standalone messages_consumed event instead. Kept for old JSONL backward compat. */
 			messagesConsumed?: string[];
 			taskId?: string;
 			ts: number;
@@ -247,9 +280,11 @@ const QUEUE_EVENT_TYPES = new Set([
  */
 export function isQueueEvent(event: Event): boolean {
 	if (QUEUE_EVENT_TYPES.has(event.type)) return true;
-	// Unified format: user_message with source field (except "user" which is ambiguous)
+	// Unified format: user_message with source or queueEntry field (except "user" which is ambiguous)
 	if (event.type === "user_message") {
-		const src = (event as { source?: string }).source;
+		const src =
+			(event as { source?: string }).source ??
+			(event as UserMessageEvent).queueEntry?.source;
 		return src !== undefined && src !== "user";
 	}
 	return false;
@@ -273,6 +308,18 @@ export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 				id: msg.id ?? base.id,
 				source: "user",
 				content: msg.content,
+				queueEntry: {
+					source: "user",
+					content: msg.content,
+					...(msg.images?.length
+						? {
+								images: msg.images.map((img) => ({
+									base64: img.base64,
+									mediaType: img.mediaType,
+								})),
+							}
+						: {}),
+				},
 				...(msg.images?.length
 					? {
 							images: msg.images.map((img) => ({
@@ -286,58 +333,83 @@ export function queueMessageToEvent(msg: QueueMessage): UserMessageEvent {
 			return {
 				...base,
 				source: "child_complete",
-				taskId: msg.taskId,
-				title: msg.title,
-				success: msg.success,
-				output: msg.output,
+				queueEntry: {
+					source: "child_complete",
+					taskId: msg.taskId,
+					title: msg.title,
+					success: msg.success,
+					output: msg.output,
+				},
 			};
 		case "parent_update":
 			return {
 				...base,
 				source: "parent_update",
-				content: msg.content,
-				...(msg.requestReply ? { requestReply: true } : {}),
+				queueEntry: {
+					source: "parent_update",
+					content: msg.content,
+					...(msg.requestReply ? { requestReply: true } : {}),
+				},
 			};
 		case "clarify_response":
 			return {
 				...base,
 				source: "clarify_response",
-				answer: msg.answer,
+				queueEntry: {
+					source: "clarify_response",
+					answer: msg.answer,
+				},
 			};
 		case "child_report":
 			return {
 				...base,
 				source: "child_report",
-				taskId: msg.taskId,
-				title: msg.title,
-				content: msg.content,
-				...(msg.requestReply ? { requestReply: true } : {}),
+				queueEntry: {
+					source: "child_report",
+					taskId: msg.taskId,
+					title: msg.title,
+					content: msg.content,
+					...(msg.requestReply ? { requestReply: true } : {}),
+				},
 			};
 		case "cross_project":
 			return {
 				...base,
 				source: "cross_project",
-				fromProjectId: msg.fromProjectId,
-				fromProjectName: msg.fromProjectName,
-				content: msg.content,
+				queueEntry: {
+					source: "cross_project",
+					fromProjectId: msg.fromProjectId,
+					fromProjectName: msg.fromProjectName,
+					content: msg.content,
+				},
 			};
 		case "background_complete":
 			return {
 				...base,
 				source: "background_complete",
-				command: msg.command,
-				commandId: msg.commandId,
-				exitCode: msg.exitCode,
-				durationMs: msg.durationMs,
+				queueEntry: {
+					source: "background_complete",
+					command: msg.command,
+					commandId: msg.commandId,
+					exitCode: msg.exitCode,
+					durationMs: msg.durationMs,
+				},
 			};
 		case "system":
 			return {
 				...base,
 				source: "system",
-				content: msg.content,
+				queueEntry: {
+					source: "system",
+					content: msg.content,
+				},
 			};
 		case "compact":
-			return { ...base, source: "compact" };
+			return {
+				...base,
+				source: "compact",
+				queueEntry: { source: "compact" },
+			};
 	}
 }
 
@@ -355,53 +427,62 @@ export function formatEventForAI(event: Event): string {
 			if (!src || src === "user") {
 				return (event as { content: string }).content;
 			}
+			// Use queueEntry if present (new format), fall back to flat fields (legacy)
+			const qe = (event as UserMessageEvent).queueEntry;
 			// Format based on source — same formatting as legacy concrete types
 			switch (src) {
 				case "child_complete": {
-					const e = event as {
-						taskId: string;
-						title: string;
-						success: boolean;
-						output: string;
-					};
-					return `<child_complete task="${e.title}" id="${e.taskId}" status="${e.success ? "passed" : "failed"}">${e.output.slice(0, 500)}</child_complete>`;
+					const taskId = qe?.taskId ?? (event as { taskId: string }).taskId;
+					const title = qe?.title ?? (event as { title: string }).title;
+					const success =
+						qe?.success ?? (event as { success: boolean }).success;
+					const output = qe?.output ?? (event as { output: string }).output;
+					return `<child_complete task="${title}" id="${taskId}" status="${success ? "passed" : "failed"}">${output.slice(0, 500)}</child_complete>`;
 				}
 				case "parent_update": {
-					const e = event as { content: string; requestReply?: boolean };
-					return `<parent_update${e.requestReply ? ' requestReply="true"' : ""}>${e.content}</parent_update>`;
+					const content = qe?.content ?? (event as { content: string }).content;
+					const requestReply =
+						qe?.requestReply ??
+						(event as { requestReply?: boolean }).requestReply;
+					return `<parent_update${requestReply ? ' requestReply="true"' : ""}>${content}</parent_update>`;
 				}
 				case "clarify_response": {
-					const e = event as { answer: string };
-					return `<clarify_response>${e.answer}</clarify_response>`;
+					const answer = qe?.answer ?? (event as { answer: string }).answer;
+					return `<clarify_response>${answer}</clarify_response>`;
 				}
 				case "child_report": {
-					const e = event as {
-						taskId: string;
-						title: string;
-						content: string;
-						requestReply?: boolean;
-					};
-					return `<child_report from="${e.title}" id="${e.taskId}"${e.requestReply ? ' requestReply="true"' : ""}>${e.content}</child_report>`;
+					const taskId = qe?.taskId ?? (event as { taskId: string }).taskId;
+					const title = qe?.title ?? (event as { title: string }).title;
+					const content = qe?.content ?? (event as { content: string }).content;
+					const requestReply =
+						qe?.requestReply ??
+						(event as { requestReply?: boolean }).requestReply;
+					return `<child_report from="${title}" id="${taskId}"${requestReply ? ' requestReply="true"' : ""}>${content}</child_report>`;
 				}
 				case "cross_project": {
-					const e = event as {
-						fromProjectId: string;
-						fromProjectName: string;
-						content: string;
-					};
-					return `<cross_project from="${e.fromProjectName}" projectId="${e.fromProjectId}">${e.content}</cross_project>`;
+					const fromProjectId =
+						qe?.fromProjectId ??
+						(event as { fromProjectId: string }).fromProjectId;
+					const fromProjectName =
+						qe?.fromProjectName ??
+						(event as { fromProjectName: string }).fromProjectName;
+					const content = qe?.content ?? (event as { content: string }).content;
+					return `<cross_project from="${fromProjectName}" projectId="${fromProjectId}">${content}</cross_project>`;
 				}
 				case "background_complete": {
-					const e = event as {
-						command: string;
-						commandId: string;
-						exitCode: number | null;
-						durationMs: number;
-					};
-					return `<background_complete command="${e.command}" id="${e.commandId}" exit="${e.exitCode}" duration="${e.durationMs}ms">Command completed. Use bg_action="status" with background_id="${e.commandId}" or read_file on output files to see results.</background_complete>`;
+					const command = qe?.command ?? (event as { command: string }).command;
+					const commandId =
+						qe?.commandId ?? (event as { commandId: string }).commandId;
+					const exitCode =
+						qe?.exitCode ?? (event as { exitCode: number | null }).exitCode;
+					const durationMs =
+						qe?.durationMs ?? (event as { durationMs: number }).durationMs;
+					return `<background_complete command="${command}" id="${commandId}" exit="${exitCode}" duration="${durationMs}ms">Command completed. Use bg_action="status" with background_id="${commandId}" or read_file on output files to see results.</background_complete>`;
 				}
-				case "system":
-					return `<system_notification>${(event as { content: string }).content}</system_notification>`;
+				case "system": {
+					const content = qe?.content ?? (event as { content: string }).content;
+					return `<system_notification>${content}</system_notification>`;
+				}
 				case "compact":
 					return "Manual compaction requested";
 				default:
@@ -428,6 +509,30 @@ export function formatEventForAI(event: Event): string {
 		default:
 			return "";
 	}
+}
+
+/**
+ * Format a structured pending section into text for AI consumption.
+ * Converts the structured `pending` field on tool_result into the `## Pending` text format.
+ */
+export function formatPendingSection(pending: {
+	runningChildren: Array<{ id: string; title: string }>;
+	pendingClarifications: number;
+}): string {
+	const runningChildrenText =
+		pending.runningChildren.length > 0
+			? pending.runningChildren.map((c) => `"${c.title}" (${c.id})`).join(", ")
+			: "none";
+	const clarifyText =
+		pending.pendingClarifications > 0
+			? String(pending.pendingClarifications)
+			: "none";
+	return [
+		"",
+		"## Pending",
+		`- Running children: ${runningChildrenText}`,
+		`- Pending clarifications: ${clarifyText}`,
+	].join("\n");
 }
 
 /**
@@ -580,8 +685,9 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 					const imageBlocks: unknown[] = [];
 					for (const msg of consumedEvents) {
 						contents.push(formatEventForAI(msg));
-						if (msg.type === "user_message" && msg.images) {
-							for (const img of msg.images) {
+						if (msg.type === "user_message") {
+							const imgs = msg.images ?? msg.queueEntry?.images ?? [];
+							for (const img of imgs) {
 								imageBlocks.push({
 									type: "image",
 									source: {
@@ -718,8 +824,12 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 								const mcText = `[Messages received while you were working:]\n${mcContents.join("\n")}`;
 								resultBlocks.push({ type: "text", text: mcText });
 								for (const mcEvt of mcEvents) {
-									if (mcEvt.type === "user_message" && mcEvt.images) {
-										for (const img of mcEvt.images) {
+									if (
+										mcEvt.type === "user_message" &&
+										(mcEvt.images || mcEvt.queueEntry?.images)
+									) {
+										const imgs = mcEvt.images ?? mcEvt.queueEntry?.images ?? [];
+										for (const img of imgs) {
 											queueImageBlocks.push({
 												type: "image",
 												source: {
@@ -732,6 +842,14 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 									}
 								}
 							}
+						}
+						// Handle structured pending section
+						if (current.pending) {
+							const pendingText = formatPendingSection(current.pending);
+							resultBlocks.push({
+								type: "text",
+								text: pendingText,
+							});
 						}
 						i++;
 					} else if (current.type === "messages_consumed") {
@@ -748,8 +866,12 @@ export function eventsToAnthropicMessages(rawEvents: Event[]): unknown[] {
 							const mcText = `[Messages received while you were working:]\n${mcContents.join("\n")}`;
 							resultBlocks.push({ type: "text", text: mcText });
 							for (const mcEvt of mcEvents) {
-								if (mcEvt.type === "user_message" && mcEvt.images) {
-									for (const img of mcEvt.images) {
+								if (
+									mcEvt.type === "user_message" &&
+									(mcEvt.images || mcEvt.queueEntry?.images)
+								) {
+									const imgs = mcEvt.images ?? mcEvt.queueEntry?.images ?? [];
+									for (const img of imgs) {
 										queueImageBlocks.push({
 											type: "image",
 											source: {
@@ -1153,8 +1275,12 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 									lastToolMsg.content += `\n\n---\n${mcText}`;
 								}
 								for (const mcEvt of mcEvents) {
-									if (mcEvt.type === "user_message" && mcEvt.images) {
-										for (const img of mcEvt.images) {
+									if (
+										mcEvt.type === "user_message" &&
+										(mcEvt.images || mcEvt.queueEntry?.images)
+									) {
+										const imgs = mcEvt.images ?? mcEvt.queueEntry?.images ?? [];
+										for (const img of imgs) {
 											queueImageResults.push({
 												text: "[User-attached image]",
 												dataUri: `data:${img.mediaType};base64,${img.base64}`,
@@ -1162,6 +1288,19 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 										}
 									}
 								}
+							}
+						}
+						// Handle structured pending section
+						if (current.pending) {
+							const pendingText = formatPendingSection(current.pending);
+							const lastToolMsg = messages[messages.length - 1] as
+								| { role: string; content: string }
+								| undefined;
+							if (
+								lastToolMsg?.role === "tool" &&
+								typeof lastToolMsg.content === "string"
+							) {
+								lastToolMsg.content += pendingText;
 							}
 						}
 						i++;
@@ -1187,8 +1326,12 @@ export function eventsToOpenAIMessages(rawEvents: Event[]): unknown[] {
 								lastToolMsg.content += `\n\n---\n${mcText}`;
 							}
 							for (const mcEvt of mcEvents) {
-								if (mcEvt.type === "user_message" && mcEvt.images) {
-									for (const img of mcEvt.images) {
+								if (
+									mcEvt.type === "user_message" &&
+									(mcEvt.images || mcEvt.queueEntry?.images)
+								) {
+									const imgs = mcEvt.images ?? mcEvt.queueEntry?.images ?? [];
+									for (const img of imgs) {
 										queueImageResults.push({
 											text: "[User-attached image]",
 											dataUri: `data:${img.mediaType};base64,${img.base64}`,
