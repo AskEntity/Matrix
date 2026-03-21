@@ -46,179 +46,52 @@ export function broadcastTreeUpdate(
 	});
 }
 
+/** Ephemeral event types that should NOT be persisted to JSONL. */
+const EPHEMERAL_EVENT_TYPES = new Set([
+	"text_delta",
+	"usage",
+	"agent_idle",
+	"agent_active",
+	"status",
+	"queue_message",
+	"clarification_timeout",
+	// Provider events are already written to JSONL by the provider — don't double-write
+	"assistant_text",
+	"tool_call",
+	"tool_result",
+	"compact_marker",
+]);
+
 /**
  * Convert a BroadcastEvent to a persistable Event for JSONL storage.
  * Returns null for ephemeral events that should not be persisted.
  * Also returns the taskId (sessionId) to store under.
+ *
+ * Since BroadcastEvent and Event now share field names (toolCallId, etc.),
+ * non-ephemeral events can be stored directly — no field mapping needed.
  */
 function broadcastToEvent(
 	event: BroadcastEvent,
 	rootNodeId: string | undefined,
 ): { event: Event; sessionId: string } | null {
+	if (EPHEMERAL_EVENT_TYPES.has(event.type)) return null;
+
 	// Extract taskId for session routing
 	const taskId =
 		"taskId" in event ? (event.taskId as string | undefined) : undefined;
 	const sessionId = taskId || rootNodeId;
 	if (!sessionId) return null;
 
-	// Skip ephemeral events
-	switch (event.type) {
-		case "text_delta":
-		case "usage":
-		case "agent_idle":
-		case "agent_active":
-		case "status":
-		case "queue_message":
-		case "clarification_timeout":
-			return null;
+	// message_injected routes to root session
+	if (event.type === "message_injected") {
+		return {
+			event: event as unknown as Event,
+			sessionId: rootNodeId ?? sessionId,
+		};
 	}
 
-	// These event types match the Event union directly
-	switch (event.type) {
-		case "orchestration_started":
-			return {
-				event: {
-					type: "orchestration_started",
-					taskId: event.taskId,
-					resume: event.resume,
-					prompt: event.prompt,
-					model: event.model,
-					provider: event.provider,
-					ts: event.ts,
-				},
-				sessionId,
-			};
-		case "orchestration_completed":
-			return {
-				event: {
-					type: "orchestration_completed",
-					taskId: event.taskId,
-					success: event.success,
-					costUsd: event.costUsd,
-					turns: event.turns,
-					inputTokens: event.inputTokens,
-					cacheCreationTokens: event.cacheCreationTokens,
-					cacheReadTokens: event.cacheReadTokens,
-					outputTokens: event.outputTokens,
-					childCosts: event.childCosts,
-					ts: event.ts,
-				},
-				sessionId,
-			};
-		case "task_started":
-			return {
-				event: {
-					type: "task_started",
-					taskId: event.taskId,
-					title: event.title,
-					ts: event.ts,
-				},
-				sessionId,
-			};
-		case "task_completed":
-			return {
-				event: {
-					type: "task_completed",
-					taskId: event.taskId,
-					title: event.title,
-					success: event.success,
-					output: event.output,
-					error: event.error,
-					ts: event.ts,
-				},
-				sessionId,
-			};
-		case "error":
-			return {
-				event: {
-					type: "error",
-					taskId: event.taskId,
-					message: event.message,
-					ts: event.ts,
-				},
-				sessionId,
-			};
-		case "budget_exceeded":
-			return {
-				event: {
-					type: "budget_exceeded",
-					taskId: event.taskId,
-					title: event.title,
-					costUsd: event.costUsd,
-					budgetUsd: event.budgetUsd,
-					ts: event.ts,
-				},
-				sessionId,
-			};
-		case "clarification_requested":
-			return {
-				event: {
-					type: "clarification_requested",
-					taskId: event.taskId,
-					question: event.question,
-					ts: event.ts,
-				},
-				sessionId,
-			};
-		case "clarification_answered":
-			return {
-				event: {
-					type: "clarification_answered",
-					taskId: event.taskId,
-					answer: event.answer,
-					ts: event.ts,
-				},
-				sessionId,
-			};
-		case "tree_mutation":
-			return {
-				event: {
-					type: "tree_mutation",
-					action: event.action,
-					nodeId: event.nodeId,
-					title: event.title,
-					ts: event.ts,
-				},
-				sessionId,
-			};
-		case "compact_started":
-			return {
-				event: {
-					type: "compact_started",
-					taskId: event.taskId,
-					ts: event.ts,
-				},
-				sessionId,
-			};
-		case "agent_stopped":
-			return {
-				event: {
-					type: "agent_stopped",
-					taskId: event.taskId,
-					ts: event.ts,
-				},
-				sessionId,
-			};
-		case "message_injected":
-			return {
-				event: {
-					type: "message_injected",
-					message: event.message,
-					...(event.images?.length ? { images: event.images } : {}),
-					ts: event.ts,
-				},
-				sessionId: rootNodeId ?? sessionId,
-			};
-		// Provider events (assistant_text, tool_call, tool_result, compact_marker)
-		// are already written to JSONL by the provider — don't double-write
-		case "assistant_text":
-		case "tool_call":
-		case "tool_result":
-		case "compact_marker":
-			return null;
-		default:
-			return null;
-	}
+	// All other non-ephemeral types can be stored as-is (field names match Event)
+	return { event: event as unknown as Event, sessionId };
 }
 
 /** Broadcast an agent event to subscribers and persist lifecycle events to JSONL. */

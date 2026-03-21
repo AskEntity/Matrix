@@ -71,7 +71,7 @@ function agentEventToBroadcast(
 			return {
 				type: "tool_call",
 				tool: eventData.tool as string,
-				toolUseId: eventData.toolUseId as string,
+				toolCallId: eventData.toolUseId as string,
 				input: eventData.input as Record<string, unknown>,
 				taskId,
 				ts,
@@ -80,7 +80,7 @@ function agentEventToBroadcast(
 			return {
 				type: "tool_result",
 				tool: eventData.tool as string,
-				toolUseId: eventData.toolUseId as string,
+				toolCallId: eventData.toolUseId as string,
 				content: (eventData.content as string) || "",
 				isError: (eventData.isError as boolean) || false,
 				...(eventData.images

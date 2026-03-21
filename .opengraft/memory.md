@@ -319,3 +319,14 @@ Event (src/events.ts) — THE source of truth
 - **`queueMessageToEvent`**: Returns `UserMessageEvent` with `source` field. All queue types unified under `type: "user_message"`.
 - **`handleInjectMessage`**: Writes user_message to JSONL BEFORE delivery. Checks `eventStore.has()` BEFORE writing.
 - **Legacy types preserved**: child_complete, parent_update, etc. kept in Event union for old JSONL backward compat.
+
+
+## BroadcastEvent/Event Unification (March 2026)
+
+- **BroadcastEvent = Event**: `BroadcastEvent` is now a deprecated type alias for `Event`. One type for everything: JSONL persistence, WS broadcast, REST responses, frontend rendering.
+- **Ephemeral types added to Event**: `text_delta`, `usage`, `agent_idle`, `agent_active`, `status`, `queue_message`, `clarification_timeout`. Converters skip these via `default` case.
+- **toolCallId everywhere**: BroadcastEvent used `toolUseId`, Event used `toolCallId`. Unified to `toolCallId`. AgentEvent (internal provider format) still uses `toolUseId`; `agentEventToBroadcast` maps it.
+- **Optional taskId on all types**: `assistant_text`, `tool_call`, `tool_result`, `compact_marker` now have `taskId?`. Set at broadcast time for WS routing.
+- **broadcastToEvent simplified**: No field-by-field conversion. Just filter ephemeral types and use Event directly.
+- **normalizeEventForUI simplified**: Only adds `taskId` (no more toolCallId→toolUseId mapping).
+- **ws-handler backward compat**: Reads both `toolCallId` and `toolUseId` from incoming messages for compatibility with old cached WS data.

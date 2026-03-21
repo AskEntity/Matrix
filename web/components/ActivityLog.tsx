@@ -185,10 +185,11 @@ export function ActivityLog({
 		// Indices to hide: yield pairs
 		const hiddenIndices = new Set<number>();
 
-		// Get tool use ID from entry (handles both Event.toolCallId and BroadcastEvent.toolUseId)
+		// Get tool call ID from entry (unified: toolCallId)
 		const getToolUseId = (entry: LogEntry): string | undefined => {
-			if ("toolUseId" in entry) return entry.toolUseId as string;
 			if ("toolCallId" in entry) return entry.toolCallId as string;
+			// Backward compat for old cached entries
+			if ("toolUseId" in entry) return entry.toolUseId as string;
 			return undefined;
 		};
 
