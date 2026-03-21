@@ -151,27 +151,18 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Don't delete completed tasks — close only.
 - Don't change auth config values without permission.
 
+## Provider Architecture
+
+- **`runProviderLoop()`** in `provider-shared.ts` — ONE run loop for all providers.
+- **`ProviderAdapter`** interface — ~15 hooks for provider-specific operations (message format, API call, streaming, response parsing, tool result building, cost calculation).
+- Each provider creates an adapter (`createAnthropicAdapter()` / `createOpenAIAdapter()`) and delegates to `runProviderLoop()`.
+- Adding a new provider = implement ProviderAdapter. Run loop, compaction, tool execution, queue handling, budget check all shared.
+
 ## Miscellaneous
 
 - **CF Tunnel**: macOS LaunchAgent, domain `t.opengraft.com`. rpID must match page domain.
 - **clarify** tool: ALWAYS goes to user (UI), never parent. Use `report_to_parent` with `requestReply: true` for parent guidance.
 - **Tool images vs queue images**: `tool_result.images` = MCP screenshots. Queue message images = user-attached, go as sibling blocks.
 - **Chrome MCP**: Use `take_screenshot` for root (safe). `take_snapshot` only for child tasks with short logs.
-- **Inline styles vs media queries**: CSS custom properties for flex ratios so media queries can override.
 - **Done counter**: UI counts both `passed` and `closed` tasks as "done".
 - **Resume error dedup**: Only show errors after last `orchestration_started` or resume event.
-
-
-
-
-## Unified Provider Run Loop (Refactored)
-
-- **`runProviderLoop()`** in `provider-shared.ts` is the SINGLE run loop for both providers.
-- **`ProviderAdapter`** interface defines ~15 hooks for provider-specific operations.
-- Each provider creates an adapter via `createAnthropicAdapter()` / `createOpenAIAdapter()` and delegates to `runProviderLoop()`.
-- The run loop handles ALL control flow: resume, compaction, tool execution, implicit yield, budget check, EventStore recording.
-- Adapters handle: message format, API call + streaming, response parsing, tool result building, cost calculation, verification.
-- OpenAI `callAPI` is an async generator that never yields (no streaming) — needs `biome-ignore lint/correctness/useYield`.
-- Compaction text extraction from `messages` array works for both formats: Anthropic uses `content[]` blocks, OpenAI uses `content: string | null`.
-- Both providers use `{ role: "user", content: string }` for basic user messages — no adapter needed for that.
-- The `prepareTools` adapter also populates the `mcpHandlers` map (passed by reference) — keeps tool registration in one place.
