@@ -239,6 +239,10 @@ export type Event =
 			type: "clarification_requested";
 			taskId: string;
 			question: string;
+			/** Short title extracted from question (first line). */
+			title?: string;
+			/** Detailed body (remaining lines after title). */
+			body?: string;
 			ts: number;
 	  }
 	| {

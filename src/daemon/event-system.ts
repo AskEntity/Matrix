@@ -112,26 +112,55 @@ export function broadcastEvent(
 
 	// Track clarification_requested events for Web UI display
 	if (event.type === "clarification_requested") {
-		addPendingClarification(ctx, projectId, event.taskId, event.question);
+		addPendingClarification(
+			ctx,
+			projectId,
+			event.taskId,
+			event.question,
+			event.title,
+			event.body,
+		);
 	}
 }
 
 // --- Pending Messages (data-driven from queue) ---
 
-/** Broadcast current queue contents as pending messages to WS clients. */
+/** Format a queue message into display text for the pending banner. */
+export function pendingTextForMessage(m: QueueMessage): string {
+	switch (m.source) {
+		case "user":
+			return m.content;
+		case "child_complete":
+			return `${m.success ? "✓" : "✗"} ${m.title}`;
+		case "child_report":
+			return `↑ ${m.title}: ${m.content}`;
+		case "parent_update":
+			return `← Parent: ${m.content}`;
+		case "clarify_response":
+			return `💬 ${m.answer}`;
+		case "cross_project":
+			return `← ${m.fromProjectName}: ${m.content}`;
+		case "background_complete":
+			return `⚙ ${m.command} (exit ${m.exitCode})`;
+		case "system":
+			return `⚙ ${m.content}`;
+		case "compact":
+			return "Compact requested";
+	}
+}
+
+/** Broadcast current queue contents as pending messages to SSE clients. */
 export function broadcastPendingFromQueue(
 	ctx: DaemonContext,
 	projectId: string,
 	messages: QueueMessage[],
 ): void {
-	const pending = messages
-		.filter((m) => m.source === "user")
-		.map((m, i) => ({
-			id: `pending-${Date.now()}-${i}`,
-			taskId: null,
-			text: (m as Extract<QueueMessage, { source: "user" }>).content,
-			timestamp: Date.now(),
-		}));
+	const pending = messages.map((m, i) => ({
+		id: `pending-${Date.now()}-${i}`,
+		taskId: null,
+		text: pendingTextForMessage(m),
+		timestamp: Date.now(),
+	}));
 	broadcast(ctx.sseClients, projectId, {
 		type: "pending_messages",
 		projectId,
@@ -167,12 +196,16 @@ export function addPendingClarification(
 	projectId: string,
 	taskId: string,
 	question: string,
+	title?: string,
+	body?: string,
 ): PendingClarification {
 	const clarifications = getPendingClarifications(ctx, projectId);
 	const entry: PendingClarification = {
 		id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 		taskId,
 		question,
+		...(title ? { title } : {}),
+		...(body ? { body } : {}),
 		timestamp: Date.now(),
 	};
 	clarifications.push(entry);

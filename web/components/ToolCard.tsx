@@ -49,7 +49,7 @@ function getEntryText(entry: LogEntry): string {
 		case "clarify_response":
 			return entry.answer;
 		case "clarification_requested":
-			return entry.question;
+			return entry.title ?? entry.question;
 		case "clarification_answered":
 			return entry.answer;
 		case "budget_exceeded":
@@ -431,9 +431,11 @@ export function getToolCardTitle(
 			case "clarify": {
 				const question = getArg(toolArgs, "question");
 				if (question) {
+					// Show first line as title (may be multi-line with title\nbody)
+					const firstLine = question.split("\n")[0] ?? question;
 					const display =
-						question.length > 40 ? `${question.slice(0, 40)}…` : question;
-					return `? Clarify: ${display}`;
+						firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine;
+					return `? ${display}`;
 				}
 				return "? Clarify";
 			}

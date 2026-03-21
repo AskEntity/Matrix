@@ -15,6 +15,10 @@ export interface PendingClarification {
 	id: string;
 	taskId: string;
 	question: string;
+	/** Short title extracted from question (first line). */
+	title?: string;
+	/** Detailed body (remaining lines after title). */
+	body?: string;
 	timestamp: number;
 }
 
