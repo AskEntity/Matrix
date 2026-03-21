@@ -7,6 +7,7 @@ import { CuteCat } from "./components/CuteCat.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import {
 	IconArrowDown,
+	IconChevron,
 	IconClose,
 	IconHexagon,
 	IconPlus,
@@ -177,6 +178,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [splitRatio, setSplitRatio] = useState(0.35);
 	const [isDragging, setIsDragging] = useState(false);
 	const [autoScroll, setAutoScroll] = useState(true);
+	const [detailCollapsed, setDetailCollapsed] = useState(
+		() => localStorage.getItem("og-detail-collapsed") === "true",
+	);
 	const [theme, setThemeState] = useState<
 		"dark" | "light" | "cute-light" | "cute-dark"
 	>(() => {
@@ -672,19 +676,37 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				</aside>
 
 				<section
-					className={`og-content${isDragging ? " dragging" : ""}`}
+					className={`og-content${isDragging ? " dragging" : ""}${detailCollapsed ? " og-detail-collapsed" : ""}`}
 					ref={contentPanelRef}
 				>
 					<div
 						className="og-detail-panel"
 						style={
-							{
-								"--split-ratio": splitRatio,
-								minHeight: 0,
-							} as React.CSSProperties
+							detailCollapsed
+								? undefined
+								: ({
+										"--split-ratio": splitRatio,
+										minHeight: 0,
+									} as React.CSSProperties)
 						}
 					>
 						<div className="og-panel-header">
+							<button
+								type="button"
+								className="og-detail-collapse-toggle"
+								onClick={() => {
+									setDetailCollapsed((prev) => {
+										const next = !prev;
+										localStorage.setItem("og-detail-collapsed", String(next));
+										return next;
+									});
+								}}
+								title={
+									detailCollapsed ? t("detail.expand") : t("detail.collapse")
+								}
+							>
+								<IconChevron size={10} expanded={!detailCollapsed} />
+							</button>
 							<span className="og-panel-title">
 								{isOrchestratorNode
 									? t("orch.label")
@@ -693,52 +715,59 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 										: t("detail.details")}
 							</span>
 						</div>
-						{isOrchestratorNode ? (
-							<OrchestratorDetail
-								running={running}
-								isRootActive={rootNodeId ? activeAgents.has(rootNodeId) : false}
-								nodes={nodes}
-								rootNodeId={rootNodeId}
-								totalCost={totalCost}
-								turns={lastTurns}
-								inputTokens={lastInputTokens}
-								cacheCreationTokens={lastCacheCreationTokens}
-								cacheReadTokens={lastCacheReadTokens}
-								outputTokens={lastOutputTokens}
-								provider={agentProvider}
-								model={agentModel}
-								onClearSessions={handleClearSessions}
-								onStop={handleStop}
-							/>
-						) : selectedNode ? (
-							<TaskDetail
-								node={selectedNode}
-								projectId={projectId}
-								isActive={activeAgents.has(selectedNode.id)}
-								onDelete={handleDeleteTask}
-								onPause={handlePauseTask}
-								onClearSession={handleClearTaskSession}
-							/>
-						) : (
-							<div className="og-detail-empty">
-								<IconHexagon size={28} />
-								<span>{t("detail.selectTask")}</span>
-							</div>
-						)}
+						{!detailCollapsed &&
+							(isOrchestratorNode ? (
+								<OrchestratorDetail
+									running={running}
+									isRootActive={
+										rootNodeId ? activeAgents.has(rootNodeId) : false
+									}
+									nodes={nodes}
+									rootNodeId={rootNodeId}
+									totalCost={totalCost}
+									turns={lastTurns}
+									inputTokens={lastInputTokens}
+									cacheCreationTokens={lastCacheCreationTokens}
+									cacheReadTokens={lastCacheReadTokens}
+									outputTokens={lastOutputTokens}
+									provider={agentProvider}
+									model={agentModel}
+									onClearSessions={handleClearSessions}
+									onStop={handleStop}
+								/>
+							) : selectedNode ? (
+								<TaskDetail
+									node={selectedNode}
+									projectId={projectId}
+									isActive={activeAgents.has(selectedNode.id)}
+									onDelete={handleDeleteTask}
+									onPause={handlePauseTask}
+									onClearSession={handleClearTaskSession}
+								/>
+							) : (
+								<div className="og-detail-empty">
+									<IconHexagon size={28} />
+									<span>{t("detail.selectTask")}</span>
+								</div>
+							))}
 					</div>
 
-					{/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */}
-					<div
-						className="og-resize-divider"
-						onMouseDown={handleDividerMouseDown}
-					/>
+					{!detailCollapsed && (
+						/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */
+						<div
+							className="og-resize-divider"
+							onMouseDown={handleDividerMouseDown}
+						/>
+					)}
 
 					<div
 						className="og-activity-panel"
 						style={
-							{
-								"--activity-ratio": 1 - splitRatio,
-							} as React.CSSProperties
+							detailCollapsed
+								? undefined
+								: ({
+										"--activity-ratio": 1 - splitRatio,
+									} as React.CSSProperties)
 						}
 					>
 						<div className="og-panel-header">

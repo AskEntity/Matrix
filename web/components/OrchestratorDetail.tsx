@@ -1,9 +1,6 @@
-import { useState } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconChevron, IconHexagon, IconPause, IconTrash } from "./icons.tsx";
-
-const STORAGE_KEY = "og-orch-stats-expanded";
+import { IconHexagon, IconPause, IconTrash } from "./icons.tsx";
 
 export function OrchestratorDetail({
 	running,
@@ -37,17 +34,6 @@ export function OrchestratorDetail({
 	onStop?: () => void;
 }) {
 	const { t } = useLocale();
-	const [expanded, setExpanded] = useState(
-		() => localStorage.getItem(STORAGE_KEY) === "true",
-	);
-
-	const toggleExpanded = () => {
-		setExpanded((prev) => {
-			const next = !prev;
-			localStorage.setItem(STORAGE_KEY, String(next));
-			return next;
-		});
-	};
 
 	// Exclude the root node from task counts
 	const childNodes = rootNodeId
@@ -71,128 +57,116 @@ export function OrchestratorDetail({
 					<div className="og-orch-name">{t("orch.label")}</div>
 					<div className="og-orch-sub">{t("orch.rootSession")}</div>
 				</div>
-				<button
-					type="button"
-					className="og-btn og-btn-sm og-btn-ghost og-orch-toggle"
-					onClick={toggleExpanded}
-					title={expanded ? "Hide stats" : "Show stats"}
-				>
-					<IconChevron size={12} expanded={expanded} />
-				</button>
 			</div>
-			{expanded && (
-				<>
-					<div className="og-stats-row">
-						{provider && (
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.provider")}</span>
-								<span className="og-stat-value" style={{ fontSize: "12px" }}>
-									{provider}
-								</span>
-							</div>
-						)}
-						{model && (
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.model")}</span>
-								<span className="og-stat-value" style={{ fontSize: "12px" }}>
-									{model}
-								</span>
-							</div>
-						)}
-						<div className="og-stat-card">
-							<span className="og-stat-label">{t("orch.tasks")}</span>
-							<span className="og-stat-value">{nodeCount}</span>
-						</div>
-						{nodeCount > 0 && (
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.done")}</span>
-								<span className="og-stat-value" style={{ fontSize: "14px" }}>
-									<span style={{ color: "var(--color-passed)" }}>{passed}</span>
-									<span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
-										{" "}
-										/ {nodeCount}
-									</span>
-								</span>
-							</div>
-						)}
-						{passed > 0 && (
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.passed")}</span>
-								<span
-									className="og-stat-value"
-									style={{ color: "var(--color-passed)" }}
-								>
-									{passed}
-								</span>
-							</div>
-						)}
-						{inProgress > 0 && (
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.active")}</span>
-								<span
-									className="og-stat-value"
-									style={{ color: "var(--color-in-progress)" }}
-								>
-									{inProgress}
-								</span>
-							</div>
-						)}
-						{failed > 0 && (
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.failed")}</span>
-								<span
-									className="og-stat-value"
-									style={{ color: "var(--color-failed)" }}
-								>
-									{failed}
-								</span>
-							</div>
-						)}
-						{totalCost != null && totalCost > 0 && (
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.totalCost")}</span>
-								<span className="og-stat-value">${totalCost.toFixed(3)}</span>
-							</div>
-						)}
-						{turns != null && turns > 0 && (
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.turns")}</span>
-								<span className="og-stat-value">{turns}</span>
-							</div>
-						)}
+			<div className="og-stats-row">
+				{provider && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.provider")}</span>
+						<span className="og-stat-value" style={{ fontSize: "12px" }}>
+							{provider}
+						</span>
 					</div>
-					{(inputTokens != null ||
-						cacheCreationTokens != null ||
-						cacheReadTokens != null ||
-						outputTokens != null) && (
-						<div className="og-stats-row" style={{ marginTop: "8px" }}>
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.input")}</span>
-								<span className="og-stat-value" style={{ fontSize: "13px" }}>
-									{(inputTokens ?? 0).toLocaleString()}
-								</span>
-							</div>
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.cacheWrite")}</span>
-								<span className="og-stat-value" style={{ fontSize: "13px" }}>
-									{(cacheCreationTokens ?? 0).toLocaleString()}
-								</span>
-							</div>
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.cacheRead")}</span>
-								<span className="og-stat-value" style={{ fontSize: "13px" }}>
-									{(cacheReadTokens ?? 0).toLocaleString()}
-								</span>
-							</div>
-							<div className="og-stat-card">
-								<span className="og-stat-label">{t("orch.output")}</span>
-								<span className="og-stat-value" style={{ fontSize: "13px" }}>
-									{(outputTokens ?? 0).toLocaleString()}
-								</span>
-							</div>
-						</div>
-					)}
-				</>
+				)}
+				{model && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.model")}</span>
+						<span className="og-stat-value" style={{ fontSize: "12px" }}>
+							{model}
+						</span>
+					</div>
+				)}
+				<div className="og-stat-card">
+					<span className="og-stat-label">{t("orch.tasks")}</span>
+					<span className="og-stat-value">{nodeCount}</span>
+				</div>
+				{nodeCount > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.done")}</span>
+						<span className="og-stat-value" style={{ fontSize: "14px" }}>
+							<span style={{ color: "var(--color-passed)" }}>{passed}</span>
+							<span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
+								{" "}
+								/ {nodeCount}
+							</span>
+						</span>
+					</div>
+				)}
+				{passed > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.passed")}</span>
+						<span
+							className="og-stat-value"
+							style={{ color: "var(--color-passed)" }}
+						>
+							{passed}
+						</span>
+					</div>
+				)}
+				{inProgress > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.active")}</span>
+						<span
+							className="og-stat-value"
+							style={{ color: "var(--color-in-progress)" }}
+						>
+							{inProgress}
+						</span>
+					</div>
+				)}
+				{failed > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.failed")}</span>
+						<span
+							className="og-stat-value"
+							style={{ color: "var(--color-failed)" }}
+						>
+							{failed}
+						</span>
+					</div>
+				)}
+				{totalCost != null && totalCost > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.totalCost")}</span>
+						<span className="og-stat-value">${totalCost.toFixed(3)}</span>
+					</div>
+				)}
+				{turns != null && turns > 0 && (
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.turns")}</span>
+						<span className="og-stat-value">{turns}</span>
+					</div>
+				)}
+			</div>
+			{(inputTokens != null ||
+				cacheCreationTokens != null ||
+				cacheReadTokens != null ||
+				outputTokens != null) && (
+				<div className="og-stats-row" style={{ marginTop: "8px" }}>
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.input")}</span>
+						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+							{(inputTokens ?? 0).toLocaleString()}
+						</span>
+					</div>
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.cacheWrite")}</span>
+						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+							{(cacheCreationTokens ?? 0).toLocaleString()}
+						</span>
+					</div>
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.cacheRead")}</span>
+						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+							{(cacheReadTokens ?? 0).toLocaleString()}
+						</span>
+					</div>
+					<div className="og-stat-card">
+						<span className="og-stat-label">{t("orch.output")}</span>
+						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+							{(outputTokens ?? 0).toLocaleString()}
+						</span>
+					</div>
+				</div>
 			)}
 			<div
 				style={{
