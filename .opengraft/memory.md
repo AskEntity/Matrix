@@ -595,3 +595,11 @@ Event (src/events.ts) — THE source of truth
 - **Frontend reconnect**: `useSSE` tracks first-connect vs reconnect. On reconnect, calls `onReconnect` which re-fetches events from REST and pending messages — safety net for gaps the ring buffer cannot cover.
 - **Initial state events have no `id:`**: `sendInitialState` sends without sequence ID so they do not interfere with Last-Event-ID tracking.
 
+
+
+## Provider-Internal Prompt Filtering (March 2026)
+
+- **Bug**: After page refresh, activity log showed a giant card with full system prompt (Working directory + memory.md + user message) alongside the correct user message card from `orchestration_started`.
+- **Root cause**: Provider writes full `firstUserContent` as `{type: "message", content: ..., cwd: ...}` to JSONL. Frontend rendered ALL `message` events as user cards.
+- **Fix**: In `web/ws-handler.ts`, skip `message`/`user_message` events that have a `cwd` field and no `id` field — these are provider-internal prompt events. Also skip `compacted_resume` events (internal compaction state). Applied in both `processEvent` (live) and `processEventBatch` (refresh).
+- **Key distinguishing field**: `cwd` — only provider-written prompt events have it. User-injected messages never have `cwd`.
