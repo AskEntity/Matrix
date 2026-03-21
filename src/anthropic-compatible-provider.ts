@@ -1157,7 +1157,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 									textParts.push(JSON.stringify(c));
 								}
 							}
-							// Extract consumed message IDs and pending state from yield/done tools
+							// Extract consumed message IDs, pending state, and formatted queue messages from yield/done tools
 							const consumedIds = Array.isArray(mcpResult._consumedMessageIds)
 								? (mcpResult._consumedMessageIds as string[])
 								: undefined;
@@ -1170,6 +1170,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 										pendingClarifications: number;
 								  }
 								| undefined;
+							const formattedQueueMessages =
+								typeof mcpResult._formattedQueueMessages === "string"
+									? mcpResult._formattedQueueMessages
+									: undefined;
 							return {
 								content: textParts.join("\n"),
 								isError: mcpResult.isError ?? false,
@@ -1181,6 +1185,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 									? { _consumedMessageIds: consumedIds }
 									: {}),
 								...(pending ? { _pending: pending } : {}),
+								...(formattedQueueMessages
+									? { _formattedQueueMessages: formattedQueueMessages }
+									: {}),
 							};
 						} catch (e) {
 							return {
@@ -1213,6 +1220,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					mediaType?: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 					mcpImages?: Array<{ base64: string; mediaType: string }>;
 					_consumedMessageIds?: string[];
+					_formattedQueueMessages?: string;
 				};
 
 				// Update cwd if bash tool changed it
@@ -1225,7 +1233,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 
 				// Collect images for the UI event
 				const images: Array<{ base64: string; mediaType: string }> = [];
-				if (exec.mcpImages?.length) {
+				// When _formattedQueueMessages is set, mcpImages are user queue images
+				// — they go alongside the queue text block, not in the tool_result
+				if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
 					images.push(...exec.mcpImages);
 				} else if (exec.isImage && exec.imageData && exec.mediaType) {
 					images.push({ base64: exec.imageData, mediaType: exec.mediaType });
@@ -1296,10 +1306,58 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 				}
 			}
 
+			// Collect formatted queue messages from yield/done tools (separate from tool_result content)
+			const yieldQueueTextBlocks: Array<{ type: "text"; text: string }> = [];
+			const yieldQueueImageBlocks: Array<{
+				type: "image";
+				data: string;
+				mimeType: string;
+			}> = [];
+			for (const exec of execResults) {
+				const e = exec as {
+					_formattedQueueMessages?: string;
+					mcpImages?: Array<{ base64: string; mediaType: string }>;
+					_consumedMessageIds?: string[];
+				};
+				if (e._formattedQueueMessages) {
+					yieldQueueTextBlocks.push({
+						type: "text" as const,
+						text: `[Messages received while you were idle:]\n${e._formattedQueueMessages}`,
+					});
+					// Images from yield/done are in mcpImages when _formattedQueueMessages is set
+					if (e.mcpImages?.length) {
+						for (const img of e.mcpImages) {
+							yieldQueueImageBlocks.push({
+								type: "image",
+								data: img.base64,
+								mimeType: img.mediaType,
+							});
+						}
+					}
+				}
+			}
+
 			// Add tool results to history — queue messages as separate text/image blocks
 			// Anthropic user message content can mix tool_result, text, and image blocks
 			const userContentBlocks = [
 				...toolResults,
+				...yieldQueueTextBlocks,
+				...yieldQueueImageBlocks.map((img) => ({
+					type: "image" as const,
+					source: {
+						type: "base64" as const,
+						media_type: img.mimeType as ImageMediaType,
+						data: img.data,
+					},
+				})),
+				...(yieldQueueImageBlocks.length > 0
+					? [
+							{
+								type: "text" as const,
+								text: `[${yieldQueueImageBlocks.length} image(s) attached by user]`,
+							},
+						]
+					: []),
 				...cancellationTextBlocks,
 				...cancellationImageBlocks,
 				...(cancellationImageBlocks.length > 0
@@ -1344,6 +1402,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 						imageData?: string;
 						mediaType?: string;
 						_consumedMessageIds?: string[];
+						_formattedQueueMessages?: string;
 						_pending?: {
 							runningChildren: Array<{ id: string; title: string }>;
 							pendingClarifications: number;
@@ -1353,7 +1412,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 					// The converter reconstructs queue messages from messagesConsumed + user_message events.
 					const resultContent = exec.content;
 					const images: Array<{ base64: string; mediaType: string }> = [];
-					if (exec.mcpImages?.length) {
+					// When _formattedQueueMessages is set, mcpImages are user queue images
+					// — they're already recorded as user_message events, not tool images
+					if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
 						images.push(...exec.mcpImages);
 					} else if (exec.isImage && exec.imageData && exec.mediaType) {
 						images.push({

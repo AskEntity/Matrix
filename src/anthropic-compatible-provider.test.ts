@@ -1673,12 +1673,15 @@ describe("done tool", () => {
 		}, 10);
 
 		const result = await donePromise;
-		// Should contain the context prefix and the wake message
+		// Should contain the context prefix and pending section (queue messages are separate)
 		expect(result.content[0].text).toContain(
 			"You previously called done(passed)",
 		);
-		expect(result.content[0].text).toContain("Resume with new instructions");
 		expect(result.content[0].text).toContain("## Pending");
+		// Queue messages are returned as _formattedQueueMessages, not embedded in content
+		expect(result._formattedQueueMessages).toContain(
+			"Resume with new instructions",
+		);
 
 		queue.close();
 	});
