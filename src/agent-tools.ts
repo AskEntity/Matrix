@@ -278,6 +278,7 @@ Before marking a task as passed, verify EVERY item in the task description is co
     - **Reset** (last resort): Call \`reset_task\` first, then \`send_message_to_child\` to start fresh.
       Only when the approach was fundamentally wrong and you want to start over from scratch.
   - If the failure reveals a scope issue: delete the task and create new tasks with better boundaries.
+- **User-resumed tasks**: When a child_report arrives from a previously-closed/passed/failed task, it means the user resumed it (new worktree, new agent session). The notification will say "User RESUMED closed/passed/failed task...". NEVER close_task without checking \`git log main..<branch>\` for unmerged commits — a resumed task may have new work.
 
 ### Merge Protocol
 - Use \`git merge --no-ff <branch> -m "Merge task: <title>"\` from YOUR working directory
