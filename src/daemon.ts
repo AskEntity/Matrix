@@ -282,7 +282,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					errorMessages.length > 0
 						? `\n\nPrevious session encountered these errors:\n${errorMessages.map((m) => `- ${m}`).join("\n")}`
 						: "";
-				const resumePrompt = `Continue where you left off. The daemon restarted.${orphanCount > 0 ? ` Note: ${orphanCount} in_progress task(s) were reset to failed.` : ""}${errorSection}\n\nCheck the task tree and proceed.`;
+				const resumePrompt = `Continue where you left off. The daemon restarted (${GIT_HASH}).${orphanCount > 0 ? ` Note: ${orphanCount} in_progress task(s) were reset to failed.` : ""}${errorSection}\n\nCheck the task tree and proceed.`;
 				await launchAgent(
 					ctx,
 					project,
