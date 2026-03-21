@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { authFetch } from "../auth.ts";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconCopy, IconPause, IconTrash } from "./icons.tsx";
@@ -85,7 +86,7 @@ export function TaskDetail({
 		(value: string) => {
 			const trimmed = value.trim();
 			if (trimmed && trimmed !== node.title) {
-				fetch(`/projects/${projectId}/tasks/${node.id}`, {
+				authFetch(`/projects/${projectId}/tasks/${node.id}`, {
 					method: "PATCH",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ title: trimmed }),
@@ -99,7 +100,7 @@ export function TaskDetail({
 	const saveDescription = useCallback(
 		(value: string) => {
 			if (value !== node.description) {
-				fetch(`/projects/${projectId}/tasks/${node.id}`, {
+				authFetch(`/projects/${projectId}/tasks/${node.id}`, {
 					method: "PATCH",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ description: value }),
@@ -209,7 +210,7 @@ export function TaskDetail({
 								className={`og-color-category${node.color === c.value ? " selected" : ""}`}
 								onClick={() => {
 									const newColor = node.color === c.value ? null : c.value;
-									fetch(`/projects/${projectId}/tasks/${node.id}`, {
+									authFetch(`/projects/${projectId}/tasks/${node.id}`, {
 										method: "PATCH",
 										headers: { "Content-Type": "application/json" },
 										body: JSON.stringify({ color: newColor }),
@@ -229,7 +230,7 @@ export function TaskDetail({
 								className="og-color-clear"
 								title="Clear color"
 								onClick={() => {
-									fetch(`/projects/${projectId}/tasks/${node.id}`, {
+									authFetch(`/projects/${projectId}/tasks/${node.id}`, {
 										method: "PATCH",
 										headers: { "Content-Type": "application/json" },
 										body: JSON.stringify({ color: null }),

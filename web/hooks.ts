@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { authFetch, getToken } from "./auth.ts";
 
 export type { TaskNode, TaskStatus } from "../src/types.ts";
 
@@ -60,7 +61,9 @@ export function useSSE(
 	useEffect(() => {
 		if (!projectId) return;
 
-		const url = `/events?projectId=${encodeURIComponent(projectId)}`;
+		let url = `/events?projectId=${encodeURIComponent(projectId)}`;
+		const token = getToken();
+		if (token) url += `&token=${encodeURIComponent(token)}`;
 		const source = new EventSource(url);
 
 		source.onopen = () => {
@@ -97,7 +100,7 @@ export function useProjects() {
 
 	const refresh = useCallback(async () => {
 		try {
-			const res = await fetch("/projects");
+			const res = await authFetch("/projects");
 			if (!res.ok) return;
 			const data = await res.json();
 			if (Array.isArray(data)) setProjects(data);
@@ -112,7 +115,7 @@ export function useProjects() {
 
 	const initProject = useCallback(
 		async (path: string) => {
-			const res = await fetch("/projects", {
+			const res = await authFetch("/projects", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ path }),
@@ -127,7 +130,7 @@ export function useProjects() {
 
 	const deleteProject = useCallback(
 		async (id: string) => {
-			const res = await fetch(`/projects/${id}`, { method: "DELETE" });
+			const res = await authFetch(`/projects/${id}`, { method: "DELETE" });
 			if (!res.ok) throw new Error((await res.json()).error);
 			await refresh();
 		},
@@ -151,7 +154,7 @@ export function useTasks(
 			return;
 		}
 		try {
-			const res = await fetch(`/projects/${projectId}/tasks`);
+			const res = await authFetch(`/projects/${projectId}/tasks`);
 			const data = await res.json();
 			setNodes(data.nodes || []);
 			if (data.rootNodeId && setRootNodeId) {
@@ -190,7 +193,7 @@ export function useAgent(projectId: string) {
 		}
 		try {
 			// Fetch per-agent idle/active status
-			const statusRes = await fetch(`/projects/${projectId}/agent/status`);
+			const statusRes = await authFetch(`/projects/${projectId}/agent/status`);
 			if (statusRes.ok) {
 				const statusData = (await statusRes.json()) as {
 					idle: string[];
@@ -199,7 +202,7 @@ export function useAgent(projectId: string) {
 				setActiveAgents(new Set(statusData.active));
 			}
 			// Fetch provider/model from legacy endpoint
-			const res = await fetch(`/projects/${projectId}/agent`);
+			const res = await authFetch(`/projects/${projectId}/agent`);
 			const data = await res.json();
 			if (data.provider) setProvider(data.provider);
 			if (data.model) setModel(data.model);
@@ -214,7 +217,7 @@ export function useAgent(projectId: string) {
 
 	const start = useCallback(
 		async (opts: { prompt: string; model?: string; childModel?: string }) => {
-			const res = await fetch(`/projects/${projectId}/orchestrate/agent`, {
+			const res = await authFetch(`/projects/${projectId}/orchestrate/agent`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(opts),
@@ -226,7 +229,7 @@ export function useAgent(projectId: string) {
 	);
 
 	const stop = useCallback(async () => {
-		const res = await fetch(`/projects/${projectId}/stop`, {
+		const res = await authFetch(`/projects/${projectId}/stop`, {
 			method: "POST",
 		});
 		if (!res.ok) {
@@ -244,7 +247,7 @@ export function useAgent(projectId: string) {
 		async (taskId: string, message?: string) => {
 			const body: Record<string, unknown> = {};
 			if (message) body.message = message;
-			const res = await fetch(
+			const res = await authFetch(
 				`/projects/${projectId}/tasks/${taskId}/continue`,
 				{
 					method: "POST",
@@ -260,7 +263,7 @@ export function useAgent(projectId: string) {
 
 	const deleteTask = useCallback(
 		async (taskId: string) => {
-			const res = await fetch(`/projects/${projectId}/tasks/${taskId}`, {
+			const res = await authFetch(`/projects/${projectId}/tasks/${taskId}`, {
 				method: "DELETE",
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
@@ -270,7 +273,7 @@ export function useAgent(projectId: string) {
 
 	const clearTaskSession = useCallback(
 		async (taskId: string) => {
-			const res = await fetch(
+			const res = await authFetch(
 				`/projects/${projectId}/tasks/${taskId}/sessions/clear`,
 				{ method: "POST" },
 			);
@@ -286,7 +289,7 @@ export function useAgent(projectId: string) {
 		) => {
 			const body: Record<string, unknown> = { message };
 			if (images?.length) body.images = images;
-			const res = await fetch(`/projects/${projectId}/message`, {
+			const res = await authFetch(`/projects/${projectId}/message`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(body),
@@ -297,7 +300,7 @@ export function useAgent(projectId: string) {
 	);
 
 	const compact = useCallback(async () => {
-		const res = await fetch(`/projects/${projectId}/compact`, {
+		const res = await authFetch(`/projects/${projectId}/compact`, {
 			method: "POST",
 		});
 		if (!res.ok) throw new Error((await res.json()).error);
@@ -305,7 +308,7 @@ export function useAgent(projectId: string) {
 
 	const sendMessageToTask = useCallback(
 		async (taskId: string, content: string) => {
-			const res = await fetch(
+			const res = await authFetch(
 				`/projects/${projectId}/tasks/${taskId}/message`,
 				{
 					method: "POST",
@@ -320,7 +323,7 @@ export function useAgent(projectId: string) {
 
 	const reorderTasks = useCallback(
 		async (nodeId: string, children: string[]) => {
-			const res = await fetch(
+			const res = await authFetch(
 				`/projects/${projectId}/tasks/${nodeId}/reorder`,
 				{
 					method: "PATCH",
@@ -335,7 +338,7 @@ export function useAgent(projectId: string) {
 
 	const reparentTask = useCallback(
 		async (nodeId: string, newParentId: string) => {
-			const res = await fetch(`/projects/${projectId}/tasks/${nodeId}`, {
+			const res = await authFetch(`/projects/${projectId}/tasks/${nodeId}`, {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ parentId: newParentId }),
@@ -399,7 +402,7 @@ export function useProjectConfig(projectId: string | null) {
 			setConfig({});
 			return;
 		}
-		fetch(`/projects/${projectId}/config`)
+		authFetch(`/projects/${projectId}/config`)
 			.then((r) => r.json())
 			.then(setConfig)
 			.catch(() => {});
@@ -408,7 +411,7 @@ export function useProjectConfig(projectId: string | null) {
 	const updateConfig = useCallback(
 		async (partial: Record<string, unknown>) => {
 			if (!projectId) return;
-			const res = await fetch(`/projects/${projectId}/config`, {
+			const res = await authFetch(`/projects/${projectId}/config`, {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(partial),
@@ -446,7 +449,7 @@ export function useThreeLayerConfig(projectId: string | null) {
 		}
 		setLoading(true);
 		try {
-			const res = await fetch(`/projects/${projectId}/config/all`);
+			const res = await authFetch(`/projects/${projectId}/config/all`);
 			if (res.ok) setLayers(await res.json());
 		} catch {
 			/* ignore */
@@ -461,7 +464,7 @@ export function useThreeLayerConfig(projectId: string | null) {
 
 	const updateGlobal = useCallback(
 		async (partial: Record<string, unknown>) => {
-			const res = await fetch("/config/global", {
+			const res = await authFetch("/config/global", {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(partial),
@@ -474,7 +477,7 @@ export function useThreeLayerConfig(projectId: string | null) {
 	const updateRepo = useCallback(
 		async (partial: Record<string, unknown>) => {
 			if (!projectId) return;
-			const res = await fetch(`/projects/${projectId}/config/repo`, {
+			const res = await authFetch(`/projects/${projectId}/config/repo`, {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(partial),
@@ -487,7 +490,7 @@ export function useThreeLayerConfig(projectId: string | null) {
 	const updateLocal = useCallback(
 		async (partial: Record<string, unknown>) => {
 			if (!projectId) return;
-			const res = await fetch(`/projects/${projectId}/config`, {
+			const res = await authFetch(`/projects/${projectId}/config`, {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(partial),

@@ -1,5 +1,6 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { authFetch, clearToken } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
 import { AppFooter } from "./components/AppFooter.tsx";
 import { AppHeader } from "./components/AppHeader.tsx";
@@ -86,15 +87,16 @@ function AppInner() {
 
 	const handleLogout = useCallback(async () => {
 		try {
-			await fetch("/auth/logout", { method: "POST" });
+			await authFetch("/auth/logout", { method: "POST" });
 		} catch {
 			// ignore
 		}
+		clearToken();
 		setAuthState("login");
 	}, []);
 
 	useEffect(() => {
-		fetch("/auth/status")
+		authFetch("/auth/status")
 			.then((r) => r.json())
 			.then(
 				(data: {
@@ -394,7 +396,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	useEffect(() => {
 		if (!projectId) return;
 		let cancelled = false;
-		fetch(`/projects/${projectId}/events`)
+		authFetch(`/projects/${projectId}/events`)
 			.then((r) => r.json())
 			.then((data: { events?: Record<string, unknown>[] }) => {
 				if (cancelled) return;
@@ -442,7 +444,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			setPendingMessages([]);
 			return;
 		}
-		fetch(`/projects/${projectId}/pending-messages`)
+		authFetch(`/projects/${projectId}/pending-messages`)
 			.then((r) => r.json())
 			.then((data: { messages: typeof pendingMessages }) =>
 				setPendingMessages(data.messages ?? []),
@@ -456,7 +458,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			setClarifyAnswers({});
 			return;
 		}
-		fetch(`/projects/${projectId}/clarifications`)
+		authFetch(`/projects/${projectId}/clarifications`)
 			.then((r) => r.json())
 			.then((data: { clarifications: typeof pendingClarifications }) =>
 				setPendingClarifications(data.clarifications ?? []),
@@ -589,7 +591,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					onClose={() => setShowSettings(false)}
 					onRestart={async () => {
 						try {
-							await fetch("/restart-daemon", { method: "POST" });
+							await authFetch("/restart-daemon", { method: "POST" });
 							addLog({
 								type: "lifecycle",
 								content: "Daemon restarting…",

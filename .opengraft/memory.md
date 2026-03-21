@@ -509,3 +509,16 @@ Event (src/events.ts) — THE source of truth
 - **Bug**: `scrollIntoView({ block: "end" })` on iOS Safari propagates to ancestor containers even with `overflow: hidden`, scrolling the entire page and pushing the input bar out of view.
 - **Fix**: Replaced with `el.scrollTop = el.scrollHeight` on the `og-activity-log` container directly. `scrollTop` only affects the target element, immune to iOS Safari scroll propagation.
 - **Removed**: `bottomRef` sentinel div — no longer needed since we use `scrollTop` instead of `scrollIntoView`.
+
+
+## JWT Auth Migration (March 2026)
+
+- **Session-based → JWT**: Replaced server-side session tokens (stored in auth.json `sessions` array) with stateless JWT tokens signed with HMAC-SHA256.
+- **Signing key**: Auto-generated on first use, persisted as `jwtSecret` (base64) in `auth.json`. Survives daemon restarts.
+- **No external deps**: Uses native Web Crypto API (`crypto.subtle`) for HMAC-SHA256 sign/verify. No `jsonwebtoken` or `jose` library.
+- **Token delivery**: Login verify endpoint returns `{ verified: true, token: "..." }` in response body (not cookie). Frontend stores in `localStorage` via `web/auth.ts` helpers.
+- **Frontend auth**: `authFetch()` wrapper adds `Authorization: Bearer` header to all API calls. `LoginPage` stores token on successful auth. `clearToken()` on logout.
+- **SSE auth**: `EventSource` cannot set custom headers. Token passed as query param: `/events?projectId=X&token=Y`. Middleware `extractToken()` checks both `Authorization` header and `token` query param.
+- **Logout**: Now stateless — server endpoint is a no-op. Client-side `clearToken()` removes JWT from localStorage.
+- **Backward compat**: Old `sessions` array in auth.json is ignored (not written back). `auth.json` migrates cleanly — existing credentials preserved, sessions dropped.
+- **JWT payload**: `{ sub: credentialID, iat: seconds, exp: seconds }`. 30-day TTL. Expiry checked on every verify.

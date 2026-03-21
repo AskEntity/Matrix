@@ -2,7 +2,8 @@
  * WebAuthn/Passkey authentication for remote access.
  *
  * Credentials stored in ~/.opengraft/auth.json.
- * Sessions maintained via random token in cookie.
+ * JWT tokens issued after WebAuthn verification (stateless, survives daemon restarts).
+ * HMAC-SHA256 signing key auto-generated and persisted in auth.json.
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -24,14 +25,19 @@ export interface StoredCredential {
 
 interface AuthData {
 	credentials: StoredCredential[];
-	sessions: SessionEntry[];
+	/** HMAC-SHA256 key for JWT signing, base64-encoded. Auto-generated on first use. */
+	jwtSecret?: string;
+	/** @deprecated — old session entries, kept for backward compat parsing only. */
+	sessions?: unknown[];
 }
 
-interface SessionEntry {
-	token: string;
-	createdAt: number;
-	/** Session expiry in ms since epoch. */
-	expiresAt: number;
+interface JWTPayload {
+	/** Credential ID that authenticated */
+	sub: string;
+	/** Issued-at (seconds since epoch) */
+	iat: number;
+	/** Expiry (seconds since epoch) */
+	exp: number;
 }
 
 /** In-memory challenge store (short-lived, not persisted). */
@@ -47,10 +53,10 @@ async function readAuthData(path: string): Promise<AuthData> {
 		const data = JSON.parse(await readFile(path, "utf-8")) as Partial<AuthData>;
 		authDataCache = {
 			credentials: data.credentials ?? [],
-			sessions: data.sessions ?? [],
+			jwtSecret: data.jwtSecret,
 		};
 	} catch {
-		authDataCache = { credentials: [], sessions: [] };
+		authDataCache = { credentials: [] };
 	}
 	return authDataCache;
 }
@@ -58,7 +64,11 @@ async function readAuthData(path: string): Promise<AuthData> {
 async function writeAuthData(path: string, data: AuthData): Promise<void> {
 	authDataCache = data;
 	await mkdir(dirname(path), { recursive: true });
-	await writeFile(path, JSON.stringify(data, null, "\t"), "utf-8");
+	// Don't persist deprecated sessions field
+	const { sessions: _, ...clean } = data as AuthData & {
+		sessions?: unknown[];
+	};
+	await writeFile(path, JSON.stringify(clean, null, "\t"), "utf-8");
 }
 
 export async function getCredentials(
@@ -130,63 +140,177 @@ export function getAndRemoveChallenge(key: string): string | null {
 	return entry.challenge;
 }
 
-// ── Session Management ─────────────────────────────────────────────────────
+// ── JWT Management ─────────────────────────────────────────────────────────
 
-const SESSION_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days
+const JWT_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 
-function generateToken(): string {
-	const bytes = new Uint8Array(32);
-	crypto.getRandomValues(bytes);
-	return Array.from(bytes)
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
-}
-
-export async function createSession(authPath: string): Promise<string> {
+/** Get or create the HMAC-SHA256 signing key. Persisted in auth.json. */
+async function getSigningKey(authPath: string): Promise<CryptoKey> {
 	const data = await readAuthData(authPath);
-	const now = Date.now();
 
-	// Prune expired sessions
-	data.sessions = data.sessions.filter((s) => s.expiresAt > now);
-
-	const token = generateToken();
-	data.sessions.push({
-		token,
-		createdAt: now,
-		expiresAt: now + SESSION_TTL,
-	});
-	await writeAuthData(authPath, data);
-	return token;
-}
-
-export async function verifySession(
-	authPath: string,
-	token: string,
-): Promise<boolean> {
-	if (!token) return false;
-	const data = await readAuthData(authPath);
-	const session = data.sessions.find((s) => s.token === token);
-	if (!session) return false;
-	if (session.expiresAt < Date.now()) {
-		// Remove expired session
-		data.sessions = data.sessions.filter((s) => s.token !== token);
-		await writeAuthData(authPath, data);
-		return false;
+	if (data.jwtSecret) {
+		// Import existing key
+		const raw = base64ToUint8Array(data.jwtSecret);
+		return crypto.subtle.importKey(
+			"raw",
+			raw,
+			{ name: "HMAC", hash: "SHA-256" },
+			true,
+			["sign", "verify"],
+		);
 	}
-	return true;
+
+	// Generate new key
+	const key = await crypto.subtle.generateKey(
+		{ name: "HMAC", hash: "SHA-256" },
+		true,
+		["sign", "verify"],
+	);
+	const raw = await crypto.subtle.exportKey("raw", key);
+	data.jwtSecret = uint8ArrayToBase64(new Uint8Array(raw));
+	await writeAuthData(authPath, data);
+	return key;
 }
 
-export async function removeSession(
+/** Sign a JWT token for the given credential ID. */
+export async function signJWT(
+	authPath: string,
+	credentialID: string,
+): Promise<string> {
+	const key = await getSigningKey(authPath);
+	const now = Math.floor(Date.now() / 1000);
+
+	const header = { alg: "HS256", typ: "JWT" };
+	const payload: JWTPayload = {
+		sub: credentialID,
+		iat: now,
+		exp: now + JWT_TTL_SECONDS,
+	};
+
+	const headerB64 = toBase64Url(JSON.stringify(header));
+	const payloadB64 = toBase64Url(JSON.stringify(payload));
+	const signingInput = `${headerB64}.${payloadB64}`;
+
+	const signature = await crypto.subtle.sign(
+		"HMAC",
+		key,
+		new TextEncoder().encode(signingInput),
+	);
+
+	const signatureB64 = uint8ArrayToBase64Url(new Uint8Array(signature));
+	return `${signingInput}.${signatureB64}`;
+}
+
+/** Verify a JWT token. Returns the payload if valid, null otherwise. */
+export async function verifyJWT(
 	authPath: string,
 	token: string,
-): Promise<void> {
-	const data = await readAuthData(authPath);
-	data.sessions = data.sessions.filter((s) => s.token !== token);
-	await writeAuthData(authPath, data);
+): Promise<JWTPayload | null> {
+	if (!token) return null;
+
+	const parts = token.split(".");
+	if (parts.length !== 3) return null;
+
+	const [headerB64, payloadB64, signatureB64] = parts as [
+		string,
+		string,
+		string,
+	];
+
+	let key: CryptoKey;
+	try {
+		key = await getSigningKey(authPath);
+	} catch {
+		return null;
+	}
+
+	// Verify signature
+	const signingInput = `${headerB64}.${payloadB64}`;
+	const signature = base64UrlToUint8Array(signatureB64);
+
+	let valid: boolean;
+	try {
+		valid = await crypto.subtle.verify(
+			"HMAC",
+			key,
+			signature,
+			new TextEncoder().encode(signingInput),
+		);
+	} catch {
+		return null;
+	}
+
+	if (!valid) return null;
+
+	// Parse and validate payload
+	let payload: JWTPayload;
+	try {
+		payload = JSON.parse(fromBase64Url(payloadB64)) as JWTPayload;
+	} catch {
+		return null;
+	}
+
+	// Check expiry
+	const now = Math.floor(Date.now() / 1000);
+	if (payload.exp <= now) return null;
+
+	return payload;
 }
 
 /** Clear the in-memory cache (for testing). */
 export function clearAuthCache(): void {
 	authDataCache = null;
 	challenges.clear();
+}
+
+// ── Base64/Base64URL helpers ───────────────────────────────────────────────
+
+function toBase64Url(str: string): string {
+	return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+function fromBase64Url(b64url: string): string {
+	const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+	const pad = b64.length % 4;
+	const padded = pad ? b64 + "=".repeat(4 - pad) : b64;
+	return atob(padded);
+}
+
+function uint8ArrayToBase64Url(bytes: Uint8Array): string {
+	let binary = "";
+	for (let i = 0; i < bytes.length; i++) {
+		binary += String.fromCharCode(bytes[i] ?? 0);
+	}
+	return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+function base64UrlToUint8Array(b64url: string): Uint8Array<ArrayBuffer> {
+	const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+	const pad = b64.length % 4;
+	const padded = pad ? b64 + "=".repeat(4 - pad) : b64;
+	const binary = atob(padded);
+	const buf = new ArrayBuffer(binary.length);
+	const bytes = new Uint8Array(buf);
+	for (let i = 0; i < binary.length; i++) {
+		bytes[i] = binary.charCodeAt(i);
+	}
+	return bytes;
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+	let binary = "";
+	for (let i = 0; i < bytes.length; i++) {
+		binary += String.fromCharCode(bytes[i] ?? 0);
+	}
+	return btoa(binary);
+}
+
+function base64ToUint8Array(b64: string): Uint8Array<ArrayBuffer> {
+	const binary = atob(b64);
+	const buf = new ArrayBuffer(binary.length);
+	const bytes = new Uint8Array(buf);
+	for (let i = 0; i < binary.length; i++) {
+		bytes[i] = binary.charCodeAt(i);
+	}
+	return bytes;
 }
