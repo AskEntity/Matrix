@@ -571,70 +571,83 @@ async function handleContinue(args: string[]): Promise<void> {
 	await watchProject(projectId);
 }
 
-/** Watch a project's agent activity via WebSocket. Resolves never (runs until Ctrl+C). */
+/** Watch a project's agent activity via SSE. Resolves never (runs until Ctrl+C). */
 async function watchProject(projectId: string): Promise<void> {
-	const wsUrl = `${DAEMON_URL.replace(/^http/, "ws")}/ws`;
 	let retryCount = 0;
 	let userCancelled = false;
-	let activeWs: WebSocket | null = null;
+	let abortController: AbortController | null = null;
 
-	// Handle Ctrl+C gracefully — close WebSocket so event loop can exit
 	process.on("SIGINT", () => {
 		userCancelled = true;
-		if (activeWs) {
-			activeWs.close();
-			activeWs = null;
-		}
+		abortController?.abort();
 		console.log("\nDetached.");
 		process.exit(0);
 	});
 
-	function connect(): void {
-		const ws = new WebSocket(wsUrl);
-		activeWs = ws;
+	async function connect(): Promise<void> {
+		if (userCancelled) return;
 
-		ws.onopen = () => {
-			if (retryCount > 0) {
-				console.log("Reconnected.");
-			}
-			retryCount = 0;
-			ws.send(JSON.stringify({ type: "subscribe", projectId }));
-		};
-
-		ws.onclose = () => {
-			if (userCancelled) return;
-			retryCount++;
-			const delay = Math.min(1000 * 2 ** (retryCount - 1), 30000);
-			console.log(
-				`\nDisconnected. Reconnecting in ${delay / 1000}s... (attempt ${retryCount})`,
+		abortController = new AbortController();
+		try {
+			const res = await fetch(
+				`${DAEMON_URL}/events?projectId=${encodeURIComponent(projectId)}`,
+				{
+					signal: abortController.signal,
+					headers: { Accept: "text/event-stream" },
+				},
 			);
-			setTimeout(connect, delay);
-		};
 
-		ws.onerror = () => {
-			// Error handling is done in onclose (which fires after onerror)
-			if (retryCount === 0) {
-				// First connection failure
-				console.error("WebSocket error. Is the daemon running?");
+			if (!res.ok || !res.body) {
+				throw new Error(`SSE connection failed: ${res.status}`);
 			}
-		};
 
-		ws.onmessage = (evt) => {
-			try {
-				const msg = JSON.parse(
-					typeof evt.data === "string" ? evt.data : "",
-				) as Record<string, unknown>;
-				formatWatchEvent(msg);
-			} catch {
-				/* ignore parse errors */
+			if (retryCount > 0) console.log("Reconnected.");
+			retryCount = 0;
+
+			const reader = res.body.getReader();
+			const decoder = new TextDecoder();
+			let buffer = "";
+
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+
+				buffer += decoder.decode(value, { stream: true });
+				const lines = buffer.split("\n");
+				buffer = lines.pop() ?? "";
+
+				for (const line of lines) {
+					if (line.startsWith("data: ")) {
+						try {
+							const msg = JSON.parse(line.slice(6)) as Record<string, unknown>;
+							formatWatchEvent(msg);
+						} catch {
+							/* ignore parse errors */
+						}
+					}
+				}
 			}
-		};
+		} catch (err) {
+			if (userCancelled) return;
+			if ((err as Error).name === "AbortError") return;
+		}
+
+		// Reconnect with backoff
+		if (!userCancelled) {
+			retryCount++;
+			const delay = Math.min(1000 * 2 ** retryCount, 30000);
+			if (retryCount === 1) {
+				console.error("SSE connection lost. Is the daemon running?");
+			}
+			console.log(
+				`Reconnecting in ${delay / 1000}s... (attempt ${retryCount})`,
+			);
+			await new Promise((r) => setTimeout(r, delay));
+			return connect();
+		}
 	}
 
-	connect();
-
-	// Keep process alive
-	await new Promise(() => {});
+	await connect();
 }
 
 async function handleWatch(): Promise<void> {
