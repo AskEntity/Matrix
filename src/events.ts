@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
 import type { QueueMessage } from "./message-queue.ts";
+import { ulid } from "./ulid.ts";
 
 /**
  * Strongly-typed event — provider-agnostic, one event per action.
@@ -311,7 +311,7 @@ export function isQueueEvent(event: Event): boolean {
 /** Convert a QueueMessage to a unified `message` Event with body. */
 export function queueMessageToEvent(msg: QueueMessage): MessageEvent {
 	const ts = Date.now();
-	const base = { type: "message" as const, id: randomUUID(), ts };
+	const base = { type: "message" as const, id: ulid(), ts };
 	switch (msg.source) {
 		case "user":
 			return {

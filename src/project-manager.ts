@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { Project } from "./types.ts";
+import { ulid } from "./ulid.ts";
 
 const PROJECTS_METADATA_FILE = "projects.json";
 
@@ -158,7 +159,7 @@ export class ProjectManager {
 
 	/** Register the project in daemon metadata. */
 	private async register(projectPath: string): Promise<Project> {
-		const id = crypto.randomUUID();
+		const id = ulid();
 		const now = new Date().toISOString();
 		const project: Project = {
 			id,

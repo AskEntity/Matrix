@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import {
 	closeSync,
 	existsSync,
@@ -13,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessageQueue } from "../message-queue.ts";
+import { ulid } from "../ulid.ts";
 
 // ── Background Process Manager ──
 
@@ -244,7 +244,7 @@ export async function executeBashWithTimeout(
 	const cdWrapper = `cd() { local t="${"$"}{1:-${"$"}HOME}"; local r; r=${"$"}(builtin cd "${"$"}t" 2>/dev/null && pwd); if [ "${"$"}(pwd)" = "${"$"}r" ]; then echo "bash: cd: ${"$"}(pwd): already in this directory" >&2; return 1; fi; builtin cd "${"$"}t"; }; `;
 
 	// All commands use file-based output redirection
-	const execId = randomUUID().slice(0, 8);
+	const execId = ulid().slice(0, 8);
 	ensureBgTmpDir();
 	const stdoutPath = join(BG_TMP_DIR, `exec-${execId}.stdout`);
 	const stderrPath = join(BG_TMP_DIR, `exec-${execId}.stderr`);
@@ -454,7 +454,7 @@ export async function executeBashWithTimeout(
 
 	// Immediate background: foregroundTimeout === 0
 	if (isImmediateBackground) {
-		const bgId = `bg-${randomUUID().slice(0, 8)}`;
+		const bgId = `bg-${ulid().slice(0, 8)}`;
 		const bgMap = getSessionBackgroundProcesses(sessionId);
 		const bgEntry: BackgroundProcess = {
 			id: bgId,
@@ -538,7 +538,7 @@ export async function executeBashWithTimeout(
 		};
 	}
 
-	const bgId = `bg-${randomUUID().slice(0, 8)}`;
+	const bgId = `bg-${ulid().slice(0, 8)}`;
 	const bgMap = getSessionBackgroundProcesses(sessionId);
 	const bgEntry: BackgroundProcess = {
 		id: bgId,

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { TaskNode, TaskStatus } from "./types.ts";
+import { ulid } from "./ulid.ts";
 
 /**
  * Manages the task tree for a project.
@@ -336,7 +337,7 @@ export class TaskTracker {
 	): TaskNode {
 		const now = new Date().toISOString();
 		const node: TaskNode = {
-			id: crypto.randomUUID(),
+			id: ulid(),
 			title,
 			description,
 			status: opts?.draft ? "draft" : "pending",

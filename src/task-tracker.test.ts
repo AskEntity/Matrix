@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskTracker } from "./task-tracker.ts";
+import { ulid } from "./ulid.ts";
 
 describe("TaskTracker", () => {
 	let tempDir: string;
@@ -237,7 +238,7 @@ describe("TaskTracker", () => {
 
 	test("migration: old draft boolean converted to status=draft on load", async () => {
 		// Simulate old tree format with draft: true boolean
-		const nodeId = crypto.randomUUID();
+		const nodeId = ulid();
 		const now = new Date().toISOString();
 		const oldFormatData = {
 			rootNodeId: null,
