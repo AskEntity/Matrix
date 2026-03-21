@@ -2437,4 +2437,268 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		);
 		expect(imgBlock).toBeDefined();
 	});
+
+	test("Anthropic: multiple queue messages at once (child_complete + user) via messages_consumed", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{ type: "assistant_text", content: "Working", ts: 1001 },
+			{
+				type: "tool_call",
+				toolCallId: "tc1",
+				tool: "bash",
+				input: { command: "echo" },
+				ts: 1002,
+			},
+			{
+				type: "user_message",
+				id: "msg-complete",
+				source: "child_complete",
+				queueEntry: {
+					source: "child_complete",
+					taskId: "t1",
+					title: "Fix bug",
+					success: true,
+					output: "Fixed",
+				},
+				ts: 1003,
+			},
+			{
+				type: "user_message",
+				id: "msg-user",
+				source: "user",
+				content: "Also do this",
+				queueEntry: { source: "user", content: "Also do this" },
+				ts: 1004,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "done",
+				isError: false,
+				ts: 1005,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-complete", "msg-user"],
+				ts: 1006,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(3);
+		const userMsg = messages[2] as { role: string; content: unknown[] };
+		expect(userMsg.role).toBe("user");
+		const textBlocks = (
+			userMsg.content as { type: string; text?: string }[]
+		).filter((b) => b.type === "text");
+		const queueText = textBlocks.find((b) =>
+			b.text?.includes("[Messages received while you were working:]"),
+		);
+		expect(queueText).toBeDefined();
+		// Both messages should be formatted
+		expect(queueText?.text).toContain("child_complete");
+		expect(queueText?.text).toContain("Fix bug");
+		expect(queueText?.text).toContain("Also do this");
+	});
+
+	test("OpenAI: multiple queue messages at once (child_complete + user) via messages_consumed", () => {
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{ type: "assistant_text", content: "Working", ts: 1001 },
+			{
+				type: "tool_call",
+				toolCallId: "tc1",
+				tool: "bash",
+				input: { command: "echo" },
+				ts: 1002,
+			},
+			{
+				type: "user_message",
+				id: "msg-complete",
+				source: "child_complete",
+				queueEntry: {
+					source: "child_complete",
+					taskId: "t1",
+					title: "Fix bug",
+					success: true,
+					output: "Fixed",
+				},
+				ts: 1003,
+			},
+			{
+				type: "user_message",
+				id: "msg-user",
+				source: "user",
+				content: "Also do this",
+				queueEntry: { source: "user", content: "Also do this" },
+				ts: 1004,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "done",
+				isError: false,
+				ts: 1005,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-complete", "msg-user"],
+				ts: 1006,
+			},
+		];
+		const messages = eventsToOpenAIMessages(events);
+		expect(messages).toHaveLength(3);
+		const toolMsg = messages[2] as { role: string; content: string };
+		expect(toolMsg.role).toBe("tool");
+		expect(toolMsg.content).toContain("done");
+		expect(toolMsg.content).toContain(
+			"[Messages received while you were working:]",
+		);
+		expect(toolMsg.content).toContain("child_complete");
+		expect(toolMsg.content).toContain("Also do this");
+	});
+
+	test("Anthropic: yield/done tool_result with structured queueEntry events from JSONL", () => {
+		// This simulates what JSONL looks like after yield/done tool execution:
+		// 1. user_message events written by waitForQueueMessages
+		// 2. tool_result with pure content (yield result text)
+		// 3. messages_consumed written by provider
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{ type: "assistant_text", content: "Yielding", ts: 1001 },
+			{
+				type: "tool_call",
+				toolCallId: "tc-yield",
+				tool: "mcp__opengraft__yield",
+				input: {},
+				ts: 1002,
+			},
+			// Written by waitForQueueMessages to JSONL
+			{
+				type: "user_message",
+				id: "msg-child-done",
+				source: "child_complete",
+				queueEntry: {
+					source: "child_complete",
+					taskId: "t1",
+					title: "Build UI",
+					success: true,
+					output: "All tests pass",
+				},
+				ts: 1003,
+			},
+			{
+				type: "user_message",
+				id: "msg-parent",
+				source: "parent_update",
+				queueEntry: {
+					source: "parent_update",
+					content: "Keep going",
+				},
+				ts: 1004,
+			},
+			// tool_result with pure yield output (no embedded queue text)
+			{
+				type: "tool_result",
+				toolCallId: "tc-yield",
+				content:
+					'<child_complete task="Build UI" id="t1" status="passed">All tests pass</child_complete>\n<parent_update>Keep going</parent_update>\n\n## Pending\n- Running children: none\n- Pending clarifications: none',
+				isError: false,
+				pending: {
+					runningChildren: [],
+					pendingClarifications: 0,
+				},
+				ts: 1005,
+			},
+			// Standalone messages_consumed written by provider
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-child-done", "msg-parent"],
+				ts: 1006,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		// user (prompt), assistant (tool_use), user (tool_result + queue text + pending)
+		expect(messages).toHaveLength(3);
+		const userMsg = messages[2] as { role: string; content: unknown[] };
+		expect(userMsg.role).toBe("user");
+		const textBlocks = (
+			userMsg.content as { type: string; text?: string }[]
+		).filter((b) => b.type === "text");
+		// Should have: tool_result content + queue messages text + pending text
+		const allText = textBlocks.map((b) => b.text).join("");
+		expect(allText).toContain("[Messages received while you were working:]");
+		expect(allText).toContain("Build UI");
+		expect(allText).toContain("Keep going");
+		expect(allText).toContain("## Pending");
+		expect(allText).toContain("none");
+	});
+
+	test("Anthropic: mixed tools — only last tool_result group gets queue messages", () => {
+		// Two tool calls, but queue messages arrive after tool execution
+		const events: Event[] = [
+			{ type: "user_message", content: "Start", ts: 1000 },
+			{ type: "assistant_text", content: "Running tools", ts: 1001 },
+			{
+				type: "tool_call",
+				toolCallId: "tc-read",
+				tool: "read_file",
+				input: { path: "foo.ts" },
+				ts: 1002,
+			},
+			{
+				type: "tool_call",
+				toolCallId: "tc-bash",
+				tool: "bash",
+				input: { command: "echo ok" },
+				ts: 1003,
+			},
+			{
+				type: "user_message",
+				id: "msg-report",
+				source: "child_report",
+				queueEntry: {
+					source: "child_report",
+					taskId: "t2",
+					title: "Worker",
+					content: "Progress: 75%",
+				},
+				ts: 1004,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc-read",
+				content: "const x = 1;",
+				isError: false,
+				ts: 1005,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc-bash",
+				content: "ok",
+				isError: false,
+				ts: 1006,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-report"],
+				ts: 1007,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(3);
+		const userMsg = messages[2] as { role: string; content: unknown[] };
+		// Should have: 2 tool_results + 1 text block with queue message
+		const toolResults = (userMsg.content as { type: string }[]).filter(
+			(b) => b.type === "tool_result",
+		);
+		expect(toolResults).toHaveLength(2);
+		const textBlocks = (
+			userMsg.content as { type: string; text?: string }[]
+		).filter(
+			(b) => b.type === "text" && b.text?.includes("while you were working"),
+		);
+		expect(textBlocks).toHaveLength(1);
+		expect(textBlocks[0]?.text).toContain("Worker");
+		expect(textBlocks[0]?.text).toContain("Progress: 75%");
+	});
 });
