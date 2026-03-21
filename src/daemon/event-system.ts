@@ -111,11 +111,6 @@ const EPHEMERAL_EVENT_TYPES = new Set([
 	"heartbeat",
 	// tree_updated carries full tree payload — ephemeral push, not JSONL
 	"tree_updated",
-	// Provider events already written to JSONL by the provider
-	"assistant_text",
-	"tool_call",
-	"tool_result",
-	"compact_marker",
 ]);
 
 function isEphemeral(type: string): boolean {

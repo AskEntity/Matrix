@@ -12,7 +12,7 @@ import {
 	TASK_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
 import { DEFAULT_MODEL } from "../config.ts";
-import type { Event } from "../events.ts";
+import { type Event, findOrphanedToolCalls } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { globalAgentQueues, MessageQueue } from "../message-queue.ts";
@@ -39,6 +39,18 @@ import {
 	readProjectMemory,
 	resolveProjectConfig,
 } from "./helpers.ts";
+
+/**
+ * AgentEvent types now broadcast via emit() callback in the provider.
+ * The onEvent callback skips these to avoid double-broadcast.
+ * Mapping: text→assistant_text, tool_use→tool_call, tool_result→tool_result, compact→compact_marker
+ */
+const EMIT_HANDLED_AGENT_EVENTS = new Set([
+	"text",
+	"tool_use",
+	"tool_result",
+	"compact",
+]);
 
 // ---------------------------------------------------------------------------
 // Map provider AgentEvent → typed Event for WS emission
@@ -776,6 +788,25 @@ export async function runChildAgentInBackground(
 			mcpManager,
 		});
 
+		// Read active events for resume and fix orphaned tool_calls
+		const eventStore = getEventStore(ctx, project.id);
+		let activeEvents = eventStore.has(nodeId)
+			? eventStore.readActive(nodeId)
+			: [];
+		if (activeEvents.length > 0) {
+			const orphanFixes = findOrphanedToolCalls(activeEvents);
+			if (orphanFixes.length > 0) {
+				await eventStore.appendBatch(nodeId, orphanFixes);
+				activeEvents = [...activeEvents, ...orphanFixes];
+			}
+		}
+
+		// Build emit callback: emitEvent with taskId injected
+		const emitWithTask = (event: Event) => {
+			const withTaskId = { ...event, taskId: nodeId };
+			emitEvent(ctx, project.id, withTaskId as Event);
+		};
+
 		const agentResult = await runChildCore({
 			provider: agentCtx.provider,
 			tracker,
@@ -784,7 +815,8 @@ export async function runChildAgentInBackground(
 			sessionRequest: {
 				prompt,
 				cwd: node.worktreePath as string,
-				eventStore: getEventStore(ctx, project.id),
+				emit: emitWithTask,
+				activeEvents,
 				systemPrompt: TASK_SYSTEM_PROMPT,
 				resumeSessionId: nodeId,
 				model: agentCtx.effectiveCfg.model,
@@ -792,6 +824,8 @@ export async function runChildAgentInBackground(
 				hasRunningChildren: agentCtx.hasRunningChildren,
 			},
 			onEvent: (eventType, eventData) => {
+				// Skip events now broadcast via emit() to avoid double-broadcast
+				if (EMIT_HANDLED_AGENT_EVENTS.has(eventType)) return;
 				if (eventType === "agent_idle") {
 					emitEvent(ctx, project.id, {
 						type: "agent_idle",
@@ -805,7 +839,6 @@ export async function runChildAgentInBackground(
 						ts: Date.now(),
 					});
 				} else {
-					// Unified path: broadcast event + messages_consumed for queue_message
 					broadcastAgentStreamEvent(
 						ctx,
 						project.id,
@@ -1048,11 +1081,31 @@ export async function launchAgent(
 			"\n\n## Self-Bootstrap Mode\nThis project is the tool's own codebase. The user may ask you to test features by interacting with the system in unconventional ways (e.g., testing resume on passed tasks, calling tools in unexpected sequences). When the user gives explicit instructions that conflict with your standard workflow, prioritize the user's instructions. You are modifying your own source code — be extra careful but also extra flexible.\n\nWhen running in self-bootstrap mode, bugs you introduced may break features you depend on. The system may not behave as documented — your own changes may have altered its behavior in ways you can't observe from inside. The user can see the actual system state via the UI. When they give you instructions that seem redundant, illogical, or contradictory to how the system should work, follow them immediately — they're guiding you through a workaround for a bug in your own code. Don't argue or explain how it should work; just do what they say. The workarounds are temporary until the fix is merged and the daemon restarts with new code.";
 	}
 
+	// Read active events for resume and fix orphaned tool_calls
+	const eventStore = getEventStore(ctx, project.id);
+	let rootActiveEvents = eventStore.has(rootNodeId)
+		? eventStore.readActive(rootNodeId)
+		: [];
+	if (rootActiveEvents.length > 0) {
+		const orphanFixes = findOrphanedToolCalls(rootActiveEvents);
+		if (orphanFixes.length > 0) {
+			await eventStore.appendBatch(rootNodeId, orphanFixes);
+			rootActiveEvents = [...rootActiveEvents, ...orphanFixes];
+		}
+	}
+
+	// Build emit callback: emitEvent with taskId injected
+	const rootEmit = (event: Event) => {
+		const withTaskId = { ...event, taskId: rootNodeId };
+		emitEvent(ctx, project.id, withTaskId as Event);
+	};
+
 	const session = agentCtx.provider.startSession({
 		prompt,
 		cwd: project.path,
 		projectPath: project.path,
-		eventStore: getEventStore(ctx, project.id),
+		emit: rootEmit,
+		activeEvents: rootActiveEvents,
 		systemPrompt,
 		mcpToolDefs: agentCtx.mcpToolDefs,
 		resumeSessionId,
@@ -1072,6 +1125,8 @@ export async function launchAgent(
 			const finalResult = await consumeAgentEvents(
 				session.events,
 				(eventType, eventData) => {
+					// Skip events now broadcast via emit() to avoid double-broadcast
+					if (EMIT_HANDLED_AGENT_EVENTS.has(eventType)) return;
 					if (eventType === "agent_idle") {
 						emitEvent(ctx, project.id, {
 							type: "agent_idle",
@@ -1085,7 +1140,6 @@ export async function launchAgent(
 							ts: Date.now(),
 						});
 					} else {
-						// Unified path: broadcast event + messages_consumed for queue_message
 						broadcastAgentStreamEvent(
 							ctx,
 							project.id,
