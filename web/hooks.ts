@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export type { TaskNode, TaskStatus } from "../src/types.ts";
 
@@ -47,71 +47,45 @@ export type LogEntry = UIEvent & {
 
 let logIdCounter = 0;
 
-// --- useWebSocket ---
+// --- useSSE ---
 
-export function useWebSocket(
+export function useSSE(
 	projectId: string,
 	onMessage: (msg: Record<string, unknown>) => void,
 	onConnect?: () => void,
 ) {
-	const wsRef = useRef<WebSocket | null>(null);
 	const [connected, setConnected] = useState(false);
 	const [lastMessageAt, setLastMessageAt] = useState<Date | null>(null);
 
 	useEffect(() => {
-		let delay = 1000;
-		let stopped = false;
+		if (!projectId) return;
 
-		function connect() {
-			if (stopped) return;
-			const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-			const ws = new WebSocket(`${protocol}//${location.host}/ws`);
-			wsRef.current = ws;
+		const url = `/events?projectId=${encodeURIComponent(projectId)}`;
+		const source = new EventSource(url);
 
-			ws.onopen = () => {
-				setConnected(true);
-				delay = 1000;
-				if (projectId) {
-					ws.send(JSON.stringify({ type: "subscribe", projectId }));
-				}
-				onConnect?.();
-			};
+		source.onopen = () => {
+			setConnected(true);
+			onConnect?.();
+		};
 
-			ws.onmessage = (evt) => {
-				try {
-					setLastMessageAt(new Date());
-					onMessage(JSON.parse(evt.data));
-				} catch {
-					/* ignore */
-				}
-			};
+		source.onmessage = (evt) => {
+			try {
+				setLastMessageAt(new Date());
+				onMessage(JSON.parse(evt.data));
+			} catch {
+				/* ignore */
+			}
+		};
 
-			ws.onclose = () => {
-				setConnected(false);
-				if (!stopped) {
-					setTimeout(connect, delay);
-					delay = Math.min(delay * 2, 30000);
-				}
-			};
-
-			ws.onerror = () => ws.close();
-		}
-
-		connect();
+		source.onerror = () => {
+			setConnected(false);
+			// EventSource auto-reconnects — no manual retry logic needed
+		};
 
 		return () => {
-			stopped = true;
-			wsRef.current?.close();
+			source.close();
 		};
 	}, [projectId, onMessage, onConnect]);
-
-	// Subscribe when projectId changes
-	useEffect(() => {
-		const ws = wsRef.current;
-		if (ws && ws.readyState === WebSocket.OPEN && projectId) {
-			ws.send(JSON.stringify({ type: "subscribe", projectId }));
-		}
-	}, [projectId]);
 
 	return { connected, lastMessageAt };
 }

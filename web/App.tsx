@@ -27,9 +27,9 @@ import {
 	type UIEvent,
 	useAgent,
 	useProjects,
+	useSSE,
 	useTasks,
 	useThreeLayerConfig,
-	useWebSocket,
 } from "./hooks.ts";
 
 import { LocaleProvider, useLocale } from "./i18n.ts";
@@ -346,7 +346,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		return () => document.removeEventListener("keydown", handleKeyDown);
 	}, [rootNodeId]);
 
-	// ── WebSocket handler ────────────────────────────────────────────────────
+	// ── SSE handler ──────────────────────────────────────────────────────────
 
 	const { handleWS, processEventBatch } = useMemo(
 		() =>
@@ -379,7 +379,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		],
 	);
 
-	const { connected } = useWebSocket(projectId, handleWS, checkStatus);
+	const { connected } = useSSE(projectId, handleWS, checkStatus);
 
 	useEffect(() => {
 		if (projects.length === 0) return;
