@@ -1,5 +1,12 @@
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+	appendFile,
+	chmod,
+	mkdir,
+	readFile,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { Project } from "./types.ts";
 import { ulid } from "./ulid.ts";
@@ -9,6 +16,10 @@ const PROJECTS_METADATA_FILE = "projects.json";
 const NEW_PROJECT_MEMORY = `# Project Memory
 
 This file is the agent's scratch pad. Discoveries, patterns, and lessons go here.
+
+## First Launch
+Verify \`.opengraft/hooks/setup_worktree.sh\` correctly sets up worktree environments.
+Create a test task to validate: spawn a child, check if it can run the project's test suite.
 `;
 
 const CONVERTED_PROJECT_MEMORY = `# Project Memory
@@ -16,6 +27,10 @@ const CONVERTED_PROJECT_MEMORY = `# Project Memory
 Converted existing project. Explore the codebase to understand its structure.
 If there are existing CLAUDE.md, AGENTS.md, or similar files, reference them.
 Source code is the ground truth — verify everything by reading actual files.
+
+## First Launch
+Verify \`.opengraft/hooks/setup_worktree.sh\` correctly sets up worktree environments.
+Create a test task to validate: spawn a child, check if it can run the project's test suite.
 `;
 
 /** Manages project lifecycle: creation, initialization, deletion. */
@@ -86,6 +101,8 @@ export class ProjectManager {
 			"utf-8",
 		);
 
+		await this.createSetupHook(projectPath);
+
 		// Initialize git repo
 		await this.exec(["git", "init"], projectPath);
 		await this.excludeWorktrees(projectPath);
@@ -118,6 +135,8 @@ export class ProjectManager {
 			createdMemory = true;
 		}
 
+		const createdHook = await this.createSetupHook(projectPath);
+
 		// Initialize git if not already a repo
 		if (!existsSync(join(projectPath, ".git"))) {
 			await this.exec(["git", "init"], projectPath);
@@ -126,15 +145,48 @@ export class ProjectManager {
 
 		// Commit new .opengraft/ files so the working tree stays clean
 		// (spawn_task/spawn_children require a clean working tree)
-		if (createdMemory) {
+		if (createdMemory || createdHook) {
 			await this.exec(["git", "add", ".opengraft/"], projectPath);
 			await this.exec(
-				["git", "commit", "-m", "Add .opengraft/ project memory"],
+				["git", "commit", "-m", "Add .opengraft/ project structure"],
 				projectPath,
 			);
 		}
 
 		return this.register(projectPath);
+	}
+
+	/**
+	 * Create .opengraft/hooks/setup_worktree.sh with auto-detected content.
+	 * Returns true if the file was created, false if it already existed.
+	 */
+	private async createSetupHook(projectPath: string): Promise<boolean> {
+		const hookDir = join(projectPath, ".opengraft", "hooks");
+		const hookPath = join(hookDir, "setup_worktree.sh");
+
+		if (existsSync(hookPath)) return false;
+
+		await mkdir(hookDir, { recursive: true });
+
+		let script: string;
+		if (existsSync(join(projectPath, "bun.lockb"))) {
+			script = '#!/bin/bash\ncd "$1" && bun install --frozen-lockfile\n';
+		} else if (existsSync(join(projectPath, "package-lock.json"))) {
+			script = '#!/bin/bash\ncd "$1" && npm ci\n';
+		} else if (existsSync(join(projectPath, "yarn.lock"))) {
+			script = '#!/bin/bash\ncd "$1" && yarn install --frozen-lockfile\n';
+		} else if (existsSync(join(projectPath, "pnpm-lock.yaml"))) {
+			script = '#!/bin/bash\ncd "$1" && pnpm install --frozen-lockfile\n';
+		} else if (existsSync(join(projectPath, "requirements.txt"))) {
+			script = '#!/bin/bash\ncd "$1" && pip install -r requirements.txt\n';
+		} else {
+			script =
+				'#!/bin/bash\n# Setup hook for new worktrees.\n# This script runs after a worktree is created.\n# $1 is the worktree path.\n#\n# Examples:\n#   cd "$1" && npm ci\n#   cd "$1" && pip install -r requirements.txt\n';
+		}
+
+		await writeFile(hookPath, script, "utf-8");
+		await chmod(hookPath, 0o755);
+		return true;
 	}
 
 	/** Ensure .worktrees is listed in .git/info/exclude so worktree dirs stay untracked. */

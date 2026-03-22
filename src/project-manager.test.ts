@@ -47,6 +47,32 @@ describe("ProjectManager", () => {
 			);
 			expect(memory).toContain("scratch pad");
 		});
+
+		test("new project memory includes first-launch bootstrap", async () => {
+			const projectPath = join(tempDir, "bootstrap");
+			await pm.init(projectPath);
+
+			const memory = await readFile(
+				join(projectPath, ".opengraft", "memory.md"),
+				"utf-8",
+			);
+			expect(memory).toContain("setup_worktree.sh");
+		});
+
+		test("creates setup hook with template content", async () => {
+			const projectPath = join(tempDir, "hook-test");
+			await pm.init(projectPath);
+
+			const hookPath = join(
+				projectPath,
+				".opengraft",
+				"hooks",
+				"setup_worktree.sh",
+			);
+			expect(existsSync(hookPath)).toBe(true);
+			const content = await readFile(hookPath, "utf-8");
+			expect(content).toContain("#!/bin/bash");
+		});
 	});
 
 	describe("init — existing directory", () => {
@@ -79,6 +105,40 @@ describe("ProjectManager", () => {
 			);
 			expect(memory).toContain("Converted existing project");
 			expect(memory).toContain("CLAUDE.md");
+		});
+
+		test("creates setup hook with bun install when bun.lockb exists", async () => {
+			const projectPath = join(tempDir, "bun-project");
+			await mkdir(projectPath, { recursive: true });
+			await writeFile(join(projectPath, "bun.lockb"), "", "utf-8");
+
+			await pm.init(projectPath);
+
+			const hookPath = join(
+				projectPath,
+				".opengraft",
+				"hooks",
+				"setup_worktree.sh",
+			);
+			const content = await readFile(hookPath, "utf-8");
+			expect(content).toContain("bun install --frozen-lockfile");
+		});
+
+		test("creates setup hook with npm ci when package-lock.json exists", async () => {
+			const projectPath = join(tempDir, "npm-project");
+			await mkdir(projectPath, { recursive: true });
+			await writeFile(join(projectPath, "package-lock.json"), "{}", "utf-8");
+
+			await pm.init(projectPath);
+
+			const hookPath = join(
+				projectPath,
+				".opengraft",
+				"hooks",
+				"setup_worktree.sh",
+			);
+			const content = await readFile(hookPath, "utf-8");
+			expect(content).toContain("npm ci");
 		});
 
 		test("does not overwrite existing .opengraft/memory.md", async () => {
