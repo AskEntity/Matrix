@@ -414,3 +414,28 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `WorktreeManager` created on demand (cheap) instead of being pre-created
 - Config values (budgetUsd, clarifyTimeoutMs) read from `ctx.globalConfig` at call time — slightly different from resolveProjectConfig which merges layers, but good enough (project-level overrides are rare for these)
 
+
+## Phase 4: Session Privacy + globalAgentQueues Removal
+
+### What was done
+- Removed `globalAgentQueues` (global Map<string, MessageQueue>) from `message-queue.ts`
+- All queue lookups now go through `tracker.get(taskId)?.session?.queue` — session on TaskNode is the single source of truth
+- All queue registration (`globalAgentQueues.set()`) removed — Phase 1 already attaches session at agent launch
+- All queue cleanup (`globalAgentQueues.delete()`) replaced with `node.session = undefined`
+- Removed import/re-export of `globalAgentQueues` from `agent-tools.ts`
+- `findParentQueue()` walks tracker parent chain checking `session?.queue` instead of globalAgentQueues
+- `attachMockSession()` helper added to `test-utils.ts` — creates minimal TaskSession with queue on a node
+- 672 tests pass, 0 failures
+
+### Pattern replacements applied across 10 files (205+ references)
+- `globalAgentQueues.get(id)` → `tracker.get(id)?.session?.queue`
+- `globalAgentQueues.set(id, queue)` → `attachMockSession(node, queue)` in tests, removed in prod (Phase 1 handles)
+- `globalAgentQueues.delete(id)` → `node.session = undefined`
+- `globalAgentQueues.has(id)` → `tracker.get(id)?.session != null`
+- afterEach cleanup loops removed (sessions are on per-test tracker nodes, GC'd automatically)
+
+### Key decisions
+- `stopAgent()` in agent-lifecycle.ts: clear session BEFORE closing queue (same ordering invariant as old delete-before-close)
+- `handleClarifyResponse()` needed a `getTracker()` call since it previously only used globalAgentQueues
+- "globalAgentQueues consistency" test describe block renamed to "session consistency on tracker nodes" and rewritten to test session on tracker
+- "delete-before-close ordering invariant" renamed to "session-clear-before-close ordering invariant"

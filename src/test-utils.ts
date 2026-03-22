@@ -2,9 +2,10 @@
  * Shared test utilities for building mock DaemonContext objects.
  */
 import type { DaemonContext } from "./daemon/context.ts";
+import type { MessageQueue } from "./message-queue.ts";
 import type { ProjectManager } from "./project-manager.ts";
 import type { TaskTracker } from "./task-tracker.ts";
-import type { Project } from "./types.ts";
+import type { Project, TaskNode, TaskSession } from "./types.ts";
 
 /**
  * Build a minimal DaemonContext for tests that call createOrchestratorTools directly.
@@ -47,4 +48,25 @@ export function mockDaemonContext(opts: {
 		startupReady: true,
 		globalConfig: {},
 	} as DaemonContext;
+}
+
+/**
+ * Attach a minimal mock session to a tracker node, primarily for setting up the queue.
+ * Returns the session for further customization if needed.
+ */
+export function attachMockSession(
+	node: TaskNode,
+	queue: MessageQueue,
+	opts?: { cwd?: string; depth?: number },
+): TaskSession {
+	const session: TaskSession = {
+		queue,
+		cwd: opts?.cwd ?? "/tmp/mock-cwd",
+		fallbackCwd: opts?.cwd ?? "/tmp/mock-cwd",
+		depth: opts?.depth ?? 0,
+		backgroundProcesses: new Map(),
+		foregroundExecutions: new Map(),
+	};
+	node.session = session;
+	return session;
 }

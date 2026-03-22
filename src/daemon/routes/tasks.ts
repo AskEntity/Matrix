@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { Hono } from "hono";
 import { buildTaskPrompt, slugify } from "../../agent-tools.ts";
 import type { Event } from "../../events.ts";
-import { globalAgentQueues } from "../../message-queue.ts";
+
 import {
 	clearPersistedMessages,
 	persistMessage,
@@ -64,8 +64,8 @@ async function notifyParentChain(
 			content,
 		};
 
-		// All agent queues (root + children) are in unified globalAgentQueues
-		const ancestorQueue = globalAgentQueues.get(currentId);
+		// Agent queues are on session of tracker nodes
+		const ancestorQueue = ancestor.session?.queue;
 
 		if (ancestorQueue) {
 			try {
@@ -105,11 +105,11 @@ function notifyAgentOfTreeChange(
 	});
 
 	// Non-waking queue message for agent awareness — picked up on next drain(), doesn't interrupt yield
-	// Look up root queue in unified registry
+	// Look up root queue via session on tracker node
 	const tracker = ctx.trackers.get(projectId);
 	const rootNodeId = tracker?.rootNodeId;
 	if (rootNodeId) {
-		const rootQueue = globalAgentQueues.get(rootNodeId);
+		const rootQueue = tracker?.get(rootNodeId)?.session?.queue;
 		if (rootQueue) {
 			try {
 				rootQueue.enqueueQuiet({
@@ -307,7 +307,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		/** Notify parent agent (waking) that a child was continued by the user. */
 		const notifyParentOfContinue = () => {
 			if (node.parentId) {
-				const parentQueue = globalAgentQueues.get(node.parentId);
+				const parentQueue = tracker.get(node.parentId)?.session?.queue;
 				if (parentQueue) {
 					try {
 						parentQueue.enqueue({
@@ -425,11 +425,10 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const eventStore = getEventStore(ctx, project.id);
 
 		for (const n of nodesToRemove) {
-			// Close running agent queue (must happen before close() to match
-			// the "globalAgentQueues only contains live queues" invariant)
-			const activeQueue = globalAgentQueues.get(n.id);
+			// Close running agent session + queue
+			const activeQueue = n.session?.queue;
 			if (activeQueue) {
-				globalAgentQueues.delete(n.id);
+				n.session = undefined;
 				activeQueue.close();
 			}
 
@@ -606,9 +605,9 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 
 		// Stop the agent if running for this task
-		const activeQueue = globalAgentQueues.get(nodeId);
+		const activeQueue = node.session?.queue;
 		if (activeQueue) {
-			globalAgentQueues.delete(nodeId);
+			node.session = undefined;
 			activeQueue.close();
 		}
 

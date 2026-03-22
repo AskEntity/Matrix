@@ -7,14 +7,11 @@ import { runChildCore } from "./daemon/agent-lifecycle.ts";
 import { createApp } from "./daemon.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
-import {
-	globalAgentQueues,
-	MessageQueue,
-	type QueueMessage,
-} from "./message-queue.ts";
+import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import { loadPersistedMessages } from "./persistent-queue.ts";
 
 import { TaskTracker } from "./task-tracker.ts";
+import { attachMockSession } from "./test-utils.ts";
 import type { AgentResult, Project, TaskNode } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -225,10 +222,6 @@ describe("lifecycle: task state vs message delivery", () => {
 	});
 
 	afterEach(async () => {
-		// Clean up any stray globalAgentQueues entries
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
@@ -262,7 +255,7 @@ describe("lifecycle: task state vs message delivery", () => {
 	});
 
 	test("message to running task enqueues immediately", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
@@ -272,9 +265,10 @@ describe("lifecycle: task state vs message delivery", () => {
 		const project = await createProject(app, projectDir);
 		const task = await createTask(app, project.id, "Running task");
 
-		// Manually register a queue to simulate a running agent
+		// Attach session to simulate a running agent
 		const taskQueue = new MessageQueue();
-		globalAgentQueues.set(task.id, taskQueue);
+		const tracker = await getTracker(project.id);
+		attachMockSession(tracker.get(task.id)!, taskQueue);
 
 		const res = await sendTaskMessage(
 			app,
@@ -294,12 +288,12 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect((msgs[0] as { content: string }).content).toBe("hello running");
 
 		// Cleanup
+		tracker.get(task.id)!.session = undefined;
 		taskQueue.close();
-		globalAgentQueues.delete(task.id);
 	});
 
 	test("message to idle task (in yield) enqueues and wakes", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
@@ -309,10 +303,11 @@ describe("lifecycle: task state vs message delivery", () => {
 		const project = await createProject(app, projectDir);
 		const task = await createTask(app, project.id, "Idle task");
 
-		// Register queue simulating an idle agent (waiting on queue.wait())
+		// Attach session simulating an idle agent (waiting on queue.wait())
 		const taskQueue = new MessageQueue();
 		taskQueue.idle = true;
-		globalAgentQueues.set(task.id, taskQueue);
+		const tracker = await getTracker(project.id);
+		attachMockSession(tracker.get(task.id)!, taskQueue);
 
 		// Start a wait that should resolve when message arrives
 		let wokenMsg: unknown = null;
@@ -330,8 +325,8 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect((wokenMsg as { content: string }).content).toBe("wake up");
 
 		// Cleanup
+		tracker.get(task.id)!.session = undefined;
 		taskQueue.close();
-		globalAgentQueues.delete(task.id);
 	});
 
 	test("message to passed task persists to disk and triggers auto-launch", async () => {
@@ -436,7 +431,7 @@ describe("lifecycle: task state vs message delivery", () => {
 	});
 
 	test("message to closed queue falls through to persist (graceful handling)", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
@@ -446,11 +441,12 @@ describe("lifecycle: task state vs message delivery", () => {
 		const project = await createProject(app, projectDir);
 		const task = await createTask(app, project.id, "Closing task");
 
-		// Register a closed queue — simulates a race condition where
-		// the queue closes between globalAgentQueues.get() and enqueue()
+		// Attach session with a closed queue — simulates a race condition where
+		// the queue closes between session lookup and enqueue()
 		const taskQueue = new MessageQueue();
 		taskQueue.close();
-		globalAgentQueues.set(task.id, taskQueue);
+		const tracker = await getTracker(project.id);
+		attachMockSession(tracker.get(task.id)!, taskQueue);
 
 		const res = await sendTaskMessage(app, project.id, task.id, "hello");
 		// After audit: route handler catches enqueue errors and falls through to persist
@@ -460,7 +456,7 @@ describe("lifecycle: task state vs message delivery", () => {
 		};
 		expect(body.ok).toBe(true);
 
-		globalAgentQueues.delete(task.id);
+		tracker.get(task.id)!.session = undefined;
 	});
 });
 
@@ -477,15 +473,12 @@ describe("lifecycle: concurrent message sources", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("two rapid messages to running task both arrive in queue, no duplicate launch", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
@@ -495,9 +488,10 @@ describe("lifecycle: concurrent message sources", () => {
 		const project = await createProject(app, projectDir);
 		const task = await createTask(app, project.id, "Rapid messages task");
 
-		// Register queue to simulate running agent
+		// Attach session to simulate running agent
 		const taskQueue = new MessageQueue();
-		globalAgentQueues.set(task.id, taskQueue);
+		const tracker = await getTracker(project.id);
+		attachMockSession(tracker.get(task.id)!, taskQueue);
 
 		// Send two messages rapidly
 		const [res1, res2] = await Promise.all([
@@ -515,15 +509,15 @@ describe("lifecycle: concurrent message sources", () => {
 		expect(contents).toContain("first");
 		expect(contents).toContain("second");
 
-		// Only one queue should exist (no duplicate)
-		expect(globalAgentQueues.get(task.id)).toBe(taskQueue);
+		// Session queue should be the same one
+		expect(tracker.get(task.id)?.session?.queue).toBe(taskQueue);
 
+		tracker.get(task.id)!.session = undefined;
 		taskQueue.close();
-		globalAgentQueues.delete(task.id);
 	});
 
 	test("multiple messages from REST arrive in same queue", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
@@ -534,7 +528,8 @@ describe("lifecycle: concurrent message sources", () => {
 		const task = await createTask(app, project.id, "Multi message task");
 
 		const taskQueue = new MessageQueue();
-		globalAgentQueues.set(task.id, taskQueue);
+		const tracker = await getTracker(project.id);
+		attachMockSession(tracker.get(task.id)!, taskQueue);
 
 		// Send 5 messages
 		for (let i = 0; i < 5; i++) {
@@ -548,12 +543,12 @@ describe("lifecycle: concurrent message sources", () => {
 			expect((msgs[i] as { content: string }).content).toBe(`msg-${i}`);
 		}
 
+		tracker.get(task.id)!.session = undefined;
 		taskQueue.close();
-		globalAgentQueues.delete(task.id);
 	});
 
 	test("REST message arrives while no queue — persists, then queue created by auto-launch", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
@@ -563,8 +558,9 @@ describe("lifecycle: concurrent message sources", () => {
 		const project = await createProject(app, projectDir);
 		const task = await createTask(app, project.id, "No queue task");
 
-		// No queue registered — message gets persisted
-		expect(globalAgentQueues.has(task.id)).toBe(false);
+		// No session — message gets persisted
+		const tracker = await getTracker(project.id);
+		expect(tracker.get(task.id)?.session).toBeUndefined();
 
 		const res = await sendTaskMessage(
 			app,
@@ -580,12 +576,12 @@ describe("lifecycle: concurrent message sources", () => {
 		await delay(200);
 
 		// After launch completed (instant provider), queue should be cleaned up
-		// (runChildCore finally block removes from globalAgentQueues)
+		// (runChildCore finally block clears session)
 		// The message was persisted, loaded into the queue at launch, then consumed
 	});
 
 	test("ensureChildAgentRunning deduplicates — second message enqueues to existing queue", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
@@ -595,7 +591,7 @@ describe("lifecycle: concurrent message sources", () => {
 		const project = await createProject(app, projectDir);
 		const task = await createTask(app, project.id, "Dedup task");
 
-		// First message — no queue, triggers auto-launch
+		// First message — no session, triggers auto-launch
 		const res1 = await sendTaskMessage(
 			app,
 			project.id,
@@ -604,15 +600,16 @@ describe("lifecycle: concurrent message sources", () => {
 		);
 		expect(res1.status).toBe(200);
 
-		// Wait for auto-launch to register the queue
+		// Wait for auto-launch to register the session
 		await delay(200);
 
-		// The auto-launch should have created a queue in globalAgentQueues
-		const queue = globalAgentQueues.get(task.id);
-		// Note: if the instant provider completed, queue may already be removed.
+		// The auto-launch should have created a session on the tracker node
+		const tracker = await getTracker(project.id);
+		const queue = tracker.get(task.id)?.session?.queue;
+		// Note: if the instant provider completed, session may already be removed.
 		// With long-running provider, it should still be there.
 		if (queue) {
-			// Second message — queue exists, should enqueue directly
+			// Second message — session exists, should enqueue directly
 			const res2 = await sendTaskMessage(
 				app,
 				project.id,
@@ -624,12 +621,13 @@ describe("lifecycle: concurrent message sources", () => {
 			// Queue active — message delivered directly, not persisted
 			expect(body2.ok).toBe(true);
 
-			// Still only one queue
-			expect(globalAgentQueues.get(task.id)).toBe(queue);
+			// Still the same queue on the session
+			expect(tracker.get(task.id)?.session?.queue).toBe(queue);
 
 			queue.close();
 		}
-		globalAgentQueues.delete(task.id);
+		const node = tracker.get(task.id);
+		if (node) node.session = undefined;
 	});
 });
 
@@ -646,9 +644,6 @@ describe("lifecycle: queue state transitions", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
@@ -762,7 +757,7 @@ describe("lifecycle: queue state transitions", () => {
 	});
 });
 
-describe("lifecycle: globalAgentQueues consistency", () => {
+describe("lifecycle: session consistency on tracker nodes", () => {
 	let tempDir: string;
 	let dataDir: string;
 	let projectDir: string;
@@ -775,15 +770,12 @@ describe("lifecycle: globalAgentQueues consistency", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	test("after agent launch and completion, queue is removed from registry", async () => {
-		const { app, pm, markReady } = createApp({
+	test("after agent launch and completion, session is removed from node", async () => {
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
@@ -799,35 +791,39 @@ describe("lifecycle: globalAgentQueues consistency", () => {
 		// Wait for instant agent to complete
 		await delay(300);
 
-		// Queue should be cleaned up after agent finishes (runChildCore finally block)
-		expect(globalAgentQueues.has(task.id)).toBe(false);
+		// Session should be cleaned up after agent finishes
+		const tracker = await getTracker(project.id);
+		expect(tracker.get(task.id)?.session).toBeUndefined();
 	});
 
-	test("manually registered queue is the only entry for a task", () => {
+	test("session on node holds the queue reference", () => {
+		const tracker = new TaskTracker(join(tempDir, "tasks.json"));
+		const node = tracker.addTask("task-1", "desc");
 		const q1 = new MessageQueue();
-		globalAgentQueues.set("task-1", q1);
+		attachMockSession(node, q1);
 
-		expect(globalAgentQueues.get("task-1")).toBe(q1);
-		expect(globalAgentQueues.size).toBeGreaterThanOrEqual(1);
+		expect(node.session?.queue).toBe(q1);
 
-		// Setting again overwrites
+		// Replacing session overwrites
 		const q2 = new MessageQueue();
-		globalAgentQueues.set("task-1", q2);
-		expect(globalAgentQueues.get("task-1")).toBe(q2);
-		expect(globalAgentQueues.get("task-1")).not.toBe(q1);
+		attachMockSession(node, q2);
+		expect(node.session?.queue).toBe(q2);
+		expect(node.session?.queue).not.toBe(q1);
 
 		q1.close();
 		q2.close();
-		globalAgentQueues.delete("task-1");
+		node.session = undefined;
 	});
 
-	test("deleting from registry removes the entry", () => {
+	test("clearing session removes the entry", () => {
+		const tracker = new TaskTracker(join(tempDir, "tasks.json"));
+		const node = tracker.addTask("task-del", "desc");
 		const q = new MessageQueue();
-		globalAgentQueues.set("task-del", q);
-		expect(globalAgentQueues.has("task-del")).toBe(true);
+		attachMockSession(node, q);
+		expect(node.session).toBeDefined();
 
-		globalAgentQueues.delete("task-del");
-		expect(globalAgentQueues.has("task-del")).toBe(false);
+		node.session = undefined;
+		expect(node.session).toBeUndefined();
 
 		q.close();
 	});
@@ -846,15 +842,12 @@ describe("lifecycle: parent chain notifications", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
 	test("user message to child notifies parent via queue (waking)", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
@@ -867,11 +860,12 @@ describe("lifecycle: parent chain notifications", () => {
 			parentId: parent.id,
 		});
 
-		// Register queues for both parent and child (simulating both are running)
+		// Attach sessions for both parent and child (simulating both are running)
+		const tracker = await getTracker(project.id);
 		const parentQueue = new MessageQueue();
 		const childQueue = new MessageQueue();
-		globalAgentQueues.set(parent.id, parentQueue);
-		globalAgentQueues.set(child.id, childQueue);
+		attachMockSession(tracker.get(parent.id)!, parentQueue);
+		attachMockSession(tracker.get(child.id)!, childQueue);
 
 		// Send message to child — should notify parent
 		const res = await sendTaskMessage(app, project.id, child.id, "child msg");
@@ -889,14 +883,14 @@ describe("lifecycle: parent chain notifications", () => {
 		expect(notification).toBeTruthy();
 		expect((notification as { content: string }).content).toContain("Child");
 
+		tracker.get(parent.id)!.session = undefined;
+		tracker.get(child.id)!.session = undefined;
 		parentQueue.close();
 		childQueue.close();
-		globalAgentQueues.delete(parent.id);
-		globalAgentQueues.delete(child.id);
 	});
 
 	test("user message to grandchild notifies entire ancestor chain", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
@@ -912,13 +906,14 @@ describe("lifecycle: parent chain notifications", () => {
 			parentId: parent.id,
 		});
 
-		// Register queues for all three levels
+		// Attach sessions for all three levels
+		const tracker = await getTracker(project.id);
 		const gpQueue = new MessageQueue();
 		const pQueue = new MessageQueue();
 		const cQueue = new MessageQueue();
-		globalAgentQueues.set(grandparent.id, gpQueue);
-		globalAgentQueues.set(parent.id, pQueue);
-		globalAgentQueues.set(child.id, cQueue);
+		attachMockSession(tracker.get(grandparent.id)!, gpQueue);
+		attachMockSession(tracker.get(parent.id)!, pQueue);
+		attachMockSession(tracker.get(child.id)!, cQueue);
 
 		await sendTaskMessage(app, project.id, child.id, "deep msg");
 
@@ -935,16 +930,16 @@ describe("lifecycle: parent chain notifications", () => {
 		const gpMsgs = gpQueue.drain();
 		expect(gpMsgs.some((m) => m.source === "child_report")).toBe(true);
 
+		tracker.get(grandparent.id)!.session = undefined;
+		tracker.get(parent.id)!.session = undefined;
+		tracker.get(child.id)!.session = undefined;
 		gpQueue.close();
 		pQueue.close();
 		cQueue.close();
-		globalAgentQueues.delete(grandparent.id);
-		globalAgentQueues.delete(parent.id);
-		globalAgentQueues.delete(child.id);
 	});
 
 	test("user message to child persists notification when parent has no queue", async () => {
-		const { app, pm, markReady } = createApp({
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
@@ -957,9 +952,10 @@ describe("lifecycle: parent chain notifications", () => {
 			parentId: parent.id,
 		});
 
-		// Only register queue for child (parent is not running)
+		// Only attach session for child (parent is not running)
+		const tracker = await getTracker(project.id);
 		const childQueue = new MessageQueue();
-		globalAgentQueues.set(child.id, childQueue);
+		attachMockSession(tracker.get(child.id)!, childQueue);
 
 		await sendTaskMessage(app, project.id, child.id, "child msg");
 
@@ -978,12 +974,12 @@ describe("lifecycle: parent chain notifications", () => {
 		const notification = persisted.find((m) => m.source === "child_report");
 		expect(notification).toBeTruthy();
 
+		tracker.get(child.id)!.session = undefined;
 		childQueue.close();
-		globalAgentQueues.delete(child.id);
 	});
 
-	test("user message to child notifies root orchestrator via globalAgentQueues", async () => {
-		const { app, pm, markReady } = createApp({
+	test("user message to child notifies root orchestrator via session queue", async () => {
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
@@ -998,15 +994,15 @@ describe("lifecycle: parent chain notifications", () => {
 			parentId: root.id,
 		});
 
-		// Root orchestrator's queue is in the unified globalAgentQueues registry
+		// Attach sessions for root and child
+		const tracker = await getTracker(project.id);
 		const rootQueue = new MessageQueue();
-		globalAgentQueues.set(root.id, rootQueue);
+		attachMockSession(tracker.get(root.id)!, rootQueue);
 
-		// Child has a queue in globalAgentQueues
 		const childQueue = new MessageQueue();
-		globalAgentQueues.set(child.id, childQueue);
+		attachMockSession(tracker.get(child.id)!, childQueue);
 
-		// Send message to child — should notify root via globalAgentQueues
+		// Send message to child — should notify root via session queue
 		const res = await sendTaskMessage(app, project.id, child.id, "hello child");
 		expect(res.status).toBe(200);
 
@@ -1015,7 +1011,7 @@ describe("lifecycle: parent chain notifications", () => {
 		expect(childMsgs).toHaveLength(1);
 		expect(childMsgs[0]?.source).toBe("user");
 
-		// Root orchestrator should have a child_report notification via globalAgentQueues
+		// Root orchestrator should have a child_report notification
 		const rootMsgs = rootQueue.drain();
 		expect(rootMsgs.length).toBeGreaterThanOrEqual(1);
 		const notification = rootMsgs.find((m) => m.source === "child_report");
@@ -1024,10 +1020,10 @@ describe("lifecycle: parent chain notifications", () => {
 			"Child task",
 		);
 
+		tracker.get(child.id)!.session = undefined;
+		tracker.get(root.id)!.session = undefined;
 		childQueue.close();
 		rootQueue.close();
-		globalAgentQueues.delete(child.id);
-		globalAgentQueues.delete(root.id);
 	});
 });
 
@@ -1044,9 +1040,6 @@ describe("lifecycle: orchestrator message routing", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
@@ -1265,9 +1258,6 @@ describe("lifecycle: persistent queue integration", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
@@ -1283,8 +1273,7 @@ describe("lifecycle: persistent queue integration", () => {
 		const project = await createProject(app, projectDir);
 		const task = await createTask(app, project.id, "Persist test");
 
-		// No queue registered — message should be persisted
-		expect(globalAgentQueues.has(task.id)).toBe(false);
+		// No session — message should be persisted
 
 		await sendTaskMessage(app, project.id, task.id, "persisted content");
 
@@ -1339,14 +1328,11 @@ describe("lifecycle: stop agent cascading", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	test("stopping orchestrator closes child queues in globalAgentQueues", async () => {
+	test("stopping orchestrator closes child sessions on tracker", async () => {
 		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
@@ -1364,7 +1350,7 @@ describe("lifecycle: stop agent cascading", () => {
 		});
 		await delay(100);
 
-		// Create a child task and register its queue (simulating a running child)
+		// Create a child task and attach session (simulating a running child)
 		const tracker = await getTracker(project.id);
 		const rootId = tracker.rootNodeId;
 		expect(rootId).toBeTruthy();
@@ -1375,7 +1361,7 @@ describe("lifecycle: stop agent cascading", () => {
 		await setTaskStatus(app, project.id, childTask.id, "in_progress");
 
 		const childQueue = new MessageQueue();
-		globalAgentQueues.set(childTask.id, childQueue);
+		attachMockSession(tracker.get(childTask.id)!, childQueue);
 
 		// Stop the orchestrator — should cascade to children
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
@@ -1390,8 +1376,6 @@ describe("lifecycle: stop agent cascading", () => {
 		const updatedTracker = await getTracker(project.id);
 		const childNode = updatedTracker.get(childTask.id);
 		expect(childNode?.status).toBe("failed");
-
-		globalAgentQueues.delete(childTask.id);
 	});
 });
 
@@ -1408,16 +1392,13 @@ describe("lifecycle: clarify response routing", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	test("clarify response routes to child queue when child is in globalAgentQueues", async () => {
+	test("clarify response routes to child queue when child has session", async () => {
 		const { provider } = createRecordingProvider();
-		const { app, pm, markReady } = createApp({
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: provider,
 		});
@@ -1434,10 +1415,11 @@ describe("lifecycle: clarify response routing", () => {
 		});
 		await delay(100);
 
-		// Create a child and register its queue
+		// Create a child and attach session
 		const child = await createTask(app, project.id, "Clarifying child");
+		const tracker = await getTracker(project.id);
 		const childQueue = new MessageQueue();
-		globalAgentQueues.set(child.id, childQueue);
+		attachMockSession(tracker.get(child.id)!, childQueue);
 
 		// Send clarify response targeting the child
 		const res = await app.request(`/projects/${project.id}/clarify`, {
@@ -1456,8 +1438,8 @@ describe("lifecycle: clarify response routing", () => {
 		expect(childMsgs[0]?.source).toBe("clarify_response");
 		expect((childMsgs[0] as { answer: string }).answer).toBe("yes, proceed");
 
+		tracker.get(child.id)!.session = undefined;
 		childQueue.close();
-		globalAgentQueues.delete(child.id);
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
 		await delay(100);
 	});
@@ -1506,9 +1488,6 @@ describe("lifecycle: edge cases and error handling", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
@@ -1593,14 +1572,19 @@ describe("lifecycle: edge cases and error handling", () => {
 		expect(res.status).toBe(503);
 	});
 
-	test("multiple queues for different tasks coexist independently", () => {
+	test("multiple sessions on different tracker nodes coexist independently", () => {
+		const tracker = new TaskTracker(join(tempDir, "tasks-multi.json"));
+		const nodeA = tracker.addTask("task-a", "desc");
+		const nodeB = tracker.addTask("task-b", "desc");
+		const nodeC = tracker.addTask("task-c", "desc");
+
 		const q1 = new MessageQueue();
 		const q2 = new MessageQueue();
 		const q3 = new MessageQueue();
 
-		globalAgentQueues.set("task-a", q1);
-		globalAgentQueues.set("task-b", q2);
-		globalAgentQueues.set("task-c", q3);
+		attachMockSession(nodeA, q1);
+		attachMockSession(nodeB, q2);
+		attachMockSession(nodeC, q3);
 
 		q1.enqueue({ source: "user", content: "to a" });
 		q2.enqueue({ source: "user", content: "to b" });
@@ -1611,6 +1595,7 @@ describe("lifecycle: edge cases and error handling", () => {
 		expect(q3.drain()[0]).toEqual({ source: "user", content: "to c" });
 
 		// Closing one doesn't affect others
+		nodeA.session = undefined;
 		q1.close();
 		expect(() => q1.enqueue({ source: "user", content: "fail" })).toThrow(
 			"Queue closed",
@@ -1618,11 +1603,10 @@ describe("lifecycle: edge cases and error handling", () => {
 		q2.enqueue({ source: "user", content: "still works" });
 		expect(q2.drain()).toHaveLength(1);
 
+		nodeB.session = undefined;
+		nodeC.session = undefined;
 		q2.close();
 		q3.close();
-		globalAgentQueues.delete("task-a");
-		globalAgentQueues.delete("task-b");
-		globalAgentQueues.delete("task-c");
 	});
 
 	test("queue idle flag tracks state correctly", () => {
@@ -1658,49 +1642,54 @@ describe("lifecycle: edge cases and error handling", () => {
 	});
 });
 
-describe("lifecycle: delete-before-close ordering invariant", () => {
-	test("proper cleanup: delete from registry then close queue", () => {
+describe("lifecycle: session-clear-before-close ordering invariant", () => {
+	test("proper cleanup: clear session then close queue", () => {
+		const tracker = new TaskTracker(join(tmpdir(), "tasks-ordering.json"));
+		const node = tracker.addTask("task-cleanup", "desc");
 		const queue = new MessageQueue();
-		globalAgentQueues.set("task-cleanup", queue);
+		attachMockSession(node, queue);
 
-		// This is the correct order per the audit:
-		// 1. Delete from globalAgentQueues (so other code sees "no queue" instead of "closed queue")
-		// 2. Close the queue (to terminate the running agent)
-		globalAgentQueues.delete("task-cleanup");
+		// Correct order: clear session (so other code sees "no session"),
+		// then close queue (to terminate the running agent)
+		node.session = undefined;
 		queue.close();
 
-		// After delete, the registry should not have the entry
-		expect(globalAgentQueues.has("task-cleanup")).toBe(false);
+		// After clearing session, node should have no session
+		expect(node.session).toBeUndefined();
 		// After close, enqueue should throw
 		expect(() => queue.enqueue({ source: "user", content: "test" })).toThrow(
 			"Queue closed",
 		);
 	});
 
-	test("wrong order (close then delete) leaves closed queue visible briefly", () => {
+	test("wrong order (close then clear) leaves closed queue visible briefly", () => {
+		const tracker = new TaskTracker(join(tmpdir(), "tasks-ordering2.json"));
+		const node = tracker.addTask("task-wrong", "desc");
 		const queue = new MessageQueue();
-		globalAgentQueues.set("task-wrong", queue);
+		attachMockSession(node, queue);
 
-		// If we close first, the registry briefly contains a closed queue
+		// If we close first, the session briefly contains a closed queue
 		queue.close();
-		// At this point, another concurrent caller could get the closed queue
-		const retrieved = globalAgentQueues.get("task-wrong");
-		expect(retrieved).toBe(queue); // Still in registry!
+		// At this point, another concurrent caller could get the closed queue via session
+		const retrieved = node.session?.queue;
+		expect(retrieved).toBe(queue); // Still in session!
 		expect(() =>
 			retrieved?.enqueue({ source: "user", content: "test" }),
 		).toThrow("Queue closed"); // But it's broken
 
-		globalAgentQueues.delete("task-wrong");
+		node.session = undefined;
 	});
 
-	test("delete-before-close prevents stale queue retrieval", () => {
+	test("clear-before-close prevents stale queue retrieval", () => {
+		const tracker = new TaskTracker(join(tmpdir(), "tasks-ordering3.json"));
+		const node = tracker.addTask("task-safe", "desc");
 		const queue = new MessageQueue();
-		globalAgentQueues.set("task-safe", queue);
+		attachMockSession(node, queue);
 
 		// Correct order
-		globalAgentQueues.delete("task-safe");
-		// Now a concurrent caller would see no queue (falls through to persist path)
-		expect(globalAgentQueues.get("task-safe")).toBeUndefined();
+		node.session = undefined;
+		// Now a concurrent caller would see no session (falls through to persist path)
+		expect(node.session).toBeUndefined();
 
 		// Close to terminate agent
 		queue.close();
@@ -1720,15 +1709,12 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	test("DELETE /tasks/:id closes active queue for the task", async () => {
-		const { app, pm, markReady } = createApp({
+	test("DELETE /tasks/:id closes active session for the task", async () => {
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
@@ -1738,9 +1724,10 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 		const project = await createProject(app, projectDir);
 		const task = await createTask(app, project.id, "Deletable task");
 
-		// Register a queue (simulating running agent)
+		// Attach session (simulating running agent)
+		const tracker = await getTracker(project.id);
 		const taskQueue = new MessageQueue();
-		globalAgentQueues.set(task.id, taskQueue);
+		attachMockSession(tracker.get(task.id)!, taskQueue);
 
 		// Delete the task via REST
 		const res = await app.request(`/projects/${project.id}/tasks/${task.id}`, {
@@ -1748,17 +1735,14 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 		});
 		expect(res.status).toBe(200);
 
-		// Queue should be removed from registry
-		expect(globalAgentQueues.has(task.id)).toBe(false);
-
 		// Queue should be closed
 		expect(() =>
 			taskQueue.enqueue({ source: "user", content: "test" }),
 		).toThrow("Queue closed");
 	});
 
-	test("DELETE /tasks/:id closes queues for all descendants", async () => {
-		const { app, pm, markReady } = createApp({
+	test("DELETE /tasks/:id closes sessions for all descendants", async () => {
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
@@ -1771,11 +1755,12 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 			parentId: parent.id,
 		});
 
-		// Register queues for both
+		// Attach sessions for both
+		const tracker = await getTracker(project.id);
 		const parentQueue = new MessageQueue();
 		const childQueue = new MessageQueue();
-		globalAgentQueues.set(parent.id, parentQueue);
-		globalAgentQueues.set(child.id, childQueue);
+		attachMockSession(tracker.get(parent.id)!, parentQueue);
+		attachMockSession(tracker.get(child.id)!, childQueue);
 
 		// Delete the parent (should cascade to children)
 		const res = await app.request(
@@ -1783,10 +1768,6 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 			{ method: "DELETE" },
 		);
 		expect(res.status).toBe(200);
-
-		// Both queues should be removed from registry
-		expect(globalAgentQueues.has(parent.id)).toBe(false);
-		expect(globalAgentQueues.has(child.id)).toBe(false);
 
 		// Both should be closed
 		expect(() =>
@@ -1797,7 +1778,7 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 		).toThrow("Queue closed");
 	});
 
-	test("DELETE /tasks/:id works fine when no queue is registered", async () => {
+	test("DELETE /tasks/:id works fine when no session exists", async () => {
 		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
@@ -1808,9 +1789,7 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 		const project = await createProject(app, projectDir);
 		const task = await createTask(app, project.id, "No queue task");
 
-		// No queue registered — delete should still work
-		expect(globalAgentQueues.has(task.id)).toBe(false);
-
+		// No session — delete should still work
 		const res = await app.request(`/projects/${project.id}/tasks/${task.id}`, {
 			method: "DELETE",
 		});
@@ -1835,9 +1814,6 @@ describe("lifecycle: child completion notification paths", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});
@@ -1854,9 +1830,9 @@ describe("lifecycle: child completion notification paths", () => {
 		tracker.updateStatus(parentNode.id, "in_progress");
 		tracker.updateStatus(childNode.id, "in_progress");
 
-		// Register parent queue (simulating running parent agent)
+		// Attach parent session (simulating running parent agent)
 		const parentQueue = new MessageQueue();
-		globalAgentQueues.set(parentNode.id, parentQueue);
+		attachMockSession(parentNode, parentQueue);
 
 		// -- First run --
 		const firstQueue = new MessageQueue();
@@ -1871,9 +1847,6 @@ describe("lifecycle: child completion notification paths", () => {
 			},
 		});
 		expect(result1.success).toBe(true);
-
-		// After runChildCore, the queue is cleaned up from globalAgentQueues
-		expect(globalAgentQueues.has(childNode.id)).toBe(false);
 
 		// Simulate runChildAgentInBackground's post-completion: send child_complete
 		parentQueue.enqueue({
@@ -1927,8 +1900,8 @@ describe("lifecycle: child completion notification paths", () => {
 		expect(secondComplete).toBeTruthy();
 		expect((secondComplete as { taskId: string }).taskId).toBe(childNode.id);
 
+		parentNode.session = undefined;
 		parentQueue.close();
-		globalAgentQueues.delete(parentNode.id);
 	});
 
 	test("done() closes queue directly (no task_completed event)", async () => {
@@ -1948,9 +1921,9 @@ describe("lifecycle: child completion notification paths", () => {
 		const childId = childNode.id;
 		tracker.updateStatus(childId, "in_progress");
 
-		// Register parent queue
+		// Attach parent session
 		const parentQueue = new MessageQueue();
-		globalAgentQueues.set(parentNode.id, parentQueue);
+		attachMockSession(parentNode, parentQueue);
 
 		// Create a provider whose stream simulates done() calling closeQueue():
 		// 1. Emits text (simulating work)
@@ -2025,9 +1998,8 @@ describe("lifecycle: child completion notification paths", () => {
 		expect(tracker.get(childId)?.status).toBe("passed");
 
 		// Cleanup
-		globalAgentQueues.delete(childId);
+		parentNode.session = undefined;
 		parentQueue.close();
-		globalAgentQueues.delete(parentNode.id);
 	});
 
 	test("done()=yield deadlocks WITHOUT closeQueue()", async () => {
@@ -2095,19 +2067,15 @@ describe("lifecycle: child completion notification paths", () => {
 		expect(result).toBe("timeout");
 
 		// Force cleanup — close the queue to unblock the deadlocked provider
-		const stuckQueue = globalAgentQueues.get(childId);
-		if (stuckQueue) {
-			globalAgentQueues.delete(childId);
-			stuckQueue.close();
-		}
+		deadlockQueue.close();
 		// Wait for runChildCore to finish after we unblocked it
 		await Promise.race([corePromise, delay(1000)]);
 	});
 
-	test("reset task cleans up queue from globalAgentQueues", async () => {
-		// Verify that reset_task (simulated) properly cleans up the old queue,
-		// and that re-starting after reset creates a fresh queue.
-		const { app, pm, markReady } = createApp({
+	test("reset task cleans up session from tracker node", async () => {
+		// Verify that reset_task (simulated) properly cleans up the old session,
+		// and that re-starting after reset creates a fresh session.
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
@@ -2120,41 +2088,42 @@ describe("lifecycle: child completion notification paths", () => {
 			parentId: parent.id,
 		});
 
-		// Register a queue for the child (simulating running agent)
+		// Attach session for the child (simulating running agent)
+		const tracker = await getTracker(project.id);
 		const oldQueue = new MessageQueue();
-		globalAgentQueues.set(child.id, oldQueue);
-		expect(globalAgentQueues.get(child.id)).toBe(oldQueue);
+		attachMockSession(tracker.get(child.id)!, oldQueue);
+		expect(tracker.get(child.id)?.session?.queue).toBe(oldQueue);
 
-		// Simulate reset_task: delete from registry THEN close (correct order)
-		globalAgentQueues.delete(child.id);
+		// Simulate reset_task: clear session THEN close (correct order)
+		tracker.get(child.id)!.session = undefined;
 		oldQueue.close();
 
-		// Verify queue is gone
-		expect(globalAgentQueues.has(child.id)).toBe(false);
+		// Verify session is gone
+		expect(tracker.get(child.id)?.session).toBeUndefined();
 
 		// Verify old queue is closed
 		expect(() => oldQueue.enqueue({ source: "user", content: "test" })).toThrow(
 			"Queue closed",
 		);
 
-		// After reset, re-start creates a fresh queue (via auto-launch)
+		// After reset, re-start creates a fresh session (via auto-launch)
 		// Send a message to trigger auto-launch
 		await setTaskStatus(app, project.id, child.id, "pending");
 		await sendTaskMessage(app, project.id, child.id, "restart");
 		await delay(300);
 
-		// If auto-launch succeeded, a new queue was created (and may already be gone
+		// If auto-launch succeeded, a new session was created (and may already be gone
 		// if the instant provider completed). Either way, it's not the old queue.
-		const newQueue = globalAgentQueues.get(child.id);
+		const newQueue = tracker.get(child.id)?.session?.queue;
 		if (newQueue) {
 			expect(newQueue).not.toBe(oldQueue);
+			tracker.get(child.id)!.session = undefined;
 			newQueue.close();
-			globalAgentQueues.delete(child.id);
 		}
 	});
 
-	test("reset task while running: queue closed, agent stops", async () => {
-		const { app, pm, markReady } = createApp({
+	test("reset task while running: session cleared, agent stops", async () => {
+		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createLongRunningProvider(),
 		});
@@ -2165,9 +2134,10 @@ describe("lifecycle: child completion notification paths", () => {
 		const task = await createTask(app, project.id, "Running child");
 		await setTaskStatus(app, project.id, task.id, "in_progress");
 
-		// Register queue simulating a running agent blocked on queue.wait()
+		// Attach session simulating a running agent blocked on queue.wait()
+		const tracker = await getTracker(project.id);
 		const taskQueue = new MessageQueue();
-		globalAgentQueues.set(task.id, taskQueue);
+		attachMockSession(tracker.get(task.id)!, taskQueue);
 
 		// Start a waiter to detect when queue is closed
 		let waiterError: Error | null = null;
@@ -2176,10 +2146,10 @@ describe("lifecycle: child completion notification paths", () => {
 		});
 
 		// Simulate reset_task behavior:
-		// 1. Delete from globalAgentQueues (so callers see "no queue")
-		const activeQueue = globalAgentQueues.get(task.id);
+		// 1. Clear session (so callers see "no session")
+		const activeQueue = tracker.get(task.id)?.session?.queue;
 		expect(activeQueue).toBe(taskQueue);
-		globalAgentQueues.delete(task.id);
+		tracker.get(task.id)!.session = undefined;
 
 		// 2. Close the queue (stops the agent)
 		activeQueue?.close();
@@ -2195,8 +2165,8 @@ describe("lifecycle: child completion notification paths", () => {
 		// biome-ignore lint/style/noNonNullAssertion: verified above
 		expect(waiterError!.message).toBe("Queue closed");
 
-		// Verify queue is removed from registry
-		expect(globalAgentQueues.has(task.id)).toBe(false);
+		// Verify session is gone
+		expect(tracker.get(task.id)?.session).toBeUndefined();
 
 		// Verify status is pending
 		const getRes = await app.request(`/projects/${project.id}/tasks`);
@@ -2314,9 +2284,6 @@ describe("lifecycle edge cases — session continuity", () => {
 	});
 
 	afterEach(async () => {
-		for (const [key] of globalAgentQueues) {
-			globalAgentQueues.delete(key);
-		}
 		await rm(tempDir, { recursive: true, force: true });
 		await rm(dataDir, { recursive: true, force: true });
 	});

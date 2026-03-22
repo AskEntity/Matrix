@@ -23,7 +23,7 @@ import {
 } from "./daemon/event-system.ts";
 import { getEventStore } from "./daemon/helpers.ts";
 import type { Event } from "./events.ts";
-import { globalAgentQueues, type QueueMessage } from "./message-queue.ts";
+import type { QueueMessage } from "./message-queue.ts";
 import { clearPersistedMessages } from "./persistent-queue.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
@@ -98,7 +98,7 @@ export interface OrchestratorToolsResult {
 	/** Raw tool definitions for provider forwarding. */
 	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic is not narrowable here
 	toolDefs: ToolDefinition<any>[];
-	/** Returns true if this agent has running children (checked via globalAgentQueues). */
+	/** Returns true if this agent has running children (checked via session on tracker). */
 	hasRunningChildren?: () => boolean;
 }
 
@@ -256,7 +256,7 @@ export function createOrchestratorTools(
 				? getDescendantIds(tracker, currentTaskId)
 				: [];
 			const runningChildren = myDescendants.filter(
-				(id) => globalAgentQueues.has(id) && !completedIds.has(id),
+				(id) => tracker.get(id)?.session != null && !completedIds.has(id),
 			);
 			// Build structured pending data
 			const runningChildrenData = runningChildren.map((id) => ({
@@ -729,13 +729,13 @@ export function createOrchestratorTools(
 					} else {
 						// Fallback for non-daemon contexts (tests without full daemon):
 						// direct queue delivery only
-						const existingQueue = globalAgentQueues.get(args.taskId);
+						const existingQueue = tracker.get(args.taskId)?.session?.queue;
 						if (existingQueue) {
 							existingQueue.enqueue(queueMessage);
 						}
 					}
 
-					const wasRunning = globalAgentQueues.has(args.taskId);
+					const wasRunning = tracker.get(args.taskId)?.session != null;
 					return {
 						content: [
 							{
@@ -786,10 +786,10 @@ export function createOrchestratorTools(
 
 				try {
 					// Close running agent if active
-					// Delete from registry first so callers see "no queue" not "closed queue"
-					const activeQueueClose = globalAgentQueues.get(args.taskId);
+					const closeNode = tracker.get(args.taskId);
+					const activeQueueClose = closeNode?.session?.queue;
 					if (activeQueueClose) {
-						globalAgentQueues.delete(args.taskId);
+						closeNode.session = undefined;
 						activeQueueClose.close();
 					}
 
@@ -863,10 +863,10 @@ export function createOrchestratorTools(
 
 				try {
 					// Close running agent if active
-					// Delete from registry first so callers see "no queue" not "closed queue"
-					const activeQueueDelete = globalAgentQueues.get(args.taskId);
+					const deleteNode = tracker.get(args.taskId);
+					const activeQueueDelete = deleteNode?.session?.queue;
 					if (activeQueueDelete) {
-						globalAgentQueues.delete(args.taskId);
+						deleteNode.session = undefined;
 						activeQueueDelete.close();
 					}
 
@@ -954,10 +954,10 @@ export function createOrchestratorTools(
 
 				try {
 					// Close running agent if active
-					// Delete from registry first so callers see "no queue" not "closed queue"
-					const activeQueueReset = globalAgentQueues.get(args.taskId);
+					const resetNode = tracker.get(args.taskId);
+					const activeQueueReset = resetNode?.session?.queue;
 					if (activeQueueReset) {
-						globalAgentQueues.delete(args.taskId);
+						resetNode.session = undefined;
 						activeQueueReset.close();
 					}
 
@@ -1272,7 +1272,7 @@ export function createOrchestratorTools(
 				const targetTracker = ctx.trackers.get(args.projectId);
 				const targetRootId = targetTracker?.rootNodeId;
 				const targetQueue = targetRootId
-					? globalAgentQueues.get(targetRootId)
+					? targetTracker?.get(targetRootId)?.session?.queue
 					: undefined;
 				if (targetQueue) {
 					try {
@@ -1409,7 +1409,8 @@ export function createOrchestratorTools(
 					// Always persist to immediate parent for eventual resumption
 					// (parent may not be running, or may be a different ancestor)
 					if (node?.parentId && lifecycleDeps?.deliverMessage) {
-						const directParentQueue = globalAgentQueues.get(node.parentId);
+						const directParentQueue = tracker.get(node.parentId)?.session
+							?.queue;
 						// Only persist if we didn't already enqueue to the direct parent
 						if (!directParentQueue || directParentQueue !== parentQueue) {
 							lifecycleDeps
@@ -1456,10 +1457,10 @@ export function createOrchestratorTools(
 	return {
 		toolDefs,
 		hasRunningChildren: () => {
-			// Check if any descendants of this task have active queues in globalAgentQueues
+			// Check if any descendants of this task have active sessions
 			if (!currentTaskId) return false;
-			return getDescendantIds(tracker, currentTaskId).some((id) =>
-				globalAgentQueues.has(id),
+			return getDescendantIds(tracker, currentTaskId).some(
+				(id) => tracker.get(id)?.session != null,
 			);
 		},
 	};

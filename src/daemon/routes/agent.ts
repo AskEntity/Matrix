@@ -1,7 +1,6 @@
 import type { Hono } from "hono";
 import { DEFAULT_MODEL } from "../../config.ts";
 import type { QueueImage } from "../../message-queue.ts";
-import { globalAgentQueues } from "../../message-queue.ts";
 import { persistMessage } from "../../persistent-queue.ts";
 import { cancelAwait, moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
@@ -77,11 +76,11 @@ export function registerAgentRoutes(
 			return c.json({ error: "Agent restarting, please wait" }, 409);
 		}
 
-		// Agent already running — enqueue the prompt as a user message via unified registry
+		// Agent already running — enqueue the prompt as a user message via session
 		const tracker = await getTracker(ctx, project.id);
 		const rootNodeId = tracker.rootNodeId;
 		if (rootNodeId) {
-			const rootQueue = globalAgentQueues.get(rootNodeId);
+			const rootQueue = tracker.get(rootNodeId)?.session?.queue;
 			if (rootQueue) {
 				try {
 					rootQueue.enqueue({
@@ -103,7 +102,7 @@ export function registerAgentRoutes(
 		const startTracker = await getTracker(ctx, project.id);
 		const startRootId = startTracker.rootNodeId;
 		if (startRootId) {
-			const startQueue = globalAgentQueues.get(startRootId);
+			const startQueue = startTracker.get(startRootId)?.session?.queue;
 			if (startQueue) {
 				const startMemory = readProjectMemory(project.path);
 				const startHeader = startMemory
@@ -155,9 +154,9 @@ export function registerAgentRoutes(
 		const active: string[] = [];
 		const tracker = ctx.trackers.get(project.id);
 		if (tracker) {
-			// All agent queues (root + children) are in globalAgentQueues
+			// All agent queues are on session of tracker nodes
 			for (const node of tracker.allNodes()) {
-				const queue = globalAgentQueues.get(node.id);
+				const queue = node.session?.queue;
 				if (queue) {
 					if (queue.idle) {
 						idle.push(node.id);
@@ -203,7 +202,7 @@ export function registerAgentRoutes(
 		const tracker = ctx.trackers.get(project.id);
 		const rootNodeId = tracker?.rootNodeId;
 		const rootQueue = rootNodeId
-			? globalAgentQueues.get(rootNodeId)
+			? tracker?.get(rootNodeId)?.session?.queue
 			: undefined;
 		if (!rootQueue) {
 			return c.json({ error: "No active agent for this project" }, 404);
