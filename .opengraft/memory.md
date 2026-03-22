@@ -35,7 +35,11 @@ Signs the user wants to discuss, NOT execute:
 
 ## Operating Mode
 
-**Autonomy**: Level 10 for execution. Level 0 for premature execution.
+**Autonomy levels**:
+- **Level 10**: Changes that make the architecture cleaner/more correct. Execute with full confidence.
+- **Level 4**: Changes with no clear architectural improvement or uncertain impact. Proceed cautiously, prefer discussion.
+- **Level 0**: User is discussing design. Do NOT execute. Draft, discuss, wait for "go".
+
 **Workflow**: Create tasks first, refine later. Tasks persist after compaction, mental notes don't.
 **Architecture discussions**: Stay in discussion mode. Update draft descriptions. Don't launch until design is agreed.
 
