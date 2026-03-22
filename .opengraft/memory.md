@@ -391,3 +391,8 @@ Daemon (Hono: HTTP + SSE on :7433)
 - QueueMessageCard eliminated — parent_update, child_report, cross_project use Card directly.
 - ToolCard.tsx uses Card as base. LogEntryView.tsx uses Card for all card types.
 - LogEntryWrapper helper in LogEntryView handles the outer timestamp + badge wrapper.
+
+## UpdateOp Timestamp Threading
+- UpdateOps (merge_text, replace_text, complete_compact) carry `ts?: number` from the originating event.
+- Apply functions use `op.ts ?? Date.now()` — historical ts for batch replay, Date.now() for live events without ts.
+- The `text_delta` event is ephemeral (not persisted to JSONL), so during batch replay only `assistant_text` (replace_text op) matters. But both paths are fixed for consistency.
