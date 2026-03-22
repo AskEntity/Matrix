@@ -10,14 +10,25 @@ import {
 // --- Update operations for in-place entry mutations ---
 
 type UpdateOp =
-	| { type: "merge_text"; taskId: string | undefined; text: string }
-	| { type: "replace_text"; taskId: string | undefined; text: string }
+	| {
+			type: "merge_text";
+			taskId: string | undefined;
+			text: string;
+			ts?: number;
+	  }
+	| {
+			type: "replace_text";
+			taskId: string | undefined;
+			text: string;
+			ts?: number;
+	  }
 	| {
 			type: "complete_compact";
 			text: string;
 			checkpoint: string;
 			savedTokens: number;
 			taskId: string | undefined;
+			ts?: number;
 	  };
 
 export interface EventHandlerDeps {
@@ -419,6 +430,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							type: "merge_text",
 							taskId: msg.taskId as string | undefined,
 							text: deltaText,
+							ts: msg.ts as number | undefined,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -437,6 +449,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							type: "replace_text",
 							taskId: msg.taskId as string | undefined,
 							text: fullText,
+							ts: msg.ts as number | undefined,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -484,6 +497,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							checkpoint: msg.checkpoint as string,
 							savedTokens: (msg.savedTokens as number) ?? 0,
 							taskId: msg.taskId as string | undefined,
+							ts: msg.ts as number | undefined,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -786,7 +800,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						type: "assistant_text",
 						content: op.text,
 						taskId: op.taskId ?? "",
-						ts: Date.now(),
+						ts: op.ts ?? Date.now(),
 					}),
 				);
 				break;
@@ -806,7 +820,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						type: "assistant_text",
 						content: op.text,
 						taskId: op.taskId ?? "",
-						ts: Date.now(),
+						ts: op.ts ?? Date.now(),
 					}),
 				);
 				break;
@@ -821,7 +835,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							checkpoint: op.checkpoint,
 							savedTokens: op.savedTokens,
 							taskId: op.taskId ?? "",
-							ts: Date.now(),
+							ts: op.ts ?? Date.now(),
 						});
 						// Preserve the original entry's timestamp
 						(replacement as { ts: number }).ts = e.ts;
@@ -836,7 +850,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						checkpoint: op.checkpoint,
 						savedTokens: op.savedTokens,
 						taskId: op.taskId ?? "",
-						ts: Date.now(),
+						ts: op.ts ?? Date.now(),
 					}),
 				);
 				break;
@@ -872,7 +886,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							type: "assistant_text",
 							content: op.text,
 							taskId: op.taskId ?? "",
-							ts: Date.now(),
+							ts: op.ts ?? Date.now(),
 						}),
 					];
 				}
@@ -897,7 +911,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							type: "assistant_text",
 							content: op.text,
 							taskId: op.taskId ?? "",
-							ts: Date.now(),
+							ts: op.ts ?? Date.now(),
 						}),
 					];
 				}
@@ -911,7 +925,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 								checkpoint: op.checkpoint,
 								savedTokens: op.savedTokens,
 								taskId: op.taskId ?? "",
-								ts: Date.now(),
+								ts: op.ts ?? Date.now(),
 							});
 							// Preserve the original entry's timestamp
 							(replacement as { ts: number }).ts = e.ts;
@@ -926,7 +940,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							checkpoint: op.checkpoint,
 							savedTokens: op.savedTokens,
 							taskId: op.taskId ?? "",
-							ts: Date.now(),
+							ts: op.ts ?? Date.now(),
 						}),
 					];
 				}
