@@ -268,3 +268,10 @@ Daemon (Hono: HTTP + SSE on :7433)
 - agent-lifecycle reads `freshNode.doneSummary` for child_complete output, falls back to `agentResult.output`
 - Removed "Passed"/"Failed" badge spans (og-mcp-done-status) from task_completed card in LogEntryView.tsx
 
+
+## Future: done() = update_task + deliverMessage + closeQueue
+- done() should be equivalent to: update tracker status → deliver child_complete message directly to parent queue (like report_to_parent) → close queue for provider exit
+- The child_complete message should be self-contained: title, status, summary — all in the message body. No reconstruction from agentResult or tracker state.
+- Current workaround: doneSummary stored on tracker node, read by runChildAgentInBackground. Works but violates stateless message principle.
+- Target: done() handler directly calls deliverMessage with the complete child_complete body, then closeQueue. runChildAgentInBackground only handles cleanup (cost, worktree), not message construction.
+
