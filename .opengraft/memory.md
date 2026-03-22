@@ -331,6 +331,6 @@ Daemon (Hono: HTTP + SSE on :7433)
 ## Background Process Refinements
 - `BackgroundProcess.endTime` added — set when process completes/fails/killed. Duration = `endTime - startTime` for completed, `now - startTime` for running.
 - `awaitBackgroundProcess` simplified — returns minimal "Process completed (exit X)" text. Output delivered via `background_complete` queue message, not by await reading files.
-- CWD tracking uses temp file (`/tmp/opengraft-bg/cwd-{execId}`) instead of EXIT trap `___OPENGRAFT_CWD___` marker in stdout. The cd wrapper AND exit trap write pwd to temp file. No marker pollution in output.
+- CWD tracking uses temp file (`/tmp/opengraft-bg/cwd-{execId}`) instead of EXIT trap `___OPENGRAFT_CWD___` marker in stdout. Only the EXIT trap writes pwd to temp file (not the cd wrapper). No marker pollution in output.
 - `background_complete` UIOnlyEvent has `stdout?` and `stderr?` fields. LogEntryView renders them in card body like bash tool_result output.
 - Frontend `BackgroundProcessBar` uses `msg.ts` (server event timestamp) for `startTime`, not `Date.now()` at component mount.
