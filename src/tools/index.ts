@@ -12,6 +12,10 @@ export {
 	getBackgroundStatus,
 	killBackgroundProcess,
 } from "./bash.ts";
-export { TOOLS } from "./definitions.ts";
-export { executeTool, resolvePath } from "./executor.ts";
+export {
+	createBuiltinTools,
+	type GetSessionFn,
+	resolvePath,
+} from "./definitions.ts";
+export { executeTool } from "./executor.ts";
 export { jsSearch, truncateSearchOutput } from "./search.ts";

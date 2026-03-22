@@ -14,13 +14,11 @@ import { join } from "node:path";
 import { MessageQueue } from "./message-queue.ts";
 import {
 	clearContextWindowCache,
-	convertToolsToOpenAI,
 	fetchContextWindowFromAPI,
 	getContextWindow,
 	getModelPricing,
 	OpenAICompatibleProvider,
 } from "./openai-compatible-provider.ts";
-import { TOOLS } from "./tools/index.ts";
 
 /** Create a MessageQueue pre-loaded with a user message (for tests). */
 function queueWithPrompt(content: string, cwd?: string): MessageQueue {
@@ -149,39 +147,6 @@ describe("getContextWindow", () => {
 
 	test("defaults to 128k for unknown models", () => {
 		expect(getContextWindow("unknown-model")).toBe(128_000);
-	});
-});
-
-// ── Tool format conversion ──
-
-describe("convertToolsToOpenAI", () => {
-	test("converts Anthropic tools to OpenAI function format", () => {
-		const converted = convertToolsToOpenAI(TOOLS);
-		expect(converted.length).toBe(TOOLS.length);
-
-		// Check first tool (bash)
-		const bash = converted[0];
-		expect(bash?.type).toBe("function");
-		expect(bash?.function.name).toBe("bash");
-		expect(bash?.function.parameters).toHaveProperty("type", "object");
-		expect(bash?.function.parameters).toHaveProperty("properties");
-	});
-
-	test("each tool has type 'function'", () => {
-		const converted = convertToolsToOpenAI(TOOLS);
-		for (const tool of converted) {
-			expect(tool.type).toBe("function");
-			expect(tool.function.name).toBeTruthy();
-			expect(tool.function.description).toBeTruthy();
-		}
-	});
-
-	test("preserves required fields from input_schema", () => {
-		const converted = convertToolsToOpenAI(TOOLS);
-		const bash = converted.find((t) => t.function.name === "bash");
-		expect(bash?.function.parameters).toHaveProperty("required");
-		const required = bash?.function.parameters.required as string[];
-		expect(required).toContain("command");
 	});
 });
 
