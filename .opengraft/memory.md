@@ -369,3 +369,10 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `executeBashWithTimeout` Promise.race carries `reason: 'timeout' | 'user'` on the timedOut result.
 - Timeout path: `reason: 'timeout'`, user moveToBackground: `reason: 'user'`.
 - Result text differs: timeout shows duration, user-initiated does not.
+
+## Anthropic Cache TTL
+- `CacheControlEphemeral` supports `ttl?: "5m" | "1h"`. Default is 5m when omitted.
+- System prompt blocks and tool definitions use `ttl: "1h"` (stable across API calls).
+- Message-level cache: orchestrator sessions use `ttl: "1h"`, child agents use default 5m.
+- `isOrchestrator` field on `AgentRequest` threads through `callAPI` params to control message cache TTL.
+- `addMessagesCacheControl` accepts optional `ttl` parameter.

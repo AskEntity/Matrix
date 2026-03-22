@@ -1211,6 +1211,8 @@ export interface ProviderAdapter {
 		maxTokens: number;
 		signal?: AbortSignal;
 		isCompacting: boolean;
+		/** True for root orchestrator sessions (depth 0). Affects cache TTL strategy. */
+		isOrchestrator?: boolean;
 	}): AsyncGenerator<Event, unknown>;
 
 	/** Extract text content from a provider response. */
@@ -1587,6 +1589,7 @@ export async function* runProviderLoop(
 			maxTokens: DEFAULT_MAX_TOKENS,
 			signal: request.signal,
 			isCompacting: compactionPending,
+			isOrchestrator: request.isOrchestrator,
 		});
 
 		let response: unknown;

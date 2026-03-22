@@ -104,6 +104,7 @@ export {
  */
 export function addMessagesCacheControl(
 	messages: MessageParam[],
+	ttl?: "5m" | "1h",
 ): MessageParam[] {
 	if (messages.length < 3) {
 		// Not enough history to be worth caching
@@ -130,6 +131,11 @@ export function addMessagesCacheControl(
 		return messages;
 	}
 
+	// Build cache_control value — include ttl only when explicitly set
+	const cacheControl = ttl
+		? ({ type: "ephemeral" as const, ttl } as const)
+		: ({ type: "ephemeral" as const } as const);
+
 	// Clone messages and add cache_control to the second-to-last user message.
 	// If its content is a string, convert to TextBlockParam array first.
 	return messages.map((msg, i) => {
@@ -144,7 +150,7 @@ export function addMessagesCacheControl(
 					{
 						type: "text" as const,
 						text: content,
-						cache_control: { type: "ephemeral" as const },
+						cache_control: cacheControl,
 					},
 				],
 			};
@@ -161,7 +167,7 @@ export function addMessagesCacheControl(
 			) {
 				const updatedContent = [
 					...content.slice(0, -1),
-					{ ...last, cache_control: { type: "ephemeral" as const } },
+					{ ...last, cache_control: cacheControl },
 				];
 				return { ...msg, content: updatedContent };
 			}
@@ -468,7 +474,7 @@ function createAnthropicAdapter(
 						{
 							type: "text",
 							text: "You are Claude Code, Anthropic's official CLI for Claude.",
-							cache_control: { type: "ephemeral" },
+							cache_control: { type: "ephemeral", ttl: "1h" },
 						},
 						...(systemText
 							? [
@@ -477,6 +483,7 @@ function createAnthropicAdapter(
 										text: systemText,
 										cache_control: {
 											type: "ephemeral" as const,
+											ttl: "1h" as const,
 										},
 									},
 								]
@@ -486,7 +493,7 @@ function createAnthropicAdapter(
 						{
 							type: "text",
 							text: systemText,
-							cache_control: { type: "ephemeral" },
+							cache_control: { type: "ephemeral", ttl: "1h" },
 						},
 					];
 
@@ -495,13 +502,18 @@ function createAnthropicAdapter(
 				tools.length > 0
 					? tools.map((tool, i) =>
 							i === tools.length - 1
-								? { ...tool, cache_control: { type: "ephemeral" } }
+								? { ...tool, cache_control: { type: "ephemeral", ttl: "1h" } }
 								: tool,
 						)
 					: tools;
 
 			// Cache control: add a cache breakpoint at the second-to-last user message
-			const messagesWithCache = addMessagesCacheControl(messages);
+			// Orchestrator sessions use 1h TTL (long-lived, stable conversations).
+			// Child agent sessions use default 5m TTL (shorter-lived).
+			const messagesWithCache = addMessagesCacheControl(
+				messages,
+				params.isOrchestrator ? "1h" : undefined,
+			);
 
 			const createParams = {
 				model: params.model,
