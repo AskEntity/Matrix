@@ -2411,7 +2411,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			type: "orchestration_started";
 		};
 		expect(lastOrchStart.resume).toBe(false);
-		expect(lastOrchStart.prompt).toBe("new fresh task");
+		// prompt field removed from orchestration_started — messages now delivered via queue
 
 		// Cleanup
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
@@ -2716,8 +2716,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		expect(orchStart).toBeTruthy();
 		// biome-ignore lint/style/noNonNullAssertion: verified above
 		expect(orchStart!.resume).toBe(false);
-		// biome-ignore lint/style/noNonNullAssertion: verified above
-		expect(orchStart!.prompt).toBe("first message ever");
+		// prompt field removed from orchestration_started — messages now delivered via queue
 
 		// Cleanup
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });

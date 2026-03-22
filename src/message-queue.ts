@@ -13,7 +13,13 @@ export interface QueueImage {
 
 /** Message types that can flow through the queue. */
 export type QueueMessage =
-	| { source: "user"; id?: string; content: string; images?: QueueImage[] }
+	| {
+			source: "user";
+			id?: string;
+			content: string;
+			images?: QueueImage[];
+			header?: string;
+	  }
 	| { source: "system"; content: string }
 	| {
 			source: "child_complete";
@@ -22,7 +28,12 @@ export type QueueMessage =
 			success: boolean;
 			output: string;
 	  }
-	| { source: "parent_update"; content: string; requestReply?: boolean }
+	| {
+			source: "parent_update";
+			content: string;
+			requestReply?: boolean;
+			header?: string;
+	  }
 	| { source: "clarify_response"; answer: string }
 	| {
 			source: "child_report";

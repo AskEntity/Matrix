@@ -574,8 +574,8 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const userMsgEvent: Event = {
 			type: "message",
 			id: msgId,
-			content: body.content,
 			taskId: nodeId,
+			body: { source: "user", content: body.content },
 			ts: Date.now(),
 		};
 		emitEvent(ctx, project.id, userMsgEvent);

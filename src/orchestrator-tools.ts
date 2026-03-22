@@ -681,6 +681,24 @@ export function createOrchestratorTools(
 						tracker.assignWorktree(node.id, wt.branch, wt.path);
 					}
 
+					// Build header with task context for child startup
+					// Header includes task description + git context — the "what to do" part
+					// Content is the parent's specific message — the "instructions" part
+					const headerParts: string[] = [];
+					headerParts.push(`## Task: ${node.title}`);
+					headerParts.push(`Task ID: \`${node.id}\``);
+					if (node.description) headerParts.push(node.description);
+					if (node.branch) {
+						headerParts.push(
+							`\n## Git Context`,
+							`You are on branch: \`${node.branch}\``,
+							`Your working directory is already set to \`${node.worktreePath ?? "unknown"}\` — do NOT cd to it.`,
+							`Do NOT switch branches. All commits go on \`${node.branch}\`.`,
+						);
+					}
+					const header =
+						headerParts.length > 0 ? headerParts.join("\n") : undefined;
+
 					// Deliver message via unified path: persist → enqueue/launch
 					// The message is NOT included in the launch prompt — it arrives
 					// via queue drain of persisted messages (exactly-once delivery).
@@ -688,6 +706,7 @@ export function createOrchestratorTools(
 						source: "parent_update",
 						content: args.message,
 						...(args.requestReply ? { requestReply: true } : {}),
+						...(header ? { header } : {}),
 					};
 
 					if (deps.deliverMessage) {

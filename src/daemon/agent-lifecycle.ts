@@ -864,10 +864,7 @@ export async function launchAgent(
 		type: "orchestration_started",
 		taskId: rootNodeId,
 		resume: opts.resume ?? false,
-		// Don't include prompt when resuming — the user message is already in the
-		// queue and will appear as a queue_message event. Including it here would
-		// cause the message to display twice in the UI.
-		prompt: opts.resume ? undefined : opts.prompt,
+		// prompt field removed — messages are now delivered via queue with unified schema
 		provider: agentCtx.provider.name,
 		model: effectiveModel ?? DEFAULT_MODEL,
 		ts: Date.now(),
@@ -1062,8 +1059,8 @@ export async function handleOrchestrate(
 			const orchUserMsg: Event = {
 				type: "message",
 				id: orchMsgId,
-				content: prompt,
 				taskId: orchRootNodeId,
+				body: { source: "user", content: prompt },
 				ts: Date.now(),
 			};
 			emitEvent(ctx, projectId, orchUserMsg);
@@ -1117,22 +1114,34 @@ export async function handleInjectMessage(
 	if (!rootNodeId) {
 		// No session at all — launch a brand new agent with this message as the prompt
 		if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
+			// Build header with pre-loaded context (CLAUDE.md + memory.md)
+			const memory = readProjectMemory(project.path);
+			const header = memory
+				? `Working directory: ${project.path}\n\n${memory}`
+				: `Working directory: ${project.path}`;
+
+			const freshMsgId = ulid();
+
 			await launchAgent(
 				ctx,
 				project,
 				{ prompt: message },
 				orchestratorSystemPrompt,
 			);
+
 			// Write + broadcast message at send time (Phase 1 of two-phase lifecycle)
 			const freshRootNodeId = tracker.rootNodeId;
 			if (freshRootNodeId) {
-				const freshMsgId = ulid();
 				const userMsgEvent: Event = {
 					type: "message",
 					id: freshMsgId,
-					content: message,
-					...(images?.length ? { images } : {}),
 					taskId: freshRootNodeId,
+					body: {
+						source: "user",
+						content: message,
+						...(images?.length ? { images } : {}),
+						header,
+					},
 					ts: Date.now(),
 				};
 				emitEvent(ctx, projectId, userMsgEvent);
@@ -1165,9 +1174,12 @@ export async function handleInjectMessage(
 	const userMsgEvent: Event = {
 		type: "message",
 		id: msgId,
-		content: message,
-		...(images?.length ? { images } : {}),
 		taskId: rootNodeId,
+		body: {
+			source: "user",
+			content: message,
+			...(images?.length ? { images } : {}),
+		},
 		ts: Date.now(),
 	};
 	emitEvent(ctx, projectId, userMsgEvent);
