@@ -100,7 +100,8 @@ export function bashBgExcludeKeys(
 	toolName: string,
 	toolArgs: Record<string, unknown> | undefined,
 ): Set<string> | undefined {
-	if (toolName === "bash" && toolArgs?.bg_action) return BASH_BG_EXCLUDE;
+	if (toolName === "mcp__opengraft__bash" && toolArgs?.bg_action)
+		return BASH_BG_EXCLUDE;
 	return undefined;
 }
 
@@ -205,211 +206,215 @@ export function getToolCardTitle(
 	resultContent: string | null,
 	nodeMap?: Map<string, { title?: string }>,
 ): string {
-	// File tools
-	if (toolName === "read_file") {
-		const path = getArg(toolArgs, "path");
-		return path ? `⌕ Read: ${basename(path)}` : "⌕ Read";
-	}
-	if (toolName === "write_file") {
-		const path = getArg(toolArgs, "path");
-		return path ? `← Write: ${basename(path)}` : "← Write";
-	}
-	if (toolName === "edit_file") {
-		const path = getArg(toolArgs, "path");
-		return path ? `✎ Edit: ${basename(path)}` : "✎ Edit";
-	}
-	if (toolName === "search") {
-		const pattern = getArg(toolArgs, "pattern");
-		if (pattern) {
-			const display =
-				pattern.length > 40 ? `${pattern.slice(0, 40)}…` : pattern;
-			return `⌕ Search: ${display}`;
+	switch (toolName) {
+		// Built-in tools
+		case "mcp__opengraft__read_file": {
+			const path = getArg(toolArgs, "path");
+			return path ? `⌕ Read: ${basename(path)}` : "⌕ Read";
 		}
-		return "⌕ Search";
-	}
-	if (toolName === "list_files") {
-		const pattern = getArg(toolArgs, "pattern");
-		return pattern ? `ls: ${pattern}` : "ls";
-	}
-	if (toolName === "bash") {
-		const bgAction = getArg(toolArgs, "bg_action");
-		if (bgAction) {
-			const bgId = getArg(toolArgs, "background_id") ?? "?";
-			return `bg ${bgAction}: ${bgId}`;
+		case "mcp__opengraft__write_file": {
+			const path = getArg(toolArgs, "path");
+			return path ? `← Write: ${basename(path)}` : "← Write";
 		}
-		const command = getArg(toolArgs, "command");
-		if (command) {
-			const display =
-				command.length > 50 ? `${command.slice(0, 50)}…` : command;
-			return `$ ${display}`;
+		case "mcp__opengraft__edit_file": {
+			const path = getArg(toolArgs, "path");
+			return path ? `✎ Edit: ${basename(path)}` : "✎ Edit";
 		}
-		return "$ bash";
-	}
-
-	// MCP tools
-	const mcpTool = toolName.replace("mcp__opengraft__", "");
-	if (toolName.startsWith("mcp__opengraft__")) {
-		switch (mcpTool) {
-			case "create_task": {
-				const title = getArg(toolArgs, "title");
-				return title ? `+ Task Created: ${title}` : "+ Task Created";
+		case "mcp__opengraft__search": {
+			const pattern = getArg(toolArgs, "pattern");
+			if (pattern) {
+				const display =
+					pattern.length > 40 ? `${pattern.slice(0, 40)}…` : pattern;
+				return `⌕ Search: ${display}`;
 			}
-			case "delete_task": {
-				// Try to get title from result
-				if (resultContent) {
+			return "⌕ Search";
+		}
+		case "mcp__opengraft__list_files": {
+			const pattern = getArg(toolArgs, "pattern");
+			return pattern ? `ls: ${pattern}` : "ls";
+		}
+		case "mcp__opengraft__bash": {
+			const bgAction = getArg(toolArgs, "bg_action");
+			if (bgAction) {
+				const bgId = getArg(toolArgs, "background_id") ?? "?";
+				return `bg ${bgAction}: ${bgId}`;
+			}
+			const command = getArg(toolArgs, "command");
+			if (command) {
+				const display =
+					command.length > 50 ? `${command.slice(0, 50)}…` : command;
+				return `$ ${display}`;
+			}
+			return "$ bash";
+		}
+		case "mcp__opengraft__background": {
+			const action = getArg(toolArgs, "action");
+			const bgId = getArg(toolArgs, "id") ?? "";
+			if (action) {
+				return bgId ? `bg ${action}: ${bgId}` : `bg ${action}`;
+			}
+			return "bg";
+		}
+		// Orchestrator tools
+		case "mcp__opengraft__create_task": {
+			const title = getArg(toolArgs, "title");
+			return title ? `+ Task Created: ${title}` : "+ Task Created";
+		}
+		case "mcp__opengraft__delete_task": {
+			// Try to get title from result
+			if (resultContent) {
+				try {
+					const json = JSON.parse(resultContent) as Record<string, unknown>;
+					if (typeof json.title === "string")
+						return `– Task Deleted: ${json.title}`;
+				} catch {
+					/* ignore */
+				}
+			}
+			const taskId = getArg(toolArgs, "taskId");
+			if (taskId) {
+				const title = nodeMap?.get(taskId)?.title;
+				return `– Task Deleted: ${title ?? taskId}`;
+			}
+			return "– Task Deleted";
+		}
+		case "mcp__opengraft__execute_tasks": {
+			// Legacy: toolArgs.tasks may be an array (live) or a JSON string (event_history)
+			let parsedTasks: Array<{ taskId?: string; title?: string }> = [];
+			const tasksVal = toolArgs?.tasks;
+			if (Array.isArray(tasksVal)) {
+				parsedTasks = tasksVal as typeof parsedTasks;
+			} else {
+				const tasksArg = getArg(toolArgs, "tasks");
+				if (tasksArg) {
 					try {
-						const json = JSON.parse(resultContent) as Record<string, unknown>;
-						if (typeof json.title === "string")
-							return `– Task Deleted: ${json.title}`;
+						parsedTasks = JSON.parse(tasksArg) as typeof parsedTasks;
 					} catch {
 						/* ignore */
 					}
 				}
-				const taskId = getArg(toolArgs, "taskId");
-				if (taskId) {
-					const title = nodeMap?.get(taskId)?.title;
-					return `– Task Deleted: ${title ?? taskId}`;
-				}
-				return "– Task Deleted";
 			}
-			case "execute_tasks": {
-				// toolArgs.tasks may be an array (live) or a JSON string (event_history)
-				let parsedTasks: Array<{ taskId?: string; title?: string }> = [];
-				const tasksVal = toolArgs?.tasks;
-				if (Array.isArray(tasksVal)) {
-					parsedTasks = tasksVal as typeof parsedTasks;
-				} else {
-					const tasksArg = getArg(toolArgs, "tasks");
-					if (tasksArg) {
-						try {
-							parsedTasks = JSON.parse(tasksArg) as typeof parsedTasks;
-						} catch {
-							/* ignore */
-						}
-					}
-				}
-				if (parsedTasks.length > 0) {
-					// Try to get titles from result
-					let titles: string[] = [];
-					if (resultContent) {
-						try {
-							const json = JSON.parse(resultContent) as {
-								tasks?: Array<{ title?: string }>;
-							};
-							if (Array.isArray(json.tasks)) {
-								titles = json.tasks.map((t) => t.title ?? "?").filter(Boolean);
-							}
-						} catch {
-							/* ignore */
-						}
-					}
-					if (titles.length > 0) {
-						return `⚡ Run ${titles.length}: ${titles.join(", ")}`;
-					}
-					return `⚡ Run ${parsedTasks.length}`;
-				}
-				return "⚡ Run";
-			}
-			case "done": {
-				const status = getArg(toolArgs, "status");
-				const summary = getArg(toolArgs, "summary");
-				const isPassed = status === "passed";
-				const icon = isPassed ? "✓" : "✗";
-				const label = isPassed ? "Task Passed" : "Task Failed";
-				if (summary) {
-					const display =
-						summary.length > 60 ? `${summary.slice(0, 60)}…` : summary;
-					return `${icon} ${label}: ${display}`;
-				}
-				return `${icon} ${label}`;
-			}
-			case "yield": {
-				// If we have result content, yield has returned with messages
-				if (resultContent) {
-					return "▶ Resume from yield";
-				}
-				return "⏸ Yield";
-			}
-			case "get_tree":
-				return "Tree";
-			case "update_task": {
-				let resolvedTitle = "";
+			if (parsedTasks.length > 0) {
+				// Try to get titles from result
+				let titles: string[] = [];
 				if (resultContent) {
 					try {
-						const json = JSON.parse(resultContent);
-						if (typeof json.title === "string") {
-							resolvedTitle =
-								json.title.length > 40
-									? `${json.title.slice(0, 40)}…`
-									: json.title;
+						const json = JSON.parse(resultContent) as {
+							tasks?: Array<{ title?: string }>;
+						};
+						if (Array.isArray(json.tasks)) {
+							titles = json.tasks.map((t) => t.title ?? "?").filter(Boolean);
 						}
 					} catch {
 						/* ignore */
 					}
 				}
-				if (resolvedTitle) return `Task Updated: ${resolvedTitle}`;
-				const taskId = getArg(toolArgs, "taskId");
-				if (taskId) {
-					const resolved = nodeMap?.get(taskId)?.title;
-					return `Task Updated: ${resolved ?? taskId}`;
+				if (titles.length > 0) {
+					return `⚡ Run ${titles.length}: ${titles.join(", ")}`;
 				}
-				return "Task Updated";
+				return `⚡ Run ${parsedTasks.length}`;
 			}
-			case "send_message_to_child": {
-				const taskId = getArg(toolArgs, "taskId");
-				if (taskId) {
-					const title = nodeMap?.get(taskId)?.title;
-					return `→ Message Child: ${title ?? taskId}`;
-				}
-				return "→ Message Child";
-			}
-			case "close_task": {
-				const taskId = getArg(toolArgs, "taskId");
-				if (taskId) {
-					const title = nodeMap?.get(taskId)?.title;
-					return `– Task Closed: ${title ?? taskId}`;
-				}
-				return "– Task Closed";
-			}
-			case "reset_task": {
-				const taskId = getArg(toolArgs, "taskId");
-				if (taskId) {
-					const title = nodeMap?.get(taskId)?.title;
-					return `↺ Task Reset: ${title ?? taskId}`;
-				}
-				return "↺ Task Reset";
-			}
-			case "reorder_tasks":
-				return "↕ Reorder tasks";
-			case "list_projects":
-				return "⌕ List projects";
-			case "send_message_to_project": {
-				const projectId = getArg(toolArgs, "projectId");
-				return projectId ? `→ Cross-project: ${projectId}` : "→ Cross-project";
-			}
-			case "report_to_parent": {
-				const title = getArg(toolArgs, "title");
-				if (title) {
-					const display = title.length > 60 ? `${title.slice(0, 60)}…` : title;
-					return `← ${display}`;
-				}
-				return "← Report to Parent";
-			}
-			case "clarify": {
-				const question = getArg(toolArgs, "question");
-				if (question) {
-					// Show first line as title (may be multi-line with title\nbody)
-					const firstLine = question.split("\n")[0] ?? question;
-					const display =
-						firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine;
-					return `? ${display}`;
-				}
-				return "? Clarify";
-			}
+			return "⚡ Run";
 		}
+		case "mcp__opengraft__done": {
+			const status = getArg(toolArgs, "status");
+			const summary = getArg(toolArgs, "summary");
+			const isPassed = status === "passed";
+			const icon = isPassed ? "✓" : "✗";
+			const label = isPassed ? "Task Passed" : "Task Failed";
+			if (summary) {
+				const display =
+					summary.length > 60 ? `${summary.slice(0, 60)}…` : summary;
+				return `${icon} ${label}: ${display}`;
+			}
+			return `${icon} ${label}`;
+		}
+		case "mcp__opengraft__yield": {
+			// If we have result content, yield has returned with messages
+			if (resultContent) {
+				return "▶ Resume from yield";
+			}
+			return "⏸ Yield";
+		}
+		case "mcp__opengraft__get_tree":
+			return "Tree";
+		case "mcp__opengraft__update_task": {
+			let resolvedTitle = "";
+			if (resultContent) {
+				try {
+					const json = JSON.parse(resultContent);
+					if (typeof json.title === "string") {
+						resolvedTitle =
+							json.title.length > 40
+								? `${json.title.slice(0, 40)}…`
+								: json.title;
+					}
+				} catch {
+					/* ignore */
+				}
+			}
+			if (resolvedTitle) return `Task Updated: ${resolvedTitle}`;
+			const taskId = getArg(toolArgs, "taskId");
+			if (taskId) {
+				const resolved = nodeMap?.get(taskId)?.title;
+				return `Task Updated: ${resolved ?? taskId}`;
+			}
+			return "Task Updated";
+		}
+		case "mcp__opengraft__send_message_to_child": {
+			const taskId = getArg(toolArgs, "taskId");
+			if (taskId) {
+				const title = nodeMap?.get(taskId)?.title;
+				return `→ Message Child: ${title ?? taskId}`;
+			}
+			return "→ Message Child";
+		}
+		case "mcp__opengraft__close_task": {
+			const taskId = getArg(toolArgs, "taskId");
+			if (taskId) {
+				const title = nodeMap?.get(taskId)?.title;
+				return `– Task Closed: ${title ?? taskId}`;
+			}
+			return "– Task Closed";
+		}
+		case "mcp__opengraft__reset_task": {
+			const taskId = getArg(toolArgs, "taskId");
+			if (taskId) {
+				const title = nodeMap?.get(taskId)?.title;
+				return `↺ Task Reset: ${title ?? taskId}`;
+			}
+			return "↺ Task Reset";
+		}
+		case "mcp__opengraft__reorder_tasks":
+			return "↕ Reorder tasks";
+		case "mcp__opengraft__list_projects":
+			return "⌕ List projects";
+		case "mcp__opengraft__send_message_to_project": {
+			const projectId = getArg(toolArgs, "projectId");
+			return projectId ? `→ Cross-project: ${projectId}` : "→ Cross-project";
+		}
+		case "mcp__opengraft__report_to_parent": {
+			const title = getArg(toolArgs, "title");
+			if (title) {
+				const display = title.length > 60 ? `${title.slice(0, 60)}…` : title;
+				return `← ${display}`;
+			}
+			return "← Report to Parent";
+		}
+		case "mcp__opengraft__clarify": {
+			const question = getArg(toolArgs, "question");
+			if (question) {
+				// Show first line as title (may be multi-line with title\nbody)
+				const firstLine = question.split("\n")[0] ?? question;
+				const display =
+					firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine;
+				return `? ${display}`;
+			}
+			return "? Clarify";
+		}
+		default:
+			return toolName;
 	}
-
-	return toolName;
 }
 
 /** Determine if a tool card should be title-only (no expandable body) */
@@ -417,19 +422,17 @@ export function isTitleOnlyCard(
 	toolName: string,
 	toolArgs?: Record<string, unknown>,
 ): boolean {
-	const mcpTool = toolName.replace("mcp__opengraft__", "");
-	if (!toolName.startsWith("mcp__opengraft__")) return false;
-	switch (mcpTool) {
-		case "get_tree":
-		case "yield":
-		case "delete_task":
-		case "update_task":
-		case "close_task":
-		case "reset_task":
-		case "reorder_tasks":
-		case "list_projects":
+	switch (toolName) {
+		case "mcp__opengraft__get_tree":
+		case "mcp__opengraft__yield":
+		case "mcp__opengraft__delete_task":
+		case "mcp__opengraft__update_task":
+		case "mcp__opengraft__close_task":
+		case "mcp__opengraft__reset_task":
+		case "mcp__opengraft__reorder_tasks":
+		case "mcp__opengraft__list_projects":
 			return true;
-		case "report_to_parent": {
+		case "mcp__opengraft__report_to_parent": {
 			// Always expandable — title is in header, message is in body
 			const msg = getArg(toolArgs, "message");
 			return !msg;

@@ -159,7 +159,7 @@ export const LogEntryView = memo(function LogEntryView({
 		const toolName = getToolName(entry);
 		const toolArgs = entry.input;
 		const argsStr = formatArgs(toolArgs, bashBgExcludeKeys(toolName, toolArgs));
-		const isMcp = toolName.startsWith("mcp__opengraft__");
+		const isOpengraft = toolName.startsWith("mcp__opengraft__");
 		const isDone = toolName === "mcp__opengraft__done";
 		const isYield = toolName === "mcp__opengraft__yield";
 		// done() tool_call — show styled card with pass/fail status
@@ -240,13 +240,13 @@ export const LogEntryView = memo(function LogEntryView({
 					</span>
 				)}
 				<div
-					className={`og-tool-card og-tool-card-pending og-tool-card-loading ${isMcp ? "og-tool-card-mcp" : ""}`}
+					className={`og-tool-card og-tool-card-pending og-tool-card-loading ${isOpengraft ? "og-tool-card-mcp" : ""}`}
 				>
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">
 							{getToolCardTitle(toolName, toolArgs, null, nodeMap)}
 						</span>
-						{toolName === "bash" && projectId && (
+						{toolName === "mcp__opengraft__bash" && projectId && (
 							<button
 								type="button"
 								className="og-bash-background-btn"
@@ -282,7 +282,7 @@ export const LogEntryView = memo(function LogEntryView({
 		const mcpFormatted = isOk
 			? formatMcpToolResult(toolName, content, t)
 			: null;
-		const isMcp = toolName.startsWith("mcp__opengraft__");
+		const isOpengraft = toolName.startsWith("mcp__opengraft__");
 		const statusClass = isErr ? "og-tool-card-err" : "og-tool-card-ok";
 		return (
 			<div className="og-log-entry og-event-tool_card">
@@ -293,7 +293,7 @@ export const LogEntryView = memo(function LogEntryView({
 					</span>
 				)}
 				<div
-					className={`og-tool-card ${statusClass} ${isMcp ? "og-tool-card-mcp" : ""}`}
+					className={`og-tool-card ${statusClass} ${isOpengraft ? "og-tool-card-mcp" : ""}`}
 				>
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">
