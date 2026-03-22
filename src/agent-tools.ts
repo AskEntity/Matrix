@@ -11,13 +11,17 @@
 
 import { pinyin } from "pinyin-pro";
 import { formatEventForAI, queueMessageToEvent } from "./events.ts";
-import type { QueueMessage } from "./message-queue.ts";
+import {
+	globalAgentQueues,
+	type MessageQueue,
+	type QueueMessage,
+} from "./message-queue.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 
 export {
 	CostAccumulator,
 	createOrchestratorTools,
-	type OrchestratorToolsDeps,
+	type LifecycleDeps,
 	type OrchestratorToolsResult,
 } from "./orchestrator-tools.ts";
 // Re-export everything from the split modules so existing imports keep working
@@ -216,4 +220,33 @@ export function slugify(title: string): string {
 		.replace(/^-|-$/g, "")
 		.slice(0, 30);
 	return slug || "task";
+}
+
+/**
+ * Find the nearest ancestor with an active queue for a given node.
+ * Walks up the parent chain to bubble through non-running intermediate nodes.
+ * Returns both the queue and the ID of the ancestor it belongs to.
+ */
+export function findParentQueue(
+	tracker: TaskTracker,
+	nodeId: string,
+): { queue: MessageQueue; targetId: string } | undefined {
+	const node = tracker.get(nodeId);
+	if (!node?.parentId) return undefined;
+
+	let targetId: string | null = node.parentId;
+	while (targetId) {
+		const queue = globalAgentQueues.get(targetId);
+		if (queue) return { queue, targetId };
+
+		const ancestor = tracker.get(targetId);
+		if (!ancestor) break;
+
+		// Reached root without finding a queue — root isn't running
+		if (!ancestor.parentId) break;
+
+		targetId = ancestor.parentId;
+	}
+
+	return undefined;
 }

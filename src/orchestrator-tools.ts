@@ -6,26 +6,27 @@
  * (create_task, update_task, send_message_to_child, yield, done, etc.).
  */
 
+import { join } from "node:path";
 import { z } from "zod";
-import type { AgentProvider } from "./agent-provider.ts";
 import {
+	findParentQueue,
 	formatQueueMessage,
 	getDescendantIds,
 	isDescendantOf,
 	resolveColor,
 	slugify,
 } from "./agent-tools.ts";
-
+import type { DaemonContext } from "./daemon/context.ts";
 import {
-	globalAgentQueues,
-	type MessageQueue,
-	type QueueMessage,
-} from "./message-queue.ts";
+	broadcastTreeUpdate as broadcastTreeUpdateFn,
+	emitEvent,
+} from "./daemon/event-system.ts";
+import { getEventStore } from "./daemon/helpers.ts";
+import type { Event } from "./events.ts";
+import { globalAgentQueues, type QueueMessage } from "./message-queue.ts";
 import { clearPersistedMessages } from "./persistent-queue.ts";
-import type { ProjectManager } from "./project-manager.ts";
-import type { TaskTracker } from "./task-tracker.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
-import type { WorktreeManager } from "./worktree-manager.ts";
+import { WorktreeManager } from "./worktree-manager.ts";
 
 /**
  * Check if the git working tree is clean (no uncommitted changes).
@@ -52,68 +53,16 @@ async function isGitClean(projectPath: string): Promise<{
 	};
 }
 
-export interface OrchestratorToolsDeps {
-	tracker: TaskTracker;
-	provider: AgentProvider;
-	worktrees: WorktreeManager;
-	/** Working directory for this agent (main repo or worktree). */
-	projectPath: string;
-	/** Main repo root — always the same, used for git operations. */
-	repoPath: string;
-	/** Current task ID — null for top-level orchestrator (project level). */
-	currentTaskId?: string | null;
-	/** Recursion depth (0 = top-level orchestrator). Max depth limits MCP tool injection. */
-	depth?: number;
-	/** Optional callback for broadcasting task events (e.g., to SSE clients). */
-	onTaskEvent?: (event: Record<string, unknown>) => void;
-	/** Optional callback to broadcast tree updates to SSE clients after task mutations. */
-	broadcastTreeUpdate?: () => void;
-	/** Model for child agent execution (defaults to provider's default). */
-	childModel?: string;
-	/** MessageQueue for the parent agent session (for fire-and-forget results). */
-	queue?: MessageQueue;
-	/**
-	 * Dynamic parent queue lookup — called at invocation time, not captured at launch.
-	 * Returns the nearest ancestor's queue, or undefined for top-level orchestrator.
-	 */
-	getParentQueue?: () => MessageQueue | undefined;
-	/** Default budget per task from project config. undefined = unlimited. */
-	defaultBudgetUsd?: number;
-	/** Timeout for clarify() responses in ms. undefined = wait forever. */
-	clarifyTimeoutMs?: number;
-	/** Maximum recursive depth for spawning child agents. Defaults to 3. */
-	maxDepth?: number;
-	/** Project manager for cross-project communication. Only needed at depth 0. */
-	projectManager?: ProjectManager;
-	/**
-	 * Check if a project has an active agent running. Only needed at depth 0.
-	 * Uses globalAgentQueues to check if root node has a queue.
-	 */
-	isProjectActive?: (projectId: string) => boolean;
-	/**
-	 * Find the root queue for a project by looking up its rootNodeId in globalAgentQueues.
-	 * Only needed at depth 0 for cross-project message delivery.
-	 */
-	getProjectRootQueue?: (projectId: string) => MessageQueue | undefined;
-	/** Current project ID — used as sender identity for cross-project messages. */
-	currentProjectId?: string;
-	/** Clear session JSONL data for a task. Used by reset/delete to clean up event history. */
-	clearSession?: (taskId: string) => void;
-	/** Data directory root (~/.opengraft). Used for persistent message queue. */
-	dataDir?: string;
-	/**
-	 * Close the agent's own queue. Used by done() to unblock waitForQueueMessages()
-	 * without emitting task_completed. Only set for child agents (depth > 0).
-	 */
-	closeQueue?: () => void;
-	/**
-	 * Deliver a message to a task: persist → enqueue (if running) → launch (if not).
-	 * Daemon provides this via the deliverMessage function in agent-lifecycle.ts.
-	 */
-	deliverMessage?: (nodeId: string, message: QueueMessage) => Promise<void>;
+/**
+ * Functions that would cause circular imports if imported directly from agent-lifecycle.ts.
+ * Passed as a parameter to avoid the cycle: orchestrator-tools.ts ↔ agent-lifecycle.ts.
+ */
+export interface LifecycleDeps {
+	/** Deliver a message to a task: persist → enqueue (if running) → launch (if not). */
+	deliverMessage: (nodeId: string, message: QueueMessage) => Promise<void>;
 	/**
 	 * Inject a message into another project, auto-launching agent if needed.
-	 * Wraps handleInjectMessage from agent-lifecycle.ts. Only needed at depth 0.
+	 * Only needed at depth 0 for cross-project messaging.
 	 */
 	injectMessageToProject?: (
 		projectId: string,
@@ -154,17 +103,64 @@ export interface OrchestratorToolsResult {
 }
 
 /**
- * Create orchestrator tools for the main agent.
- * Returns both an MCP server (for Claude Code provider) and raw tool definitions
- * (for AnthropicCompatibleProvider to forward as Anthropic API tools).
+ * Create orchestrator tools for an agent.
+ *
+ * All state is derived from ctx + projectId + taskId at call time.
+ * lifecycleDeps provides functions that would cause circular imports if imported directly.
  */
 export function createOrchestratorTools(
-	deps: OrchestratorToolsDeps,
+	ctx: DaemonContext,
+	projectId: string,
+	taskId: string | null,
+	lifecycleDeps?: LifecycleDeps,
 ): OrchestratorToolsResult {
-	const { tracker, worktrees, projectPath, onTaskEvent, broadcastTreeUpdate } =
-		deps;
-	const currentTaskId = deps.currentTaskId ?? null;
-	const emit = (event: Record<string, unknown>) => onTaskEvent?.(event);
+	// Derive tracker from ctx — the single source of truth for task state.
+	const trackerOrUndefined = ctx.trackers.get(projectId);
+	if (!trackerOrUndefined) {
+		throw new Error(
+			`No tracker found for project ${projectId}. Ensure project is loaded before creating tools.`,
+		);
+	}
+	// TypeScript can't always narrow Map.get() results across closure boundaries.
+	// The throw above guarantees this is never undefined.
+	const tracker = trackerOrUndefined;
+
+	const currentTaskId = taskId;
+	const project = ctx.pm.get(projectId);
+	const repoPath = project?.path ?? "";
+
+	// Derive depth, queue, and projectPath from session on the task node.
+	const getSession = () => (taskId ? tracker.get(taskId)?.session : undefined);
+	const getDepth = () => getSession()?.depth ?? 0;
+	const getQueue = () => getSession()?.queue;
+	const getProjectPath = () =>
+		(taskId
+			? (tracker.get(taskId)?.worktreePath as string | undefined)
+			: undefined) ?? repoPath;
+
+	/** Emit an event through the daemon's unified event system. */
+	const emit = (event: Record<string, unknown>) => {
+		const ts = (event.ts as number) || Date.now();
+		if (event.type === "agent_event") {
+			const evtTaskId = (event.taskId as string) || "";
+			const eventType = event.eventType as string;
+			const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
+			emitEvent(ctx, projectId, {
+				type: eventType,
+				taskId: evtTaskId,
+				ts,
+				...rest,
+			} as unknown as Event);
+		} else {
+			const withTs = event.ts ? event : { ...event, ts };
+			emitEvent(ctx, projectId, withTs as unknown as Event);
+		}
+		broadcastTreeUpdateFn(ctx, projectId, tracker);
+	};
+
+	const broadcastTree = () => {
+		broadcastTreeUpdateFn(ctx, projectId, tracker);
+	};
 	/** Count of outstanding clarify() calls that have not yet received a clarify_response. */
 	let pendingClarifications = 0;
 
@@ -187,19 +183,22 @@ export function createOrchestratorTools(
 			pendingClarifications: number;
 		};
 	} | null> {
-		if (!deps.queue) return null;
+		const queue = getQueue();
+		if (!queue) return null;
 		try {
 			let all: QueueMessage[];
 
 			while (true) {
 				if (currentTaskId) {
-					deps.queue.idle = true;
+					queue.idle = true;
 					emit({ type: "agent_idle", taskId: currentTaskId });
 				}
 
+				// Resolve clarifyTimeoutMs from config at call time (cheap, cached)
+				const clarifyTimeoutMs = ctx.globalConfig?.clarifyTimeoutMs;
 				const timeoutMs =
-					pendingClarifications > 0 ? deps.clarifyTimeoutMs : undefined;
-				const result = await deps.queue.waitForMessage(timeoutMs);
+					pendingClarifications > 0 ? clarifyTimeoutMs : undefined;
+				const result = await queue.waitForMessage(timeoutMs);
 
 				if (result === "timeout") {
 					const timeoutMsg = `<clarify_timeout duration="${timeoutMs}ms">No response received. Proceed with your best judgement.</clarify_timeout>`;
@@ -216,9 +215,9 @@ export function createOrchestratorTools(
 						}),
 					);
 					pendingClarifications = 0;
-					all = [...synthesized, ...deps.queue.drainMerged()];
+					all = [...synthesized, ...queue.drainMerged()];
 				} else {
-					const rest = deps.queue.drainMerged();
+					const rest = queue.drainMerged();
 					all = [result, ...rest];
 					for (const msg of all) {
 						if (msg.source === "clarify_response") {
@@ -231,7 +230,7 @@ export function createOrchestratorTools(
 				all = all.filter((m) => m.source !== "compact");
 				if (compactMsgs.length > 0) {
 					for (const cm of compactMsgs) {
-						deps.queue.enqueue(cm);
+						queue.enqueue(cm);
 					}
 					break;
 				}
@@ -239,7 +238,7 @@ export function createOrchestratorTools(
 			}
 
 			if (currentTaskId) {
-				deps.queue.idle = false;
+				queue.idle = false;
 				emit({ type: "agent_active", taskId: currentTaskId });
 			}
 
@@ -419,7 +418,8 @@ export function createOrchestratorTools(
 						draft?: boolean;
 						editedBy: "agent";
 					} = { editedBy: "agent" };
-					if (deps.defaultBudgetUsd) opts.budgetUsd = deps.defaultBudgetUsd;
+					const defaultBudgetUsd = ctx.globalConfig?.budgetUsd;
+					if (defaultBudgetUsd) opts.budgetUsd = defaultBudgetUsd;
 					if (args.draft) opts.draft = true;
 					const node = effectiveParentId
 						? tracker.addChild(
@@ -433,7 +433,7 @@ export function createOrchestratorTools(
 						tracker.updateColor(node.id, resolveColor(args.color), "agent");
 					}
 					await tracker.save();
-					broadcastTreeUpdate?.();
+					broadcastTree();
 					return {
 						content: [
 							{
@@ -551,7 +551,7 @@ export function createOrchestratorTools(
 						);
 					}
 					await tracker.save();
-					broadcastTreeUpdate?.();
+					broadcastTree();
 					const node = tracker.get(args.taskId);
 					return {
 						content: [
@@ -672,6 +672,7 @@ export function createOrchestratorTools(
 				try {
 					// Create worktree if needed (requires clean working tree)
 					if (!node.worktreePath) {
+						const projectPath = getProjectPath();
 						const gitCheck = await isGitClean(projectPath);
 						if (!gitCheck.clean) {
 							return {
@@ -689,7 +690,9 @@ export function createOrchestratorTools(
 							: undefined;
 						const baseBranch = currentNode?.branch ?? undefined;
 						const slug = slugify(node.title);
-						const wt = await worktrees.create(node.id, slug, baseBranch);
+						const wtRoot = join(repoPath, ".worktrees");
+						const wm = new WorktreeManager(repoPath, wtRoot);
+						const wt = await wm.create(node.id, slug, baseBranch);
 						tracker.assignWorktree(node.id, wt.branch, wt.path);
 					}
 
@@ -721,8 +724,8 @@ export function createOrchestratorTools(
 						...(header ? { header } : {}),
 					};
 
-					if (deps.deliverMessage) {
-						await deps.deliverMessage(args.taskId, queueMessage);
+					if (lifecycleDeps?.deliverMessage) {
+						await lifecycleDeps.deliverMessage(args.taskId, queueMessage);
 					} else {
 						// Fallback for non-daemon contexts (tests without full daemon):
 						// direct queue delivery only
@@ -793,7 +796,9 @@ export function createOrchestratorTools(
 					// Clean up worktree + branch if they exist
 					if (node.worktreePath && node.branch) {
 						const slug = slugify(node.title);
-						await worktrees.remove(node.id, slug);
+						const wtRoot = join(repoPath, ".worktrees");
+						const wm = new WorktreeManager(repoPath, wtRoot);
+						await wm.remove(node.id, slug);
 						node.worktreePath = null;
 						node.branch = null;
 						node.updatedAt = new Date().toISOString();
@@ -801,7 +806,7 @@ export function createOrchestratorTools(
 
 					tracker.updateStatus(node.id, "closed");
 					await tracker.save();
-					broadcastTreeUpdate?.();
+					broadcastTree();
 
 					return {
 						content: [
@@ -868,16 +873,17 @@ export function createOrchestratorTools(
 					// Clean up worktree + branch if they exist
 					if (node.worktreePath && node.branch) {
 						const slug = slugify(node.title);
-						await worktrees.remove(node.id, slug);
+						const wtRoot = join(repoPath, ".worktrees");
+						const wm = new WorktreeManager(repoPath, wtRoot);
+						await wm.remove(node.id, slug);
 					}
 
 					// Delete event JSONL files
-					deps.clearSession?.(node.id);
+					getEventStore(ctx, projectId).clear(node.id);
 
 					// Clear persisted messages for this task and all descendants
-					if (deps.dataDir && deps.currentProjectId) {
-						const dd = deps.dataDir;
-						const pid = deps.currentProjectId;
+					if (ctx.config.dataDir) {
+						const dd = ctx.config.dataDir;
 						const collectIds = (id: string): string[] => {
 							const n = tracker.get(id);
 							if (!n) return [];
@@ -885,14 +891,14 @@ export function createOrchestratorTools(
 						};
 						const allIds = collectIds(node.id);
 						await Promise.all(
-							allIds.map((id) => clearPersistedMessages(dd, pid, id)),
+							allIds.map((id) => clearPersistedMessages(dd, projectId, id)),
 						);
 					}
 
 					// Remove node from tree
 					tracker.remove(node.id);
 					await tracker.save();
-					broadcastTreeUpdate?.();
+					broadcastTree();
 
 					return {
 						content: [
@@ -958,26 +964,28 @@ export function createOrchestratorTools(
 					// Clean up worktree + branch if they exist
 					if (node.worktreePath && node.branch) {
 						const slug = slugify(node.title);
-						await worktrees.remove(node.id, slug);
+						const wtRoot = join(repoPath, ".worktrees");
+						const wm = new WorktreeManager(repoPath, wtRoot);
+						await wm.remove(node.id, slug);
 						node.worktreePath = null;
 						node.branch = null;
 					}
 
 					// Delete event JSONL files
-					deps.clearSession?.(node.id);
+					getEventStore(ctx, projectId).clear(node.id);
 
 					// Clear persisted messages (follows session lifecycle)
-					if (deps.dataDir && deps.currentProjectId) {
+					if (ctx.config.dataDir) {
 						await clearPersistedMessages(
-							deps.dataDir,
-							deps.currentProjectId,
+							ctx.config.dataDir,
+							projectId,
 							node.id,
 						);
 					}
 
 					tracker.updateStatus(node.id, "pending");
 					await tracker.save();
-					broadcastTreeUpdate?.();
+					broadcastTree();
 
 					return {
 						content: [
@@ -1078,7 +1086,9 @@ export function createOrchestratorTools(
 			},
 			async (args) => {
 				// Dynamic parent queue lookup at invocation time
-				const parentQueue = deps.getParentQueue?.();
+				const parentQueue = currentTaskId
+					? findParentQueue(tracker, currentTaskId)?.queue
+					: undefined;
 				if (!parentQueue) {
 					// No parent queue — silently no-op (top-level orchestrator has no parent)
 					return {
@@ -1155,7 +1165,7 @@ export function createOrchestratorTools(
 					}
 					tracker.reorderChildren(args.nodeId, args.children);
 					await tracker.save();
-					broadcastTreeUpdate?.();
+					broadcastTree();
 					return {
 						content: [
 							{
@@ -1188,7 +1198,8 @@ export function createOrchestratorTools(
 				"Use this to discover other projects before sending cross-project messages.",
 			{},
 			async () => {
-				if (!deps.projectManager) {
+				const depth = getDepth();
+				if (depth > 0) {
 					return {
 						content: [
 							{
@@ -1199,11 +1210,11 @@ export function createOrchestratorTools(
 						isError: true,
 					};
 				}
-				const projects = deps.projectManager.list().map((p) => ({
+				const projects = ctx.pm.list().map((p) => ({
 					id: p.id,
 					name: p.name,
 					path: p.path,
-					hasActiveAgent: deps.isProjectActive?.(p.id) ?? false,
+					hasActiveAgent: ctx.activeSessions.has(p.id),
 				}));
 				return {
 					content: [
@@ -1226,7 +1237,8 @@ export function createOrchestratorTools(
 				message: z.string().describe("Message content to send"),
 			},
 			async (args) => {
-				if (!deps.projectManager || !deps.getProjectRootQueue) {
+				const depth = getDepth();
+				if (depth > 0) {
 					return {
 						content: [
 							{
@@ -1238,7 +1250,7 @@ export function createOrchestratorTools(
 					};
 				}
 
-				const targetProject = deps.projectManager.get(args.projectId);
+				const targetProject = ctx.pm.get(args.projectId);
 				if (!targetProject) {
 					return {
 						content: [
@@ -1252,14 +1264,16 @@ export function createOrchestratorTools(
 				}
 
 				// Determine sender identity
-				const senderProject = deps.currentProjectId
-					? deps.projectManager.get(deps.currentProjectId)
-					: undefined;
-				const fromProjectId = deps.currentProjectId ?? "unknown";
+				const senderProject = ctx.pm.get(projectId);
+				const fromProjectId = projectId;
 				const fromProjectName = senderProject?.name ?? "unknown";
 
 				// Try direct enqueue if target agent is already running
-				const targetQueue = deps.getProjectRootQueue(args.projectId);
+				const targetTracker = ctx.trackers.get(args.projectId);
+				const targetRootId = targetTracker?.rootNodeId;
+				const targetQueue = targetRootId
+					? globalAgentQueues.get(targetRootId)
+					: undefined;
 				if (targetQueue) {
 					try {
 						targetQueue.enqueue({
@@ -1291,7 +1305,7 @@ export function createOrchestratorTools(
 				}
 
 				// Agent not running — auto-launch via injectMessageToProject
-				if (!deps.injectMessageToProject) {
+				if (!lifecycleDeps?.injectMessageToProject) {
 					return {
 						content: [
 							{
@@ -1306,7 +1320,7 @@ export function createOrchestratorTools(
 				try {
 					// Prepend sender identity so the target agent knows who sent the message
 					const prefixedMessage = `[Cross-project message from "${fromProjectName}" (${fromProjectId})]\n\n${args.message}`;
-					const result = await deps.injectMessageToProject(
+					const result = await lifecycleDeps.injectMessageToProject(
 						args.projectId,
 						prefixedMessage,
 					);
@@ -1367,12 +1381,12 @@ export function createOrchestratorTools(
 						args.status === "passed" ? "passed" : "failed",
 					);
 					await tracker.save();
-					broadcastTreeUpdate?.();
+					broadcastTree();
 				}
 
 				// Deliver child_complete message directly to parent queue (child agents only).
 				// This is the canonical delivery — runChildAgentInBackground skips it when done() was called.
-				const depth = deps.depth ?? 0;
+				const depth = getDepth();
 				if (currentTaskId && depth > 0) {
 					const node = tracker.get(currentTaskId);
 					const completionMsg: QueueMessage = {
@@ -1383,7 +1397,8 @@ export function createOrchestratorTools(
 						output: args.summary.slice(0, 2000),
 					};
 					// Try direct enqueue to parent's queue first
-					const parentQueue = deps.getParentQueue?.();
+					const parentResult = findParentQueue(tracker, currentTaskId);
+					const parentQueue = parentResult?.queue;
 					if (parentQueue) {
 						try {
 							parentQueue.enqueue(completionMsg);
@@ -1393,11 +1408,13 @@ export function createOrchestratorTools(
 					}
 					// Always persist to immediate parent for eventual resumption
 					// (parent may not be running, or may be a different ancestor)
-					if (node?.parentId && deps.deliverMessage) {
+					if (node?.parentId && lifecycleDeps?.deliverMessage) {
 						const directParentQueue = globalAgentQueues.get(node.parentId);
 						// Only persist if we didn't already enqueue to the direct parent
 						if (!directParentQueue || directParentQueue !== parentQueue) {
-							deps.deliverMessage(node.parentId, completionMsg).catch(() => {});
+							lifecycleDeps
+								.deliverMessage(node.parentId, completionMsg)
+								.catch(() => {});
 						}
 					}
 				}
@@ -1405,7 +1422,10 @@ export function createOrchestratorTools(
 				// Close queue for child agents — unblocks waitForQueueMessages() below
 				// which will reject immediately since queue is closed.
 				// Root agents don't close here — they block on waitForQueueMessages() normally.
-				deps.closeQueue?.();
+				const queue = getQueue();
+				if (depth > 0 && queue) {
+					queue.close();
+				}
 
 				// Enter implicit yield — wait for wake messages (e.g. parent resume).
 				// This prevents the provider from making another API call after done(),

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
 import {
 	createOrchestratorTools,
+	findParentQueue,
 	slugify,
 	TASK_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
@@ -41,7 +42,7 @@ import {
 
 // All provider events flow through the emit() callback → emitEvent().
 // No more AgentEvent→Event conversion layer.
-// The onTaskEvent callback in createAgentContext still handles agent_event
+// The emit() function in createOrchestratorTools handles agent_event
 // wrappers from MCP tools (child agents forwarding events to parent).
 
 // ---------------------------------------------------------------------------
@@ -71,8 +72,6 @@ async function createAgentContext(
 		projectPath: string;
 		currentTaskId: string;
 		depth: number;
-		queue: MessageQueue;
-		childModel?: string;
 		mcpManager?: McpClientManager;
 		/** System prompt for auto-launching target project agents (cross-project). Only needed at depth 0. */
 		orchestratorSystemPrompt?: string;
@@ -95,84 +94,28 @@ async function createAgentContext(
 		await mcpManager.connectAll(effectiveCfg.mcpServers);
 	}
 
-	const wtRoot = join(project.path, ".worktrees");
-	const wm = new WorktreeManager(project.path, wtRoot);
-
-	const { toolDefs, hasRunningChildren } = createOrchestratorTools({
-		tracker: opts.tracker,
-		provider,
-		worktrees: wm,
-		projectPath: opts.projectPath,
-		repoPath: project.path,
-		currentTaskId: opts.currentTaskId,
-		depth: opts.depth,
-		childModel: opts.childModel ?? effectiveCfg.childModel,
-		queue: opts.queue,
-		defaultBudgetUsd: effectiveCfg.budgetUsd,
-		clarifyTimeoutMs: effectiveCfg.clarifyTimeoutMs,
-		maxDepth: effectiveCfg.maxDepth,
-		projectManager: opts.depth === 0 ? ctx.pm : undefined,
-		currentProjectId: project.id,
-		clearSession: (taskId: string) =>
-			getEventStore(ctx, project.id).clear(taskId),
-		dataDir: ctx.config.dataDir,
-		closeQueue: opts.depth > 0 ? () => opts.queue.close() : undefined,
-		onTaskEvent: (event) => {
-			console.error(event.type, event.taskId);
-			const ts = (event.ts as number) || Date.now();
-			// Transform agent_event wrappers into flat Events
-			if (event.type === "agent_event") {
-				const taskId = (event.taskId as string) || "";
-				const eventType = event.eventType as string;
-				const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
-				// Construct a proper Event from the wrapper fields
-				emitEvent(ctx, project.id, {
-					type: eventType,
-					taskId,
-					ts,
-					...rest,
-				} as unknown as Event);
-			} else {
-				// Already a valid Event shape — just ensure ts
-				const withTs = event.ts ? event : { ...event, ts };
-				emitEvent(ctx, project.id, withTs as unknown as Event);
-			}
-			broadcastTreeUpdate(ctx, project.id, opts.tracker);
+	const { toolDefs, hasRunningChildren } = createOrchestratorTools(
+		ctx,
+		project.id,
+		opts.currentTaskId,
+		{
+			deliverMessage: async (nodeId: string, message: QueueMessage) => {
+				await deliverMessage(ctx, project, nodeId, message);
+			},
+			injectMessageToProject:
+				opts.depth === 0 && opts.orchestratorSystemPrompt
+					? async (projectId: string, message: string) => {
+							return handleInjectMessage(
+								ctx,
+								projectId,
+								message,
+								undefined,
+								opts.orchestratorSystemPrompt,
+							);
+						}
+					: undefined,
 		},
-		getParentQueue:
-			opts.depth > 0
-				? () => findParentQueue(opts.tracker, opts.currentTaskId)?.queue
-				: undefined,
-		broadcastTreeUpdate: () =>
-			broadcastTreeUpdate(ctx, project.id, opts.tracker),
-		isProjectActive:
-			opts.depth === 0
-				? (projectId: string) => ctx.activeSessions.has(projectId)
-				: undefined,
-		getProjectRootQueue:
-			opts.depth === 0
-				? (projectId: string) => {
-						const t = ctx.trackers.get(projectId);
-						if (!t?.rootNodeId) return undefined;
-						return globalAgentQueues.get(t.rootNodeId);
-					}
-				: undefined,
-		deliverMessage: async (nodeId: string, message: QueueMessage) => {
-			await deliverMessage(ctx, project, nodeId, message);
-		},
-		injectMessageToProject:
-			opts.depth === 0 && opts.orchestratorSystemPrompt
-				? async (projectId: string, message: string) => {
-						return handleInjectMessage(
-							ctx,
-							projectId,
-							message,
-							undefined,
-							opts.orchestratorSystemPrompt,
-						);
-					}
-				: undefined,
-	});
+	);
 
 	// Create built-in tools with handler closures that read session state
 	const builtinTools = createBuiltinTools(
@@ -240,7 +183,7 @@ export interface RunChildCoreParams {
  *
  * Used by `runChildAgentInBackground` for all child agents (both MCP and daemon paths).
  *
- * Done detection: done() handler calls closeQueue() directly (via OrchestratorToolsDeps),
+ * Done detection: done() handler closes the queue directly (derived from session),
  * which closes the queue before waitForQueueMessages() blocks. The fallback path detects
  * tool_result for mcp__opengraft__done and closes the queue (handles edge cases).
  */
@@ -560,41 +503,8 @@ function computeDepth(tracker: TaskTracker, nodeId: string): number {
 	return depth;
 }
 
-/**
- * Find the nearest ancestor with an active queue for a given node.
- * Walks up the parent chain to bubble through non-running intermediate nodes.
- * Returns both the queue and the ID of the ancestor it belongs to.
- */
-/**
- * Find the nearest ancestor with an active queue for a given node.
- * Walks up the parent chain to bubble through non-running intermediate nodes.
- * Returns both the queue and the ID of the ancestor it belongs to.
- *
- * Exported so agent-tools.ts can use it for dynamic parent queue lookup.
- */
-export function findParentQueue(
-	tracker: TaskTracker,
-	nodeId: string,
-): { queue: MessageQueue; targetId: string } | undefined {
-	const node = tracker.get(nodeId);
-	if (!node?.parentId) return undefined;
-
-	let targetId: string | null = node.parentId;
-	while (targetId) {
-		const queue = globalAgentQueues.get(targetId);
-		if (queue) return { queue, targetId };
-
-		const ancestor = tracker.get(targetId);
-		if (!ancestor) break;
-
-		// Reached root without finding a queue — root isn't running
-		if (!ancestor.parentId) break;
-
-		targetId = ancestor.parentId;
-	}
-
-	return undefined;
-}
+// findParentQueue moved to agent-tools.ts to avoid circular imports
+// (orchestrator-tools.ts needs it, and agent-lifecycle.ts imports from orchestrator-tools.ts)
 
 /** Run a child agent in the background for a specific task node. */
 export async function runChildAgentInBackground(
@@ -634,7 +544,6 @@ export async function runChildAgentInBackground(
 			projectPath: node.worktreePath as string,
 			currentTaskId: nodeId,
 			depth,
-			queue: childQueue,
 			mcpManager,
 			getSession,
 		});
@@ -863,8 +772,6 @@ export async function launchAgent(
 		projectPath: project.path,
 		currentTaskId: rootNodeId,
 		depth: 0,
-		childModel: opts.childModel,
-		queue,
 		mcpManager,
 		orchestratorSystemPrompt,
 		getSession,
