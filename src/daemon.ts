@@ -5,10 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import type { AgentSession } from "./agent-provider.ts";
-import {
-	ROOT_ORCHESTRATOR_PREAMBLE,
-	UNIFIED_SYSTEM_PROMPT,
-} from "./agent-tools.ts";
+import { buildSystemPrompt } from "./agent-tools.ts";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
 import { launchAgent, stopAgent } from "./daemon/agent-lifecycle.ts";
 import type {
@@ -357,7 +354,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	};
 }
 
-const ORCHESTRATOR_SYSTEM_PROMPT = `${ROOT_ORCHESTRATOR_PREAMBLE}\n\n${UNIFIED_SYSTEM_PROMPT}`;
+const ORCHESTRATOR_SYSTEM_PROMPT = buildSystemPrompt(true);
 
 // Only start the server when run directly, not when imported for testing.
 if (import.meta.main) {

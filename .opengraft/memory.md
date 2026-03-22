@@ -354,3 +354,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **Root preamble**: `ROOT_ORCHESTRATOR_PREAMBLE` prepended for root agents only.
 - **No tool listings in prompts**: `ToolDefinition.description` is sole source of truth for tool schema. Prompts contain only STRATEGY guidance.
 - Prompt ordering for cache: UNIFIED_SYSTEM_PROMPT (stable) → ROOT_ORCHESTRATOR_PREAMBLE → date (changes daily).
+
+## Prompt Cache Ordering & Naming Cleanup
+- **Prompt ordering**: SYSTEM_PROMPT (stable prefix, cacheable) → ROOT_ORCHESTRATOR_ROLE (root only) → date (dynamic, at end). `buildSystemPrompt(isRoot)` in system-prompts.ts handles assembly.
+- **Renames**: `UNIFIED_SYSTEM_PROMPT` → `SYSTEM_PROMPT`, `ROOT_ORCHESTRATOR_PREAMBLE` → `ROOT_ORCHESTRATOR_ROLE`, `executeToolUnified` → `executeTool` (in provider-shared.ts).
+- **Naming rule**: No comparative names ("unified", "improved", "new", etc.) in identifiers. Name things for what they ARE.
+- Key files table entry: `src/system-prompts.ts` exports `SYSTEM_PROMPT`, `ROOT_ORCHESTRATOR_ROLE`, `buildSystemPrompt`.

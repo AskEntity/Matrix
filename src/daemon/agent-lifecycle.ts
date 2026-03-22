@@ -1,10 +1,10 @@
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
 import {
+	buildSystemPrompt,
 	createOrchestratorTools,
 	findParentQueue,
 	slugify,
-	UNIFIED_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
 import { DEFAULT_MODEL } from "../config.ts";
 import { type Event, findOrphanedToolCalls } from "../events.ts";
@@ -577,7 +577,7 @@ export async function runChildAgentInBackground(
 				cwd: node.worktreePath as string,
 				emit: emitWithTask,
 				activeEvents,
-				systemPrompt: UNIFIED_SYSTEM_PROMPT,
+				systemPrompt: buildSystemPrompt(false),
 				resumeSessionId: nodeId,
 				model: agentCtx.effectiveCfg.model,
 				mcpToolDefs: agentCtx.mcpToolDefs,

@@ -335,7 +335,7 @@ export interface ToolExecResult {
  * ALL tools (built-in + orchestrator + external MCP) go through this single path.
  * Returns a unified ToolExecResult.
  */
-export async function executeToolUnified(
+export async function executeTool(
 	toolName: string,
 	input: Record<string, unknown>,
 	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
@@ -1746,7 +1746,7 @@ export async function* runProviderLoop(
 		// ── Execute tools concurrently ──
 		const execResults = await Promise.all(
 			toolUses.map(async (toolUse) => {
-				return executeToolUnified(
+				return executeTool(
 					toolUse.name,
 					toolUse.input,
 					mcpHandlers,

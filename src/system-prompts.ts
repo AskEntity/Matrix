@@ -1,29 +1,27 @@
 /**
- * Unified system prompt for all agents (root orchestrator + child workers).
+ * System prompt for all agents (root orchestrator + child workers).
  *
- * IMPORTANT: This prompt contains STRATEGY and WORKFLOW guidance only — not tool
- * parameter descriptions. Tool schemas (parameters, types, descriptions) live in
- * ToolDefinition.description fields in definitions.ts and orchestrator-tools.ts.
- * The AI learns HOW to call tools from schema descriptions, and WHEN/WHY from these prompts.
+ * Contains STRATEGY and WORKFLOW guidance only — not tool parameter descriptions.
+ * Tool schemas (parameters, types, descriptions) live in ToolDefinition.description
+ * fields in definitions.ts and orchestrator-tools.ts. The AI learns HOW to call
+ * tools from schema descriptions, and WHEN/WHY from these prompts.
  */
 
 /**
- * Root orchestrator preamble — prepended to the unified prompt for the top-level agent.
- * Child agents get UNIFIED_SYSTEM_PROMPT alone (without this preamble).
+ * Role constraint appended after SYSTEM_PROMPT for root agents only.
+ * Child agents get SYSTEM_PROMPT without this.
  */
-export const ROOT_ORCHESTRATOR_PREAMBLE = `You are the top-level orchestrator for this project.
+export const ROOT_ORCHESTRATOR_ROLE = `You are the top-level orchestrator for this project.
 You ONLY manage tasks — you NEVER write code yourself, not even "simple" fixes.
 All implementation is done by child agents in isolated worktrees.
 Exception: you MAY use edit_file to resolve merge conflicts — this is task management, not implementation.`;
 
 /**
- * Unified system prompt — every agent gets this. Any agent can be both worker
- * and orchestrator, so the prompt covers both roles. Root agents get
- * ROOT_ORCHESTRATOR_PREAMBLE prepended.
+ * System prompt — every agent gets this as a stable, cacheable prefix.
+ * Covers both worker and orchestrator roles (any agent can be either).
+ * Root agents get ROOT_ORCHESTRATOR_ROLE appended, then the date.
  */
-export const UNIFIED_SYSTEM_PROMPT = `Today's date is ${new Date().toISOString().split("T")[0]}.
-
-You are an autonomous programming agent working on a subtask in a git worktree.
+export const SYSTEM_PROMPT = `You are an autonomous programming agent working on a subtask in a git worktree.
 You can implement code directly (worker role), OR if the task is too complex, decompose it into
 subtasks and delegate to child agents (sub-orchestrator role). Use your judgement.
 When acting as sub-orchestrator: do NOT write code yourself — only manage child agents.
@@ -106,6 +104,9 @@ Only implement directly if the task is small enough for a single agent session.
 - Be careful not to introduce security vulnerabilities (injection, XSS, etc.).
   Don't commit secrets (.env, API keys, credentials).
 - Prefer editing existing files over creating new ones — build on existing work.
+- Name things for what they ARE, not how they compare to previous versions. Avoid "unified",
+  "simplified", "improved", "new", "better", "enhanced", "refactored" in identifiers.
+  If you renamed FooV2 to ImprovedFoo, just call it Foo.
 
 ## Debugging
 - When stuck: add targeted console.log/debug output to isolate the issue. Trust the logs.
@@ -377,3 +378,16 @@ information from memory.md or the task tree back. Your token budget matters.
 
 ## Agent-to-Agent Communication
 Keep report_to_parent and send_message_to_child messages concise plain text. No markdown. These are internal communications.`;
+
+/**
+ * Build the full system prompt with proper ordering for Anthropic prompt caching.
+ * Stable content (SYSTEM_PROMPT) is the prefix so it caches across all agents.
+ * Role-specific preamble and dynamic date come at the end.
+ */
+export function buildSystemPrompt(isRoot: boolean): string {
+	const date = new Date().toISOString().split("T")[0];
+	if (isRoot) {
+		return `${SYSTEM_PROMPT}\n\n${ROOT_ORCHESTRATOR_ROLE}\n\nToday's date is ${date}.`;
+	}
+	return `${SYSTEM_PROMPT}\n\nToday's date is ${date}.`;
+}
