@@ -15,8 +15,7 @@ import {
 	resolveColor,
 	slugify,
 } from "./agent-tools.ts";
-import type { EventStore } from "./event-store.ts";
-import { queueMessageToEvent } from "./events.ts";
+
 import {
 	globalAgentQueues,
 	type MessageQueue,
@@ -98,8 +97,8 @@ export interface OrchestratorToolsDeps {
 	getProjectRootQueue?: (projectId: string) => MessageQueue | undefined;
 	/** Current project ID — used as sender identity for cross-project messages. */
 	currentProjectId?: string;
-	/** EventStore for JSONL event persistence. Used to clear session data on reset/delete. */
-	eventStore?: EventStore;
+	/** Clear session JSONL data for a task. Used by reset/delete to clean up event history. */
+	clearSession?: (taskId: string) => void;
 	/** Data directory root (~/.opengraft). Used for persistent message queue. */
 	dataDir?: string;
 	/**
@@ -300,22 +299,15 @@ export function createOrchestratorTools(
 				}
 			}
 
-			// Write structured message events to JSONL for each consumed queue message.
-			// The provider writes tool_result + standalone messages_consumed events.
-			const consumedIds: string[] = [];
-			const sessionId = currentTaskId ?? "orchestrator";
+			// Separate user messages (already persisted at send time) from queue messages
+			// that need to flow through the provider's emit path for SSE broadcast + persistence.
+			const userConsumedIds: string[] = [];
+			const queueMessages: QueueMessage[] = [];
 			for (const msg of all) {
 				if (msg.source === "user" && msg.id) {
-					// User messages are already written to JSONL at send time
-					consumedIds.push(msg.id);
+					userConsumedIds.push(msg.id);
 				} else {
-					const evt = queueMessageToEvent(msg);
-					const evtId = (evt as { id?: string }).id;
-					if (evtId) consumedIds.push(evtId);
-					// Write the structured message event to JSONL
-					if (deps.eventStore) {
-						deps.eventStore.append(sessionId, evt);
-					}
+					queueMessages.push(msg);
 				}
 			}
 
@@ -327,7 +319,12 @@ export function createOrchestratorTools(
 					},
 					...imageBlocks,
 				],
-				...(consumedIds.length > 0 ? { _consumedMessageIds: consumedIds } : {}),
+				...(userConsumedIds.length > 0
+					? { _consumedMessageIds: userConsumedIds }
+					: {}),
+				...(queueMessages.length > 0
+					? { _consumedQueueMessages: queueMessages }
+					: {}),
 				...(formatted ? { _formattedQueueMessages: formatted } : {}),
 				_pending: pendingData,
 			};
@@ -875,9 +872,7 @@ export function createOrchestratorTools(
 					}
 
 					// Delete event JSONL files
-					if (deps.eventStore && node.id) {
-						deps.eventStore.clear(node.id);
-					}
+					deps.clearSession?.(node.id);
 
 					// Clear persisted messages for this task and all descendants
 					if (deps.dataDir && deps.currentProjectId) {
@@ -969,9 +964,7 @@ export function createOrchestratorTools(
 					}
 
 					// Delete event JSONL files
-					if (deps.eventStore) {
-						deps.eventStore.clear(node.id);
-					}
+					deps.clearSession?.(node.id);
 
 					// Clear persisted messages (follows session lifecycle)
 					if (deps.dataDir && deps.currentProjectId) {
