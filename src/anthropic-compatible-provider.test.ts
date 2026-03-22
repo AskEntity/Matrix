@@ -2357,7 +2357,7 @@ describe("Event deterministic verification", () => {
 
 		// Verify reconstruction
 		const reconstructed = eventsToAnthropicMessages(events);
-		// Should have: user_msg, assistant(end_turn), queue_message(as user), assistant(continue)
+		// Should have: user_msg, assistant(end_turn), queue message (as user), assistant(continue)
 		expect(reconstructed.length).toBeGreaterThanOrEqual(4);
 
 		// Find the queue-originated user message in reconstructed — it becomes a plain user message

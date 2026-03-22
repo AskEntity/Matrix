@@ -24,13 +24,6 @@ export interface Project {
 export type UIOnlyEvent =
 	| { type: "lifecycle"; content: string; taskId?: string; ts: number }
 	| {
-			type: "generic_queue_message";
-			content: string;
-			source?: string;
-			taskId?: string;
-			ts: number;
-	  }
-	| {
 			type: "parent_update";
 			content: string;
 			taskId?: string;

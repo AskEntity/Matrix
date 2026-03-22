@@ -21,7 +21,6 @@ function getSearchableText(entry: LogEntry): string {
 		case "parent_update":
 		case "child_report":
 		case "cross_project":
-		case "generic_queue_message":
 			return entry.content ?? "";
 		case "background_complete":
 			return entry.command;

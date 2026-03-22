@@ -106,7 +106,6 @@ const EPHEMERAL_EVENT_TYPES = new Set([
 	"agent_idle",
 	"agent_active",
 	"status",
-	"queue_message",
 	"clarification_timeout",
 	"heartbeat",
 	// tree_updated carries full tree payload — ephemeral push, not JSONL

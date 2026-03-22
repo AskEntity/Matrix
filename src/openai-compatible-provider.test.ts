@@ -1303,7 +1303,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 					);
 				}
 
-				// Verify reconstruction — queue_message should become user message
+				// Verify reconstruction — queue message should become user message
 				const reconstructed = eventsToOpenAIMessages(events);
 				expect(reconstructed.length).toBeGreaterThanOrEqual(4);
 			},
