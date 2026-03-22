@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { MessageQueue } from "../message-queue.ts";
 import {
+	awaitBackgroundProcess,
 	executeBashWithTimeout,
 	getBackgroundStatus,
 	getRunningBackgroundCount,
@@ -74,17 +75,28 @@ export async function executeTool(
 					return { content: result, isError: false };
 				}
 
+				if (bgAction === "await") {
+					const result = await awaitBackgroundProcess(sessionId, backgroundId);
+					if (result === null) {
+						return {
+							content: `Background process ${backgroundId} not found.`,
+							isError: true,
+						};
+					}
+					return result;
+				}
+
 				return {
-					content: `Unknown bg_action: ${bgAction}. Use 'kill' or 'status'.`,
+					content: `Unknown bg_action: ${bgAction}. Use 'kill', 'status', or 'await'.`,
 					isError: true,
 				};
 			}
 
 			const command = input.command as string;
-			const foregroundTimeout = Math.max(
-				(input.foreground_timeout as number) ?? 120000,
-				0,
-			);
+			const runInBackground = input.run_in_background as boolean | undefined;
+			const foregroundTimeout = runInBackground
+				? 0
+				: Math.max((input.foreground_timeout as number) ?? 120000, 0);
 
 			// Warn about running background commands
 			const bgWarning =

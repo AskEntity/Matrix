@@ -28,6 +28,10 @@ export interface MessageBody {
 	commandId?: string;
 	exitCode?: number | null;
 	durationMs?: number;
+	/** stdout content from background_complete (included when small). */
+	stdout?: string;
+	/** stderr content from background_complete (included when small). */
+	stderr?: string;
 	images?: Array<{ base64: string; mediaType: string }>;
 	/** Context header prepended to AI message (working dir, pre-loaded memory, task description). Not shown in UI. */
 	header?: string;
@@ -246,6 +250,8 @@ export function queueMessageToEvent(msg: QueueMessage): MessageEvent {
 					commandId: msg.commandId,
 					exitCode: msg.exitCode,
 					durationMs: msg.durationMs,
+					...(msg.stdout ? { stdout: msg.stdout } : {}),
+					...(msg.stderr ? { stderr: msg.stderr } : {}),
 				};
 			case "system":
 				return { source: "system", content: msg.content };
@@ -270,8 +276,16 @@ function formatBodyForAI(body: MessageBody): string {
 			return `<child_report from="${body.title}" id="${body.taskId}"${body.summary ? ` summary="${body.summary}"` : ""}${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</child_report>`;
 		case "cross_project":
 			return `<cross_project from="${body.fromProjectName}" projectId="${body.fromProjectId}">${body.content}</cross_project>`;
-		case "background_complete":
-			return `<background_complete command="${body.command}" id="${body.commandId}" exit="${body.exitCode}" duration="${body.durationMs}ms">Command completed. Use bg_action="status" with background_id="${body.commandId}" or read_file on output files to see results.</background_complete>`;
+		case "background_complete": {
+			const parts: string[] = [];
+			if (body.stdout) parts.push(`stdout:\n${body.stdout}`);
+			if (body.stderr) parts.push(`stderr:\n${body.stderr}`);
+			const innerContent =
+				parts.length > 0
+					? `${parts.join("\n")}\nexit code: ${body.exitCode}`
+					: `exit code: ${body.exitCode}`;
+			return `<background_complete command="${body.command}" id="${body.commandId}" exit="${body.exitCode}" duration="${body.durationMs}ms">${innerContent}</background_complete>`;
+		}
 		case "system":
 			return `<system_notification>${body.content}</system_notification>`;
 		case "compact":
