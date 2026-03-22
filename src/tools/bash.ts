@@ -548,18 +548,29 @@ export async function executeBashWithTimeout(
 	}));
 
 	// Race: foreground timeout vs process completion vs external signal
-	const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
-		setTimeout(() => resolve({ timedOut: true }), foregroundTimeout);
+	// Reason distinguishes timeout (automatic) from user-initiated move-to-background
+	type BackgroundReason = "timeout" | "user";
+	const timeoutPromise = new Promise<{
+		timedOut: true;
+		reason: BackgroundReason;
+	}>((resolve) => {
+		setTimeout(
+			() => resolve({ timedOut: true, reason: "timeout" }),
+			foregroundTimeout,
+		);
 	});
 
 	// External signal: allows moveToBackground() to interrupt the foreground wait
 	// Use toolCallId as key when available (allows frontend to reference via tool_call event ID)
 	const fgKey = toolCallId ?? execId;
-	const externalSignalPromise = new Promise<{ timedOut: true }>((resolve) => {
+	const externalSignalPromise = new Promise<{
+		timedOut: true;
+		reason: BackgroundReason;
+	}>((resolve) => {
 		if (sessionId && fgMap) {
 			const key = `${sessionId}:${fgKey}`;
 			fgMap.set(key, {
-				resolve: () => resolve({ timedOut: true }),
+				resolve: () => resolve({ timedOut: true, reason: "user" }),
 				command,
 			});
 		}
@@ -661,8 +672,13 @@ export async function executeBashWithTimeout(
 		// File may be empty
 	}
 
+	const movedReason =
+		result.reason === "user"
+			? "Command moved to background."
+			: `Command moved to background after ${foregroundTimeout}ms.`;
+
 	return {
-		content: `Command moved to background after ${foregroundTimeout}ms.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialStdout ? `\n\nPartial stdout so far:\n${partialStdout.slice(0, 5000)}` : ""}`,
+		content: `${movedReason}\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialStdout ? `\n\nPartial stdout so far:\n${partialStdout.slice(0, 5000)}` : ""}`,
 		isError: false,
 		backgroundId: bgId,
 		backgroundCommand: command,
