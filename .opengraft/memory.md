@@ -274,23 +274,26 @@ Daemon (Hono: HTTP + SSE on :7433)
 - done() card and child_complete card both show "Task Passed/Failed: {title}" format with green/red border.
 
 
-## Bash Background Improvements
-- `formatBashResult()` in bash.ts is THE shared formatting function for ALL output paths (foreground, background completion, await, status).
-- `run_in_background: true` is sugar for `foreground_timeout=0`. Handled in executor.ts.
-- `bg_action="await"` blocks on `completionPromise` (stored on BackgroundProcess). Returns formatted output like foreground.
-- Background completion notifications now include stdout/stderr content when small (< 50KB). formatBashResult cleans up small files, keeps large ones.
-- `completionPromise` pattern: create bgEntry first, then assign promise that captures resolve callback onto bgEntry. Avoids non-null assertions.
-- `queueMessageToEvent` and `formatBodyForAI` updated to pass through stdout/stderr fields for background_complete messages.
+## Background Process Management
 
+**Architecture**: Two tools — `bash` (execute only) and `background` (manage: list/status/kill/await). Separated from bash to keep bash simple.
 
-## Background Tool Refactor (Phase 1)
-- `bg_action` and `background_id` params removed from bash tool schema. Background management is now a first-class `background` tool with actions: list/status/kill/await.
-- `getRunningBackgroundCount` and `getRunningBackgroundSummary` removed — background warning injection in bash output removed. Use `background` tool `list` action instead.
-- `src/tools/background.ts` — new file: `executeBackgroundTool`, `listBackgroundProcesses`, `moveToBackground`, `cancelAwait`. Imports from bash.ts (no circular deps).
-- `foregroundExecutions` Map lives in bash.ts, exported for background.ts to use. Tracks resolve callbacks for external signal in Promise.race.
-- External signal: third racer in `executeBashWithTimeout` Promise.race — allows `moveToBackground()` to interrupt foreground wait from REST API.
-- `executeBashWithTimeout` now returns `backgroundId?: string` and `backgroundCommand?: string` when command moves to background.
-- `tool_result` Event type now has optional `backgroundId` and `backgroundCommand` fields.
-- REST endpoints added to agent routes: POST `/projects/:id/background/move`, `/projects/:id/background/:bgId/kill`, `/projects/:id/background/:bgId/cancel-await`.
-- Test pitfall: background process cleanup can cause Bun filesystem races. After `cleanupSessionBackgroundProcesses`, drain the queue (`await queue.wait()`) to let async monitor finish before starting new tests that use temp files.
+**Key files**: `src/tools/bash.ts` (execution + formatBashResult), `src/tools/background.ts` (management), `web/components/BackgroundProcessBar.tsx` (UI).
 
+**Backend**:
+- `bg_action`/`background_id` removed from bash. Background warning injection removed. Use `background list` instead.
+- `formatBashResult()` is THE shared formatting function for ALL output paths (foreground, background completion, await, status).
+- `run_in_background: true` = sugar for `foreground_timeout=0`.
+- `background await` blocks on `completionPromise` stored on BackgroundProcess.
+- External signal: third racer in `executeBashWithTimeout` Promise.race — `moveToBackground()` interrupts foreground wait from REST API.
+- `tool_result` Event type has optional `backgroundId` and `backgroundCommand` fields.
+- REST endpoints: POST `/projects/:id/background/move`, `/:bgId/kill`, `/:bgId/cancel-await`. Require `sessionId` (= `taskId`).
+- `foregroundExecutions` Map in bash.ts, exported for background.ts. Uses `toolCallId` as key.
+- Test pitfall: after `cleanupSessionBackgroundProcesses`, drain queue to let async monitor finish before new tests.
+
+**Frontend**:
+- `backgroundProcesses` state = `Map<string, {id, command, startTime, taskId}>` in App.tsx.
+- Tracked via: `tool_result` with `backgroundId` (add), `message` with `body.source=background_complete` (remove by `commandId`).
+- Removal at phase 1 (message receipt), not phase 2 (messages_consumed). `processEventBatch` clears before replay.
+- BackgroundProcessBar filters by taskId. Shows elapsed time, kill button, command preview.
+- Move-to-background button on pending bash tool_call cards. Calls REST endpoint.

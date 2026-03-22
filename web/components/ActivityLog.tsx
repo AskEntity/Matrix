@@ -51,6 +51,7 @@ export const ActivityLog = memo(function ActivityLog({
 	autoScroll,
 	onAutoScrollChange,
 	isActive,
+	projectId,
 }: {
 	entries: LogEntry[];
 	filterTaskId: string | null;
@@ -59,6 +60,7 @@ export const ActivityLog = memo(function ActivityLog({
 	autoScroll: boolean;
 	onAutoScrollChange: (locked: boolean) => void;
 	isActive: boolean;
+	projectId: string;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 
@@ -296,6 +298,8 @@ export const ActivityLog = memo(function ActivityLog({
 							key={item.entry.id}
 							entry={item.entry}
 							nodeMap={nodeMap}
+							projectId={projectId}
+							rootNodeId={rootNodeId}
 						/>
 					),
 				)}
