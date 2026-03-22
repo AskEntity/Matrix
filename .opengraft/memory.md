@@ -364,3 +364,8 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `opengraft init` auto-detects package manager (bun.lockb, package-lock.json, yarn.lock, pnpm-lock.yaml, requirements.txt) and creates appropriate hook.
 - OpenGraft's own hook: `.opengraft/hooks/setup_worktree.sh` → `bun install --frozen-lockfile`.
 - System prompt no longer references bun-specific commands — agents check memory.md/CLAUDE.md for project commands.
+
+## Background Move Reason
+- `executeBashWithTimeout` Promise.race carries `reason: 'timeout' | 'user'` on the timedOut result.
+- Timeout path: `reason: 'timeout'`, user moveToBackground: `reason: 'user'`.
+- Result text differs: timeout shows duration, user-initiated does not.
