@@ -82,8 +82,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 **Ephemeral events** (broadcast only, NOT persisted to JSONL):
 - `text_delta`, `usage`, `agent_idle`, `agent_active`, `status`, `heartbeat`, `tree_updated`, `clarification_timeout`
-- `queue_message` — LEGACY, scheduled for removal. Duplicates two-phase lifecycle.
-- Provider events (`assistant_text`, `tool_call`, `tool_result`, `compact_marker`) — already written to JSONL by providers
+- Provider events (`assistant_text`, `tool_call`, `tool_result`, `compact_marker`) — persisted by providers via emit callback, not by emitEvent
 
 **Two-phase message lifecycle**:
 1. Phase 1: `message` event with `id` written to JSONL at send time → frontend defers into `deferredMessages` map → shows in pending banner
@@ -112,10 +111,10 @@ Daemon (Hono: HTTP + SSE on :7433)
 ## Agent Lifecycle
 
 - `stopAgent()` cascades: closes child queues via `globalAgentQueues`, sets children to `failed`.
-- `done()` = explicit yield: sets tracker status, emits `task_completed`, blocks on `waitForQueueMessages()`. Wake messages arrive as done()'s tool_result.
+- `done()` = update status + deliver child_complete to parent queue + closeQueue (child) or block on waitForQueueMessages (root).
 - `yield()` and `done()` share `waitForQueueMessages()` helper. Both = "block and wait."
 - Loop exits ONLY when queue is closed (stop signal). Stop = pause (root stays in_progress → auto-resume). Only `done()` changes to passed/failed.
-- **done() closes queue directly**: `closeQueue` callback (OrchestratorToolsDeps) for child agents (depth > 0). No `task_completed` event needed.
+- **done() closes queue directly**: `closeQueue` callback (OrchestratorToolsDeps) for child agents (depth > 0). Child_complete delivered directly by done(), not reconstructed by agent-lifecycle.
 
 ## Task System
 
@@ -241,43 +240,13 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **done() tool cards unsuppressed** in LogEntryView.tsx and ToolCard.tsx — styled with green/red border like old task_completed card.
 - **Error path in runChildAgentInBackground**: emits `error` event instead of `task_completed`. child_complete queue message still handles parent notification.
 
-## queue_message Removal (TODO)
-- `queue_message` is a LEGACY ephemeral SSE event that duplicates the two-phase lifecycle. It must be fully removed from backend and frontend.
-- The TWO-PHASE lifecycle is the ONE canonical UI rendering path: `message` event (persisted) → `deferredMessages` → `messages_consumed` → `materialize()`.
-- `queue_message` caused duplicate cards and live/refresh inconsistency. Do NOT use it as a workaround for broken `messages_consumed` — fix `messages_consumed` instead.
-- **Removal scope**: `src/orchestrator-tools.ts` (emitter), `src/provider-shared.ts` (emitter), `src/events.ts` (type), `src/daemon/event-system.ts` (ephemeral list), `web/event-handler.ts` (processEvent case), `web/hooks.ts`, `web/components/tools/utils.ts`, `src/cli.ts`, test files.
-- **Prerequisite**: `messages_consumed` must work reliably live before removing queue_message. Currently it doesn't — that's the real bug to fix first.
-
 ## queue_message Removal (DONE)
-- Removed `queue_message` from Event union type in events.ts
-- Removed from EPHEMERAL_EVENT_TYPES in event-system.ts
-- Removed emission in orchestrator-tools.ts (waitForQueueMessages) — kept formatQueueMessage for AI text
-- Removed two emissions in provider-shared.ts (recordQueueEvents and cancellation point) — removed toRawMessage import
-- Removed case "queue_message" from cli.ts event handler
-- Removed createQueueUIEvent function and case "queue_message" from web/event-handler.ts processEvent
-- Removed generic_queue_message from UIOnlyEvent union in hooks.ts
-- Removed generic_queue_message cases from ActivityLog.tsx, LogEntryView.tsx, utils.ts
-- Removed CSS classes: .og-event-queue_message, .og-queue-message, .og-queue-message-text
-- Changed queueEntryToUIEvent default case to return null instead of generic_queue_message
-- toRawMessage still exists in agent-tools.ts (dead code) but is harmless — can be cleaned up later
-
-
-## done() summary → child_complete output
-- done() handler stores `args.summary` on tracker node via `tracker.setDoneSummary()`
-- `doneSummary` field added to TaskNode type (optional, backward compat)
-- agent-lifecycle reads `freshNode.doneSummary` for child_complete output, falls back to `agentResult.output`
-- Removed "Passed"/"Failed" badge spans (og-mcp-done-status) from task_completed card in LogEntryView.tsx
-
-
-## Future: done() = update_task + deliverMessage + closeQueue
-- done() should be equivalent to: update tracker status → deliver child_complete message directly to parent queue (like report_to_parent) → close queue for provider exit
-- The child_complete message should be self-contained: title, status, summary — all in the message body. No reconstruction from agentResult or tracker state.
-- Current workaround: doneSummary stored on tracker node, read by runChildAgentInBackground. Works but violates stateless message principle.
-- Target: done() handler directly calls deliverMessage with the complete child_complete body, then closeQueue. runChildAgentInBackground only handles cleanup (cost, worktree), not message construction.
+- `queue_message` ephemeral SSE event fully removed from backend + frontend (-180 lines).
+- TWO-PHASE lifecycle is the ONE canonical UI rendering path: `message` event (persisted) → `deferredMessages` → `messages_consumed` → `materialize()`.
+- `toRawMessage` dead code also removed from agent-tools.ts.
 
 
 ## done() → child_complete Direct Delivery
-- done() handler now directly enqueues child_complete to parent queue (like report_to_parent), no more reconstruction from tracker state in runChildAgentInBackground.
-- `doneSummary` field removed from TaskNode type and `setDoneSummary` removed from TaskTracker — summary lives in the message, not on the node.
+- done() handler directly enqueues child_complete to parent queue (stateless, like report_to_parent). No reconstruction from tracker state.
 - runChildAgentInBackground only delivers child_complete as fallback when done() was NOT called (daemon restart, error).
-- done() card and child_complete card both show "Task Passed/Failed: {title}" format.
+- done() card and child_complete card both show "Task Passed/Failed: {title}" format with green/red border.
