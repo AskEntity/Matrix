@@ -79,12 +79,10 @@ export type { BackgroundProcess } from "./tools/index.ts";
 // ── Re-exports from extracted tool modules ──
 // These were extracted from this file; re-exported to preserve backward compatibility.
 export {
-	backgroundProcesses,
 	cleanupSessionBackgroundProcesses,
 	executeBashWithTimeout,
 	executeTool,
 	getBackgroundStatus,
-	getSessionBackgroundProcesses,
 	jsSearch,
 	killBackgroundProcess,
 	resolvePath,
@@ -92,10 +90,7 @@ export {
 	truncateSearchOutput,
 } from "./tools/index.ts";
 
-import {
-	cleanupSessionBackgroundProcesses as _cleanupBg,
-	TOOLS as _TOOLS,
-} from "./tools/index.ts";
+import { TOOLS as _TOOLS } from "./tools/index.ts";
 
 /**
  * Add cache_control breakpoints to the messages array for prompt caching.
@@ -953,7 +948,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			stop() {
 				queue.close();
 				abortController.abort();
-				_cleanupBg(sessionId);
+				// Background process cleanup is handled by the daemon via node.session
 			},
 		};
 	}

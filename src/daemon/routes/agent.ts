@@ -345,8 +345,18 @@ export function registerAgentRoutes(
 
 	// ── Background process management endpoints ──
 
+	// Helper: look up session from tracker by sessionId (= taskId)
+	const getSessionFromTracker = async (
+		projectId: string,
+		sessionId: string,
+	) => {
+		const tracker = await getTracker(ctx, projectId);
+		return tracker.get(sessionId)?.session;
+	};
+
 	// Move a foreground execution to background
 	app.post("/projects/:id/background/move", async (c) => {
+		const projectId = c.req.param("id");
 		const body = await c.req.json<{
 			sessionId: string;
 			execId: string;
@@ -354,7 +364,15 @@ export function registerAgentRoutes(
 		if (!body.sessionId || !body.execId) {
 			return c.json({ error: "sessionId and execId are required" }, 400);
 		}
-		const result = moveToBackground(body.sessionId, body.execId);
+		const session = await getSessionFromTracker(projectId, body.sessionId);
+		if (!session) {
+			return c.json({ error: "Session not found" }, 404);
+		}
+		const result = moveToBackground(
+			session.foregroundExecutions,
+			body.sessionId,
+			body.execId,
+		);
 		if (result === null) {
 			return c.json(
 				{ error: "Foreground execution not found or already completed" },
@@ -366,6 +384,7 @@ export function registerAgentRoutes(
 
 	// Kill a background process
 	app.post("/projects/:id/background/:bgId/kill", async (c) => {
+		const projectId = c.req.param("id");
 		const bgId = c.req.param("bgId");
 		const body = await c.req
 			.json<{ sessionId: string }>()
@@ -373,7 +392,11 @@ export function registerAgentRoutes(
 		if (!body?.sessionId) {
 			return c.json({ error: "sessionId is required" }, 400);
 		}
-		const result = killBackgroundProcess(body.sessionId, bgId);
+		const session = await getSessionFromTracker(projectId, body.sessionId);
+		if (!session) {
+			return c.json({ error: "Session not found" }, 404);
+		}
+		const result = killBackgroundProcess(session.backgroundProcesses, bgId);
 		if (result === null) {
 			return c.json({ error: `Background process ${bgId} not found` }, 404);
 		}

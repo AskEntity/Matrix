@@ -20,7 +20,7 @@ import {
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import { executeTool } from "./tools/index.ts";
-import type { AgentResult } from "./types.ts";
+import type { AgentResult, TaskSession } from "./types.ts";
 
 // ── Constants ──
 
@@ -345,6 +345,7 @@ export async function executeToolUnified(
 	sessionId?: string,
 	queue?: MessageQueue,
 	toolCallId?: string,
+	getSession?: (sessionId: string) => TaskSession | undefined,
 ): Promise<ToolExecResult> {
 	const mcpHandler = mcpHandlers.get(toolName);
 	if (mcpHandler) {
@@ -424,6 +425,7 @@ export async function executeToolUnified(
 		sessionId,
 		queue,
 		toolCallId,
+		getSession,
 	);
 }
 
@@ -1744,6 +1746,7 @@ export async function* runProviderLoop(
 					sessionId,
 					queue,
 					toolUse.id,
+					request.getSession,
 				);
 			}),
 		);

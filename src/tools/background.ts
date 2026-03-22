@@ -3,21 +3,19 @@
  * Extracted from bash.ts to provide a clean separation between command execution
  * and background process lifecycle management.
  *
- * Reuses the same BackgroundProcess infrastructure from bash.ts.
+ * All functions take Maps (from TaskSession) instead of using module-level globals.
  */
 import {
 	awaitBackgroundProcess,
-	backgroundProcesses,
+	type BackgroundProcess,
 	getBackgroundStatus,
 	killBackgroundProcess,
 } from "./bash.ts";
 
-/** List all background processes for a session. */
+/** List all background processes from a session's bgMap. */
 export function listBackgroundProcesses(
-	sessionId: string,
+	bgMap: Map<string, BackgroundProcess>,
 ): { id: string; command: string; status: string; durationMs: number }[] {
-	const map = backgroundProcesses.get(sessionId);
-	if (!map) return [];
 	const now = Date.now();
 	const result: {
 		id: string;
@@ -25,7 +23,7 @@ export function listBackgroundProcesses(
 		status: string;
 		durationMs: number;
 	}[] = [];
-	for (const bg of map.values()) {
+	for (const bg of bgMap.values()) {
 		// Use endTime for completed processes, now for running ones
 		const endPoint = bg.endTime ?? now;
 		result.push({
@@ -46,13 +44,14 @@ export function listBackgroundProcesses(
  * Returns null if the execution is not found or already completed.
  */
 export function moveToBackground(
+	fgMap: Map<string, { resolve: () => void; command: string }>,
 	sessionId: string,
 	execId: string,
 ): string | null {
-	const entry = foregroundExecutions.get(`${sessionId}:${execId}`);
+	const entry = fgMap.get(`${sessionId}:${execId}`);
 	if (!entry) return null;
 	entry.resolve();
-	foregroundExecutions.delete(`${sessionId}:${execId}`);
+	fgMap.delete(`${sessionId}:${execId}`);
 	return execId;
 }
 
@@ -68,10 +67,6 @@ export function cancelAwait(_sessionId: string, _bgId: string): string | null {
 	return "Cannot cancel await — use kill to terminate the process instead.";
 }
 
-// foregroundExecutions lives in bash.ts to avoid circular imports.
-// It's imported here for moveToBackground.
-import { foregroundExecutions } from "./bash.ts";
-
 /**
  * Execute the background management tool.
  * Handles list/status/kill/await actions on background processes.
@@ -80,10 +75,10 @@ export async function executeBackgroundTool(
 	action: string,
 	id: string | undefined,
 	_timeout: number | undefined,
-	sessionId: string,
+	bgMap: Map<string, BackgroundProcess>,
 ): Promise<{ content: string; isError: boolean }> {
 	if (action === "list") {
-		const processes = listBackgroundProcesses(sessionId);
+		const processes = listBackgroundProcesses(bgMap);
 		if (processes.length === 0) {
 			return { content: "No background processes.", isError: false };
 		}
@@ -105,7 +100,7 @@ export async function executeBackgroundTool(
 	}
 
 	if (action === "kill") {
-		const result = killBackgroundProcess(sessionId, id);
+		const result = killBackgroundProcess(bgMap, id);
 		if (result === null) {
 			return {
 				content: `Background process ${id} not found.`,
@@ -116,7 +111,7 @@ export async function executeBackgroundTool(
 	}
 
 	if (action === "status") {
-		const result = getBackgroundStatus(sessionId, id);
+		const result = getBackgroundStatus(bgMap, id);
 		if (result === null) {
 			return {
 				content: `Background process ${id} not found.`,
@@ -127,7 +122,7 @@ export async function executeBackgroundTool(
 	}
 
 	if (action === "await") {
-		const result = await awaitBackgroundProcess(sessionId, id);
+		const result = await awaitBackgroundProcess(bgMap, id);
 		if (result === null) {
 			return {
 				content: `Background process ${id} not found.`,

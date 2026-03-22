@@ -2,7 +2,7 @@ import type { Event } from "./events.ts";
 import type { MessageQueue } from "./message-queue.ts";
 
 import type { ToolDefinition } from "./tool-definition.ts";
-import type { AgentResult } from "./types.ts";
+import type { AgentResult, TaskSession } from "./types.ts";
 
 /** What the orchestrator sends to an agent. */
 export interface AgentRequest {
@@ -40,6 +40,11 @@ export interface AgentRequest {
 	 * Provider uses them to reconstruct the conversation on resume.
 	 */
 	activeEvents?: Event[];
+	/**
+	 * Lookup function for TaskSession by sessionId.
+	 * Used by tool execution to access session-scoped state (backgroundProcesses, foregroundExecutions).
+	 */
+	getSession?: (sessionId: string) => TaskSession | undefined;
 }
 
 /** Handle to a running agent session that supports message injection. */

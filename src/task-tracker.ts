@@ -37,13 +37,15 @@ export class TaskTracker {
 		}
 	}
 
-	/** Persist task tree to disk. */
+	/** Persist task tree to disk. Strips runtime-only `session` field. */
 	async save(): Promise<void> {
 		const dir = dirname(this.treePath);
 		await mkdir(dir, { recursive: true });
 		const data = {
 			rootNodeId: this._rootNodeId,
-			nodes: Array.from(this.nodes.values()),
+			nodes: Array.from(this.nodes.values()).map(
+				({ session: _session, ...rest }) => rest,
+			),
 		};
 		await writeFile(this.treePath, JSON.stringify(data, null, "\t"), "utf-8");
 	}

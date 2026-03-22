@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { MessageQueue } from "../message-queue.ts";
+import type { TaskSession } from "../types.ts";
 import { executeBackgroundTool } from "./background.ts";
 import { executeBashWithTimeout } from "./bash.ts";
 import { jsSearch } from "./search.ts";
@@ -19,6 +20,7 @@ export async function executeTool(
 	sessionId?: string,
 	queue?: MessageQueue,
 	toolCallId?: string,
+	getSession?: (sessionId: string) => TaskSession | undefined,
 ): Promise<{
 	content: string;
 	isError: boolean;
@@ -37,6 +39,7 @@ export async function executeTool(
 				? 0
 				: Math.max((input.foreground_timeout as number) ?? 120000, 0);
 
+			const session = sessionId ? getSession?.(sessionId) : undefined;
 			try {
 				return await executeBashWithTimeout(
 					command,
@@ -46,6 +49,8 @@ export async function executeTool(
 					sessionId,
 					queue,
 					toolCallId,
+					session?.backgroundProcesses,
+					session?.foregroundExecutions,
 				);
 			} catch (e) {
 				return {
@@ -68,7 +73,21 @@ export async function executeTool(
 				};
 			}
 
-			return executeBackgroundTool(action, id, timeout, sessionId);
+			const bgSession = getSession?.(sessionId);
+			if (!bgSession) {
+				return {
+					content:
+						"Error: no session context for background process management.",
+					isError: true,
+				};
+			}
+
+			return executeBackgroundTool(
+				action,
+				id,
+				timeout,
+				bgSession.backgroundProcesses,
+			);
 		}
 
 		case "read_file": {

@@ -49,39 +49,6 @@ export interface BackgroundProcess {
 	resolveCompletion?: () => void;
 }
 
-/**
- * Per-session map of background processes.
- * Outer key = session/agent identifier, inner key = background process ID.
- * Cleaned up when session ends.
- */
-export const backgroundProcesses = new Map<
-	string,
-	Map<string, BackgroundProcess>
->();
-
-/**
- * Foreground execution tracking — stores resolve callbacks for the external signal
- * in the bash Promise.race. When moveToBackground() is called via the background tool,
- * it resolves this promise, causing the race to finish and bash returns a background handle.
- * Key format: `${sessionId}:${execId}`
- */
-export const foregroundExecutions = new Map<
-	string,
-	{ resolve: () => void; command: string }
->();
-
-/** Get the background process map for a session, creating if needed. */
-export function getSessionBackgroundProcesses(
-	sessionId: string,
-): Map<string, BackgroundProcess> {
-	let map = backgroundProcesses.get(sessionId);
-	if (!map) {
-		map = new Map();
-		backgroundProcesses.set(sessionId, map);
-	}
-	return map;
-}
-
 /** Remove temp output files for a background process. */
 function cleanupBgFiles(bg: BackgroundProcess): void {
 	for (const p of [bg.stdoutPath, bg.stderrPath]) {
@@ -235,28 +202,25 @@ export function formatBashResult(
 	};
 }
 
-/** Clean up all background processes for a session. */
-export function cleanupSessionBackgroundProcesses(sessionId: string): void {
-	const map = backgroundProcesses.get(sessionId);
-	if (map) {
-		for (const bg of map.values()) {
-			if (bg.status === "running" && bg.kill) {
-				bg.kill();
-			}
-			cleanupBgFiles(bg);
+/** Clean up all background processes for a session. Takes the bgMap directly. */
+export function cleanupSessionBackgroundProcesses(
+	bgMap: Map<string, BackgroundProcess>,
+): void {
+	for (const bg of bgMap.values()) {
+		if (bg.status === "running" && bg.kill) {
+			bg.kill();
 		}
+		cleanupBgFiles(bg);
 	}
-	backgroundProcesses.delete(sessionId);
+	bgMap.clear();
 }
 
 /** Kill a background process. Returns a status message or null if not found. */
 export function killBackgroundProcess(
-	sessionId: string,
+	bgMap: Map<string, BackgroundProcess>,
 	bgId: string,
 ): string | null {
-	const map = backgroundProcesses.get(sessionId);
-	if (!map) return null;
-	const bg = map.get(bgId);
+	const bg = bgMap.get(bgId);
 	if (!bg) return null;
 
 	if (bg.status !== "running") {
@@ -295,12 +259,10 @@ export function killBackgroundProcess(
  * Returns null if process not found.
  */
 export async function awaitBackgroundProcess(
-	sessionId: string,
+	bgMap: Map<string, BackgroundProcess>,
 	bgId: string,
 ): Promise<{ content: string; isError: boolean } | null> {
-	const map = backgroundProcesses.get(sessionId);
-	if (!map) return null;
-	const bg = map.get(bgId);
+	const bg = bgMap.get(bgId);
 	if (!bg) return null;
 
 	// Wait for completion if still running
@@ -320,12 +282,10 @@ export async function awaitBackgroundProcess(
 
 /** Get status of a background process. Returns a status message or null if not found. */
 export function getBackgroundStatus(
-	sessionId: string,
+	bgMap: Map<string, BackgroundProcess>,
 	bgId: string,
 ): string | null {
-	const map = backgroundProcesses.get(sessionId);
-	if (!map) return null;
-	const bg = map.get(bgId);
+	const bg = bgMap.get(bgId);
 	if (!bg) return null;
 
 	const durationMs = (bg.endTime ?? Date.now()) - bg.startTime;
@@ -376,8 +336,11 @@ export function getBackgroundStatus(
  * @param cwd - Working directory
  * @param fallbackCwd - Fallback if cwd doesn't exist (worktree root)
  * @param foregroundTimeout - Ms to wait in foreground (0 = immediate background, undefined = wait forever)
- * @param sessionId - Session ID for background tracking
+ * @param sessionId - Session ID for background tracking (bgId prefix, temp file paths)
  * @param queue - Message queue for background completion notifications
+ * @param toolCallId - Tool call ID for foreground execution tracking
+ * @param bgMap - Background processes map from TaskSession
+ * @param fgMap - Foreground executions map from TaskSession
  */
 export async function executeBashWithTimeout(
 	command: string,
@@ -387,6 +350,8 @@ export async function executeBashWithTimeout(
 	sessionId: string | undefined,
 	queue: MessageQueue | undefined,
 	toolCallId?: string,
+	bgMap?: Map<string, BackgroundProcess>,
+	fgMap?: Map<string, { resolve: () => void; command: string }>,
 ): Promise<{
 	content: string;
 	isError: boolean;
@@ -507,7 +472,15 @@ export async function executeBashWithTimeout(
 	// Immediate background: foregroundTimeout === 0
 	if (isImmediateBackground) {
 		const bgId = `bg-${ulid().slice(0, 8)}`;
-		const bgMap = getSessionBackgroundProcesses(sessionId);
+		if (!bgMap) {
+			// No session background map — can't track background processes
+			proc.kill();
+			formatBashResult(stdoutPath, stderrPath, 1);
+			return {
+				content: "Command cannot be backgrounded (no session for tracking).",
+				isError: true,
+			};
+		}
 		const bgEntry: BackgroundProcess = {
 			id: bgId,
 			command,
@@ -583,9 +556,9 @@ export async function executeBashWithTimeout(
 	// Use toolCallId as key when available (allows frontend to reference via tool_call event ID)
 	const fgKey = toolCallId ?? execId;
 	const externalSignalPromise = new Promise<{ timedOut: true }>((resolve) => {
-		if (sessionId) {
+		if (sessionId && fgMap) {
 			const key = `${sessionId}:${fgKey}`;
-			foregroundExecutions.set(key, {
+			fgMap.set(key, {
 				resolve: () => resolve({ timedOut: true }),
 				command,
 			});
@@ -599,8 +572,8 @@ export async function executeBashWithTimeout(
 	]);
 
 	// Clean up the foreground execution tracking
-	if (sessionId) {
-		foregroundExecutions.delete(`${sessionId}:${fgKey}`);
+	if (sessionId && fgMap) {
+		fgMap.delete(`${sessionId}:${fgKey}`);
 	}
 
 	if (!result.timedOut) {
@@ -620,7 +593,15 @@ export async function executeBashWithTimeout(
 	}
 
 	const bgId = `bg-${ulid().slice(0, 8)}`;
-	const bgMap = getSessionBackgroundProcesses(sessionId);
+	if (!bgMap) {
+		// No session background map — kill and return
+		proc.kill();
+		formatBashResult(stdoutPath, stderrPath, 1);
+		return {
+			content: `Command timed out after ${foregroundTimeout}ms and was killed (no session for backgrounding).`,
+			isError: true,
+		};
+	}
 	const bgEntry: BackgroundProcess = {
 		id: bgId,
 		command,
