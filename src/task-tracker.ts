@@ -133,6 +133,14 @@ export class TaskTracker {
 		node.updatedAt = new Date().toISOString();
 	}
 
+	/** Set the done() summary on a task node. Used as child_complete output. */
+	setDoneSummary(nodeId: string, summary: string): void {
+		const node = this.nodes.get(nodeId);
+		if (!node) throw new Error(`Node not found: ${nodeId}`);
+		node.doneSummary = summary;
+		node.updatedAt = new Date().toISOString();
+	}
+
 	/** Set a message on a task (e.g. instructions when continuing a failed task). */
 	setMessage(nodeId: string, message: string): void {
 		const node = this.nodes.get(nodeId);

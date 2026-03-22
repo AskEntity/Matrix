@@ -1355,12 +1355,13 @@ export function createOrchestratorTools(
 					),
 			},
 			async (args) => {
-				// Update task status in the tree
+				// Update task status and store done summary in the tree
 				if (currentTaskId) {
 					tracker.updateStatus(
 						currentTaskId,
 						args.status === "passed" ? "passed" : "failed",
 					);
+					tracker.setDoneSummary(currentTaskId, args.summary);
 					await tracker.save();
 					broadcastTreeUpdate?.();
 				}

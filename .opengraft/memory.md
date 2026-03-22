@@ -260,3 +260,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Removed CSS classes: .og-event-queue_message, .og-queue-message, .og-queue-message-text
 - Changed queueEntryToUIEvent default case to return null instead of generic_queue_message
 - toRawMessage still exists in agent-tools.ts (dead code) but is harmless — can be cleaned up later
+
+
+## done() summary → child_complete output
+- done() handler stores `args.summary` on tracker node via `tracker.setDoneSummary()`
+- `doneSummary` field added to TaskNode type (optional, backward compat)
+- agent-lifecycle reads `freshNode.doneSummary` for child_complete output, falls back to `agentResult.output`
+- Removed "Passed"/"Failed" badge spans (og-mcp-done-status) from task_completed card in LogEntryView.tsx
+
