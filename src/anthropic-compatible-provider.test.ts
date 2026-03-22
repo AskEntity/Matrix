@@ -2523,7 +2523,8 @@ describe("Event deterministic verification", () => {
 		const preEvents: Event[] = [
 			{
 				type: "message",
-				content: "Old message before compaction",
+				id: "",
+				body: { source: "user", content: "Old message before compaction" },
 				ts: 1000,
 			},
 			{
@@ -2591,7 +2592,8 @@ describe("Event deterministic verification", () => {
 		const events: Event[] = [
 			{
 				type: "message",
-				content: "Start working",
+				id: "",
+				body: { source: "user", content: "Start working" },
 				ts: 1000,
 			},
 			{

@@ -17,8 +17,9 @@ export interface Project {
 }
 
 /**
- * UI-only event types — lifecycle and generic_queue_message that only exist
- * in the frontend rendering layer.
+ * UI-only event types that only exist in the frontend rendering layer.
+ * Queue-originated message types (parent_update, child_report, etc.) are
+ * created by event-handler.ts when materializing deferred messages.
  */
 export type UIOnlyEvent =
 	| { type: "lifecycle"; content: string; taskId?: string; ts: number }
@@ -26,6 +27,44 @@ export type UIOnlyEvent =
 			type: "generic_queue_message";
 			content: string;
 			source?: string;
+			taskId?: string;
+			ts: number;
+	  }
+	| {
+			type: "parent_update";
+			content: string;
+			taskId?: string;
+			ts: number;
+	  }
+	| {
+			type: "child_report";
+			taskId?: string;
+			title: string;
+			summary?: string;
+			content: string;
+			requestReply?: boolean;
+			ts: number;
+	  }
+	| {
+			type: "cross_project";
+			fromProjectId: string;
+			fromProjectName: string;
+			content: string;
+			taskId?: string;
+			ts: number;
+	  }
+	| {
+			type: "background_complete";
+			command: string;
+			commandId: string;
+			exitCode: number | null;
+			durationMs: number;
+			taskId?: string;
+			ts: number;
+	  }
+	| {
+			type: "clarify_response";
+			answer: string;
 			taskId?: string;
 			ts: number;
 	  };

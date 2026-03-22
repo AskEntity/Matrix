@@ -15,9 +15,6 @@ import {
 	type Event,
 	formatEventForAI,
 	isQueueEvent,
-	type MessageBody,
-	type MessageEvent,
-	normalizeMessageEvent,
 	queueMessageToEvent,
 } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
@@ -912,27 +909,15 @@ export function buildEventIndex(events: Event[]): Map<string, Event> {
 }
 
 /**
- * Extract images from a consumed event (message/user_message with images).
+ * Extract images from a consumed event (message with images in body).
  */
 export function extractConsumedEventImages(event: Event): EventImageData[] {
-	if (event.type !== "message" && event.type !== "user_message") return [];
-	if (event.type === "message") {
-		const body = normalizeMessageEvent(event as MessageEvent);
-		const imgs = body.images ?? [];
-		return imgs.map((img) => ({
-			base64: img.base64,
-			mediaType: img.mediaType,
-		}));
-	}
-	// Legacy: user_message — can't cast to MessageEvent (different type field)
-	const umEvent = event as unknown as {
-		images?: Array<{ base64: string; mediaType: string }>;
-		body?: MessageBody;
-		queueEntry?: MessageBody;
-	};
-	const imgs =
-		umEvent.images ?? umEvent.body?.images ?? umEvent.queueEntry?.images ?? [];
-	return imgs.map((img) => ({ base64: img.base64, mediaType: img.mediaType }));
+	if (event.type !== "message") return [];
+	const imgs = event.body.images ?? [];
+	return imgs.map((img) => ({
+		base64: img.base64,
+		mediaType: img.mediaType,
+	}));
 }
 
 /**
@@ -980,26 +965,14 @@ export function walkEventsToMessages(
 		const event = events[i] as Event;
 
 		switch (event.type) {
-			case "message":
-			case "user_message": {
-				// Events with id = injected message, skip here — materialized at messages_consumed
-				if ((event as { id?: string }).id) {
+			case "message": {
+				// Messages with non-empty IDs are deferred — materialized at messages_consumed
+				if (event.id) {
 					i++;
 					break;
 				}
-				// Defensive: ensure content is never undefined
-				let msgContent = (event as { content?: string }).content;
-				if (!msgContent) {
-					msgContent = formatEventForAI(event);
-					if (!msgContent) {
-						console.warn(
-							"[event-converter] Empty content fallback triggered for event:",
-							event.type,
-							event,
-						);
-						msgContent = "(empty)";
-					}
-				}
+				// Messages without meaningful IDs — render directly as user message
+				const msgContent = formatEventForAI(event) || "(empty)";
 				messages.push(callbacks.onUserMessage(msgContent));
 				i++;
 				break;
@@ -1095,11 +1068,7 @@ export function walkEventsToMessages(
 							queueImages.push(...consumed.images);
 						}
 						i++;
-					} else if (
-						isQueueEvent(current) ||
-						current.type === "message" ||
-						current.type === "user_message"
-					) {
+					} else if (isQueueEvent(current) || current.type === "message") {
 						// Queue events with IDs — skip, materialized by messages_consumed
 						i++;
 					} else {
@@ -1117,18 +1086,6 @@ export function walkEventsToMessages(
 				}
 				break;
 			}
-
-			// Queue-originated events (standalone) — skip, materialized by messages_consumed
-			case "child_complete":
-			case "parent_update":
-			case "clarify_response":
-			case "child_report":
-			case "cross_project":
-			case "background_complete":
-			case "system_notification":
-			case "compact_request":
-				i++;
-				break;
 
 			case "compact_marker":
 				i++;

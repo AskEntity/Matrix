@@ -209,3 +209,17 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `handleOrchestrate` and `handleInjectMessage` enqueue user messages with header directly to the running queue.
 - `autoResumeProjects` persists a resume message with fresh context header before launching.
 - Mock providers in tests must loop `while(true) { await queue.wait(); }` to stay alive (old mock exited immediately because it had nothing to wait for).
+
+
+## Legacy Compat Removal (2026-03-22)
+
+- **MessageEvent** now has required `id: string` and `body: MessageBody`. No more optional deprecated top-level fields.
+- **Event union** no longer includes: `child_complete`, `parent_update`, `clarify_response`, `child_report`, `cross_project`, `background_complete`, `system_notification`, `compact_request`, `user_message`. All of these are now `message` events with `body.source` discriminating.
+- **`normalizeMessageEvent()`** removed — just use `event.body` directly.
+- **`LEGACY_QUEUE_EVENT_TYPES`** removed.
+- **`formatEventForAI()`** simplified — only handles `message` type, reads from `body`.
+- **`isQueueEvent()`** simplified — just checks `event.body.source !== "user"`.
+- **Event-store migration code** removed — `runEventMigrations()` is now a no-op stub.
+- **`walkEventsToMessages()`** — removed `user_message` case, removed legacy queue type skip cases. Messages with non-empty `id` are skipped (deferred until `messages_consumed`). Messages with empty `id` are rendered directly.
+- **Frontend `UIOnlyEvent`** now includes `parent_update`, `child_report`, `cross_project`, `background_complete`, `clarify_response` types (moved from Event union).
+- **Converter test events** use `id: ""` for direct prompt messages (not deferred) and real IDs for queue-originated deferred messages.

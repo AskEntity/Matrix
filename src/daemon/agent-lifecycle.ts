@@ -328,11 +328,7 @@ async function writeOrphanedToolResults(
 		} else if (event.type === "tool_result") {
 			// Found a tool_result — everything before this is already paired
 			break;
-		} else if (
-			event.type === "assistant_text" ||
-			event.type === "message" ||
-			event.type === "user_message"
-		) {
+		} else if (event.type === "assistant_text" || event.type === "message") {
 			// Hit a non-tool event — stop scanning
 			break;
 		}

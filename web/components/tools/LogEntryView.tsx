@@ -448,19 +448,18 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
-	if (entry.type === "message" || entry.type === "user_message") {
+	if (entry.type === "message") {
 		return (
 			<div className="og-log-entry og-event-user_message">
 				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				<div className="og-user-prompt-bubble">
-					<span className="og-user-prompt-text">{entry.content ?? ""}</span>
-					{entry.images &&
-						(entry.images as Array<{ base64: string; mediaType: string }>)
-							.length > 0 && (
-							<div className="og-user-images">
-								{(
-									entry.images as Array<{ base64: string; mediaType: string }>
-								).map((img: { base64: string; mediaType: string }) => (
+					<span className="og-user-prompt-text">
+						{entry.body.content ?? ""}
+					</span>
+					{entry.body.images && entry.body.images.length > 0 && (
+						<div className="og-user-images">
+							{entry.body.images.map(
+								(img: { base64: string; mediaType: string }) => (
 									<img
 										key={img.base64.slice(-32)}
 										src={`data:${img.mediaType};base64,${img.base64}`}
@@ -480,9 +479,10 @@ export const LogEntryView = memo(function LogEntryView({
 												);
 										}}
 									/>
-								))}
-							</div>
-						)}
+								),
+							)}
+						</div>
+					)}
 				</div>
 			</div>
 		);

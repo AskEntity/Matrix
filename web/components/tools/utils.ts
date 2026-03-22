@@ -13,8 +13,7 @@ export function getEntryText(entry: LogEntry): string {
 		case "error":
 			return entry.message;
 		case "message":
-		case "user_message":
-			return entry.content ?? "";
+			return entry.body.content ?? "";
 		case "lifecycle":
 		case "parent_update":
 		case "child_report":
@@ -23,9 +22,6 @@ export function getEntryText(entry: LogEntry): string {
 			return entry.content ?? "";
 		case "background_complete":
 			return `${entry.command} (exit ${entry.exitCode})`;
-		case "system_notification":
-		case "compact_request":
-			return "content" in entry ? (entry as { content: string }).content : "";
 		case "task_started":
 			return entry.title;
 		case "task_completed":

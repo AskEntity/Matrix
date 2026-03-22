@@ -139,8 +139,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				// When called from materialization, we DO want to show them
 				return {
 					type: "message",
-					content: qe.content ?? "",
-					...(qe.images?.length ? { images: qe.images } : {}),
+					id: "",
+					body: {
+						source: "user",
+						content: qe.content ?? "",
+						...(qe.images?.length ? { images: qe.images } : {}),
+					},
 					taskId: parentTaskId,
 					ts: eventTs,
 				} as UIEvent;
@@ -300,8 +304,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// User messages (or no source): render as message
 		return createLogEntry({
 			type: "message",
-			content: msg.content,
-			...(msg.images?.length ? { images: msg.images } : {}),
+			id: "",
+			body: {
+				source: "user",
+				content: msg.content,
+				...(msg.images?.length ? { images: msg.images } : {}),
+			},
 			taskId: msg.taskId ?? undefined,
 			ts,
 		});
@@ -639,80 +647,38 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				// Internal compaction state — not user content
 				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 
-			case "message":
-			case "user_message": {
-				// Skip provider-internal prompt events (have `cwd`, no `id`)
-				if (msg.cwd && !msg.id) {
-					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
-				}
+			case "message": {
+				const body = msg.body as QueueEntryLike | undefined;
+				const source = body?.source;
 				const umId = msg.id as string | undefined;
-				const bodyField =
-					(msg.body as QueueEntryLike | undefined) ??
-					(msg.queueEntry as QueueEntryLike | undefined);
-				const source = bodyField?.source ?? (msg.source as string | undefined);
 				const umTaskId = msg.taskId as string | null | undefined;
 				const umTs = (msg.ts as number) ?? Date.now();
-
-				// Read content and images from body (new format) or top-level (legacy)
-				// Don't display `header` in UI — it's context, not user-visible content
-				const umContent = bodyField?.content ?? (msg.content as string) ?? "";
-				const umImages =
-					(bodyField?.images as
-						| Array<{ base64: string; mediaType: string }>
-						| undefined) ??
-					(msg.images as
-						| Array<{ base64: string; mediaType: string }>
-						| undefined);
+				const umContent = body?.content ?? "";
+				const umImages = body?.images;
 
 				if (umId) {
 					// message with id = deferred until messages_consumed.
-					// For legacy events without body/queueEntry, build one from flat fields
-					const effectiveQueueEntry: QueueEntryLike | undefined =
-						bodyField ??
-						(source
-							? {
-									source,
-									content: msg.content as string | undefined,
-									taskId: msg.taskId as string | undefined,
-									title: msg.title as string | undefined,
-									summary: msg.summary as string | undefined,
-									success: msg.success as boolean | undefined,
-									output: msg.output as string | undefined,
-									requestReply: msg.requestReply as boolean | undefined,
-									answer: msg.answer as string | undefined,
-									fromProjectId: msg.fromProjectId as string | undefined,
-									fromProjectName: msg.fromProjectName as string | undefined,
-									command: msg.command as string | undefined,
-									commandId: msg.commandId as string | undefined,
-									exitCode: msg.exitCode as number | null | undefined,
-									durationMs: msg.durationMs as number | undefined,
-								}
-							: undefined);
-
-					// Store in deferredMessages immediately (not as side effect)
-					// so messages_consumed later in the same batch can find it.
 					deferredMessages.set(umId, {
 						content: umContent,
 						images: umImages,
 						taskId: umTaskId,
 						ts: umTs,
 						source,
-						queueEntry: effectiveQueueEntry,
+						queueEntry: body,
 					});
 
 					return {
 						entries: [],
 						updates: [],
-						// Pending banner sync is a side effect (React state update)
 						sideEffects: () => syncPendingBanner(),
 					};
 				}
 
-				// message without id = initial prompt or legacy event
+				// message without id = initial prompt or internal event
 				// If it has a body with non-user source, render as the appropriate card type
-				if (bodyField && source && source !== "user") {
+				if (body && source && source !== "user") {
 					const uiEvent = queueEntryToUIEvent(
-						bodyField,
+						body,
 						umTaskId ?? undefined,
 						umTs,
 					);
@@ -731,8 +697,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					entries: [
 						createLogEntry({
 							type: "message",
-							content: umContent,
-							...(umImages?.length ? { images: umImages } : {}),
+							id: umId ?? "",
+							body: {
+								source: "user",
+								content: umContent,
+								...(umImages?.length ? { images: umImages } : {}),
+							},
 							taskId: umTaskId ?? undefined,
 							ts: umTs,
 						}),
@@ -992,11 +962,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		for (const evt of events) {
 			// Skip provider-internal prompt events and compacted_resume
 			const evtType = evt.type as string;
-			if (
-				(evtType === "message" || evtType === "user_message") &&
-				evt.cwd &&
-				!evt.id
-			) {
+			if (evtType === "message" && evt.cwd && !evt.id) {
 				continue;
 			}
 			if (evtType === "compacted_resume") {
