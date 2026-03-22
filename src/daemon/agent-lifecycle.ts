@@ -109,6 +109,7 @@ async function createAgentContext(
 		currentProjectId: project.id,
 		eventStore: getEventStore(ctx, project.id),
 		dataDir: ctx.config.dataDir,
+		closeQueue: opts.depth > 0 ? () => opts.queue.close() : undefined,
 		onTaskEvent: (event) => {
 			console.error(event.type, event.taskId);
 			const ts = (event.ts as number) || Date.now();
@@ -130,24 +131,6 @@ async function createAgentContext(
 				emitEvent(ctx, project.id, withTs as unknown as Event);
 			}
 			broadcastTreeUpdate(ctx, project.id, opts.tracker);
-
-			// Detect done() via task_completed event. done() emits this BEFORE
-			// blocking on waitForQueueMessages(). Closing the queue here causes
-			// waitForQueueMessages() to reject with "Queue closed", unblocking
-			// the done() handler and allowing the provider stream to finish.
-			// Without this, done()=yield deadlocks: tool_result never emits
-			// because done() blocks, and nobody closes the queue.
-			if (
-				event.type === "task_completed" &&
-				event.taskId === opts.currentTaskId &&
-				opts.depth > 0
-			) {
-				const nodeStatus = opts.tracker.get(opts.currentTaskId)?.status;
-				if (nodeStatus === "passed" || nodeStatus === "failed") {
-					console.error();
-					opts.queue.close();
-				}
-			}
 		},
 		getParentQueue:
 			opts.depth > 0
@@ -241,11 +224,9 @@ export interface RunChildCoreParams {
  *
  * Used by `runChildAgentInBackground` for all child agents (both MCP and daemon paths).
  *
- * Done detection has two paths:
- * 1. Primary: onTaskEvent callback detects task_completed and closes queue BEFORE
- *    done()'s waitForQueueMessages() blocks (prevents deadlock).
- * 2. Fallback: tool_result with tool === "mcp__opengraft__done" closes queue
- *    (handles edge cases where done() returns without blocking).
+ * Done detection: done() handler calls closeQueue() directly (via OrchestratorToolsDeps),
+ * which closes the queue before waitForQueueMessages() blocks. The fallback path detects
+ * tool_result for mcp__opengraft__done and closes the queue (handles edge cases).
  */
 export async function runChildCore(
 	params: RunChildCoreParams,
@@ -283,10 +264,9 @@ export async function runChildCore(
 		while (!result.done) {
 			const event = result.value;
 
-			// Fallback done() detection via tool_result. The primary detection path
-			// is in onTaskEvent (task_completed event closes the queue before
-			// waitForQueueMessages blocks). This fallback handles edge cases where
-			// done() completes without blocking (e.g., no queue available).
+			// Fallback done() detection via tool_result. The primary path is
+			// done() calling closeQueue() directly. This fallback handles edge
+			// cases where done() completes without blocking.
 			if (
 				event.type === "tool_result" &&
 				"tool" in event &&
@@ -680,7 +660,7 @@ export async function runChildAgentInBackground(
 			});
 		}
 
-		// done() tool updates status directly in the tracker AND emits task_completed.
+		// done() tool updates status directly in the tracker.
 		// Only update status here if done() wasn't called (agent exited without calling done()).
 		const currentNode = tracker.get(nodeId);
 		const doneWasCalled =
@@ -701,18 +681,6 @@ export async function runChildAgentInBackground(
 			tracker.updateStatus(nodeId, newStatus);
 		}
 		await tracker.save();
-
-		// Only emit task_completed if done() wasn't called (it already emitted)
-		if (!doneWasCalled) {
-			emitEvent(ctx, project.id, {
-				type: "task_completed",
-				taskId: nodeId,
-				title: node.title,
-				success: success ?? true,
-				output: (agentResult.output ?? "").slice(0, 500),
-				ts: Date.now(),
-			});
-		}
 
 		// Enqueue child_complete message to parent's queue (bubbles up through non-running intermediates)
 		const completionResult = findParentQueue(tracker, nodeId);
@@ -749,12 +717,9 @@ export async function runChildAgentInBackground(
 		await tracker.save();
 		const errorMsg = e instanceof Error ? e.message : String(e);
 		emitEvent(ctx, project.id, {
-			type: "task_completed",
+			type: "error",
 			taskId: nodeId,
-			title: node.title,
-			success: false,
-			error: errorMsg,
-			output: `Error: ${errorMsg}`,
+			message: `Child agent error: ${errorMsg}`,
 			ts: Date.now(),
 		});
 

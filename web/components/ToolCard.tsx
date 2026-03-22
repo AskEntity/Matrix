@@ -61,9 +61,6 @@ export const ToolCard = memo(function ToolCard({
 		titleOnly ? false : totalContent.length <= 200,
 	);
 
-	// Suppress done() tool_result card — task_completed card replaces it
-	if (toolName === "mcp__opengraft__done") return null;
-
 	const taskLabel = null;
 
 	// Try structured MCP rendering (skip for title-only cards)

@@ -128,12 +128,67 @@ export const LogEntryView = memo(function LogEntryView({
 	// Standalone tool_use (not merged with result) — show as a card too
 	if (entry.type === "tool_call") {
 		const toolName = getToolName(entry);
-		// Suppress done() tool_use card — task_completed card replaces it
-		if (toolName === "mcp__opengraft__done") return null;
 		const toolArgs = entry.input;
 		const argsStr = formatArgs(toolArgs, bashBgExcludeKeys(toolName, toolArgs));
 		const isMcp = toolName.startsWith("mcp__opengraft__");
+		const isDone = toolName === "mcp__opengraft__done";
 		const isYield = toolName === "mcp__opengraft__yield";
+		// done() tool_call — show styled card with pass/fail status
+		if (isDone) {
+			const doneStatus = toolArgs?.status as string | undefined;
+			const doneSummary = toolArgs?.summary as string | undefined;
+			const donePassed = doneStatus === "passed";
+			const borderClass = donePassed
+				? "og-tool-card-done-passed"
+				: "og-tool-card-done-failed";
+			return (
+				<div className="og-log-entry og-event-tool_card">
+					<span className="og-log-time">{formatTime(entry.ts)}</span>
+					{taskLabel && (
+						<span className="og-log-badge" title={getLogTaskId(entry)}>
+							{taskLabel}
+						</span>
+					)}
+					<div className={`og-tool-card ${borderClass}`}>
+						{doneSummary ? (
+							<button
+								type="button"
+								className="og-tool-card-header"
+								onClick={() => setExpanded(!expanded)}
+							>
+								<span className="og-tool-card-name">
+									{donePassed ? "✓" : "✗"} done({doneStatus})
+								</span>
+								<span
+									className={`og-mcp-done-status ${donePassed ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
+								>
+									{donePassed ? "Passed" : "Failed"}
+								</span>
+								<span className="og-tool-card-toggle">
+									<IconChevron size={10} expanded={expanded} />
+								</span>
+							</button>
+						) : (
+							<div className="og-tool-card-header">
+								<span className="og-tool-card-name">
+									{donePassed ? "✓" : "✗"} done({doneStatus})
+								</span>
+								<span
+									className={`og-mcp-done-status ${donePassed ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
+								>
+									{donePassed ? "Passed" : "Failed"}
+								</span>
+							</div>
+						)}
+						{expanded && doneSummary && (
+							<div className="og-tool-card-body">
+								<div className="og-tool-card-result">{doneSummary}</div>
+							</div>
+						)}
+					</div>
+				</div>
+			);
+		}
 		// Yield gets a calm "waiting" card — no spinner/pulse since it's idle, not loading
 		if (isYield) {
 			return (
@@ -184,8 +239,6 @@ export const LogEntryView = memo(function LogEntryView({
 	// Standalone tool_result (not merged) — show as a card
 	if (entry.type === "tool_result") {
 		const toolName = getToolName(entry);
-		// Suppress done() tool_result card — task_completed card replaces it
-		if (toolName === "mcp__opengraft__done") return null;
 		const content = entry.content;
 		const isErr = entry.isError;
 		const isOk = !isErr;

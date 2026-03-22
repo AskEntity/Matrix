@@ -104,6 +104,11 @@ export interface OrchestratorToolsDeps {
 	/** Data directory root (~/.opengraft). Used for persistent message queue. */
 	dataDir?: string;
 	/**
+	 * Close the agent's own queue. Used by done() to unblock waitForQueueMessages()
+	 * without emitting task_completed. Only set for child agents (depth > 0).
+	 */
+	closeQueue?: () => void;
+	/**
 	 * Deliver a message to a task: persist → enqueue (if running) → launch (if not).
 	 * Daemon provides this via the deliverMessage function in agent-lifecycle.ts.
 	 */
@@ -1370,15 +1375,10 @@ export function createOrchestratorTools(
 					broadcastTreeUpdate?.();
 				}
 
-				// Broadcast task_completed event
-				const node = currentTaskId ? tracker.get(currentTaskId) : null;
-				emit({
-					type: "task_completed",
-					taskId: currentTaskId ?? "orchestrator",
-					title: node?.title ?? "unknown",
-					success: args.status === "passed",
-					output: args.summary.slice(0, 500),
-				});
+				// Close queue for child agents — unblocks waitForQueueMessages() below
+				// which will reject immediately since queue is closed.
+				// Root agents don't close here — they block on waitForQueueMessages() normally.
+				deps.closeQueue?.();
 
 				// Enter implicit yield — wait for wake messages (e.g. parent resume).
 				// This prevents the provider from making another API call after done(),
