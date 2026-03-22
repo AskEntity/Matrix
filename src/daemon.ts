@@ -297,7 +297,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				// Persist resume message with fresh context header
 				const resumeMemory = readProjectMemory(project.path);
 				const resumeHeader = resumeMemory
-					? `Working directory: ${project.path}\n\n${resumeMemory}`
+					? `Working directory: ${project.path}\n\n## Project Memory\n${resumeMemory}`
 					: `Working directory: ${project.path}`;
 				if (tracker.rootNodeId) {
 					await persistMessage(

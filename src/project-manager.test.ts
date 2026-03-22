@@ -104,7 +104,7 @@ describe("ProjectManager", () => {
 				"utf-8",
 			);
 			expect(memory).toContain("Converted existing project");
-			expect(memory).toContain("CLAUDE.md");
+			expect(memory).toContain("Check existing documentation");
 		});
 
 		test("creates setup hook with bun install when bun.lockb exists", async () => {
