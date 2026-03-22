@@ -104,7 +104,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `done()` = explicit yield: sets tracker status, emits `task_completed`, blocks on `waitForQueueMessages()`. Wake messages arrive as done()'s tool_result.
 - `yield()` and `done()` share `waitForQueueMessages()` helper. Both = "block and wait."
 - Loop exits ONLY when queue is closed (stop signal). Stop = pause (root stays in_progress → auto-resume). Only `done()` changes to passed/failed.
-- **done() deadlock fix**: `onTaskEvent` callback detects `task_completed` and closes queue immediately (child agents only).
+- **done() closes queue directly**: `closeQueue` callback (OrchestratorToolsDeps) for child agents (depth > 0). No `task_completed` event needed.
 
 ## Task System
 
@@ -208,22 +208,10 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **`walkEventsToMessages()`**: Messages with non-empty `id` are deferred (skipped until `messages_consumed`). Messages with `id: ""` are rendered directly as prompt events.
 - **Frontend `UIOnlyEvent`**: includes `parent_update`, `child_report`, `cross_project`, `background_complete`, `clarify_response` types for UI rendering (not in backend Event union).
 
-## Interleaved assistant_text + tool_call Bug Fix
-
-- **Problem**: `walkEventsToMessages()` used two sequential while loops (first all assistant_text, then all tool_call), which split interleaved text→tool→text→tool sequences into separate assistant messages.
-- **Fix**: Single unified while loop that collects both event types until hitting a non-assistant event (tool_result, message, etc.).
-- **AssistantContent.items**: Added ordered `items` array to preserve interleaved sequence. `texts`/`toolCalls` arrays kept for OpenAI (which joins texts and separates tool_calls anyway). Anthropic callback uses `items` for correct content block ordering.
-- **Natural boundary**: assistant_text + tool_call = one assistant turn. tool_result/message = the boundary that ends it.
-
-
-## AssistantContent Simplification
-- Removed redundant `texts` and `toolCalls` arrays from `AssistantContent`. Only `items` remains.
-- Anthropic provider already used `items` exclusively — no changes needed.
-- OpenAI provider derived texts/toolCalls from `items` with type-guard filters.
-- `walkEventsToMessages()` only pushes to `items` now.
-## SSE idle timeout fix
-- **Bun idleTimeout**: Default 10s kills SSE connections. Set `idleTimeout: 255` (Bun max, 4.25 min) in `Bun.serve()`. Data heartbeat at 15s keeps it alive.
-- SSE comment heartbeats (`: heartbeat`) do NOT reset Bun's idle timer. Only data frames count — so we only use data heartbeats.
+## AssistantContent & Converter
+- `AssistantContent` has only `items` array (ordered text + tool_call items). No separate `texts`/`toolCalls`.
+- `walkEventsToMessages()`: single unified while loop collects both `assistant_text` + `tool_call` until hitting a non-assistant event.
+- Natural boundary: assistant_text + tool_call = one assistant turn. tool_result/message = boundary.
 
 ## Critical Rule
 - **NEVER delete session JSONL files** for other projects. If a session is corrupted, wait for daemon restart with fixed code — the converter fix will handle it on resume. Session files are not in git and cannot be recovered.
