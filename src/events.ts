@@ -76,6 +76,10 @@ export type Event =
 				runningChildren: Array<{ id: string; title: string }>;
 				pendingClarifications: number;
 			};
+			/** Background process ID — set when bash moves a command to background. */
+			backgroundId?: string;
+			/** Background command — set when bash moves a command to background. */
+			backgroundCommand?: string;
 
 			taskId?: string;
 			ts: number;

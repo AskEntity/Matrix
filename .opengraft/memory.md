@@ -281,3 +281,16 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Background completion notifications now include stdout/stderr content when small (< 50KB). formatBashResult cleans up small files, keeps large ones.
 - `completionPromise` pattern: create bgEntry first, then assign promise that captures resolve callback onto bgEntry. Avoids non-null assertions.
 - `queueMessageToEvent` and `formatBodyForAI` updated to pass through stdout/stderr fields for background_complete messages.
+
+
+## Background Tool Refactor (Phase 1)
+- `bg_action` and `background_id` params removed from bash tool schema. Background management is now a first-class `background` tool with actions: list/status/kill/await.
+- `getRunningBackgroundCount` and `getRunningBackgroundSummary` removed — background warning injection in bash output removed. Use `background` tool `list` action instead.
+- `src/tools/background.ts` — new file: `executeBackgroundTool`, `listBackgroundProcesses`, `moveToBackground`, `cancelAwait`. Imports from bash.ts (no circular deps).
+- `foregroundExecutions` Map lives in bash.ts, exported for background.ts to use. Tracks resolve callbacks for external signal in Promise.race.
+- External signal: third racer in `executeBashWithTimeout` Promise.race — allows `moveToBackground()` to interrupt foreground wait from REST API.
+- `executeBashWithTimeout` now returns `backgroundId?: string` and `backgroundCommand?: string` when command moves to background.
+- `tool_result` Event type now has optional `backgroundId` and `backgroundCommand` fields.
+- REST endpoints added to agent routes: POST `/projects/:id/background/move`, `/projects/:id/background/:bgId/kill`, `/projects/:id/background/:bgId/cancel-await`.
+- Test pitfall: background process cleanup can cause Bun filesystem races. After `cleanupSessionBackgroundProcesses`, drain the queue (`await queue.wait()`) to let async monitor finish before starting new tests that use temp files.
+

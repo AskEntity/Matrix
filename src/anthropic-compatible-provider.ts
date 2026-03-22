@@ -84,8 +84,6 @@ export {
 	executeBashWithTimeout,
 	executeTool,
 	getBackgroundStatus,
-	getRunningBackgroundCount,
-	getRunningBackgroundSummary,
 	getSessionBackgroundProcesses,
 	jsSearch,
 	killBackgroundProcess,

@@ -3,6 +3,8 @@ import { DEFAULT_MODEL } from "../../config.ts";
 import type { QueueImage } from "../../message-queue.ts";
 import { globalAgentQueues } from "../../message-queue.ts";
 import { persistMessage } from "../../persistent-queue.ts";
+import { cancelAwait, moveToBackground } from "../../tools/background.ts";
+import { killBackgroundProcess } from "../../tools/bash.ts";
 import {
 	handleClarifyResponse,
 	handleInjectMessage,
@@ -339,5 +341,58 @@ export function registerAgentRoutes(
 
 		const result = await pruneSessionFiles(ctx, project.id, keepCount);
 		return c.json(result);
+	});
+
+	// ── Background process management endpoints ──
+
+	// Move a foreground execution to background
+	app.post("/projects/:id/background/move", async (c) => {
+		const body = await c.req.json<{
+			sessionId: string;
+			execId: string;
+		}>();
+		if (!body.sessionId || !body.execId) {
+			return c.json({ error: "sessionId and execId are required" }, 400);
+		}
+		const result = moveToBackground(body.sessionId, body.execId);
+		if (result === null) {
+			return c.json(
+				{ error: "Foreground execution not found or already completed" },
+				404,
+			);
+		}
+		return c.json({ ok: true, execId: result });
+	});
+
+	// Kill a background process
+	app.post("/projects/:id/background/:bgId/kill", async (c) => {
+		const bgId = c.req.param("bgId");
+		const body = await c.req
+			.json<{ sessionId: string }>()
+			.catch(() => ({}) as { sessionId: string });
+		if (!body?.sessionId) {
+			return c.json({ error: "sessionId is required" }, 400);
+		}
+		const result = killBackgroundProcess(body.sessionId, bgId);
+		if (result === null) {
+			return c.json({ error: `Background process ${bgId} not found` }, 404);
+		}
+		return c.json({ ok: true, message: result });
+	});
+
+	// Cancel an active await on a background process
+	app.post("/projects/:id/background/:bgId/cancel-await", async (c) => {
+		const bgId = c.req.param("bgId");
+		const body = await c.req
+			.json<{ sessionId: string }>()
+			.catch(() => ({}) as { sessionId: string });
+		if (!body?.sessionId) {
+			return c.json({ error: "sessionId is required" }, 400);
+		}
+		const result = cancelAwait(body.sessionId, bgId);
+		if (result === null) {
+			return c.json({ error: `Background process ${bgId} not found` }, 404);
+		}
+		return c.json({ ok: true, message: result });
 	});
 }

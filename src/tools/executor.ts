@@ -1,14 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import type { MessageQueue } from "../message-queue.ts";
-import {
-	awaitBackgroundProcess,
-	executeBashWithTimeout,
-	getBackgroundStatus,
-	getRunningBackgroundCount,
-	getRunningBackgroundSummary,
-	killBackgroundProcess,
-} from "./bash.ts";
+import { executeBackgroundTool } from "./background.ts";
+import { executeBashWithTimeout } from "./bash.ts";
 import { jsSearch } from "./search.ts";
 
 /** @internal Exported for testing */
@@ -28,84 +22,22 @@ export async function executeTool(
 	content: string;
 	isError: boolean;
 	cwd?: string;
+	backgroundId?: string;
+	backgroundCommand?: string;
 	isImage?: boolean;
 	imageData?: string;
 	mediaType?: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 }> {
 	switch (name) {
 		case "bash": {
-			const bgAction = input.bg_action as string | undefined;
-			const backgroundId = input.background_id as string | undefined;
-
-			// Handle background process management actions
-			if (bgAction) {
-				if (!backgroundId) {
-					return {
-						content: "Error: background_id is required when bg_action is set.",
-						isError: true,
-					};
-				}
-				if (!sessionId) {
-					return {
-						content:
-							"Error: no session context for background process management.",
-						isError: true,
-					};
-				}
-
-				if (bgAction === "kill") {
-					const result = killBackgroundProcess(sessionId, backgroundId);
-					if (result === null) {
-						return {
-							content: `Background process ${backgroundId} not found.`,
-							isError: true,
-						};
-					}
-					return { content: result, isError: false };
-				}
-
-				if (bgAction === "status") {
-					const result = getBackgroundStatus(sessionId, backgroundId);
-					if (result === null) {
-						return {
-							content: `Background process ${backgroundId} not found.`,
-							isError: true,
-						};
-					}
-					return { content: result, isError: false };
-				}
-
-				if (bgAction === "await") {
-					const result = await awaitBackgroundProcess(sessionId, backgroundId);
-					if (result === null) {
-						return {
-							content: `Background process ${backgroundId} not found.`,
-							isError: true,
-						};
-					}
-					return result;
-				}
-
-				return {
-					content: `Unknown bg_action: ${bgAction}. Use 'kill', 'status', or 'await'.`,
-					isError: true,
-				};
-			}
-
 			const command = input.command as string;
 			const runInBackground = input.run_in_background as boolean | undefined;
 			const foregroundTimeout = runInBackground
 				? 0
 				: Math.max((input.foreground_timeout as number) ?? 120000, 0);
 
-			// Warn about running background commands
-			const bgWarning =
-				sessionId && getRunningBackgroundCount(sessionId) > 0
-					? `[Note: ${getRunningBackgroundCount(sessionId)} background command(s) still running]\n${getRunningBackgroundSummary(sessionId)}\n\n`
-					: "";
-
 			try {
-				const result = await executeBashWithTimeout(
+				return await executeBashWithTimeout(
 					command,
 					cwd,
 					fallbackCwd,
@@ -113,16 +45,28 @@ export async function executeTool(
 					sessionId,
 					queue,
 				);
-				return {
-					...result,
-					content: bgWarning + result.content,
-				};
 			} catch (e) {
 				return {
-					content: `${bgWarning}Error: ${e instanceof Error ? e.message : String(e)}`,
+					content: `Error: ${e instanceof Error ? e.message : String(e)}`,
 					isError: true,
 				};
 			}
+		}
+
+		case "background": {
+			const action = input.action as string;
+			const id = input.id as string | undefined;
+			const timeout = input.timeout as number | undefined;
+
+			if (!sessionId) {
+				return {
+					content:
+						"Error: no session context for background process management.",
+					isError: true,
+				};
+			}
+
+			return executeBackgroundTool(action, id, timeout, sessionId);
 		}
 
 		case "read_file": {
