@@ -2001,6 +2001,52 @@ button.og-tool-card-header:hover {
 	color: var(--text-muted);
 }
 
+/* Diff view (edit_file, update_task surgical edits) */
+.og-diff-container {
+	font-family: var(--font-mono);
+	font-size: 11px;
+	line-height: 1.5;
+	border-radius: var(--radius-sm);
+	overflow: hidden;
+	border: 1px solid var(--border-subtle);
+}
+
+.og-diff-line {
+	display: flex;
+	padding: 0 8px;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
+.og-diff-line-removed {
+	background: rgba(248, 81, 73, 0.12);
+	color: #ffa198;
+}
+
+.og-diff-line-added {
+	background: rgba(63, 185, 80, 0.12);
+	color: #7ee787;
+}
+
+.og-diff-prefix {
+	flex-shrink: 0;
+	width: 16px;
+	user-select: none;
+	opacity: 0.7;
+}
+
+.og-diff-content {
+	flex: 1;
+	min-width: 0;
+}
+
+.og-mcp-diff-path {
+	font-family: var(--font-mono);
+	font-size: 10px;
+	color: var(--text-muted);
+	margin-bottom: 4px;
+}
+
 /* =========================================================
    Compact Boundary
    ========================================================= */
