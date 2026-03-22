@@ -2,6 +2,16 @@
 
 > Single source of truth. Read on every session start. Full design: `OpenGraft.md`
 
+## ⚠️ MOST IMPORTANT — Architecture Discipline
+
+Every bug fix MUST ask TWO questions:
+1. **What caused this specific bug?** — Fix it.
+2. **Why does our architecture make this class of bug easy to create?** — Is the architecture too complex? Too hacky? Is the design philosophy wrong?
+
+If the answer to #2 is "we have two codepaths that do similar things with subtle differences" — **DO NOT patch the symptom.** Remove the duplicate codepath entirely, even if it temporarily breaks something. A broken-but-simple architecture is better than a working-but-fragile one with hidden duplication.
+
+**Pattern to watch for**: Every time we introduce an "ephemeral" shortcut alongside a "persisted" canonical path, we create a live/refresh inconsistency bug factory. ONE path. Always.
+
 ## Operating Mode
 
 **Autonomy**: Level 10. Work continuously. Don't ask questions — decide and move.
