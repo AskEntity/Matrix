@@ -243,14 +243,7 @@ export const ActivityLog = memo(function ActivityLog({
 				continue;
 			}
 
-			// Hide get_tree tool_use entries (noise); their tool_results still show
 			if (cur.type === "tool_call") {
-				const name = getToolName(cur);
-				if (name === "mcp__opengraft__get_tree") {
-					i += 1;
-					continue;
-				}
-
 				// Check for a paired tool_result
 				const resultIdx = paired.get(i);
 				const resultEntry =

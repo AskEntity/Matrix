@@ -345,9 +345,20 @@ export function createOrchestratorTools(
 		tool(
 			"get_tree",
 			"Get the current task tree. Returns all nodes with their status, branch, and hierarchy.",
-			{ format: z.enum(["flat", "tree"]).optional().default("flat") },
-			async () => {
-				const nodes = tracker.allNodes();
+			{
+				format: z.enum(["flat", "tree"]).optional(),
+				include_closed: z
+					.boolean()
+					.optional()
+					.describe(
+						"Include closed tasks in the result. Default false — closed tasks are hidden to reduce noise.",
+					),
+			},
+			async ({ include_closed }) => {
+				let nodes = tracker.allNodes();
+				if (!include_closed) {
+					nodes = nodes.filter((n) => n.status !== "closed");
+				}
 				return {
 					content: [
 						{
