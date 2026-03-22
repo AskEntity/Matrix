@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentProvider } from "./agent-provider.ts";
+import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { createOrchestratorTools, isDescendantOf } from "./agent-tools.ts";
 import { createApp } from "./daemon.ts";
 import type { Event } from "./events.ts";
@@ -18,9 +18,9 @@ import type {
 } from "./types.ts";
 
 function createMockProvider(
-	handler?: (request: {
-		prompt: string;
-	}) => Promise<{ success: boolean; output: string }>,
+	handler?: (
+		request: AgentRequest,
+	) => Promise<{ success: boolean; output: string }>,
 ): AgentProvider {
 	const execute = handler ?? (async () => ({ success: true, output: "" }));
 	return {
@@ -32,8 +32,20 @@ function createMockProvider(
 		},
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
-			// biome-ignore lint/correctness/useYield: mock session never streams
+			// Mock session: drain first queue message then block on queue.wait()
+			// like the real provider does (wait for more messages or close signal)
+			// biome-ignore lint/correctness/useYield: mock session blocks on queue
 			async function* events(): AsyncGenerator<Event, AgentResult> {
+				try {
+					// Drain first message (the initial prompt)
+					if (queue.pending > 0) queue.drain();
+					// Block until queue is closed (stop signal)
+					while (true) {
+						await queue.wait();
+					}
+				} catch {
+					// Queue closed — normal exit
+				}
 				return { success: true, output: "" };
 			}
 			return {

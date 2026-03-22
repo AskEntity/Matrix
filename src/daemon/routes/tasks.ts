@@ -337,24 +337,23 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			broadcastTreeUpdate(ctx, project.id, tracker);
 			notifyParentOfContinue();
 
-			// sessionId = nodeId: the provider loads session history from <nodeId>.json.
-			// If history exists, the agent has full context. If not, include task details.
-			const branchReminder = node.branch
-				? `\n\nReminder: you are on branch \`${node.branch}\`. Do NOT switch branches.`
-				: "";
-			const continuePrompt = body.message
-				? `${body.message}${branchReminder}`
-				: `Continue working. Pick up where you left off and complete the task.${branchReminder}`;
+			// Persist a message for the agent to drain — header has context
+			const memory = readProjectMemory(
+				node.worktreePath ?? project.path,
+				false,
+			);
+			const header = buildTaskPrompt(node, tracker, memory);
+			const content = body.message
+				? body.message
+				: "Continue working. Pick up where you left off and complete the task.";
+			await persistMessage(ctx.config.dataDir, project.id, nodeId, {
+				source: "parent_update",
+				content,
+				header,
+			});
 
 			// Run async — return immediately so UI updates
-			runChildAgentInBackground(
-				ctx,
-				project,
-				tracker,
-				nodeId,
-				continuePrompt,
-				body.model,
-			);
+			runChildAgentInBackground(ctx, project, tracker, nodeId, body.model);
 
 			return c.json(tracker.get(nodeId));
 		}
@@ -383,23 +382,15 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 
 				const memory = readProjectMemory(project.path, false);
 				const updatedNode = tracker.get(nodeId);
-				const taskPrompt = buildTaskPrompt(
-					updatedNode ?? node,
-					tracker,
-					memory,
-				);
-				const continuePrompt = body.message
-					? `${body.message}\n\n${taskPrompt}`
-					: taskPrompt;
+				const header = buildTaskPrompt(updatedNode ?? node, tracker, memory);
+				const content = body.message ?? "Start working on this task.";
+				await persistMessage(ctx.config.dataDir, project.id, nodeId, {
+					source: "parent_update",
+					content,
+					header,
+				});
 
-				runChildAgentInBackground(
-					ctx,
-					project,
-					tracker,
-					nodeId,
-					continuePrompt,
-					body.model,
-				);
+				runChildAgentInBackground(ctx, project, tracker, nodeId, body.model);
 
 				return c.json(tracker.get(nodeId));
 			} catch (e) {

@@ -37,6 +37,14 @@ import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { AgentResult } from "./types.ts";
 
+/** Create a MessageQueue pre-loaded with a user message (for tests). */
+function queueWithPrompt(content: string, cwd?: string): MessageQueue {
+	const q = new MessageQueue();
+	const header = cwd ? `Working directory: ${cwd}` : undefined;
+	q.enqueue({ source: "user", content, ...(header ? { header } : {}) });
+	return q;
+}
+
 describe("getModelPricing", () => {
 	test("returns Opus pricing for opus models", () => {
 		const pricing = getModelPricing("claude-opus-4-6");
@@ -2006,12 +2014,12 @@ describe("Event deterministic verification", () => {
 			createMockStream(response, ["Hello! How can I help?"]),
 		);
 
-		// No queue → end_turn exits immediately
+		// Provider drains queue for first message
 		const result = await provider.execute({
-			prompt: "Say hello",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
 			emit,
+			queue: queueWithPrompt("Say hello", testDir),
 		});
 
 		expect(result.success).toBe(true);
@@ -2020,18 +2028,18 @@ describe("Event deterministic verification", () => {
 		const events = emittedEvents;
 		expect(events.length).toBeGreaterThanOrEqual(2);
 
-		// Should have: user_message, assistant_text
+		// Should have: messages_consumed (from queue drain), assistant_text
 		const types = events.map((e) => e.type);
-		expect(types[0]).toBe("message");
+		expect(types).toContain("messages_consumed");
 		expect(types).toContain("assistant_text");
 
-		// Verify reconstruction matches
+		// Verify reconstruction matches — the queue message with header is consumed
 		const reconstructed = eventsToAnthropicMessages(events);
 		expect(reconstructed.length).toBeGreaterThanOrEqual(2);
-		expect(reconstructed[0]).toEqual({
-			role: "user",
-			content: `Working directory: ${testDir}\n\nSay hello`,
-		});
+		// First message should contain the header + content from queue drain
+		const firstMsg = reconstructed[0] as { role: string; content: string };
+		expect(firstMsg.role).toBe("user");
+		expect(firstMsg.content).toContain("Say hello");
 		// Assistant text without tool_use should use array format (matches Anthropic API response.content)
 		expect(reconstructed[1]).toEqual({
 			role: "assistant",
@@ -2076,10 +2084,10 @@ describe("Event deterministic verification", () => {
 		});
 
 		const session = provider.startSession({
-			prompt: "Do the task",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
 			emit,
+			queue: queueWithPrompt("Do the task", testDir),
 			mcpToolDefs: {
 				opengraft: [
 					{
@@ -2198,10 +2206,10 @@ describe("Event deterministic verification", () => {
 		});
 
 		const session = provider.startSession({
-			prompt: "Try something",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
 			emit,
+			queue: queueWithPrompt("Try something", testDir),
 			mcpToolDefs: {
 				opengraft: [
 					{
@@ -2296,9 +2304,8 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
-		const queue = new MessageQueue();
+		const queue = queueWithPrompt("Start working", testDir);
 		const session = provider.startSession({
-			prompt: "Start working",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
 			emit,
@@ -2409,10 +2416,10 @@ describe("Event deterministic verification", () => {
 		});
 
 		const session = provider.startSession({
-			prompt: "Run three tools",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
 			emit,
+			queue: queueWithPrompt("Run three tools", testDir),
 			mcpToolDefs: {
 				test: [
 					{
@@ -2670,9 +2677,8 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
-		const queue = new MessageQueue();
+		const queue = queueWithPrompt("Do task", testDir);
 		const session = provider.startSession({
-			prompt: "Do task",
 			cwd: testDir,
 			systemPrompt: "You are helpful.",
 			emit,

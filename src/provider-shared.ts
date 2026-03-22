@@ -1349,41 +1349,39 @@ export async function* runProviderLoop(
 	const activeEvents = request.activeEvents ?? [];
 	const isResume = activeEvents.length > 0;
 
-	// Prepend working directory to the first user message (not on resume turns) so that
-	// the system prompt stays identical across agents in different worktrees, enabling
-	// prompt caching to cache the system prompt once and share it across agents.
-	const firstUserContent =
-		cwd && !isResume
-			? `Working directory: ${cwd}\n\n${request.prompt}`
-			: request.prompt;
-
 	// Reconstruct messages from active events on resume, or start fresh
-	// Both providers use { role: "user", content: string } for user messages
 	const messages: unknown[] = isResume
-		? [
-				...adapter.convertEventsToMessages(activeEvents),
-				{ role: "user" as const, content: request.prompt },
-			]
-		: [{ role: "user" as const, content: firstUserContent }];
+		? adapter.convertEventsToMessages(activeEvents)
+		: [];
 
-	// Emit the provider prompt event — written to JSONL for conversation history.
-	// These are backward-compat: old format with top-level content/cwd, no id/body.
-	// The walker skips these (no id). Future: remove when prompt moves to queue entirely.
-	if (emit) {
-		if (isResume) {
-			emit({
-				type: "message",
-				content: request.prompt,
-				isResume: true,
-				ts: Date.now(),
-			} as Event);
-		} else {
-			emit({
-				type: "message",
-				content: firstUserContent,
-				cwd,
-				ts: Date.now(),
-			} as Event);
+	// Drain the queue for messages — both fresh start and resume.
+	// Fresh start: first message has header with working dir + pre-loaded memory.
+	// Resume: message has header with fresh context (re-read memory from disk).
+	// Header is ALWAYS how context gets into the conversation — no special codepaths.
+	if (queue) {
+		// Wait for at least one message in the queue
+		const firstMsg = await queue.wait();
+		const rest = queue.drain();
+		const allMsgs = [firstMsg, ...rest];
+
+		// Build user content from the queue message(s)
+		// Header (working dir + memory) goes first, then content
+		const parts: string[] = [];
+		for (const msg of allMsgs) {
+			if (msg.source === "user" || msg.source === "parent_update") {
+				const m = msg as { header?: string; content: string };
+				if (m.header) parts.push(m.header);
+				parts.push(m.content);
+			} else {
+				parts.push(formatQueueMessage(msg));
+			}
+		}
+		const firstUserContent = parts.join("\n\n");
+		messages.push({ role: "user" as const, content: firstUserContent });
+
+		// Record queue events for the consumed messages
+		if (emit) {
+			recordQueueEvents(emit, allMsgs);
 		}
 	}
 
