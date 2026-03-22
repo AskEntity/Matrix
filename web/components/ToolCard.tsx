@@ -6,7 +6,7 @@ import {
 	type TaskNode,
 } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconChevron } from "./icons.tsx";
+import { Card } from "./Card.tsx";
 import { MCP_CARD_BODY_TOOLS, McpToolCardBody } from "./tools/McpToolCard.tsx";
 import { ToolResultImages } from "./tools/ToolResultImages.tsx";
 import {
@@ -58,7 +58,7 @@ export const ToolCard = memo(function ToolCard({
 	const isOpengraft = toolName.startsWith("mcp__opengraft__");
 	const titleOnly = isTitleOnlyCard(toolName, toolArgs);
 	const totalContent = argsStr + (resultContent ?? "");
-	const [expanded, setExpanded] = useState(() =>
+	const [defaultExpanded] = useState(() =>
 		titleOnly ? false : totalContent.length <= 200,
 	);
 
@@ -80,33 +80,16 @@ export const ToolCard = memo(function ToolCard({
 		return (
 			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{formatTime(useEntry.ts)}</span>
-				<div className={`og-tool-card ${borderClass}`}>
+				<Card
+					title={`${donePassed ? "✓" : "✗"} ${doneTitle}`}
+					className={borderClass}
+				>
 					{doneSummary ? (
-						<button
-							type="button"
-							className="og-tool-card-header"
-							onClick={() => setExpanded(!expanded)}
-						>
-							<span className="og-tool-card-name">
-								{donePassed ? "✓" : "✗"} {doneTitle}
-							</span>
-							<span className="og-tool-card-toggle">
-								<IconChevron size={10} expanded={expanded} />
-							</span>
-						</button>
-					) : (
-						<div className="og-tool-card-header">
-							<span className="og-tool-card-name">
-								{donePassed ? "✓" : "✗"} {doneTitle}
-							</span>
-						</div>
-					)}
-					{expanded && doneSummary && (
 						<div className="og-tool-card-body">
 							<div className="og-tool-card-result">{doneSummary}</div>
 						</div>
-					)}
-				</div>
+					) : null}
+				</Card>
 			</div>
 		);
 	}
@@ -132,6 +115,11 @@ export const ToolCard = memo(function ToolCard({
 	const statusClass = isErr ? "og-tool-card-err" : "og-tool-card-ok";
 	const accentClass = isOpengraft ? "og-tool-card-mcp" : "";
 
+	const hasImages =
+		resultEntry.type === "tool_result" &&
+		resultEntry.images &&
+		resultEntry.images.length > 0;
+
 	return (
 		<div className="og-log-entry og-event-tool_card">
 			<span className="og-log-time">{formatTime(useEntry.ts)}</span>
@@ -140,53 +128,45 @@ export const ToolCard = memo(function ToolCard({
 					{taskLabel}
 				</span>
 			)}
-			<div className={`og-tool-card ${statusClass} ${accentClass}`}>
-				{titleOnly ? (
-					<div className="og-tool-card-header">
-						<span className="og-tool-card-name">
-							{getToolCardTitle(toolName, toolArgs, resultContent, nodeMap)}
+			<Card
+				title={getToolCardTitle(toolName, toolArgs, resultContent, nodeMap)}
+				className={`${statusClass} ${accentClass}`}
+				collapsible={!titleOnly}
+				defaultExpanded={defaultExpanded}
+				statusSlot={
+					!titleOnly && toolName !== "mcp__opengraft__done" ? (
+						<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
+							{isErr ? "✗" : "✓"}
 						</span>
-					</div>
-				) : (
-					<button
-						type="button"
-						className="og-tool-card-header"
-						onClick={() => setExpanded(!expanded)}
-					>
-						<span className="og-tool-card-name">
-							{getToolCardTitle(toolName, toolArgs, resultContent, nodeMap)}
-						</span>
-						{toolName !== "mcp__opengraft__done" && (
-							<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
-								{isErr ? "✗" : "✓"}
-							</span>
-						)}
-						<span className="og-tool-card-toggle">
-							<IconChevron size={10} expanded={expanded} />
-						</span>
-					</button>
-				)}
-				{expanded && mcpBody && (
-					<div className="og-tool-card-body">{mcpBody}</div>
-				)}
-				{expanded && !mcpBody && (
-					<div className="og-tool-card-body">
-						{argsStr && <div className="og-tool-card-args">{argsStr}</div>}
-						{resultContent && (
-							<div className="og-tool-card-result">
-								{mcpFormatted ?? resultContent}
+					) : undefined
+				}
+			>
+				{!titleOnly ? (
+					<>
+						{mcpBody && <div className="og-tool-card-body">{mcpBody}</div>}
+						{!mcpBody && (
+							<div className="og-tool-card-body">
+								{argsStr && <div className="og-tool-card-args">{argsStr}</div>}
+								{resultContent && (
+									<div className="og-tool-card-result">
+										{mcpFormatted ?? resultContent}
+									</div>
+								)}
 							</div>
 						)}
-					</div>
-				)}
-				{resultEntry.type === "tool_result" &&
-					resultEntry.images &&
-					resultEntry.images.length > 0 && (
-						<div className="og-tool-card-body">
-							<ToolResultImages images={resultEntry.images} />
-						</div>
-					)}
-			</div>
+						{hasImages && (
+							<div className="og-tool-card-body">
+								<ToolResultImages
+									images={
+										(resultEntry as Extract<LogEntry, { type: "tool_result" }>)
+											.images!
+									}
+								/>
+							</div>
+						)}
+					</>
+				) : null}
+			</Card>
 		</div>
 	);
 });

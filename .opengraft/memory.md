@@ -381,3 +381,13 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `readProjectMemory(projectPath)` only reads `.opengraft/memory.md` — no CLAUDE.md, no `includeHeaders` param.
 - Returns raw content or empty string. Callers add `## Project Memory\n` prefix for orchestrator headers.
 - Child task callers pass raw content to `buildTaskPrompt()` which adds its own header.
+
+
+## Card Component
+- `web/components/Card.tsx` — base card for all activity log entries. Uses existing `og-tool-card-*` CSS classes.
+- Props: `title`, `detail`, `className`, `collapsible`, `defaultExpanded`, `children`, `statusSlot`.
+- `collapsible` defaults to true when children are provided, false otherwise.
+- `statusSlot` renders inline in header before the chevron (for ✓/✗ status or spinner).
+- QueueMessageCard eliminated — parent_update, child_report, cross_project use Card directly.
+- ToolCard.tsx uses Card as base. LogEntryView.tsx uses Card for all card types.
+- LogEntryWrapper helper in LogEntryView handles the outer timestamp + badge wrapper.
