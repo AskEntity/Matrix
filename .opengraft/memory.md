@@ -347,6 +347,10 @@ Daemon (Hono: HTTP + SSE on :7433)
 ## Tool Name Prefixing in UI
 - All tools use `mcp__opengraft__*` prefix in JSONL events. UI code must use full prefixed names (e.g., `mcp__opengraft__bash`, not `"bash"`).
 - External MCP tools (e.g., `mcp__chrome-devtools__click`) keep their own prefix — only opengraft tools use `mcp__opengraft__`.
-- `isMcp` renamed to `isOpengraft` = `toolName.startsWith("mcp__opengraft__")` — distinguishes opengraft tools from external MCP tools.
-- `McpToolCard.tsx` strips prefix locally (`toolName.replace("mcp__opengraft__", "")`) for its internal switch — this is fine since it only receives opengraft tools.
-- `formatMcpToolResult()` also strips internally — no change needed there.
+- `isOpengraft` = `toolName.startsWith("mcp__opengraft__")` — distinguishes opengraft tools from external MCP tools.
+
+## System Prompt Unification
+- **Single prompt**: `UNIFIED_SYSTEM_PROMPT` in system-prompts.ts replaces both `ORCHESTRATOR_SYSTEM_PROMPT` (was in daemon.ts) and `TASK_SYSTEM_PROMPT`.
+- **Root preamble**: `ROOT_ORCHESTRATOR_PREAMBLE` prepended for root agents only.
+- **No tool listings in prompts**: `ToolDefinition.description` is sole source of truth for tool schema. Prompts contain only STRATEGY guidance.
+- Prompt ordering for cache: UNIFIED_SYSTEM_PROMPT (stable) → ROOT_ORCHESTRATOR_PREAMBLE → date (changes daily).

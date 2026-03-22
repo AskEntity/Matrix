@@ -4,7 +4,7 @@ import {
 	createOrchestratorTools,
 	findParentQueue,
 	slugify,
-	TASK_SYSTEM_PROMPT,
+	UNIFIED_SYSTEM_PROMPT,
 } from "../agent-tools.ts";
 import { DEFAULT_MODEL } from "../config.ts";
 import { type Event, findOrphanedToolCalls } from "../events.ts";
@@ -577,7 +577,7 @@ export async function runChildAgentInBackground(
 				cwd: node.worktreePath as string,
 				emit: emitWithTask,
 				activeEvents,
-				systemPrompt: TASK_SYSTEM_PROMPT,
+				systemPrompt: UNIFIED_SYSTEM_PROMPT,
 				resumeSessionId: nodeId,
 				model: agentCtx.effectiveCfg.model,
 				mcpToolDefs: agentCtx.mcpToolDefs,
