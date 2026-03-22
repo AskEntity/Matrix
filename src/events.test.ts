@@ -1043,6 +1043,65 @@ describe("eventsToOpenAIMessages", () => {
 			content: "Command failed with exit code 1",
 		});
 	});
+
+	test("interleaved assistant_text + tool_call produces ONE assistant message", () => {
+		const events: Event[] = [
+			{
+				type: "assistant_text",
+				content: "Creating task and reading files.",
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: "create_task",
+				toolCallId: "call_1",
+				input: { title: "Fix bug" },
+				ts: 1001,
+			},
+			{ type: "assistant_text", content: "Also checking source.", ts: 1002 },
+			{
+				type: "tool_call",
+				tool: "read_file",
+				toolCallId: "call_2",
+				input: { path: "src/foo.ts" },
+				ts: 1003,
+			},
+			// Tool results for both
+			{
+				type: "tool_result",
+				toolCallId: "call_1",
+				content: "Task created",
+				isError: false,
+				ts: 1004,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "call_2",
+				content: "file contents",
+				isError: false,
+				ts: 1005,
+			},
+		];
+		const messages = eventsToOpenAIMessages(events);
+		// ONE assistant + TWO tool results = 3 messages (OpenAI uses individual tool messages)
+		expect(messages).toHaveLength(3);
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: "Creating task and reading files.\nAlso checking source.",
+			tool_calls: [
+				{
+					id: "call_1",
+					type: "function",
+					function: { name: "create_task", arguments: '{"title":"Fix bug"}' },
+				},
+				{
+					id: "call_2",
+					type: "function",
+					function: { name: "read_file", arguments: '{"path":"src/foo.ts"}' },
+				},
+			],
+		});
+	});
 });
 
 // ── Bug fix regression tests ──
@@ -1105,6 +1164,139 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 				},
 			],
 		});
+	});
+
+	test("Bug: interleaved assistant_text + tool_call produces ONE assistant message", () => {
+		// Reproduces the bug where text→tool→text→tool from the same API response
+		// was split into two separate assistant messages
+		const events: Event[] = [
+			{
+				type: "assistant_text",
+				content: "I'll create the task and read files.",
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: "create_task",
+				toolCallId: "toolu_01Foy",
+				input: { title: "Fix bug" },
+				ts: 1001,
+			},
+			{
+				type: "assistant_text",
+				content: "Let me also check the source.",
+				ts: 1002,
+			},
+			{
+				type: "tool_call",
+				tool: "read_file",
+				toolCallId: "toolu_02Bar",
+				input: { path: "src/foo.ts" },
+				ts: 1003,
+			},
+			{
+				type: "tool_call",
+				tool: "read_file",
+				toolCallId: "toolu_03Baz",
+				input: { path: "src/bar.ts" },
+				ts: 1004,
+			},
+			// Tool results for all three
+			{
+				type: "tool_result",
+				toolCallId: "toolu_01Foy",
+				content: "Task created",
+				isError: false,
+				ts: 1005,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "toolu_02Bar",
+				content: "file contents",
+				isError: false,
+				ts: 1006,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "toolu_03Baz",
+				content: "file contents",
+				isError: false,
+				ts: 1007,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		// Must be TWO messages: ONE assistant + ONE user (tool_results), not three
+		expect(messages).toHaveLength(2);
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: [
+				{ type: "text", text: "I'll create the task and read files." },
+				{
+					type: "tool_use",
+					id: "toolu_01Foy",
+					name: "create_task",
+					input: { title: "Fix bug" },
+					caller: { type: "direct" },
+				},
+				{ type: "text", text: "Let me also check the source." },
+				{
+					type: "tool_use",
+					id: "toolu_02Bar",
+					name: "read_file",
+					input: { path: "src/foo.ts" },
+					caller: { type: "direct" },
+				},
+				{
+					type: "tool_use",
+					id: "toolu_03Baz",
+					name: "read_file",
+					input: { path: "src/bar.ts" },
+					caller: { type: "direct" },
+				},
+			],
+		});
+		// All tool_results in ONE user message
+		expect((messages[1] as { role: string }).role).toBe("user");
+	});
+
+	test("Bug: interleaved text+tool with tool_results — all results reference same assistant msg", () => {
+		const events: Event[] = [
+			{ type: "assistant_text", content: "Checking files.", ts: 1000 },
+			{
+				type: "tool_call",
+				tool: "read_file",
+				toolCallId: "tc1",
+				input: { path: "a.ts" },
+				ts: 1001,
+			},
+			{ type: "assistant_text", content: "And this one too.", ts: 1002 },
+			{
+				type: "tool_call",
+				tool: "read_file",
+				toolCallId: "tc2",
+				input: { path: "b.ts" },
+				ts: 1003,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc1",
+				content: "file a contents",
+				isError: false,
+				ts: 1004,
+			},
+			{
+				type: "tool_result",
+				toolCallId: "tc2",
+				content: "file b contents",
+				isError: false,
+				ts: 1005,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		// ONE assistant + ONE user (tool_results) = 2 messages total
+		expect(messages).toHaveLength(2);
+		expect((messages[0] as { role: string }).role).toBe("assistant");
+		expect((messages[1] as { role: string }).role).toBe("user");
 	});
 });
 

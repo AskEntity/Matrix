@@ -825,14 +825,22 @@ export interface EventImageData {
 	mediaType: string;
 }
 
+/** A single tool call in an assistant turn. */
+export interface AssistantToolCall {
+	id: string;
+	name: string;
+	input: Record<string, unknown>;
+}
+
 /** Collected assistant content: text blocks and tool calls. */
 export interface AssistantContent {
 	texts: string[];
-	toolCalls: Array<{
-		id: string;
-		name: string;
-		input: Record<string, unknown>;
-	}>;
+	toolCalls: AssistantToolCall[];
+	/** Ordered items preserving interleaved text/tool_call sequence. */
+	items: Array<
+		| { type: "text"; text: string }
+		| { type: "tool_call"; call: AssistantToolCall }
+	>;
 }
 
 /** A single tool result extracted from events. */
@@ -1009,27 +1017,32 @@ export function walkEventsToMessages(
 
 			case "assistant_text":
 			case "tool_call": {
-				const content: AssistantContent = { texts: [], toolCalls: [] };
+				const content: AssistantContent = {
+					texts: [],
+					toolCalls: [],
+					items: [],
+				};
 
-				// Collect consecutive assistant_text events
-				while (
-					i < events.length &&
-					(events[i] as Event).type === "assistant_text"
-				) {
-					const e = events[i] as Event & { type: "assistant_text" };
-					content.texts.push(e.content);
-					i++;
-				}
-
-				// Collect consecutive tool_call events
-				while (i < events.length && (events[i] as Event).type === "tool_call") {
-					const e = events[i] as Event & { type: "tool_call" };
-					content.toolCalls.push({
-						id: e.toolCallId,
-						name: e.tool,
-						input: e.input,
-					});
-					i++;
+				// Collect ALL consecutive assistant_text and tool_call events.
+				// They may be interleaved (text→tool→text→tool) but belong to the same turn.
+				while (i < events.length) {
+					const cur = events[i] as Event;
+					if (cur.type === "assistant_text") {
+						content.texts.push(cur.content);
+						content.items.push({ type: "text", text: cur.content });
+						i++;
+					} else if (cur.type === "tool_call") {
+						const call: AssistantToolCall = {
+							id: cur.toolCallId,
+							name: cur.tool,
+							input: cur.input,
+						};
+						content.toolCalls.push(call);
+						content.items.push({ type: "tool_call", call });
+						i++;
+					} else {
+						break;
+					}
 				}
 
 				messages.push(callbacks.onAssistantContent(content));
