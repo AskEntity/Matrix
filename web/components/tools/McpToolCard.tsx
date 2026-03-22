@@ -1,3 +1,4 @@
+import { DiffView } from "./DiffView.tsx";
 import { formatMcpToolResult, getArg } from "./utils.ts";
 
 /** Tool short names that have custom card body rendering in McpToolCardBody */
@@ -11,6 +12,8 @@ export const MCP_CARD_BODY_TOOLS = new Set([
 	"report_to_parent",
 	"send_message_to_project",
 	"execute_tasks",
+	"edit_file",
+	"update_task",
 ]);
 
 /** Render structured body for special MCP tools */
@@ -192,6 +195,32 @@ export function McpToolCardBody({
 					{msg && <div className="og-mcp-task-desc">{msg}</div>}
 				</div>
 			);
+		}
+		case "edit_file": {
+			const path = getArg(toolArgs, "path");
+			const oldStr = getArg(toolArgs, "old_string");
+			const newStr = getArg(toolArgs, "new_string");
+			if (oldStr != null && newStr != null) {
+				return (
+					<div className="og-mcp-body">
+						{path && <div className="og-mcp-diff-path">{path}</div>}
+						<DiffView oldText={oldStr} newText={newStr} />
+					</div>
+				);
+			}
+			return null;
+		}
+		case "update_task": {
+			const oldDesc = getArg(toolArgs, "old_description");
+			const newDesc = getArg(toolArgs, "new_description");
+			if (oldDesc != null && newDesc != null) {
+				return (
+					<div className="og-mcp-body">
+						<DiffView oldText={oldDesc} newText={newDesc} />
+					</div>
+				);
+			}
+			return null;
 		}
 		default:
 			return null;

@@ -426,12 +426,17 @@ export function isTitleOnlyCard(
 		case "mcp__opengraft__get_tree":
 		case "mcp__opengraft__yield":
 		case "mcp__opengraft__delete_task":
-		case "mcp__opengraft__update_task":
 		case "mcp__opengraft__close_task":
 		case "mcp__opengraft__reset_task":
 		case "mcp__opengraft__reorder_tasks":
 		case "mcp__opengraft__list_projects":
 			return true;
+		case "mcp__opengraft__update_task": {
+			// Expandable when surgical edit (old_description/new_description) is used
+			const oldDesc = getArg(toolArgs, "old_description");
+			const newDesc = getArg(toolArgs, "new_description");
+			return !(oldDesc != null && newDesc != null);
+		}
 		case "mcp__opengraft__report_to_parent": {
 			// Always expandable — title is in header, message is in body
 			const msg = getArg(toolArgs, "message");
