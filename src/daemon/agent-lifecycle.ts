@@ -70,6 +70,8 @@ async function createAgentContext(
 		queue: MessageQueue;
 		childModel?: string;
 		mcpManager?: McpClientManager;
+		/** System prompt for auto-launching target project agents (cross-project). Only needed at depth 0. */
+		orchestratorSystemPrompt?: string;
 	},
 ): Promise<AgentContextResult> {
 	const effectiveCfg = await resolveProjectConfig(
@@ -168,6 +170,18 @@ async function createAgentContext(
 		deliverMessage: async (nodeId: string, message: QueueMessage) => {
 			await deliverMessage(ctx, project, nodeId, message);
 		},
+		injectMessageToProject:
+			opts.depth === 0 && opts.orchestratorSystemPrompt
+				? async (projectId: string, message: string) => {
+						return handleInjectMessage(
+							ctx,
+							projectId,
+							message,
+							undefined,
+							opts.orchestratorSystemPrompt,
+						);
+					}
+				: undefined,
 	});
 
 	const mcpToolDefs: Record<string, ToolDefinition[]> = {
@@ -828,6 +842,7 @@ export async function launchAgent(
 		childModel: opts.childModel,
 		queue,
 		mcpManager,
+		orchestratorSystemPrompt,
 	});
 
 	// Priority: API param > resolved config

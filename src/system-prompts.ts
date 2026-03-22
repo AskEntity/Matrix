@@ -47,8 +47,8 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 - list_projects: List all registered projects with their IDs, names, paths, and active agent status.
   Use this to discover other projects before sending cross-project messages.
 - send_message_to_project: Send a message to the orchestrator of another project.
-  The target project must have an active agent running. The message arrives as a cross_project
-  message in the target orchestrator's queue (visible via yield()).
+  The message arrives as a cross_project message in the target orchestrator's queue (visible via yield()).
+  If the target project has no active agent, one is auto-launched with the message as the initial prompt.
 
 ## Draft Tasks
 - Create tasks with \`draft: true\` to quickly capture ideas, requirements, and half-formed thoughts. They get status="draft".

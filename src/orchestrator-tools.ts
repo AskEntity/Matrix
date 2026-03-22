@@ -108,6 +108,14 @@ export interface OrchestratorToolsDeps {
 	 * Daemon provides this via the deliverMessage function in agent-lifecycle.ts.
 	 */
 	deliverMessage?: (nodeId: string, message: QueueMessage) => Promise<void>;
+	/**
+	 * Inject a message into another project, auto-launching agent if needed.
+	 * Wraps handleInjectMessage from agent-lifecycle.ts. Only needed at depth 0.
+	 */
+	injectMessageToProject?: (
+		projectId: string,
+		message: string,
+	) => Promise<{ ok: boolean; error?: string }>;
 }
 
 /** Tracks accumulated costs from all child agent executions. */
@@ -1212,7 +1220,7 @@ export function createOrchestratorTools(
 			"send_message_to_project",
 			"Send a message to the orchestrator of another project. " +
 				"The message appears in the target project's orchestrator queue as a cross_project message. " +
-				"The target project must have an active agent running.",
+				"If the target project has no active agent, one is auto-launched with the message as the initial prompt.",
 			{
 				projectId: z.string().describe("ID of the target project"),
 				message: z.string().describe("Message content to send"),
@@ -1243,19 +1251,6 @@ export function createOrchestratorTools(
 					};
 				}
 
-				const targetQueue = deps.getProjectRootQueue(args.projectId);
-				if (!targetQueue) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Error: No active agent running for project "${targetProject.name}" (${args.projectId}).`,
-							},
-						],
-						isError: true,
-					};
-				}
-
 				// Determine sender identity
 				const senderProject = deps.currentProjectId
 					? deps.projectManager.get(deps.currentProjectId)
@@ -1263,18 +1258,74 @@ export function createOrchestratorTools(
 				const fromProjectId = deps.currentProjectId ?? "unknown";
 				const fromProjectName = senderProject?.name ?? "unknown";
 
-				try {
-					targetQueue.enqueue({
-						source: "cross_project",
-						fromProjectId,
-						fromProjectName,
-						content: args.message,
-					});
+				// Try direct enqueue if target agent is already running
+				const targetQueue = deps.getProjectRootQueue(args.projectId);
+				if (targetQueue) {
+					try {
+						targetQueue.enqueue({
+							source: "cross_project",
+							fromProjectId,
+							fromProjectName,
+							content: args.message,
+						});
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Message sent to project "${targetProject.name}" (${args.projectId}).`,
+								},
+							],
+						};
+					} catch (e) {
+						const message = e instanceof Error ? e.message : "Unknown error";
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Error sending message: ${message}`,
+								},
+							],
+							isError: true,
+						};
+					}
+				}
+
+				// Agent not running — auto-launch via injectMessageToProject
+				if (!deps.injectMessageToProject) {
 					return {
 						content: [
 							{
 								type: "text" as const,
-								text: `Message sent to project "${targetProject.name}" (${args.projectId}).`,
+								text: `Error: No active agent running for project "${targetProject.name}" (${args.projectId}), and auto-launch is not available.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				try {
+					// Prepend sender identity so the target agent knows who sent the message
+					const prefixedMessage = `[Cross-project message from "${fromProjectName}" (${fromProjectId})]\n\n${args.message}`;
+					const result = await deps.injectMessageToProject(
+						args.projectId,
+						prefixedMessage,
+					);
+					if (!result.ok) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Error: ${result.error ?? "Failed to launch agent for target project."}`,
+								},
+							],
+							isError: true,
+						};
+					}
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Message sent to project "${targetProject.name}" (${args.projectId}). Agent was not running and has been auto-launched.`,
 							},
 						],
 					};
