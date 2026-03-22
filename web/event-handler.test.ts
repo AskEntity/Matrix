@@ -30,6 +30,7 @@ function makeDeps() {
 			setLastCacheCreationTokens: mock(() => {}),
 			setLastCacheReadTokens: mock(() => {}),
 			setLastOutputTokens: mock(() => {}),
+			setBackgroundProcesses: mock(() => {}),
 			t: (key: string) => key,
 		},
 		logs,

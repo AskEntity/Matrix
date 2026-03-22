@@ -60,6 +60,19 @@ export interface EventHandlerDeps {
 	>;
 	setLastCacheReadTokens: React.Dispatch<React.SetStateAction<number | null>>;
 	setLastOutputTokens: React.Dispatch<React.SetStateAction<number | null>>;
+	setBackgroundProcesses: React.Dispatch<
+		React.SetStateAction<
+			Map<
+				string,
+				{
+					id: string;
+					command: string;
+					startTime: number;
+					taskId?: string;
+				}
+			>
+		>
+	>;
 	t: (key: string, params?: Record<string, string>) => string;
 }
 
@@ -80,6 +93,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		setLastCacheCreationTokens,
 		setLastCacheReadTokens,
 		setLastOutputTokens,
+		setBackgroundProcesses,
 	} = deps;
 
 	/** Shape of a MessageBody / rawMessage — shared by both formats. */
@@ -350,7 +364,10 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					sideEffects: NO_SIDE_EFFECTS,
 				};
 
-			case "tool_result":
+			case "tool_result": {
+				const bgId = msg.backgroundId as string | undefined;
+				const bgCommand = msg.backgroundCommand as string | undefined;
+				const trTaskId = msg.taskId as string | undefined;
 				return {
 					entries: [
 						createLogEntry({
@@ -362,13 +379,27 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							images: msg.images as
 								| Array<{ base64: string; mediaType: string }>
 								| undefined,
-							taskId: msg.taskId as string,
+							taskId: trTaskId as string,
 							ts: (msg.ts as number) ?? Date.now(),
 						}),
 					],
 					updates: [],
-					sideEffects: NO_SIDE_EFFECTS,
+					sideEffects: bgId
+						? () => {
+								setBackgroundProcesses((prev) => {
+									const next = new Map(prev);
+									next.set(bgId, {
+										id: bgId,
+										command: bgCommand ?? "",
+										startTime: Date.now(),
+										taskId: trTaskId,
+									});
+									return next;
+								});
+							}
+						: NO_SIDE_EFFECTS,
 				};
+			}
 
 			case "text_delta": {
 				const deltaText = (msg.content as string) || "";
@@ -603,10 +634,23 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						queueEntry: body,
 					});
 
+					// Remove completed background processes immediately on receipt
+					const bgCompleteId =
+						source === "background_complete" ? body?.commandId : undefined;
+
 					return {
 						entries: [],
 						updates: [],
-						sideEffects: () => syncPendingBanner(),
+						sideEffects: () => {
+							syncPendingBanner();
+							if (bgCompleteId) {
+								setBackgroundProcesses((prev) => {
+									const next = new Map(prev);
+									next.delete(bgCompleteId);
+									return next;
+								});
+							}
+						},
 					};
 				}
 
@@ -891,6 +935,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	function processEventBatch(events: Record<string, unknown>[]): void {
 		// Clear deferred state — reprocessing from scratch
 		deferredMessages.clear();
+		setBackgroundProcesses(new Map());
 
 		const entries: LogEntry[] = [];
 		const deferredSideEffects: (() => void)[] = [];

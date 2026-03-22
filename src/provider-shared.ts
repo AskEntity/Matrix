@@ -342,6 +342,7 @@ export async function executeToolUnified(
 	fallbackCwd?: string,
 	sessionId?: string,
 	queue?: MessageQueue,
+	toolCallId?: string,
 ): Promise<ToolExecResult> {
 	const mcpHandler = mcpHandlers.get(toolName);
 	if (mcpHandler) {
@@ -407,7 +408,15 @@ export async function executeToolUnified(
 		}
 	}
 
-	return executeTool(toolName, input, cwd, fallbackCwd, sessionId, queue);
+	return executeTool(
+		toolName,
+		input,
+		cwd,
+		fallbackCwd,
+		sessionId,
+		queue,
+		toolCallId,
+	);
 }
 
 // ── Queue image extraction ──
@@ -1710,6 +1719,7 @@ export async function* runProviderLoop(
 					request.cwd,
 					sessionId,
 					queue,
+					toolUse.id,
 				);
 			}),
 		);

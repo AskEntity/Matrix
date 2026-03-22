@@ -1,4 +1,5 @@
-import { memo, useState } from "react";
+import { memo, useCallback, useState } from "react";
+import { authFetch } from "../../auth.ts";
 import {
 	formatTime,
 	getLogTaskId,
@@ -81,14 +82,42 @@ function QueueMessageCard({
 export const LogEntryView = memo(function LogEntryView({
 	entry,
 	nodeMap,
+	projectId,
+	rootNodeId,
 }: {
 	entry: LogEntry;
 	nodeMap: Map<string, TaskNode>;
+	projectId?: string;
+	rootNodeId?: string | null;
 }) {
 	const [expanded, setExpanded] = useState(false);
+	const [movingToBg, setMovingToBg] = useState(false);
 	const taskLabel = null;
 
 	const { t } = useLocale();
+
+	const handleMoveToBackground = useCallback(async () => {
+		if (!projectId) return;
+		const toolCallId =
+			"toolCallId" in entry ? (entry.toolCallId as string) : undefined;
+		const taskId = getLogTaskId(entry);
+		if (!toolCallId) return;
+		setMovingToBg(true);
+		try {
+			await authFetch(`/projects/${projectId}/background/move`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					sessionId: taskId ?? rootNodeId ?? "",
+					execId: toolCallId,
+				}),
+			});
+		} catch {
+			// ignore — command may have already completed
+		} finally {
+			setMovingToBg(false);
+		}
+	}, [projectId, rootNodeId, entry]);
 
 	if (entry.type === "compact_marker") {
 		const displayText = `Context compacted (saved ~${entry.savedTokens} tokens)`;
@@ -217,6 +246,17 @@ export const LogEntryView = memo(function LogEntryView({
 						<span className="og-tool-card-name">
 							{getToolCardTitle(toolName, toolArgs, null, nodeMap)}
 						</span>
+						{toolName === "bash" && projectId && (
+							<button
+								type="button"
+								className="og-bash-background-btn"
+								onClick={handleMoveToBackground}
+								disabled={movingToBg}
+								title="Move to background"
+							>
+								⏎ Background
+							</button>
+						)}
 						<span className="og-tool-card-status pending">
 							<span className="og-spinner" />
 						</span>

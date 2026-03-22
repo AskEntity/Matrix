@@ -4,6 +4,7 @@ import { authFetch, clearToken } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
 import { AppFooter } from "./components/AppFooter.tsx";
 import { AppHeader } from "./components/AppHeader.tsx";
+import { BackgroundProcessBar } from "./components/BackgroundProcessBar.tsx";
 import { CuteCat } from "./components/CuteCat.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import {
@@ -220,6 +221,17 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [clarifyAnswers, setClarifyAnswers] = useState<Record<string, string>>(
 		{},
 	);
+	const [backgroundProcesses, setBackgroundProcesses] = useState<
+		Map<
+			string,
+			{
+				id: string;
+				command: string;
+				startTime: number;
+				taskId?: string;
+			}
+		>
+	>(() => new Map());
 	const contentPanelRef = useRef<HTMLElement>(null);
 
 	const {
@@ -382,6 +394,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setLastCacheCreationTokens,
 				setLastCacheReadTokens,
 				setLastOutputTokens,
+				setBackgroundProcesses,
 				t,
 			}),
 		[
@@ -479,6 +492,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setTokenUsage({});
 				setPendingMessages([]);
 				setPendingClarifications([]);
+				setBackgroundProcesses(new Map());
 				setActiveAgents(new Set());
 			} else if (ht && ht !== selectedTaskId) {
 				setSelectedTaskId(ht);
@@ -631,6 +645,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			setTokenUsage({});
 			setPendingMessages([]);
 			setPendingClarifications([]);
+			setBackgroundProcesses(new Map());
 			setActiveAgents(new Set());
 		},
 		[setActiveAgents],
@@ -961,6 +976,12 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								</button>
 							</div>
 						</div>
+						<BackgroundProcessBar
+							processes={backgroundProcesses}
+							projectId={projectId}
+							filterTaskId={selectedTaskId}
+							rootNodeId={rootNodeId}
+						/>
 						<ActivityLog
 							entries={logs}
 							filterTaskId={selectedTaskId}
@@ -969,6 +990,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 							autoScroll={autoScroll}
 							onAutoScrollChange={setAutoScroll}
 							isActive={isSelectedTaskActive}
+							projectId={projectId}
 						/>
 					</div>
 				</section>
