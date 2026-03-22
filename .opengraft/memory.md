@@ -315,3 +315,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `buildToolResultEvents` processes `_consumedQueueMessages` same as cancellation queue messages — converts to events, emits through emit callback for SSE broadcast + JSONL persistence.
 - For reset/delete_task cleanup: `clearSession?: (taskId: string) => void` callback replaces direct `eventStore.clear()` calls.
 - This unifies explicit yield (tool handler) and implicit yield (provider loop) into ONE event emission path.
+
+## Built-in Tool Definitions Refresh on Restart
+- Built-in tools (bash, background, read_file, etc.) are defined in the system prompt, which is frozen at session creation.
+- When tool definitions change in code, the running session still sees the OLD definitions until daemon restart.
+- After daemon restart: new session picks up updated tool definitions automatically.
+- Self-bootstrap implication: when you modify tool definitions (e.g. adding `background` tool), you can use them immediately after the next daemon restart — even though your system prompt text still describes the old tools. The provider registers the actual tool schemas from `definitions.ts`, not from the system prompt text.
