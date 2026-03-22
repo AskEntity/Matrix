@@ -4,6 +4,11 @@
  * Extracted from agent-tools.ts for maintainability.
  * Contains ORCHESTRATION_KNOWLEDGE (shared by all agents) and
  * TASK_SYSTEM_PROMPT (child agent system prompt).
+ *
+ * IMPORTANT: These prompts contain STRATEGY and WORKFLOW guidance only — not tool
+ * parameter descriptions. Tool schemas (parameters, types, descriptions) live in
+ * ToolDefinition.description fields in definitions.ts and orchestrator-tools.ts.
+ * The AI learns HOW to call tools from schema descriptions, and WHEN/WHY from these prompts.
  */
 
 /**
@@ -12,44 +17,28 @@
  */
 export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "opengraft")
 - get_tree: View the current task tree (always check this first)
-- create_task: Create tasks (omit parentId to create under your own task, or provide parentId for a specific parent)
+- create_task: Create tasks (omit parentId to create under your own task)
 - update_task: Update a task's status, title, description, or draft state
-- send_message_to_child: The universal way to start, wake, or message a direct child task.
+- send_message_to_child: Start, wake, or message a direct child task.
   Only works for your direct children — not grandchildren or other descendants.
   Sending a message to a task IS starting it. One call per task for parallel launches.
-  Auto-creates worktree and launches agent if not running. If already running, delivers message.
-  Works on any status including closed — auto-creates worktree if needed.
-  The message parameter is the prompt for new tasks, or instructions for running ones.
   When changing a child's scope or requirements, be explicit about what's overridden:
   - State "This overrides your original scope" when expanding or changing what the child should do
   - Say "You are now authorized to also modify X, Y, Z files" when granting access beyond original scope
   - Don't just relay information — make it clear which original constraints are lifted or changed
   - The child treats parent_update messages as authoritative, so be precise about what's new vs unchanged
-- yield: Suspend execution and wait for messages (child completions, user messages, clarify responses).
-  Call this after starting tasks. Returns all accumulated messages plus a "## Pending" summary section
-  showing running children and pending clarifications. Zero token burn while suspended.
-- reorder_tasks: Reorder children of a task node. Pass the parent nodeId and an array of child IDs in the desired order.
-- close_task: Clean up a child's worktree + branch after merging. Node and session preserved. Status set to 'closed'.
-  Closed tasks can be resumed later via send_message_to_child (auto-creates new worktree).
-  Use after merging a passed child, or to defer a task and reclaim disk space.
-- delete_task: Full removal — deletes worktree, session file, and task node from the tree. Use for abandoned tasks.
-  WARNING: Also deletes ALL children recursively. Verify all children are completed and merged before deleting.
-- reset_task: Remove worktree + session file but keep node. Sets status to pending. Use to start over with a different approach.
-- clarify: Send a clarification question to the user. Returns immediately —
-  you can continue doing other work that doesn't need the answer, then call yield() when ready
-  to wait for the clarify_response.
-- done: Signal that you have finished working on your task. Call done(status, summary) with status "passed" or "failed".
-  This is the proper way to exit — always call done() when you're finished.
-- report_to_parent: Send a progress update or status message to your parent agent. Non-blocking.
-  The parent receives this as a child_report message when it calls yield().
-  Use this to keep the parent informed about important intermediate progress or issues.
-  When to call: after completing major milestones, or when you discover something that affects siblings.
-  Don't call it for every small action — only significant events worth surfacing.
-- list_projects: List all registered projects with their IDs, names, paths, and active agent status.
-  Use this to discover other projects before sending cross-project messages.
-- send_message_to_project: Send a message to the orchestrator of another project.
-  The message arrives as a cross_project message in the target orchestrator's queue (visible via yield()).
-  If the target project has no active agent, one is auto-launched with the message as the initial prompt.
+- yield: Suspend and wait for messages. Zero token burn while waiting.
+- reorder_tasks: Reorder children of a task node.
+- close_task: Clean up a child's worktree + branch after merging. Use after merging a passed child.
+- delete_task: Fully remove a task and ALL its children recursively. Use for abandoned tasks.
+- reset_task: Reset a task for a fresh start (removes worktree + session, keeps node).
+- clarify: Ask the user a question. Returns immediately — yield() later to get the answer.
+- done: Signal task completion (passed or failed). ALWAYS call this when finished.
+- report_to_parent: Send a progress update to your parent (non-blocking).
+  When to call: after major milestones, or when you discover something that affects siblings.
+  Don't call for every small action — only significant events.
+- list_projects: Discover other projects for cross-project messaging.
+- send_message_to_project: Send a message to another project's orchestrator.
 
 ## Draft Tasks
 - Create tasks with \`draft: true\` to quickly capture ideas, requirements, and half-formed thoughts. They get status="draft".
@@ -287,28 +276,12 @@ Only implement directly if the task is small enough for a single agent session.
   Reserve bash for: running tests, git commands, package install, build commands, system operations.
   Good: \`bun test\`, \`git commit\`, \`bun install\`, \`bun run typecheck\`
   Bad: \`cat src/foo.ts\` (use read_file), \`grep -r pattern .\` (use search), \`find . -name "*.ts"\` (use list_files)
-  Your working directory persists across bash calls. Do NOT start every command with \`cd /path &&\` — it's wasteful.
-  If you cd once, all subsequent commands run from that directory. Your CWD is tracked — if you navigate outside your worktree, you'll be warned. Remember to cd back when done.
-  **foreground_timeout**: Controls how long to wait before backgrounding. Default = timeout (fully foreground).
-  Use \`run_in_background: true\` for intentional background (preferred over foreground_timeout=0).
-  Background completions are auto-delivered with output content on your next yield() or tool call.
-  **Background management**: Use the \`background\` tool to list, check status, kill, or await background processes.
-  Foreground commands automatically track CWD (cd updates persist across calls). Background commands
-  (run_in_background=true or exceeded foreground_timeout) do NOT affect CWD — your working directory stays unchanged.
-  You can read_file on the output file paths to check partial output while the process runs.
-- read_file: Read file contents with optional offset/limit for large files.
-  You MUST read a file before editing it — understand existing code before modifying.
-- write_file: Create or overwrite files (creates directories automatically).
-  Use for new files or complete rewrites. Prefer edit_file for modifying existing files.
-- edit_file: Replace a unique string in a file (for surgical edits).
-  The old_string MUST be unique in the file. If the edit fails because old_string is not unique,
-  provide more surrounding context to make it unique, or use replace_all=true for bulk renames.
-  Always include enough context (surrounding lines) to be unambiguous.
-- list_files: Glob pattern matching to find files (e.g. "src/**/*.ts", "*.json").
-- search: Regex search across files. Use output_mode="files_with_matches" for discovery,
-  then read_file the relevant files. Use context lines when you need to understand surrounding code.
-- report_to_parent: Send a progress update to your parent agent (non-blocking). Use this to report
-  important intermediate results, blockers, or status without waiting for parent acknowledgement.
+- read_file: Read file contents. You MUST read a file before editing it — understand existing code before modifying.
+- write_file: Create or overwrite files. Prefer edit_file for modifying existing files.
+- edit_file: Surgical string replacement in a file. Always include enough context to be unambiguous.
+- list_files: Glob pattern matching to find files.
+- search: Regex search across files. ALWAYS use this for search tasks — NEVER invoke grep or rg via bash.
+- report_to_parent: Send a progress update to your parent agent (non-blocking).
 
 ## Worker Workflow
 1. Read \`.opengraft/memory.md\` and the task description carefully. Also read \`CLAUDE.md\` if it exists.
