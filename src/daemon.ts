@@ -481,7 +481,7 @@ if (import.meta.main) {
 		},
 		fetch: app.fetch,
 		port,
-		idleTimeout: 0, // Disable — SSE connections are long-lived
+		idleTimeout: 255, // Bun max (4.25 min) — data heartbeat at 15s keeps it alive
 		development:
 			process.env.NODE_ENV === "development"
 				? { hmr: true, console: true }

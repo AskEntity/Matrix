@@ -132,7 +132,8 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 - **SSE replaces WebSocket**: `GET /events?projectId=X&token=Y`. Standard `ReadableStream` + `Response`.
 - **Ring buffer + Last-Event-ID**: 2000-entry catch-up on reconnect. Falls back to full `sendInitialState`.
-- **Two-tier heartbeat**: SSE comment every 15s (keepalive), data heartbeat every 120s (dead connection detection). Client watchdog: 30s interval, 150s timeout (data events only — does NOT check readyState to avoid conflicting with EventSource auto-reconnect).
+- **Data heartbeat every 15s**: Resets Bun's `idleTimeout` (255s) and lets client watchdog detect dead connections. No comment heartbeat (Bun ignores SSE comments for idle timeout, EventSource ignores them too).
+- **Client watchdog**: 30s check interval, 45s timeout (3x heartbeat). Does NOT check readyState to avoid conflicting with EventSource auto-reconnect.
 - **Initial state**: Tree + pending clarifications sent on connect. Pending messages derived from JSONL events.
 
 ## Compaction
@@ -221,5 +222,5 @@ Daemon (Hono: HTTP + SSE on :7433)
 - OpenAI provider derived texts/toolCalls from `items` with type-guard filters.
 - `walkEventsToMessages()` only pushes to `items` now.
 ## SSE idle timeout fix
-- **Bun idleTimeout**: Default 10s kills SSE connections. Set `idleTimeout: 0` in `Bun.serve()` to disable.
-- SSE comment heartbeats (`: heartbeat`) do NOT reset Bun's idle timer. Only data frames count.
+- **Bun idleTimeout**: Default 10s kills SSE connections. Set `idleTimeout: 255` (Bun max, 4.25 min) in `Bun.serve()`. Data heartbeat at 15s keeps it alive.
+- SSE comment heartbeats (`: heartbeat`) do NOT reset Bun's idle timer. Only data frames count — so we only use data heartbeats.
