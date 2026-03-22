@@ -1355,15 +1355,46 @@ export function createOrchestratorTools(
 					),
 			},
 			async (args) => {
-				// Update task status and store done summary in the tree
+				// Update task status in the tree
 				if (currentTaskId) {
 					tracker.updateStatus(
 						currentTaskId,
 						args.status === "passed" ? "passed" : "failed",
 					);
-					tracker.setDoneSummary(currentTaskId, args.summary);
 					await tracker.save();
 					broadcastTreeUpdate?.();
+				}
+
+				// Deliver child_complete message directly to parent queue (child agents only).
+				// This is the canonical delivery — runChildAgentInBackground skips it when done() was called.
+				const depth = deps.depth ?? 0;
+				if (currentTaskId && depth > 0) {
+					const node = tracker.get(currentTaskId);
+					const completionMsg: QueueMessage = {
+						source: "child_complete",
+						taskId: currentTaskId,
+						title: node?.title ?? "unknown",
+						success: args.status === "passed",
+						output: args.summary.slice(0, 2000),
+					};
+					// Try direct enqueue to parent's queue first
+					const parentQueue = deps.getParentQueue?.();
+					if (parentQueue) {
+						try {
+							parentQueue.enqueue(completionMsg);
+						} catch {
+							// Queue closed — persist via deliverMessage fallback below
+						}
+					}
+					// Always persist to immediate parent for eventual resumption
+					// (parent may not be running, or may be a different ancestor)
+					if (node?.parentId && deps.deliverMessage) {
+						const directParentQueue = globalAgentQueues.get(node.parentId);
+						// Only persist if we didn't already enqueue to the direct parent
+						if (!directParentQueue || directParentQueue !== parentQueue) {
+							deps.deliverMessage(node.parentId, completionMsg).catch(() => {});
+						}
+					}
 				}
 
 				// Close queue for child agents — unblocks waitForQueueMessages() below

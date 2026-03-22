@@ -145,7 +145,7 @@ export const LogEntryView = memo(function LogEntryView({
 			const doneTaskTitle = doneTaskId
 				? nodeMap?.get(doneTaskId)?.title
 				: undefined;
-			const doneTitle = doneTaskTitle || (donePassed ? "Passed" : "Failed");
+			const doneTitle = `Task ${donePassed ? "Passed" : "Failed"}: ${doneTaskTitle || "Orchestrator"}`;
 			return (
 				<div className="og-log-entry og-event-tool_card">
 					<span className="og-log-time">{formatTime(entry.ts)}</span>
@@ -312,6 +312,7 @@ export const LogEntryView = memo(function LogEntryView({
 		const borderClass = success
 			? "og-tool-card-done-passed"
 			: "og-tool-card-done-failed";
+		const completedTitle = `Task ${success ? "Passed" : "Failed"}: ${title}`;
 
 		return (
 			<div className="og-log-entry og-event-tool_card">
@@ -329,7 +330,7 @@ export const LogEntryView = memo(function LogEntryView({
 							onClick={() => setExpanded(!expanded)}
 						>
 							<span className="og-tool-card-name">
-								{success ? "✓" : "✗"} {title}
+								{success ? "✓" : "✗"} {completedTitle}
 							</span>
 							<span className="og-tool-card-toggle">
 								<IconChevron size={10} expanded={expanded} />
@@ -338,7 +339,7 @@ export const LogEntryView = memo(function LogEntryView({
 					) : (
 						<div className="og-tool-card-header">
 							<span className="og-tool-card-name">
-								{success ? "✓" : "✗"} {title}
+								{success ? "✓" : "✗"} {completedTitle}
 							</span>
 						</div>
 					)}
