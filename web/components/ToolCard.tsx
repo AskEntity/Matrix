@@ -55,7 +55,7 @@ export const ToolCard = memo(function ToolCard({
 		resultEntry.type === "tool_result" ? resultEntry.isError : false;
 	const isOk = !isErr;
 
-	const isMcp = toolName.startsWith("mcp__opengraft__");
+	const isOpengraft = toolName.startsWith("mcp__opengraft__");
 	const titleOnly = isTitleOnlyCard(toolName, toolArgs);
 	const totalContent = argsStr + (resultContent ?? "");
 	const [expanded, setExpanded] = useState(() =>
@@ -113,7 +113,7 @@ export const ToolCard = memo(function ToolCard({
 
 	// Try structured MCP rendering (skip for title-only cards)
 	const mcpBody =
-		isMcp && !titleOnly ? (
+		isOpengraft && !titleOnly ? (
 			<McpToolCardBody
 				toolName={toolName}
 				toolArgs={toolArgs}
@@ -129,7 +129,7 @@ export const ToolCard = memo(function ToolCard({
 		isOk && !mcpBody ? formatMcpToolResult(toolName, resultContent, t) : null;
 
 	const statusClass = isErr ? "og-tool-card-err" : "og-tool-card-ok";
-	const accentClass = isMcp ? "og-tool-card-mcp" : "";
+	const accentClass = isOpengraft ? "og-tool-card-mcp" : "";
 
 	return (
 		<div className="og-log-entry og-event-tool_card">
