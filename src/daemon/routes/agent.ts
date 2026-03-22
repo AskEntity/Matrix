@@ -106,7 +106,7 @@ export function registerAgentRoutes(
 			if (startQueue) {
 				const startMemory = readProjectMemory(project.path);
 				const startHeader = startMemory
-					? `Working directory: ${project.path}\n\n## Project Memory\n${startMemory}`
+					? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${startMemory}`
 					: `Working directory: ${project.path}`;
 				try {
 					startQueue.enqueue({
@@ -234,7 +234,7 @@ export function registerAgentRoutes(
 			if (restartRootId) {
 				const restartMemory = readProjectMemory(project.path);
 				const restartHeader = restartMemory
-					? `Working directory: ${project.path}\n\n## Project Memory\n${restartMemory}`
+					? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${restartMemory}`
 					: `Working directory: ${project.path}`;
 				await persistMessage(ctx.config.dataDir, project.id, restartRootId, {
 					source: "user",

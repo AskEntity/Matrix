@@ -391,3 +391,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - QueueMessageCard eliminated — parent_update, child_report, cross_project use Card directly.
 - ToolCard.tsx uses Card as base. LogEntryView.tsx uses Card for all card types.
 - LogEntryWrapper helper in LogEntryView handles the outer timestamp + badge wrapper.
+
+
+## readProjectMemory Header Update
+- Memory pre-load header changed from `## Project Memory` to `# .opengraft/memory.md (Preloaded, do not read again)` across all injection points.
+- provider-shared.ts compaction resume also updated (was `## Project Memory (fresh)`).
+- buildTaskPrompt in agent-tools.ts also updated.
