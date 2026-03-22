@@ -316,8 +316,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - For reset/delete_task cleanup: `clearSession?: (taskId: string) => void` callback replaces direct `eventStore.clear()` calls.
 - This unifies explicit yield (tool handler) and implicit yield (provider loop) into ONE event emission path.
 
-## Built-in Tool Definitions Refresh on Restart
-- Built-in tools (bash, background, read_file, etc.) are defined in the system prompt, which is frozen at session creation.
-- When tool definitions change in code, the running session still sees the OLD definitions until daemon restart.
-- After daemon restart: new session picks up updated tool definitions automatically.
-- Self-bootstrap implication: when you modify tool definitions (e.g. adding `background` tool), you can use them immediately after the next daemon restart — even though your system prompt text still describes the old tools. The provider registers the actual tool schemas from `definitions.ts`, not from the system prompt text.
+## Built-in Tool Definitions Refresh
+- Built-in tools (bash, background, read_file, etc.) are defined in the system prompt, frozen at session creation.
+- Daemon restart resumes the existing session — old system prompt preserved, old tool descriptions remain.
+- Only a fresh session (clear sessions) or compaction creates a new system prompt with updated tool definitions.
+- However: the provider registers actual tool SCHEMAS from `definitions.ts` at launch time, not from the system prompt text. So new tools ARE callable after restart — the AI just doesn't know about them from the prompt until session refresh.
+- Self-bootstrap: after modifying tool definitions and daemon restart, you CAN call the new tools immediately. The schema is live, only the prompt description is stale.
