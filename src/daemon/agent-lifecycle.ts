@@ -107,7 +107,8 @@ async function createAgentContext(
 		maxDepth: effectiveCfg.maxDepth,
 		projectManager: opts.depth === 0 ? ctx.pm : undefined,
 		currentProjectId: project.id,
-		eventStore: getEventStore(ctx, project.id),
+		clearSession: (taskId: string) =>
+			getEventStore(ctx, project.id).clear(taskId),
 		dataDir: ctx.config.dataDir,
 		closeQueue: opts.depth > 0 ? () => opts.queue.close() : undefined,
 		onTaskEvent: (event) => {

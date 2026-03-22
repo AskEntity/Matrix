@@ -3512,7 +3512,7 @@ button.og-tool-card-header:hover {
 	flex-wrap: wrap;
 	gap: 6px;
 	padding: 5px 12px;
-	margin: 4px 0;
+	margin: 4px 8px;
 	border-radius: var(--radius-md);
 	border: 1px solid rgba(99, 179, 237, 0.35);
 	background: rgba(99, 179, 237, 0.08);

@@ -308,3 +308,10 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `send_message_to_child` only allows messaging direct children (node.parentId === currentTaskId), not any descendant.
 - Root orchestrator checks node.parentId === tracker.rootNodeId || node.parentId === null.
 - Other tools (create_task, update_task, reorder_tasks) still use isDescendantOf for broader scope validation — those are correct to allow subtree operations.
+
+## eventStore Removal from OrchestratorToolsDeps
+- `eventStore` removed from OrchestratorToolsDeps — enforces "Provider has zero EventStore access" rule.
+- `waitForQueueMessages` (yield/done) no longer writes events directly to JSONL. Instead, raw queue messages passed back via `_consumedQueueMessages` on tool result.
+- `buildToolResultEvents` processes `_consumedQueueMessages` same as cancellation queue messages — converts to events, emits through emit callback for SSE broadcast + JSONL persistence.
+- For reset/delete_task cleanup: `clearSession?: (taskId: string) => void` callback replaces direct `eventStore.clear()` calls.
+- This unifies explicit yield (tool handler) and implicit yield (provider loop) into ONE event emission path.

@@ -322,6 +322,8 @@ export interface ToolExecResult {
 	mediaType?: string;
 	mcpImages?: Array<{ base64: string; mediaType: string; data?: string }>;
 	_consumedMessageIds?: string[];
+	/** Raw queue messages from yield/done that need to flow through emit for SSE broadcast + persistence. */
+	_consumedQueueMessages?: QueueMessage[];
 	_formattedQueueMessages?: string;
 	_pending?: {
 		runningChildren: Array<{ id: string; title: string }>;
@@ -384,6 +386,9 @@ export async function executeToolUnified(
 			const consumedIds = Array.isArray(mcpResult._consumedMessageIds)
 				? (mcpResult._consumedMessageIds as string[])
 				: undefined;
+			const consumedQueueMsgs = Array.isArray(mcpResult._consumedQueueMessages)
+				? (mcpResult._consumedQueueMessages as QueueMessage[])
+				: undefined;
 			const pending = mcpResult._pending as ToolExecResult["_pending"];
 			const formattedQueueMessages =
 				typeof mcpResult._formattedQueueMessages === "string"
@@ -395,6 +400,9 @@ export async function executeToolUnified(
 				isImage: mcpImages.length > 0,
 				mcpImages,
 				...(consumedIds?.length ? { _consumedMessageIds: consumedIds } : {}),
+				...(consumedQueueMsgs?.length
+					? { _consumedQueueMessages: consumedQueueMsgs }
+					: {}),
 				...(pending ? { _pending: pending } : {}),
 				...(formattedQueueMessages
 					? { _formattedQueueMessages: formattedQueueMessages }
@@ -684,7 +692,23 @@ export function buildToolResultEvents(
 		});
 	}
 
-	// Record non-user cancellation-point queue messages as separate Events
+	// Process queue messages from yield/done tool results (same pattern as cancellation)
+	for (const exec of execResults) {
+		if (exec._consumedQueueMessages?.length) {
+			for (const qm of exec._consumedQueueMessages) {
+				if (qm.source === "user" && qm.id) {
+					consumedIds.push(qm.id);
+				} else {
+					const evt = queueMessageToEvent(qm);
+					const evtId = (evt as { id?: string }).id;
+					if (evtId) consumedIds.push(evtId);
+					nonUserQueueEvents.push(evt);
+				}
+			}
+		}
+	}
+
+	// Record non-user queue messages (cancellation + yield/done) as separate Events
 	for (const evt of nonUserQueueEvents) {
 		toolEvents.push(evt);
 	}
