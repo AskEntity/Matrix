@@ -48,7 +48,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 | src/worktree-manager.ts | Git worktree lifecycle |
 | src/message-queue.ts | MessageQueue + globalAgentQueues |
 | src/persistent-queue.ts | Disk-backed message persistence |
-| src/events.ts | Event types + provider converters (eventsToAnthropicMessages, eventsToOpenAIMessages) |
+| src/events.ts | Event types + helpers (formatEventForAI, queueMessageToEvent, findOrphanedToolCalls) |
 | src/event-store.ts | JSONL EventStore — sole persistence for events (session resume + activity log) |
 | src/daemon/routes/auth.ts | WebAuthn/Passkey auth middleware + endpoints |
 | src/daemon/routes/sse.ts | SSE endpoint + initial state push |
@@ -81,7 +81,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 **Frontend unified processor**: ONE `processEvent` function used by both live SSE events AND batch processing (page load/reconnect). `processEventBatch` just loops `processEvent` over all events. No dual-path code.
 
-**Provider-internal events**: `message` events with `cwd` field and no `id` = provider prompts (initial/resume). Filtered out by frontend. `compacted_resume` also filtered.
+**Provider-internal events**: `message` events with `id: ""` (empty string) = provider prompts (initial/resume). Filtered out by frontend. `compacted_resume` also filtered.
 
 ## Known Pitfalls
 
@@ -162,7 +162,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `activeEvents` on AgentRequest provides pre-loaded events for resume (daemon reads from EventStore).
 - Orphan tool_call fixes happen in daemon layer before passing events to provider.
 - Converters live in their respective provider files, not events.ts.
-- `events.ts` is types + helpers only (~576 lines).
+- `events.ts` is types + helpers only (~400 lines).
 - Adding a new provider = implement `ProviderAdapter` + `EventConverterCallbacks`.
 
 ## Miscellaneous
@@ -192,34 +192,17 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 ## Unified Message Schema
 
-- **MessageEvent** now has unified format: `{ type: "message", id: string, taskId?, body: MessageBody, ts }`. All data lives in `body`, no top-level duplication.
-- Old fields (`source`, `content`, `images`, `cwd`, `isResume`) kept as optional + `@deprecated` on MessageEvent for backward compat with old JSONL.
-- `normalizeMessageEvent()` in events.ts handles both old and new formats — reads from body if present, synthesizes from top-level fields if not.
-- `queueMessageToEvent()` no longer duplicates fields at top level — just wraps in `{ type, id, body, ts }`.
-- **QueueMessage** now has `header?: string` on `user` and `parent_update` variants. Header = context prepended in AI message (working dir, pre-loaded memory, task description).
-- `formatBodyForAI()` handles header: prepends to content for user messages, wraps parent_update content with header.
-- `orchestration_started` no longer has `prompt` field — messages delivered via queue with unified schema.
-- Frontend `processEvent` reads content/images from `body` field preferentially, falling back to top-level for legacy events. Does NOT display `header` in UI.
-- Provider still emits old-format prompt events (no id, top-level content/cwd) for JSONL — walker skips these (no id). Future work: move prompt to queue entirely.
-
-- **prompt removed from AgentRequest**: Provider drains queue for first message. Header on queue message provides working dir + pre-loaded memory.
-- **Resume and fresh start converge**: Both paths drain queue. Resume reconstructs events first, then drains. Header is ALWAYS how context enters the conversation.
-- `execute()` in both providers creates a self-closing queue (onDrain closes it) so provider exits on end_turn instead of entering implicit yield.
+- **MessageEvent**: `{ type: "message", id: string, taskId?, body: MessageBody, ts }`. `id` and `body` required. All data in `body`, no top-level fields.
+- **MessageBody** = `QueueMessage` discriminated union. `body.source` determines type (user, child_complete, parent_update, etc.).
+- **`header?: string`** on `user` and `parent_update` variants. Header = context prepended in AI message (working dir, pre-loaded memory, task description). Frontend does NOT display header.
+- **`queueMessageToEvent()`**: wraps QueueMessage as `{ type: "message", id: ulid(), body: msg, ts }`.
+- **`formatEventForAI()`**: only handles `message` type, reads from `body` via `formatBodyForAI()`.
+- **`isQueueEvent()`**: just checks `event.body.source !== "user"`.
+- **No legacy types in Event union**: All queue messages are `message` events with `body.source` discriminating. No standalone `child_complete`, `user_message`, etc.
+- **Prompt removed from AgentRequest**: Provider drains queue for first message. Header provides context.
+- **Resume and fresh start converge**: Both paths drain queue. Header is ALWAYS how context enters the conversation.
 - `launchAgent` no longer takes prompt — callers enqueue messages to queue before/after launch.
-- `handleOrchestrate` and `handleInjectMessage` enqueue user messages with header directly to the running queue.
-- `autoResumeProjects` persists a resume message with fresh context header before launching.
-- Mock providers in tests must loop `while(true) { await queue.wait(); }` to stay alive (old mock exited immediately because it had nothing to wait for).
-
-
-## Legacy Compat Removal (2026-03-22)
-
-- **MessageEvent** now has required `id: string` and `body: MessageBody`. No more optional deprecated top-level fields.
-- **Event union** no longer includes: `child_complete`, `parent_update`, `clarify_response`, `child_report`, `cross_project`, `background_complete`, `system_notification`, `compact_request`, `user_message`. All of these are now `message` events with `body.source` discriminating.
-- **`normalizeMessageEvent()`** removed — just use `event.body` directly.
-- **`LEGACY_QUEUE_EVENT_TYPES`** removed.
-- **`formatEventForAI()`** simplified — only handles `message` type, reads from `body`.
-- **`isQueueEvent()`** simplified — just checks `event.body.source !== "user"`.
-- **Event-store migration code** removed — `runEventMigrations()` is now a no-op stub.
-- **`walkEventsToMessages()`** — removed `user_message` case, removed legacy queue type skip cases. Messages with non-empty `id` are skipped (deferred until `messages_consumed`). Messages with empty `id` are rendered directly.
-- **Frontend `UIOnlyEvent`** now includes `parent_update`, `child_report`, `cross_project`, `background_complete`, `clarify_response` types (moved from Event union).
-- **Converter test events** use `id: ""` for direct prompt messages (not deferred) and real IDs for queue-originated deferred messages.
+- `execute()` in both providers creates a self-closing queue (onDrain closes it) so provider exits on end_turn instead of entering implicit yield.
+- Mock providers in tests must loop `while(true) { await queue.wait(); }` to stay alive.
+- **`walkEventsToMessages()`**: Messages with non-empty `id` are deferred (skipped until `messages_consumed`). Messages with `id: ""` are rendered directly as prompt events.
+- **Frontend `UIOnlyEvent`**: includes `parent_update`, `child_report`, `cross_project`, `background_complete`, `clarify_response` types for UI rendering (not in backend Event union).
