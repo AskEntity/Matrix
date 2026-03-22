@@ -154,7 +154,7 @@ export const TaskDetail = memo(function TaskDetail({
 				onClick={copyId}
 				title={t("detail.copyId")}
 			>
-				<span className="og-detail-task-id-text">{node.id.slice(0, 8)}</span>
+				<span className="og-detail-task-id-text">{node.id}</span>
 				<IconCopy size={10} />
 				{idCopied && (
 					<span className="og-detail-id-copied">{t("detail.copied")}</span>

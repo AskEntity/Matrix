@@ -53,8 +53,7 @@ export const AppFooter = memo(function AppFooter({
 			{pendingClarifications.length > 0 && (
 				<div className="og-clarifications">
 					{pendingClarifications.map((c) => {
-						const taskTitle =
-							nodeMap.get(c.taskId)?.title ?? c.taskId.slice(0, 8);
+						const taskTitle = nodeMap.get(c.taskId)?.title ?? c.taskId;
 						return (
 							<div key={c.id} className="og-clarification-card">
 								<div className="og-clarification-header">
@@ -123,9 +122,7 @@ export const AppFooter = memo(function AppFooter({
 				<div className="og-message-target">
 					<span className="og-message-target-label">
 						→ {t("target.sendingTo")}{" "}
-						<strong>
-							{nodeMap.get(targetNodeId)?.title ?? targetNodeId.slice(0, 8)}
-						</strong>
+						<strong>{nodeMap.get(targetNodeId)?.title ?? targetNodeId}</strong>
 					</span>
 					<button
 						type="button"
