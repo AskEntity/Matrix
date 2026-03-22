@@ -22,10 +22,10 @@ When the user discusses a feature or gives architectural feedback, they are desi
 3. **Only then execute** — with the agreed-upon architecture
 
 Signs the user wants to discuss, NOT execute:
-- They suggest an approach ("能不能之后的tool result带上running_bashes")
-- They give architectural feedback ("background task的信息应该用某种方式传递")
-- They say "的id" or add clarifications after your response
-- They haven't explicitly said "开始做" / "做吧" / "实现一下"
+- They suggest an approach ("what if tool_result carried runningBackgrounds")
+- They give architectural feedback ("background task info should be transmitted somehow")
+- They add small clarifications or corrections after your response
+- They haven't explicitly said "start" / "go" / "implement it"
 
 **NEVER rush to launch a child task when the user is still refining the design.** A wasted child execution costs real money and loses context. A draft task costs nothing. When in doubt: update the draft description, ask for confirmation, wait.
 
