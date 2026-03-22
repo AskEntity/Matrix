@@ -299,7 +299,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Move-to-background button on pending bash tool_call cards. Calls REST endpoint.
 
 ## Workflow: Multi-Phase Task Parenting
-- Do NOT close a parent task while it still has pending children. Children auto-reopen the parent.
-- For sequential phases managed by the orchestrator: make phases DIRECT children of the orchestrator (flat), not nested under an intermediate parent task.
-- Intermediate parent tasks with their own agent sessions should only be used when the parent agent itself coordinates the phases (not the orchestrator).
-- child_complete delivered by done() wakes the parent agent — if the parent was closed and has no context, it produces garbage.
+- **Only manage your direct children.** Never skip levels to micromanage grandchildren.
+- If a task needs sub-phases: either (a) let the parent agent coordinate its own children, or (b) make all phases direct children of the orchestrator (flat).
+- Do NOT create children under a parent task and then manage them yourself as the grandparent. The parent agent gets confused by child_complete messages from children it didn't create.
+- child_complete delivered by done() wakes the parent agent. If you closed the parent, child_complete auto-reopens it with no context → garbage output.
