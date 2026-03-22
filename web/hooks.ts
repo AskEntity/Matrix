@@ -52,6 +52,8 @@ export type UIOnlyEvent =
 			commandId: string;
 			exitCode: number | null;
 			durationMs: number;
+			stdout?: string;
+			stderr?: string;
 			taskId?: string;
 			ts: number;
 	  }

@@ -114,6 +114,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		commandId?: string;
 		exitCode?: number | null;
 		durationMs?: number;
+		stdout?: string;
+		stderr?: string;
 	}
 
 	/**
@@ -186,6 +188,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					commandId: qe.commandId ?? "",
 					exitCode: qe.exitCode ?? null,
 					durationMs: qe.durationMs ?? 0,
+					stdout: qe.stdout,
+					stderr: qe.stderr,
 					taskId: parentTaskId,
 					ts: eventTs,
 				} as UIEvent;
@@ -386,12 +390,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					updates: [],
 					sideEffects: bgId
 						? () => {
+								// Use event timestamp as startTime (from server, not component mount time)
+								const bgStartTime = (msg.ts as number) ?? Date.now();
 								setBackgroundProcesses((prev) => {
 									const next = new Map(prev);
 									next.set(bgId, {
 										id: bgId,
 										command: bgCommand ?? "",
-										startTime: Date.now(),
+										startTime: bgStartTime,
 										taskId: trTaskId,
 									});
 									return next;

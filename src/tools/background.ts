@@ -26,11 +26,13 @@ export function listBackgroundProcesses(
 		durationMs: number;
 	}[] = [];
 	for (const bg of map.values()) {
+		// Use endTime for completed processes, now for running ones
+		const endPoint = bg.endTime ?? now;
 		result.push({
 			id: bg.id,
 			command: bg.command,
 			status: bg.status,
-			durationMs: now - bg.startTime,
+			durationMs: endPoint - bg.startTime,
 		});
 	}
 	return result;

@@ -31,6 +31,8 @@ export interface BackgroundProcess {
 	id: string;
 	command: string;
 	startTime: number;
+	/** Set when process completes (status changes from "running"). */
+	endTime?: number;
 	stdout: string;
 	stderr: string;
 	exitCode: number | null;
@@ -264,12 +266,14 @@ export function killBackgroundProcess(
 	if (bg.kill) {
 		bg.kill();
 		bg.status = "failed";
+		bg.endTime = Date.now();
 		bg.kill = null;
 		// Keep temp files alive — agent can read via read_file, cleaned up on session end
+		const durationMs = (bg.endTime ?? Date.now()) - bg.startTime;
 		const parts = [
 			`Process ${bgId} killed.`,
 			`Command: ${bg.command}`,
-			`Ran for ${Math.round((Date.now() - bg.startTime) / 1000)}s.`,
+			`Ran for ${Math.round(durationMs / 1000)}s.`,
 		];
 		if (bg.stdoutPath) {
 			parts.push(`stdout file: ${bg.stdoutPath}`);
@@ -304,23 +308,13 @@ export async function awaitBackgroundProcess(
 		await bg.completionPromise;
 	}
 
-	// Use shared formatting
-	const result = formatBashResult(
-		bg.stdoutPath,
-		bg.stderrPath,
-		bg.exitCode ?? 1,
-	);
-	const durationMs = Date.now() - bg.startTime;
-	const parts = [
-		`Background process ${bg.id} completed.`,
-		`Command: ${bg.command}`,
-		`Duration: ${Math.round(durationMs / 1000)}s`,
-		"",
-		result.content,
-	];
+	// Simplified await: just return minimal completion info.
+	// The actual output comes via background_complete queue message.
+	const exitCode = bg.exitCode ?? 1;
+	const durationMs = (bg.endTime ?? Date.now()) - bg.startTime;
 	return {
-		content: parts.join("\n"),
-		isError: result.isError,
+		content: `Process ${bg.id} completed (exit ${exitCode}, ${Math.round(durationMs / 1000)}s). Output delivered via background completion message.`,
+		isError: exitCode !== 0,
 	};
 }
 
@@ -334,7 +328,7 @@ export function getBackgroundStatus(
 	const bg = map.get(bgId);
 	if (!bg) return null;
 
-	const durationMs = Date.now() - bg.startTime;
+	const durationMs = (bg.endTime ?? Date.now()) - bg.startTime;
 
 	// For completed processes, use formatBashResult (shared formatting)
 	if (bg.status !== "running" && bg.exitCode !== null) {
@@ -400,8 +394,6 @@ export async function executeBashWithTimeout(
 	backgroundId?: string;
 	backgroundCommand?: string;
 }> {
-	const CWD_MARKER = "___OPENGRAFT_CWD___";
-
 	// Fall back if tracked CWD no longer exists
 	let effectiveCwd = cwd;
 	if (!existsSync(cwd)) {
@@ -413,20 +405,21 @@ export async function executeBashWithTimeout(
 		}
 	}
 
-	const cdWrapper = `cd() { local t="${"$"}{1:-${"$"}HOME}"; local r; r=${"$"}(builtin cd "${"$"}t" 2>/dev/null && pwd); if [ "${"$"}(pwd)" = "${"$"}r" ]; then echo "bash: cd: ${"$"}(pwd): already in this directory" >&2; return 1; fi; builtin cd "${"$"}t"; }; `;
-
 	// All commands use file-based output redirection
 	const execId = ulid().slice(0, 8);
 	ensureBgTmpDir();
 	const stdoutPath = join(BG_TMP_DIR, `exec-${execId}.stdout`);
 	const stderrPath = join(BG_TMP_DIR, `exec-${execId}.stderr`);
+	const cwdPath = join(BG_TMP_DIR, `cwd-${execId}`);
 
-	// For foreground commands, include CWD tracking wrapper.
-	// For immediate background (foregroundTimeout === 0), use plain command (no CWD tracking).
+	// cd wrapper writes resolved pwd to temp file on every cd — no stdout pollution.
+	// EXIT trap writes final pwd to temp file (catches cd in subshells/scripts too).
 	const isImmediateBackground = foregroundTimeout === 0 && !!sessionId;
+	const cdWrapper = `cd() { local t="${"$"}{1:-${"$"}HOME}"; local r; r=${"$"}(builtin cd "${"$"}t" 2>/dev/null && pwd); if [ "${"$"}(pwd)" = "${"$"}r" ]; then echo "bash: cd: ${"$"}(pwd): already in this directory" >&2; return 1; fi; builtin cd "${"$"}t" && pwd > "${cwdPath}"; }; `;
+	const exitTrap = `___og_trap() { pwd > "${cwdPath}"; }; trap ___og_trap EXIT; `;
 	const shellCommand = isImmediateBackground
 		? command
-		: `___og_trap() { echo "${CWD_MARKER}"; pwd; }; trap ___og_trap EXIT; ${cdWrapper}${command}`;
+		: `${exitTrap}${cdWrapper}${command}`;
 
 	const proc = Bun.spawn(["bash", "-c", shellCommand], {
 		cwd: effectiveCwd,
@@ -437,7 +430,7 @@ export async function executeBashWithTimeout(
 
 	const startTime = Date.now();
 
-	// Helper: use formatBashResult + parse CWD marker for foreground results
+	// Helper: use formatBashResult + read CWD from temp file for foreground results
 	function parseForegroundResult(exitCode: number): {
 		content: string;
 		isError: boolean;
@@ -445,72 +438,43 @@ export async function executeBashWithTimeout(
 	} {
 		const result = formatBashResult(stdoutPath, stderrPath, exitCode);
 
-		// Extract CWD marker from stdout before formatting
-		let cleanContent = result.content;
+		let content = result.content;
 		let newCwd: string | undefined;
 
-		// CWD marker is in the raw stdout — check if it's present
-		const markerIdx = result.stdout.lastIndexOf(CWD_MARKER);
-		if (markerIdx !== -1) {
-			const afterMarker = result.stdout
-				.slice(markerIdx + CWD_MARKER.length)
-				.trim();
-			const pwdLine = afterMarker.split("\n")[0]?.trim();
-			if (pwdLine) {
+		// Read CWD from temp file (written by cd wrapper or EXIT trap)
+		try {
+			const cwdFromFile = readFileSync(cwdPath, "utf-8").trim();
+			if (cwdFromFile) {
 				let resolvedCwd: string;
 				try {
 					resolvedCwd = realpathSync(effectiveCwd);
 				} catch {
 					resolvedCwd = effectiveCwd;
 				}
-				if (pwdLine !== resolvedCwd) {
-					newCwd = pwdLine;
+				if (cwdFromFile !== resolvedCwd) {
+					newCwd = cwdFromFile;
 				}
 			}
-			// Rebuild content without CWD marker in stdout
-			const cleanStdout = result.stdout.slice(0, markerIdx);
-			const parts: string[] = [];
-			if (effectiveCwd !== cwd) {
-				parts.push(
-					`workdir reset to ${effectiveCwd} (previous dir '${cwd}' no longer exists)`,
-				);
-				if (!newCwd) newCwd = effectiveCwd;
-			}
-			if (cleanStdout) {
-				if (result.stdoutTruncatedPath) {
-					const size = fileSize(result.stdoutTruncatedPath);
-					const sizeKb = Math.round(size / 1024);
-					parts.push(
-						`stdout (truncated, ${sizeKb}KB total):\n${cleanStdout}\n(Output too large. Full output: ${result.stdoutTruncatedPath} — use read_file with offset/limit.)`,
-					);
-				} else {
-					parts.push(`stdout:\n${cleanStdout}`);
-				}
-			}
-			if (result.stderr) {
-				if (result.stderrTruncatedPath) {
-					const size = fileSize(result.stderrTruncatedPath);
-					const sizeKb = Math.round(size / 1024);
-					parts.push(
-						`stderr (truncated, ${sizeKb}KB total):\n${result.stderr}\n(Output too large. Full output: ${result.stderrTruncatedPath} — use read_file with offset/limit.)`,
-					);
-				} else {
-					parts.push(`stderr:\n${result.stderr}`);
-				}
-			}
-			parts.push(`exit code: ${exitCode}`);
-			cleanContent = parts.join("\n");
-		} else {
-			// No CWD marker — prepend workdir reset if needed
-			if (effectiveCwd !== cwd) {
-				const resetMsg = `workdir reset to ${effectiveCwd} (previous dir '${cwd}' no longer exists)`;
-				cleanContent = `${resetMsg}\n${cleanContent}`;
-				if (!newCwd) newCwd = effectiveCwd;
+		} catch {
+			// No CWD file — command didn't cd
+		} finally {
+			// Clean up CWD temp file
+			try {
+				unlinkSync(cwdPath);
+			} catch {
+				// Already removed or never created
 			}
 		}
 
+		// Prepend workdir reset if CWD was invalid
+		if (effectiveCwd !== cwd) {
+			const resetMsg = `workdir reset to ${effectiveCwd} (previous dir '${cwd}' no longer exists)`;
+			content = `${resetMsg}\n${content}`;
+			if (!newCwd) newCwd = effectiveCwd;
+		}
+
 		if (newCwd) {
-			cleanContent += `\n\nworkdir set to ${newCwd} from now on`;
+			content += `\n\nworkdir set to ${newCwd} from now on`;
 			if (fallbackCwd) {
 				let resolvedWorktree: string;
 				let resolvedNew: string;
@@ -528,13 +492,13 @@ export async function executeBashWithTimeout(
 					resolvedNew !== resolvedWorktree &&
 					!resolvedNew.startsWith(`${resolvedWorktree}/`);
 				if (isOutside) {
-					cleanContent += `\n[Note: CWD is outside your worktree. Your worktree root is ${resolvedWorktree}. Remember to cd back when done.]`;
+					content += `\n[Note: CWD is outside your worktree. Your worktree root is ${resolvedWorktree}. Remember to cd back when done.]`;
 				}
 			}
 		}
 
 		return {
-			content: cleanContent,
+			content,
 			isError: result.isError,
 			cwd: newCwd,
 		};
@@ -567,6 +531,7 @@ export async function executeBashWithTimeout(
 				const exitCode = await proc.exited;
 				bgEntry.exitCode = exitCode;
 				bgEntry.status = exitCode === 0 ? "completed" : "failed";
+				bgEntry.endTime = Date.now();
 				bgEntry.kill = null;
 
 				// Format output using shared formatBashResult
@@ -679,6 +644,7 @@ export async function executeBashWithTimeout(
 			const { exitCode } = await exitPromise;
 			bgEntry.exitCode = exitCode;
 			bgEntry.status = exitCode === 0 ? "completed" : "failed";
+			bgEntry.endTime = Date.now();
 			bgEntry.kill = null;
 
 			// Format output using shared formatBashResult
