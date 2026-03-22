@@ -60,8 +60,7 @@ export function McpToolCardBody({
 								<span className="og-mcp-task-title">
 									{rt.title ??
 										(rt.taskId
-											? (nodeMap?.get(rt.taskId)?.title ??
-												rt.taskId.slice(0, 8))
+											? (nodeMap?.get(rt.taskId)?.title ?? rt.taskId)
 											: "?")}
 								</span>
 								{taskInput?.mode && taskInput.mode !== "new" && (
@@ -136,7 +135,7 @@ export function McpToolCardBody({
 					) : (
 						<div className="og-mcp-task-title">
 							{(argTaskId
-								? (nodeMap?.get(argTaskId)?.title ?? argTaskId.slice(0, 8))
+								? (nodeMap?.get(argTaskId)?.title ?? argTaskId)
 								: null) ?? "?"}
 						</div>
 					)}

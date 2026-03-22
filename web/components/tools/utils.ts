@@ -269,7 +269,7 @@ export function getToolCardTitle(
 				const taskId = getArg(toolArgs, "taskId");
 				if (taskId) {
 					const title = nodeMap?.get(taskId)?.title;
-					return `– Task Deleted: ${title ?? taskId.slice(0, 8)}`;
+					return `– Task Deleted: ${title ?? taskId}`;
 				}
 				return "– Task Deleted";
 			}
@@ -352,7 +352,7 @@ export function getToolCardTitle(
 				const taskId = getArg(toolArgs, "taskId");
 				if (taskId) {
 					const resolved = nodeMap?.get(taskId)?.title;
-					return `Task Updated: ${resolved ?? taskId.slice(0, 8)}`;
+					return `Task Updated: ${resolved ?? taskId}`;
 				}
 				return "Task Updated";
 			}
@@ -360,7 +360,7 @@ export function getToolCardTitle(
 				const taskId = getArg(toolArgs, "taskId");
 				if (taskId) {
 					const title = nodeMap?.get(taskId)?.title;
-					return `→ Message Child: ${title ?? taskId.slice(0, 8)}`;
+					return `→ Message Child: ${title ?? taskId}`;
 				}
 				return "→ Message Child";
 			}
@@ -368,7 +368,7 @@ export function getToolCardTitle(
 				const taskId = getArg(toolArgs, "taskId");
 				if (taskId) {
 					const title = nodeMap?.get(taskId)?.title;
-					return `– Task Closed: ${title ?? taskId.slice(0, 8)}`;
+					return `– Task Closed: ${title ?? taskId}`;
 				}
 				return "– Task Closed";
 			}
@@ -376,7 +376,7 @@ export function getToolCardTitle(
 				const taskId = getArg(toolArgs, "taskId");
 				if (taskId) {
 					const title = nodeMap?.get(taskId)?.title;
-					return `↺ Task Reset: ${title ?? taskId.slice(0, 8)}`;
+					return `↺ Task Reset: ${title ?? taskId}`;
 				}
 				return "↺ Task Reset";
 			}
@@ -386,9 +386,7 @@ export function getToolCardTitle(
 				return "⌕ List projects";
 			case "send_message_to_project": {
 				const projectId = getArg(toolArgs, "projectId");
-				return projectId
-					? `→ Cross-project: ${projectId.slice(0, 8)}…`
-					: "→ Cross-project";
+				return projectId ? `→ Cross-project: ${projectId}` : "→ Cross-project";
 			}
 			case "report_to_parent": {
 				const title = getArg(toolArgs, "title");
