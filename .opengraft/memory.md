@@ -343,3 +343,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `mockDaemonContext()` builds minimal DaemonContext
 - `attachMockSession(node, queue)` creates TaskSession on tracker node
 - `executeTool()` in executor.ts kept for backward compat in tests (production uses handler path)
+
+
+## System Prompt Unification
+- **Single prompt**: `UNIFIED_SYSTEM_PROMPT` in system-prompts.ts replaces both `ORCHESTRATOR_SYSTEM_PROMPT` (was in daemon.ts) and `TASK_SYSTEM_PROMPT`.
+- **Root preamble**: `ROOT_ORCHESTRATOR_PREAMBLE` prepended for root agents only. Short (4 lines).
+- **No tool listings in prompts**: Tool name/description listings removed. `ToolDefinition.description` is sole source of truth for tool schema. Prompts contain only STRATEGY guidance (when/why to use tools, not what they do).
+- **Strategy guidance preserved**: send_message_to_child scope-override guidance moved to Event-Driven Workflow step 3. report_to_parent guidance already in Progress Updates section.
+- Old exports `ORCHESTRATION_KNOWLEDGE` and `TASK_SYSTEM_PROMPT` removed. New exports: `UNIFIED_SYSTEM_PROMPT` and `ROOT_ORCHESTRATOR_PREAMBLE`.

@@ -22,8 +22,8 @@ export {
 } from "./orchestrator-tools.ts";
 // Re-export everything from the split modules so existing imports keep working
 export {
-	ORCHESTRATION_KNOWLEDGE,
-	TASK_SYSTEM_PROMPT,
+	ROOT_ORCHESTRATOR_PREAMBLE,
+	UNIFIED_SYSTEM_PROMPT,
 } from "./system-prompts.ts";
 
 /** Named color → hex mapping for agent tools. Accepts common names and converts to hex. */
