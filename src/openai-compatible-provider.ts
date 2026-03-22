@@ -7,6 +7,7 @@ import { type Event, formatPendingSection } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
 	type AssistantContent,
+	type AssistantToolCall,
 	type ConsumedMessages,
 	type EventImageData,
 	extractQueueImageParts,
@@ -328,23 +329,32 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 		},
 
 		onAssistantContent(content: AssistantContent): unknown {
+			const texts = content.items
+				.filter((i): i is { type: "text"; text: string } => i.type === "text")
+				.map((i) => i.text);
 			let textContent: string | null = null;
-			if (content.texts.length > 0) {
-				textContent = content.texts.join("\n");
+			if (texts.length > 0) {
+				textContent = texts.join("\n");
 			}
 
-			const toolCalls = content.toolCalls.map((tc) => {
-				// Register tool name for later tool_result resolution
-				toolNames.set(tc.id, tc.name);
-				return {
-					id: tc.id,
-					type: "function" as const,
-					function: {
-						name: tc.name,
-						arguments: JSON.stringify(tc.input),
-					},
-				};
-			});
+			const toolCalls = content.items
+				.filter(
+					(i): i is { type: "tool_call"; call: AssistantToolCall } =>
+						i.type === "tool_call",
+				)
+				.map((i) => {
+					const tc = i.call;
+					// Register tool name for later tool_result resolution
+					toolNames.set(tc.id, tc.name);
+					return {
+						id: tc.id,
+						type: "function" as const,
+						function: {
+							name: tc.name,
+							arguments: JSON.stringify(tc.input),
+						},
+					};
+				});
 
 			// Defensive: ensure assistant message has content or tool_calls
 			if (textContent === null && toolCalls.length === 0) {

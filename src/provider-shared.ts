@@ -832,11 +832,8 @@ export interface AssistantToolCall {
 	input: Record<string, unknown>;
 }
 
-/** Collected assistant content: text blocks and tool calls. */
+/** Collected assistant content: ordered text blocks and tool calls. */
 export interface AssistantContent {
-	texts: string[];
-	toolCalls: AssistantToolCall[];
-	/** Ordered items preserving interleaved text/tool_call sequence. */
 	items: Array<
 		| { type: "text"; text: string }
 		| { type: "tool_call"; call: AssistantToolCall }
@@ -1018,8 +1015,6 @@ export function walkEventsToMessages(
 			case "assistant_text":
 			case "tool_call": {
 				const content: AssistantContent = {
-					texts: [],
-					toolCalls: [],
 					items: [],
 				};
 
@@ -1028,7 +1023,6 @@ export function walkEventsToMessages(
 				while (i < events.length) {
 					const cur = events[i] as Event;
 					if (cur.type === "assistant_text") {
-						content.texts.push(cur.content);
 						content.items.push({ type: "text", text: cur.content });
 						i++;
 					} else if (cur.type === "tool_call") {
@@ -1037,7 +1031,6 @@ export function walkEventsToMessages(
 							name: cur.tool,
 							input: cur.input,
 						};
-						content.toolCalls.push(call);
 						content.items.push({ type: "tool_call", call });
 						i++;
 					} else {
