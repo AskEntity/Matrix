@@ -27,6 +27,8 @@ export interface AgentRequest {
 	hasRunningChildren?: () => boolean;
 	/** Budget limit in USD — provider will inject warnings at 80% and 100%. */
 	budgetUsd?: number;
+	/** True for root orchestrator sessions (depth 0). Affects cache TTL strategy. */
+	isOrchestrator?: boolean;
 	/**
 	 * Emit callback for provider events (broadcast + persist).
 	 * Provider calls this instead of writing to EventStore directly.

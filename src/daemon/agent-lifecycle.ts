@@ -845,6 +845,7 @@ export async function launchAgent(
 		queue,
 		hasRunningChildren: agentCtx.hasRunningChildren,
 		getSession,
+		isOrchestrator: true,
 	});
 
 	ctx.activeSessions.set(project.id, session);
