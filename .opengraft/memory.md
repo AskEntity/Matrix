@@ -229,3 +229,8 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **`task_completed` remains as UIOnlyEvent** — child_complete queue message materialization creates it for the parent activity log card. The SSE event and backend Event type are gone.
 - **done() tool cards unsuppressed** in LogEntryView.tsx and ToolCard.tsx — styled with green/red border like old task_completed card.
 - **Error path in runChildAgentInBackground**: emits `error` event instead of `task_completed`. child_complete queue message still handles parent notification.
+
+## queue_message Ephemeral Event
+- `queue_message` SSE events are ephemeral (not persisted to JSONL). They carry raw queue messages for AI consumption and pending banner chips.
+- ALL queue messages go through two-phase lifecycle: `message` event (persisted) → `deferredMessages` → `messages_consumed` → `materialize()` into activity log.
+- `createQueueUIEvent` returns null unconditionally — the ephemeral `queue_message` should NEVER render activity log cards. That caused duplicate cards (once from queue_message, once from messages_consumed).
