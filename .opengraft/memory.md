@@ -381,3 +381,36 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Built-in tools get `mcp__opengraft__` prefix like orchestrator tools (consistent naming).
 - `getCwd()` callback pattern instead of passing cwd directly — handlers read from session for current CWD.
 
+
+
+## Phase 3: Remove OrchestratorToolsDeps
+
+### What was done
+- Removed the 20-field `OrchestratorToolsDeps` interface from `orchestrator-tools.ts`
+- Changed `createOrchestratorTools` signature to `(ctx: DaemonContext, projectId: string, taskId: string | null, lifecycleDeps?: LifecycleDeps)`
+- All deps now derived from `ctx + projectId + taskId` at call time:
+  - `tracker` → `ctx.trackers.get(projectId)`
+  - `queue` → `tracker.get(taskId)?.session?.queue` (from TaskSession on node)
+  - `depth` → `tracker.get(taskId)?.session?.depth ?? 0`
+  - `projectPath` → `tracker.get(taskId)?.worktreePath ?? repoPath`
+  - `repoPath` → `ctx.pm.get(projectId)?.path`
+  - Events → `emitEvent(ctx, projectId, ...)` and `broadcastTreeUpdate(ctx, projectId, tracker)` imported directly
+  - `clearSession` → `getEventStore(ctx, projectId).clear(taskId)`
+  - `dataDir` → `ctx.config.dataDir`
+  - Cross-project: `ctx.pm`, `ctx.activeSessions`, `ctx.trackers` directly
+  - `defaultBudgetUsd` → `ctx.globalConfig?.budgetUsd`
+  - `clarifyTimeoutMs` → `ctx.globalConfig?.clarifyTimeoutMs`
+  - `WorktreeManager` → created on demand from `repoPath`
+- `LifecycleDeps` interface: minimal object with `deliverMessage` and optional `injectMessageToProject` — avoids circular imports between `orchestrator-tools.ts` ↔ `agent-lifecycle.ts`
+- `findParentQueue` moved from `agent-lifecycle.ts` to `agent-tools.ts` — used by both orchestrator tools and lifecycle code
+- `createAgentContext` in agent-lifecycle.ts simplified: no longer passes 20+ fields, just `ctx`, `projectId`, `taskId`, and lifecycle deps
+- Tests use `mockDaemonContext()` helper from new `src/test-utils.ts` to build minimal DaemonContext for tool testing
+- `taskId` accepts `null` for root orchestrator (bypasses scope validation, same as old behavior)
+
+### Key decisions
+- Direct imports from `daemon/event-system.ts` and `daemon/helpers.ts` — no circular dep (they dont import from orchestrator-tools)
+- `LifecycleDeps` pattern for the one actual circular dependency (deliverMessage, handleInjectMessage)
+- `provider` and `childModel` fields completely removed from tools — never used by handlers
+- `WorktreeManager` created on demand (cheap) instead of being pre-created
+- Config values (budgetUsd, clarifyTimeoutMs) read from `ctx.globalConfig` at call time — slightly different from resolveProjectConfig which merges layers, but good enough (project-level overrides are rare for these)
+

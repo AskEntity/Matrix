@@ -8,6 +8,7 @@ import { createApp } from "./daemon.ts";
 import type { Event } from "./events.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
+import { mockDaemonContext } from "./test-utils.ts";
 import type {
 	AgentResult,
 	HealthResponse,
@@ -1867,14 +1868,16 @@ describe("create_task validation", () => {
 		currentTaskId: string | null,
 		args: { title: string; description: string; parentId?: string },
 	) {
-		const { toolDefs } = createOrchestratorTools({
+		const ctx = mockDaemonContext({
 			tracker,
-			provider: mockProvider,
-			worktrees: {} as never,
+			projectId: "test-project",
 			projectPath: tempDir,
-			repoPath: tempDir,
-			currentTaskId,
 		});
+		const { toolDefs } = createOrchestratorTools(
+			ctx,
+			"test-project",
+			currentTaskId,
+		);
 		const createTaskTool = toolDefs.find((t) => t.name === "create_task");
 		if (!createTaskTool) throw new Error("create_task tool not found");
 		// biome-ignore lint/suspicious/noExplicitAny: test helper accesses internal handler
@@ -2869,38 +2872,9 @@ describe("GET /projects/:id/clarifications", () => {
 	});
 
 	test("adds clarification when clarification_requested event fires via agent tools", async () => {
-		// Use createOrchestratorTools to emit a clarification_requested event which
-		// should flow through onTaskEvent → broadcastEvent → addPendingClarification
-		const trackerPath = join(dataDir, "projects", projectId, "tree.json");
-		await mkdir(join(dataDir, "projects", projectId), { recursive: true });
-		const tracker = new TaskTracker(trackerPath);
-		await tracker.load();
-
-		const capturedEvents: Record<string, unknown>[] = [];
-
-		const { toolDefs } = createOrchestratorTools({
-			tracker,
-			provider: mockProvider,
-			worktrees: { createWorktree: async () => {} } as unknown as Parameters<
-				typeof createOrchestratorTools
-			>[0]["worktrees"],
-			projectPath: tempDir,
-			repoPath: tempDir,
-			depth: 0,
-			queue: new MessageQueue(),
-			onTaskEvent: (event) => {
-				capturedEvents.push(event);
-			},
-			broadcastTreeUpdate: () => {},
-		});
-
-		// Find the clarify tool and call it
-		const clarifyTool = toolDefs.find((t) => t.name === "clarify");
-		expect(clarifyTool).toBeDefined();
-
-		// Simulate a clarification by directly calling broadcastEvent via the app
-		// We test the endpoint independently — the integration is via broadcastEvent
-		// which is internal. Instead, test that the endpoint responds correctly.
+		// Test that the clarification endpoint responds correctly.
+		// The integration (clarify tool → emitEvent → pendingClarifications) is tested
+		// via the daemon's event system. Here we just verify the endpoint.
 		const res = await app.request(`/projects/${projectId}/clarifications`);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {

@@ -33,6 +33,7 @@ import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
+import { mockDaemonContext } from "./test-utils.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
 import type { AgentResult } from "./types.ts";
@@ -1712,26 +1713,12 @@ describe("done tool", () => {
 		taskId: string | null,
 		args: { status: "passed" | "failed"; summary: string },
 	) {
-		const mockProvider = {
-			name: "mock",
-			execute: async () => ({ success: true, output: "" }),
-			// biome-ignore lint/correctness/useYield: mock provider never streams
-			stream: async function* () {
-				return { success: true, output: "" } as AgentResult;
-			},
-			startSession: () => {
-				throw new Error("not used");
-			},
-		};
-
-		const { toolDefs } = createOrchestratorTools({
+		const ctx = mockDaemonContext({
 			tracker,
-			provider: mockProvider,
-			worktrees: {} as never,
+			projectId: "test-project",
 			projectPath: tempDir,
-			repoPath: tempDir,
-			currentTaskId: taskId,
 		});
+		const { toolDefs } = createOrchestratorTools(ctx, "test-project", taskId);
 		const doneTool = toolDefs.find((t) => t.name === "done");
 		if (!doneTool) throw new Error("done tool not found");
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
@@ -1765,40 +1752,25 @@ describe("done tool", () => {
 	});
 
 	test("hasRunningChildren returns false when no children", async () => {
-		const mockProvider = {
-			name: "mock",
-			execute: async () => ({ success: true, output: "" }),
-			// biome-ignore lint/correctness/useYield: mock provider never streams
-			stream: async function* () {
-				return { success: true, output: "" } as AgentResult;
-			},
-			startSession: () => {
-				throw new Error("not used");
-			},
-		};
-
-		const { hasRunningChildren } = createOrchestratorTools({
+		const ctx = mockDaemonContext({
 			tracker,
-			provider: mockProvider,
-			worktrees: {} as never,
+			projectId: "test-project",
 			projectPath: tempDir,
-			repoPath: tempDir,
 		});
+		const { hasRunningChildren } = createOrchestratorTools(
+			ctx,
+			"test-project",
+			"",
+		);
 		expect(hasRunningChildren?.()).toBe(false);
 	});
 
 	test("hasRunningChildren returns true when child has queue in globalAgentQueues", async () => {
-		const mockProvider = {
-			name: "mock",
-			execute: async () => ({ success: true, output: "" }),
-			// biome-ignore lint/correctness/useYield: mock provider never streams
-			stream: async function* () {
-				return { success: true, output: "" } as AgentResult;
-			},
-			startSession: () => {
-				throw new Error("not used");
-			},
-		};
+		const ctx = mockDaemonContext({
+			tracker,
+			projectId: "test-project",
+			projectPath: tempDir,
+		});
 
 		// Create a parent task and a child task
 		const parentId =
@@ -1808,14 +1780,11 @@ describe("done tool", () => {
 		const childQueue = new MessageQueue();
 		globalAgentQueues.set(childId, childQueue);
 
-		const { hasRunningChildren } = createOrchestratorTools({
-			tracker,
-			provider: mockProvider,
-			worktrees: {} as never,
-			projectPath: tempDir,
-			repoPath: tempDir,
-			currentTaskId: parentId,
-		});
+		const { hasRunningChildren } = createOrchestratorTools(
+			ctx,
+			"test-project",
+			parentId,
+		);
 		expect(hasRunningChildren?.()).toBe(true);
 
 		// Clean up
@@ -1824,17 +1793,11 @@ describe("done tool", () => {
 	});
 
 	test("hasRunningChildren detects running grandchildren (descendants)", async () => {
-		const mockProvider = {
-			name: "mock",
-			execute: async () => ({ success: true, output: "" }),
-			// biome-ignore lint/correctness/useYield: mock provider never streams
-			stream: async function* () {
-				return { success: true, output: "" } as AgentResult;
-			},
-			startSession: () => {
-				throw new Error("not used");
-			},
-		};
+		const ctx = mockDaemonContext({
+			tracker,
+			projectId: "test-project",
+			projectPath: tempDir,
+		});
 
 		const parentId =
 			tracker.rootNodeId ?? tracker.ensureRootNode("Root", "").id;
@@ -1843,14 +1806,11 @@ describe("done tool", () => {
 		const grandchildQueue = new MessageQueue();
 		globalAgentQueues.set(grandchild.id, grandchildQueue);
 
-		const { hasRunningChildren } = createOrchestratorTools({
-			tracker,
-			provider: mockProvider,
-			worktrees: {} as never,
-			projectPath: tempDir,
-			repoPath: tempDir,
-			currentTaskId: parentId,
-		});
+		const { hasRunningChildren } = createOrchestratorTools(
+			ctx,
+			"test-project",
+			parentId,
+		);
 		// Grandchild has a queue → hasRunningChildren should be true
 		expect(hasRunningChildren?.()).toBe(true);
 
@@ -1864,27 +1824,22 @@ describe("done tool", () => {
 		tracker.updateStatus(node.id, "in_progress");
 		const queue = new MessageQueue();
 
-		const mockProvider = {
-			name: "mock",
-			execute: async () => ({ success: true, output: "" }),
-			// biome-ignore lint/correctness/useYield: mock provider never streams
-			stream: async function* () {
-				return { success: true, output: "" } as AgentResult;
-			},
-			startSession: () => {
-				throw new Error("not used");
-			},
+		// Attach session to the node so tools can find the queue
+		node.session = {
+			queue,
+			cwd: tempDir,
+			fallbackCwd: tempDir,
+			depth: 0,
+			backgroundProcesses: new Map(),
+			foregroundExecutions: new Map(),
 		};
 
-		const { toolDefs } = createOrchestratorTools({
+		const ctx = mockDaemonContext({
 			tracker,
-			provider: mockProvider,
-			worktrees: {} as never,
+			projectId: "test-project",
 			projectPath: tempDir,
-			repoPath: tempDir,
-			currentTaskId: node.id,
-			queue,
 		});
+		const { toolDefs } = createOrchestratorTools(ctx, "test-project", node.id);
 		const doneTool = toolDefs.find((t) => t.name === "done");
 		if (!doneTool) throw new Error("done tool not found");
 
@@ -1925,27 +1880,22 @@ describe("done tool", () => {
 		tracker.updateStatus(node.id, "in_progress");
 		const queue = new MessageQueue();
 
-		const mockProvider = {
-			name: "mock",
-			execute: async () => ({ success: true, output: "" }),
-			// biome-ignore lint/correctness/useYield: mock provider never streams
-			stream: async function* () {
-				return { success: true, output: "" } as AgentResult;
-			},
-			startSession: () => {
-				throw new Error("not used");
-			},
+		// Attach session to the node so tools can find the queue
+		node.session = {
+			queue,
+			cwd: tempDir,
+			fallbackCwd: tempDir,
+			depth: 0,
+			backgroundProcesses: new Map(),
+			foregroundExecutions: new Map(),
 		};
 
-		const { toolDefs } = createOrchestratorTools({
+		const ctx = mockDaemonContext({
 			tracker,
-			provider: mockProvider,
-			worktrees: {} as never,
+			projectId: "test-project",
 			projectPath: tempDir,
-			repoPath: tempDir,
-			currentTaskId: node.id,
-			queue,
 		});
+		const { toolDefs } = createOrchestratorTools(ctx, "test-project", node.id);
 		const doneTool = toolDefs.find((t) => t.name === "done");
 		if (!doneTool) throw new Error("done tool not found");
 
