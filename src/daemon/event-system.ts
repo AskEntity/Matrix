@@ -5,7 +5,7 @@ import type {
 	PendingClarification,
 	SSEClient,
 } from "./context.ts";
-import { getEventStore } from "./helpers.ts";
+import { getEventStore, stripEventForUI } from "./helpers.ts";
 
 const sseEncoder = new TextEncoder();
 
@@ -78,7 +78,7 @@ export function broadcast(
 	event: Record<string, unknown>,
 ) {
 	const seqId = nextSeqId(projectId);
-	const data = JSON.stringify(event);
+	const data = JSON.stringify(stripEventForUI(event));
 	bufferEvent(projectId, seqId, data);
 
 	const sseMessage = sseEncoder.encode(`id: ${seqId}\ndata: ${data}\n\n`);

@@ -400,3 +400,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 ## readProjectMemory Header
 - Memory pre-load header: `# .opengraft/memory.md (Preloaded, do not read again)` across all injection points.
 - buildTaskPrompt and compaction resume use the same header.
+
+## SSE Header Stripping
+- `stripEventForUI()` in helpers.ts strips `body.header` from message events before UI delivery.
+- Applied in both paths: `broadcast()` (live SSE) and `normalizeEventForUI()` (REST API).
+- JSONL persistence keeps full events — AI needs header on resume.
+- `broadcast()` strips before ring buffer storage, so reconnect catch-up also gets stripped events.
