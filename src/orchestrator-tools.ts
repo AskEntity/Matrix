@@ -454,7 +454,9 @@ export function createOrchestratorTools(
 
 		tool(
 			"update_task",
-			"Update a task node. All fields except taskId are optional — provide only the fields you want to change.",
+			"Update a task node. All fields except taskId are optional — provide only the fields you want to change." +
+				" For surgical description edits, use old_description + new_description (like edit_file's old_string/new_string)." +
+				" Cannot combine description with old_description/new_description.",
 			{
 				taskId: z.string().describe("Task node ID"),
 				status: z
@@ -471,6 +473,16 @@ export function createOrchestratorTools(
 					.describe("New status"),
 				title: z.string().optional().describe("New title"),
 				description: z.string().optional().describe("New description"),
+				old_description: z
+					.string()
+					.optional()
+					.describe(
+						"Exact substring to find in the current description for surgical edit. Must be unique. Use with new_description.",
+					),
+				new_description: z
+					.string()
+					.optional()
+					.describe("Replacement string for old_description match."),
 				draft: z
 					.boolean()
 					.optional()
@@ -532,6 +544,78 @@ export function createOrchestratorTools(
 					}
 					if (args.title !== undefined) {
 						tracker.updateTitle(args.taskId, args.title, "agent");
+					}
+					if (
+						args.old_description !== undefined ||
+						args.new_description !== undefined
+					) {
+						if (
+							args.old_description === undefined ||
+							args.new_description === undefined
+						) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: "Error: old_description and new_description must both be provided",
+									},
+								],
+								isError: true,
+							};
+						}
+						if (args.description !== undefined) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: "Error: cannot use description with old_description/new_description — use one or the other",
+									},
+								],
+								isError: true,
+							};
+						}
+						const node = tracker.get(args.taskId);
+						if (!node?.description) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: "Error: task has no description to edit",
+									},
+								],
+								isError: true,
+							};
+						}
+						const idx = node.description.indexOf(args.old_description);
+						if (idx === -1) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: `Error: old_description not found in task description`,
+									},
+								],
+								isError: true,
+							};
+						}
+						if (
+							node.description.indexOf(args.old_description, idx + 1) !== -1
+						) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: "Error: old_description is not unique in task description — provide more context to make it unique",
+									},
+								],
+								isError: true,
+							};
+						}
+						const updated = node.description.replace(
+							args.old_description,
+							args.new_description,
+						);
+						tracker.updateDescription(args.taskId, updated, "agent");
 					}
 					if (args.description !== undefined) {
 						tracker.updateDescription(args.taskId, args.description, "agent");
