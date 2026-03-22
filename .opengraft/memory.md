@@ -8,9 +8,13 @@ Every bug fix MUST ask TWO questions:
 1. **What caused this specific bug?** — Fix it.
 2. **Why does our architecture make this class of bug easy to create?** — Is the architecture too complex? Too hacky? Is the design philosophy wrong?
 
-If the answer to #2 is "we have two codepaths that do similar things with subtle differences" — **DO NOT patch the symptom.** Remove the duplicate codepath entirely, even if it temporarily breaks something. A broken-but-simple architecture is better than a working-but-fragile one with hidden duplication.
+If the answer to #2 reveals a structural problem — **DO NOT patch the symptom.** Fix the architecture, even if it temporarily breaks something. A broken-but-simple architecture is better than a working-but-fragile one.
 
-**Pattern to watch for**: Every time we introduce an "ephemeral" shortcut alongside a "persisted" canonical path, we create a live/refresh inconsistency bug factory. ONE path. Always.
+**Anti-patterns to watch for**:
+- **Duplicate codepaths with subtle differences**: Two paths that do similar things (e.g. ephemeral SSE shortcut + persisted two-phase lifecycle). One works live, the other on refresh. Remove the duplicate — ONE path always.
+- **Lifecycle dependency coupling**: When A's completion triggers B's cleanup which triggers C's notification — and a failure in B silently breaks C. Decouple: each step should be self-contained, not chained through side effects.
+- **Legacy fallback masking bugs**: A "backward compat" fallback that silently handles the case where the new path fails. The fallback works, so the bug in the new path goes unnoticed for weeks. Remove fallbacks — let failures be loud.
+- **Stale mental model in new code**: Old design assumed X (e.g. "agent result carries the summary"), new design says Y (e.g. "message carries the summary"), but the code still reconstructs from X as primary and uses Y as optional. Fully commit to the new model — delete the old reconstruction path.
 
 ## ⚠️ CRITICAL — Task Execution Discipline
 
