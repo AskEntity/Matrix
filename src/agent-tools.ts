@@ -157,7 +157,11 @@ export function buildTaskPrompt(
 	const parts: string[] = [];
 
 	if (memory) {
-		parts.push("## Project Memory", memory, "");
+		parts.push(
+			"# .opengraft/memory.md (Preloaded, do not read again)",
+			memory,
+			"",
+		);
 	}
 
 	parts.push(`# Task: ${node.title}`);

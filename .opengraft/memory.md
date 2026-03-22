@@ -395,4 +395,8 @@ Daemon (Hono: HTTP + SSE on :7433)
 ## UpdateOp Timestamp Threading
 - UpdateOps (merge_text, replace_text, complete_compact) carry `ts?: number` from the originating event.
 - Apply functions use `op.ts ?? Date.now()` — historical ts for batch replay, Date.now() for live events without ts.
-- The `text_delta` event is ephemeral (not persisted to JSONL), so during batch replay only `assistant_text` (replace_text op) matters. But both paths are fixed for consistency.
+- All JSONL events have `ts` — the fallback is defensive only.
+
+## readProjectMemory Header
+- Memory pre-load header: `# .opengraft/memory.md (Preloaded, do not read again)` across all injection points.
+- buildTaskPrompt and compaction resume use the same header.

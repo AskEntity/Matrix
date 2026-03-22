@@ -149,7 +149,9 @@ export async function buildCompactedContext(
 
 	const parts: string[] = [];
 	if (freshMemory) {
-		parts.push(`## Project Memory (fresh)\n${freshMemory}`);
+		parts.push(
+			`# .opengraft/memory.md (Preloaded, do not read again)\n${freshMemory}`,
+		);
 	}
 	parts.push(`## Checkpoint Summary\n\n${checkpoint}`);
 

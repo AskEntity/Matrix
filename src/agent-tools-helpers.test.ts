@@ -101,14 +101,18 @@ describe("buildTaskPrompt", () => {
 			tracker,
 			"## Important\nRemember this.",
 		);
-		expect(result).toContain("## Project Memory");
+		expect(result).toContain(
+			"# .opengraft/memory.md (Preloaded, do not read again)",
+		);
 		expect(result).toContain("Remember this.");
 	});
 
 	test("omits project memory section when empty", () => {
 		const tracker = makeTracker([]);
 		const result = buildTaskPrompt(makeNode({ id: "task-1" }), tracker, "");
-		expect(result).not.toContain("## Project Memory");
+		expect(result).not.toContain(
+			"# .opengraft/memory.md (Preloaded, do not read again)",
+		);
 	});
 
 	test("includes git context when branch is set", () => {
