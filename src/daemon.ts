@@ -481,6 +481,7 @@ if (import.meta.main) {
 		},
 		fetch: app.fetch,
 		port,
+		idleTimeout: 0, // Disable — SSE connections are long-lived
 		development:
 			process.env.NODE_ENV === "development"
 				? { hmr: true, console: true }
