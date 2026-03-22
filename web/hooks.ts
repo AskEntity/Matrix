@@ -90,7 +90,7 @@ let logIdCounter = 0;
 // --- useSSE ---
 
 /** How often the watchdog checks for dead connections (ms). */
-const WATCHDOG_CHECK_INTERVAL = 10_000;
+const WATCHDOG_CHECK_INTERVAL = 30_000;
 /**
  * If no SSE data event received within this window, consider connection dead (ms).
  * Server sends two tiers of heartbeat:
@@ -161,8 +161,7 @@ export function useSSE(
 		// In both cases, bump reconnectKey to tear down and re-create EventSource.
 		const watchdog = setInterval(() => {
 			const elapsed = Date.now() - lastMessageRef.current;
-			const isClosed = source.readyState === EventSource.CLOSED;
-			if (isClosed || elapsed > WATCHDOG_TIMEOUT) {
+			if (elapsed > WATCHDOG_TIMEOUT) {
 				source.close();
 				setConnected(false);
 				setReconnectKey((k) => k + 1);
