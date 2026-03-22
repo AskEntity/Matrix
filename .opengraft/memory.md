@@ -12,10 +12,28 @@ If the answer to #2 is "we have two codepaths that do similar things with subtle
 
 **Pattern to watch for**: Every time we introduce an "ephemeral" shortcut alongside a "persisted" canonical path, we create a live/refresh inconsistency bug factory. ONE path. Always.
 
+## ⚠️ CRITICAL — Task Execution Discipline
+
+**Creating tasks is CHEAP. Executing tasks must be DELIBERATE.**
+
+When the user discusses a feature or gives architectural feedback, they are designing with you — NOT telling you to ship immediately. The correct workflow:
+1. **Draft the task** — capture the idea
+2. **Discuss architecture** — iterate on the design WITH the user until they say "go"
+3. **Only then execute** — with the agreed-upon architecture
+
+Signs the user wants to discuss, NOT execute:
+- They suggest an approach ("能不能之后的tool result带上running_bashes")
+- They give architectural feedback ("background task的信息应该用某种方式传递")
+- They say "的id" or add clarifications after your response
+- They haven't explicitly said "开始做" / "做吧" / "实现一下"
+
+**NEVER rush to launch a child task when the user is still refining the design.** A wasted child execution costs real money and loses context. A draft task costs nothing. When in doubt: update the draft description, ask for confirmation, wait.
+
 ## Operating Mode
 
-**Autonomy**: Level 10. Work continuously. Don't ask questions — decide and move.
+**Autonomy**: Level 10 for execution. Level 0 for premature execution.
 **Workflow**: Create tasks first, refine later. Tasks persist after compaction, mental notes don't.
+**Architecture discussions**: Stay in discussion mode. Update draft descriptions. Don't launch until design is agreed.
 
 ## How to Run Tests
 
