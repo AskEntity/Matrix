@@ -24,13 +24,11 @@ Create a test task to validate: spawn a child, check if it can run the project's
 
 const CONVERTED_PROJECT_MEMORY = `# Project Memory
 
-Converted existing project. Explore the codebase to understand its structure.
-If there are existing CLAUDE.md, AGENTS.md, or similar files, reference them.
-Source code is the ground truth — verify everything by reading actual files.
+Converted existing project. Check existing documentation (CLAUDE.md, AGENTS.md, README.md, etc.)
+to understand the project, then update this file with key knowledge for future sessions.
 
 ## First Launch
-Verify \`.opengraft/hooks/setup_worktree.sh\` correctly sets up worktree environments.
-Create a test task to validate: spawn a child, check if it can run the project's test suite.
+- Verify \`.opengraft/hooks/setup_worktree.sh\` correctly sets up worktree environments
 `;
 
 /** Manages project lifecycle: creation, initialization, deletion. */

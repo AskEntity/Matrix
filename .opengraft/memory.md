@@ -376,3 +376,8 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Message-level cache: orchestrator sessions use `ttl: "1h"`, child agents use default 5m.
 - `isOrchestrator` field on `AgentRequest` threads through `callAPI` params to control message cache TTL.
 - `addMessagesCacheControl` accepts optional `ttl` parameter.
+
+## readProjectMemory Simplification
+- `readProjectMemory(projectPath)` only reads `.opengraft/memory.md` — no CLAUDE.md, no `includeHeaders` param.
+- Returns raw content or empty string. Callers add `## Project Memory\n` prefix for orchestrator headers.
+- Child task callers pass raw content to `buildTaskPrompt()` which adds its own header.

@@ -1013,7 +1013,7 @@ export async function handleOrchestrate(
 	if (orchRootId2) {
 		const orchMemory = readProjectMemory(project.path);
 		const orchHeader = orchMemory
-			? `Working directory: ${project.path}\n\n${orchMemory}`
+			? `Working directory: ${project.path}\n\n## Project Memory\n${orchMemory}`
 			: `Working directory: ${project.path}`;
 		const orchMsgId2 = ulid();
 
@@ -1071,10 +1071,10 @@ export async function handleInjectMessage(
 	if (!rootNodeId) {
 		// No session at all — launch a brand new agent with this message as the prompt
 		if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
-			// Build header with pre-loaded context (CLAUDE.md + memory.md)
+			// Build header with pre-loaded context (memory.md)
 			const memory = readProjectMemory(project.path);
 			const header = memory
-				? `Working directory: ${project.path}\n\n${memory}`
+				? `Working directory: ${project.path}\n\n## Project Memory\n${memory}`
 				: `Working directory: ${project.path}`;
 
 			const freshMsgId = ulid();
@@ -1138,7 +1138,7 @@ export async function handleInjectMessage(
 	// Header is ALWAYS how context gets into the conversation — no special codepaths.
 	const memory = readProjectMemory(project.path);
 	const header = memory
-		? `Working directory: ${project.path}\n\n${memory}`
+		? `Working directory: ${project.path}\n\n## Project Memory\n${memory}`
 		: `Working directory: ${project.path}`;
 
 	// Write + broadcast message at send time (Phase 1 of two-phase lifecycle)

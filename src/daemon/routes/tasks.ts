@@ -338,10 +338,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			notifyParentOfContinue();
 
 			// Persist a message for the agent to drain — header has context
-			const memory = readProjectMemory(
-				node.worktreePath ?? project.path,
-				false,
-			);
+			const memory = readProjectMemory(node.worktreePath ?? project.path);
 			const header = buildTaskPrompt(node, tracker, memory);
 			const content = body.message
 				? body.message
@@ -380,7 +377,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				broadcastTreeUpdate(ctx, project.id, tracker);
 				notifyParentOfContinue();
 
-				const memory = readProjectMemory(project.path, false);
+				const memory = readProjectMemory(project.path);
 				const updatedNode = tracker.get(nodeId);
 				const header = buildTaskPrompt(updatedNode ?? node, tracker, memory);
 				const content = body.message ?? "Start working on this task.";

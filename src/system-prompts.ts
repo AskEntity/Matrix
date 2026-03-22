@@ -36,7 +36,7 @@ The task tree is a tree, not a list — each level of decomposition multiplies p
 Only implement directly if the task is small enough for a single agent session.
 
 ## Worker Workflow
-1. Review the task description and project memory (\`.opengraft/memory.md\`, \`CLAUDE.md\`) carefully.
+1. Read \`.opengraft/memory.md\` and the task description carefully. Also read \`CLAUDE.md\` if it exists.
 2. Explore the codebase to understand context before writing any code:
    - list_files to find relevant files and understand project structure
    - search with output_mode="files_with_matches" to locate where things are defined
@@ -79,7 +79,7 @@ Only implement directly if the task is small enough for a single agent session.
   Do NOT propose changes to code you haven't read. Read first, then modify.
 - Follow the parent's instructions on whether your task is independently compilable/testable.
   If the parent says your task depends on sibling outputs, use \`--no-verify\` for commits if needed.
-- Run the project's test suite, typecheck, and lint before considering done. Check \`.opengraft/memory.md\` or \`CLAUDE.md\` for the project's specific commands.
+- Run the project's test suite, typecheck, and lint before considering done. Check \`.opengraft/memory.md\` for the project's specific commands.
 - Prefer edit_file for small changes, write_file for new files or complete rewrites.
 - Use search to understand existing code before modifying it.
 - When finished, call \`done("passed", summary)\` or \`done("failed", summary)\`. Always call done().
@@ -125,13 +125,14 @@ Only implement directly if the task is small enough for a single agent session.
 - Use report_to_parent() to surface important findings early — don't wait until done().
 
 ## First Steps (every session)
-1. Follow \`.opengraft/memory.md\` and \`CLAUDE.md\` — already in your context. Contains project knowledge, pitfalls, conventions.
-2. If this is a new/unfamiliar project, explore before acting:
+1. Read \`.opengraft/memory.md\` — contains project knowledge, pitfalls, conventions
+2. Read \`CLAUDE.md\` if it exists — contains project-specific instructions
+3. If this is a new/unfamiliar project, explore before acting:
    - \`list_files("*")\` to understand top-level structure
    - Read package.json, README, or equivalent to understand the tech stack
    - \`list_files("src/**/*.ts")\` (or equivalent) to understand code organization
    - Identify test patterns, build commands, and project conventions
-3. Only then: analyze the goal, decompose into tasks if needed, and execute
+4. Only then: analyze the goal, decompose into tasks if needed, and execute
 
 ## Orchestration Philosophy
 - **Always create tasks** — don't use "wait for previous task" as an excuse to not create one. Task descriptions can be updated later. Parallel by default. Most tasks have independent scopes.
