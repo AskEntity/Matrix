@@ -297,3 +297,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Removal at phase 1 (message receipt), not phase 2 (messages_consumed). `processEventBatch` clears before replay.
 - BackgroundProcessBar filters by taskId. Shows elapsed time, kill button, command preview.
 - Move-to-background button on pending bash tool_call cards. Calls REST endpoint.
+
+## Workflow: Multi-Phase Task Parenting
+- Do NOT close a parent task while it still has pending children. Children auto-reopen the parent.
+- For sequential phases managed by the orchestrator: make phases DIRECT children of the orchestrator (flat), not nested under an intermediate parent task.
+- Intermediate parent tasks with their own agent sessions should only be used when the parent agent itself coordinates the phases (not the orchestrator).
+- child_complete delivered by done() wakes the parent agent — if the parent was closed and has no context, it produces garbage.
