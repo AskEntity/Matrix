@@ -6,8 +6,6 @@ import type { AgentResult } from "./types.ts";
 
 /** What the orchestrator sends to an agent. */
 export interface AgentRequest {
-	/** The task prompt for the agent. @deprecated Use queue messages with header instead. */
-	prompt: string;
 	/** Working directory for the agent to operate in. */
 	cwd: string;
 	/** Absolute path to the project root. Defaults to cwd if omitted. */

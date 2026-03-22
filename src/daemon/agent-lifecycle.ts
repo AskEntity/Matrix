@@ -1,7 +1,6 @@
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
 import {
-	buildTaskPrompt,
 	createOrchestratorTools,
 	slugify,
 	TASK_SYSTEM_PROMPT,
@@ -527,29 +526,10 @@ export async function ensureChildAgentRunning(
 	});
 	broadcastTreeUpdate(ctx, project.id, tracker);
 
-	// Build a generic prompt — the real user/parent message is persisted to disk
-	// and will be delivered via queue drain (runChildCore loads persisted messages).
-	const hasExistingSession =
-		node.status === "failed" ||
-		node.status === "stuck" ||
-		node.status === "passed" ||
-		node.status === "closed";
-	let genericPrompt: string;
-	if (hasExistingSession) {
-		genericPrompt = "New message received. Resume and check your queue.";
-	} else {
-		const memory = readProjectMemory(node.worktreePath ?? project.path, false);
-		genericPrompt = buildTaskPrompt(node, tracker, memory);
-	}
-
-	await runChildAgentInBackground(
-		ctx,
-		project,
-		tracker,
-		nodeId,
-		genericPrompt,
-		model,
-	);
+	// The real user/parent message is persisted to disk and will be delivered
+	// via queue drain (runChildCore loads persisted messages).
+	// The message's header field contains task context + working dir.
+	await runChildAgentInBackground(ctx, project, tracker, nodeId, model);
 }
 
 /** Compute the depth of a task in the tree by walking up the parentId chain. */
@@ -605,7 +585,6 @@ export async function runChildAgentInBackground(
 	project: { id: string; path: string },
 	tracker: TaskTracker,
 	nodeId: string,
-	prompt: string,
 	_model?: string,
 ): Promise<void> {
 	const node = tracker.get(nodeId);
@@ -652,7 +631,6 @@ export async function runChildAgentInBackground(
 			taskId: nodeId,
 			queue: childQueue,
 			sessionRequest: {
-				prompt,
 				cwd: node.worktreePath as string,
 				emit: emitWithTask,
 				activeEvents,
@@ -814,7 +792,6 @@ export async function launchAgent(
 	ctx: DaemonContext,
 	project: { id: string; path: string },
 	opts: {
-		prompt: string;
 		resume?: boolean;
 		model?: string;
 		childModel?: string;
@@ -825,7 +802,7 @@ export async function launchAgent(
 	if (!tracker) return;
 
 	// Ensure root node exists for the orchestrator
-	const rootNode = tracker.ensureRootNode("Orchestrator", opts.prompt);
+	const rootNode = tracker.ensureRootNode("Orchestrator", "");
 	const rootNodeId = rootNode.id;
 	tracker.updateStatus(rootNodeId, "in_progress");
 	tracker.save().catch(() => {});
@@ -873,16 +850,6 @@ export async function launchAgent(
 
 	// sessionId = taskId: orchestrator's session is always its rootNodeId.
 	// The provider loads the session file if it exists.
-	const shouldResume = opts.resume;
-
-	const memory = readProjectMemory(project.path);
-	const prompt = shouldResume
-		? (opts.prompt ??
-			"Continue where you left off. Check the task tree and proceed.")
-		: memory
-			? `${memory}\n\n${opts.prompt}`
-			: opts.prompt;
-
 	const resumeSessionId = rootNodeId;
 
 	// Append self-bootstrap mode instructions if enabled
@@ -912,7 +879,6 @@ export async function launchAgent(
 	};
 
 	const session = agentCtx.provider.startSession({
-		prompt,
 		cwd: project.path,
 		projectPath: project.path,
 		emit: rootEmit,
@@ -1077,12 +1043,42 @@ export async function handleOrchestrate(
 		}
 	}
 	await getTracker(ctx, projectId);
-	await launchAgent(
-		ctx,
-		project,
-		{ prompt, ...opts },
-		orchestratorSystemPrompt,
-	);
+
+	// Launch agent first (creates rootNodeId), then enqueue message
+	await launchAgent(ctx, project, { ...opts }, orchestratorSystemPrompt);
+
+	// Now enqueue the user message with header — provider is waiting for queue drain
+	const orchRootId2 = orchTracker.rootNodeId;
+	if (orchRootId2) {
+		const orchMemory = readProjectMemory(project.path);
+		const orchHeader = orchMemory
+			? `Working directory: ${project.path}\n\n${orchMemory}`
+			: `Working directory: ${project.path}`;
+		const orchMsgId2 = ulid();
+
+		emitEvent(ctx, projectId, {
+			type: "message",
+			id: orchMsgId2,
+			taskId: orchRootId2,
+			body: { source: "user", content: prompt, header: orchHeader },
+			ts: Date.now(),
+		});
+
+		const orchRootQueue = globalAgentQueues.get(orchRootId2);
+		if (orchRootQueue) {
+			try {
+				orchRootQueue.enqueue({
+					source: "user",
+					id: orchMsgId2,
+					content: prompt,
+					header: orchHeader,
+				});
+			} catch {
+				// Queue may have closed
+			}
+		}
+	}
+
 	return { ok: true };
 }
 
@@ -1122,16 +1118,15 @@ export async function handleInjectMessage(
 
 			const freshMsgId = ulid();
 
-			await launchAgent(
-				ctx,
-				project,
-				{ prompt: message },
-				orchestratorSystemPrompt,
-			);
+			// Persist the user message to disk BEFORE launching — the provider
+			// will drain it from the queue as its first message.
+			// We need the rootNodeId, but it doesn't exist yet. Create it by
+			// launching first, then persist.
+			await launchAgent(ctx, project, {}, orchestratorSystemPrompt);
 
-			// Write + broadcast message at send time (Phase 1 of two-phase lifecycle)
 			const freshRootNodeId = tracker.rootNodeId;
 			if (freshRootNodeId) {
+				// Write + broadcast message at send time (Phase 1 of two-phase lifecycle)
 				const userMsgEvent: Event = {
 					type: "message",
 					id: freshMsgId,
@@ -1145,13 +1140,22 @@ export async function handleInjectMessage(
 					ts: Date.now(),
 				};
 				emitEvent(ctx, projectId, userMsgEvent);
-				// Emit messages_consumed immediately — message was consumed as the initial prompt
-				emitEvent(ctx, projectId, {
-					type: "messages_consumed",
-					messageIds: [freshMsgId],
-					taskId: freshRootNodeId,
-					ts: Date.now(),
-				});
+
+				// Enqueue directly to the running agent's queue — it's waiting for first message
+				const rootQueue = globalAgentQueues.get(freshRootNodeId);
+				if (rootQueue) {
+					try {
+						rootQueue.enqueue({
+							source: "user",
+							id: freshMsgId,
+							content: message,
+							...(images?.length ? { images } : {}),
+							header,
+						});
+					} catch {
+						// Queue may have closed already
+					}
+				}
 			}
 			return { ok: true };
 		}
@@ -1169,6 +1173,13 @@ export async function handleInjectMessage(
 	// shouldn't influence the fresh-vs-resume decision)
 	const shouldResume = eventStore.has(rootNodeId);
 
+	// Build header with fresh context for messages that will start/resume the agent.
+	// Header is ALWAYS how context gets into the conversation — no special codepaths.
+	const memory = readProjectMemory(project.path);
+	const header = memory
+		? `Working directory: ${project.path}\n\n${memory}`
+		: `Working directory: ${project.path}`;
+
 	// Write + broadcast message at send time (Phase 1 of two-phase lifecycle)
 	// Frontend derives pending state from message events without matching messages_consumed.
 	const userMsgEvent: Event = {
@@ -1179,6 +1190,7 @@ export async function handleInjectMessage(
 			source: "user",
 			content: message,
 			...(images?.length ? { images } : {}),
+			header,
 		},
 		ts: Date.now(),
 	};
@@ -1191,6 +1203,7 @@ export async function handleInjectMessage(
 		id: msgId,
 		content: message,
 		...(images?.length ? { images } : {}),
+		header,
 	};
 
 	const result = await deliverMessage(ctx, project, rootNodeId, msg);
@@ -1200,27 +1213,14 @@ export async function handleInjectMessage(
 	}
 
 	// Message was persisted (agent not running) — auto-resume if possible.
-	// Don't pass the user message as prompt — it's already persisted to disk
-	// and will be delivered as a queue_message. Passing it as prompt would cause
-	// the message to appear twice.
+	// The message is already persisted to disk and will be delivered via queue drain.
 	if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
-		if (shouldResume) {
-			await launchAgent(
-				ctx,
-				project,
-				{ prompt: "User sent a new message. Resuming.", resume: true },
-				orchestratorSystemPrompt,
-			);
-		} else {
-			// No session history — clear persisted messages and start fresh
-			await clearPersistedMessages(ctx.config.dataDir, projectId, rootNodeId);
-			await launchAgent(
-				ctx,
-				project,
-				{ prompt: message },
-				orchestratorSystemPrompt,
-			);
-		}
+		await launchAgent(
+			ctx,
+			project,
+			{ resume: shouldResume },
+			orchestratorSystemPrompt,
+		);
 	}
 
 	return { ok: true };

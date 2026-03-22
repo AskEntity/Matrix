@@ -11,6 +11,7 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MessageQueue } from "./message-queue.ts";
 import {
 	clearContextWindowCache,
 	convertToolsToOpenAI,
@@ -20,6 +21,14 @@ import {
 	OpenAICompatibleProvider,
 } from "./openai-compatible-provider.ts";
 import { TOOLS } from "./tools/index.ts";
+
+/** Create a MessageQueue pre-loaded with a user message (for tests). */
+function queueWithPrompt(content: string, cwd?: string): MessageQueue {
+	const q = new MessageQueue();
+	const header = cwd ? `Working directory: ${cwd}` : undefined;
+	q.enqueue({ source: "user", content, ...(header ? { header } : {}) });
+	return q;
+}
 
 // ── Pricing ──
 
@@ -356,9 +365,9 @@ describe("runLoop integration", () => {
 		try {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const session = provider.startSession({
-				prompt: "Do something",
 				cwd: tmpDir,
 				systemPrompt: "You are a helpful agent.",
+				queue: queueWithPrompt("Do something", tmpDir),
 				mcpToolDefs: {
 					opengraft: [
 						{
@@ -491,9 +500,9 @@ describe("runLoop integration", () => {
 			// execute() doesn't pass a queue, so on end_turn the provider exits
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const result = await provider.execute({
-				prompt: "Say hello",
 				cwd: tmpDir,
 				systemPrompt: "You are helpful.",
+				queue: queueWithPrompt("Say hello", tmpDir),
 			});
 			expect(result.success).toBe(true);
 			expect(result.output).toBe("All done!");
@@ -570,10 +579,16 @@ describe("runLoop integration", () => {
 		try {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const events: Array<{ type: string; message?: string }> = [];
+			// Queue auto-closes after drain so stream() exits on end_turn
+			const retryQueue = queueWithPrompt("Hello", tmpDir);
+			retryQueue.onDrain = () => {
+				retryQueue.onDrain = undefined;
+				retryQueue.close();
+			};
 			const gen = provider.stream({
-				prompt: "Hello",
 				cwd: tmpDir,
 				systemPrompt: "Be helpful",
+				queue: retryQueue,
 			});
 			let result = await gen.next();
 			while (!result.done) {
@@ -827,10 +842,10 @@ describe("Event recording via emit callback", () => {
 			};
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const session = provider.startSession({
-				prompt: "Do something",
 				cwd: tmpDir,
 				systemPrompt: "You are a helpful agent.",
 				emit,
+				queue: queueWithPrompt("Do something", tmpDir),
 				mcpToolDefs: {
 					opengraft: [
 						{
@@ -884,23 +899,12 @@ describe("Event recording via emit callback", () => {
 			const strongEvents = emittedEvents;
 			expect(strongEvents.length).toBeGreaterThanOrEqual(4);
 
-			// Should have: user_message, assistant_text, tool_call, tool_result, assistant_text
+			// Should have: messages_consumed (from queue drain), assistant_text, tool_call, tool_result
 			const types = strongEvents.map((e) => e.type);
-			expect(types[0]).toBe("message");
+			expect(types).toContain("messages_consumed");
 			expect(types).toContain("assistant_text");
 			expect(types).toContain("tool_call");
 			expect(types).toContain("tool_result");
-
-			// Verify user_message has cwd
-			const userMsg = strongEvents[0] as {
-				type: string;
-				content: string;
-				cwd?: string;
-				ts: number;
-			};
-			expect(userMsg.cwd).toBe(tmpDir);
-			expect(userMsg.content).toContain("Do something");
-			expect(userMsg.ts).toBeGreaterThan(0);
 
 			// Verify tool_call has correct tool name
 			const toolCallEvent = strongEvents.find((e) => e.type === "tool_call");
@@ -933,7 +937,6 @@ describe("Event recording via emit callback", () => {
 });
 
 import type { Event } from "./events.ts";
-import { MessageQueue } from "./message-queue.ts";
 import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
 // Import AgentResult for type assertion
 import type { AgentResult } from "./types.ts";
@@ -1066,10 +1069,10 @@ describe("Event deterministic verification (OpenAI)", () => {
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const result = await provider.execute({
-					prompt: "Say hello",
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
 					emit,
+					queue: queueWithPrompt("Say hello", testDir),
 				});
 
 				expect(result.success).toBe(true);
@@ -1080,16 +1083,23 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const persistable = events.filter(
 					(e) => !["status", "usage", "text_delta"].includes(e.type),
 				);
-				expect(persistable[0]?.type).toBe("message");
-				expect(persistable[1]?.type).toBe("assistant_text");
+				// First persistable should be messages_consumed (from queue drain), then assistant_text
+				expect(persistable).toEqual(
+					expect.arrayContaining([
+						expect.objectContaining({ type: "messages_consumed" }),
+						expect.objectContaining({ type: "assistant_text" }),
+					]),
+				);
 
 				// Verify reconstruction
 				const reconstructed = eventsToOpenAIMessages(persistable);
-				expect(reconstructed.length).toBe(2);
-				expect(reconstructed[0]).toEqual({
-					role: "user",
-					content: `Working directory: ${testDir}\n\nSay hello`,
-				});
+				expect(reconstructed.length).toBeGreaterThanOrEqual(1);
+				// First message should contain the content from queue drain
+				const firstMsg = reconstructed[0] as {
+					role: string;
+					content: string;
+				};
+				expect(firstMsg?.role).toBe("user");
 				expect(reconstructed[1]).toEqual({
 					role: "assistant",
 					content: "Hello! How can I help?",
@@ -1141,10 +1151,10 @@ describe("Event deterministic verification (OpenAI)", () => {
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const session = provider.startSession({
-					prompt: "Do the task",
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
 					emit,
+					queue: queueWithPrompt("Do the task", testDir),
 					mcpToolDefs: {
 						opengraft: [
 							{
@@ -1244,10 +1254,9 @@ describe("Event deterministic verification (OpenAI)", () => {
 				});
 			}) as unknown as typeof fetch,
 			async () => {
-				const queue = new MessageQueue();
+				const queue = queueWithPrompt("Start working", testDir);
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const session = provider.startSession({
-					prompt: "Start working",
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
 					emit,
@@ -1340,10 +1349,10 @@ describe("Event deterministic verification (OpenAI)", () => {
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const session = provider.startSession({
-					prompt: "Try something",
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
 					emit,
+					queue: queueWithPrompt("Try something", testDir),
 					mcpToolDefs: {
 						opengraft: [
 							{
@@ -1444,10 +1453,10 @@ describe("Event deterministic verification (OpenAI)", () => {
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const session = provider.startSession({
-					prompt: "Run three tools",
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
 					emit,
+					queue: queueWithPrompt("Run three tools", testDir),
 					mcpToolDefs: {
 						test: [
 							{

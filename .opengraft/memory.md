@@ -201,3 +201,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `orchestration_started` no longer has `prompt` field — messages delivered via queue with unified schema.
 - Frontend `processEvent` reads content/images from `body` field preferentially, falling back to top-level for legacy events. Does NOT display `header` in UI.
 - Provider still emits old-format prompt events (no id, top-level content/cwd) for JSONL — walker skips these (no id). Future work: move prompt to queue entirely.
+
+- **prompt removed from AgentRequest**: Provider drains queue for first message. Header on queue message provides working dir + pre-loaded memory.
+- **Resume and fresh start converge**: Both paths drain queue. Resume reconstructs events first, then drains. Header is ALWAYS how context enters the conversation.
+- `execute()` in both providers creates a self-closing queue (onDrain closes it) so provider exits on end_turn instead of entering implicit yield.
+- `launchAgent` no longer takes prompt — callers enqueue messages to queue before/after launch.
+- `handleOrchestrate` and `handleInjectMessage` enqueue user messages with header directly to the running queue.
+- `autoResumeProjects` persists a resume message with fresh context header before launching.
+- Mock providers in tests must loop `while(true) { await queue.wait(); }` to stay alive (old mock exited immediately because it had nothing to wait for).

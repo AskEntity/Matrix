@@ -7,7 +7,11 @@ import { runChildCore } from "./daemon/agent-lifecycle.ts";
 import { createApp } from "./daemon.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
-import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
+import {
+	globalAgentQueues,
+	MessageQueue,
+	type QueueMessage,
+} from "./message-queue.ts";
 import { loadPersistedMessages } from "./persistent-queue.ts";
 
 import { TaskTracker } from "./task-tracker.ts";
@@ -58,9 +62,11 @@ function createLongRunningProvider(): AgentProvider {
 			const queue = req.queue ?? new MessageQueue();
 			// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
 			async function* events(): AsyncGenerator<Event, AgentResult> {
-				// Keep the session alive until queue is closed
+				// Keep the session alive — drain messages until queue is closed
 				try {
-					await queue.wait();
+					while (true) {
+						await queue.wait();
+					}
 				} catch {
 					// Queue closed — exit cleanly
 				}
@@ -1853,13 +1859,15 @@ describe("lifecycle: child completion notification paths", () => {
 		globalAgentQueues.set(parentNode.id, parentQueue);
 
 		// -- First run --
+		const firstQueue = new MessageQueue();
+		firstQueue.enqueue({ source: "user", content: "do work" });
 		const result1 = await runChildCore({
 			provider: createInstantProvider(),
 			tracker,
 			taskId: childNode.id,
 			sessionRequest: {
-				prompt: "do work",
 				cwd: projectDir,
+				queue: firstQueue,
 			},
 		});
 		expect(result1.success).toBe(true);
@@ -1889,13 +1897,15 @@ describe("lifecycle: child completion notification paths", () => {
 
 		// -- Second run --
 		tracker.updateStatus(childNode.id, "in_progress");
+		const secondQueue = new MessageQueue();
+		secondQueue.enqueue({ source: "user", content: "try again" });
 		const result2 = await runChildCore({
 			provider: createInstantProvider(),
 			tracker,
 			taskId: childNode.id,
 			sessionRequest: {
-				prompt: "try again",
 				cwd: projectDir,
+				queue: secondQueue,
 			},
 		});
 		expect(result2.success).toBe(true);
@@ -2027,13 +2037,15 @@ describe("lifecycle: child completion notification paths", () => {
 			}
 		};
 
+		const doneQueue = new MessageQueue();
+		doneQueue.enqueue({ source: "user", content: "test" });
 		const corePromise = runChildCore({
 			provider: doneYieldProvider,
 			tracker,
 			taskId: childId,
 			sessionRequest: {
-				prompt: "test",
 				cwd: projectDir,
+				queue: doneQueue,
 				emit,
 			},
 		});
@@ -2104,13 +2116,15 @@ describe("lifecycle: child completion notification paths", () => {
 			},
 		};
 
+		const deadlockQueue = new MessageQueue();
+		deadlockQueue.enqueue({ source: "user", content: "test" });
 		const corePromise = runChildCore({
 			provider: deadlockProvider,
 			tracker,
 			taskId: childId,
 			sessionRequest: {
-				prompt: "test",
 				cwd: projectDir,
+				queue: deadlockQueue,
 				// No emit callback — nothing closes the queue on task_completed
 			},
 		});
@@ -2245,8 +2259,11 @@ function createCapturingProvider(): {
 	provider: AgentProvider;
 	/** All AgentRequests that were passed to startSession, in order. */
 	sessionRequests: AgentRequest[];
+	/** Queue messages drained from each session (indexed by session index). */
+	queueMessages: QueueMessage[][];
 } {
 	const sessionRequests: AgentRequest[] = [];
+	const queueMessages: QueueMessage[][] = [];
 	const provider: AgentProvider = {
 		name: "mock-capturing",
 		execute: async () => ({ success: true, output: "" }),
@@ -2257,11 +2274,16 @@ function createCapturingProvider(): {
 		startSession(req) {
 			sessionRequests.push(req);
 			const queue = req.queue ?? new MessageQueue();
+			const sessionIdx = sessionRequests.length - 1;
+			queueMessages[sessionIdx] = [];
 			// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
 			async function* events(): AsyncGenerator<Event, AgentResult> {
 				try {
 					while (true) {
-						await queue.wait();
+						const msg = await queue.wait();
+						// Capture queue messages for test assertions
+						const msgs = queueMessages[sessionIdx];
+						if (msgs) msgs.push(msg);
 					}
 				} catch {
 					// Queue closed
@@ -2279,7 +2301,7 @@ function createCapturingProvider(): {
 			};
 		},
 	};
-	return { provider, sessionRequests };
+	return { provider, sessionRequests, queueMessages };
 }
 
 /**
@@ -2344,7 +2366,8 @@ describe("lifecycle edge cases — session continuity", () => {
 		// 2. Clear sessions
 		// 3. Send message
 		// 4. Verify: orchestration_started has resume: false and includes the prompt
-		const { provider, sessionRequests } = createCapturingProvider();
+		const { provider, sessionRequests, queueMessages } =
+			createCapturingProvider();
 		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
@@ -2385,14 +2408,16 @@ describe("lifecycle edge cases — session continuity", () => {
 
 		// Should have 2 session requests: initial + after clear
 		expect(sessionRequests.length).toBe(2);
-		// biome-ignore lint/style/noNonNullAssertion: length checked above
-		const lastReq = sessionRequests[1]!;
 
-		// Key assertion: the prompt should contain the user message (fresh start),
-		// NOT "User sent a new message. Resuming."
-		// (launchAgent may prepend project memory to the prompt for fresh starts)
-		expect(lastReq.prompt).toContain("new fresh task");
-		expect(lastReq.prompt).not.toContain("Resuming");
+		// Key assertion: the queue should contain the user message (fresh start)
+		// Messages are delivered via queue, not prompt
+		const lastQueueMsgs = queueMessages[1] ?? [];
+		const userMsg = lastQueueMsgs.find(
+			(m) =>
+				m.source === "user" &&
+				(m as { content: string }).content === "new fresh task",
+		);
+		expect(userMsg).toBeDefined();
 
 		// Verify the orchestration_started event has resume: false
 		// Note: clear sessions wipes the JSONL events too, so only the
@@ -2424,7 +2449,8 @@ describe("lifecycle edge cases — session continuity", () => {
 		// 3. Send new message "new task"
 		// 4. Verify: The provider receives no session history (resumeSessionId
 		//    points to a fresh session OR sessionStore has no data for it)
-		const { provider, sessionRequests } = createCapturingProvider();
+		const { provider, sessionRequests, queueMessages } =
+			createCapturingProvider();
 		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
@@ -2480,11 +2506,16 @@ describe("lifecycle edge cases — session continuity", () => {
 
 		// Verify the new session request gets the raw prompt (fresh start)
 		expect(sessionRequests.length).toBe(2);
+		// Messages are delivered via queue, not prompt
+		const newQueueMsgs = queueMessages[1] ?? [];
+		const newUserMsg = newQueueMsgs.find(
+			(m) =>
+				m.source === "user" &&
+				(m as { content: string }).content === "new task",
+		);
+		expect(newUserMsg).toBeDefined();
 		// biome-ignore lint/style/noNonNullAssertion: length checked above
 		const newReq = sessionRequests[1]!;
-		// launchAgent may prepend project memory for fresh starts
-		expect(newReq.prompt).toContain("new task");
-		expect(newReq.prompt).not.toContain("Resuming");
 
 		// Verify there's no old session history for the new session
 		const newEventStore = new EventStore(sessionsDir);
@@ -2557,9 +2588,8 @@ describe("lifecycle edge cases — session continuity", () => {
 		// biome-ignore lint/style/noNonNullAssertion: length checked above
 		const resumeReq = sessionRequests[1]!;
 
-		// Key assertion: on resume, the prompt is a generic resume message,
-		// NOT the user's message (which was persisted to disk separately)
-		expect(resumeReq.prompt).toBe("User sent a new message. Resuming.");
+		// Key assertion: resume flag is set, and the user message arrives via queue
+		expect(resumeReq.activeEvents?.length).toBeGreaterThan(0); // has session history
 
 		// Verify the orchestration_started event has resume: true
 		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
@@ -2672,7 +2702,8 @@ describe("lifecycle edge cases — session continuity", () => {
 	test("send message creates root node if none exists", async () => {
 		// Fresh project with no tasks — sending a message should create
 		// the root node and launch agent as fresh (not resume)
-		const { provider, sessionRequests } = createCapturingProvider();
+		const { provider, sessionRequests, queueMessages } =
+			createCapturingProvider();
 		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: provider,
@@ -2701,11 +2732,15 @@ describe("lifecycle edge cases — session continuity", () => {
 
 		// Should have exactly one session launch
 		expect(sessionRequests.length).toBe(1);
-		// biome-ignore lint/style/noNonNullAssertion: length checked above
-		const req = sessionRequests[0]!;
 
-		// Launched fresh with the user's message as the prompt
-		expect(req.prompt).toContain("first message ever");
+		// Message delivered via queue with header, not as prompt
+		const firstQueueMsgs = queueMessages[0] ?? [];
+		const firstUserMsg = firstQueueMsgs.find(
+			(m) =>
+				m.source === "user" &&
+				(m as { content: string }).content === "first message ever",
+		);
+		expect(firstUserMsg).toBeDefined();
 
 		// Verify orchestration_started has resume: false
 		const eventStore = new EventStore(join(dataDir, "sessions", project.id));

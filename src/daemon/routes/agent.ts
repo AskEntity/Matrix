@@ -2,6 +2,7 @@ import type { Hono } from "hono";
 import { DEFAULT_MODEL } from "../../config.ts";
 import type { QueueImage } from "../../message-queue.ts";
 import { globalAgentQueues } from "../../message-queue.ts";
+import { persistMessage } from "../../persistent-queue.ts";
 import {
 	handleClarifyResponse,
 	handleInjectMessage,
@@ -16,6 +17,7 @@ import {
 	getProjectProvider,
 	getTracker,
 	pruneSessionFiles,
+	readProjectMemory,
 	resolveProjectConfig,
 } from "../helpers.ts";
 
@@ -92,7 +94,30 @@ export function registerAgentRoutes(
 		}
 
 		await getTracker(ctx, project.id);
-		await launchAgent(ctx, project, body, orchestratorSystemPrompt);
+		const { prompt: _prompt, ...launchOpts } = body;
+		await launchAgent(ctx, project, launchOpts, orchestratorSystemPrompt);
+
+		// Enqueue the user message with header — provider is waiting for queue drain
+		const startTracker = await getTracker(ctx, project.id);
+		const startRootId = startTracker.rootNodeId;
+		if (startRootId) {
+			const startQueue = globalAgentQueues.get(startRootId);
+			if (startQueue) {
+				const startMemory = readProjectMemory(project.path);
+				const startHeader = startMemory
+					? `Working directory: ${project.path}\n\n${startMemory}`
+					: `Working directory: ${project.path}`;
+				try {
+					startQueue.enqueue({
+						source: "user",
+						content: body.prompt,
+						header: startHeader,
+					});
+				} catch {
+					// Queue may have closed
+				}
+			}
+		}
 		return c.json({ status: "running", projectId: project.id });
 	});
 
@@ -202,15 +227,27 @@ export function registerAgentRoutes(
 		try {
 			await stopAgent(ctx, project.id);
 
+			// Persist a resume message with fresh context header
+			const restartTracker = await getTracker(ctx, project.id);
+			const restartRootId = restartTracker.rootNodeId;
+			if (restartRootId) {
+				const restartMemory = readProjectMemory(project.path);
+				const restartHeader = restartMemory
+					? `Working directory: ${project.path}\n\n${restartMemory}`
+					: `Working directory: ${project.path}`;
+				await persistMessage(ctx.config.dataDir, project.id, restartRootId, {
+					source: "user",
+					content:
+						"Orchestrator restarted to pick up new config. Continue where you left off.",
+					header: restartHeader,
+				});
+			}
+
 			// Relaunch with resume to pick up new config
 			await launchAgent(
 				ctx,
 				project,
-				{
-					prompt:
-						"Orchestrator restarted to pick up new config. Continue where you left off.",
-					resume: true,
-				},
+				{ resume: true },
 				orchestratorSystemPrompt,
 			);
 			return c.json({ ok: true });

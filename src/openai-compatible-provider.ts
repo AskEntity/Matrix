@@ -944,7 +944,20 @@ export class OpenAICompatibleProvider implements AgentProvider {
 
 	async execute(request: AgentRequest): Promise<AgentResult> {
 		const sessionId = request.resumeSessionId ?? ulid();
-		const gen = this.runLoop(request, sessionId);
+		// For execute(), create a self-closing queue: after draining the initial
+		// message, close so the provider exits on end_turn instead of entering
+		// implicit yield. If a queue was provided, copy its messages.
+		const execQueue = new MessageQueue();
+		if (request.queue) {
+			for (const msg of request.queue.drain()) {
+				execQueue.enqueue(msg);
+			}
+		}
+		execQueue.onDrain = () => {
+			execQueue.onDrain = undefined;
+			execQueue.close();
+		};
+		const gen = this.runLoop(request, sessionId, execQueue);
 		let result = await gen.next();
 		while (!result.done) {
 			result = await gen.next();

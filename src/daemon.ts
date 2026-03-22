@@ -19,6 +19,7 @@ import {
 	getEventStore,
 	getTracker,
 	pruneSessionFiles,
+	readProjectMemory,
 } from "./daemon/helpers.ts";
 import { registerAgentRoutes } from "./daemon/routes/agent.ts";
 import {
@@ -30,6 +31,7 @@ import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
 import { runEventMigrations } from "./event-store.ts";
+import { persistMessage } from "./persistent-queue.ts";
 import { ProjectManager } from "./project-manager.ts";
 import type {
 	HealthResponse,
@@ -290,14 +292,30 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					errorMessages.length > 0
 						? `\n\nPrevious session encountered these errors:\n${errorMessages.map((m) => `- ${m}`).join("\n")}`
 						: "";
-				const resumePrompt = `Continue where you left off. The daemon restarted (${GIT_HASH}).${orphanCount > 0 ? ` Note: ${orphanCount} in_progress task(s) were reset to failed.` : ""}${errorSection}\n\nCheck the task tree and proceed.`;
+				const resumeContent = `Continue where you left off. The daemon restarted (${GIT_HASH}).${orphanCount > 0 ? ` Note: ${orphanCount} in_progress task(s) were reset to failed.` : ""}${errorSection}\n\nCheck the task tree and proceed.`;
+
+				// Persist resume message with fresh context header
+				const resumeMemory = readProjectMemory(project.path);
+				const resumeHeader = resumeMemory
+					? `Working directory: ${project.path}\n\n${resumeMemory}`
+					: `Working directory: ${project.path}`;
+				if (tracker.rootNodeId) {
+					await persistMessage(
+						ctx.config.dataDir,
+						project.id,
+						tracker.rootNodeId,
+						{
+							source: "user",
+							content: resumeContent,
+							header: resumeHeader,
+						},
+					);
+				}
+
 				await launchAgent(
 					ctx,
 					project,
-					{
-						prompt: resumePrompt,
-						resume: true,
-					},
+					{ resume: true },
 					ORCHESTRATOR_SYSTEM_PROMPT,
 				);
 			}
