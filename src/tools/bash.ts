@@ -415,7 +415,7 @@ export async function executeBashWithTimeout(
 	// cd wrapper writes resolved pwd to temp file on every cd — no stdout pollution.
 	// EXIT trap writes final pwd to temp file (catches cd in subshells/scripts too).
 	const isImmediateBackground = foregroundTimeout === 0 && !!sessionId;
-	const cdWrapper = `cd() { local t="${"$"}{1:-${"$"}HOME}"; local r; r=${"$"}(builtin cd "${"$"}t" 2>/dev/null && pwd); if [ "${"$"}(pwd)" = "${"$"}r" ]; then echo "bash: cd: ${"$"}(pwd): already in this directory" >&2; return 1; fi; builtin cd "${"$"}t" && pwd > "${cwdPath}"; }; `;
+	const cdWrapper = `cd() { local t="${"$"}{1:-${"$"}HOME}"; local r; r=${"$"}(builtin cd "${"$"}t" 2>/dev/null && pwd); if [ "${"$"}(pwd)" = "${"$"}r" ]; then echo "bash: cd: ${"$"}(pwd): already in this directory" >&2; return 1; fi; builtin cd "${"$"}t"; }; `;
 	const exitTrap = `___og_trap() { pwd > "${cwdPath}"; }; trap ___og_trap EXIT; `;
 	const shellCommand = isImmediateBackground
 		? command
