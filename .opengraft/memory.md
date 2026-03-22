@@ -214,3 +214,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **AssistantContent.items**: Added ordered `items` array to preserve interleaved sequence. `texts`/`toolCalls` arrays kept for OpenAI (which joins texts and separates tool_calls anyway). Anthropic callback uses `items` for correct content block ordering.
 - **Natural boundary**: assistant_text + tool_call = one assistant turn. tool_result/message = the boundary that ends it.
 
+
+## AssistantContent Simplification
+- Removed redundant `texts` and `toolCalls` arrays from `AssistantContent`. Only `items` remains.
+- Anthropic provider already used `items` exclusively — no changes needed.
+- OpenAI provider derived texts/toolCalls from `items` with type-guard filters.
+- `walkEventsToMessages()` only pushes to `items` now.
