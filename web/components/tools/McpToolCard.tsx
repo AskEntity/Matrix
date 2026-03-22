@@ -1,5 +1,18 @@
 import { formatMcpToolResult, getArg } from "./utils.ts";
 
+/** Tool short names that have custom card body rendering in McpToolCardBody */
+export const MCP_CARD_BODY_TOOLS = new Set([
+	"create_task",
+	"done",
+	"yield",
+	"delete_task",
+	"get_tree",
+	"send_message_to_child",
+	"report_to_parent",
+	"send_message_to_project",
+	"execute_tasks",
+]);
+
 /** Render structured body for special MCP tools */
 export function McpToolCardBody({
 	toolName,

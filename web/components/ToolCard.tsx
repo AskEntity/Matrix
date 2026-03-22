@@ -7,7 +7,7 @@ import {
 } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron } from "./icons.tsx";
-import { McpToolCardBody } from "./tools/McpToolCard.tsx";
+import { MCP_CARD_BODY_TOOLS, McpToolCardBody } from "./tools/McpToolCard.tsx";
 import { ToolResultImages } from "./tools/ToolResultImages.tsx";
 import {
 	bashBgExcludeKeys,
@@ -111,9 +111,10 @@ export const ToolCard = memo(function ToolCard({
 		);
 	}
 
-	// Try structured MCP rendering (skip for title-only cards)
+	// Try structured MCP rendering (only for tools with custom card bodies)
+	const shortName = toolName.replace("mcp__opengraft__", "");
 	const mcpBody =
-		isOpengraft && !titleOnly ? (
+		isOpengraft && !titleOnly && MCP_CARD_BODY_TOOLS.has(shortName) ? (
 			<McpToolCardBody
 				toolName={toolName}
 				toolArgs={toolArgs}
