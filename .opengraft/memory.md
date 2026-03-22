@@ -71,7 +71,8 @@ Daemon (Hono: HTTP + SSE on :7433)
 2. Persists non-ephemeral events to JSONL EventStore
 
 **Ephemeral events** (broadcast only, NOT persisted to JSONL):
-- `text_delta`, `usage`, `agent_idle`, `agent_active`, `status`, `queue_message`, `heartbeat`, `tree_updated`, `clarification_timeout`
+- `text_delta`, `usage`, `agent_idle`, `agent_active`, `status`, `heartbeat`, `tree_updated`, `clarification_timeout`
+- `queue_message` — LEGACY, scheduled for removal. Duplicates two-phase lifecycle.
 - Provider events (`assistant_text`, `tool_call`, `tool_result`, `compact_marker`) — already written to JSONL by providers
 
 **Two-phase message lifecycle**:
@@ -230,7 +231,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **done() tool cards unsuppressed** in LogEntryView.tsx and ToolCard.tsx — styled with green/red border like old task_completed card.
 - **Error path in runChildAgentInBackground**: emits `error` event instead of `task_completed`. child_complete queue message still handles parent notification.
 
-## queue_message Ephemeral Event
-- `queue_message` SSE events are ephemeral (not persisted to JSONL). They carry raw queue messages for AI consumption and pending banner chips.
-- ALL queue messages go through two-phase lifecycle: `message` event (persisted) → `deferredMessages` → `messages_consumed` → `materialize()` into activity log.
-- `createQueueUIEvent` returns null unconditionally — the ephemeral `queue_message` should NEVER render activity log cards. That caused duplicate cards (once from queue_message, once from messages_consumed).
+## queue_message Removal (TODO)
+- `queue_message` is a LEGACY ephemeral SSE event that duplicates the two-phase lifecycle. It must be fully removed from backend and frontend.
+- The TWO-PHASE lifecycle is the ONE canonical UI rendering path: `message` event (persisted) → `deferredMessages` → `messages_consumed` → `materialize()`.
+- `queue_message` caused duplicate cards and live/refresh inconsistency. Do NOT use it as a workaround for broken `messages_consumed` — fix `messages_consumed` instead.
+- **Removal scope**: `src/orchestrator-tools.ts` (emitter), `src/provider-shared.ts` (emitter), `src/events.ts` (type), `src/daemon/event-system.ts` (ephemeral list), `web/event-handler.ts` (processEvent case), `web/hooks.ts`, `web/components/tools/utils.ts`, `src/cli.ts`, test files.
+- **Prerequisite**: `messages_consumed` must work reliably live before removing queue_message. Currently it doesn't — that's the real bug to fix first.
