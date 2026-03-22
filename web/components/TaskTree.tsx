@@ -136,7 +136,7 @@ export const TaskTree = memo(function TaskTree({
 			if (
 				trimmed &&
 				!node.title.toLowerCase().includes(lower) &&
-				!node.id.toLowerCase().startsWith(lower)
+				!node.id.toLowerCase().includes(lower)
 			)
 				continue;
 			// Include this node AND all its ancestors
@@ -564,9 +564,7 @@ function TaskNodeView({
 					{node.status === "draft" && (
 						<span className="og-task-draft-badge">draft</span>
 					)}
-					<span className="og-task-id-tag" title={node.id}>
-						{node.id.slice(0, 8)}
-					</span>
+					<span className="og-task-id-tag">{node.id}</span>
 					{node.branch && (
 						<span className="og-task-branch-tag" title={node.branch}>
 							{node.branch.replace("og/", "").split("/").slice(1).join("/") ||
