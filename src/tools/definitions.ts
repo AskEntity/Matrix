@@ -24,7 +24,7 @@ export { resolvePath };
 
 /**
  * Extended CallToolResult with non-standard properties for built-in tools.
- * These are read by executeToolUnified() to populate ToolExecResult fields.
+ * These are read by executeTool() to populate ToolExecResult fields.
  * Index signature required for CallToolResult compatibility (Zod-generated type).
  */
 interface BuiltinToolResult {
