@@ -220,3 +220,6 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Anthropic provider already used `items` exclusively — no changes needed.
 - OpenAI provider derived texts/toolCalls from `items` with type-guard filters.
 - `walkEventsToMessages()` only pushes to `items` now.
+## SSE idle timeout fix
+- **Bun idleTimeout**: Default 10s kills SSE connections. Set `idleTimeout: 0` in `Bun.serve()` to disable.
+- SSE comment heartbeats (`: heartbeat`) do NOT reset Bun's idle timer. Only data frames count.
