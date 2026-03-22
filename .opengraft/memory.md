@@ -224,3 +224,6 @@ Daemon (Hono: HTTP + SSE on :7433)
 ## SSE idle timeout fix
 - **Bun idleTimeout**: Default 10s kills SSE connections. Set `idleTimeout: 255` (Bun max, 4.25 min) in `Bun.serve()`. Data heartbeat at 15s keeps it alive.
 - SSE comment heartbeats (`: heartbeat`) do NOT reset Bun's idle timer. Only data frames count — so we only use data heartbeats.
+
+## Critical Rule
+- **NEVER delete session JSONL files** for other projects. If a session is corrupted, wait for daemon restart with fixed code — the converter fix will handle it on resume. Session files are not in git and cannot be recovered.
