@@ -141,7 +141,11 @@ export const LogEntryView = memo(function LogEntryView({
 			const borderClass = donePassed
 				? "og-tool-card-done-passed"
 				: "og-tool-card-done-failed";
-			const doneTitle = donePassed ? "Passed" : "Failed";
+			const doneTaskId = getLogTaskId(entry);
+			const doneTaskTitle = doneTaskId
+				? nodeMap?.get(doneTaskId)?.title
+				: undefined;
+			const doneTitle = doneTaskTitle || (donePassed ? "Passed" : "Failed");
 			return (
 				<div className="og-log-entry og-event-tool_card">
 					<span className="og-log-time">{formatTime(entry.ts)}</span>
