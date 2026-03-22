@@ -252,6 +252,20 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				? tracker.get(tracker.rootNodeId)
 				: null;
 			if (rootNode && rootNode.status === "in_progress") {
+				// Check if any children were actively running — if not, the root was
+				// just idle-yielding and doesn't need auto-resume (saves money)
+				const hasActiveChildren = tracker
+					.allNodes()
+					.some(
+						(n) => n.id !== tracker.rootNodeId && n.status === "in_progress",
+					);
+				if (!hasActiveChildren) {
+					console.log(
+						`Skipping auto-resume for ${project.name} — no active children`,
+					);
+					continue;
+				}
+
 				// Reset orphaned in_progress tasks — their agent sessions died with the daemon
 				// Skip the root node — it will be re-activated by launchAgent
 				let orphanCount = 0;
