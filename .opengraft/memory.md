@@ -356,3 +356,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 ## Naming Convention
 - **No comparative names** in identifiers or comments: avoid "unified", "simplified", "improved", "new", "better", "enhanced", "refactored". Name things for what they ARE, not how they compare to previous versions.
+
+## Worktree Setup Hook
+- Worktree setup is hook-based: `.opengraft/hooks/setup_worktree.sh` runs with worktree path as `$1`.
+- Hook is REQUIRED — missing hook fails worktree creation with clear error.
+- Hook exists + fails → worktree creation fails, worktree is rolled back.
+- `opengraft init` auto-detects package manager (bun.lockb, package-lock.json, yarn.lock, pnpm-lock.yaml, requirements.txt) and creates appropriate hook.
+- OpenGraft's own hook: `.opengraft/hooks/setup_worktree.sh` → `bun install --frozen-lockfile`.
+- System prompt no longer references bun-specific commands — agents check memory.md/CLAUDE.md for project commands.

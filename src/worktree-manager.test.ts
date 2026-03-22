@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorktreeManager } from "./worktree-manager.ts";
@@ -19,14 +19,25 @@ async function initRepo(dir: string): Promise<void> {
 	await exec(["git", "init"], dir);
 	await exec(["git", "config", "user.email", "test@test.com"], dir);
 	await exec(["git", "config", "user.name", "Test"], dir);
-	// Create a minimal package.json so installDeps has something to work with
-	await writeFile(
-		join(dir, "package.json"),
-		JSON.stringify({ name: "test-repo", private: true }),
-	);
 	await writeFile(join(dir, "README.md"), "# Test\n");
+	// Create a no-op setup hook (required for worktree creation)
+	const hookDir = join(dir, ".opengraft", "hooks");
+	await mkdir(hookDir, { recursive: true });
+	const hookPath = join(hookDir, "setup_worktree.sh");
+	await writeFile(hookPath, "#!/bin/bash\nexit 0\n", "utf-8");
+	await chmod(hookPath, 0o755);
 	await exec(["git", "add", "-A"], dir);
 	await exec(["git", "commit", "-m", "init"], dir);
+}
+
+/** Add a setup_worktree.sh hook to the repo and commit it. */
+async function addSetupHook(dir: string, script: string): Promise<void> {
+	const hookDir = join(dir, ".opengraft", "hooks");
+	await mkdir(hookDir, { recursive: true });
+	await writeFile(join(hookDir, "setup_worktree.sh"), script, "utf-8");
+	await chmod(join(hookDir, "setup_worktree.sh"), 0o755);
+	await exec(["git", "add", "-A"], dir);
+	await exec(["git", "commit", "-m", "add setup hook"], dir);
 }
 
 describe("WorktreeManager", () => {
@@ -177,5 +188,52 @@ describe("WorktreeManager", () => {
 		await expect(
 			mgr.create(taskId, "bad", "nonexistent-branch"),
 		).rejects.toThrow();
+	});
+
+	test("create runs setup hook when present", async () => {
+		// Add a hook that creates a marker file
+		await addSetupHook(repoDir, '#!/bin/bash\ntouch "$1/setup-ran.marker"\n');
+
+		const taskId = "aabbccdd-1111-2222-3333-444444444444";
+		const info = await mgr.create(taskId, "with-hook");
+
+		// The hook should have created the marker file
+		expect(existsSync(join(info.path, "setup-ran.marker"))).toBe(true);
+	});
+
+	test("create fails when setup hook is missing", async () => {
+		// Remove the hook from the repo
+		await exec(["git", "rm", ".opengraft/hooks/setup_worktree.sh"], repoDir);
+		await exec(["git", "commit", "-m", "remove hook"], repoDir);
+
+		const taskId = "11223344-1111-2222-3333-444444444444";
+		await expect(mgr.create(taskId, "no-hook")).rejects.toThrow(
+			"Missing .opengraft/hooks/setup_worktree.sh",
+		);
+
+		// Worktree should be cleaned up
+		const wtPath = join(wtRoot, `${taskId.slice(0, 8)}-no-hook`);
+		expect(existsSync(wtPath)).toBe(false);
+	});
+
+	test("create fails and rolls back when setup hook fails", async () => {
+		// Add a hook that exits with error
+		await addSetupHook(
+			repoDir,
+			'#!/bin/bash\necho "setup failed" >&2\nexit 1\n',
+		);
+
+		const taskId = "55667788-1111-2222-3333-444444444444";
+		await expect(mgr.create(taskId, "bad-hook")).rejects.toThrow(
+			"Setup hook failed",
+		);
+
+		// Worktree should be cleaned up
+		const wtPath = join(wtRoot, `${taskId.slice(0, 8)}-bad-hook`);
+		expect(existsSync(wtPath)).toBe(false);
+
+		// Branch should be cleaned up
+		const branches = await exec(["git", "branch"], repoDir);
+		expect(branches).not.toContain("og/55667788/bad-hook");
 	});
 });

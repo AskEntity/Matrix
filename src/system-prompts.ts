@@ -79,7 +79,7 @@ Only implement directly if the task is small enough for a single agent session.
   Do NOT propose changes to code you haven't read. Read first, then modify.
 - Follow the parent's instructions on whether your task is independently compilable/testable.
   If the parent says your task depends on sibling outputs, use \`--no-verify\` for commits if needed.
-- Run \`bun test\`, \`bun run typecheck\`, and \`bun run check\` before considering done.
+- Run the project's test suite, typecheck, and lint before considering done. Check \`.opengraft/memory.md\` or \`CLAUDE.md\` for the project's specific commands.
 - Prefer edit_file for small changes, write_file for new files or complete rewrites.
 - Use search to understand existing code before modifying it.
 - When finished, call \`done("passed", summary)\` or \`done("failed", summary)\`. Always call done().

@@ -18,7 +18,7 @@ export interface WorktreeInfo {
  * Worktree setup:
  * - extensions.worktreeConfig is enabled so per-worktree git config works
  * - Hooks are disabled per-worktree (core.hooksPath = /dev/null)
- * - Dependencies are installed (bun install) so the env is complete
+ * - Setup hook (.opengraft/hooks/setup_worktree.sh) is run if present
  */
 export class WorktreeManager {
 	constructor(
@@ -48,7 +48,7 @@ export class WorktreeManager {
 	 * Sets up a fully isolated environment:
 	 * 1. Creates worktree with new branch
 	 * 2. Disables hooks (so child agents don't trigger parent project's pre-commit)
-	 * 3. Installs dependencies (bun install)
+	 * 3. Runs .opengraft/hooks/setup_worktree.sh if present
 	 */
 	async create(
 		taskId: string,
@@ -80,9 +80,9 @@ export class WorktreeManager {
 				wtPath,
 			).exited;
 
-			// Install dependencies so the worktree has a complete environment
+			// Run setup hook if present — installs deps, etc.
 			// (.gitignore'd files like node_modules don't exist in new worktrees)
-			await this.installDeps(wtPath);
+			await this.runSetupHook(wtPath);
 		} catch (e) {
 			// Rollback: remove partially created worktree
 			await this.git(["worktree", "remove", "--force", wtPath]).exited;
@@ -176,25 +176,24 @@ export class WorktreeManager {
 		});
 	}
 
-	/** Install dependencies in a worktree directory. */
-	private async installDeps(wtPath: string): Promise<void> {
-		// Only install if package.json exists (not all projects use bun/node)
-		if (!existsSync(join(wtPath, "package.json"))) return;
+	/** Run the project's setup hook. Fails if hook is missing. */
+	private async runSetupHook(wtPath: string): Promise<void> {
+		const hookPath = join(wtPath, ".opengraft", "hooks", "setup_worktree.sh");
+		if (!existsSync(hookPath)) {
+			throw new Error(
+				"Missing .opengraft/hooks/setup_worktree.sh — create this file to configure worktree environment setup.",
+			);
+		}
 
-		const proc = Bun.spawn(["bun", "install", "--frozen-lockfile"], {
+		const proc = Bun.spawn(["bash", hookPath, wtPath], {
 			cwd: wtPath,
 			stdout: "pipe",
 			stderr: "pipe",
 		});
 		const exitCode = await proc.exited;
 		if (exitCode !== 0) {
-			// Retry without --frozen-lockfile (lockfile may not exist)
-			const retry = Bun.spawn(["bun", "install"], {
-				cwd: wtPath,
-				stdout: "pipe",
-				stderr: "pipe",
-			});
-			await retry.exited;
+			const stderr = await new Response(proc.stderr).text();
+			throw new Error(`Setup hook failed (exit ${exitCode}): ${stderr.trim()}`);
 		}
 	}
 
