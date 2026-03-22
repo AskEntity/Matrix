@@ -6,9 +6,9 @@ import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { createOrchestratorTools, isDescendantOf } from "./agent-tools.ts";
 import { createApp } from "./daemon.ts";
 import type { Event } from "./events.ts";
-import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
+import { MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
-import { mockDaemonContext } from "./test-utils.ts";
+import { attachMockSession, mockDaemonContext } from "./test-utils.ts";
 import type {
 	AgentResult,
 	HealthResponse,
@@ -409,6 +409,7 @@ describe("daemon tasks API", () => {
 	let tempDir: string;
 	let dataDir: string;
 	let app: ReturnType<typeof createApp>["app"];
+	let getTracker: ReturnType<typeof createApp>["getTracker"];
 	let projectId: string;
 
 	beforeEach(async () => {
@@ -416,6 +417,7 @@ describe("daemon tasks API", () => {
 		dataDir = await mkdtemp(join(tmpdir(), "og-tdata-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
+		getTracker = result.getTracker;
 		await result.pm.load();
 
 		// Create a project for task tests
@@ -731,9 +733,11 @@ describe("daemon tasks API", () => {
 		});
 		const child = (await childRes.json()) as TaskNode;
 
-		// Register a queue for the child (simulating a running agent)
+		// Attach session to simulate a running agent
 		const childQueue = new MessageQueue();
-		globalAgentQueues.set(child.id, childQueue);
+		const tracker = await getTracker(projectId);
+		const childNode = tracker.get(child.id)!;
+		attachMockSession(childNode, childQueue);
 
 		// Delete the parent — should cascade and close child queue
 		const delRes = await app.request(
@@ -751,8 +755,8 @@ describe("daemon tasks API", () => {
 		}
 		expect(closedAfterDelete).toBe(true);
 
-		// Queue should be removed from global registry
-		expect(globalAgentQueues.has(child.id)).toBe(false);
+		// Session should be cleared
+		expect(childNode.session).toBeUndefined();
 	});
 
 	test("POST /tasks/:nodeId/continue resets failed task to pending", async () => {
@@ -899,9 +903,9 @@ describe("daemon tasks API", () => {
 		expect(streamCalled).toBe(true);
 		expect(receivedMcpToolDefs).toBe(true);
 		expect(receivedQueue).toBe(true);
-		// Ensure global queue registry is cleaned up after agent completes
+		// Ensure session is cleaned up after agent completes
 		await new Promise((r) => setTimeout(r, 50));
-		expect(globalAgentQueues.has(task.id)).toBe(false);
+		expect(daemonTracker.get(task.id)?.session).toBeUndefined();
 
 		await rm(localDataDir, { recursive: true });
 	});
@@ -1164,8 +1168,6 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 
 	afterEach(async () => {
-		// Clean up global registry
-		globalAgentQueues.delete(taskId);
 		await rm(tempDir, { recursive: true });
 		await rm(dataDir, { recursive: true });
 	});
@@ -1193,15 +1195,21 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 
 	test("routes message to registered task queue", async () => {
-		const { app, pm } = createApp({
+		const {
+			app,
+			pm,
+			getTracker: gt,
+		} = createApp({
 			dataDir,
 			agentProvider: mockProvider,
 		});
 		await pm.load();
 
-		// Register a queue for this task in the global registry
+		// Attach session to simulate a running agent
 		taskQueue = new MessageQueue();
-		globalAgentQueues.set(taskId, taskQueue);
+		const tracker = await gt(projectId);
+		const taskNode = tracker.get(taskId)!;
+		attachMockSession(taskNode, taskQueue);
 
 		const res = await app.request(
 			`/projects/${projectId}/tasks/${taskId}/message`,
@@ -1262,7 +1270,11 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 
 	test("falls through to persist when queue is closed (no 409)", async () => {
-		const { app, pm } = createApp({
+		const {
+			app,
+			pm,
+			getTracker: gt,
+		} = createApp({
 			dataDir,
 			agentProvider: mockProvider,
 		});
@@ -1270,7 +1282,9 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 
 		taskQueue = new MessageQueue();
 		taskQueue.close();
-		globalAgentQueues.set(taskId, taskQueue);
+		const tracker = await gt(projectId);
+		const taskNode = tracker.get(taskId)!;
+		attachMockSession(taskNode, taskQueue);
 
 		const res = await app.request(
 			`/projects/${projectId}/tasks/${taskId}/message`,
@@ -1288,7 +1302,7 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		};
 		expect(body.ok).toBe(true);
 
-		globalAgentQueues.delete(taskId);
+		taskNode.session = undefined;
 	});
 });
 
@@ -1588,9 +1602,10 @@ describe("POST /projects/:id/clarify", () => {
 		});
 		const child = (await childRes.json()) as TaskNode;
 
-		// Register a queue for the child in globalAgentQueues (simulating runChildAgentInBackground)
+		// Attach session to simulate a running child agent
 		const childQueue = new MessageQueue();
-		globalAgentQueues.set(child.id, childQueue);
+		const childNode = tracker.get(child.id)!;
+		attachMockSession(childNode, childQueue);
 
 		try {
 			// Post clarify response with the child's taskId
@@ -1617,7 +1632,7 @@ describe("POST /projects/:id/clarify", () => {
 					: "",
 			).toBe("The answer for child agent");
 		} finally {
-			globalAgentQueues.delete(child.id);
+			childNode.session = undefined;
 			await localApp.request(`/projects/${project.id}/stop`, {
 				method: "POST",
 			});
@@ -1704,7 +1719,8 @@ describe("POST /projects/:id/clarify", () => {
 
 		const closedQueue = new MessageQueue();
 		closedQueue.close();
-		globalAgentQueues.set(child.id, closedQueue);
+		const childNode = tracker.get(child.id)!;
+		attachMockSession(childNode, closedQueue);
 
 		try {
 			const clarifyRes = await localApp.request(
@@ -1722,7 +1738,7 @@ describe("POST /projects/:id/clarify", () => {
 			const body = (await clarifyRes.json()) as { error: string };
 			expect(body.error).toBe("Queue closed");
 		} finally {
-			globalAgentQueues.delete(child.id);
+			childNode.session = undefined;
 			await localApp.request(`/projects/${project.id}/stop`, {
 				method: "POST",
 			});
@@ -2161,9 +2177,10 @@ describe("POST /projects/:id/stop", () => {
 			body: JSON.stringify({ status: "in_progress" }),
 		});
 
-		// Register a queue for the child in globalAgentQueues (simulating runChildAgentInBackground)
+		// Attach session to simulate a running child agent
 		const childQueue = new MessageQueue();
-		globalAgentQueues.set(child.id, childQueue);
+		const childNode = tracker.get(child.id)!;
+		attachMockSession(childNode, childQueue);
 
 		// Verify queue is open
 		let queueClosed = false;
@@ -2199,7 +2216,6 @@ describe("POST /projects/:id/stop", () => {
 		expect(updatedChild?.status).toBe("failed");
 
 		// Clean up
-		globalAgentQueues.delete(child.id);
 		await rm(localDataDir, { recursive: true });
 	});
 });
@@ -2634,7 +2650,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.status).toBe("pending");
 	});
 
-	test("cleans up global queue after agent completes for worktree task", async () => {
+	test("cleans up session after agent completes for worktree task", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -2666,8 +2682,8 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		// Wait for background agent to complete
 		await new Promise((r) => setTimeout(r, 150));
 
-		// Queue should be cleaned up after completion
-		expect(globalAgentQueues.has(task.id)).toBe(false);
+		// Session should be cleaned up after completion
+		expect(tracker.get(task.id)?.session).toBeUndefined();
 	});
 
 	test("sets status to in_progress for passed task with worktree", async () => {

@@ -11,11 +11,7 @@
 
 import { pinyin } from "pinyin-pro";
 import { formatEventForAI, queueMessageToEvent } from "./events.ts";
-import {
-	globalAgentQueues,
-	type MessageQueue,
-	type QueueMessage,
-} from "./message-queue.ts";
+import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 
 export {
@@ -236,7 +232,7 @@ export function findParentQueue(
 
 	let targetId: string | null = node.parentId;
 	while (targetId) {
-		const queue = globalAgentQueues.get(targetId);
+		const queue = tracker.get(targetId)?.session?.queue;
 		if (queue) return { queue, targetId };
 
 		const ancestor = tracker.get(targetId);

@@ -10,7 +10,7 @@ import { DEFAULT_MODEL } from "../config.ts";
 import { type Event, findOrphanedToolCalls } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
-import { globalAgentQueues, MessageQueue } from "../message-queue.ts";
+import { MessageQueue } from "../message-queue.ts";
 import {
 	clearPersistedMessages,
 	loadPersistedMessages,
@@ -195,7 +195,6 @@ export async function runChildCore(
 
 	// Use pre-created queue or create a new one
 	const childQueue = params.queue ?? new MessageQueue();
-	globalAgentQueues.set(taskId, childQueue);
 	sessionRequest.queue = childQueue;
 
 	// Load any persisted messages from disk and enqueue them
@@ -247,7 +246,6 @@ export async function runChildCore(
 		}
 		return result.value;
 	} finally {
-		globalAgentQueues.delete(taskId);
 		childQueue.close();
 	}
 }
@@ -326,32 +324,36 @@ export async function stopAgent(
 	session.stop();
 	ctx.activeSessions.delete(projectId);
 
-	// Cascade stop to ALL agents (root + children) via unified globalAgentQueues
+	// Cascade stop to ALL agents (root + children) via session on tracker nodes
 	if (tracker) {
 		const rootNodeId = tracker.rootNodeId;
-		// Close root queue from unified registry
+		// Close root session
 		if (rootNodeId) {
-			const rootQueue = globalAgentQueues.get(rootNodeId);
-			if (rootQueue) {
-				globalAgentQueues.delete(rootNodeId);
-				rootQueue.close();
-			}
-			// Clean up root session
 			const rootNode = tracker.get(rootNodeId);
-			if (rootNode?.session) {
+			const rootQueue = rootNode?.session?.queue;
+			if (rootQueue) {
+				if (rootNode?.session) {
+					cleanupSessionBackgroundProcesses(
+						rootNode.session.backgroundProcesses,
+					);
+					rootNode.session = undefined;
+				}
+				rootQueue.close();
+			} else if (rootNode?.session) {
 				cleanupSessionBackgroundProcesses(rootNode.session.backgroundProcesses);
 				rootNode.session = undefined;
 			}
 		}
 		for (const node of tracker.allNodes()) {
 			if (node.status === "in_progress" && node.id !== rootNodeId) {
-				const childQueue = globalAgentQueues.get(node.id);
+				const childQueue = node.session?.queue;
 				if (childQueue) {
-					globalAgentQueues.delete(node.id);
+					if (node.session) {
+						cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
+						node.session = undefined;
+					}
 					childQueue.close();
-				}
-				// Clean up child session
-				if (node.session) {
+				} else if (node.session) {
 					cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
 					node.session = undefined;
 				}
@@ -414,8 +416,8 @@ export async function deliverMessage(
 ): Promise<"enqueued" | "persisted"> {
 	const tracker = await getTracker(ctx, project.id);
 
-	// 1. Try direct queue delivery (unified registry — root + child queues)
-	const queue = globalAgentQueues.get(nodeId);
+	// 1. Try direct queue delivery via session on tracker node
+	const queue = tracker.get(nodeId)?.session?.queue;
 	if (queue) {
 		try {
 			queue.enqueue(message);
@@ -462,8 +464,7 @@ export async function ensureChildAgentRunning(
 	if (!node) return;
 
 	// Guard: if agent is already running, do nothing (message was already enqueued by deliverMessage)
-	const existingQueue = globalAgentQueues.get(nodeId);
-	if (existingQueue) {
+	if (node.session != null) {
 		return;
 	}
 
@@ -846,8 +847,6 @@ export async function launchAgent(
 		getSession,
 	});
 
-	// Register root queue in the unified globalAgentQueues registry
-	globalAgentQueues.set(rootNodeId, queue);
 	ctx.activeSessions.set(project.id, session);
 
 	// Fire-and-forget: consume events in background
@@ -917,8 +916,6 @@ export async function launchAgent(
 				// Don't let save failure prevent cleanup
 			}
 			session.stop();
-			// Remove root queue from unified registry
-			globalAgentQueues.delete(rootNodeId);
 			// Only clean up if this session is still the active one.
 			// During restart, a new session replaces us — don't clobber it.
 			if (ctx.activeSessions.get(project.id) === session) {
@@ -981,7 +978,7 @@ export async function handleOrchestrate(
 	const orchTracker = await getTracker(ctx, projectId);
 	const orchRootNodeId = orchTracker.rootNodeId;
 	if (orchRootNodeId) {
-		const rootQueue = globalAgentQueues.get(orchRootNodeId);
+		const rootQueue = orchTracker.get(orchRootNodeId)?.session?.queue;
 		if (rootQueue) {
 			const orchMsgId = ulid();
 			// Write + broadcast message at send time (Phase 1)
@@ -1027,7 +1024,7 @@ export async function handleOrchestrate(
 			ts: Date.now(),
 		});
 
-		const orchRootQueue = globalAgentQueues.get(orchRootId2);
+		const orchRootQueue = orchTracker.get(orchRootId2)?.session?.queue;
 		if (orchRootQueue) {
 			try {
 				orchRootQueue.enqueue({
@@ -1105,7 +1102,7 @@ export async function handleInjectMessage(
 				emitEvent(ctx, projectId, userMsgEvent);
 
 				// Enqueue directly to the running agent's queue — it's waiting for first message
-				const rootQueue = globalAgentQueues.get(freshRootNodeId);
+				const rootQueue = tracker.get(freshRootNodeId)?.session?.queue;
 				if (rootQueue) {
 					try {
 						rootQueue.enqueue({
@@ -1197,8 +1194,9 @@ export async function handleClarifyResponse(
 	answer: string,
 	clarificationId?: string,
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
-	// Route the response to the correct agent's queue via unified registry
-	const targetQueue = globalAgentQueues.get(taskId);
+	// Route the response to the correct agent's queue via session on tracker
+	const tracker = await getTracker(ctx, projectId);
+	const targetQueue = tracker.get(taskId)?.session?.queue;
 	if (targetQueue) {
 		try {
 			targetQueue.enqueue({ source: "clarify_response", answer });

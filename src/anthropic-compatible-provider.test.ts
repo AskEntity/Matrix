@@ -31,9 +31,9 @@ import {
 } from "./anthropic-compatible-provider.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
-import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
+import { MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
-import { mockDaemonContext } from "./test-utils.ts";
+import { attachMockSession, mockDaemonContext } from "./test-utils.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
 import type { AgentResult } from "./types.ts";
@@ -1765,7 +1765,7 @@ describe("done tool", () => {
 		expect(hasRunningChildren?.()).toBe(false);
 	});
 
-	test("hasRunningChildren returns true when child has queue in globalAgentQueues", async () => {
+	test("hasRunningChildren returns true when child has session on tracker", async () => {
 		const ctx = mockDaemonContext({
 			tracker,
 			projectId: "test-project",
@@ -1776,9 +1776,8 @@ describe("done tool", () => {
 		const parentId =
 			tracker.rootNodeId ?? tracker.ensureRootNode("Root", "").id;
 		const child = tracker.addChild(parentId, "Child Task", "desc");
-		const childId = child.id;
 		const childQueue = new MessageQueue();
-		globalAgentQueues.set(childId, childQueue);
+		attachMockSession(child, childQueue);
 
 		const { hasRunningChildren } = createOrchestratorTools(
 			ctx,
@@ -1788,7 +1787,7 @@ describe("done tool", () => {
 		expect(hasRunningChildren?.()).toBe(true);
 
 		// Clean up
-		globalAgentQueues.delete(childId);
+		child.session = undefined;
 		childQueue.close();
 	});
 
@@ -1804,18 +1803,18 @@ describe("done tool", () => {
 		const child = tracker.addChild(parentId, "Child Task", "desc");
 		const grandchild = tracker.addChild(child.id, "Grandchild Task", "desc");
 		const grandchildQueue = new MessageQueue();
-		globalAgentQueues.set(grandchild.id, grandchildQueue);
+		attachMockSession(grandchild, grandchildQueue);
 
 		const { hasRunningChildren } = createOrchestratorTools(
 			ctx,
 			"test-project",
 			parentId,
 		);
-		// Grandchild has a queue → hasRunningChildren should be true
+		// Grandchild has a session → hasRunningChildren should be true
 		expect(hasRunningChildren?.()).toBe(true);
 
 		// Clean up
-		globalAgentQueues.delete(grandchild.id);
+		grandchild.session = undefined;
 		grandchildQueue.close();
 	});
 
