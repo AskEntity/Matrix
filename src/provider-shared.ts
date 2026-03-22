@@ -313,6 +313,10 @@ export interface ToolExecResult {
 	content: string;
 	isError: boolean;
 	cwd?: string;
+	/** Background process ID — set when bash moves a command to background. */
+	backgroundId?: string;
+	/** Background command — set when bash moves a command to background. */
+	backgroundCommand?: string;
 	isImage?: boolean;
 	imageData?: string;
 	mediaType?: string;
@@ -663,6 +667,10 @@ export function buildToolResultEvents(
 			isError: exec.isError,
 			...(images.length > 0 ? { images } : {}),
 			...(isLast && exec._pending ? { pending: exec._pending } : {}),
+			...(exec.backgroundId ? { backgroundId: exec.backgroundId } : {}),
+			...(exec.backgroundCommand
+				? { backgroundCommand: exec.backgroundCommand }
+				: {}),
 			ts: Date.now(),
 		});
 	}
@@ -1725,6 +1733,10 @@ export async function* runProviderLoop(
 				content: exec.content.slice(0, 500),
 				isError: exec.isError,
 				...(images.length > 0 ? { images } : {}),
+				...(exec.backgroundId ? { backgroundId: exec.backgroundId } : {}),
+				...(exec.backgroundCommand
+					? { backgroundCommand: exec.backgroundCommand }
+					: {}),
 				ts: Date.now(),
 			};
 		}

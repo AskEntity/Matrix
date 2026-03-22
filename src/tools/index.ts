@@ -1,11 +1,17 @@
+export {
+	cancelAwait,
+	executeBackgroundTool,
+	listBackgroundProcesses,
+	moveToBackground,
+} from "./background.ts";
 export type { BackgroundProcess } from "./bash.ts";
 export {
+	awaitBackgroundProcess,
 	backgroundProcesses,
 	cleanupSessionBackgroundProcesses,
 	executeBashWithTimeout,
+	foregroundExecutions,
 	getBackgroundStatus,
-	getRunningBackgroundCount,
-	getRunningBackgroundSummary,
 	getSessionBackgroundProcesses,
 	killBackgroundProcess,
 } from "./bash.ts";

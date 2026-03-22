@@ -41,7 +41,7 @@ export interface BackgroundProcess {
 	stdoutPath: string | null;
 	/** Path to the stderr output file (while running, for partial reads). */
 	stderrPath: string | null;
-	/** Resolves when the process completes. Used by bg_action="await". */
+	/** Resolves when the process completes. Used by background tool "await" action. */
 	completionPromise?: Promise<void>;
 	/** Call to resolve the completion promise. */
 	resolveCompletion?: () => void;
@@ -57,6 +57,17 @@ export const backgroundProcesses = new Map<
 	Map<string, BackgroundProcess>
 >();
 
+/**
+ * Foreground execution tracking — stores resolve callbacks for the external signal
+ * in the bash Promise.race. When moveToBackground() is called via the background tool,
+ * it resolves this promise, causing the race to finish and bash returns a background handle.
+ * Key format: `${sessionId}:${execId}`
+ */
+export const foregroundExecutions = new Map<
+	string,
+	{ resolve: () => void; command: string }
+>();
+
 /** Get the background process map for a session, creating if needed. */
 export function getSessionBackgroundProcesses(
 	sessionId: string,
@@ -67,33 +78,6 @@ export function getSessionBackgroundProcesses(
 		backgroundProcesses.set(sessionId, map);
 	}
 	return map;
-}
-
-/** Get running background process count for a session. */
-export function getRunningBackgroundCount(sessionId: string): number {
-	const map = backgroundProcesses.get(sessionId);
-	if (!map) return 0;
-	let count = 0;
-	for (const bg of map.values()) {
-		if (bg.status === "running") count++;
-	}
-	return count;
-}
-
-/** Get running background commands summary for a session. */
-export function getRunningBackgroundSummary(sessionId: string): string {
-	const map = backgroundProcesses.get(sessionId);
-	if (!map) return "";
-	const running: string[] = [];
-	for (const bg of map.values()) {
-		if (bg.status === "running") {
-			const elapsed = Date.now() - bg.startTime;
-			running.push(
-				`  ${bg.id}: "${bg.command}" (running ${Math.round(elapsed / 1000)}s)`,
-			);
-		}
-	}
-	return running.join("\n");
 }
 
 /** Remove temp output files for a background process. */
@@ -135,8 +119,8 @@ function fileSize(path: string): number {
  * This is THE formatting function — ALL paths use it:
  * - Foreground completion
  * - Background completion notification (queue message)
- * - bg_action="await" result
- * - bg_action="status" on completed process
+ * - background tool "await" result
+ * - background tool "status" on completed process
  */
 export function formatBashResult(
 	stdoutPath: string | null,
@@ -412,6 +396,8 @@ export async function executeBashWithTimeout(
 	content: string;
 	isError: boolean;
 	cwd?: string;
+	backgroundId?: string;
+	backgroundCommand?: string;
 }> {
 	const CWD_MARKER = "___OPENGRAFT_CWD___";
 
@@ -609,8 +595,10 @@ export async function executeBashWithTimeout(
 		})();
 
 		return {
-			content: `Command backgrounded immediately.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes. Do NOT poll with bg_action=status.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}`,
+			content: `Command backgrounded immediately.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}`,
 			isError: false,
+			backgroundId: bgId,
+			backgroundCommand: command,
 		};
 	}
 
@@ -620,12 +608,32 @@ export async function executeBashWithTimeout(
 		timedOut: false as const,
 	}));
 
-	// Race: foreground timeout vs process completion
+	// Race: foreground timeout vs process completion vs external signal
 	const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
 		setTimeout(() => resolve({ timedOut: true }), foregroundTimeout);
 	});
 
-	const result = await Promise.race([exitPromise, timeoutPromise]);
+	// External signal: allows moveToBackground() to interrupt the foreground wait
+	const externalSignalPromise = new Promise<{ timedOut: true }>((resolve) => {
+		if (sessionId) {
+			const key = `${sessionId}:${execId}`;
+			foregroundExecutions.set(key, {
+				resolve: () => resolve({ timedOut: true }),
+				command,
+			});
+		}
+	});
+
+	const result = await Promise.race([
+		exitPromise,
+		timeoutPromise,
+		externalSignalPromise,
+	]);
+
+	// Clean up the foreground execution tracking
+	if (sessionId) {
+		foregroundExecutions.delete(`${sessionId}:${execId}`);
+	}
 
 	if (!result.timedOut) {
 		// Process completed within foreground timeout — return normally
@@ -704,7 +712,9 @@ export async function executeBashWithTimeout(
 	}
 
 	return {
-		content: `Command moved to background after ${foregroundTimeout}ms.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes. Do NOT poll with bg_action=status.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialStdout ? `\n\nPartial stdout so far:\n${partialStdout.slice(0, 5000)}` : ""}`,
+		content: `Command moved to background after ${foregroundTimeout}ms.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialStdout ? `\n\nPartial stdout so far:\n${partialStdout.slice(0, 5000)}` : ""}`,
 		isError: false,
+		backgroundId: bgId,
+		backgroundCommand: command,
 	};
 }

@@ -4,7 +4,7 @@ export const TOOLS: Tool[] = [
 	{
 		name: "bash",
 		description:
-			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). The `cd` command has special behavior: working directory is tracked across calls, so if you `cd` in one command, subsequent commands automatically run from the new directory. Do NOT cd to your current working directory — it will return an error. No need to prefix every command with `cd /path &&`. Exception: after a daemon restart, your workdir resets to the project root. If you navigate outside your worktree, you'll be warned — remember to cd back when done.\n\nforeground_timeout controls how long to wait in the foreground before backgrounding the command. Use `run_in_background: true` as the preferred way to intentionally run a command in the background (equivalent to foreground_timeout=0). If the command finishes before the timeout, results are returned immediately. If not, the command moves to background and you get partial output + a background handle. Background completions are delivered as messages on your next yield() or tool call — do NOT poll with bg_action=status, you will be notified automatically with output content when it completes.\n\nTo manage background processes: set bg_action to 'kill', 'status', or 'await' with a background_id. When bg_action is set, the command parameter is ignored. Use bg_action='await' to block until a background process completes and get its full output (like a foreground command). Foreground bash commands automatically track CWD changes (cd commands update the working directory for subsequent calls). Background commands (run_in_background=true or commands that exceeded foreground_timeout) do NOT affect CWD — your working directory stays at whatever it was before the backgrounded command. You can read_file on the output file paths to check partial output while the process runs.\n\nBackground completion notifications include stdout/stderr content inline when output is small (< 50KB). For large output, use read_file on the output file paths. Output files persist until the session ends.",
+			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). The `cd` command has special behavior: working directory is tracked across calls, so if you `cd` in one command, subsequent commands automatically run from the new directory. Do NOT cd to your current working directory — it will return an error. No need to prefix every command with `cd /path &&`. Exception: after a daemon restart, your workdir resets to the project root. If you navigate outside your worktree, you'll be warned — remember to cd back when done.\n\nforeground_timeout controls how long to wait in the foreground before backgrounding the command. Use `run_in_background: true` as the preferred way to intentionally run a command in the background (equivalent to foreground_timeout=0). If the command finishes before the timeout, results are returned immediately. If not, the command moves to background and you get partial output + a background handle. Background completions are delivered as messages on your next yield() or tool call.\n\nForeground bash commands automatically track CWD changes (cd commands update the working directory for subsequent calls). Background commands (run_in_background=true or commands that exceeded foreground_timeout) do NOT affect CWD — your working directory stays at whatever it was before the backgrounded command. You can read_file on the output file paths to check partial output while the process runs.\n\nBackground completion notifications include stdout/stderr content inline when output is small (< 50KB). For large output, use read_file on the output file paths. Output files persist until the session ends.",
 		input_schema: {
 			type: "object" as const,
 			properties: {
@@ -22,19 +22,35 @@ export const TOOLS: Tool[] = [
 					description:
 						"Maximum time in ms to run in foreground before backgrounding. 0 = immediate background. Default: 120000 (2 minutes).",
 				},
-				background_id: {
-					type: "string",
-					description:
-						"ID of a background process to interact with (e.g. 'bg-a1b2c3d4'). Required when bg_action is set.",
-				},
-				bg_action: {
-					type: "string",
-					enum: ["kill", "status", "await"],
-					description:
-						"Action to take on a background process. 'kill': terminate the process. 'status': get current status and output. 'await': block until the process completes and return full output (like a foreground command).",
-				},
 			},
 			required: ["command"],
+		},
+	},
+	{
+		name: "background",
+		description:
+			"Manage background processes. Use to list, check status, kill, or await background processes that were started via bash with run_in_background=true or that exceeded foreground_timeout.\n\nActions:\n- list: Show all background processes for this session\n- status: Get detailed status of a specific background process\n- kill: Terminate a running background process\n- await: Block until a background process completes and return its full output (like a foreground command)",
+		input_schema: {
+			type: "object" as const,
+			properties: {
+				action: {
+					type: "string",
+					enum: ["list", "status", "kill", "await"],
+					description:
+						"Action to take. 'list': show all background processes. 'status': get status of a specific process. 'kill': terminate a process. 'await': block until completion.",
+				},
+				id: {
+					type: "string",
+					description:
+						"Background process ID (e.g. 'bg-A1B2C3D4'). Required for status, kill, and await actions.",
+				},
+				timeout: {
+					type: "number",
+					description:
+						"Maximum time in ms to wait for await action. Optional — defaults to waiting indefinitely.",
+				},
+			},
+			required: ["action"],
 		},
 	},
 	{

@@ -23,7 +23,6 @@ import {
 	getCompactionThresholds,
 	getContextWindow,
 	getModelPricing,
-	getRunningBackgroundCount,
 	jsSearch,
 	killBackgroundProcess,
 	resolvePath,
@@ -35,6 +34,7 @@ import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
+import { listBackgroundProcesses } from "./tools/background.ts";
 import type { AgentResult } from "./types.ts";
 
 /** Create a MessageQueue pre-loaded with a user message (for tests). */
@@ -741,6 +741,9 @@ describe("executeBashWithTimeout", () => {
 		expect(result.content).toContain("backgrounded immediately");
 		expect(result.content).toContain("Background ID: bg-");
 		expect(result.isError).toBe(false);
+		// backgroundId and backgroundCommand returned on result
+		expect(result.backgroundId).toMatch(/^bg-/);
+		expect(result.backgroundCommand).toBe("echo bg-test");
 
 		// Wait for background process to complete and notify (with stdout/stderr content)
 		const msg = await queue.wait();
@@ -771,7 +774,10 @@ describe("executeBashWithTimeout", () => {
 		expect(result.isError).toBe(false);
 
 		// Verify it's tracked as running
-		expect(getRunningBackgroundCount(sessionId)).toBe(1);
+		expect(
+			listBackgroundProcesses(sessionId).filter((p) => p.status === "running")
+				.length,
+		).toBe(1);
 
 		// Wait for completion notification — this takes ~5s (with stdout/stderr content)
 		const msg = await queue.wait();
@@ -784,7 +790,10 @@ describe("executeBashWithTimeout", () => {
 		}
 
 		// Should no longer be running
-		expect(getRunningBackgroundCount(sessionId)).toBe(0);
+		expect(
+			listBackgroundProcesses(sessionId).filter((p) => p.status === "running")
+				.length,
+		).toBe(0);
 		cleanupSessionBackgroundProcesses(sessionId);
 	}, 10000);
 
@@ -816,7 +825,7 @@ describe("executeBashWithTimeout", () => {
 		expect(result.isError).toBe(false);
 	});
 
-	test("background warning shown when background commands running", async () => {
+	test("no background warning injected into bash output", async () => {
 		const sessionId = "test-bg-warn";
 		const queue = new MessageQueue();
 
@@ -829,9 +838,12 @@ describe("executeBashWithTimeout", () => {
 			sessionId,
 			queue,
 		);
-		expect(getRunningBackgroundCount(sessionId)).toBe(1);
+		expect(
+			listBackgroundProcesses(sessionId).filter((p) => p.status === "running")
+				.length,
+		).toBe(1);
 
-		// Run another command — should show warning
+		// Run another command — should NOT show warning (bg warning removed)
 		const result = await executeTool(
 			"bash",
 			{ command: "echo hello", foreground_timeout: 5000 },
@@ -839,7 +851,8 @@ describe("executeBashWithTimeout", () => {
 			undefined,
 			sessionId,
 		);
-		expect(result.content).toContain("background command(s) still running");
+		expect(result.content).not.toContain("background command(s) still running");
+		expect(result.content).toContain("hello");
 
 		cleanupSessionBackgroundProcesses(sessionId);
 	});
@@ -885,7 +898,10 @@ describe("executeBashWithTimeout", () => {
 		const bgId = result.content.match(/bg-[A-Z0-9]+/)?.[0] ?? "";
 		expect(bgId).toBeTruthy();
 
-		expect(getRunningBackgroundCount(sessionId)).toBe(1);
+		expect(
+			listBackgroundProcesses(sessionId).filter((p) => p.status === "running")
+				.length,
+		).toBe(1);
 
 		const killResult = killBackgroundProcess(sessionId, bgId);
 		expect(killResult).toContain("killed");
@@ -895,7 +911,10 @@ describe("executeBashWithTimeout", () => {
 		const msg = await queue.wait();
 		expect(msg.source).toBe("background_complete");
 
-		expect(getRunningBackgroundCount(sessionId)).toBe(0);
+		expect(
+			listBackgroundProcesses(sessionId).filter((p) => p.status === "running")
+				.length,
+		).toBe(0);
 		cleanupSessionBackgroundProcesses(sessionId);
 	});
 
@@ -996,7 +1015,7 @@ describe("executeBashWithTimeout", () => {
 		expect(result).toBeNull();
 	});
 
-	test("executeTool routes bg_action=kill", async () => {
+	test("background tool routes action=kill", async () => {
 		const sessionId = "test-tool-kill";
 		const queue = new MessageQueue();
 		await executeBashWithTimeout(
@@ -1013,8 +1032,8 @@ describe("executeBashWithTimeout", () => {
 		expect(bgId).toBeDefined();
 
 		const result = await executeTool(
-			"bash",
-			{ command: "", bg_action: "kill", background_id: bgId },
+			"background",
+			{ action: "kill", id: bgId },
 			tempDir,
 			undefined,
 			sessionId,
@@ -1027,7 +1046,7 @@ describe("executeBashWithTimeout", () => {
 		cleanupSessionBackgroundProcesses(sessionId);
 	});
 
-	test("executeTool routes bg_action=status", async () => {
+	test("background tool routes action=status", async () => {
 		const sessionId = "test-tool-status";
 		backgroundProcesses.set(
 			sessionId,
@@ -1051,8 +1070,8 @@ describe("executeBashWithTimeout", () => {
 		);
 
 		const result = await executeTool(
-			"bash",
-			{ command: "", bg_action: "status", background_id: "bg-st" },
+			"background",
+			{ action: "status", id: "bg-st" },
 			tempDir,
 			undefined,
 			sessionId,
@@ -1063,32 +1082,32 @@ describe("executeBashWithTimeout", () => {
 		cleanupSessionBackgroundProcesses(sessionId);
 	});
 
-	test("executeTool bg_action without background_id returns error", async () => {
+	test("background tool action without id returns error", async () => {
 		const result = await executeTool(
-			"bash",
-			{ command: "", bg_action: "kill" },
+			"background",
+			{ action: "kill" },
 			tempDir,
 			undefined,
 			"test-session",
 		);
 		expect(result.isError).toBe(true);
-		expect(result.content).toContain("background_id is required");
+		expect(result.content).toContain("id is required");
 	});
 
-	test("executeTool bg_action without session returns error", async () => {
+	test("background tool without session returns error", async () => {
 		const result = await executeTool(
-			"bash",
-			{ command: "", bg_action: "kill", background_id: "bg-123" },
+			"background",
+			{ action: "kill", id: "bg-123" },
 			tempDir,
 		);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("no session context");
 	});
 
-	test("executeTool bg_action=status for unknown process returns error", async () => {
+	test("background tool action=status for unknown process returns error", async () => {
 		const result = await executeTool(
-			"bash",
-			{ command: "", bg_action: "status", background_id: "bg-unknown" },
+			"background",
+			{ action: "status", id: "bg-unknown" },
 			tempDir,
 			undefined,
 			"test-session",
@@ -1123,7 +1142,7 @@ describe("executeBashWithTimeout", () => {
 		cleanupSessionBackgroundProcesses(sessionId);
 	});
 
-	test("bg_action=await blocks until process completes and returns output", async () => {
+	test("background tool action=await blocks until process completes and returns output", async () => {
 		const sessionId = "test-await";
 		const queue = new MessageQueue();
 		// Start a background command
@@ -1143,8 +1162,8 @@ describe("executeBashWithTimeout", () => {
 
 		// Await should return the formatted output
 		const result = await executeTool(
-			"bash",
-			{ command: "", bg_action: "await", background_id: bgId },
+			"background",
+			{ action: "await", id: bgId },
 			tempDir,
 			undefined,
 			sessionId,
@@ -1158,16 +1177,57 @@ describe("executeBashWithTimeout", () => {
 		cleanupSessionBackgroundProcesses(sessionId);
 	});
 
-	test("bg_action=await for unknown process returns error", async () => {
+	test("background tool action=await for unknown process returns error", async () => {
 		const result = await executeTool(
-			"bash",
-			{ command: "", bg_action: "await", background_id: "bg-unknown" },
+			"background",
+			{ action: "await", id: "bg-unknown" },
 			tempDir,
 			undefined,
 			"test-session",
 		);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("not found");
+	});
+
+	test("background tool action=list shows all processes", async () => {
+		const sessionId = "test-list";
+		const queue = new MessageQueue();
+		await executeBashWithTimeout(
+			"sleep 30",
+			tempDir,
+			undefined,
+			0,
+			sessionId,
+			queue,
+		);
+
+		const result = await executeTool(
+			"background",
+			{ action: "list" },
+			tempDir,
+			undefined,
+			sessionId,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("Background processes:");
+		expect(result.content).toContain("sleep 30");
+		expect(result.content).toContain("running");
+
+		cleanupSessionBackgroundProcesses(sessionId);
+		// Wait for background monitor to finish after kill
+		await queue.wait();
+	});
+
+	test("background tool action=list with no processes", async () => {
+		const result = await executeTool(
+			"background",
+			{ action: "list" },
+			tempDir,
+			undefined,
+			"test-empty-session",
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("No background processes");
 	});
 
 	test("background completion includes stderr when present", async () => {
