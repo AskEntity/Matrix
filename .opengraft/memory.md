@@ -97,7 +97,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **Cache invariant**: All in-memory state (queues, sessions) is cache of disk. Eviction = optimization. Daemon restart = rebuild from disk.
 - **MCP/REST parity**: Same observable behavior regardless of entry point. Only difference: message source + REST notifies parent chain.
 - **Message delivery guarantee**: Messages ALWAYS delivered. Active queue → enqueue directly. No queue → persist to disk + launch agent.
-- **`globalAgentQueues`** is sole source of truth for running agents (root + child). Delete BEFORE close.
+- **`task.session`** is sole source of truth for running agents (root + child). Session-clear-before-close ordering.
 - **Single event path**: `emitEvent()` is THE function all events flow through (broadcast + optional persist).
 
 ## Unified Event System
@@ -313,146 +313,33 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Root orchestrator checks node.parentId === tracker.rootNodeId || node.parentId === null.
 - Other tools (create_task, update_task, reorder_tasks) still use isDescendantOf for broader scope validation — those are correct to allow subtree operations.
 
-## eventStore Removal from OrchestratorToolsDeps
-- `eventStore` removed from OrchestratorToolsDeps — enforces "Provider has zero EventStore access" rule.
-- `waitForQueueMessages` (yield/done) no longer writes events directly to JSONL. Instead, raw queue messages passed back via `_consumedQueueMessages` on tool result.
-- `buildToolResultEvents` processes `_consumedQueueMessages` same as cancellation queue messages — converts to events, emits through emit callback for SSE broadcast + JSONL persistence.
-- For reset/delete_task cleanup: `clearSession?: (taskId: string) => void` callback replaces direct `eventStore.clear()` calls.
-- This unifies explicit yield (tool handler) and implicit yield (provider loop) into ONE event emission path.
+## Unified Tool Architecture (Phases 1-5 Refactor)
 
-## Built-in Tool Definitions Refresh
-- Built-in tools (bash, background, read_file, etc.) are defined in the system prompt, frozen at session creation.
-- Daemon restart resumes the existing session — old system prompt preserved, old tool descriptions remain.
-- Only a fresh session (clear sessions) or compaction creates a new system prompt with updated tool definitions.
-- However: the provider registers actual tool SCHEMAS from `definitions.ts` at launch time, not from the system prompt text. So new tools ARE callable after restart — the AI just doesn't know about them from the prompt until session refresh.
-- Self-bootstrap: after modifying tool definitions and daemon restart, you CAN call the new tools immediately. The schema is live, only the prompt description is stale.
+**Architecture**: All tools are `ToolDefinition[]` under `mcp__opengraft__*` namespace. ONE execution path via `mcpHandler.handler()`. No separate built-in vs MCP dispatch.
 
+**TaskSession** — runtime-only field on `TaskNode` (`session?: TaskSession`). Stripped on save, rebuilt at launch.
+- Contains: `queue`, `cwd` (mutable), `fallbackCwd`, `depth`, `backgroundProcesses`, `foregroundExecutions`
+- **Private** — only own tools access via handler closure. No cross-task session access.
+- `session != null` = agent is running. Replaces old `globalAgentQueues`.
 
-## Background Process Refinements
-- `BackgroundProcess.endTime` added — set when process completes/fails/killed. Duration = `endTime - startTime` for completed, `now - startTime` for running.
-- `awaitBackgroundProcess` simplified — returns minimal "Process completed (exit X)" text. Output delivered via `background_complete` queue message, not by await reading files.
-- CWD tracking uses temp file (`/tmp/opengraft-bg/cwd-{execId}`) instead of EXIT trap `___OPENGRAFT_CWD___` marker in stdout. Only the EXIT trap writes pwd to temp file (not the cd wrapper). No marker pollution in output.
-- `background_complete` UIOnlyEvent has `stdout?` and `stderr?` fields. LogEntryView renders them in card body like bash tool_result output.
-- Frontend `BackgroundProcessBar` uses `msg.ts` (server event timestamp) for `startTime`, not `Date.now()` at component mount.
+**Tool creation**: `createBuiltinTools()` + `createOrchestratorTools()` → merged into `mcpToolDefs.opengraft`.
+- Built-in tools: bash, background, read_file, write_file, edit_file, list_files, search
+- Orchestrator tools: get_tree, create_task, yield, done, clarify, etc.
+- Handler results use `_cwd`, `_backgroundId`, `_consumedMessageIds` etc. as non-standard CallToolResult properties.
 
+**Deps derivation**: `createOrchestratorTools(ctx: DaemonContext, projectId, taskId, lifecycleDeps?)` — everything derived from `ctx + projectId + taskId` at call time. `LifecycleDeps` is minimal interface (`deliverMessage`, `injectMessageToProject`) to avoid circular imports.
 
-## Phase 1: TaskSession on TaskNode
+**globalAgentQueues removed** — all queue access through `tracker.get(taskId)?.session?.queue`. Session-clear-before-close ordering invariant preserved.
 
-### What was done
-- Added `TaskSession` interface to `types.ts` — runtime-only session state (queue, cwd, fallbackCwd, depth, backgroundProcesses Map, foregroundExecutions Map)
-- Added `session?: TaskSession` field to `TaskNode` — stripped during `save()` via destructuring, always undefined on load
-- Eliminated module-level `backgroundProcesses` and `foregroundExecutions` Maps from `bash.ts`
-- Removed `getSessionBackgroundProcesses()` — no longer needed since Maps come from TaskSession
-- All functions in `bash.ts` (`executeBashWithTimeout`, `cleanupSessionBackgroundProcesses`, `killBackgroundProcess`, `awaitBackgroundProcess`, `getBackgroundStatus`) now take Maps as parameters
-- All functions in `background.ts` (`listBackgroundProcesses`, `moveToBackground`, `executeBackgroundTool`) now take Maps as parameters
-- `executor.ts` `executeTool()` gains `getSession?: (sessionId: string) => TaskSession | undefined` parameter
-- `provider-shared.ts` `executeToolUnified()` passes `getSession` through
-- `AgentRequest` gains `getSession` field — wired by daemon to `tracker.get(id)?.session`
-- Session created and attached at agent launch (both root in `launchAgent` and child in `runChildAgentInBackground`)
-- Session cleaned up (backgroundProcesses cleared, session set to undefined) at agent stop and in finally blocks
-- Provider `stop()` no longer calls `cleanupSessionBackgroundProcesses` — daemon handles it via node.session
-- REST endpoints look up session from tracker via `getTracker()` instead of passing sessionId to global-based functions
-- `globalAgentQueues` still used for compatibility (Phase 4 removes it)
+**System prompt = strategy only** — no tool parameter descriptions. `ToolDefinition.description` is sole source of truth for HOW to call tools.
 
-### Key decisions
-- `types.ts` imports `BackgroundProcess` from `tools/bash.ts` (type-only, no circular dep)
-- `getSession` callback pattern chosen over direct tracker dependency — keeps tools layer decoupled from daemon
-- Tests create per-test `bgMap`/`fgMap` and a `makeGetSession` helper to wire them through `executeTool`
+**Key files**:
+- `src/types.ts` — TaskSession interface
+- `src/tools/definitions.ts` — `createBuiltinTools()` factory with handler closures
+- `src/orchestrator-tools.ts` — `createOrchestratorTools(ctx, projectId, taskId, lifecycleDeps?)`
+- `src/test-utils.ts` — `mockDaemonContext()`, `attachMockSession()` test helpers
 
-
-
-## Phase 2: Unified Tool Definitions
-
-### What was done
-- Created `createBuiltinTools()` factory in `definitions.ts` that returns `ToolDefinition[]` with handler closures
-- Each handler wraps the existing implementation (bash, background, read_file, write_file, edit_file, list_files, search)
-- Handlers return `CallToolResult` with non-standard properties (`_cwd`, `_backgroundId`, `_backgroundCommand`, `_isImage`, `_imageData`, `_mediaType`) — same pattern as orchestrator tools use `_consumedMessageIds`, `_pending`, etc.
-- `executeToolUnified()` simplified to ONE path: all tools go through `mcpHandler.handler()`. Fallback to `executeTool()` removed.
-- Both providers `prepareTools()` now iterate only over `mcpToolDefs` — no more separate `_TOOLS` array.
-- `convertToolsToOpenAI()` removed from openai-compatible-provider.ts.
-- Built-in tools merged into `mcpToolDefs.opengraft` alongside orchestrator tools in `createAgentContext()`.
-- `getSession` callback passed to `createAgentContext()` and wired to `createBuiltinTools()`.
-- CWD sync: run loop updates both local `cwd` AND `session.cwd` when bash changes directory.
-
-### Key decisions
-- `BuiltinToolResult` needs `[key: string]: unknown` index signature for CallToolResult compatibility (MCP SDK type uses Zod-generated loose objects).
-- `toolCallId` passed through `extra` parameter to handler — bash needs it for foreground execution tracking.
-- `executeTool()` in executor.ts kept for backward compat (used by 50+ test calls directly). Production path no longer uses it.
-- Built-in tools get `mcp__opengraft__` prefix like orchestrator tools (consistent naming).
-- `getCwd()` callback pattern instead of passing cwd directly — handlers read from session for current CWD.
-
-
-
-## Phase 3: Remove OrchestratorToolsDeps
-
-### What was done
-- Removed the 20-field `OrchestratorToolsDeps` interface from `orchestrator-tools.ts`
-- Changed `createOrchestratorTools` signature to `(ctx: DaemonContext, projectId: string, taskId: string | null, lifecycleDeps?: LifecycleDeps)`
-- All deps now derived from `ctx + projectId + taskId` at call time:
-  - `tracker` → `ctx.trackers.get(projectId)`
-  - `queue` → `tracker.get(taskId)?.session?.queue` (from TaskSession on node)
-  - `depth` → `tracker.get(taskId)?.session?.depth ?? 0`
-  - `projectPath` → `tracker.get(taskId)?.worktreePath ?? repoPath`
-  - `repoPath` → `ctx.pm.get(projectId)?.path`
-  - Events → `emitEvent(ctx, projectId, ...)` and `broadcastTreeUpdate(ctx, projectId, tracker)` imported directly
-  - `clearSession` → `getEventStore(ctx, projectId).clear(taskId)`
-  - `dataDir` → `ctx.config.dataDir`
-  - Cross-project: `ctx.pm`, `ctx.activeSessions`, `ctx.trackers` directly
-  - `defaultBudgetUsd` → `ctx.globalConfig?.budgetUsd`
-  - `clarifyTimeoutMs` → `ctx.globalConfig?.clarifyTimeoutMs`
-  - `WorktreeManager` → created on demand from `repoPath`
-- `LifecycleDeps` interface: minimal object with `deliverMessage` and optional `injectMessageToProject` — avoids circular imports between `orchestrator-tools.ts` ↔ `agent-lifecycle.ts`
-- `findParentQueue` moved from `agent-lifecycle.ts` to `agent-tools.ts` — used by both orchestrator tools and lifecycle code
-- `createAgentContext` in agent-lifecycle.ts simplified: no longer passes 20+ fields, just `ctx`, `projectId`, `taskId`, and lifecycle deps
-- Tests use `mockDaemonContext()` helper from new `src/test-utils.ts` to build minimal DaemonContext for tool testing
-- `taskId` accepts `null` for root orchestrator (bypasses scope validation, same as old behavior)
-
-### Key decisions
-- Direct imports from `daemon/event-system.ts` and `daemon/helpers.ts` — no circular dep (they dont import from orchestrator-tools)
-- `LifecycleDeps` pattern for the one actual circular dependency (deliverMessage, handleInjectMessage)
-- `provider` and `childModel` fields completely removed from tools — never used by handlers
-- `WorktreeManager` created on demand (cheap) instead of being pre-created
-- Config values (budgetUsd, clarifyTimeoutMs) read from `ctx.globalConfig` at call time — slightly different from resolveProjectConfig which merges layers, but good enough (project-level overrides are rare for these)
-
-
-## Phase 4: Session Privacy + globalAgentQueues Removal
-
-### What was done
-- Removed `globalAgentQueues` (global Map<string, MessageQueue>) from `message-queue.ts`
-- All queue lookups now go through `tracker.get(taskId)?.session?.queue` — session on TaskNode is the single source of truth
-- All queue registration (`globalAgentQueues.set()`) removed — Phase 1 already attaches session at agent launch
-- All queue cleanup (`globalAgentQueues.delete()`) replaced with `node.session = undefined`
-- Removed import/re-export of `globalAgentQueues` from `agent-tools.ts`
-- `findParentQueue()` walks tracker parent chain checking `session?.queue` instead of globalAgentQueues
-- `attachMockSession()` helper added to `test-utils.ts` — creates minimal TaskSession with queue on a node
-- 672 tests pass, 0 failures
-
-### Pattern replacements applied across 10 files (205+ references)
-- `globalAgentQueues.get(id)` → `tracker.get(id)?.session?.queue`
-- `globalAgentQueues.set(id, queue)` → `attachMockSession(node, queue)` in tests, removed in prod (Phase 1 handles)
-- `globalAgentQueues.delete(id)` → `node.session = undefined`
-- `globalAgentQueues.has(id)` → `tracker.get(id)?.session != null`
-- afterEach cleanup loops removed (sessions are on per-test tracker nodes, GC'd automatically)
-
-### Key decisions
-- `stopAgent()` in agent-lifecycle.ts: clear session BEFORE closing queue (same ordering invariant as old delete-before-close)
-- `handleClarifyResponse()` needed a `getTracker()` call since it previously only used globalAgentQueues
-- "globalAgentQueues consistency" test describe block renamed to "session consistency on tracker nodes" and rewritten to test session on tracker
-- "delete-before-close ordering invariant" renamed to "session-clear-before-close ordering invariant"
-
-
-## Phase 5: System Prompt Cleanup
-
-### What was done
-- Removed tool parameter/schema descriptions from system prompts (ORCHESTRATION_KNOWLEDGE + TASK_SYSTEM_PROMPT)
-- System prompts now contain STRATEGY only (when/why to use tools), not HOW to call them
-- ToolDefinition.description fields in definitions.ts and orchestrator-tools.ts are the sole source of truth for tool usage instructions
-- Worker Tools section: kept strategy tips (dont use bash for file ops, grep→search, read before edit), removed parameter details
-- ORCHESTRATION_KNOWLEDGE tool list: condensed to one-liner per tool, kept strategy for send_message_to_child scope overrides
-- All workflow/strategy sections unchanged (Draft Tasks, Event-Driven Workflow, Task Lifecycle, Memory System, Merge Protocol, etc.)
-- 672 tests pass, typecheck + lint clean
-
-### Key decisions
-- Conservative approach: if unclear whether something is strategy or schema, kept it
-- Tool-specific behavioral tips ("dont cd to current directory") stay in ToolDefinition.description since they describe tool behavior
-- Strategy tips ("use search instead of grep via bash") stay in system prompt since they guide tool selection decisions
+**Test patterns**:
+- `mockDaemonContext()` builds minimal DaemonContext
+- `attachMockSession(node, queue)` creates TaskSession on tracker node
+- `executeTool()` in executor.ts kept for backward compat in tests (production uses handler path)
