@@ -1160,7 +1160,7 @@ describe("executeBashWithTimeout", () => {
 		// Drain the completion notification so it doesn't interfere
 		await queue.wait();
 
-		// Await should return the formatted output
+		// Await returns minimal completion info (output delivered via background_complete message)
 		const result = await executeTool(
 			"background",
 			{ action: "await", id: bgId },
@@ -1171,8 +1171,7 @@ describe("executeBashWithTimeout", () => {
 		);
 		expect(result.isError).toBe(false);
 		expect(result.content).toContain("completed");
-		expect(result.content).toContain("await-test");
-		expect(result.content).toContain("exit code: 0");
+		expect(result.content).toContain("exit 0");
 
 		cleanupSessionBackgroundProcesses(sessionId);
 	});

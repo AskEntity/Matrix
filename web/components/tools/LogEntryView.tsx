@@ -443,24 +443,38 @@ export const LogEntryView = memo(function LogEntryView({
 		const command = entry.command;
 		const exitCode = entry.exitCode;
 		const durationMs = entry.durationMs;
+		const stdout = entry.stdout;
+		const stderr = entry.stderr;
 		const cmdDisplay =
 			command.length > 50 ? `${command.slice(0, 50)}…` : command;
-		const detail = [
-			exitCode != null ? `exit ${exitCode}` : "",
-			durationMs ? `${durationMs}ms` : "",
-		]
+		const durationSec = durationMs ? `${Math.round(durationMs / 1000)}s` : "";
+		const detail = [exitCode != null ? `exit ${exitCode}` : "", durationSec]
 			.filter(Boolean)
 			.join(" · ");
+		const isErr = exitCode != null && exitCode !== 0;
+		// Build output content similar to bash tool_result
+		const outputParts: string[] = [];
+		if (stdout) outputParts.push(`stdout:\n${stdout}`);
+		if (stderr) outputParts.push(`stderr:\n${stderr}`);
+		if (exitCode != null) outputParts.push(`exit code: ${exitCode}`);
+		const outputContent = outputParts.join("\n");
 		return (
 			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{formatTime(entry.ts)}</span>
-				<div className="og-tool-card og-tool-card-bg-complete">
+				<div
+					className={`og-tool-card og-tool-card-bg-complete ${isErr ? "og-tool-card-err" : ""}`}
+				>
 					<div className="og-tool-card-header">
 						<span className="og-tool-card-name">
 							⚙ Background Complete{cmdDisplay ? `: ${cmdDisplay}` : ""}
 						</span>
 						{detail && <span className="og-tool-card-detail">{detail}</span>}
 					</div>
+					{outputContent && (
+						<div className="og-tool-card-body">
+							<div className="og-tool-card-result">{outputContent}</div>
+						</div>
+					)}
 				</div>
 			</div>
 		);
