@@ -44,6 +44,7 @@ export const ToolCard = memo(function ToolCard({
 
 	const toolName = getToolName(useEntry);
 	const toolArgs = getToolArgs(useEntry);
+	const isDone = toolName === "mcp__opengraft__done";
 	const argsExclude = bashBgExcludeKeys(toolName, toolArgs);
 	const argsStr = formatArgs(toolArgs, argsExclude);
 	const resultContent =
@@ -62,6 +63,49 @@ export const ToolCard = memo(function ToolCard({
 	);
 
 	const taskLabel = null;
+
+	// done() merged card — render like standalone done() tool_call card
+	if (isDone) {
+		const doneStatus = toolArgs?.status as string | undefined;
+		const doneSummary = toolArgs?.summary as string | undefined;
+		const donePassed = doneStatus === "passed";
+		const borderClass = donePassed
+			? "og-tool-card-done-passed"
+			: "og-tool-card-done-failed";
+		const doneTitle = donePassed ? "Passed" : "Failed";
+		return (
+			<div className="og-log-entry og-event-tool_card">
+				<span className="og-log-time">{formatTime(useEntry.ts)}</span>
+				<div className={`og-tool-card ${borderClass}`}>
+					{doneSummary ? (
+						<button
+							type="button"
+							className="og-tool-card-header"
+							onClick={() => setExpanded(!expanded)}
+						>
+							<span className="og-tool-card-name">
+								{donePassed ? "✓" : "✗"} {doneTitle}
+							</span>
+							<span className="og-tool-card-toggle">
+								<IconChevron size={10} expanded={expanded} />
+							</span>
+						</button>
+					) : (
+						<div className="og-tool-card-header">
+							<span className="og-tool-card-name">
+								{donePassed ? "✓" : "✗"} {doneTitle}
+							</span>
+						</div>
+					)}
+					{expanded && doneSummary && (
+						<div className="og-tool-card-body">
+							<div className="og-tool-card-result">{doneSummary}</div>
+						</div>
+					)}
+				</div>
+			</div>
+		);
+	}
 
 	// Try structured MCP rendering (skip for title-only cards)
 	const mcpBody =

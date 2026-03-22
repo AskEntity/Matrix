@@ -141,6 +141,7 @@ export const LogEntryView = memo(function LogEntryView({
 			const borderClass = donePassed
 				? "og-tool-card-done-passed"
 				: "og-tool-card-done-failed";
+			const doneTitle = donePassed ? "Passed" : "Failed";
 			return (
 				<div className="og-log-entry og-event-tool_card">
 					<span className="og-log-time">{formatTime(entry.ts)}</span>
@@ -157,12 +158,7 @@ export const LogEntryView = memo(function LogEntryView({
 								onClick={() => setExpanded(!expanded)}
 							>
 								<span className="og-tool-card-name">
-									{donePassed ? "✓" : "✗"} done({doneStatus})
-								</span>
-								<span
-									className={`og-mcp-done-status ${donePassed ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
-								>
-									{donePassed ? "Passed" : "Failed"}
+									{donePassed ? "✓" : "✗"} {doneTitle}
 								</span>
 								<span className="og-tool-card-toggle">
 									<IconChevron size={10} expanded={expanded} />
@@ -171,12 +167,7 @@ export const LogEntryView = memo(function LogEntryView({
 						) : (
 							<div className="og-tool-card-header">
 								<span className="og-tool-card-name">
-									{donePassed ? "✓" : "✗"} done({doneStatus})
-								</span>
-								<span
-									className={`og-mcp-done-status ${donePassed ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
-								>
-									{donePassed ? "Passed" : "Failed"}
+									{donePassed ? "✓" : "✗"} {doneTitle}
 								</span>
 							</div>
 						)}
@@ -239,6 +230,8 @@ export const LogEntryView = memo(function LogEntryView({
 	// Standalone tool_result (not merged) — show as a card
 	if (entry.type === "tool_result") {
 		const toolName = getToolName(entry);
+		// Suppress standalone done() tool_result — the tool_call card already shows everything
+		if (toolName === "mcp__opengraft__done") return null;
 		const content = entry.content;
 		const isErr = entry.isError;
 		const isOk = !isErr;
