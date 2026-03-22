@@ -392,6 +392,7 @@ export async function executeBashWithTimeout(
 	foregroundTimeout: number,
 	sessionId: string | undefined,
 	queue: MessageQueue | undefined,
+	toolCallId?: string,
 ): Promise<{
 	content: string;
 	isError: boolean;
@@ -614,9 +615,11 @@ export async function executeBashWithTimeout(
 	});
 
 	// External signal: allows moveToBackground() to interrupt the foreground wait
+	// Use toolCallId as key when available (allows frontend to reference via tool_call event ID)
+	const fgKey = toolCallId ?? execId;
 	const externalSignalPromise = new Promise<{ timedOut: true }>((resolve) => {
 		if (sessionId) {
-			const key = `${sessionId}:${execId}`;
+			const key = `${sessionId}:${fgKey}`;
 			foregroundExecutions.set(key, {
 				resolve: () => resolve({ timedOut: true }),
 				command,
@@ -632,7 +635,7 @@ export async function executeBashWithTimeout(
 
 	// Clean up the foreground execution tracking
 	if (sessionId) {
-		foregroundExecutions.delete(`${sessionId}:${execId}`);
+		foregroundExecutions.delete(`${sessionId}:${fgKey}`);
 	}
 
 	if (!result.timedOut) {

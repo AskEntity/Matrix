@@ -294,3 +294,13 @@ Daemon (Hono: HTTP + SSE on :7433)
 - REST endpoints added to agent routes: POST `/projects/:id/background/move`, `/projects/:id/background/:bgId/kill`, `/projects/:id/background/:bgId/cancel-await`.
 - Test pitfall: background process cleanup can cause Bun filesystem races. After `cleanupSessionBackgroundProcesses`, drain the queue (`await queue.wait()`) to let async monitor finish before starting new tests that use temp files.
 
+
+
+## Frontend Background Process Bar
+- `backgroundProcesses` state is a `Map<string, {id, command, startTime, taskId}>` in App.tsx.
+- Tracked via two events: `tool_result` with `backgroundId` (add), `message` with `body.source=background_complete` (remove by `commandId`).
+- Removal happens at phase 1 (message receipt), not phase 2 (messages_consumed materialization).
+- `processEventBatch` clears backgroundProcesses before replaying to avoid stale data.
+- BackgroundProcessBar filters by taskId to show only processes relevant to the current view.
+- Move-to-background uses `toolCallId` as the foregroundExecutions key (not the internal `execId`), threaded via `executeTool` → `executeBashWithTimeout`.
+- REST endpoints for background management require `sessionId` which equals `taskId` (root node ID for orchestrator, child task ID for child agents).

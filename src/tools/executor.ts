@@ -18,6 +18,7 @@ export async function executeTool(
 	fallbackCwd?: string,
 	sessionId?: string,
 	queue?: MessageQueue,
+	toolCallId?: string,
 ): Promise<{
 	content: string;
 	isError: boolean;
@@ -44,6 +45,7 @@ export async function executeTool(
 					foregroundTimeout,
 					sessionId,
 					queue,
+					toolCallId,
 				);
 			} catch (e) {
 				return {
