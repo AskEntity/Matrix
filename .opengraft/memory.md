@@ -73,7 +73,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 |------|---------|
 | src/daemon.ts | Hono app, routes |
 | src/daemon/ | context, event-system, helpers, agent-lifecycle, routes/ |
-| src/system-prompts.ts | ORCHESTRATOR_SYSTEM_PROMPT, ORCHESTRATION_KNOWLEDGE, child prompt |
+| src/system-prompts.ts | SYSTEM_PROMPT, ROOT_ORCHESTRATOR_ROLE, buildSystemPrompt() |
 | src/orchestrator-tools.ts | MCP tool definitions + handlers (createOrchestratorTools) |
 | src/agent-tools.ts | Re-exports from system-prompts + orchestrator-tools, helpers |
 | src/provider-shared.ts | Shared provider logic: compaction, tool execution, queue handling, budget |
@@ -349,14 +349,10 @@ Daemon (Hono: HTTP + SSE on :7433)
 - External MCP tools (e.g., `mcp__chrome-devtools__click`) keep their own prefix — only opengraft tools use `mcp__opengraft__`.
 - `isOpengraft` = `toolName.startsWith("mcp__opengraft__")` — distinguishes opengraft tools from external MCP tools.
 
-## System Prompt Unification
-- **Single prompt**: `UNIFIED_SYSTEM_PROMPT` in system-prompts.ts replaces both `ORCHESTRATOR_SYSTEM_PROMPT` (was in daemon.ts) and `TASK_SYSTEM_PROMPT`.
-- **Root preamble**: `ROOT_ORCHESTRATOR_PREAMBLE` prepended for root agents only.
-- **No tool listings in prompts**: `ToolDefinition.description` is sole source of truth for tool schema. Prompts contain only STRATEGY guidance.
-- Prompt ordering for cache: UNIFIED_SYSTEM_PROMPT (stable) → ROOT_ORCHESTRATOR_PREAMBLE → date (changes daily).
+## System Prompt
+- **`SYSTEM_PROMPT`** in system-prompts.ts — strategy/workflow guidance for all agents. No tool listings (ToolDefinition.description is sole source of truth).
+- **`ROOT_ORCHESTRATOR_ROLE`** — appended for root agents only (task-management-only constraint).
+- **`buildSystemPrompt(isRoot)`** — assembles: SYSTEM_PROMPT (stable, cacheable prefix) → ROOT_ORCHESTRATOR_ROLE (root only) → date (dynamic, at end). Ordering optimized for Anthropic prompt caching (prefix match).
 
-## Prompt Cache Ordering & Naming Cleanup
-- **Prompt ordering**: SYSTEM_PROMPT (stable prefix, cacheable) → ROOT_ORCHESTRATOR_ROLE (root only) → date (dynamic, at end). `buildSystemPrompt(isRoot)` in system-prompts.ts handles assembly.
-- **Renames**: `UNIFIED_SYSTEM_PROMPT` → `SYSTEM_PROMPT`, `ROOT_ORCHESTRATOR_PREAMBLE` → `ROOT_ORCHESTRATOR_ROLE`, `executeToolUnified` → `executeTool` (in provider-shared.ts).
-- **Naming rule**: No comparative names ("unified", "improved", "new", etc.) in identifiers. Name things for what they ARE.
-- Key files table entry: `src/system-prompts.ts` exports `SYSTEM_PROMPT`, `ROOT_ORCHESTRATOR_ROLE`, `buildSystemPrompt`.
+## Naming Convention
+- **No comparative names** in identifiers or comments: avoid "unified", "simplified", "improved", "new", "better", "enhanced", "refactored". Name things for what they ARE, not how they compare to previous versions.
