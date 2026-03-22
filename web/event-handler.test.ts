@@ -146,7 +146,9 @@ describe("event-handler queueEntry handling", () => {
 
 		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
 		expect(userEntry).toBeDefined();
-		expect(userEntry?.content).toBe("Hello world");
+		expect(userEntry?.type === "message" ? userEntry.body.content : "").toBe(
+			"Hello world",
+		);
 	});
 
 	it("processEventBatch: unconsumed non-user user_message goes to pendingMessages with descriptive text", () => {
@@ -201,7 +203,7 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "message",
 				id: "msg-5",
-				content: "Please check this",
+				body: { source: "user", content: "Please check this" },
 				ts: 1000,
 			},
 			// No messages_consumed — message is unconsumed
@@ -213,7 +215,7 @@ describe("event-handler queueEntry handling", () => {
 		);
 	});
 
-	it("processEventBatch: legacy flat-field user_message (no queueEntry) materializes correctly", () => {
+	it("processEventBatch: message with body.source=child_report materializes correctly", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -223,15 +225,17 @@ describe("event-handler queueEntry handling", () => {
 
 		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
 
-		// Legacy format: source + flat fields, no queueEntry
 		processEventBatch([
 			{
 				type: "message",
 				id: "msg-6",
-				source: "child_report",
-				taskId: "child-1",
-				title: "Legacy Task",
-				content: "Legacy report content",
+				body: {
+					source: "child_report",
+					taskId: "child-1",
+					title: "New Task",
+					content: "Report content",
+				},
+				taskId: "parent-1",
 				ts: 1000,
 			},
 			{
@@ -245,8 +249,8 @@ describe("event-handler queueEntry handling", () => {
 			(e: LogEntry) => e.type === "child_report",
 		);
 		expect(childReportEntry).toBeDefined();
-		expect(childReportEntry?.content).toBe("Legacy report content");
-		expect(childReportEntry?.title).toBe("Legacy Task");
+		expect(childReportEntry?.content).toBe("Report content");
+		expect(childReportEntry?.title).toBe("New Task");
 	});
 
 	it("handleEvent: live user_message with queueEntry.source=child_report deferred, then messages_consumed renders card", () => {
@@ -335,11 +339,11 @@ describe("event-handler queueEntry handling", () => {
 
 		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
 
-		// 1. Receive user_message (actual user)
+		// 1. Receive message (actual user)
 		handleEvent({
 			type: "message",
 			id: "msg-8",
-			content: "Build a feature",
+			body: { source: "user", content: "Build a feature" },
 			taskId: "task-1",
 			ts: 1000,
 		});
@@ -358,7 +362,9 @@ describe("event-handler queueEntry handling", () => {
 		// Should be moved to activity log
 		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
 		expect(userEntry).toBeDefined();
-		expect(userEntry?.content).toBe("Build a feature");
+		expect(userEntry?.type === "message" ? userEntry.body.content : "").toBe(
+			"Build a feature",
+		);
 
 		// Should be removed from pending
 		expect(capturedPending.length).toBe(0);
@@ -442,7 +448,7 @@ describe("event-handler JSONL-driven pending state", () => {
 		handleEvent({
 			type: "message",
 			id: "msg-race",
-			content: "Hello world",
+			body: { source: "user", content: "Hello world" },
 			taskId: null,
 			ts: 1000,
 		});
@@ -461,7 +467,9 @@ describe("event-handler JSONL-driven pending state", () => {
 		// The user message MUST appear in the activity log
 		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
 		expect(userEntry).toBeDefined();
-		expect(userEntry?.content).toBe("Hello world");
+		expect(userEntry?.type === "message" ? userEntry.body.content : "").toBe(
+			"Hello world",
+		);
 		// Pending should be cleared
 		expect(capturedPending.length).toBe(0);
 	});

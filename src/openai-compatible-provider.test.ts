@@ -1290,13 +1290,17 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const events = emittedEvents;
 				const types = events.map((e) => e.type);
 
-				// Must have user_message events (from queue)
+				// Must have message events (from queue)
 				expect(types).toContain("message");
 				const queueMsgEvent = events.find(
-					(e) => e.type === "message" && e.content?.includes("New instruction"),
+					(e) =>
+						e.type === "message" &&
+						e.body?.content?.includes("New instruction"),
 				);
-				if (queueMsgEvent?.type === "user_message") {
-					expect(queueMsgEvent.content).toContain("New instruction for you");
+				if (queueMsgEvent?.type === "message") {
+					expect(queueMsgEvent.body.content).toContain(
+						"New instruction for you",
+					);
 				}
 
 				// Verify reconstruction — queue_message should become user message

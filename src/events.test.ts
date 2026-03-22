@@ -4,7 +4,7 @@ import { type Event, formatEventForAI, queueMessageToEvent } from "./events.ts";
 import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
 
 describe("queueMessageToEvent", () => {
-	test("converts user message — all data in body, no top-level duplication", () => {
+	test("converts user message — all data in body", () => {
 		const event = queueMessageToEvent({
 			source: "user",
 			content: "hello",
@@ -12,14 +12,9 @@ describe("queueMessageToEvent", () => {
 		});
 		expect(event.type).toBe("message");
 		expect(event.id).toBeTruthy();
-		expect(event.body).toBeDefined();
-		expect(event.body?.source).toBe("user");
-		expect(event.body?.content).toBe("hello");
-		expect(event.body?.images).toHaveLength(1);
-		// No top-level duplication
-		expect(event.source).toBeUndefined();
-		expect(event.content).toBeUndefined();
-		expect(event.images).toBeUndefined();
+		expect(event.body.source).toBe("user");
+		expect(event.body.content).toBe("hello");
+		expect(event.body.images).toHaveLength(1);
 	});
 
 	test("converts user message — preserves existing id", () => {
@@ -41,27 +36,24 @@ describe("queueMessageToEvent", () => {
 		});
 		expect(event.type).toBe("message");
 		expect(event.id).toBeTruthy();
-		expect(event.body?.source).toBe("child_complete");
-		expect(event.body?.taskId).toBe("t1");
-		expect(event.body?.title).toBe("Auth");
-		expect(event.body?.success).toBe(true);
-		expect(event.body?.output).toBe("done");
-		expect(event.source).toBeUndefined();
+		expect(event.body.source).toBe("child_complete");
+		expect(event.body.taskId).toBe("t1");
+		expect(event.body.title).toBe("Auth");
+		expect(event.body.success).toBe(true);
+		expect(event.body.output).toBe("done");
 	});
 
 	test("converts compact — all data in body", () => {
 		const event = queueMessageToEvent({ source: "compact" });
 		expect(event.type).toBe("message");
-		expect(event.body?.source).toBe("compact");
-		expect(event.source).toBeUndefined();
+		expect(event.body.source).toBe("compact");
 	});
 
 	test("converts system — all data in body", () => {
 		const event = queueMessageToEvent({ source: "system", content: "hi" });
 		expect(event.type).toBe("message");
-		expect(event.body?.source).toBe("system");
-		expect(event.body?.content).toBe("hi");
-		expect(event.source).toBeUndefined();
+		expect(event.body.source).toBe("system");
+		expect(event.body.content).toBe("hi");
 	});
 
 	test("converts parent_update — all data in body, includes header", () => {
@@ -72,11 +64,10 @@ describe("queueMessageToEvent", () => {
 			header: "## Task Context\nTitle: Fix Bug",
 		});
 		expect(event.type).toBe("message");
-		expect(event.body?.source).toBe("parent_update");
-		expect(event.body?.content).toBe("update");
-		expect(event.body?.requestReply).toBe(true);
-		expect(event.body?.header).toBe("## Task Context\nTitle: Fix Bug");
-		expect(event.source).toBeUndefined();
+		expect(event.body.source).toBe("parent_update");
+		expect(event.body.content).toBe("update");
+		expect(event.body.requestReply).toBe(true);
+		expect(event.body.header).toBe("## Task Context\nTitle: Fix Bug");
 	});
 
 	test("converts user message with header", () => {
@@ -85,9 +76,9 @@ describe("queueMessageToEvent", () => {
 			content: "Build a feature",
 			header: "Working directory: /tmp\n\n## Memory\nSome memory",
 		});
-		expect(event.body?.source).toBe("user");
-		expect(event.body?.content).toBe("Build a feature");
-		expect(event.body?.header).toBe(
+		expect(event.body.source).toBe("user");
+		expect(event.body.content).toBe("Build a feature");
+		expect(event.body.header).toBe(
 			"Working directory: /tmp\n\n## Memory\nSome memory",
 		);
 	});
@@ -97,7 +88,8 @@ describe("formatEventForAI", () => {
 	test("formats user message", () => {
 		const event: Event = {
 			type: "message",
-			content: "Hello world",
+			id: "test",
+			body: { source: "user", content: "Hello world" },
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe("Hello world");
@@ -105,11 +97,15 @@ describe("formatEventForAI", () => {
 
 	test("formats child_complete", () => {
 		const event: Event = {
-			type: "child_complete",
-			taskId: "t1",
-			title: "Auth",
-			success: true,
-			output: "All tests pass",
+			type: "message",
+			id: "test",
+			body: {
+				source: "child_complete",
+				taskId: "t1",
+				title: "Auth",
+				success: true,
+				output: "All tests pass",
+			},
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
@@ -119,9 +115,13 @@ describe("formatEventForAI", () => {
 
 	test("formats parent_update with requestReply", () => {
 		const event: Event = {
-			type: "parent_update",
-			content: "What status?",
-			requestReply: true,
+			type: "message",
+			id: "test",
+			body: {
+				source: "parent_update",
+				content: "What status?",
+				requestReply: true,
+			},
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
@@ -131,8 +131,9 @@ describe("formatEventForAI", () => {
 
 	test("formats clarify_response", () => {
 		const event: Event = {
-			type: "clarify_response",
-			answer: "Yes",
+			type: "message",
+			id: "test",
+			body: { source: "clarify_response", answer: "Yes" },
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
@@ -140,9 +141,11 @@ describe("formatEventForAI", () => {
 		);
 	});
 
-	test("formats compact_request", () => {
+	test("formats compact", () => {
 		const event: Event = {
-			type: "compact_request",
+			type: "message",
+			id: "test",
+			body: { source: "compact" },
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe("Manual compaction requested");
@@ -156,7 +159,12 @@ describe("eventsToAnthropicMessages", () => {
 
 	test("converts user_message", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Hello world", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Hello world" },
+				ts: 1000,
+			},
 		];
 		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "Hello world" },
@@ -375,12 +383,12 @@ describe("eventsToAnthropicMessages", () => {
 		// When user_message appears after an assistant message (idle context),
 		// it should be wrapped. But as the first event or after a provider user_message,
 		// it acts as a normal user message.
-		// The converter treats user_message as a normal message (case "user_message":)
-		// Queue-originated user_messages only get idle wrapper when batched with other queue events.
+		// Queue-originated messages only get idle wrapper when batched with other queue events.
 		const events: Event[] = [
 			{
 				type: "message",
-				content: "Please check this",
+				id: "",
+				body: { source: "user", content: "Please check this" },
 				ts: 1000,
 			},
 		];
@@ -394,7 +402,12 @@ describe("eventsToAnthropicMessages", () => {
 
 	test("compact_marker is skipped", () => {
 		const events: Event[] = [
-			{ type: "message", content: "hello", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "hello" },
+				ts: 1000,
+			},
 			{
 				type: "compact_marker",
 				checkpoint: "summary",
@@ -413,8 +426,11 @@ describe("eventsToAnthropicMessages", () => {
 		const events: Event[] = [
 			{
 				type: "message",
-				content: "Working directory: /tmp\n\nBuild a feature",
-				cwd: "/tmp",
+				id: "",
+				body: {
+					source: "user",
+					content: "Working directory: /tmp\n\nBuild a feature",
+				},
 				ts: 1000,
 			},
 			{ type: "assistant_text", content: "I'll build that.", ts: 1001 },
@@ -578,8 +594,8 @@ describe("eventsToAnthropicMessages", () => {
 		const events: Event[] = [
 			{
 				type: "message",
-				content: "Continue the task",
-				isResume: true,
+				id: "",
+				body: { source: "user", content: "Continue the task" },
 				ts: 1000,
 			},
 		];
@@ -596,7 +612,12 @@ describe("eventsToOpenAIMessages", () => {
 
 	test("converts user_message", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Hello world", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Hello world" },
+				ts: 1000,
+			},
 		];
 		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "user", content: "Hello world" },
@@ -818,7 +839,12 @@ describe("eventsToOpenAIMessages", () => {
 
 	test("compact_marker is skipped", () => {
 		const events: Event[] = [
-			{ type: "message", content: "hello", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "hello" },
+				ts: 1000,
+			},
 			{
 				type: "compact_marker",
 				checkpoint: "summary",
@@ -837,8 +863,11 @@ describe("eventsToOpenAIMessages", () => {
 		const events: Event[] = [
 			{
 				type: "message",
-				content: "Working directory: /tmp\n\nBuild a feature",
-				cwd: "/tmp",
+				id: "",
+				body: {
+					source: "user",
+					content: "Working directory: /tmp\n\nBuild a feature",
+				},
 				ts: 1000,
 			},
 			{ type: "assistant_text", content: "I'll build that.", ts: 1001 },
@@ -895,8 +924,11 @@ describe("eventsToOpenAIMessages", () => {
 		const events: Event[] = [
 			{
 				type: "message",
-				content: "Continue the task",
-				isResume: true,
+
+				id: "",
+
+				body: { source: "user", content: "Continue the task" },
+
 				ts: 1000,
 			},
 		];
@@ -1018,7 +1050,12 @@ describe("eventsToOpenAIMessages", () => {
 describe("eventsToAnthropicMessages — converter bug fixes", () => {
 	test("Bug 1: assistant text-only must use array content format (not bare string)", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Hello", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Hello" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Hi there!", ts: 1001 },
 		];
 		const messages = eventsToAnthropicMessages(events);
@@ -1074,13 +1111,21 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 describe("messages_consumed — two-phase user message lifecycle", () => {
 	test("Anthropic: user_message with id is skipped; messages_consumed materializes it (idle)", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Hello", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Hello" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Working...", ts: 1001 },
 			// Agent calls done(), enters idle state. User sends new message.
 			{
 				type: "message",
+
 				id: "msg-1",
-				content: "Please also check X",
+
+				body: { source: "user", content: "Please also check X" },
+
 				ts: 2000,
 			},
 			{
@@ -1109,7 +1154,12 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 	test("Anthropic: messages_consumed at cancellation point (between tool_results)", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Do a task", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Do a task" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "OK", ts: 1001 },
 			{
 				type: "tool_call",
@@ -1120,8 +1170,11 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			},
 			{
 				type: "message",
+
 				id: "msg-1",
-				content: "Also do Y",
+
+				body: { source: "user", content: "Also do Y" },
+
 				ts: 1500,
 			},
 			{
@@ -1160,14 +1213,20 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		const events: Event[] = [
 			{
 				type: "message",
+
 				id: "msg-1",
-				content: "First",
+
+				body: { source: "user", content: "First" },
+
 				ts: 1000,
 			},
 			{
 				type: "message",
+
 				id: "msg-2",
-				content: "Second",
+
+				body: { source: "user", content: "Second" },
+
 				ts: 1500,
 			},
 			{
@@ -1187,7 +1246,12 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 	test("Anthropic: user_message with id and images at cancellation point", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Start", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Start" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "OK", ts: 1001 },
 			{
 				type: "tool_call",
@@ -1199,8 +1263,11 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			{
 				type: "message",
 				id: "msg-1",
-				content: "Look at this",
-				images: [{ base64: "abc123", mediaType: "image/png" }],
+				body: {
+					source: "user",
+					content: "Look at this",
+					images: [{ base64: "abc123", mediaType: "image/png" }],
+				},
 				ts: 1500,
 			},
 			{
@@ -1240,12 +1307,20 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 	test("OpenAI: user_message with id is skipped; messages_consumed materializes it (idle)", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Hello", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Hello" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Working...", ts: 1001 },
 			{
 				type: "message",
+
 				id: "msg-1",
-				content: "Please also check X",
+
+				body: { source: "user", content: "Please also check X" },
+
 				ts: 2000,
 			},
 			{
@@ -1274,7 +1349,12 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 	test("OpenAI: messages_consumed at cancellation point appends to tool result", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Do a task", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Do a task" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "OK", ts: 1001 },
 			{
 				type: "tool_call",
@@ -1285,8 +1365,11 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			},
 			{
 				type: "message",
+
 				id: "msg-1",
-				content: "Also do Y",
+
+				body: { source: "user", content: "Also do Y" },
+
 				ts: 1500,
 			},
 			{
@@ -1333,7 +1416,12 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 	test("Anthropic: messages_consumed at cancellation point materializes user_message", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Do a task", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Do a task" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "OK", ts: 1001 },
 			{
 				type: "tool_call",
@@ -1344,8 +1432,11 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			},
 			{
 				type: "message",
+
 				id: "msg-1",
-				content: "Also do Y",
+
+				body: { source: "user", content: "Also do Y" },
+
 				ts: 1500,
 			},
 			{
@@ -1381,7 +1472,12 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 	test("OpenAI: messages_consumed at cancellation point materializes user_message", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Do a task", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Do a task" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "OK", ts: 1001 },
 			{
 				type: "tool_call",
@@ -1392,8 +1488,11 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			},
 			{
 				type: "message",
+
 				id: "msg-1",
-				content: "Also do Y",
+
+				body: { source: "user", content: "Also do Y" },
+
 				ts: 1500,
 			},
 			{
@@ -1423,7 +1522,8 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		const events: Event[] = [
 			{
 				type: "message",
-				content: "Direct message",
+				id: "",
+				body: { source: "user", content: "Direct message" },
 				ts: 1000,
 			},
 		];
@@ -1445,7 +1545,12 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 				prompt: "hello",
 				ts: 1,
 			} as Event,
-			{ type: "message", content: "hello", ts: 2 } as Event,
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "hello" },
+				ts: 2,
+			} as Event,
 			{ type: "assistant_text", content: "hi", ts: 3 } as Event,
 			{ type: "agent_stopped", ts: 4 } as Event,
 			{
@@ -1468,7 +1573,12 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 				prompt: "hello",
 				ts: 1,
 			} as Event,
-			{ type: "message", content: "hello", ts: 2 } as Event,
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "hello" },
+				ts: 2,
+			} as Event,
 			{ type: "assistant_text", content: "hi", ts: 3 } as Event,
 			{ type: "agent_stopped", ts: 4 } as Event,
 			{
@@ -1486,7 +1596,12 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 	test("Anthropic: synthesizes tool_result for orphaned tool_call at end", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Run a command", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Run a command" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "I'll run that.", ts: 1001 },
 			{
 				type: "tool_call",
@@ -1520,7 +1635,12 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 
 	test("Anthropic: synthesizes tool_results for multiple orphaned tool_calls", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Do both", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Do both" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Running two tools.", ts: 1001 },
 			{
 				type: "tool_call",
@@ -1553,7 +1673,12 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 
 	test("Anthropic: no synthetic results when tool_results exist", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Run something", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Run something" },
+				ts: 1000,
+			},
 			{
 				type: "tool_call",
 				toolCallId: "toolu_ok",
@@ -1579,7 +1704,14 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 	});
 
 	test("Anthropic: no synthetic results when last message is not assistant", () => {
-		const events: Event[] = [{ type: "message", content: "Hello", ts: 1000 }];
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Hello" },
+				ts: 1000,
+			},
+		];
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(1);
 		expect((messages[0] as { role: string }).role).toBe("user");
@@ -1587,7 +1719,12 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 
 	test("Anthropic: assistant with text-only (no tool_use) gets no synthetic results", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Hi", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Hi" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Hello!", ts: 1001 },
 		];
 		const messages = eventsToAnthropicMessages(events);
@@ -1596,7 +1733,12 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 
 	test("OpenAI: synthesizes tool response for orphaned tool_call at end", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Run a command", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Run a command" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "I'll run that.", ts: 1001 },
 			{
 				type: "tool_call",
@@ -1625,7 +1767,12 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 
 	test("OpenAI: synthesizes tool responses for multiple orphaned tool_calls", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Do both", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Do both" },
+				ts: 1000,
+			},
 			{
 				type: "tool_call",
 				toolCallId: "call_first",
@@ -1665,7 +1812,12 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 
 	test("OpenAI: no synthetic results when tool_results exist", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Run", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Run" },
+				ts: 1000,
+			},
 			{
 				type: "tool_call",
 				toolCallId: "call_ok",
@@ -1690,7 +1842,12 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 		// Scenario: first restart leaves orphaned tool_use, fix synthesizes result.
 		// Agent continues, more events append. Second restart — the orphan is now in the middle.
 		const events: Event[] = [
-			{ type: "message", content: "Do something", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Do something" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Running tool", ts: 1001 },
 			{
 				type: "tool_call",
@@ -1770,7 +1927,12 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 
 	test("OpenAI: fixes orphaned tool_call in MIDDLE of conversation (double restart)", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Do something", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Do something" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Running tool", ts: 1001 },
 			{
 				type: "tool_call",
@@ -1827,7 +1989,12 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 	test("Anthropic: does NOT synthesize when tool_result exists in following user message", () => {
 		// Normal case — tool_use has matching tool_result, no synthesis needed
 		const events: Event[] = [
-			{ type: "message", content: "Run it", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Run it" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Running", ts: 1001 },
 			{
 				type: "tool_call",
@@ -1866,7 +2033,12 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 describe("structured JSONL — queueEntry on user_message", () => {
 	test("Anthropic: user_message with body.source=child_complete formats correctly via standalone messages_consumed", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Start", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Start" },
+				ts: 1000,
+			},
 			{
 				type: "assistant_text",
 				content: "Working...",
@@ -1882,7 +2054,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-child",
-				source: "child_complete",
 				body: {
 					source: "child_complete",
 					taskId: "t1",
@@ -1927,7 +2098,12 @@ describe("structured JSONL — queueEntry on user_message", () => {
 
 	test("Anthropic: user_message with body formats correctly at idle drain", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Start", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Start" },
+				ts: 1000,
+			},
 			{
 				type: "assistant_text",
 				content: "Done for now",
@@ -1936,7 +2112,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-parent",
-				source: "parent_update",
 				body: {
 					source: "parent_update",
 					content: "New instructions here",
@@ -1967,7 +2142,12 @@ describe("structured JSONL — queueEntry on user_message", () => {
 
 	test("OpenAI: user_message with body.source=child_complete formats at cancellation point via standalone messages_consumed", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Start", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Start" },
+				ts: 1000,
+			},
 			{
 				type: "assistant_text",
 				content: "Working...",
@@ -1983,7 +2163,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-child",
-				source: "child_complete",
 				body: {
 					source: "child_complete",
 					taskId: "t1",
@@ -2024,7 +2203,12 @@ describe("structured JSONL — queueEntry on user_message", () => {
 
 	test("Anthropic: tool_result with pending section formats correctly", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Start", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Start" },
+				ts: 1000,
+			},
 			{
 				type: "assistant_text",
 				content: "Yielding",
@@ -2040,7 +2224,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-report",
-				source: "child_report",
 				body: {
 					source: "child_report",
 					taskId: "t2",
@@ -2082,7 +2265,12 @@ describe("structured JSONL — queueEntry on user_message", () => {
 
 	test("OpenAI: tool_result with pending section formats correctly", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Start", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Start" },
+				ts: 1000,
+			},
 			{
 				type: "assistant_text",
 				content: "Yielding",
@@ -2098,7 +2286,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-report",
-				source: "child_report",
 				body: {
 					source: "child_report",
 					taskId: "t2",
@@ -2138,7 +2325,12 @@ describe("structured JSONL — queueEntry on user_message", () => {
 
 	test("Anthropic: user_message with body.images gets image blocks", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Start", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Start" },
+				ts: 1000,
+			},
 			{
 				type: "assistant_text",
 				content: "Done",
@@ -2147,7 +2339,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-img",
-				source: "user",
 				body: {
 					source: "user",
 					content: "Look at this",
@@ -2174,7 +2365,12 @@ describe("structured JSONL — queueEntry on user_message", () => {
 
 	test("Anthropic: multiple queue messages at once (child_complete + user) via messages_consumed", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Start", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Start" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Working", ts: 1001 },
 			{
 				type: "tool_call",
@@ -2186,7 +2382,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-complete",
-				source: "child_complete",
 				body: {
 					source: "child_complete",
 					taskId: "t1",
@@ -2199,8 +2394,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-user",
-				source: "user",
-				content: "Also do this",
 				body: { source: "user", content: "Also do this" },
 				ts: 1004,
 			},
@@ -2236,7 +2429,12 @@ describe("structured JSONL — queueEntry on user_message", () => {
 
 	test("OpenAI: multiple queue messages at once (child_complete + user) via messages_consumed", () => {
 		const events: Event[] = [
-			{ type: "message", content: "Start", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Start" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Working", ts: 1001 },
 			{
 				type: "tool_call",
@@ -2248,7 +2446,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-complete",
-				source: "child_complete",
 				body: {
 					source: "child_complete",
 					taskId: "t1",
@@ -2261,8 +2458,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-user",
-				source: "user",
-				content: "Also do this",
 				body: { source: "user", content: "Also do this" },
 				ts: 1004,
 			},
@@ -2297,7 +2492,12 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		// 2. tool_result with pure content (yield result text)
 		// 3. messages_consumed written by provider
 		const events: Event[] = [
-			{ type: "message", content: "Start", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Start" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Yielding", ts: 1001 },
 			{
 				type: "tool_call",
@@ -2310,7 +2510,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-child-done",
-				source: "child_complete",
 				body: {
 					source: "child_complete",
 					taskId: "t1",
@@ -2323,7 +2522,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-parent",
-				source: "parent_update",
 				body: {
 					source: "parent_update",
 					content: "Keep going",
@@ -2370,7 +2568,12 @@ describe("structured JSONL — queueEntry on user_message", () => {
 	test("Anthropic: mixed tools — only last tool_result group gets queue messages", () => {
 		// Two tool calls, but queue messages arrive after tool execution
 		const events: Event[] = [
-			{ type: "message", content: "Start", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "Start" },
+				ts: 1000,
+			},
 			{ type: "assistant_text", content: "Running tools", ts: 1001 },
 			{
 				type: "tool_call",
@@ -2389,7 +2592,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-report",
-				source: "child_report",
 				body: {
 					source: "child_report",
 					taskId: "t2",
@@ -2462,7 +2664,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 		});
 
 		test("Anthropic: message with body but no source uses body to format", () => {
-			// message with body but no top-level source — normalizeMessageEvent reads from body
+			// message with body — formatEventForAI reads from body
 			const events: Event[] = [
 				{
 					type: "message",
@@ -2514,7 +2716,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 		});
 
 		test("OpenAI: message with body but no source uses body to format", () => {
-			// normalizeMessageEvent reads from body even without top-level source
+			// formatEventForAI reads from body
 			const events: Event[] = [
 				{
 					type: "message",
@@ -2551,7 +2753,12 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			// but the collection loops find nothing (e.g., corrupt JSONL where
 			// assistant_text event has wrong type after normalization)
 			const events: Event[] = [
-				{ type: "message", content: "Hello", ts: 1000 } as unknown as Event,
+				{
+					type: "message",
+					id: "",
+					body: { source: "user", content: "Hello" },
+					ts: 1000,
+				} as unknown as Event,
 				// assistant_text with empty content still produces a block, so we test
 				// the structural guard by checking the output is always valid
 				{ type: "assistant_text", content: "", ts: 1001 } as unknown as Event,
@@ -2570,7 +2777,12 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 
 		test("OpenAI: empty assistant message gets (empty) text fallback", () => {
 			const events: Event[] = [
-				{ type: "message", content: "Hello", ts: 1000 } as unknown as Event,
+				{
+					type: "message",
+					id: "",
+					body: { source: "user", content: "Hello" },
+					ts: 1000,
+				} as unknown as Event,
 				{ type: "assistant_text", content: "", ts: 1001 } as unknown as Event,
 			];
 			const messages = eventsToOpenAIMessages(events);
@@ -2588,7 +2800,12 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 	describe("empty tool_result blocks", () => {
 		test("Anthropic: tool_result with undefined content gets (empty) fallback", () => {
 			const events: Event[] = [
-				{ type: "message", content: "Run it", ts: 1000 } as unknown as Event,
+				{
+					type: "message",
+					id: "",
+					body: { source: "user", content: "Run it" },
+					ts: 1000,
+				} as unknown as Event,
 				{
 					type: "assistant_text",
 					content: "Running...",
@@ -2627,7 +2844,12 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 
 		test("OpenAI: tool_result with undefined content gets (empty) fallback", () => {
 			const events: Event[] = [
-				{ type: "message", content: "Run it", ts: 1000 } as unknown as Event,
+				{
+					type: "message",
+					id: "",
+					body: { source: "user", content: "Run it" },
+					ts: 1000,
+				} as unknown as Event,
 				{
 					type: "assistant_text",
 					content: "Running...",
@@ -2659,7 +2881,12 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			// Edge case: tool_result case is entered but the while loop skips
 			// everything (all events are queue events with IDs that get skipped)
 			const events: Event[] = [
-				{ type: "message", content: "Hello", ts: 1000 } as unknown as Event,
+				{
+					type: "message",
+					id: "",
+					body: { source: "user", content: "Hello" },
+					ts: 1000,
+				} as unknown as Event,
 				{
 					type: "assistant_text",
 					content: "Running",

@@ -36,39 +36,18 @@ export interface MessageBody {
 /**
  * MessageEvent — unified format for ALL messages that flow through the system.
  * Uses `body.source` to indicate the message type. Written to JSONL with `id` for tracking.
- *
- * **New format (unified)**: `id` and `body` are always present. All data lives in `body`.
- * **Old format (legacy JSONL)**: may have top-level `source`, `content`, `images`, `cwd`, `isResume`.
- * Old fields are kept optional for backward compatibility — readers normalize via `normalizeMessageEvent()`.
+ * All data lives in `body`. `id` is always present.
  */
 export interface MessageEvent {
 	type: "message";
-	/** ULID — identifies this message for two-phase lifecycle. Required in new format. */
-	id?: string;
-	/** @deprecated Use body.source instead. Kept for backward compat with old JSONL. */
-	source?: string;
-	/** @deprecated Use body.content instead. Kept for backward compat with old JSONL. */
-	content?: string;
-	/** @deprecated No longer used. Kept for backward compat with old JSONL. */
-	cwd?: string;
-	/** @deprecated No longer used. Kept for backward compat with old JSONL. */
-	isResume?: boolean;
-	/** @deprecated Use body.images instead. Kept for backward compat with old JSONL. */
-	images?: Array<{ base64: string; mediaType: string }>;
+	/** ULID — identifies this message for two-phase lifecycle. */
+	id: string;
 	/** Task/session ID — used for JSONL routing and SSE broadcast targeting. */
 	taskId?: string;
-	/**
-	 * Structured message body — contains ALL message data.
-	 * Required in new unified format. Optional for backward compat with old JSONL.
-	 */
-	body?: MessageBody;
+	/** Structured message body — contains ALL message data. */
+	body: MessageBody;
 	ts: number;
 }
-
-/** @deprecated Use MessageEvent instead */
-export type UserMessageEvent = MessageEvent;
-/** @deprecated Use MessageBody instead */
-export type QueueEntry = MessageBody;
 
 export type Event =
 	| MessageEvent
@@ -126,68 +105,6 @@ export type Event =
 			type: "clarification_timeout";
 			taskId?: string;
 			timeoutMs: number;
-			ts: number;
-	  }
-	// Legacy queue-originated event types — kept for backward compat with old JSONL.
-	// New code produces `message` events with `body.source` instead.
-	// normalizeLegacyEvent() converts these to `message` on read.
-	| {
-			type: "child_complete";
-			id?: string;
-			taskId: string;
-			title: string;
-			success: boolean;
-			output: string;
-			ts: number;
-	  }
-	| {
-			type: "parent_update";
-			id?: string;
-			content: string;
-			requestReply?: boolean;
-			ts: number;
-	  }
-	| { type: "clarify_response"; id?: string; answer: string; ts: number }
-	| {
-			type: "child_report";
-			id?: string;
-			taskId: string;
-			title: string;
-			summary?: string;
-			content: string;
-			requestReply?: boolean;
-			ts: number;
-	  }
-	| {
-			type: "cross_project";
-			id?: string;
-			fromProjectId: string;
-			fromProjectName: string;
-			content: string;
-			ts: number;
-	  }
-	| {
-			type: "background_complete";
-			id?: string;
-			command: string;
-			commandId: string;
-			exitCode: number | null;
-			durationMs: number;
-			ts: number;
-	  }
-	| { type: "system_notification"; id?: string; content: string; ts: number }
-	| { type: "compact_request"; id?: string; ts: number }
-	// Legacy user_message — old JSONL may have this type. Normalized to "message" on read.
-	| {
-			type: "user_message";
-			id?: string;
-			source?: string;
-			content?: string;
-			cwd?: string;
-			isResume?: boolean;
-			images?: Array<{ base64: string; mediaType: string }>;
-			queueEntry?: MessageBody;
-			body?: MessageBody;
 			ts: number;
 	  }
 	| { type: "compacted_resume"; content: string; cwd?: string; ts: number }
@@ -278,37 +195,13 @@ export type Event =
 			ts: number;
 	  };
 
-/** Legacy event types that originate from the message queue (for backward compat). */
-const LEGACY_QUEUE_EVENT_TYPES = new Set([
-	"child_complete",
-	"parent_update",
-	"clarify_response",
-	"child_report",
-	"cross_project",
-	"background_complete",
-	"system_notification",
-	"compact_request",
-]);
-
 /**
  * Check if an event originated from the message queue.
  * A `message` event is a queue event if `body.source` is present and not "user".
- * Legacy standalone types (child_complete, parent_update, etc.) are also detected.
- * Legacy `user_message` events with source/queueEntry are also detected.
  */
 export function isQueueEvent(event: Event): boolean {
-	if (LEGACY_QUEUE_EVENT_TYPES.has(event.type)) return true;
 	if (event.type === "message") {
-		const body = normalizeMessageEvent(event as MessageEvent);
-		return body.source !== undefined && body.source !== "user";
-	}
-	// Legacy: user_message with source or queueEntry field
-	if (event.type === "user_message") {
-		const src =
-			(event as { source?: string }).source ??
-			(event as { queueEntry?: { source?: string } }).queueEntry?.source ??
-			(event as { body?: { source?: string } }).body?.source;
-		return src !== undefined && src !== "user";
+		return event.body.source !== "user";
 	}
 	return false;
 }
@@ -385,23 +278,6 @@ export function queueMessageToEvent(msg: QueueMessage): MessageEvent {
 }
 
 /**
- * Normalize a message event from JSONL — handles both old and new formats.
- * Old format: top-level source/content/images/cwd, no body or optional body.
- * New format: all data in body, no top-level fields.
- * Returns the body (synthesized from top-level fields if missing).
- */
-export function normalizeMessageEvent(event: MessageEvent): MessageBody {
-	if (event.body) return event.body;
-	// Old format: synthesize body from top-level fields
-	const source = event.source ?? "user";
-	return {
-		source,
-		content: event.content,
-		...(event.images?.length ? { images: event.images } : {}),
-	};
-}
-
-/**
  * Format a MessageBody for AI consumption based on source.
  * Used by formatEventForAI for message events.
  */
@@ -439,46 +315,14 @@ function formatBodyForAI(body: MessageBody): string {
 /**
  * Format a concrete Event for inclusion in provider messages.
  * `message` events use body.source to determine formatting.
- * Legacy standalone types (child_complete, etc.) are also supported for backward compat.
  */
 export function formatEventForAI(event: Event): string {
-	switch (event.type) {
-		case "message": {
-			const body = normalizeMessageEvent(event as MessageEvent);
-			return formatBodyForAI(body);
-		}
-		// Legacy: user_message (old JSONL)
-		case "user_message": {
-			const src = (event as { source?: string }).source;
-			if (!src || src === "user") {
-				return (event as { content: string }).content;
-			}
-			const body =
-				(event as { body?: MessageBody }).body ??
-				(event as { queueEntry?: MessageBody }).queueEntry;
-			if (!body) return "";
-			return formatBodyForAI(body);
-		}
-		// Legacy standalone queue event types (old JSONL)
-		case "clarify_response":
-			return `<clarify_response>${event.answer}</clarify_response>`;
-		case "system_notification":
-			return `<system_notification>${event.content}</system_notification>`;
-		case "compact_request":
-			return "Manual compaction requested";
-		case "child_complete":
-			return `<child_complete task="${event.title}" id="${event.taskId}" status="${event.success ? "passed" : "failed"}">${event.output.slice(0, 500)}</child_complete>`;
-		case "parent_update":
-			return `<parent_update${event.requestReply ? ' requestReply="true"' : ""}>${event.content}</parent_update>`;
-		case "child_report":
-			return `<child_report from="${event.title}" id="${event.taskId}"${event.summary ? ` summary="${event.summary}"` : ""}${event.requestReply ? ' requestReply="true"' : ""}>${event.content}</child_report>`;
-		case "cross_project":
-			return `<cross_project from="${event.fromProjectName}" projectId="${event.fromProjectId}">${event.content}</cross_project>`;
-		case "background_complete":
-			return `<background_complete command="${event.command}" id="${event.commandId}" exit="${event.exitCode}" duration="${event.durationMs}ms">Command completed. Use bg_action="status" with background_id="${event.commandId}" or read_file on output files to see results.</background_complete>`;
-		default:
-			return "";
+	if (event.type === "message") {
+		// Defensive: body should always be present but guard against corrupt data
+		if (!event.body) return "";
+		return formatBodyForAI(event.body);
 	}
+	return "";
 }
 
 /**

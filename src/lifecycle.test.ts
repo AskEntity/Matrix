@@ -2480,7 +2480,8 @@ describe("lifecycle edge cases — session continuity", () => {
 		const eventStore = new EventStore(sessionsDir);
 		await eventStore.append(sessionId, {
 			type: "message",
-			content: "hello",
+			id: "",
+			body: { source: "user", content: "hello" },
 			ts: Date.now(),
 		} as Event);
 		// Verify it was saved
@@ -2527,7 +2528,7 @@ describe("lifecycle edge cases — session continuity", () => {
 			const hasOldMessage = events.some(
 				(e) =>
 					e.type === "message" &&
-					(e as Event & { type: "message" }).content === "hello",
+					(e as Event & { type: "message" }).body.content === "hello",
 			);
 			expect(hasOldMessage).toBe(false);
 		}
@@ -2567,7 +2568,8 @@ describe("lifecycle edge cases — session continuity", () => {
 		const eventStore2 = new EventStore(sessionsDir);
 		await eventStore2.append(sessionId, {
 			type: "message",
-			content: "initial work",
+			id: "",
+			body: { source: "user", content: "initial work" },
 			ts: Date.now(),
 		} as Event);
 
@@ -2838,7 +2840,8 @@ describe("lifecycle edge cases — session continuity", () => {
 		const eventStore2 = new EventStore(sessionsDir);
 		await eventStore2.append(sessionId, {
 			type: "message",
-			content: "do work",
+			id: "",
+			body: { source: "user", content: "do work" },
 			ts: Date.now(),
 		} as Event);
 
