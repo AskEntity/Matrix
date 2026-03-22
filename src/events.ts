@@ -29,30 +29,37 @@ export interface MessageBody {
 	exitCode?: number | null;
 	durationMs?: number;
 	images?: Array<{ base64: string; mediaType: string }>;
+	/** Context header prepended to AI message (working dir, pre-loaded memory, task description). Not shown in UI. */
+	header?: string;
 }
 
 /**
- * MessageEvent — unified format for ALL messages that flow through the queue.
+ * MessageEvent — unified format for ALL messages that flow through the system.
  * Uses `body.source` to indicate the message type. Written to JSONL with `id` for tracking.
  *
- * Base form (no body): initial prompt, resume messages — written by provider.
- * Body-typed form: queue-originated messages — written at enqueue time.
+ * **New format (unified)**: `id` and `body` are always present. All data lives in `body`.
+ * **Old format (legacy JSONL)**: may have top-level `source`, `content`, `images`, `cwd`, `isResume`.
+ * Old fields are kept optional for backward compatibility — readers normalize via `normalizeMessageEvent()`.
  */
 export interface MessageEvent {
 	type: "message";
+	/** ULID — identifies this message for two-phase lifecycle. Required in new format. */
 	id?: string;
-	/** Message source. Absent for initial prompt/resume. Present for queue messages. */
+	/** @deprecated Use body.source instead. Kept for backward compat with old JSONL. */
 	source?: string;
+	/** @deprecated Use body.content instead. Kept for backward compat with old JSONL. */
 	content?: string;
+	/** @deprecated No longer used. Kept for backward compat with old JSONL. */
 	cwd?: string;
+	/** @deprecated No longer used. Kept for backward compat with old JSONL. */
 	isResume?: boolean;
+	/** @deprecated Use body.images instead. Kept for backward compat with old JSONL. */
 	images?: Array<{ base64: string; mediaType: string }>;
 	/** Task/session ID — used for JSONL routing and SSE broadcast targeting. */
 	taskId?: string;
 	/**
-	 * Structured message body — present when this message represents a queue message.
-	 * Contains the full structured data (source, taskId, title, etc.).
-	 * Format for AI happens at conversion time via formatEventForAI().
+	 * Structured message body — contains ALL message data.
+	 * Required in new unified format. Optional for backward compat with old JSONL.
 	 */
 	body?: MessageBody;
 	ts: number;
@@ -292,10 +299,8 @@ const LEGACY_QUEUE_EVENT_TYPES = new Set([
 export function isQueueEvent(event: Event): boolean {
 	if (LEGACY_QUEUE_EVENT_TYPES.has(event.type)) return true;
 	if (event.type === "message") {
-		const src =
-			(event as { source?: string }).source ??
-			(event as MessageEvent).body?.source;
-		return src !== undefined && src !== "user";
+		const body = normalizeMessageEvent(event as MessageEvent);
+		return body.source !== undefined && body.source !== "user";
 	}
 	// Legacy: user_message with source or queueEntry field
 	if (event.type === "user_message") {
@@ -311,15 +316,12 @@ export function isQueueEvent(event: Event): boolean {
 /** Convert a QueueMessage to a unified `message` Event with body. */
 export function queueMessageToEvent(msg: QueueMessage): MessageEvent {
 	const ts = Date.now();
-	const base = { type: "message" as const, id: ulid(), ts };
-	switch (msg.source) {
-		case "user":
-			return {
-				...base,
-				id: msg.id ?? base.id,
-				source: "user",
-				content: msg.content,
-				body: {
+	const id = msg.source === "user" && msg.id ? msg.id : ulid();
+	// Build body directly from the QueueMessage — source discriminates the shape
+	const body: MessageBody = (() => {
+		switch (msg.source) {
+			case "user":
+				return {
 					source: "user",
 					content: msg.content,
 					...(msg.images?.length
@@ -330,99 +332,73 @@ export function queueMessageToEvent(msg: QueueMessage): MessageEvent {
 								})),
 							}
 						: {}),
-				},
-				...(msg.images?.length
-					? {
-							images: msg.images.map((img) => ({
-								base64: img.base64,
-								mediaType: img.mediaType,
-							})),
-						}
-					: {}),
-			};
-		case "child_complete":
-			return {
-				...base,
-				source: "child_complete",
-				body: {
+					...(msg.header ? { header: msg.header } : {}),
+				};
+			case "child_complete":
+				return {
 					source: "child_complete",
 					taskId: msg.taskId,
 					title: msg.title,
 					success: msg.success,
 					output: msg.output,
-				},
-			};
-		case "parent_update":
-			return {
-				...base,
-				source: "parent_update",
-				body: {
+				};
+			case "parent_update":
+				return {
 					source: "parent_update",
 					content: msg.content,
 					...(msg.requestReply ? { requestReply: true } : {}),
-				},
-			};
-		case "clarify_response":
-			return {
-				...base,
-				source: "clarify_response",
-				body: {
-					source: "clarify_response",
-					answer: msg.answer,
-				},
-			};
-		case "child_report":
-			return {
-				...base,
-				source: "child_report",
-				body: {
+					...(msg.header ? { header: msg.header } : {}),
+				};
+			case "clarify_response":
+				return { source: "clarify_response", answer: msg.answer };
+			case "child_report":
+				return {
 					source: "child_report",
 					taskId: msg.taskId,
 					title: msg.title,
 					...(msg.summary ? { summary: msg.summary } : {}),
 					content: msg.content,
 					...(msg.requestReply ? { requestReply: true } : {}),
-				},
-			};
-		case "cross_project":
-			return {
-				...base,
-				source: "cross_project",
-				body: {
+				};
+			case "cross_project":
+				return {
 					source: "cross_project",
 					fromProjectId: msg.fromProjectId,
 					fromProjectName: msg.fromProjectName,
 					content: msg.content,
-				},
-			};
-		case "background_complete":
-			return {
-				...base,
-				source: "background_complete",
-				body: {
+				};
+			case "background_complete":
+				return {
 					source: "background_complete",
 					command: msg.command,
 					commandId: msg.commandId,
 					exitCode: msg.exitCode,
 					durationMs: msg.durationMs,
-				},
-			};
-		case "system":
-			return {
-				...base,
-				source: "system",
-				body: {
-					source: "system",
-					content: msg.content,
-				},
-			};
-		case "compact":
-			return {
-				...base,
-				source: "compact",
-				body: { source: "compact" },
-			};
-	}
+				};
+			case "system":
+				return { source: "system", content: msg.content };
+			case "compact":
+				return { source: "compact" };
+		}
+	})();
+	return { type: "message", id, taskId: undefined, body, ts };
+}
+
+/**
+ * Normalize a message event from JSONL — handles both old and new formats.
+ * Old format: top-level source/content/images/cwd, no body or optional body.
+ * New format: all data in body, no top-level fields.
+ * Returns the body (synthesized from top-level fields if missing).
+ */
+export function normalizeMessageEvent(event: MessageEvent): MessageBody {
+	if (event.body) return event.body;
+	// Old format: synthesize body from top-level fields
+	const source = event.source ?? "user";
+	return {
+		source,
+		content: event.content,
+		...(event.images?.length ? { images: event.images } : {}),
+	};
 }
 
 /**
@@ -433,8 +409,6 @@ function formatBodyForAI(body: MessageBody): string {
 	switch (body.source) {
 		case "child_complete":
 			return `<child_complete task="${body.title}" id="${body.taskId}" status="${body.success ? "passed" : "failed"}">${(body.output ?? "").slice(0, 500)}</child_complete>`;
-		case "parent_update":
-			return `<parent_update${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</parent_update>`;
 		case "clarify_response":
 			return `<clarify_response>${body.answer}</clarify_response>`;
 		case "child_report":
@@ -448,7 +422,15 @@ function formatBodyForAI(body: MessageBody): string {
 		case "compact":
 			return "Manual compaction requested";
 		case "user":
+			if (body.header) {
+				return `${body.header}\n\n${body.content ?? ""}`;
+			}
 			return body.content ?? "";
+		case "parent_update":
+			if (body.header) {
+				return `${body.header}\n\n<parent_update${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</parent_update>`;
+			}
+			return `<parent_update${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</parent_update>`;
 		default:
 			return "";
 	}
@@ -462,12 +444,7 @@ function formatBodyForAI(body: MessageBody): string {
 export function formatEventForAI(event: Event): string {
 	switch (event.type) {
 		case "message": {
-			const src = (event as { source?: string }).source;
-			if (!src || src === "user") {
-				return (event as { content: string }).content;
-			}
-			const body = (event as MessageEvent).body;
-			if (!body) return "";
+			const body = normalizeMessageEvent(event as MessageEvent);
 			return formatBodyForAI(body);
 		}
 		// Legacy: user_message (old JSONL)

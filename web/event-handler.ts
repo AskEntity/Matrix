@@ -512,16 +512,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						}),
 					);
 				}
-				if (msg.prompt) {
-					entries.push(
-						createLogEntry({
-							type: "message",
-							content: msg.prompt as string,
-							taskId: startRootId,
-							ts: (msg.ts as number) ?? Date.now(),
-						}),
-					);
-				}
+				// prompt field removed from orchestration_started — messages are now
+				// delivered via queue with unified schema and displayed via two-phase lifecycle
 				return {
 					entries,
 					updates: [],
@@ -661,12 +653,19 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				const umTaskId = msg.taskId as string | null | undefined;
 				const umTs = (msg.ts as number) ?? Date.now();
 
+				// Read content and images from body (new format) or top-level (legacy)
+				// Don't display `header` in UI — it's context, not user-visible content
+				const umContent = bodyField?.content ?? (msg.content as string) ?? "";
+				const umImages =
+					(bodyField?.images as
+						| Array<{ base64: string; mediaType: string }>
+						| undefined) ??
+					(msg.images as
+						| Array<{ base64: string; mediaType: string }>
+						| undefined);
+
 				if (umId) {
 					// message with id = deferred until messages_consumed.
-					const umContent = (msg.content as string) || "";
-					const umImages = msg.images as
-						| Array<{ base64: string; mediaType: string }>
-						| undefined;
 					// For legacy events without body/queueEntry, build one from flat fields
 					const effectiveQueueEntry: QueueEntryLike | undefined =
 						bodyField ??
@@ -732,15 +731,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					entries: [
 						createLogEntry({
 							type: "message",
-							content: (msg.content as string) || "",
-							...(msg.images
-								? {
-										images: msg.images as Array<{
-											base64: string;
-											mediaType: string;
-										}>,
-									}
-								: {}),
+							content: umContent,
+							...(umImages?.length ? { images: umImages } : {}),
 							taskId: umTaskId ?? undefined,
 							ts: umTs,
 						}),

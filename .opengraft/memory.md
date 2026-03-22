@@ -188,3 +188,16 @@ Daemon (Hono: HTTP + SSE on :7433)
 - All `randomUUID()` calls replaced with `ulid()`. Old UUID strings in JSONL/task files still work (just strings).
 - Background process IDs changed from `bg-{hex8}` to `bg-{ULID8}` — test regex updated from `[a-f0-9]` to `[A-Z0-9]`.
 - `noUncheckedIndexedAccess`: Uint8Array indexing needs `as number` casts. `(arr[i] as number)++` works for increment.
+
+
+## Unified Message Schema
+
+- **MessageEvent** now has unified format: `{ type: "message", id: string, taskId?, body: MessageBody, ts }`. All data lives in `body`, no top-level duplication.
+- Old fields (`source`, `content`, `images`, `cwd`, `isResume`) kept as optional + `@deprecated` on MessageEvent for backward compat with old JSONL.
+- `normalizeMessageEvent()` in events.ts handles both old and new formats — reads from body if present, synthesizes from top-level fields if not.
+- `queueMessageToEvent()` no longer duplicates fields at top level — just wraps in `{ type, id, body, ts }`.
+- **QueueMessage** now has `header?: string` on `user` and `parent_update` variants. Header = context prepended in AI message (working dir, pre-loaded memory, task description).
+- `formatBodyForAI()` handles header: prepends to content for user messages, wraps parent_update content with header.
+- `orchestration_started` no longer has `prompt` field — messages delivered via queue with unified schema.
+- Frontend `processEvent` reads content/images from `body` field preferentially, falling back to top-level for legacy events. Does NOT display `header` in UI.
+- Provider still emits old-format prompt events (no id, top-level content/cwd) for JSONL — walker skips these (no id). Future work: move prompt to queue entirely.

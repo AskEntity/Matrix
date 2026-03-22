@@ -17,6 +17,7 @@ import {
 	isQueueEvent,
 	type MessageBody,
 	type MessageEvent,
+	normalizeMessageEvent,
 	queueMessageToEvent,
 } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
@@ -915,11 +916,22 @@ export function buildEventIndex(events: Event[]): Map<string, Event> {
  */
 export function extractConsumedEventImages(event: Event): EventImageData[] {
 	if (event.type !== "message" && event.type !== "user_message") return [];
+	if (event.type === "message") {
+		const body = normalizeMessageEvent(event as MessageEvent);
+		const imgs = body.images ?? [];
+		return imgs.map((img) => ({
+			base64: img.base64,
+			mediaType: img.mediaType,
+		}));
+	}
+	// Legacy: user_message — can't cast to MessageEvent (different type field)
+	const umEvent = event as unknown as {
+		images?: Array<{ base64: string; mediaType: string }>;
+		body?: MessageBody;
+		queueEntry?: MessageBody;
+	};
 	const imgs =
-		(event as MessageEvent).images ??
-		(event as MessageEvent).body?.images ??
-		(event as { queueEntry?: MessageBody }).queueEntry?.images ??
-		[];
+		umEvent.images ?? umEvent.body?.images ?? umEvent.queueEntry?.images ?? [];
 	return imgs.map((img) => ({ base64: img.base64, mediaType: img.mediaType }));
 }
 
@@ -1354,7 +1366,9 @@ export async function* runProviderLoop(
 			]
 		: [{ role: "user" as const, content: firstUserContent }];
 
-	// Emit the new user message event
+	// Emit the provider prompt event — written to JSONL for conversation history.
+	// These are backward-compat: old format with top-level content/cwd, no id/body.
+	// The walker skips these (no id). Future: remove when prompt moves to queue entirely.
 	if (emit) {
 		if (isResume) {
 			emit({
@@ -1362,14 +1376,14 @@ export async function* runProviderLoop(
 				content: request.prompt,
 				isResume: true,
 				ts: Date.now(),
-			});
+			} as Event);
 		} else {
 			emit({
 				type: "message",
 				content: firstUserContent,
 				cwd,
 				ts: Date.now(),
-			});
+			} as Event);
 		}
 	}
 

@@ -4,22 +4,34 @@ import { type Event, formatEventForAI, queueMessageToEvent } from "./events.ts";
 import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
 
 describe("queueMessageToEvent", () => {
-	test("converts user message with body field", () => {
+	test("converts user message — all data in body, no top-level duplication", () => {
 		const event = queueMessageToEvent({
 			source: "user",
 			content: "hello",
 			images: [{ base64: "abc", mediaType: "image/png" }],
 		});
 		expect(event.type).toBe("message");
-		expect(event.content).toBe("hello");
-		expect(event.images).toHaveLength(1);
+		expect(event.id).toBeTruthy();
 		expect(event.body).toBeDefined();
 		expect(event.body?.source).toBe("user");
 		expect(event.body?.content).toBe("hello");
 		expect(event.body?.images).toHaveLength(1);
+		// No top-level duplication
+		expect(event.source).toBeUndefined();
+		expect(event.content).toBeUndefined();
+		expect(event.images).toBeUndefined();
 	});
 
-	test("converts child_complete to unified message with body", () => {
+	test("converts user message — preserves existing id", () => {
+		const event = queueMessageToEvent({
+			source: "user",
+			id: "existing-id",
+			content: "hello",
+		});
+		expect(event.id).toBe("existing-id");
+	});
+
+	test("converts child_complete — all data in body", () => {
 		const event = queueMessageToEvent({
 			source: "child_complete",
 			taskId: "t1",
@@ -28,45 +40,56 @@ describe("queueMessageToEvent", () => {
 			output: "done",
 		});
 		expect(event.type).toBe("message");
-		expect(event.source).toBe("child_complete");
 		expect(event.id).toBeTruthy();
-		expect(event.body).toBeDefined();
 		expect(event.body?.source).toBe("child_complete");
 		expect(event.body?.taskId).toBe("t1");
 		expect(event.body?.title).toBe("Auth");
 		expect(event.body?.success).toBe(true);
 		expect(event.body?.output).toBe("done");
+		expect(event.source).toBeUndefined();
 	});
 
-	test("converts compact to unified message with body", () => {
+	test("converts compact — all data in body", () => {
 		const event = queueMessageToEvent({ source: "compact" });
 		expect(event.type).toBe("message");
-		expect(event.source).toBe("compact");
-		expect(event.body).toBeDefined();
 		expect(event.body?.source).toBe("compact");
+		expect(event.source).toBeUndefined();
 	});
 
-	test("converts system to unified message with body", () => {
+	test("converts system — all data in body", () => {
 		const event = queueMessageToEvent({ source: "system", content: "hi" });
 		expect(event.type).toBe("message");
-		expect(event.source).toBe("system");
-		expect(event.body).toBeDefined();
 		expect(event.body?.source).toBe("system");
 		expect(event.body?.content).toBe("hi");
+		expect(event.source).toBeUndefined();
 	});
 
-	test("converts parent_update to unified message with body", () => {
+	test("converts parent_update — all data in body, includes header", () => {
 		const event = queueMessageToEvent({
 			source: "parent_update",
 			content: "update",
 			requestReply: true,
+			header: "## Task Context\nTitle: Fix Bug",
 		});
 		expect(event.type).toBe("message");
-		expect(event.source).toBe("parent_update");
-		expect(event.body).toBeDefined();
 		expect(event.body?.source).toBe("parent_update");
 		expect(event.body?.content).toBe("update");
 		expect(event.body?.requestReply).toBe(true);
+		expect(event.body?.header).toBe("## Task Context\nTitle: Fix Bug");
+		expect(event.source).toBeUndefined();
+	});
+
+	test("converts user message with header", () => {
+		const event = queueMessageToEvent({
+			source: "user",
+			content: "Build a feature",
+			header: "Working directory: /tmp\n\n## Memory\nSome memory",
+		});
+		expect(event.body?.source).toBe("user");
+		expect(event.body?.content).toBe("Build a feature");
+		expect(event.body?.header).toBe(
+			"Working directory: /tmp\n\n## Memory\nSome memory",
+		);
 	});
 });
 
@@ -2438,9 +2461,8 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			expect(msg.content).toContain("Do this next");
 		});
 
-		test("Anthropic: message with body but no source falls back to (empty)", () => {
-			// message with body but no top-level source — formatEventForAI tries content (undefined),
-			// returns undefined, fallback to (empty)
+		test("Anthropic: message with body but no source uses body to format", () => {
+			// message with body but no top-level source — normalizeMessageEvent reads from body
 			const events: Event[] = [
 				{
 					type: "message",
@@ -2456,7 +2478,8 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			expect(messages).toHaveLength(1);
 			const msg = messages[0] as { role: string; content: string };
 			expect(msg.role).toBe("user");
-			expect(msg.content).toBe("(empty)");
+			expect(msg.content).toContain("parent_update");
+			expect(msg.content).toContain("Do this next");
 		});
 
 		test("Anthropic: message with no content and no body falls back to (empty)", () => {
@@ -2490,12 +2513,13 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			expect(msg.content).toContain("Agent stopped");
 		});
 
-		test("OpenAI: message with body but no source falls back to (empty)", () => {
+		test("OpenAI: message with body but no source uses body to format", () => {
+			// normalizeMessageEvent reads from body even without top-level source
 			const events: Event[] = [
 				{
 					type: "message",
 					body: {
-						source: "system_notification",
+						source: "system",
 						content: "Agent stopped",
 					},
 					ts: 1000,
@@ -2505,7 +2529,8 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			expect(messages).toHaveLength(1);
 			const msg = messages[0] as { role: string; content: string };
 			expect(msg.role).toBe("user");
-			expect(msg.content).toBe("(empty)");
+			expect(msg.content).toContain("system_notification");
+			expect(msg.content).toContain("Agent stopped");
 		});
 
 		test("OpenAI: message with no content and no body falls back to (empty)", () => {
