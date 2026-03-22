@@ -461,13 +461,9 @@ async function handleLogs(args: string[]): Promise<void> {
 				line = `➕ Task created: ${title} (${taskId})`;
 				break;
 			}
-			case "task_completed": {
-				const title = String(event.title ?? "");
-				const success = Boolean(event.success);
-				const icon = success ? "✅" : "❌";
-				line = `${icon} Task completed: ${title} - ${success ? "passed" : "failed"}`;
-				break;
-			}
+			case "task_completed":
+				// Removed — done() tool card replaces this
+				continue;
 			case "agent_turn": {
 				const turns = event.turns ?? event.turnCount ?? "?";
 				line = `💬 Agent turn (turns: ${turns})`;
@@ -719,9 +715,7 @@ function formatWatchEvent(msg: Record<string, unknown>): void {
 			console.log(`${time} [task] ${c.green(">")} ${msg.title}`);
 			break;
 		case "task_completed":
-			console.log(
-				`${time} [task] ${msg.success ? c.brightGreen("+") : c.red("x")} ${msg.title}`,
-			);
+			// Removed — done() tool card replaces this
 			break;
 		case "orchestration_started":
 			console.log(`${time} ${c.cyan("[orch]")} Started`);

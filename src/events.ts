@@ -145,15 +145,6 @@ export type Event =
 			ts: number;
 	  }
 	| { type: "task_started"; taskId: string; title: string; ts: number }
-	| {
-			type: "task_completed";
-			taskId: string;
-			title: string;
-			success: boolean;
-			output?: string;
-			error?: string;
-			ts: number;
-	  }
 	| { type: "error"; taskId?: string; message: string; ts: number }
 	| {
 			type: "budget_exceeded";

@@ -1931,23 +1931,14 @@ describe("lifecycle: child completion notification paths", () => {
 		globalAgentQueues.delete(parentNode.id);
 	});
 
-	test("child_complete after task_completed event (done()=yield detection)", async () => {
-		// KEY test for the deadlock fix.
-		//
-		// The done()=yield sequence is:
+	test("done() closes queue directly (no task_completed event)", async () => {
+		// Tests the simplified done() flow:
 		// 1. done() handler updates tracker status to passed/failed
-		// 2. done() handler calls emit({ type: "task_completed" }) — triggers onTaskEvent
-		// 3. onTaskEvent (the fix) closes the child queue
-		// 4. done() handler calls waitForQueueMessages() — rejects immediately (queue closed)
-		// 5. done() returns → provider emits tool_result → runChildCore sees it and exits
+		// 2. done() handler calls closeQueue() directly
+		// 3. waitForQueueMessages() rejects immediately (queue closed)
+		// 4. done() returns → provider emits tool_result → runChildCore sees it and exits
 		//
-		// This test simulates the stream behavior where:
-		// - The tracker status is updated to "passed" (step 1)
-		// - The queue is closed externally (step 3 — the fix)
-		// - The stream unblocks and exits (steps 4-5)
-		// - runChildCore completes without deadlock
-		//
-		// If the onEvent callback does NOT close the queue, the stream deadlocks.
+		// No task_completed event is emitted — closeQueue() replaces it.
 
 		const trackerPath = join(dataDir, "test-donefix-tracker.json");
 		const tracker = new TaskTracker(trackerPath);
@@ -1961,13 +1952,11 @@ describe("lifecycle: child completion notification paths", () => {
 		const parentQueue = new MessageQueue();
 		globalAgentQueues.set(parentNode.id, parentQueue);
 
-		// Create a provider whose stream simulates done()=yield:
+		// Create a provider whose stream simulates done() calling closeQueue():
 		// 1. Emits text (simulating work)
-		// 2. Updates tracker status (simulating done() handler step 1)
-		// 3. Yields a "status" event with task_completed message (simulating emit())
-		// 4. Blocks on queue.wait() (simulating done() handler step 3)
-		// The stream NEVER yields a tool_result for mcp__opengraft__done —
-		// that only happens AFTER done() unblocks.
+		// 2. Updates tracker status (simulating done() handler)
+		// 3. Closes the queue directly (simulating closeQueue() in done() handler)
+		// 4. Blocks on queue.wait() which rejects immediately
 		const doneYieldProvider: AgentProvider = {
 			name: "mock-done-yield",
 			execute: async () => ({ success: true, output: "" }),
@@ -1984,25 +1973,17 @@ describe("lifecycle: child completion notification paths", () => {
 				// Step 2: Agent calls done("passed") — handler updates tracker
 				tracker.updateStatus(childId, "passed");
 
-				// Step 3: done() handler calls emit({ type: "task_completed" })
-				// In production, this triggers onTaskEvent which closes the queue.
-				// Provider calls emit() which flows to emitEvent → onTaskEvent.
-				req.emit?.({
-					type: "status",
-					message: `task_completed:${childId}`,
-					ts: Date.now(),
-				});
+				// Step 3: done() handler calls closeQueue() directly
+				queue.close();
 
 				// Step 4: done() handler calls waitForQueueMessages()
-				// which blocks on queue.wait() — if queue is closed, it rejects
+				// which blocks on queue.wait() — rejects immediately since queue is closed
 				try {
 					await queue.wait();
 				} catch {
-					// Queue closed — exit cleanly (the fix unblocks us here)
+					// Queue closed — exit cleanly
 				}
 
-				// Step 5: After unblocking, the provider would emit tool_result
-				// (but we're simulating the whole thing)
 				return { success: true, output: "done" } as AgentResult;
 			},
 			startSession(req) {
@@ -2018,23 +1999,8 @@ describe("lifecycle: child completion notification paths", () => {
 		};
 
 		const eventLog: string[] = [];
-
-		// Build emit callback that simulates the fix:
-		// When it sees the task_completed event AND tracker shows passed/failed,
-		// it closes the queue. This is what createAgentContext's onTaskEvent does.
 		const emit = (event: Event) => {
 			eventLog.push(event.type);
-
-			if (event.type === "status" && "message" in event) {
-				const msg = event.message as string;
-				if (msg.startsWith("task_completed:")) {
-					const nodeStatus = tracker.get(childId)?.status;
-					if (nodeStatus === "passed" || nodeStatus === "failed") {
-						const q = globalAgentQueues.get(childId);
-						if (q) q.close();
-					}
-				}
-			}
 		};
 
 		const doneQueue = new MessageQueue();
@@ -2054,10 +2020,9 @@ describe("lifecycle: child completion notification paths", () => {
 		const timeoutPromise = delay(3000).then(() => "timeout" as const);
 		const result = await Promise.race([corePromise, timeoutPromise]);
 
-		// With the fix in place, runChildCore should complete (not timeout)
+		// closeQueue() directly unblocks done() — no deadlock
 		expect(result).not.toBe("timeout");
 		expect(tracker.get(childId)?.status).toBe("passed");
-		expect(eventLog).toContain("status");
 
 		// Cleanup
 		globalAgentQueues.delete(childId);
@@ -2065,9 +2030,9 @@ describe("lifecycle: child completion notification paths", () => {
 		globalAgentQueues.delete(parentNode.id);
 	});
 
-	test("done()=yield deadlocks WITHOUT task_completed detection", async () => {
-		// Companion test: verifies that WITHOUT the fix (no queue closure in onEvent),
-		// the stream blocks indefinitely. This proves the fix is necessary.
+	test("done()=yield deadlocks WITHOUT closeQueue()", async () => {
+		// Companion test: verifies that WITHOUT closeQueue() in done(),
+		// the stream blocks indefinitely. This proves closeQueue() is necessary.
 
 		const trackerPath = join(dataDir, "test-deadlock-tracker.json");
 		const tracker = new TaskTracker(trackerPath);
@@ -2077,7 +2042,7 @@ describe("lifecycle: child completion notification paths", () => {
 		const childId = childNode.id;
 		tracker.updateStatus(childId, "in_progress");
 
-		// Provider that simulates done()=yield WITHOUT the fix closing the queue
+		// Provider that simulates done()=yield WITHOUT closeQueue()
 		const deadlockProvider: AgentProvider = {
 			name: "mock-deadlock",
 			execute: async () => ({ success: true, output: "" }),
@@ -2090,13 +2055,9 @@ describe("lifecycle: child completion notification paths", () => {
 				};
 
 				tracker.updateStatus(childId, "passed");
-				yield {
-					type: "status" as const,
-					message: "task_completed",
-					ts: Date.now(),
-				};
 
-				// Block forever — no one closes the queue
+				// No closeQueue() call — nobody closes the queue
+				// Block forever on queue.wait()
 				try {
 					await queue.wait();
 				} catch {
@@ -2125,7 +2086,6 @@ describe("lifecycle: child completion notification paths", () => {
 			sessionRequest: {
 				cwd: projectDir,
 				queue: deadlockQueue,
-				// No emit callback — nothing closes the queue on task_completed
 			},
 		});
 

@@ -233,3 +233,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `injectMessageToProject` wraps `handleInjectMessage` from agent-lifecycle.ts. Only wired at depth 0 with `orchestratorSystemPrompt`.
 - When target has running agent: direct queue enqueue (fast path, cross_project message).
 - When target has no agent: falls back to `injectMessageToProject` which uses `handleInjectMessage` to persist + launch. Message is prefixed with sender identity since it goes through as a user message.
+
+## task_completed Event Removal
+- **Removed `task_completed` from Event union** — was architectural duplication of `child_complete` queue message (parent view) and `done()` tool call (child view).
+- **New done() flow**: done() handler calls `closeQueue()` directly (via OrchestratorToolsDeps) instead of emitting task_completed. closeQueue closes the queue, waitForQueueMessages() rejects immediately, done() returns idle message.
+- **`closeQueue` only set for child agents** (depth > 0). Root agents block on waitForQueueMessages() normally.
+- **`task_completed` remains as UIOnlyEvent** — child_complete queue message materialization creates it for the parent activity log card. The SSE event and backend Event type are gone.
+- **done() tool cards unsuppressed** in LogEntryView.tsx and ToolCard.tsx — styled with green/red border like old task_completed card.
+- **Error path in runChildAgentInBackground**: emits `error` event instead of `task_completed`. child_complete queue message still handles parent notification.

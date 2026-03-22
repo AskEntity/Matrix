@@ -623,25 +623,10 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				};
 			}
 
-			case "task_completed": {
-				const ts = (msg.ts as number) ?? Date.now();
-				// Only show in the child task's own view — parent sees it via
-				// child_complete queue message two-phase lifecycle (pending → consumed)
-				return {
-					entries: [
-						createLogEntry({
-							type: "task_completed",
-							taskId: msg.taskId as string,
-							title: msg.title as string,
-							success: msg.success as boolean,
-							output: (msg.output as string) || undefined,
-							ts,
-						}),
-					],
-					updates: [],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-			}
+			case "task_completed":
+				// Removed — done() tool card replaces this in child view,
+				// child_complete queue message handles parent view
+				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 
 			case "compacted_resume":
 				// Internal compaction state — not user content

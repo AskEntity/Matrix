@@ -67,6 +67,14 @@ export type UIOnlyEvent =
 			answer: string;
 			taskId?: string;
 			ts: number;
+	  }
+	| {
+			type: "task_completed";
+			taskId?: string;
+			title: string;
+			success: boolean;
+			output?: string;
+			ts: number;
 	  };
 
 /** All event types the UI can display. */
