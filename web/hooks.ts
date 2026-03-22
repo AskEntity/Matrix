@@ -93,12 +93,9 @@ let logIdCounter = 0;
 const WATCHDOG_CHECK_INTERVAL = 30_000;
 /**
  * If no SSE data event received within this window, consider connection dead (ms).
- * Server sends two tiers of heartbeat:
- * 1. SSE comments every 15s — keeps TCP alive (invisible to EventSource)
- * 2. Data heartbeat every 120s — triggers onmessage, updates lastMessageRef
- * Watchdog timeout is 150s (~1.25x data heartbeat interval).
+ * Server sends data heartbeat every 15s. Timeout is 3x heartbeat = 45s.
  */
-const WATCHDOG_TIMEOUT = 150_000;
+const WATCHDOG_TIMEOUT = 45_000;
 
 export function useSSE(
 	projectId: string,
