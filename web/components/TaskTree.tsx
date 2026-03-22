@@ -564,7 +564,6 @@ function TaskNodeView({
 					{node.status === "draft" && (
 						<span className="og-task-draft-badge">draft</span>
 					)}
-					<span className="og-task-id-tag">{node.id}</span>
 					{node.branch && (
 						<span className="og-task-branch-tag" title={node.branch}>
 							{node.branch.replace("og/", "").split("/").slice(1).join("/") ||
