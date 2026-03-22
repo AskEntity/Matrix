@@ -132,7 +132,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 - **SSE replaces WebSocket**: `GET /events?projectId=X&token=Y`. Standard `ReadableStream` + `Response`.
 - **Ring buffer + Last-Event-ID**: 2000-entry catch-up on reconnect. Falls back to full `sendInitialState`.
-- **Two-tier heartbeat**: SSE comment every 15s (keepalive), data heartbeat every 120s (dead connection detection). Client watchdog 150s timeout.
+- **Two-tier heartbeat**: SSE comment every 15s (keepalive), data heartbeat every 120s (dead connection detection). Client watchdog: 30s interval, 150s timeout (data events only — does NOT check readyState to avoid conflicting with EventSource auto-reconnect).
 - **Initial state**: Tree + pending clarifications sent on connect. Pending messages derived from JSONL events.
 
 ## Compaction
