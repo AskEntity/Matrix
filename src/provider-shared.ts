@@ -19,8 +19,7 @@ import {
 } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
-import { executeTool } from "./tools/index.ts";
-import type { AgentResult, TaskSession } from "./types.ts";
+import type { AgentResult } from "./types.ts";
 
 // ── Constants ──
 
@@ -332,7 +331,8 @@ export interface ToolExecResult {
 }
 
 /**
- * Execute a single tool — MCP handler or built-in.
+ * Execute a single tool via its handler.
+ * ALL tools (built-in + orchestrator + external MCP) go through this single path.
  * Returns a unified ToolExecResult.
  */
 export async function executeToolUnified(
@@ -340,93 +340,103 @@ export async function executeToolUnified(
 	input: Record<string, unknown>,
 	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
 	mcpHandlers: Map<string, ToolDefinition<any>>,
-	cwd: string,
-	fallbackCwd?: string,
-	sessionId?: string,
-	queue?: MessageQueue,
 	toolCallId?: string,
-	getSession?: (sessionId: string) => TaskSession | undefined,
 ): Promise<ToolExecResult> {
 	const mcpHandler = mcpHandlers.get(toolName);
-	if (mcpHandler) {
-		try {
-			const mcpResult = await mcpHandler.handler(input, {});
-			const parts = Array.isArray(mcpResult.content) ? mcpResult.content : [];
-			const textParts: string[] = [];
-			const mcpImages: Array<{
-				base64: string;
-				mediaType: string;
-				data: string;
-			}> = [];
-			for (const c of parts as Array<Record<string, unknown>>) {
-				if (c.type === "text") {
-					textParts.push((c.text as string) ?? "");
-				} else if (c.type === "image" && c.data) {
-					// MCP format: { type: "image", data, mimeType }
-					mcpImages.push({
-						mediaType: (c.mimeType as string) ?? "image/png",
-						data: c.data as string,
-						base64: c.data as string,
-					});
-				} else if (
-					c.type === "image" &&
-					(c.source as Record<string, unknown>)?.type === "base64"
-				) {
-					// Anthropic format: { type: "image", source: { type: "base64", media_type, data } }
-					const src = c.source as Record<string, string>;
-					mcpImages.push({
-						mediaType: src.media_type ?? "image/png",
-						data: src.data ?? "",
-						base64: src.data ?? "",
-					});
-				} else {
-					textParts.push(JSON.stringify(c));
-				}
-			}
-			// Extract consumed message IDs, pending state, and formatted queue messages from yield/done tools
-			const consumedIds = Array.isArray(mcpResult._consumedMessageIds)
-				? (mcpResult._consumedMessageIds as string[])
-				: undefined;
-			const consumedQueueMsgs = Array.isArray(mcpResult._consumedQueueMessages)
-				? (mcpResult._consumedQueueMessages as QueueMessage[])
-				: undefined;
-			const pending = mcpResult._pending as ToolExecResult["_pending"];
-			const formattedQueueMessages =
-				typeof mcpResult._formattedQueueMessages === "string"
-					? mcpResult._formattedQueueMessages
-					: undefined;
-			return {
-				content: textParts.join("\n"),
-				isError: (mcpResult.isError as boolean) ?? false,
-				isImage: mcpImages.length > 0,
-				mcpImages,
-				...(consumedIds?.length ? { _consumedMessageIds: consumedIds } : {}),
-				...(consumedQueueMsgs?.length
-					? { _consumedQueueMessages: consumedQueueMsgs }
-					: {}),
-				...(pending ? { _pending: pending } : {}),
-				...(formattedQueueMessages
-					? { _formattedQueueMessages: formattedQueueMessages }
-					: {}),
-			};
-		} catch (e) {
-			return {
-				content: `MCP tool error: ${e instanceof Error ? e.message : String(e)}`,
-				isError: true,
-			};
-		}
+	if (!mcpHandler) {
+		return {
+			content: `Unknown tool: ${toolName}`,
+			isError: true,
+		};
 	}
 
-	return executeTool(
-		toolName,
-		input,
-		cwd,
-		fallbackCwd,
-		sessionId,
-		queue,
-		toolCallId,
-		getSession,
-	);
+	try {
+		const mcpResult = await mcpHandler.handler(input, { toolCallId });
+		const parts = Array.isArray(mcpResult.content) ? mcpResult.content : [];
+		const textParts: string[] = [];
+		const mcpImages: Array<{
+			base64: string;
+			mediaType: string;
+			data: string;
+		}> = [];
+		for (const c of parts as Array<Record<string, unknown>>) {
+			if (c.type === "text") {
+				textParts.push((c.text as string) ?? "");
+			} else if (c.type === "image" && c.data) {
+				// MCP format: { type: "image", data, mimeType }
+				mcpImages.push({
+					mediaType: (c.mimeType as string) ?? "image/png",
+					data: c.data as string,
+					base64: c.data as string,
+				});
+			} else if (
+				c.type === "image" &&
+				(c.source as Record<string, unknown>)?.type === "base64"
+			) {
+				// Anthropic format: { type: "image", source: { type: "base64", media_type, data } }
+				const src = c.source as Record<string, string>;
+				mcpImages.push({
+					mediaType: src.media_type ?? "image/png",
+					data: src.data ?? "",
+					base64: src.data ?? "",
+				});
+			} else {
+				textParts.push(JSON.stringify(c));
+			}
+		}
+		// Extract non-standard properties from handler results
+		// biome-ignore lint/suspicious/noExplicitAny: reading non-standard properties from handler results
+		const r = mcpResult as any;
+		const consumedIds = Array.isArray(r._consumedMessageIds)
+			? (r._consumedMessageIds as string[])
+			: undefined;
+		const consumedQueueMsgs = Array.isArray(r._consumedQueueMessages)
+			? (r._consumedQueueMessages as QueueMessage[])
+			: undefined;
+		const pending = r._pending as ToolExecResult["_pending"];
+		const formattedQueueMessages =
+			typeof r._formattedQueueMessages === "string"
+				? r._formattedQueueMessages
+				: undefined;
+		// Built-in tool extended properties
+		const _cwd = typeof r._cwd === "string" ? r._cwd : undefined;
+		const _backgroundId =
+			typeof r._backgroundId === "string" ? r._backgroundId : undefined;
+		const _backgroundCommand =
+			typeof r._backgroundCommand === "string"
+				? r._backgroundCommand
+				: undefined;
+		const _isImage = typeof r._isImage === "boolean" ? r._isImage : undefined;
+		const _imageData =
+			typeof r._imageData === "string" ? r._imageData : undefined;
+		const _mediaType =
+			typeof r._mediaType === "string" ? r._mediaType : undefined;
+
+		return {
+			content: textParts.join("\n"),
+			isError: (mcpResult.isError as boolean) ?? false,
+			isImage: _isImage ?? mcpImages.length > 0,
+			...(_cwd ? { cwd: _cwd } : {}),
+			...(_backgroundId ? { backgroundId: _backgroundId } : {}),
+			...(_backgroundCommand ? { backgroundCommand: _backgroundCommand } : {}),
+			...(_imageData ? { imageData: _imageData } : {}),
+			...(_mediaType ? { mediaType: _mediaType } : {}),
+			mcpImages,
+			...(consumedIds?.length ? { _consumedMessageIds: consumedIds } : {}),
+			...(consumedQueueMsgs?.length
+				? { _consumedQueueMessages: consumedQueueMsgs }
+				: {}),
+			...(pending ? { _pending: pending } : {}),
+			...(formattedQueueMessages
+				? { _formattedQueueMessages: formattedQueueMessages }
+				: {}),
+		};
+	} catch (e) {
+		return {
+			content: `Tool error (${toolName}): ${e instanceof Error ? e.message : String(e)}`,
+			isError: true,
+		};
+	}
 }
 
 // ── Queue image extraction ──
@@ -1736,25 +1746,24 @@ export async function* runProviderLoop(
 		// ── Execute tools concurrently ──
 		const execResults = await Promise.all(
 			toolUses.map(async (toolUse) => {
-				// OpenAI needs JSON.parse for arguments — handled in getToolUses already
 				return executeToolUnified(
 					toolUse.name,
 					toolUse.input,
 					mcpHandlers,
-					cwd,
-					request.cwd,
-					sessionId,
-					queue,
 					toolUse.id,
-					request.getSession,
 				);
 			}),
 		);
 
-		// Update cwd if bash tool changed it
+		// Update cwd if bash tool changed it — sync both the loop-local cwd
+		// and the session's cwd so handler closures see the new value.
 		for (const exec of execResults) {
 			if (exec.cwd) {
 				cwd = exec.cwd;
+				const currentSession = request.getSession?.(sessionId);
+				if (currentSession) {
+					currentSession.cwd = exec.cwd;
+				}
 			}
 		}
 

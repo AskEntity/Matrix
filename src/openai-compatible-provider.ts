@@ -21,7 +21,6 @@ import {
 	zodShapeToJsonSchema,
 } from "./provider-shared.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
-import { TOOLS } from "./tools/index.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
 
@@ -236,20 +235,6 @@ export function getContextWindow(model: string): number {
 		if (model.startsWith(key) && window) return window;
 	}
 	return DEFAULT_CONTEXT_WINDOW;
-}
-
-// ── Tool format conversion ──
-
-/** Convert Anthropic-format tools to OpenAI function calling format. */
-export function convertToolsToOpenAI(tools: typeof TOOLS): OpenAITool[] {
-	return tools.map((tool) => ({
-		type: "function" as const,
-		function: {
-			name: tool.name,
-			description: tool.description ?? "",
-			parameters: tool.input_schema as Record<string, unknown>,
-		},
-	}));
 }
 
 // ── OpenAI API call helper ──
@@ -585,8 +570,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
 			mcpHandlers: Map<string, ToolDefinition<any>>,
 		): unknown[] {
-			const builtinTools = convertToolsToOpenAI(TOOLS);
-			const allTools: OpenAITool[] = [...builtinTools];
+			const allTools: OpenAITool[] = [];
 			if (mcpToolDefs) {
 				for (const [serverName, defs] of Object.entries(mcpToolDefs)) {
 					for (const def of defs) {

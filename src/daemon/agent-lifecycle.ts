@@ -17,7 +17,10 @@ import {
 } from "../persistent-queue.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
-import { cleanupSessionBackgroundProcesses } from "../tools/index.ts";
+import {
+	cleanupSessionBackgroundProcesses,
+	createBuiltinTools,
+} from "../tools/index.ts";
 import type { AgentResult, TaskSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
@@ -73,6 +76,8 @@ async function createAgentContext(
 		mcpManager?: McpClientManager;
 		/** System prompt for auto-launching target project agents (cross-project). Only needed at depth 0. */
 		orchestratorSystemPrompt?: string;
+		/** Callback to look up TaskSession by sessionId. Needed for built-in tool handlers. */
+		getSession: (sessionId: string) => TaskSession | undefined;
 	},
 ): Promise<AgentContextResult> {
 	const effectiveCfg = await resolveProjectConfig(
@@ -169,8 +174,17 @@ async function createAgentContext(
 				: undefined,
 	});
 
+	// Create built-in tools with handler closures that read session state
+	const builtinTools = createBuiltinTools(
+		opts.getSession,
+		opts.currentTaskId,
+		() => opts.getSession(opts.currentTaskId)?.cwd ?? opts.projectPath,
+		() => opts.getSession(opts.currentTaskId)?.fallbackCwd,
+		() => opts.getSession(opts.currentTaskId)?.queue,
+	);
+
 	const mcpToolDefs: Record<string, ToolDefinition[]> = {
-		opengraft: toolDefs,
+		opengraft: [...builtinTools, ...toolDefs],
 		...mcpManager.getToolDefs(),
 	};
 
@@ -612,6 +626,9 @@ export async function runChildAgentInBackground(
 		};
 		node.session = taskSession;
 
+		// getSession lookup: find session from tracker by sessionId
+		const getSession = (sid: string) => tracker.get(sid)?.session;
+
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
 			projectPath: node.worktreePath as string,
@@ -619,6 +636,7 @@ export async function runChildAgentInBackground(
 			depth,
 			queue: childQueue,
 			mcpManager,
+			getSession,
 		});
 
 		// Read active events for resume and fix orphaned tool_calls
@@ -639,9 +657,6 @@ export async function runChildAgentInBackground(
 			const withTaskId = { ...event, taskId: nodeId };
 			emitEvent(ctx, project.id, withTaskId as Event);
 		};
-
-		// getSession lookup: find session from tracker by sessionId
-		const getSession = (sessionId: string) => tracker.get(sessionId)?.session;
 
 		const agentResult = await runChildCore({
 			provider: agentCtx.provider,
@@ -840,6 +855,9 @@ export async function launchAgent(
 
 	const mcpManager = new McpClientManager();
 
+	// getSession lookup: find session from tracker by sessionId
+	const getSession = (sid: string) => tracker.get(sid)?.session;
+
 	const agentCtx = await createAgentContext(ctx, project, {
 		tracker,
 		projectPath: project.path,
@@ -849,6 +867,7 @@ export async function launchAgent(
 		queue,
 		mcpManager,
 		orchestratorSystemPrompt,
+		getSession,
 	});
 
 	// Priority: API param > resolved config
@@ -905,9 +924,6 @@ export async function launchAgent(
 		foregroundExecutions: new Map(),
 	};
 	rootNode.session = rootTaskSession;
-
-	// getSession lookup: find session from tracker by sessionId
-	const getSession = (sessionId: string) => tracker.get(sessionId)?.session;
 
 	const session = agentCtx.provider.startSession({
 		cwd: project.path,

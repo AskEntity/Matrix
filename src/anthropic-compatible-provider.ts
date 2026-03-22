@@ -86,11 +86,8 @@ export {
 	jsSearch,
 	killBackgroundProcess,
 	resolvePath,
-	TOOLS,
 	truncateSearchOutput,
 } from "./tools/index.ts";
-
-import { TOOLS as _TOOLS } from "./tools/index.ts";
 
 /**
  * Add cache_control breakpoints to the messages array for prompt caching.
@@ -441,7 +438,7 @@ function createAnthropicAdapter(
 			// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
 			mcpHandlers: Map<string, ToolDefinition<any>>,
 		): unknown[] {
-			const allTools: Tool[] = [..._TOOLS];
+			const allTools: Tool[] = [];
 			if (mcpToolDefs) {
 				for (const [serverName, defs] of Object.entries(mcpToolDefs)) {
 					for (const def of defs) {

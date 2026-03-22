@@ -359,3 +359,25 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `getSession` callback pattern chosen over direct tracker dependency — keeps tools layer decoupled from daemon
 - Tests create per-test `bgMap`/`fgMap` and a `makeGetSession` helper to wire them through `executeTool`
 
+
+
+## Phase 2: Unified Tool Definitions
+
+### What was done
+- Created `createBuiltinTools()` factory in `definitions.ts` that returns `ToolDefinition[]` with handler closures
+- Each handler wraps the existing implementation (bash, background, read_file, write_file, edit_file, list_files, search)
+- Handlers return `CallToolResult` with non-standard properties (`_cwd`, `_backgroundId`, `_backgroundCommand`, `_isImage`, `_imageData`, `_mediaType`) — same pattern as orchestrator tools use `_consumedMessageIds`, `_pending`, etc.
+- `executeToolUnified()` simplified to ONE path: all tools go through `mcpHandler.handler()`. Fallback to `executeTool()` removed.
+- Both providers `prepareTools()` now iterate only over `mcpToolDefs` — no more separate `_TOOLS` array.
+- `convertToolsToOpenAI()` removed from openai-compatible-provider.ts.
+- Built-in tools merged into `mcpToolDefs.opengraft` alongside orchestrator tools in `createAgentContext()`.
+- `getSession` callback passed to `createAgentContext()` and wired to `createBuiltinTools()`.
+- CWD sync: run loop updates both local `cwd` AND `session.cwd` when bash changes directory.
+
+### Key decisions
+- `BuiltinToolResult` needs `[key: string]: unknown` index signature for CallToolResult compatibility (MCP SDK type uses Zod-generated loose objects).
+- `toolCallId` passed through `extra` parameter to handler — bash needs it for foreground execution tracking.
+- `executeTool()` in executor.ts kept for backward compat (used by 50+ test calls directly). Production path no longer uses it.
+- Built-in tools get `mcp__opengraft__` prefix like orchestrator tools (consistent naming).
+- `getCwd()` callback pattern instead of passing cwd directly — handlers read from session for current CWD.
+
