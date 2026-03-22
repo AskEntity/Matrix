@@ -683,13 +683,18 @@ export async function runChildAgentInBackground(
 		await tracker.save();
 
 		// Enqueue child_complete message to parent's queue (bubbles up through non-running intermediates)
+		// Use doneSummary from tracker (set by done() handler) as canonical output,
+		// falling back to agentResult.output for agents that exit without calling done()
+		const freshNode = tracker.get(nodeId);
+		const completionOutput =
+			freshNode?.doneSummary ?? (agentResult.output ?? "").slice(0, 2000);
 		const completionResult = findParentQueue(tracker, nodeId);
 		const completionNotification = {
 			source: "child_complete" as const,
 			taskId: nodeId,
 			title: node.title,
 			success: success ?? true,
-			output: (agentResult.output ?? "").slice(0, 2000),
+			output: completionOutput.slice(0, 2000),
 		};
 		if (completionResult?.queue) {
 			try {

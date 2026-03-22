@@ -331,11 +331,6 @@ export const LogEntryView = memo(function LogEntryView({
 							<span className="og-tool-card-name">
 								{success ? "✓" : "✗"} {title}
 							</span>
-							<span
-								className={`og-mcp-done-status ${success ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
-							>
-								{success ? "Passed" : "Failed"}
-							</span>
 							<span className="og-tool-card-toggle">
 								<IconChevron size={10} expanded={expanded} />
 							</span>
@@ -344,11 +339,6 @@ export const LogEntryView = memo(function LogEntryView({
 						<div className="og-tool-card-header">
 							<span className="og-tool-card-name">
 								{success ? "✓" : "✗"} {title}
-							</span>
-							<span
-								className={`og-mcp-done-status ${success ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
-							>
-								{success ? "Passed" : "Failed"}
 							</span>
 						</div>
 					)}
