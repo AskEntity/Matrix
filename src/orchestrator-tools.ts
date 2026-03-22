@@ -633,20 +633,32 @@ export function createOrchestratorTools(
 						isError: true,
 					};
 				}
-				if (
-					currentTaskId !== null &&
-					args.taskId !== currentTaskId &&
-					!isDescendantOf(tracker, args.taskId, currentTaskId)
-				) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Error: Task "${args.taskId}" is not your descendant.`,
-							},
-						],
-						isError: true,
-					};
+				if (currentTaskId !== null) {
+					// Non-root agent: only direct children allowed
+					if (node.parentId !== currentTaskId) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Error: Task "${args.taskId}" is not your direct child.`,
+								},
+							],
+							isError: true,
+						};
+					}
+				} else {
+					// Root orchestrator: only top-level tasks (children of root node)
+					if (node.parentId !== tracker.rootNodeId && node.parentId !== null) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Error: Task "${args.taskId}" is not your direct child.`,
+								},
+							],
+							isError: true,
+						};
+					}
 				}
 				if (node.status === "draft") {
 					return {

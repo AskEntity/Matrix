@@ -303,3 +303,8 @@ Daemon (Hono: HTTP + SSE on :7433)
 - If a task needs sub-phases: either (a) let the parent agent coordinate its own children, or (b) make all phases direct children of the orchestrator (flat).
 - Do NOT create children under a parent task and then manage them yourself as the grandparent. The parent agent gets confused by child_complete messages from children it didn't create.
 - child_complete delivered by done() wakes the parent agent. If you closed the parent, child_complete auto-reopens it with no context → garbage output.
+
+## send_message_to_child Direct Children Only
+- `send_message_to_child` only allows messaging direct children (node.parentId === currentTaskId), not any descendant.
+- Root orchestrator checks node.parentId === tracker.rootNodeId || node.parentId === null.
+- Other tools (create_task, update_task, reorder_tasks) still use isDescendantOf for broader scope validation — those are correct to allow subtree operations.
