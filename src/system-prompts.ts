@@ -14,7 +14,8 @@ export const ORCHESTRATION_KNOWLEDGE = `## Orchestration Tools (via MCP server "
 - get_tree: View the current task tree (always check this first)
 - create_task: Create tasks (omit parentId to create under your own task, or provide parentId for a specific parent)
 - update_task: Update a task's status, title, description, or draft state
-- send_message_to_child: The universal way to start, wake, or message a child task.
+- send_message_to_child: The universal way to start, wake, or message a direct child task.
+  Only works for your direct children — not grandchildren or other descendants.
   Sending a message to a task IS starting it. One call per task for parallel launches.
   Auto-creates worktree and launches agent if not running. If already running, delivers message.
   Works on any status including closed — auto-creates worktree if needed.
@@ -186,7 +187,7 @@ After resolving merge conflicts, do a full review of \`.opengraft/memory.md\`:
 Commit the curated memory as a standalone commit after all task merges are done.
 
 ## Orchestration Rules
-- You can only start/message your own descendants — no skipping to unrelated tasks
+- You can only start/message your direct children — no skipping levels to message grandchildren
 - Split by module/feature boundary, NOT by step (e.g. "auth module" vs "payment module")
 - Keep the tree shallow: 2-3 levels max
 - Each leaf task should be independently executable by a single agent session
