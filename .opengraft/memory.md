@@ -206,3 +206,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Mock providers in tests must loop `while(true) { await queue.wait(); }` to stay alive.
 - **`walkEventsToMessages()`**: Messages with non-empty `id` are deferred (skipped until `messages_consumed`). Messages with `id: ""` are rendered directly as prompt events.
 - **Frontend `UIOnlyEvent`**: includes `parent_update`, `child_report`, `cross_project`, `background_complete`, `clarify_response` types for UI rendering (not in backend Event union).
+
+## Interleaved assistant_text + tool_call Bug Fix
+
+- **Problem**: `walkEventsToMessages()` used two sequential while loops (first all assistant_text, then all tool_call), which split interleaved text→tool→text→tool sequences into separate assistant messages.
+- **Fix**: Single unified while loop that collects both event types until hitting a non-assistant event (tool_result, message, etc.).
+- **AssistantContent.items**: Added ordered `items` array to preserve interleaved sequence. `texts`/`toolCalls` arrays kept for OpenAI (which joins texts and separates tool_calls anyway). Anthropic callback uses `items` for correct content block ordering.
+- **Natural boundary**: assistant_text + tool_call = one assistant turn. tool_result/message = the boundary that ends it.
+

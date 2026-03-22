@@ -204,17 +204,19 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 
 		onAssistantContent(content: AssistantContent): unknown {
 			const blocks: unknown[] = [];
-			for (const text of content.texts) {
-				blocks.push({ type: "text", text });
-			}
-			for (const tc of content.toolCalls) {
-				blocks.push({
-					type: "tool_use",
-					id: tc.id,
-					name: tc.name,
-					input: tc.input,
-					caller: { type: "direct" },
-				});
+			// Use ordered items to preserve interleaved text/tool_call sequence
+			for (const item of content.items) {
+				if (item.type === "text") {
+					blocks.push({ type: "text", text: item.text });
+				} else {
+					blocks.push({
+						type: "tool_use",
+						id: item.call.id,
+						name: item.call.name,
+						input: item.call.input,
+						caller: { type: "direct" },
+					});
+				}
 			}
 			// Defensive: ensure content array is never empty (causes Anthropic 400)
 			if (blocks.length === 0) {
