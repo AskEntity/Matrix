@@ -275,3 +275,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Current workaround: doneSummary stored on tracker node, read by runChildAgentInBackground. Works but violates stateless message principle.
 - Target: done() handler directly calls deliverMessage with the complete child_complete body, then closeQueue. runChildAgentInBackground only handles cleanup (cost, worktree), not message construction.
 
+
+## done() → child_complete Direct Delivery
+- done() handler now directly enqueues child_complete to parent queue (like report_to_parent), no more reconstruction from tracker state in runChildAgentInBackground.
+- `doneSummary` field removed from TaskNode type and `setDoneSummary` removed from TaskTracker — summary lives in the message, not on the node.
+- runChildAgentInBackground only delivers child_complete as fallback when done() was NOT called (daemon restart, error).
+- done() card and child_complete card both show "Task Passed/Failed: {title}" format.

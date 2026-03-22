@@ -72,7 +72,11 @@ export const ToolCard = memo(function ToolCard({
 		const borderClass = donePassed
 			? "og-tool-card-done-passed"
 			: "og-tool-card-done-failed";
-		const doneTitle = donePassed ? "Passed" : "Failed";
+		const doneTaskId = getLogTaskId(useEntry);
+		const doneTaskTitle = doneTaskId
+			? nodeMap?.get(doneTaskId)?.title
+			: undefined;
+		const doneTitle = `Task ${donePassed ? "Passed" : "Failed"}: ${doneTaskTitle || "Orchestrator"}`;
 		return (
 			<div className="og-log-entry og-event-tool_card">
 				<span className="og-log-time">{formatTime(useEntry.ts)}</span>

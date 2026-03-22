@@ -32,8 +32,6 @@ export interface TaskNode {
 	editedBy?: "user" | "agent";
 	/** Optional color label for visual categorization. */
 	color?: string;
-	/** Summary from done() call — used as child_complete output. */
-	doneSummary?: string;
 	createdAt: string;
 	updatedAt: string;
 }

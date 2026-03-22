@@ -682,38 +682,39 @@ export async function runChildAgentInBackground(
 		}
 		await tracker.save();
 
-		// Enqueue child_complete message to parent's queue (bubbles up through non-running intermediates)
-		// Use doneSummary from tracker (set by done() handler) as canonical output,
-		// falling back to agentResult.output for agents that exit without calling done()
-		const freshNode = tracker.get(nodeId);
-		const completionOutput =
-			freshNode?.doneSummary ?? (agentResult.output ?? "").slice(0, 2000);
-		const completionResult = findParentQueue(tracker, nodeId);
-		const completionNotification = {
-			source: "child_complete" as const,
-			taskId: nodeId,
-			title: node.title,
-			success: success ?? true,
-			output: completionOutput.slice(0, 2000),
-		};
-		if (completionResult?.queue) {
-			try {
-				completionResult.queue.enqueue(completionNotification);
-			} catch {
-				// Queue may be closed if parent already finished
+		// Fallback child_complete delivery: only when done() was NOT called.
+		// When done() was called, it already delivered child_complete directly to the parent queue.
+		// This handles agents that exit without calling done() (daemon restart, error, budget exceeded).
+		if (!doneWasCalled) {
+			const completionOutput = (agentResult.output ?? "").slice(0, 2000);
+			const completionResult = findParentQueue(tracker, nodeId);
+			const completionNotification = {
+				source: "child_complete" as const,
+				taskId: nodeId,
+				title: node.title,
+				success: success ?? true,
+				output: completionOutput,
+			};
+			if (completionResult?.queue) {
+				try {
+					completionResult.queue.enqueue(completionNotification);
+				} catch {
+					// Queue may be closed if parent already finished
+				}
 			}
-		}
-		// Always persist to immediate parent for its eventual resumption
-		if (
-			node.parentId &&
-			(!completionResult?.queue || completionResult.targetId !== node.parentId)
-		) {
-			await persistMessage(
-				ctx.config.dataDir,
-				project.id,
-				node.parentId,
-				completionNotification,
-			);
+			// Always persist to immediate parent for its eventual resumption
+			if (
+				node.parentId &&
+				(!completionResult?.queue ||
+					completionResult.targetId !== node.parentId)
+			) {
+				await persistMessage(
+					ctx.config.dataDir,
+					project.id,
+					node.parentId,
+					completionNotification,
+				);
+			}
 		}
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
