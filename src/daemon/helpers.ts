@@ -168,16 +168,36 @@ export async function pruneSessionFiles(
 }
 
 /**
+ * Strip fields from an event that the UI doesn't need.
+ * Currently strips body.header from message events (contains memory.md content, 10-20KB).
+ */
+export function stripEventForUI(
+	event: Record<string, unknown>,
+): Record<string, unknown> {
+	if (
+		event.type === "message" &&
+		event.body &&
+		typeof event.body === "object" &&
+		"header" in (event.body as Record<string, unknown>)
+	) {
+		const { header: _, ...bodyRest } = event.body as Record<string, unknown>;
+		return { ...event, body: bodyRest };
+	}
+	return event;
+}
+
+/**
  * Normalize an Event from JSONL for UI consumption.
  * Adds taskId to events that don't have it (all events need taskId for routing).
+ * Strips UI-irrelevant fields (e.g. body.header).
  */
 export function normalizeEventForUI(
 	event: Event,
 	sessionId: string,
 ): Record<string, unknown> {
 	const base = event as unknown as Record<string, unknown>;
-	return {
+	return stripEventForUI({
 		...base,
 		taskId: sessionId,
-	};
+	});
 }
