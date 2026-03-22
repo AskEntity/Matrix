@@ -227,3 +227,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 ## Critical Rule
 - **NEVER delete session JSONL files** for other projects. If a session is corrupted, wait for daemon restart with fixed code — the converter fix will handle it on resume. Session files are not in git and cannot be recovered.
+
+## Cross-Project Auto-Launch
+- `send_message_to_project` now auto-launches target agent if not running, via `injectMessageToProject` dep.
+- `injectMessageToProject` wraps `handleInjectMessage` from agent-lifecycle.ts. Only wired at depth 0 with `orchestratorSystemPrompt`.
+- When target has running agent: direct queue enqueue (fast path, cross_project message).
+- When target has no agent: falls back to `injectMessageToProject` which uses `handleInjectMessage` to persist + launch. Message is prefixed with sender identity since it goes through as a user message.
