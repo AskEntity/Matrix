@@ -242,16 +242,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 	/**
 	 * Convert a raw queue message into a UIEvent.
-	 * Maps structured rawMessage fields directly to concrete Event types.
-	 * Returns null for messages that should be skipped (user messages use two-phase lifecycle).
+	 * All queue messages go through two-phase lifecycle (message → deferred → messages_consumed → materialize),
+	 * so the ephemeral queue_message SSE event should never produce UI cards — return null unconditionally.
 	 */
 	function createQueueUIEvent(
-		rm: QueueEntryLike,
-		parentTaskId?: string,
+		_rm: QueueEntryLike,
+		_parentTaskId?: string,
 	): UIEvent | null {
-		// User messages use two-phase lifecycle (pending → consumed) — skip here
-		if (rm.source === "user") return null;
-		return queueEntryToUIEvent(rm, parentTaskId);
+		return null;
 	}
 
 	// --- Deferred messages for two-phase lifecycle ---
