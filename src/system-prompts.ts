@@ -289,11 +289,14 @@ Only implement directly if the task is small enough for a single agent session.
   Your working directory persists across bash calls. Do NOT start every command with \`cd /path &&\` — it's wasteful.
   If you cd once, all subsequent commands run from that directory. Your CWD is tracked — if you navigate outside your worktree, you'll be warned. Remember to cd back when done.
   **foreground_timeout**: Controls how long to wait before backgrounding. Default = timeout (fully foreground).
-  Use 0 for fire-and-forget (e.g. starting servers). Background completions arrive as messages on your next yield() or tool call.
-  **Background management**: Use bg_action ('kill' or 'status') with background_id to manage backgrounded processes.
+  Use \`run_in_background: true\` for intentional background (preferred over foreground_timeout=0).
+  Background completions are auto-delivered with output content on your next yield() or tool call.
+  Do NOT poll with bg_action=status — you will be notified automatically when it completes.
+  **Background management**: Use bg_action ('kill', 'status', or 'await') with background_id to manage backgrounded processes.
+  Use bg_action='await' to block until a background process completes and get its full output.
   Foreground commands automatically track CWD (cd updates persist across calls). Background commands
-  (foreground_timeout=0 or exceeded foreground_timeout) do NOT affect CWD — your working directory stays unchanged.
-  You can read_file on the output file paths for partial output.
+  (run_in_background=true or exceeded foreground_timeout) do NOT affect CWD — your working directory stays unchanged.
+  You can read_file on the output file paths to check partial output while the process runs.
 - read_file: Read file contents with optional offset/limit for large files.
   You MUST read a file before editing it — understand existing code before modifying.
 - write_file: Create or overwrite files (creates directories automatically).

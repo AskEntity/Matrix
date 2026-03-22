@@ -55,9 +55,9 @@ export type QueueMessage =
 			command: string;
 			exitCode: number | null;
 			durationMs: number;
-			/** @deprecated No longer included — use read_file on output files instead. */
+			/** Included when output is small (< 50KB). Undefined for large output — use read_file. */
 			stdout?: string;
-			/** @deprecated No longer included — use read_file on output files instead. */
+			/** Included when output is small (< 50KB). Undefined for large output — use read_file. */
 			stderr?: string;
 	  }
 	| { source: "compact" };

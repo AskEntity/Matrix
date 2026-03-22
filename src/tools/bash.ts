@@ -41,6 +41,10 @@ export interface BackgroundProcess {
 	stdoutPath: string | null;
 	/** Path to the stderr output file (while running, for partial reads). */
 	stderrPath: string | null;
+	/** Resolves when the process completes. Used by bg_action="await". */
+	completionPromise?: Promise<void>;
+	/** Call to resolve the completion promise. */
+	resolveCompletion?: () => void;
 }
 
 /**
@@ -107,6 +111,144 @@ function cleanupBgFiles(bg: BackgroundProcess): void {
 	bg.stderrPath = null;
 }
 
+// ── Shared Output Formatting ──
+
+/** Max file size (bytes) to inline in response. Above this, return a preview + file path. */
+const LARGE_OUTPUT_THRESHOLD = 50 * 1024; // 50KB
+/** Preview size for large output. */
+const PREVIEW_SIZE = 5 * 1024; // 5KB
+
+/** Get file size in bytes, or 0 if file doesn't exist. */
+function fileSize(path: string): number {
+	try {
+		return statSync(path).size;
+	} catch {
+		return 0;
+	}
+}
+
+/**
+ * Read and format output from stdout/stderr files.
+ * Small output (< 50KB): inline content, clean up temp files.
+ * Large output (> 50KB): preview + file path for read_file, keep temp files.
+ *
+ * This is THE formatting function — ALL paths use it:
+ * - Foreground completion
+ * - Background completion notification (queue message)
+ * - bg_action="await" result
+ * - bg_action="status" on completed process
+ */
+export function formatBashResult(
+	stdoutPath: string | null,
+	stderrPath: string | null,
+	exitCode: number,
+): {
+	stdout: string;
+	stderr: string;
+	content: string;
+	isError: boolean;
+	/** Set if stdout was too large — file kept for read_file access. */
+	stdoutTruncatedPath?: string;
+	/** Set if stderr was too large — file kept for read_file access. */
+	stderrTruncatedPath?: string;
+} {
+	let stdout = "";
+	let stderr = "";
+	let stdoutTruncatedPath: string | undefined;
+	let stderrTruncatedPath: string | undefined;
+
+	// Read stdout
+	if (stdoutPath) {
+		const stdoutSize = fileSize(stdoutPath);
+		if (stdoutSize > LARGE_OUTPUT_THRESHOLD) {
+			try {
+				const buf = Buffer.alloc(PREVIEW_SIZE);
+				const fd = openSync(stdoutPath, "r");
+				const bytesRead = readSync(fd, buf, 0, PREVIEW_SIZE, 0);
+				closeSync(fd);
+				stdout = buf.toString("utf-8", 0, bytesRead);
+			} catch {
+				// File may not exist
+			}
+			stdoutTruncatedPath = stdoutPath;
+		} else {
+			try {
+				stdout = readFileSync(stdoutPath, "utf-8");
+			} catch {
+				// File may not exist
+			}
+			try {
+				unlinkSync(stdoutPath);
+			} catch {
+				// Already removed
+			}
+		}
+	}
+
+	// Read stderr
+	if (stderrPath) {
+		const stderrSize = fileSize(stderrPath);
+		if (stderrSize > LARGE_OUTPUT_THRESHOLD) {
+			try {
+				const buf = Buffer.alloc(PREVIEW_SIZE);
+				const fd = openSync(stderrPath, "r");
+				const bytesRead = readSync(fd, buf, 0, PREVIEW_SIZE, 0);
+				closeSync(fd);
+				stderr = buf.toString("utf-8", 0, bytesRead);
+			} catch {
+				// File may not exist
+			}
+			stderrTruncatedPath = stderrPath;
+		} else {
+			try {
+				stderr = readFileSync(stderrPath, "utf-8");
+			} catch {
+				// File may not exist
+			}
+			try {
+				unlinkSync(stderrPath);
+			} catch {
+				// Already removed
+			}
+		}
+	}
+
+	// Build content string
+	const parts: string[] = [];
+	if (stdout) {
+		if (stdoutTruncatedPath) {
+			const size = fileSize(stdoutTruncatedPath);
+			const sizeKb = Math.round(size / 1024);
+			parts.push(
+				`stdout (truncated, ${sizeKb}KB total):\n${stdout}\n(Output too large. Full output: ${stdoutTruncatedPath} — use read_file with offset/limit.)`,
+			);
+		} else {
+			parts.push(`stdout:\n${stdout}`);
+		}
+	}
+	if (stderr) {
+		if (stderrTruncatedPath) {
+			const size = fileSize(stderrTruncatedPath);
+			const sizeKb = Math.round(size / 1024);
+			parts.push(
+				`stderr (truncated, ${sizeKb}KB total):\n${stderr}\n(Output too large. Full output: ${stderrTruncatedPath} — use read_file with offset/limit.)`,
+			);
+		} else {
+			parts.push(`stderr:\n${stderr}`);
+		}
+	}
+	parts.push(`exit code: ${exitCode}`);
+
+	return {
+		stdout,
+		stderr,
+		content: parts.join("\n"),
+		isError: exitCode !== 0,
+		stdoutTruncatedPath,
+		stderrTruncatedPath,
+	};
+}
+
 /** Clean up all background processes for a session. */
 export function cleanupSessionBackgroundProcesses(sessionId: string): void {
 	const map = backgroundProcesses.get(sessionId);
@@ -160,6 +302,44 @@ export function killBackgroundProcess(
 	return `Process ${bgId} is running but has no kill handle.`;
 }
 
+/**
+ * Await a background process completion, then return formatted result.
+ * Returns null if process not found.
+ */
+export async function awaitBackgroundProcess(
+	sessionId: string,
+	bgId: string,
+): Promise<{ content: string; isError: boolean } | null> {
+	const map = backgroundProcesses.get(sessionId);
+	if (!map) return null;
+	const bg = map.get(bgId);
+	if (!bg) return null;
+
+	// Wait for completion if still running
+	if (bg.status === "running" && bg.completionPromise) {
+		await bg.completionPromise;
+	}
+
+	// Use shared formatting
+	const result = formatBashResult(
+		bg.stdoutPath,
+		bg.stderrPath,
+		bg.exitCode ?? 1,
+	);
+	const durationMs = Date.now() - bg.startTime;
+	const parts = [
+		`Background process ${bg.id} completed.`,
+		`Command: ${bg.command}`,
+		`Duration: ${Math.round(durationMs / 1000)}s`,
+		"",
+		result.content,
+	];
+	return {
+		content: parts.join("\n"),
+		isError: result.isError,
+	};
+}
+
 /** Get status of a background process. Returns a status message or null if not found. */
 export function getBackgroundStatus(
 	sessionId: string,
@@ -171,6 +351,22 @@ export function getBackgroundStatus(
 	if (!bg) return null;
 
 	const durationMs = Date.now() - bg.startTime;
+
+	// For completed processes, use formatBashResult (shared formatting)
+	if (bg.status !== "running" && bg.exitCode !== null) {
+		const result = formatBashResult(bg.stdoutPath, bg.stderrPath, bg.exitCode);
+		const parts: string[] = [
+			`Background ID: ${bg.id}`,
+			`Command: ${bg.command}`,
+			`Status: ${bg.status}`,
+			`Duration: ${Math.round(durationMs / 1000)}s`,
+			"",
+			result.content,
+		];
+		return parts.join("\n");
+	}
+
+	// Still running — show file paths for partial output
 	const parts: string[] = [
 		`Background ID: ${bg.id}`,
 		`Command: ${bg.command}`,
@@ -178,11 +374,6 @@ export function getBackgroundStatus(
 		`Duration: ${Math.round(durationMs / 1000)}s`,
 	];
 
-	if (bg.exitCode !== null) {
-		parts.push(`Exit code: ${bg.exitCode}`);
-	}
-
-	// Always include file paths for output reading
 	if (bg.stdoutPath) {
 		parts.push(`stdout file: ${bg.stdoutPath}`);
 	}
@@ -190,15 +381,9 @@ export function getBackgroundStatus(
 		parts.push(`stderr file: ${bg.stderrPath}`);
 	}
 
-	if (bg.status === "running") {
-		parts.push(
-			"\n(Process still running. Use read_file on the paths above for partial output.)",
-		);
-	} else {
-		parts.push(
-			"\n(Process completed. Use read_file on the paths above to see output.)",
-		);
-	}
+	parts.push(
+		"\n(Process still running. Use read_file on the paths above for partial output.)",
+	);
 
 	return parts.join("\n");
 }
@@ -265,109 +450,22 @@ export async function executeBashWithTimeout(
 
 	const startTime = Date.now();
 
-	/** Max file size (bytes) to inline in foreground response. Above this, return a preview + file path. */
-	const LARGE_OUTPUT_THRESHOLD = 50 * 1024; // 50KB
-	/** Preview size for large output. */
-	const PREVIEW_SIZE = 5 * 1024; // 5KB
-
-	/** Get file size in bytes, or 0 if file doesn't exist. */
-	function fileSize(path: string): number {
-		try {
-			return statSync(path).size;
-		} catch {
-			return 0;
-		}
-	}
-
-	/** Read output files. If small, clean up files; if large, keep files and return preview + path. */
-	function readOutput(): {
-		stdout: string;
-		stderr: string;
-		/** Set if stdout was too large — file kept for read_file access. */
-		stdoutTruncatedPath?: string;
-		/** Set if stderr was too large — file kept for read_file access. */
-		stderrTruncatedPath?: string;
-	} {
-		let stdout = "";
-		let stderr = "";
-		let stdoutTruncatedPath: string | undefined;
-		let stderrTruncatedPath: string | undefined;
-		const stdoutSize = fileSize(stdoutPath);
-		const stderrSize = fileSize(stderrPath);
-
-		// Read stdout
-		if (stdoutSize > LARGE_OUTPUT_THRESHOLD) {
-			// Large output — read preview only, keep file
-			try {
-				const buf = Buffer.alloc(PREVIEW_SIZE);
-				const fd = openSync(stdoutPath, "r");
-				const bytesRead = readSync(fd, buf, 0, PREVIEW_SIZE, 0);
-				closeSync(fd);
-				stdout = buf.toString("utf-8", 0, bytesRead);
-			} catch {
-				// File may not exist
-			}
-			stdoutTruncatedPath = stdoutPath;
-		} else {
-			try {
-				stdout = readFileSync(stdoutPath, "utf-8");
-			} catch {
-				// File may not exist
-			}
-			try {
-				unlinkSync(stdoutPath);
-			} catch {
-				// Already removed
-			}
-		}
-
-		// Read stderr
-		if (stderrSize > LARGE_OUTPUT_THRESHOLD) {
-			try {
-				const buf = Buffer.alloc(PREVIEW_SIZE);
-				const fd = openSync(stderrPath, "r");
-				const bytesRead = readSync(fd, buf, 0, PREVIEW_SIZE, 0);
-				closeSync(fd);
-				stderr = buf.toString("utf-8", 0, bytesRead);
-			} catch {
-				// File may not exist
-			}
-			stderrTruncatedPath = stderrPath;
-		} else {
-			try {
-				stderr = readFileSync(stderrPath, "utf-8");
-			} catch {
-				// File may not exist
-			}
-			try {
-				unlinkSync(stderrPath);
-			} catch {
-				// Already removed
-			}
-		}
-
-		return { stdout, stderr, stdoutTruncatedPath, stderrTruncatedPath };
-	}
-
-	// Helper: parse stdout for CWD marker and build result
-	function parseResult(
-		stdout: string,
-		stderr: string,
-		exitCode: number,
-		opts?: {
-			stdoutTruncatedPath?: string;
-			stderrTruncatedPath?: string;
-		},
-	): {
+	// Helper: use formatBashResult + parse CWD marker for foreground results
+	function parseForegroundResult(exitCode: number): {
 		content: string;
 		isError: boolean;
 		cwd?: string;
 	} {
-		let cleanStdout = stdout;
+		const result = formatBashResult(stdoutPath, stderrPath, exitCode);
+
+		// Extract CWD marker from stdout before formatting
+		let cleanContent = result.content;
 		let newCwd: string | undefined;
-		const markerIdx = cleanStdout.lastIndexOf(CWD_MARKER);
+
+		// CWD marker is in the raw stdout — check if it's present
+		const markerIdx = result.stdout.lastIndexOf(CWD_MARKER);
 		if (markerIdx !== -1) {
-			const afterMarker = cleanStdout
+			const afterMarker = result.stdout
 				.slice(markerIdx + CWD_MARKER.length)
 				.trim();
 			const pwdLine = afterMarker.split("\n")[0]?.trim();
@@ -382,45 +480,50 @@ export async function executeBashWithTimeout(
 					newCwd = pwdLine;
 				}
 			}
-			cleanStdout = cleanStdout.slice(0, markerIdx);
-		}
-
-		const parts: string[] = [];
-		if (effectiveCwd !== cwd) {
-			parts.push(
-				`workdir reset to ${effectiveCwd} (previous dir '${cwd}' no longer exists)`,
-			);
-			if (!newCwd) newCwd = effectiveCwd;
-		}
-
-		// Format stdout — with truncation notice for large output
-		if (cleanStdout) {
-			if (opts?.stdoutTruncatedPath) {
-				const size = fileSize(opts.stdoutTruncatedPath);
-				const sizeKb = Math.round(size / 1024);
+			// Rebuild content without CWD marker in stdout
+			const cleanStdout = result.stdout.slice(0, markerIdx);
+			const parts: string[] = [];
+			if (effectiveCwd !== cwd) {
 				parts.push(
-					`stdout (truncated, ${sizeKb}KB total):\n${cleanStdout}\n(Output too large. Full output: ${opts.stdoutTruncatedPath} — use read_file with offset/limit.)`,
+					`workdir reset to ${effectiveCwd} (previous dir '${cwd}' no longer exists)`,
 				);
-			} else {
-				parts.push(`stdout:\n${cleanStdout}`);
+				if (!newCwd) newCwd = effectiveCwd;
+			}
+			if (cleanStdout) {
+				if (result.stdoutTruncatedPath) {
+					const size = fileSize(result.stdoutTruncatedPath);
+					const sizeKb = Math.round(size / 1024);
+					parts.push(
+						`stdout (truncated, ${sizeKb}KB total):\n${cleanStdout}\n(Output too large. Full output: ${result.stdoutTruncatedPath} — use read_file with offset/limit.)`,
+					);
+				} else {
+					parts.push(`stdout:\n${cleanStdout}`);
+				}
+			}
+			if (result.stderr) {
+				if (result.stderrTruncatedPath) {
+					const size = fileSize(result.stderrTruncatedPath);
+					const sizeKb = Math.round(size / 1024);
+					parts.push(
+						`stderr (truncated, ${sizeKb}KB total):\n${result.stderr}\n(Output too large. Full output: ${result.stderrTruncatedPath} — use read_file with offset/limit.)`,
+					);
+				} else {
+					parts.push(`stderr:\n${result.stderr}`);
+				}
+			}
+			parts.push(`exit code: ${exitCode}`);
+			cleanContent = parts.join("\n");
+		} else {
+			// No CWD marker — prepend workdir reset if needed
+			if (effectiveCwd !== cwd) {
+				const resetMsg = `workdir reset to ${effectiveCwd} (previous dir '${cwd}' no longer exists)`;
+				cleanContent = `${resetMsg}\n${cleanContent}`;
+				if (!newCwd) newCwd = effectiveCwd;
 			}
 		}
-		// Format stderr — with truncation notice for large output
-		if (stderr) {
-			if (opts?.stderrTruncatedPath) {
-				const size = fileSize(opts.stderrTruncatedPath);
-				const sizeKb = Math.round(size / 1024);
-				parts.push(
-					`stderr (truncated, ${sizeKb}KB total):\n${stderr}\n(Output too large. Full output: ${opts.stderrTruncatedPath} — use read_file with offset/limit.)`,
-				);
-			} else {
-				parts.push(`stderr:\n${stderr}`);
-			}
-		}
-		parts.push(`exit code: ${exitCode}`);
 
 		if (newCwd) {
-			parts.push(`\nworkdir set to ${newCwd} from now on`);
+			cleanContent += `\n\nworkdir set to ${newCwd} from now on`;
 			if (fallbackCwd) {
 				let resolvedWorktree: string;
 				let resolvedNew: string;
@@ -438,16 +541,14 @@ export async function executeBashWithTimeout(
 					resolvedNew !== resolvedWorktree &&
 					!resolvedNew.startsWith(`${resolvedWorktree}/`);
 				if (isOutside) {
-					parts.push(
-						`[Note: CWD is outside your worktree. Your worktree root is ${resolvedWorktree}. Remember to cd back when done.]`,
-					);
+					cleanContent += `\n[Note: CWD is outside your worktree. Your worktree root is ${resolvedWorktree}. Remember to cd back when done.]`;
 				}
 			}
 		}
 
 		return {
-			content: parts.join("\n"),
-			isError: exitCode !== 0,
+			content: cleanContent,
+			isError: result.isError,
 			cwd: newCwd,
 		};
 	}
@@ -468,6 +569,9 @@ export async function executeBashWithTimeout(
 			stdoutPath,
 			stderrPath,
 		};
+		bgEntry.completionPromise = new Promise<void>((resolve) => {
+			bgEntry.resolveCompletion = resolve;
+		});
 		bgMap.set(bgId, bgEntry);
 
 		// Monitor in background
@@ -477,9 +581,11 @@ export async function executeBashWithTimeout(
 				bgEntry.exitCode = exitCode;
 				bgEntry.status = exitCode === 0 ? "completed" : "failed";
 				bgEntry.kill = null;
-				// Keep temp files alive — agent reads via read_file, cleaned up on session end
 
-				// Notify via queue (metadata only — no stdout/stderr content)
+				// Format output using shared formatBashResult
+				const result = formatBashResult(stdoutPath, stderrPath, exitCode);
+
+				// Notify via queue with content when small
 				if (queue) {
 					try {
 						queue.enqueue({
@@ -488,6 +594,8 @@ export async function executeBashWithTimeout(
 							command,
 							exitCode,
 							durationMs: Date.now() - startTime,
+							stdout: result.stdout || undefined,
+							stderr: result.stderr || undefined,
 						});
 					} catch {
 						// Queue may be closed
@@ -495,11 +603,13 @@ export async function executeBashWithTimeout(
 				}
 			} catch {
 				bgEntry.status = "failed";
+			} finally {
+				bgEntry.resolveCompletion?.();
 			}
 		})();
 
 		return {
-			content: `Command backgrounded immediately.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nUse read_file on the output files for partial output. Results will be delivered when complete.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}`,
+			content: `Command backgrounded immediately.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes. Do NOT poll with bg_action=status.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}`,
 			isError: false,
 		};
 	}
@@ -519,19 +629,14 @@ export async function executeBashWithTimeout(
 
 	if (!result.timedOut) {
 		// Process completed within foreground timeout — return normally
-		const { stdout, stderr, stdoutTruncatedPath, stderrTruncatedPath } =
-			readOutput();
-		return parseResult(stdout, stderr, result.exitCode, {
-			stdoutTruncatedPath,
-			stderrTruncatedPath,
-		});
+		return parseForegroundResult(result.exitCode);
 	}
 
 	// Foreground timeout hit — move to background
 	if (!sessionId) {
 		// No session to track background — just kill and return
 		proc.kill();
-		readOutput();
+		formatBashResult(stdoutPath, stderrPath, 1); // clean up temp files
 		return {
 			content: `Command timed out after ${foregroundTimeout}ms and was killed (no session for backgrounding).`,
 			isError: true,
@@ -552,6 +657,9 @@ export async function executeBashWithTimeout(
 		stdoutPath,
 		stderrPath,
 	};
+	bgEntry.completionPromise = new Promise<void>((resolve) => {
+		bgEntry.resolveCompletion = resolve;
+	});
 	bgMap.set(bgId, bgEntry);
 
 	// Monitor in background
@@ -561,7 +669,9 @@ export async function executeBashWithTimeout(
 			bgEntry.exitCode = exitCode;
 			bgEntry.status = exitCode === 0 ? "completed" : "failed";
 			bgEntry.kill = null;
-			// Keep temp files alive — agent reads via read_file, cleaned up on session end
+
+			// Format output using shared formatBashResult
+			const result = formatBashResult(stdoutPath, stderrPath, exitCode);
 
 			if (queue) {
 				try {
@@ -571,6 +681,8 @@ export async function executeBashWithTimeout(
 						command,
 						exitCode,
 						durationMs: Date.now() - startTime,
+						stdout: result.stdout || undefined,
+						stderr: result.stderr || undefined,
 					});
 				} catch {
 					// Queue may be closed
@@ -578,6 +690,8 @@ export async function executeBashWithTimeout(
 			}
 		} catch {
 			bgEntry.status = "failed";
+		} finally {
+			bgEntry.resolveCompletion?.();
 		}
 	})();
 
@@ -590,7 +704,7 @@ export async function executeBashWithTimeout(
 	}
 
 	return {
-		content: `Command moved to background after ${foregroundTimeout}ms.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nUse read_file on the output files for partial output. Full results delivered on completion.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialStdout ? `\n\nPartial stdout so far:\n${partialStdout.slice(0, 5000)}` : ""}`,
+		content: `Command moved to background after ${foregroundTimeout}ms.\nBackground ID: ${bgId}\nCommand: ${command}\nOutput files: ${stdoutPath}, ${stderrPath}\nYou will be notified with output when it completes. Do NOT poll with bg_action=status.\nCWD is not affected by backgrounded commands. Your current working directory remains: ${cwd}${partialStdout ? `\n\nPartial stdout so far:\n${partialStdout.slice(0, 5000)}` : ""}`,
 		isError: false,
 	};
 }

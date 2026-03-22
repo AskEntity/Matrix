@@ -742,15 +742,14 @@ describe("executeBashWithTimeout", () => {
 		expect(result.content).toContain("Background ID: bg-");
 		expect(result.isError).toBe(false);
 
-		// Wait for background process to complete and notify (metadata only, no stdout/stderr)
+		// Wait for background process to complete and notify (with stdout/stderr content)
 		const msg = await queue.wait();
 		expect(msg.source).toBe("background_complete");
 		if (msg.source === "background_complete") {
 			expect(msg.exitCode).toBe(0);
 			expect(msg.durationMs).toBeGreaterThanOrEqual(0);
-			// stdout/stderr no longer included in queue messages
-			expect(msg.stdout).toBeUndefined();
-			expect(msg.stderr).toBeUndefined();
+			// stdout/stderr included when output is small
+			expect(msg.stdout).toContain("bg-test");
 		}
 
 		cleanupSessionBackgroundProcesses(sessionId);
@@ -774,15 +773,14 @@ describe("executeBashWithTimeout", () => {
 		// Verify it's tracked as running
 		expect(getRunningBackgroundCount(sessionId)).toBe(1);
 
-		// Wait for completion notification — this takes ~5s (metadata only, no stdout/stderr)
+		// Wait for completion notification — this takes ~5s (with stdout/stderr content)
 		const msg = await queue.wait();
 		expect(msg.source).toBe("background_complete");
 		if (msg.source === "background_complete") {
 			expect(msg.exitCode).toBe(0);
 			expect(msg.durationMs).toBeGreaterThan(100);
-			// stdout/stderr no longer included in queue messages
-			expect(msg.stdout).toBeUndefined();
-			expect(msg.stderr).toBeUndefined();
+			// stdout/stderr included when output is small
+			expect(msg.stdout).toContain("done-slow");
 		}
 
 		// Should no longer be running
@@ -988,9 +986,7 @@ describe("executeBashWithTimeout", () => {
 
 		const status = getBackgroundStatus(sessionId, "bg-fin");
 		expect(status).toContain("completed");
-		expect(status).toContain("Exit code: 0");
-		expect(status).toContain("stdout file:");
-		expect(status).toContain("Process completed");
+		expect(status).toContain("exit code: 0");
 		expect(status).not.toContain("still running");
 		cleanupSessionBackgroundProcesses(sessionId);
 	});
@@ -1099,6 +1095,101 @@ describe("executeBashWithTimeout", () => {
 		);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("not found");
+	});
+
+	test("run_in_background=true behaves like foreground_timeout=0", async () => {
+		const sessionId = "test-run-in-bg";
+		const queue = new MessageQueue();
+		const result = await executeTool(
+			"bash",
+			{ command: "echo run-in-bg-test", run_in_background: true },
+			tempDir,
+			undefined,
+			sessionId,
+			queue,
+		);
+		expect(result.content).toContain("backgrounded immediately");
+		expect(result.content).toContain("Background ID: bg-");
+		expect(result.isError).toBe(false);
+
+		// Wait for completion with content
+		const msg = await queue.wait();
+		expect(msg.source).toBe("background_complete");
+		if (msg.source === "background_complete") {
+			expect(msg.exitCode).toBe(0);
+			expect(msg.stdout).toContain("run-in-bg-test");
+		}
+
+		cleanupSessionBackgroundProcesses(sessionId);
+	});
+
+	test("bg_action=await blocks until process completes and returns output", async () => {
+		const sessionId = "test-await";
+		const queue = new MessageQueue();
+		// Start a background command
+		const bgResult = await executeBashWithTimeout(
+			"echo await-test",
+			tempDir,
+			undefined,
+			0,
+			sessionId,
+			queue,
+		);
+		const bgId = bgResult.content.match(/bg-[A-Z0-9]+/)?.[0] ?? "";
+		expect(bgId).toBeTruthy();
+
+		// Drain the completion notification so it doesn't interfere
+		await queue.wait();
+
+		// Await should return the formatted output
+		const result = await executeTool(
+			"bash",
+			{ command: "", bg_action: "await", background_id: bgId },
+			tempDir,
+			undefined,
+			sessionId,
+			queue,
+		);
+		expect(result.isError).toBe(false);
+		expect(result.content).toContain("completed");
+		expect(result.content).toContain("await-test");
+		expect(result.content).toContain("exit code: 0");
+
+		cleanupSessionBackgroundProcesses(sessionId);
+	});
+
+	test("bg_action=await for unknown process returns error", async () => {
+		const result = await executeTool(
+			"bash",
+			{ command: "", bg_action: "await", background_id: "bg-unknown" },
+			tempDir,
+			undefined,
+			"test-session",
+		);
+		expect(result.isError).toBe(true);
+		expect(result.content).toContain("not found");
+	});
+
+	test("background completion includes stderr when present", async () => {
+		const sessionId = "test-bg-stderr";
+		const queue = new MessageQueue();
+		const result = await executeBashWithTimeout(
+			"echo err-output >&2",
+			tempDir,
+			undefined,
+			0,
+			sessionId,
+			queue,
+		);
+		expect(result.content).toContain("backgrounded immediately");
+
+		const msg = await queue.wait();
+		expect(msg.source).toBe("background_complete");
+		if (msg.source === "background_complete") {
+			expect(msg.stderr).toContain("err-output");
+		}
+
+		cleanupSessionBackgroundProcesses(sessionId);
 	});
 });
 

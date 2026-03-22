@@ -250,3 +250,12 @@ Daemon (Hono: HTTP + SSE on :7433)
 - done() handler directly enqueues child_complete to parent queue (stateless, like report_to_parent). No reconstruction from tracker state.
 - runChildAgentInBackground only delivers child_complete as fallback when done() was NOT called (daemon restart, error).
 - done() card and child_complete card both show "Task Passed/Failed: {title}" format with green/red border.
+
+
+## Bash Background Improvements
+- `formatBashResult()` in bash.ts is THE shared formatting function for ALL output paths (foreground, background completion, await, status).
+- `run_in_background: true` is sugar for `foreground_timeout=0`. Handled in executor.ts.
+- `bg_action="await"` blocks on `completionPromise` (stored on BackgroundProcess). Returns formatted output like foreground.
+- Background completion notifications now include stdout/stderr content when small (< 50KB). formatBashResult cleans up small files, keeps large ones.
+- `completionPromise` pattern: create bgEntry first, then assign promise that captures resolve callback onto bgEntry. Avoids non-null assertions.
+- `queueMessageToEvent` and `formatBodyForAI` updated to pass through stdout/stderr fields for background_complete messages.
