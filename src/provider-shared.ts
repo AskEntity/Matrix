@@ -10,7 +10,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentRequest } from "./agent-provider.ts";
-import { formatQueueMessage, toRawMessage } from "./agent-tools.ts";
+import { formatQueueMessage } from "./agent-tools.ts";
 import {
 	type Event,
 	formatEventForAI,
@@ -514,14 +514,6 @@ export async function* handleImplicitYield(
 			};
 		}
 		const formatted = nonCompact.map(formatQueueMessage).join("\n");
-		const qmEvt: Event = {
-			type: "queue_message",
-			messages: formatted,
-			rawMessages: nonCompact.map(toRawMessage),
-			ts: Date.now(),
-		};
-		emit?.(qmEvt);
-		yield qmEvt;
 		return {
 			formatted,
 			nonCompact,
@@ -1749,14 +1741,6 @@ export async function* runProviderLoop(
 				if (drained.messages.length > 0) {
 					cancellationQueueMsgs = drained.messages;
 					cancellationFormatted = drained.formatted;
-					const cqEvt: Event = {
-						type: "queue_message",
-						messages: drained.formatted,
-						rawMessages: drained.messages.map(toRawMessage),
-						ts: Date.now(),
-					};
-					emit?.(cqEvt);
-					yield cqEvt;
 				}
 			}
 		}

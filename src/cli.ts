@@ -472,15 +472,6 @@ async function handleLogs(args: string[]): Promise<void> {
 			case "tree_updated":
 				// Too noisy, skip
 				continue;
-			case "queue_message": {
-				const source = String(event.source ?? event.messageType ?? "");
-				const content = String(event.content ?? event.message ?? "").slice(
-					0,
-					200,
-				);
-				line = `📨 Queue message: ${source} - ${content}`;
-				break;
-			}
 			case "compact_boundary":
 				line = "📦 Context compacted";
 				break;

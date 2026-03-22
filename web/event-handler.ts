@@ -192,13 +192,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					ts: eventTs,
 				} as UIEvent;
 			default:
-				return {
-					type: "generic_queue_message",
-					content: qe.content ?? "",
-					source: qe.source,
-					taskId: parentTaskId,
-					ts: eventTs,
-				};
+				return null;
 		}
 	}
 
@@ -238,18 +232,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			default:
 				return content || `[${source}]`;
 		}
-	}
-
-	/**
-	 * Convert a raw queue message into a UIEvent.
-	 * All queue messages go through two-phase lifecycle (message → deferred → messages_consumed → materialize),
-	 * so the ephemeral queue_message SSE event should never produce UI cards — return null unconditionally.
-	 */
-	function createQueueUIEvent(
-		_rm: QueueEntryLike,
-		_parentTaskId?: string,
-	): UIEvent | null {
-		return null;
 	}
 
 	// --- Deferred messages for two-phase lifecycle ---
@@ -469,35 +451,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					],
 					sideEffects: NO_SIDE_EFFECTS,
 				};
-
-			case "queue_message": {
-				const entries: LogEntry[] = [];
-				const rawMessages = msg.rawMessages as
-					| Array<Record<string, unknown>>
-					| undefined;
-				if (rawMessages && rawMessages.length > 0) {
-					for (const rm of rawMessages) {
-						const event = createQueueUIEvent(
-							rm as unknown as QueueEntryLike,
-							msg.taskId as string | undefined,
-						);
-						if (event) entries.push(createLogEntry(event));
-					}
-				} else {
-					const raw = (msg.messages as string) || "";
-					if (raw) {
-						entries.push(
-							createLogEntry({
-								type: "generic_queue_message",
-								content: raw,
-								taskId: msg.taskId as string | undefined,
-								ts: (msg.ts as number) ?? Date.now(),
-							}),
-						);
-					}
-				}
-				return { entries, updates: [], sideEffects: NO_SIDE_EFFECTS };
-			}
 
 			case "status":
 				// Status events are internal — no log entries

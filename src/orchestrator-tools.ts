@@ -14,7 +14,6 @@ import {
 	isDescendantOf,
 	resolveColor,
 	slugify,
-	toRawMessage,
 } from "./agent-tools.ts";
 import type { EventStore } from "./event-store.ts";
 import { queueMessageToEvent } from "./events.ts";
@@ -246,15 +245,6 @@ export function createOrchestratorTools(
 			}
 
 			const formatted = all.map(formatQueueMessage).join("\n");
-			if (formatted) {
-				emit({
-					type: "agent_event",
-					taskId: currentTaskId ?? undefined,
-					eventType: "queue_message",
-					messages: formatted,
-					rawMessages: all.map(toRawMessage),
-				});
-			}
 
 			const completedIds = new Set(
 				all

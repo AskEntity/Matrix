@@ -90,18 +90,6 @@ export type Event =
 	| { type: "agent_active"; taskId: string; ts: number }
 	| { type: "status"; message: string; taskId?: string; ts: number }
 	| {
-			type: "queue_message";
-			messages: string;
-			rawMessages?: Array<{
-				source: string;
-				content: string;
-				id?: string;
-				images?: { base64: string; mediaType: string }[];
-			}>;
-			taskId?: string;
-			ts: number;
-	  }
-	| {
 			type: "clarification_timeout";
 			taskId?: string;
 			timeoutMs: number;

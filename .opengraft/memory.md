@@ -237,3 +237,16 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `queue_message` caused duplicate cards and live/refresh inconsistency. Do NOT use it as a workaround for broken `messages_consumed` — fix `messages_consumed` instead.
 - **Removal scope**: `src/orchestrator-tools.ts` (emitter), `src/provider-shared.ts` (emitter), `src/events.ts` (type), `src/daemon/event-system.ts` (ephemeral list), `web/event-handler.ts` (processEvent case), `web/hooks.ts`, `web/components/tools/utils.ts`, `src/cli.ts`, test files.
 - **Prerequisite**: `messages_consumed` must work reliably live before removing queue_message. Currently it doesn't — that's the real bug to fix first.
+
+## queue_message Removal (DONE)
+- Removed `queue_message` from Event union type in events.ts
+- Removed from EPHEMERAL_EVENT_TYPES in event-system.ts
+- Removed emission in orchestrator-tools.ts (waitForQueueMessages) — kept formatQueueMessage for AI text
+- Removed two emissions in provider-shared.ts (recordQueueEvents and cancellation point) — removed toRawMessage import
+- Removed case "queue_message" from cli.ts event handler
+- Removed createQueueUIEvent function and case "queue_message" from web/event-handler.ts processEvent
+- Removed generic_queue_message from UIOnlyEvent union in hooks.ts
+- Removed generic_queue_message cases from ActivityLog.tsx, LogEntryView.tsx, utils.ts
+- Removed CSS classes: .og-event-queue_message, .og-queue-message, .og-queue-message-text
+- Changed queueEntryToUIEvent default case to return null instead of generic_queue_message
+- toRawMessage still exists in agent-tools.ts (dead code) but is harmless — can be cleaned up later

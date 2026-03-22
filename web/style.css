@@ -1585,29 +1585,6 @@ select {
 	font-style: italic;
 }
 
-.og-event-queue_message {
-	border-left-color: var(--color-testing);
-}
-
-.og-queue-message {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	color: var(--color-testing);
-	font-weight: 500;
-	font-size: 12px;
-}
-
-.og-queue-message svg {
-	flex-shrink: 0;
-	opacity: 0.7;
-}
-
-.og-queue-message-text {
-	color: var(--text-secondary);
-	font-weight: 400;
-}
-
 /* User prompt bubble */
 .og-event-user_message {
 	border-left-color: var(--accent);

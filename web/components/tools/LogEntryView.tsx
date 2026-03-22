@@ -445,55 +445,6 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
-	if (entry.type === "generic_queue_message") {
-		const text = entry.content;
-		const sourceLabel = entry.source ? `[${entry.source}]` : "";
-		const isLong = text.length > 100 || text.includes("\n");
-		const headerText =
-			text.length > 100
-				? `${text.slice(0, 100)}…`
-				: (text.split("\n")[0] ?? text);
-		return (
-			<div className="og-log-entry og-event-tool_card">
-				<span className="og-log-time">{formatTime(entry.ts)}</span>
-				{taskLabel && (
-					<span className="og-log-badge" title={entry.taskId}>
-						{taskLabel}
-					</span>
-				)}
-				<div className="og-tool-card og-tool-card-mcp">
-					{isLong ? (
-						<>
-							<button
-								type="button"
-								className="og-tool-card-header"
-								onClick={() => setExpanded(!expanded)}
-							>
-								<span className="og-tool-card-name">
-									{sourceLabel} {headerText}
-								</span>
-								<span className="og-tool-card-toggle">
-									<IconChevron size={10} expanded={expanded} />
-								</span>
-							</button>
-							{expanded && (
-								<div className="og-mcp-body">
-									<div className="og-mcp-task-desc">{text}</div>
-								</div>
-							)}
-						</>
-					) : (
-						<div className="og-tool-card-header">
-							<span className="og-tool-card-name">
-								{sourceLabel} {headerText}
-							</span>
-						</div>
-					)}
-				</div>
-			</div>
-		);
-	}
-
 	if (entry.type === "message") {
 		return (
 			<div className="og-log-entry og-event-user_message">
