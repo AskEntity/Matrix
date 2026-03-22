@@ -194,7 +194,7 @@ export function buildTaskPrompt(
 
 	parts.push(
 		"\n## Instructions",
-		"1. Read `.opengraft/memory.md` first for project-specific knowledge.",
+		"1. Follow `.opengraft/memory.md` for project-specific knowledge.",
 		"2. Implement this task: types → tests → implementation → all checks passing.",
 		"3. Run `bun test`, `bun run typecheck`, and `bun run check` before considering done.",
 		"4. If you discover something important, append it to `.opengraft/memory.md` using edit_file (match last lines + extend) or bash `echo >> .opengraft/memory.md`. Never use write_file on memory.md — it duplicates content.",
