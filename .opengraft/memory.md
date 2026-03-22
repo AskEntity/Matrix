@@ -343,3 +343,10 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `mockDaemonContext()` builds minimal DaemonContext
 - `attachMockSession(node, queue)` creates TaskSession on tracker node
 - `executeTool()` in executor.ts kept for backward compat in tests (production uses handler path)
+
+## Tool Name Prefixing in UI
+- All tools use `mcp__opengraft__*` prefix in JSONL events. UI code must use full prefixed names (e.g., `mcp__opengraft__bash`, not `"bash"`).
+- External MCP tools (e.g., `mcp__chrome-devtools__click`) keep their own prefix — only opengraft tools use `mcp__opengraft__`.
+- `isMcp` renamed to `isOpengraft` = `toolName.startsWith("mcp__opengraft__")` — distinguishes opengraft tools from external MCP tools.
+- `McpToolCard.tsx` strips prefix locally (`toolName.replace("mcp__opengraft__", "")`) for its internal switch — this is fine since it only receives opengraft tools.
+- `formatMcpToolResult()` also strips internally — no change needed there.
