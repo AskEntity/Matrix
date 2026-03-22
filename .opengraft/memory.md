@@ -439,3 +439,20 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `handleClarifyResponse()` needed a `getTracker()` call since it previously only used globalAgentQueues
 - "globalAgentQueues consistency" test describe block renamed to "session consistency on tracker nodes" and rewritten to test session on tracker
 - "delete-before-close ordering invariant" renamed to "session-clear-before-close ordering invariant"
+
+
+## Phase 5: System Prompt Cleanup
+
+### What was done
+- Removed tool parameter/schema descriptions from system prompts (ORCHESTRATION_KNOWLEDGE + TASK_SYSTEM_PROMPT)
+- System prompts now contain STRATEGY only (when/why to use tools), not HOW to call them
+- ToolDefinition.description fields in definitions.ts and orchestrator-tools.ts are the sole source of truth for tool usage instructions
+- Worker Tools section: kept strategy tips (dont use bash for file ops, grep→search, read before edit), removed parameter details
+- ORCHESTRATION_KNOWLEDGE tool list: condensed to one-liner per tool, kept strategy for send_message_to_child scope overrides
+- All workflow/strategy sections unchanged (Draft Tasks, Event-Driven Workflow, Task Lifecycle, Memory System, Merge Protocol, etc.)
+- 672 tests pass, typecheck + lint clean
+
+### Key decisions
+- Conservative approach: if unclear whether something is strategy or schema, kept it
+- Tool-specific behavioral tips ("dont cd to current directory") stay in ToolDefinition.description since they describe tool behavior
+- Strategy tips ("use search instead of grep via bash") stay in system prompt since they guide tool selection decisions
