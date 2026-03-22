@@ -334,3 +334,28 @@ Daemon (Hono: HTTP + SSE on :7433)
 - CWD tracking uses temp file (`/tmp/opengraft-bg/cwd-{execId}`) instead of EXIT trap `___OPENGRAFT_CWD___` marker in stdout. Only the EXIT trap writes pwd to temp file (not the cd wrapper). No marker pollution in output.
 - `background_complete` UIOnlyEvent has `stdout?` and `stderr?` fields. LogEntryView renders them in card body like bash tool_result output.
 - Frontend `BackgroundProcessBar` uses `msg.ts` (server event timestamp) for `startTime`, not `Date.now()` at component mount.
+
+
+## Phase 1: TaskSession on TaskNode
+
+### What was done
+- Added `TaskSession` interface to `types.ts` — runtime-only session state (queue, cwd, fallbackCwd, depth, backgroundProcesses Map, foregroundExecutions Map)
+- Added `session?: TaskSession` field to `TaskNode` — stripped during `save()` via destructuring, always undefined on load
+- Eliminated module-level `backgroundProcesses` and `foregroundExecutions` Maps from `bash.ts`
+- Removed `getSessionBackgroundProcesses()` — no longer needed since Maps come from TaskSession
+- All functions in `bash.ts` (`executeBashWithTimeout`, `cleanupSessionBackgroundProcesses`, `killBackgroundProcess`, `awaitBackgroundProcess`, `getBackgroundStatus`) now take Maps as parameters
+- All functions in `background.ts` (`listBackgroundProcesses`, `moveToBackground`, `executeBackgroundTool`) now take Maps as parameters
+- `executor.ts` `executeTool()` gains `getSession?: (sessionId: string) => TaskSession | undefined` parameter
+- `provider-shared.ts` `executeToolUnified()` passes `getSession` through
+- `AgentRequest` gains `getSession` field — wired by daemon to `tracker.get(id)?.session`
+- Session created and attached at agent launch (both root in `launchAgent` and child in `runChildAgentInBackground`)
+- Session cleaned up (backgroundProcesses cleared, session set to undefined) at agent stop and in finally blocks
+- Provider `stop()` no longer calls `cleanupSessionBackgroundProcesses` — daemon handles it via node.session
+- REST endpoints look up session from tracker via `getTracker()` instead of passing sessionId to global-based functions
+- `globalAgentQueues` still used for compatibility (Phase 4 removes it)
+
+### Key decisions
+- `types.ts` imports `BackgroundProcess` from `tools/bash.ts` (type-only, no circular dep)
+- `getSession` callback pattern chosen over direct tracker dependency — keeps tools layer decoupled from daemon
+- Tests create per-test `bgMap`/`fgMap` and a `makeGetSession` helper to wire them through `executeTool`
+

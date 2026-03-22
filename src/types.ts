@@ -1,3 +1,6 @@
+import type { MessageQueue } from "./message-queue.ts";
+import type { BackgroundProcess } from "./tools/bash.ts";
+
 /** Task status follows the lifecycle: draft → pending → in_progress → testing → passed | failed | stuck | closed */
 export type TaskStatus =
 	| "draft"
@@ -8,6 +11,23 @@ export type TaskStatus =
 	| "failed"
 	| "stuck"
 	| "closed";
+
+/**
+ * Runtime-only session state attached to a TaskNode while its agent is running.
+ * NOT serialized to disk — rebuilt at agent launch, cleared at agent stop.
+ */
+export interface TaskSession {
+	queue: MessageQueue;
+	/** Current working directory — mutable, updated by bash cd. */
+	cwd: string;
+	/** Project/worktree root — immutable fallback. */
+	fallbackCwd: string;
+	depth: number;
+	/** Background processes for this session, keyed by background process ID. */
+	backgroundProcesses: Map<string, BackgroundProcess>;
+	/** Foreground execution tracking — resolve callbacks for move-to-background. Key: `${sessionId}:${execId}` */
+	foregroundExecutions: Map<string, { resolve: () => void; command: string }>;
+}
 
 /** A node in the task tree. Each node maps 1:1 to an agent and a git branch. */
 export interface TaskNode {
@@ -34,6 +54,11 @@ export interface TaskNode {
 	color?: string;
 	createdAt: string;
 	updatedAt: string;
+	/**
+	 * Runtime-only session state. Present while the agent is running.
+	 * NOT persisted to disk — stripped during save(), undefined on load().
+	 */
+	session?: TaskSession;
 }
 
 /** Result returned by an agent after executing a task step. */

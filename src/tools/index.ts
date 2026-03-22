@@ -7,12 +7,9 @@ export {
 export type { BackgroundProcess } from "./bash.ts";
 export {
 	awaitBackgroundProcess,
-	backgroundProcesses,
 	cleanupSessionBackgroundProcesses,
 	executeBashWithTimeout,
-	foregroundExecutions,
 	getBackgroundStatus,
-	getSessionBackgroundProcesses,
 	killBackgroundProcess,
 } from "./bash.ts";
 export { TOOLS } from "./definitions.ts";

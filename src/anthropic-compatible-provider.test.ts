@@ -11,7 +11,6 @@ import { createOrchestratorTools } from "./agent-tools.ts";
 import {
 	AnthropicCompatibleProvider,
 	addMessagesCacheControl,
-	backgroundProcesses,
 	buildCompactedContext,
 	buildSummarizationInstruction,
 	cleanupSessionBackgroundProcesses,
@@ -35,6 +34,7 @@ import type { Event } from "./events.ts";
 import { globalAgentQueues, MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
+import type { BackgroundProcess } from "./tools/bash.ts";
 import type { AgentResult } from "./types.ts";
 
 /** Create a MessageQueue pre-loaded with a user message (for tests). */
@@ -703,6 +703,33 @@ describe("executeTool", () => {
 describe("executeBashWithTimeout", () => {
 	let tempDir: string;
 
+	/**
+	 * Per-test session Maps. Tests that need background process tracking
+	 * create a local bgMap/fgMap and pass them to functions.
+	 * The afterAll cleans up any straggler Maps.
+	 */
+	const allTestBgMaps: Map<string, BackgroundProcess>[] = [];
+
+	/** Create a fresh bgMap + fgMap pair for a test. Tracks bgMap for cleanup. */
+	function createTestMaps() {
+		const bgMap = new Map<string, BackgroundProcess>();
+		const fgMap = new Map<string, { resolve: () => void; command: string }>();
+		allTestBgMaps.push(bgMap);
+		return { bgMap, fgMap };
+	}
+
+	/** Create a getSession callback that returns a fake session with the given Maps. */
+	function makeGetSession(
+		bgMap: Map<string, BackgroundProcess>,
+		fgMap: Map<string, { resolve: () => void; command: string }>,
+	) {
+		return (_sessionId: string) =>
+			({
+				backgroundProcesses: bgMap,
+				foregroundExecutions: fgMap,
+			}) as import("./types.ts").TaskSession;
+	}
+
 	beforeAll(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "bash-timeout-"));
 	});
@@ -710,7 +737,9 @@ describe("executeBashWithTimeout", () => {
 	afterAll(async () => {
 		await rm(tempDir, { recursive: true, force: true });
 		// Clean up any background processes
-		backgroundProcesses.clear();
+		for (const bgMap of allTestBgMaps) {
+			cleanupSessionBackgroundProcesses(bgMap);
+		}
 	});
 
 	test("foreground command completes within timeout", async () => {
@@ -730,6 +759,7 @@ describe("executeBashWithTimeout", () => {
 	test("foreground_timeout=0 immediately backgrounds", async () => {
 		const sessionId = "test-bg-immediate";
 		const queue = new MessageQueue();
+		const { bgMap, fgMap } = createTestMaps();
 		const result = await executeBashWithTimeout(
 			"echo bg-test",
 			tempDir,
@@ -737,6 +767,9 @@ describe("executeBashWithTimeout", () => {
 			0,
 			sessionId,
 			queue,
+			undefined,
+			bgMap,
+			fgMap,
 		);
 		expect(result.content).toContain("backgrounded immediately");
 		expect(result.content).toContain("Background ID: bg-");
@@ -755,12 +788,13 @@ describe("executeBashWithTimeout", () => {
 			expect(msg.stdout).toContain("bg-test");
 		}
 
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
 	test("foreground timeout triggers backgrounding for slow command", async () => {
 		const sessionId = "test-bg-slow";
 		const queue = new MessageQueue();
+		const { bgMap, fgMap } = createTestMaps();
 		const result = await executeBashWithTimeout(
 			"sleep 5 && echo done-slow",
 			tempDir,
@@ -768,6 +802,9 @@ describe("executeBashWithTimeout", () => {
 			100, // 100ms foreground timeout — will trigger background
 			sessionId,
 			queue,
+			undefined,
+			bgMap,
+			fgMap,
 		);
 		expect(result.content).toContain("moved to background");
 		expect(result.content).toContain("Background ID: bg-");
@@ -775,7 +812,7 @@ describe("executeBashWithTimeout", () => {
 
 		// Verify it's tracked as running
 		expect(
-			listBackgroundProcesses(sessionId).filter((p) => p.status === "running")
+			listBackgroundProcesses(bgMap).filter((p) => p.status === "running")
 				.length,
 		).toBe(1);
 
@@ -791,13 +828,14 @@ describe("executeBashWithTimeout", () => {
 
 		// Should no longer be running
 		expect(
-			listBackgroundProcesses(sessionId).filter((p) => p.status === "running")
+			listBackgroundProcesses(bgMap).filter((p) => p.status === "running")
 				.length,
 		).toBe(0);
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	}, 10000);
 
 	test("foreground command that finishes before timeout returns normally", async () => {
+		const { bgMap } = createTestMaps();
 		const result = await executeBashWithTimeout(
 			"echo fast",
 			tempDir,
@@ -805,13 +843,15 @@ describe("executeBashWithTimeout", () => {
 			5000,
 			"test-fast",
 			undefined,
+			undefined,
+			bgMap,
 		);
 		expect(result.content).toContain("fast");
 		expect(result.content).toContain("exit code: 0");
 		expect(result.isError).toBe(false);
 		// Should NOT be backgrounded
 		expect(result.content).not.toContain("Background ID");
-		cleanupSessionBackgroundProcesses("test-fast");
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
 	test("executeTool bash with foreground_timeout passes through", async () => {
@@ -828,6 +868,7 @@ describe("executeBashWithTimeout", () => {
 	test("no background warning injected into bash output", async () => {
 		const sessionId = "test-bg-warn";
 		const queue = new MessageQueue();
+		const { bgMap, fgMap } = createTestMaps();
 
 		// Start a slow background command
 		await executeBashWithTimeout(
@@ -837,9 +878,12 @@ describe("executeBashWithTimeout", () => {
 			0,
 			sessionId,
 			queue,
+			undefined,
+			bgMap,
+			fgMap,
 		);
 		expect(
-			listBackgroundProcesses(sessionId).filter((p) => p.status === "running")
+			listBackgroundProcesses(bgMap).filter((p) => p.status === "running")
 				.length,
 		).toBe(1);
 
@@ -850,43 +894,43 @@ describe("executeBashWithTimeout", () => {
 			tempDir,
 			undefined,
 			sessionId,
+			undefined,
+			undefined,
+			makeGetSession(bgMap, fgMap),
 		);
 		expect(result.content).not.toContain("background command(s) still running");
 		expect(result.content).toContain("hello");
 
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
 	test("cleanup removes all background processes for session", () => {
-		const sessionId = "test-cleanup";
-		backgroundProcesses.set(
-			sessionId,
-			new Map([
-				[
-					"bg-1",
-					{
-						id: "bg-1",
-						command: "test",
-						startTime: Date.now(),
-						stdout: "",
-						stderr: "",
-						exitCode: null,
-						status: "running",
-						kill: null,
-						stdoutPath: null,
-						stderrPath: null,
-					},
-				],
-			]),
-		);
-		expect(backgroundProcesses.has(sessionId)).toBe(true);
-		cleanupSessionBackgroundProcesses(sessionId);
-		expect(backgroundProcesses.has(sessionId)).toBe(false);
+		const bgMap = new Map<string, BackgroundProcess>([
+			[
+				"bg-1",
+				{
+					id: "bg-1",
+					command: "test",
+					startTime: Date.now(),
+					stdout: "",
+					stderr: "",
+					exitCode: null,
+					status: "running",
+					kill: null,
+					stdoutPath: null,
+					stderrPath: null,
+				},
+			],
+		]);
+		expect(bgMap.size).toBe(1);
+		cleanupSessionBackgroundProcesses(bgMap);
+		expect(bgMap.size).toBe(0);
 	});
 
 	test("killBackgroundProcess kills a running process", async () => {
 		const sessionId = "test-kill";
 		const queue = new MessageQueue();
+		const { bgMap, fgMap } = createTestMaps();
 		const result = await executeBashWithTimeout(
 			"sleep 30",
 			tempDir,
@@ -894,16 +938,19 @@ describe("executeBashWithTimeout", () => {
 			0,
 			sessionId,
 			queue,
+			undefined,
+			bgMap,
+			fgMap,
 		);
 		const bgId = result.content.match(/bg-[A-Z0-9]+/)?.[0] ?? "";
 		expect(bgId).toBeTruthy();
 
 		expect(
-			listBackgroundProcesses(sessionId).filter((p) => p.status === "running")
+			listBackgroundProcesses(bgMap).filter((p) => p.status === "running")
 				.length,
 		).toBe(1);
 
-		const killResult = killBackgroundProcess(sessionId, bgId);
+		const killResult = killBackgroundProcess(bgMap, bgId);
 		expect(killResult).toContain("killed");
 		expect(killResult).toContain(bgId);
 
@@ -912,49 +959,47 @@ describe("executeBashWithTimeout", () => {
 		expect(msg.source).toBe("background_complete");
 
 		expect(
-			listBackgroundProcesses(sessionId).filter((p) => p.status === "running")
+			listBackgroundProcesses(bgMap).filter((p) => p.status === "running")
 				.length,
 		).toBe(0);
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
 	test("killBackgroundProcess returns not-running message for completed process", () => {
-		const sessionId = "test-kill-completed";
-		backgroundProcesses.set(
-			sessionId,
-			new Map([
-				[
-					"bg-done",
-					{
-						id: "bg-done",
-						command: "echo done",
-						startTime: Date.now() - 1000,
-						stdout: "done\n",
-						stderr: "",
-						exitCode: 0,
-						status: "completed",
-						kill: null,
-						stdoutPath: null,
-						stderrPath: null,
-					},
-				],
-			]),
-		);
+		const bgMap = new Map<string, BackgroundProcess>([
+			[
+				"bg-done",
+				{
+					id: "bg-done",
+					command: "echo done",
+					startTime: Date.now() - 1000,
+					stdout: "done\n",
+					stderr: "",
+					exitCode: 0,
+					status: "completed",
+					kill: null,
+					stdoutPath: null,
+					stderrPath: null,
+				},
+			],
+		]);
 
-		const result = killBackgroundProcess(sessionId, "bg-done");
+		const result = killBackgroundProcess(bgMap, "bg-done");
 		expect(result).toContain("not running");
 		expect(result).toContain("completed");
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
 	test("killBackgroundProcess returns null for unknown process", () => {
-		const result = killBackgroundProcess("nonexistent", "bg-nope");
+		const bgMap = new Map<string, BackgroundProcess>();
+		const result = killBackgroundProcess(bgMap, "bg-nope");
 		expect(result).toBeNull();
 	});
 
 	test("getBackgroundStatus returns status for running process", async () => {
 		const sessionId = "test-status-running";
 		const queue = new MessageQueue();
+		const { bgMap, fgMap } = createTestMaps();
 		await executeBashWithTimeout(
 			"sleep 30",
 			tempDir,
@@ -962,62 +1007,62 @@ describe("executeBashWithTimeout", () => {
 			0,
 			sessionId,
 			queue,
+			undefined,
+			bgMap,
+			fgMap,
 		);
 
-		const map = backgroundProcesses.get(sessionId);
-		const bgId = map?.keys().next().value ?? "";
+		const bgId = bgMap.keys().next().value ?? "";
 		expect(bgId).toBeTruthy();
 
-		const status = getBackgroundStatus(sessionId, bgId);
+		const status = getBackgroundStatus(bgMap, bgId);
 		expect(status).toContain("running");
 		expect(status).toContain("sleep 30");
 		expect(status).toContain("stdout file:");
 		expect(status).toContain("read_file");
 
 		// Clean up: kill the process
-		killBackgroundProcess(sessionId, bgId);
+		killBackgroundProcess(bgMap, bgId);
 		await queue.wait();
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
 	test("getBackgroundStatus returns metadata for completed process", () => {
-		const sessionId = "test-status-done";
-		backgroundProcesses.set(
-			sessionId,
-			new Map([
-				[
-					"bg-fin",
-					{
-						id: "bg-fin",
-						command: "echo hello",
-						startTime: Date.now() - 2000,
-						stdout: "",
-						stderr: "",
-						exitCode: 0,
-						status: "completed",
-						kill: null,
-						stdoutPath: "/tmp/opengraft-bg/exec-test.stdout",
-						stderrPath: "/tmp/opengraft-bg/exec-test.stderr",
-					},
-				],
-			]),
-		);
+		const bgMap = new Map<string, BackgroundProcess>([
+			[
+				"bg-fin",
+				{
+					id: "bg-fin",
+					command: "echo hello",
+					startTime: Date.now() - 2000,
+					stdout: "",
+					stderr: "",
+					exitCode: 0,
+					status: "completed",
+					kill: null,
+					stdoutPath: "/tmp/opengraft-bg/exec-test.stdout",
+					stderrPath: "/tmp/opengraft-bg/exec-test.stderr",
+				},
+			],
+		]);
 
-		const status = getBackgroundStatus(sessionId, "bg-fin");
+		const status = getBackgroundStatus(bgMap, "bg-fin");
 		expect(status).toContain("completed");
 		expect(status).toContain("exit code: 0");
 		expect(status).not.toContain("still running");
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
 	test("getBackgroundStatus returns null for unknown process", () => {
-		const result = getBackgroundStatus("nonexistent", "bg-nope");
+		const bgMap = new Map<string, BackgroundProcess>();
+		const result = getBackgroundStatus(bgMap, "bg-nope");
 		expect(result).toBeNull();
 	});
 
 	test("background tool routes action=kill", async () => {
 		const sessionId = "test-tool-kill";
 		const queue = new MessageQueue();
+		const { bgMap, fgMap } = createTestMaps();
 		await executeBashWithTimeout(
 			"sleep 30",
 			tempDir,
@@ -1025,10 +1070,12 @@ describe("executeBashWithTimeout", () => {
 			0,
 			sessionId,
 			queue,
+			undefined,
+			bgMap,
+			fgMap,
 		);
 
-		const map = backgroundProcesses.get(sessionId);
-		const bgId = map?.keys().next().value;
+		const bgId = bgMap.keys().next().value;
 		expect(bgId).toBeDefined();
 
 		const result = await executeTool(
@@ -1038,36 +1085,37 @@ describe("executeBashWithTimeout", () => {
 			undefined,
 			sessionId,
 			queue,
+			undefined,
+			makeGetSession(bgMap, fgMap),
 		);
 		expect(result.isError).toBe(false);
 		expect(result.content).toContain("killed");
 
 		await queue.wait();
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
 	test("background tool routes action=status", async () => {
 		const sessionId = "test-tool-status";
-		backgroundProcesses.set(
-			sessionId,
-			new Map([
-				[
-					"bg-st",
-					{
-						id: "bg-st",
-						command: "echo test",
-						startTime: Date.now() - 5000,
-						stdout: "test\n",
-						stderr: "",
-						exitCode: 0,
-						status: "completed",
-						kill: null,
-						stdoutPath: null,
-						stderrPath: null,
-					},
-				],
-			]),
-		);
+		const bgMap = new Map<string, BackgroundProcess>([
+			[
+				"bg-st",
+				{
+					id: "bg-st",
+					command: "echo test",
+					startTime: Date.now() - 5000,
+					stdout: "test\n",
+					stderr: "",
+					exitCode: 0,
+					status: "completed",
+					kill: null,
+					stdoutPath: null,
+					stderrPath: null,
+				},
+			],
+		]);
+		const fgMap = new Map<string, { resolve: () => void; command: string }>();
+		allTestBgMaps.push(bgMap);
 
 		const result = await executeTool(
 			"background",
@@ -1075,20 +1123,27 @@ describe("executeBashWithTimeout", () => {
 			tempDir,
 			undefined,
 			sessionId,
+			undefined,
+			undefined,
+			makeGetSession(bgMap, fgMap),
 		);
 		expect(result.isError).toBe(false);
 		expect(result.content).toContain("completed");
 		expect(result.content).toContain("test");
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
 	test("background tool action without id returns error", async () => {
+		const { bgMap, fgMap } = createTestMaps();
 		const result = await executeTool(
 			"background",
 			{ action: "kill" },
 			tempDir,
 			undefined,
 			"test-session",
+			undefined,
+			undefined,
+			makeGetSession(bgMap, fgMap),
 		);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("id is required");
@@ -1105,12 +1160,16 @@ describe("executeBashWithTimeout", () => {
 	});
 
 	test("background tool action=status for unknown process returns error", async () => {
+		const { bgMap, fgMap } = createTestMaps();
 		const result = await executeTool(
 			"background",
 			{ action: "status", id: "bg-unknown" },
 			tempDir,
 			undefined,
 			"test-session",
+			undefined,
+			undefined,
+			makeGetSession(bgMap, fgMap),
 		);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("not found");
@@ -1119,6 +1178,7 @@ describe("executeBashWithTimeout", () => {
 	test("run_in_background=true behaves like foreground_timeout=0", async () => {
 		const sessionId = "test-run-in-bg";
 		const queue = new MessageQueue();
+		const { bgMap, fgMap } = createTestMaps();
 		const result = await executeTool(
 			"bash",
 			{ command: "echo run-in-bg-test", run_in_background: true },
@@ -1126,6 +1186,8 @@ describe("executeBashWithTimeout", () => {
 			undefined,
 			sessionId,
 			queue,
+			undefined,
+			makeGetSession(bgMap, fgMap),
 		);
 		expect(result.content).toContain("backgrounded immediately");
 		expect(result.content).toContain("Background ID: bg-");
@@ -1139,12 +1201,13 @@ describe("executeBashWithTimeout", () => {
 			expect(msg.stdout).toContain("run-in-bg-test");
 		}
 
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
 	test("background tool action=await blocks until process completes and returns output", async () => {
 		const sessionId = "test-await";
 		const queue = new MessageQueue();
+		const { bgMap, fgMap } = createTestMaps();
 		// Start a background command
 		const bgResult = await executeBashWithTimeout(
 			"echo await-test",
@@ -1153,6 +1216,9 @@ describe("executeBashWithTimeout", () => {
 			0,
 			sessionId,
 			queue,
+			undefined,
+			bgMap,
+			fgMap,
 		);
 		const bgId = bgResult.content.match(/bg-[A-Z0-9]+/)?.[0] ?? "";
 		expect(bgId).toBeTruthy();
@@ -1168,21 +1234,27 @@ describe("executeBashWithTimeout", () => {
 			undefined,
 			sessionId,
 			queue,
+			undefined,
+			makeGetSession(bgMap, fgMap),
 		);
 		expect(result.isError).toBe(false);
 		expect(result.content).toContain("completed");
 		expect(result.content).toContain("exit 0");
 
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
 	test("background tool action=await for unknown process returns error", async () => {
+		const { bgMap, fgMap } = createTestMaps();
 		const result = await executeTool(
 			"background",
 			{ action: "await", id: "bg-unknown" },
 			tempDir,
 			undefined,
 			"test-session",
+			undefined,
+			undefined,
+			makeGetSession(bgMap, fgMap),
 		);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("not found");
@@ -1191,6 +1263,7 @@ describe("executeBashWithTimeout", () => {
 	test("background tool action=list shows all processes", async () => {
 		const sessionId = "test-list";
 		const queue = new MessageQueue();
+		const { bgMap, fgMap } = createTestMaps();
 		await executeBashWithTimeout(
 			"sleep 30",
 			tempDir,
@@ -1198,6 +1271,9 @@ describe("executeBashWithTimeout", () => {
 			0,
 			sessionId,
 			queue,
+			undefined,
+			bgMap,
+			fgMap,
 		);
 
 		const result = await executeTool(
@@ -1206,24 +1282,31 @@ describe("executeBashWithTimeout", () => {
 			tempDir,
 			undefined,
 			sessionId,
+			undefined,
+			undefined,
+			makeGetSession(bgMap, fgMap),
 		);
 		expect(result.isError).toBe(false);
 		expect(result.content).toContain("Background processes:");
 		expect(result.content).toContain("sleep 30");
 		expect(result.content).toContain("running");
 
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 		// Wait for background monitor to finish after kill
 		await queue.wait();
 	});
 
 	test("background tool action=list with no processes", async () => {
+		const { bgMap, fgMap } = createTestMaps();
 		const result = await executeTool(
 			"background",
 			{ action: "list" },
 			tempDir,
 			undefined,
 			"test-empty-session",
+			undefined,
+			undefined,
+			makeGetSession(bgMap, fgMap),
 		);
 		expect(result.isError).toBe(false);
 		expect(result.content).toContain("No background processes");
@@ -1232,6 +1315,7 @@ describe("executeBashWithTimeout", () => {
 	test("background completion includes stderr when present", async () => {
 		const sessionId = "test-bg-stderr";
 		const queue = new MessageQueue();
+		const { bgMap, fgMap } = createTestMaps();
 		const result = await executeBashWithTimeout(
 			"echo err-output >&2",
 			tempDir,
@@ -1239,6 +1323,9 @@ describe("executeBashWithTimeout", () => {
 			0,
 			sessionId,
 			queue,
+			undefined,
+			bgMap,
+			fgMap,
 		);
 		expect(result.content).toContain("backgrounded immediately");
 
@@ -1248,7 +1335,7 @@ describe("executeBashWithTimeout", () => {
 			expect(msg.stderr).toContain("err-output");
 		}
 
-		cleanupSessionBackgroundProcesses(sessionId);
+		cleanupSessionBackgroundProcesses(bgMap);
 	});
 });
 

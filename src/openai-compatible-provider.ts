@@ -21,7 +21,7 @@ import {
 	zodShapeToJsonSchema,
 } from "./provider-shared.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
-import { cleanupSessionBackgroundProcesses, TOOLS } from "./tools/index.ts";
+import { TOOLS } from "./tools/index.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
 
@@ -1020,7 +1020,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			stop() {
 				queue.close();
 				abortController.abort();
-				cleanupSessionBackgroundProcesses(sessionId);
+				// Background process cleanup is handled by the daemon via node.session
 			},
 		};
 	}

@@ -17,7 +17,8 @@ import {
 } from "../persistent-queue.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
-import type { AgentResult } from "../types.ts";
+import { cleanupSessionBackgroundProcesses } from "../tools/index.ts";
+import type { AgentResult, TaskSession } from "../types.ts";
 import { ulid } from "../ulid.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
@@ -378,6 +379,12 @@ export async function stopAgent(
 				globalAgentQueues.delete(rootNodeId);
 				rootQueue.close();
 			}
+			// Clean up root session
+			const rootNode = tracker.get(rootNodeId);
+			if (rootNode?.session) {
+				cleanupSessionBackgroundProcesses(rootNode.session.backgroundProcesses);
+				rootNode.session = undefined;
+			}
 		}
 		for (const node of tracker.allNodes()) {
 			if (node.status === "in_progress" && node.id !== rootNodeId) {
@@ -385,6 +392,11 @@ export async function stopAgent(
 				if (childQueue) {
 					globalAgentQueues.delete(node.id);
 					childQueue.close();
+				}
+				// Clean up child session
+				if (node.session) {
+					cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
+					node.session = undefined;
 				}
 				tracker.updateStatus(node.id, "failed");
 			}
@@ -588,6 +600,18 @@ export async function runChildAgentInBackground(
 
 		// Create the queue first — shared between MCP tools and runChildCore
 		const childQueue = new MessageQueue();
+
+		// Create and attach TaskSession to the node
+		const taskSession: TaskSession = {
+			queue: childQueue,
+			cwd: node.worktreePath as string,
+			fallbackCwd: node.worktreePath as string,
+			depth,
+			backgroundProcesses: new Map(),
+			foregroundExecutions: new Map(),
+		};
+		node.session = taskSession;
+
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
 			projectPath: node.worktreePath as string,
@@ -616,6 +640,9 @@ export async function runChildAgentInBackground(
 			emitEvent(ctx, project.id, withTaskId as Event);
 		};
 
+		// getSession lookup: find session from tracker by sessionId
+		const getSession = (sessionId: string) => tracker.get(sessionId)?.session;
+
 		const agentResult = await runChildCore({
 			provider: agentCtx.provider,
 			tracker,
@@ -630,6 +657,7 @@ export async function runChildAgentInBackground(
 				model: agentCtx.effectiveCfg.model,
 				mcpToolDefs: agentCtx.mcpToolDefs,
 				hasRunningChildren: agentCtx.hasRunningChildren,
+				getSession,
 			},
 			persistedMessages: {
 				dataDir: ctx.config.dataDir,
@@ -761,6 +789,12 @@ export async function runChildAgentInBackground(
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} finally {
+		// Clean up session: background processes + detach from node
+		const finalNode = tracker.get(nodeId);
+		if (finalNode?.session) {
+			cleanupSessionBackgroundProcesses(finalNode.session.backgroundProcesses);
+			finalNode.session = undefined;
+		}
 		await mcpManager.disconnectAll();
 	}
 }
@@ -861,6 +895,20 @@ export async function launchAgent(
 		emitEvent(ctx, project.id, withTaskId as Event);
 	};
 
+	// Create and attach TaskSession to root node
+	const rootTaskSession: TaskSession = {
+		queue,
+		cwd: project.path,
+		fallbackCwd: project.path,
+		depth: 0,
+		backgroundProcesses: new Map(),
+		foregroundExecutions: new Map(),
+	};
+	rootNode.session = rootTaskSession;
+
+	// getSession lookup: find session from tracker by sessionId
+	const getSession = (sessionId: string) => tracker.get(sessionId)?.session;
+
 	const session = agentCtx.provider.startSession({
 		cwd: project.path,
 		projectPath: project.path,
@@ -872,6 +920,7 @@ export async function launchAgent(
 		model: effectiveModel,
 		queue,
 		hasRunningChildren: agentCtx.hasRunningChildren,
+		getSession,
 	});
 
 	// Register root queue in the unified globalAgentQueues registry
@@ -961,6 +1010,14 @@ export async function launchAgent(
 						ts: Date.now(),
 					});
 				}
+			}
+			// Clean up root session
+			const rootNodeFinal = tracker.get(rootNodeId);
+			if (rootNodeFinal?.session) {
+				cleanupSessionBackgroundProcesses(
+					rootNodeFinal.session.backgroundProcesses,
+				);
+				rootNodeFinal.session = undefined;
 			}
 			broadcastTreeUpdate(ctx, project.id, tracker);
 			await mcpManager.disconnectAll();
