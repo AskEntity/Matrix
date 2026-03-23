@@ -4,20 +4,16 @@ import { type Event, formatEventForAI, queueMessageToEvent } from "./events.ts";
 import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
 
 describe("queueMessageToEvent", () => {
-	test("converts user message — all data in body", () => {
-		const event = queueMessageToEvent(
-			{
-				source: "user",
-				content: "hello",
-				images: [{ base64: "abc", mediaType: "image/png" }],
-			},
-			"test",
-		);
+	test("converts user message — body is the QueueMessage directly", () => {
+		const msg = {
+			source: "user" as const,
+			content: "hello",
+			images: [{ base64: "abc", mediaType: "image/png" }],
+		};
+		const event = queueMessageToEvent(msg, "test");
 		expect(event.type).toBe("message");
 		expect(event.id).toBeTruthy();
-		expect(event.body.source).toBe("user");
-		expect(event.body.content).toBe("hello");
-		expect(event.body.images).toHaveLength(1);
+		expect(event.body).toBe(msg);
 	});
 
 	test("converts user message — preserves existing id", () => {
@@ -32,80 +28,59 @@ describe("queueMessageToEvent", () => {
 		expect(event.id).toBe("existing-id");
 	});
 
-	test("converts child_complete — all data in body", () => {
-		const event = queueMessageToEvent(
-			{
-				source: "child_complete",
-				taskId: "t1",
-				title: "Auth",
-				success: true,
-				output: "done",
-			},
-			"test",
-		);
+	test("converts child_complete — body is the QueueMessage directly", () => {
+		const msg = {
+			source: "child_complete" as const,
+			taskId: "t1",
+			title: "Auth",
+			success: true as const,
+			output: "done",
+		};
+		const event = queueMessageToEvent(msg, "test");
 		expect(event.type).toBe("message");
 		expect(event.id).toBeTruthy();
-		expect(event.body.source).toBe("child_complete");
-		expect(event.body.taskId).toBe("t1");
-		expect(event.body.title).toBe("Auth");
-		expect(event.body.success).toBe(true);
-		expect(event.body.output).toBe("done");
+		expect(event.body).toBe(msg);
 	});
 
-	test("converts compact — all data in body", () => {
-		const event = queueMessageToEvent({ source: "compact" }, "test");
+	test("converts compact — body is the QueueMessage directly", () => {
+		const msg = { source: "compact" as const };
+		const event = queueMessageToEvent(msg, "test");
 		expect(event.type).toBe("message");
-		expect(event.body.source).toBe("compact");
+		expect(event.body).toBe(msg);
 	});
 
-	test("converts tree_change — all data in body", () => {
-		const event = queueMessageToEvent(
-			{
-				source: "tree_change",
-				action: "created",
-				nodeId: "node-1",
-				title: "My Task",
-			},
-			"test",
-		);
+	test("converts tree_change — body is the QueueMessage directly", () => {
+		const msg = {
+			source: "tree_change" as const,
+			action: "created" as const,
+			nodeId: "node-1",
+			title: "My Task",
+		};
+		const event = queueMessageToEvent(msg, "test");
 		expect(event.type).toBe("message");
-		expect(event.body.source).toBe("tree_change");
-		expect(event.body.action).toBe("created");
-		expect(event.body.nodeId).toBe("node-1");
-		expect(event.body.title).toBe("My Task");
+		expect(event.body).toBe(msg);
 	});
 
-	test("converts parent_update — all data in body, includes header", () => {
-		const event = queueMessageToEvent(
-			{
-				source: "parent_update",
-				content: "update",
-				requestReply: true,
-				header: "## Task Context\nTitle: Fix Bug",
-			},
-			"test",
-		);
+	test("converts parent_update — body is the QueueMessage directly", () => {
+		const msg = {
+			source: "parent_update" as const,
+			content: "update",
+			requestReply: true,
+			header: "## Task Context\nTitle: Fix Bug",
+		};
+		const event = queueMessageToEvent(msg, "test");
 		expect(event.type).toBe("message");
-		expect(event.body.source).toBe("parent_update");
-		expect(event.body.content).toBe("update");
-		expect(event.body.requestReply).toBe(true);
-		expect(event.body.header).toBe("## Task Context\nTitle: Fix Bug");
+		expect(event.body).toBe(msg);
 	});
 
-	test("converts user message with header", () => {
-		const event = queueMessageToEvent(
-			{
-				source: "user",
-				content: "Build a feature",
-				header: "Working directory: /tmp\n\n## Memory\nSome memory",
-			},
-			"test",
-		);
-		expect(event.body.source).toBe("user");
-		expect(event.body.content).toBe("Build a feature");
-		expect(event.body.header).toBe(
-			"Working directory: /tmp\n\n## Memory\nSome memory",
-		);
+	test("converts user message with header — body is the QueueMessage directly", () => {
+		const msg = {
+			source: "user" as const,
+			content: "Build a feature",
+			header: "Working directory: /tmp\n\n## Memory\nSome memory",
+		};
+		const event = queueMessageToEvent(msg, "test");
+		expect(event.body).toBe(msg);
 	});
 });
 

@@ -147,9 +147,11 @@ describe("event-handler queueEntry handling", () => {
 
 		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
 		expect(userEntry).toBeDefined();
-		expect(userEntry?.type === "message" ? userEntry.body.content : "").toBe(
-			"Hello world",
-		);
+		expect(
+			userEntry?.type === "message" && userEntry.body.source === "user"
+				? userEntry.body.content
+				: "",
+		).toBe("Hello world");
 	});
 
 	it("processEventBatch: unconsumed non-user user_message goes to pendingMessages with descriptive text", () => {
@@ -363,9 +365,11 @@ describe("event-handler queueEntry handling", () => {
 		// Should be moved to activity log
 		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
 		expect(userEntry).toBeDefined();
-		expect(userEntry?.type === "message" ? userEntry.body.content : "").toBe(
-			"Build a feature",
-		);
+		expect(
+			userEntry?.type === "message" && userEntry.body.source === "user"
+				? userEntry.body.content
+				: "",
+		).toBe("Build a feature");
 
 		// Should be removed from pending
 		expect(capturedPending.length).toBe(0);
@@ -468,9 +472,11 @@ describe("event-handler JSONL-driven pending state", () => {
 		// The user message MUST appear in the activity log
 		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
 		expect(userEntry).toBeDefined();
-		expect(userEntry?.type === "message" ? userEntry.body.content : "").toBe(
-			"Hello world",
-		);
+		expect(
+			userEntry?.type === "message" && userEntry.body.source === "user"
+				? userEntry.body.content
+				: "",
+		).toBe("Hello world");
 		// Pending should be cleared
 		expect(capturedPending.length).toBe(0);
 	});

@@ -2409,7 +2409,8 @@ describe("lifecycle edge cases — session continuity", () => {
 			const hasOldMessage = events.some(
 				(e) =>
 					e.type === "message" &&
-					(e as Event & { type: "message" }).body.content === "hello",
+					e.body.source === "user" &&
+					e.body.content === "hello",
 			);
 			expect(hasOldMessage).toBe(false);
 		}

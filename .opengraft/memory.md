@@ -436,3 +436,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Tree change notifications walk parent chain (not just root): `notifyTreeChange()` in tasks.ts quiet-enqueues to each running ancestor.
 - `formatBodyForAI` for tree_change: `<tree_change action="..." nodeId="..." title="...">Call get_tree to see latest state.</tree_change>`
 - `MessageBody` has `action?: string` and `nodeId?: string` fields for tree_change body serialization.
+
+## MessageBody Elimination
+- `MessageBody` flat interface deleted from events.ts. `MessageEvent.body` now typed as `QueueMessage` discriminated union directly.
+- `queueMessageToEvent` simplified to one-liner: `{ type: "message", id, taskId, body: msg, ts: Date.now() }` — no more switch/case copying fields.
+- `formatBodyForAI` accepts `QueueMessage` and uses source narrowing. Fields like `body.output` no longer need `?? ""` since the union guarantees they exist on the correct variant.
+- Frontend `QueueEntryLike` flat interface deleted from event-handler.ts. Replaced with `QueueMessage` import from `../src/message-queue.ts`.
+- All code accessing `body.content` or `body.images` must narrow by `body.source` first (discriminated union rules).
+- JSONL disk format unchanged — QueueMessage serializes identically to old MessageBody.

@@ -8,41 +8,11 @@ import { ulid } from "./ulid.ts";
  * All injected content uses `type: "message"` with a `body` field.
  * `body.source` discriminates: "user", "tree_change", "child_complete", etc.
  */
-/**
- * MessageBody — structured body of a message event.
- * The `source` field discriminates the shape. Format for AI happens at conversion time.
- */
-export interface MessageBody {
-	source: string;
-	content?: string;
-	taskId?: string;
-	title?: string;
-	summary?: string;
-	success?: boolean;
-	output?: string;
-	requestReply?: boolean;
-	answer?: string;
-	action?: string;
-	nodeId?: string;
-	fromProjectId?: string;
-	fromProjectName?: string;
-	command?: string;
-	commandId?: string;
-	exitCode?: number | null;
-	durationMs?: number;
-	/** stdout content from background_complete (included when small). */
-	stdout?: string;
-	/** stderr content from background_complete (included when small). */
-	stderr?: string;
-	images?: Array<{ base64: string; mediaType: string }>;
-	/** Context header prepended to AI message (working dir, pre-loaded memory, task description). Not shown in UI. */
-	header?: string;
-}
 
 /**
  * MessageEvent — unified format for ALL messages that flow through the system.
  * Uses `body.source` to indicate the message type. Written to JSONL with `id` for tracking.
- * All data lives in `body`. `id` is always present.
+ * All data lives in `body` as a QueueMessage discriminated union.
  */
 export interface MessageEvent {
 	type: "message";
@@ -50,8 +20,8 @@ export interface MessageEvent {
 	id: string;
 	/** Task/session ID — used for JSONL routing and SSE broadcast targeting. */
 	taskId: string;
-	/** Structured message body — contains ALL message data. */
-	body: MessageBody;
+	/** Structured message body — QueueMessage discriminated union. */
+	body: QueueMessage;
 	ts: number;
 }
 
@@ -204,90 +174,18 @@ export function queueMessageToEvent(
 	msg: QueueMessage,
 	taskId: string,
 ): MessageEvent {
-	const ts = Date.now();
 	const id = msg.source === "user" && msg.id ? msg.id : ulid();
-	// Build body directly from the QueueMessage — source discriminates the shape
-	const body: MessageBody = (() => {
-		switch (msg.source) {
-			case "user":
-				return {
-					source: "user",
-					content: msg.content,
-					...(msg.images?.length
-						? {
-								images: msg.images.map((img) => ({
-									base64: img.base64,
-									mediaType: img.mediaType,
-								})),
-							}
-						: {}),
-					...(msg.header ? { header: msg.header } : {}),
-				};
-			case "child_complete":
-				return {
-					source: "child_complete",
-					taskId: msg.taskId,
-					title: msg.title,
-					success: msg.success,
-					output: msg.output,
-				};
-			case "parent_update":
-				return {
-					source: "parent_update",
-					content: msg.content,
-					...(msg.requestReply ? { requestReply: true } : {}),
-					...(msg.header ? { header: msg.header } : {}),
-				};
-			case "clarify_response":
-				return { source: "clarify_response", answer: msg.answer };
-			case "child_report":
-				return {
-					source: "child_report",
-					taskId: msg.taskId,
-					title: msg.title,
-					...(msg.summary ? { summary: msg.summary } : {}),
-					content: msg.content,
-					...(msg.requestReply ? { requestReply: true } : {}),
-				};
-			case "cross_project":
-				return {
-					source: "cross_project",
-					fromProjectId: msg.fromProjectId,
-					fromProjectName: msg.fromProjectName,
-					content: msg.content,
-				};
-			case "background_complete":
-				return {
-					source: "background_complete",
-					command: msg.command,
-					commandId: msg.commandId,
-					exitCode: msg.exitCode,
-					durationMs: msg.durationMs,
-					...(msg.stdout ? { stdout: msg.stdout } : {}),
-					...(msg.stderr ? { stderr: msg.stderr } : {}),
-				};
-			case "tree_change":
-				return {
-					source: "tree_change",
-					action: msg.action,
-					nodeId: msg.nodeId,
-					...(msg.title ? { title: msg.title } : {}),
-				};
-			case "compact":
-				return { source: "compact" };
-		}
-	})();
-	return { type: "message", id, taskId, body, ts };
+	return { type: "message", id, taskId, body: msg, ts: Date.now() };
 }
 
 /**
- * Format a MessageBody for AI consumption based on source.
+ * Format a QueueMessage body for AI consumption based on source narrowing.
  * Used by formatEventForAI for message events.
  */
-function formatBodyForAI(body: MessageBody): string {
+function formatBodyForAI(body: QueueMessage): string {
 	switch (body.source) {
 		case "child_complete":
-			return `<child_complete task="${body.title}" id="${body.taskId}" status="${body.success ? "passed" : "failed"}">${(body.output ?? "").slice(0, 500)}</child_complete>`;
+			return `<child_complete task="${body.title}" id="${body.taskId}" status="${body.success ? "passed" : "failed"}">${body.output.slice(0, 500)}</child_complete>`;
 		case "clarify_response":
 			return `<clarify_response>${body.answer}</clarify_response>`;
 		case "child_report":
@@ -310,9 +208,9 @@ function formatBodyForAI(body: MessageBody): string {
 			return "Manual compaction requested";
 		case "user":
 			if (body.header) {
-				return `${body.header}\n\n${body.content ?? ""}`;
+				return `${body.header}\n\n${body.content}`;
 			}
-			return body.content ?? "";
+			return body.content;
 		case "parent_update":
 			if (body.header) {
 				return `${body.header}\n\n<parent_update${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</parent_update>`;
