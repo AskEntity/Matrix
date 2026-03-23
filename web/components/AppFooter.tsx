@@ -2,7 +2,7 @@ import { memo } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { InputBar } from "./InputBar.tsx";
-import { IconClose } from "./icons.tsx";
+import { IconBack } from "./icons.tsx";
 
 export const AppFooter = memo(function AppFooter({
 	projectId,
@@ -131,7 +131,7 @@ export const AppFooter = memo(function AppFooter({
 						aria-label={t("target.sendToOrch")}
 						title={t("target.sendToOrch")}
 					>
-						<IconClose size={10} />
+						<IconBack size={10} />
 					</button>
 				</div>
 			)}
