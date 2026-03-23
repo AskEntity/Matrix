@@ -3,26 +3,28 @@ import type {
 	AgentRequest,
 	AgentSession,
 } from "./agent-provider.ts";
-import { type Event, formatPendingSection } from "./events.ts";
-import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
 	type AssistantContent,
 	type AssistantToolCall,
 	type ConsumedMessages,
 	type EventImageData,
+	type ToolResultData,
+	walkEventsToMessages,
+} from "./event-converter.ts";
+import { type Event, formatPendingSection } from "./events.ts";
+import { MessageQueue, type QueueMessage } from "./message-queue.ts";
+import {
 	extractQueueImageParts,
 	type ProviderAdapter,
 	type ProviderTokenUsage,
 	type ProviderToolUse,
 	runProviderLoop,
 	type ToolExecResult,
-	type ToolResultData,
-	walkEventsToMessages,
-	zodShapeToJsonSchema,
 } from "./provider-shared.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
+import { zodShapeToJsonSchema } from "./zod-schema.ts";
 
 // ── Types ──
 
