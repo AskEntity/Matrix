@@ -10,7 +10,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentRequest } from "./agent-provider.ts";
-import { formatQueueMessage } from "./agent-tools.ts";
+import { formatQueueMessage } from "./task-utils.ts";
 import {
 	type Event,
 	formatEventForAI,

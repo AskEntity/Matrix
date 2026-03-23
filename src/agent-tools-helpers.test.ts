@@ -5,7 +5,7 @@ import {
 	getDescendantIds,
 	isDescendantOf,
 	slugify,
-} from "./agent-tools.ts";
+} from "./task-utils.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { TaskNode } from "./types.ts";

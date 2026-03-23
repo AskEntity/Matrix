@@ -1,21 +1,12 @@
 /**
- * Agent tools — re-exports and helper functions.
- *
- * This file was split for maintainability:
- * - System prompts → src/system-prompts.ts
- * - Orchestrator tool definitions + handlers → src/orchestrator-tools.ts
- * - Helpers + re-exports → this file (src/agent-tools.ts)
- *
- * All existing imports from "./agent-tools" continue to work unchanged.
+ * Task utility functions — helpers for task tree traversal, prompt building,
+ * message formatting, and slug generation.
  */
 
 import { pinyin } from "pinyin-pro";
 import { formatEventForAI, queueMessageToEvent } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import type { TaskTracker } from "./task-tracker.ts";
-
-export { createOrchestratorTools } from "./orchestrator-tools.ts";
-export { buildSystemPrompt, SYSTEM_PROMPT } from "./system-prompts.ts";
 
 /** Named color → hex mapping for agent tools. Accepts common names and converts to hex. */
 const NAMED_COLORS: Record<string, string> = {

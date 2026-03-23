@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { Hono } from "hono";
-import { buildTaskPrompt, slugify } from "../../agent-tools.ts";
+import { buildTaskPrompt, slugify } from "../../task-utils.ts";
 import type { Event } from "../../events.ts";
 import type { QueueMessage } from "../../message-queue.ts";
 

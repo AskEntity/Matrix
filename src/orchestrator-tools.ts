@@ -1,7 +1,7 @@
 /**
  * MCP tool definitions and handlers for orchestration tools.
  *
- * Extracted from agent-tools.ts for maintainability.
+ * Extracted for maintainability.
  * Contains createOrchestratorTools() and all tool definitions
  * (create_task, update_task, send_message_to_child, yield, done, etc.).
  */
@@ -15,7 +15,7 @@ import {
 	isDescendantOf,
 	resolveColor,
 	slugify,
-} from "./agent-tools.ts";
+} from "./task-utils.ts";
 import type { DaemonContext } from "./daemon/context.ts";
 import {
 	broadcastTreeUpdate as broadcastTreeUpdateFn,

@@ -7,7 +7,7 @@ import type {
 	MessageParam,
 	TextBlockParam,
 } from "@anthropic-ai/sdk/resources/messages/messages";
-import { createOrchestratorTools } from "./agent-tools.ts";
+import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import {
 	AnthropicCompatibleProvider,
 	addMessagesCacheControl,

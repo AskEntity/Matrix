@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import type { AgentSession } from "./agent-provider.ts";
-import { buildSystemPrompt } from "./agent-tools.ts";
+import { buildSystemPrompt } from "./system-prompts.ts";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
 import { launchAgent, stopAgent } from "./daemon/agent-lifecycle.ts";
 import type {
