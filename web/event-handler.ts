@@ -910,7 +910,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			case "remove_tool": {
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
-					if (e && e.type === "tool_call" && e.toolCallId === op.toolCallId) {
+					if (
+						e &&
+						(e.type === "tool_call" || e.type === "tool_pair") &&
+						e.toolCallId === op.toolCallId
+					) {
 						entries.splice(i, 1);
 						return;
 					}
@@ -1051,7 +1055,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				case "remove_tool": {
 					for (let i = prev.length - 1; i >= 0; i--) {
 						const e = prev[i];
-						if (e && e.type === "tool_call" && e.toolCallId === op.toolCallId) {
+						if (
+							e &&
+							(e.type === "tool_call" || e.type === "tool_pair") &&
+							e.toolCallId === op.toolCallId
+						) {
 							return prev.filter((_, idx) => idx !== i);
 						}
 					}
