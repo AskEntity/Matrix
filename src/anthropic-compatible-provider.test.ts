@@ -15,14 +15,21 @@ import {
 	getContextWindow,
 	getModelPricing,
 } from "./anthropic-compatible-provider.ts";
+import { EventStore } from "./event-store.ts";
+import type { Event } from "./events.ts";
+import { MessageQueue } from "./message-queue.ts";
 import {
-	SUMMARIZATION_INSTRUCTION,
 	buildCompactedContext,
 	buildSummarizationInstruction,
 	extractCheckpoint,
 	getCompactionThresholds,
+	SUMMARIZATION_INSTRUCTION,
 	zodShapeToJsonSchema,
 } from "./provider-shared.ts";
+import { TaskTracker } from "./task-tracker.ts";
+import { attachMockSession, mockDaemonContext } from "./test-utils.ts";
+import { listBackgroundProcesses } from "./tools/background.ts";
+import type { BackgroundProcess } from "./tools/bash.ts";
 import {
 	cleanupSessionBackgroundProcesses,
 	executeBashWithTimeout,
@@ -33,13 +40,6 @@ import {
 	resolvePath,
 	truncateSearchOutput,
 } from "./tools/index.ts";
-import { EventStore } from "./event-store.ts";
-import type { Event } from "./events.ts";
-import { MessageQueue } from "./message-queue.ts";
-import { TaskTracker } from "./task-tracker.ts";
-import { attachMockSession, mockDaemonContext } from "./test-utils.ts";
-import { listBackgroundProcesses } from "./tools/background.ts";
-import type { BackgroundProcess } from "./tools/bash.ts";
 import type { AgentResult } from "./types.ts";
 
 /** Create a MessageQueue pre-loaded with a user message (for tests). */
