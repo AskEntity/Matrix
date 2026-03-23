@@ -654,7 +654,7 @@ export function collectToolResultImages(
  * and a messages_consumed event combining all consumed IDs.
  */
 export function buildToolResultEvents(
-	toolIds: Array<{ id: string }>,
+	toolIds: Array<{ id: string; name: string }>,
 	execResults: ToolExecResult[],
 	cancellationQueueMsgs: QueueMessage[],
 	taskId = "",
@@ -677,7 +677,7 @@ export function buildToolResultEvents(
 	}
 
 	for (let idx = 0; idx < toolIds.length; idx++) {
-		const toolId = toolIds[idx] as { id: string };
+		const toolId = toolIds[idx] as { id: string; name: string };
 		const exec = execResults[idx] as ToolExecResult;
 
 		// Record pure tool output — queue text is NOT embedded.
@@ -700,6 +700,7 @@ export function buildToolResultEvents(
 		const isLast = idx === toolIds.length - 1;
 		toolEvents.push({
 			type: "tool_result",
+			tool: toolId.name,
 			toolCallId: toolId.id,
 			content: exec.content,
 			isError: exec.isError,
@@ -1860,7 +1861,7 @@ export async function* runProviderLoop(
 		// Emit individual tool_result Events
 		if (emit) {
 			const toolEvents = buildToolResultEvents(
-				toolUses.map((tu) => ({ id: tu.id })),
+				toolUses.map((tu) => ({ id: tu.id, name: tu.name })),
 				execResults,
 				cancellationQueueMsgs,
 			);

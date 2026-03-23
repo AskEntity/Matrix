@@ -38,7 +38,7 @@ export type Event =
 	  }
 	| {
 			type: "tool_result";
-			tool?: string;
+			tool: string;
 			toolCallId: string;
 			content: string;
 			isError: boolean;
@@ -297,6 +297,7 @@ export function findOrphanedToolCalls(
 			);
 			orphans.push({
 				type: "tool_result" as const,
+				tool,
 				toolCallId: id,
 				content:
 					"Tool execution was interrupted by daemon restart. Results were lost.",

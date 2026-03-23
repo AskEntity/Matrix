@@ -263,6 +263,7 @@ describe("eventsToAnthropicMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "file.ts",
 				isError: false,
@@ -271,6 +272,7 @@ describe("eventsToAnthropicMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc2",
 				content: "contents",
 				isError: false,
@@ -313,6 +315,7 @@ describe("eventsToAnthropicMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "hi",
 				isError: false,
@@ -339,6 +342,7 @@ describe("eventsToAnthropicMessages", () => {
 		const events: Event[] = [
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "file1.ts\nfile2.ts",
 				isError: false,
@@ -347,6 +351,7 @@ describe("eventsToAnthropicMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc2",
 				content: "contents of file",
 				isError: false,
@@ -379,6 +384,7 @@ describe("eventsToAnthropicMessages", () => {
 		const events: Event[] = [
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "screenshot taken",
 				isError: false,
@@ -494,6 +500,7 @@ describe("eventsToAnthropicMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tu_1",
 				content: "hi\n",
 				isError: false,
@@ -564,6 +571,7 @@ describe("eventsToAnthropicMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "src/",
 				isError: false,
@@ -590,6 +598,7 @@ describe("eventsToAnthropicMessages", () => {
 		const events: Event[] = [
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "Command failed with exit code 1",
 				isError: true,
@@ -616,6 +625,7 @@ describe("eventsToAnthropicMessages", () => {
 		const events: Event[] = [
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "screenshot 1",
 				isError: false,
@@ -625,6 +635,7 @@ describe("eventsToAnthropicMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc2",
 				content: "screenshot 2",
 				isError: false,
@@ -769,6 +780,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_1",
 				content: "file.ts",
 				isError: false,
@@ -777,6 +789,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_2",
 				content: "contents",
 				isError: false,
@@ -821,6 +834,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_1",
 				content: "hi",
 				isError: false,
@@ -857,6 +871,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_1",
 				content: "file1.ts\nfile2.ts",
 				isError: false,
@@ -877,6 +892,7 @@ describe("eventsToOpenAIMessages", () => {
 		const events: Event[] = [
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "orphan_call",
 				content: "result",
 				isError: false,
@@ -906,6 +922,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_1",
 				content: "screenshot taken",
 				isError: false,
@@ -988,6 +1005,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_1",
 				content: "hi\n",
 				isError: false,
@@ -1067,6 +1085,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_1",
 				content: "shot1",
 				isError: false,
@@ -1076,6 +1095,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_2",
 				content: "shot2",
 				isError: false,
@@ -1115,6 +1135,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_1",
 				content: "src/",
 				isError: false,
@@ -1149,6 +1170,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_1",
 				content: "Command failed with exit code 1",
 				isError: true,
@@ -1198,6 +1220,7 @@ describe("eventsToOpenAIMessages", () => {
 			// Tool results for both
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_1",
 				content: "Task created",
 				isError: false,
@@ -1206,6 +1229,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_2",
 				content: "file contents",
 				isError: false,
@@ -1362,6 +1386,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 			// Tool results for all three
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "toolu_01Foy",
 				content: "Task created",
 				isError: false,
@@ -1370,6 +1395,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "toolu_02Bar",
 				content: "file contents",
 				isError: false,
@@ -1378,6 +1404,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "toolu_03Baz",
 				content: "file contents",
 				isError: false,
@@ -1452,6 +1479,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "file a contents",
 				isError: false,
@@ -1460,6 +1488,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc2",
 				content: "file b contents",
 				isError: false,
@@ -1562,6 +1591,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "ok",
 				isError: false,
@@ -1668,6 +1698,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "ok",
 				isError: false,
@@ -1788,6 +1819,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_1",
 				content: "ok",
 				isError: false,
@@ -1861,6 +1893,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "ok",
 				isError: false,
@@ -1922,6 +1955,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_1",
 				content: "ok",
 				isError: false,
@@ -2139,6 +2173,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "toolu_ok",
 				content: "ok",
 				isError: false,
@@ -2293,6 +2328,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "call_ok",
 				content: "ok",
 				isError: false,
@@ -2348,6 +2384,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc2",
 				content: "file contents",
 				isError: false,
@@ -2442,6 +2479,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc2",
 				content: "file contents",
 				isError: false,
@@ -2494,6 +2532,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "output",
 				isError: false,
@@ -2559,6 +2598,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "hi",
 				isError: false,
@@ -2678,6 +2718,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "hi",
 				isError: false,
@@ -2744,6 +2785,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc-yield",
 				content: "",
 				isError: false,
@@ -2812,6 +2854,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc-yield",
 				content: "",
 				isError: false,
@@ -2925,6 +2968,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "done",
 				isError: false,
@@ -2995,6 +3039,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc1",
 				content: "done",
 				isError: false,
@@ -3069,6 +3114,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			// tool_result with pure yield output (no embedded queue text)
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc-yield",
 				content:
 					'<child_complete task="Build UI" id="t1" status="passed">All tests pass</child_complete>\n<parent_update>Keep going</parent_update>\n\n## Pending\n- Running children: none\n- Pending clarifications: none',
@@ -3151,6 +3197,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc-read",
 				content: "const x = 1;",
 				isError: false,
@@ -3159,6 +3206,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "test_tool",
 				toolCallId: "tc-bash",
 				content: "ok",
 				isError: false,
@@ -3395,6 +3443,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 				} as unknown as Event,
 				{
 					type: "tool_result",
+					tool: "test_tool",
 					toolCallId: "tc1",
 					// content is undefined — simulating corrupt JSONL
 					taskId: "test",
@@ -3443,6 +3492,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 				} as unknown as Event,
 				{
 					type: "tool_result",
+					tool: "test_tool",
 					toolCallId: "tc1",
 					// content is undefined — simulating corrupt JSONL
 					taskId: "test",
@@ -3484,6 +3534,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 				} as unknown as Event,
 				{
 					type: "tool_result",
+					tool: "test_tool",
 					toolCallId: "tc1",
 					content: "output",
 					taskId: "test",
