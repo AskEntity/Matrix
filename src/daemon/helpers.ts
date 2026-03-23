@@ -19,7 +19,7 @@ import type { TaskNode } from "../types.ts";
 import type { DaemonContext } from "./context.ts";
 
 /** Create an AgentProvider from an AuthGroup and model. */
-export function createProviderFromAuth(
+function createProviderFromAuth(
 	authGroup: AuthGroup,
 	model?: string,
 ): AgentProvider {
@@ -36,7 +36,7 @@ export function createProviderFromAuth(
 }
 
 /** Create a provider from resolved config. Requires an auth group to be configured. */
-export function createProviderFromConfig(
+function createProviderFromConfig(
 	effectiveConfig: OpenGraftConfig,
 ): AgentProvider {
 	const authGroup = resolveAuthGroup(effectiveConfig);

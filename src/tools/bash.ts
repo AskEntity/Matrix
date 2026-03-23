@@ -91,7 +91,7 @@ function fileSize(path: string): number {
  * - background tool "await" result
  * - background tool "status" on completed process
  */
-export function formatBashResult(
+function formatBashResult(
 	stdoutPath: string | null,
 	stderrPath: string | null,
 	exitCode: number,

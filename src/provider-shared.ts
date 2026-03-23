@@ -24,9 +24,9 @@ import type { AgentResult } from "./types.ts";
 // ── Constants ──
 
 /** Reserve ~17% as compaction buffer — compress when messages exceed this */
-export const COMPACT_BUFFER_RATIO = 0.17;
+const COMPACT_BUFFER_RATIO = 0.17;
 
-export const DEFAULT_MAX_TOKENS = 16384;
+const DEFAULT_MAX_TOKENS = 16384;
 
 // ── Compaction ──
 
@@ -510,7 +510,7 @@ export function extractQueueImageParts(
  *
  * @returns Object with formatted messages and image data, or null if queue closed
  */
-export async function* handleImplicitYield(
+async function* handleImplicitYield(
 	queue: MessageQueue,
 	emit?: (event: Event) => void,
 ): AsyncGenerator<
@@ -571,7 +571,7 @@ export async function* handleImplicitYield(
  * Drain queue at cancellation point (between tool execution and next API call).
  * Returns the queue messages and formatted text, or null if nothing to drain.
  */
-export function drainQueueAtCancellationPoint(queue: MessageQueue): {
+function drainQueueAtCancellationPoint(queue: MessageQueue): {
 	messages: QueueMessage[];
 	formatted: string;
 	manualCompactRequested: boolean;
@@ -596,7 +596,7 @@ export function drainQueueAtCancellationPoint(queue: MessageQueue): {
  * Handles the two-phase message lifecycle: user messages with IDs are already
  * written at send time — just track their IDs. Other messages get converted.
  */
-export function recordQueueEvents(
+function recordQueueEvents(
 	emit: (event: Event) => void,
 	queueMsgs: QueueMessage[],
 	additionalConsumedIds?: string[],
@@ -631,7 +631,7 @@ export function recordQueueEvents(
  * When `_formattedQueueMessages` is set, mcpImages are user queue images
  * — they go alongside the queue text, not in the tool_result.
  */
-export function collectToolResultImages(
+function collectToolResultImages(
 	exec: ToolExecResult,
 ): Array<{ base64: string; mediaType: string }> {
 	const images: Array<{ base64: string; mediaType: string }> = [];
@@ -653,7 +653,7 @@ export function collectToolResultImages(
  * Returns the events array with tool_result events, cancellation queue events,
  * and a messages_consumed event combining all consumed IDs.
  */
-export function buildToolResultEvents(
+function buildToolResultEvents(
 	toolIds: Array<{ id: string; name: string }>,
 	execResults: ToolExecResult[],
 	cancellationQueueMsgs: QueueMessage[],
@@ -759,7 +759,7 @@ export function buildToolResultEvents(
  * Process compaction response: extract checkpoint, rebuild context, record events.
  * Returns the new user content and usage info, or null on failure.
  */
-export async function* processCompaction(
+async function* processCompaction(
 	responseText: string,
 	cwd: string | undefined,
 	preCompactTokenCount: number,
@@ -843,7 +843,7 @@ export async function* processCompaction(
  * Check budget and inject warnings at 80% and 100% thresholds.
  * Returns warning events and the warning text to inject, if any.
  */
-export function checkBudget(
+function checkBudget(
 	budgetUsd: number,
 	runningCost: number,
 ): { warning: string; ratio: number } | null {
@@ -866,7 +866,7 @@ export function checkBudget(
 /**
  * Emit a budget warning event.
  */
-export function recordBudgetWarning(
+function recordBudgetWarning(
 	emit: ((event: Event) => void) | undefined,
 	warning: string,
 	taskId = "",
@@ -927,7 +927,7 @@ export interface ConsumedMessages {
  * Callbacks that each provider implements to handle provider-specific message formatting.
  * The shared walker calls these at the right points during event traversal.
  */
-export interface EventConverterCallbacks {
+interface EventConverterCallbacks {
 	/** Build a user message from plain content (message/user_message without id, compacted_resume, etc.). */
 	onUserMessage(content: string): unknown;
 
@@ -966,7 +966,7 @@ export interface EventConverterCallbacks {
 /**
  * Build an index of events by ID for messages_consumed resolution.
  */
-export function buildEventIndex(events: Event[]): Map<string, Event> {
+function buildEventIndex(events: Event[]): Map<string, Event> {
 	const index = new Map<string, Event>();
 	for (const e of events) {
 		const eid = (e as { id?: string }).id;
@@ -980,7 +980,7 @@ export function buildEventIndex(events: Event[]): Map<string, Event> {
 /**
  * Extract images from a consumed event (message with images in body).
  */
-export function extractConsumedEventImages(event: Event): EventImageData[] {
+function extractConsumedEventImages(event: Event): EventImageData[] {
 	if (event.type !== "message") return [];
 	if (event.body.source !== "user") return [];
 	const imgs = event.body.images ?? [];
@@ -994,7 +994,7 @@ export function extractConsumedEventImages(event: Event): EventImageData[] {
  * Resolve consumed events from a messages_consumed event using the event index.
  * Returns formatted text contents and extracted images.
  */
-export function resolveConsumedMessages(
+function resolveConsumedMessages(
 	messageIds: string[],
 	eventIndex: Map<string, Event>,
 	isWorking: boolean,

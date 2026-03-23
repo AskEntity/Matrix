@@ -14,7 +14,7 @@ import { ulid } from "./ulid.ts";
  * Uses `body.source` to indicate the message type. Written to JSONL with `id` for tracking.
  * All data lives in `body` as a QueueMessage discriminated union.
  */
-export interface MessageEvent {
+interface MessageEvent {
 	type: "message";
 	/** ULID — identifies this message for two-phase lifecycle. */
 	id: string;

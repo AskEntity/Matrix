@@ -15,7 +15,7 @@ import type {
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-export interface StoredCredential {
+interface StoredCredential {
 	credentialID: Base64URLString;
 	publicKey: string; // base64url-encoded
 	counter: number;

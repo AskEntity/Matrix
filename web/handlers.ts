@@ -4,7 +4,7 @@ import type { LogEntry, Project, TaskNode, UIEvent } from "./hooks.ts";
 
 type AddLogFn = (event: UIEvent) => void;
 
-export interface ActionHandlerDeps {
+interface ActionHandlerDeps {
 	projectId: string;
 	selectedTaskId: string | null;
 	rootNodeId: string | null;

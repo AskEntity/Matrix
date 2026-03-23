@@ -21,7 +21,7 @@ export interface Project {
  * Queue-originated message types (parent_update, child_report, etc.) are
  * created by event-handler.ts when materializing deferred messages.
  */
-export type UIOnlyEvent =
+type UIOnlyEvent =
 	| { type: "lifecycle"; content: string; taskId?: string; ts: number }
 	| {
 			type: "parent_update";
