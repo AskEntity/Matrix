@@ -24,6 +24,7 @@ import {
 import { getEventStore } from "./daemon/helpers.ts";
 import type { Event } from "./events.ts";
 import type { QueueMessage } from "./message-queue.ts";
+import type { PendingState } from "./shared-types.ts";
 import { clearPersistedMessages } from "./persistent-queue.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
@@ -155,10 +156,7 @@ export function createOrchestratorTools(
 		isError?: boolean;
 		_consumedMessageIds?: string[];
 		_formattedQueueMessages?: string;
-		_pending?: {
-			runningChildren: Array<{ id: string; title: string }>;
-			pendingClarifications: number;
-		};
+		_pending?: PendingState;
 	} | null> {
 		const queue = getQueue();
 		if (!queue) return null;

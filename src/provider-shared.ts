@@ -18,6 +18,7 @@ import {
 	queueMessageToEvent,
 } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
+import type { EventImageData, PendingState } from "./shared-types.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 
@@ -321,15 +322,12 @@ export interface ToolExecResult {
 	isImage?: boolean;
 	imageData?: string;
 	mediaType?: string;
-	mcpImages?: Array<{ base64: string; mediaType: string; data?: string }>;
+	mcpImages?: Array<EventImageData & { data?: string }>;
 	_consumedMessageIds?: string[];
 	/** Raw queue messages from yield/done that need to flow through emit for SSE broadcast + persistence. */
 	_consumedQueueMessages?: QueueMessage[];
 	_formattedQueueMessages?: string;
-	_pending?: {
-		runningChildren: Array<{ id: string; title: string }>;
-		pendingClarifications: number;
-	};
+	_pending?: PendingState;
 }
 
 /**
@@ -633,8 +631,8 @@ function recordQueueEvents(
  */
 function collectToolResultImages(
 	exec: ToolExecResult,
-): Array<{ base64: string; mediaType: string }> {
-	const images: Array<{ base64: string; mediaType: string }> = [];
+): EventImageData[] {
+	const images: EventImageData[] = [];
 	if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
 		for (const img of exec.mcpImages) {
 			images.push({
@@ -682,7 +680,7 @@ function buildToolResultEvents(
 
 		// Record pure tool output — queue text is NOT embedded.
 		// The converter reconstructs queue messages from messagesConsumed + message events.
-		const images: Array<{ base64: string; mediaType: string }> = [];
+		const images: EventImageData[] = [];
 		if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
 			for (const img of exec.mcpImages) {
 				images.push({
@@ -883,11 +881,7 @@ function recordBudgetWarning(
 
 // ── Shared Event Converter Walker ──
 
-/** Image data extracted from events (provider-agnostic). */
-export interface EventImageData {
-	base64: string;
-	mediaType: string;
-}
+export type { EventImageData } from "./shared-types.ts";
 
 /** A single tool call in an assistant turn. */
 export interface AssistantToolCall {
@@ -910,10 +904,7 @@ export interface ToolResultData {
 	content: string;
 	isError: boolean;
 	images?: EventImageData[];
-	pending?: {
-		runningChildren: Array<{ id: string; title: string }>;
-		pendingClarifications: number;
-	};
+	pending?: PendingState;
 }
 
 /** Consumed messages resolved from a messages_consumed event. */
