@@ -54,6 +54,9 @@ export const ActivityLog = memo(function ActivityLog({
 	onAutoScrollChange,
 	isActive,
 	projectId,
+	olderEventsAvailable,
+	loadingOlderEvents,
+	onLoadOlderEvents,
 }: {
 	entries: LogEntry[];
 	filterTaskId: string | null;
@@ -63,6 +66,9 @@ export const ActivityLog = memo(function ActivityLog({
 	onAutoScrollChange: (locked: boolean) => void;
 	isActive: boolean;
 	projectId: string;
+	olderEventsAvailable?: Map<string, { hasOlder: boolean; oldestTs: number }>;
+	loadingOlderEvents?: boolean;
+	onLoadOlderEvents?: (sessionId: string) => void;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 
@@ -155,6 +161,26 @@ export const ActivityLog = memo(function ActivityLog({
 		onAutoScrollChange(atBottom);
 	}, [onAutoScrollChange]);
 
+	// Determine if "Load earlier history" should be shown for the current view
+	const olderSessionId = useMemo(() => {
+		if (!olderEventsAvailable || olderEventsAvailable.size === 0) return null;
+		if (filterTaskId && filterTaskId !== rootNodeId) {
+			// Task-specific view: check if that specific session has older events
+			return olderEventsAvailable.has(filterTaskId) ? filterTaskId : null;
+		}
+		// Root/orchestrator view: check if root session has older events
+		if (rootNodeId && olderEventsAvailable.has(rootNodeId)) return rootNodeId;
+		// Or any session with older events
+		const first = olderEventsAvailable.keys().next();
+		return first.done ? null : first.value;
+	}, [olderEventsAvailable, filterTaskId, rootNodeId]);
+
+	const handleLoadOlder = useCallback(() => {
+		if (olderSessionId && onLoadOlderEvents) {
+			onLoadOlderEvents(olderSessionId);
+		}
+	}, [olderSessionId, onLoadOlderEvents]);
+
 	const { t } = useLocale();
 
 	return (
@@ -169,6 +195,18 @@ export const ActivityLog = memo(function ActivityLog({
 				/>
 			</div>
 			<div className="og-activity-log" ref={logRef} onScroll={handleScroll}>
+				{olderSessionId && (
+					<div className="og-load-older-bar">
+						<button
+							type="button"
+							className="og-load-older-btn"
+							onClick={handleLoadOlder}
+							disabled={loadingOlderEvents}
+						>
+							{loadingOlderEvents ? "Loading…" : "↑ Load earlier history"}
+						</button>
+					</div>
+				)}
 				{visible.map((entry) =>
 					entry.type === "tool_pair" ? (
 						<ToolCard key={entry.id} entry={entry} nodeMap={nodeMap} />

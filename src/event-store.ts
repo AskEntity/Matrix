@@ -93,6 +93,48 @@ export class EventStore {
 		return lastMarker === -1 ? all : all.slice(lastMarker + 1);
 	}
 
+	/**
+	 * Read events from the last compact_marker onward (for UI activity log).
+	 * Returns the compact_marker itself plus all events after it.
+	 * Also indicates whether there are older events before the marker.
+	 */
+	readFromLastCompactMarker(sessionId: string): {
+		events: Event[];
+		hasOlderEvents: boolean;
+	} {
+		const all = this.read(sessionId);
+		const lastMarker = all.findLastIndex((e) => e.type === "compact_marker");
+		if (lastMarker === -1) {
+			return { events: all, hasOlderEvents: false };
+		}
+		return {
+			events: all.slice(lastMarker),
+			hasOlderEvents: lastMarker > 0,
+		};
+	}
+
+	/**
+	 * Read events before a given timestamp, up to a limit (for "load older" pagination).
+	 * Returns events in chronological order (oldest first).
+	 */
+	readBefore(
+		sessionId: string,
+		beforeTs: number,
+		limit: number,
+	): { events: Event[]; hasMore: boolean } {
+		const all = this.read(sessionId);
+		// Find events strictly before the timestamp
+		const beforeEvents = all.filter((e) => e.ts < beforeTs);
+		if (beforeEvents.length <= limit) {
+			return { events: beforeEvents, hasMore: false };
+		}
+		// Return the last `limit` events (most recent ones before the timestamp)
+		return {
+			events: beforeEvents.slice(-limit),
+			hasMore: true,
+		};
+	}
+
 	/** Clear all events for a session */
 	clear(sessionId: string): void {
 		const p = this.path(sessionId);

@@ -523,10 +523,21 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			return c.json({ error: "Task not found" }, 404);
 		}
 		const eventStore = getEventStore(ctx, project.id);
+		const afterCompact = c.req.query("after") === "compact";
+
+		if (afterCompact) {
+			const result = eventStore.readFromLastCompactMarker(nodeId);
+			const events = result.events.map((e) => normalizeEventForUI(e, nodeId));
+			return c.json({
+				events,
+				hasOlderEvents: result.hasOlderEvents,
+			});
+		}
+
 		const events = eventStore
 			.read(nodeId)
 			.map((e) => normalizeEventForUI(e, nodeId));
-		return c.json({ events });
+		return c.json({ events, hasOlderEvents: false });
 	});
 
 	// Inject a message into a specific running child agent's queue

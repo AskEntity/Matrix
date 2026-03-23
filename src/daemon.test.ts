@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import { createOrchestratorTools, isDescendantOf } from "./agent-tools.ts";
 import { createApp } from "./daemon.ts";
+import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
@@ -1131,6 +1132,357 @@ describe("GET /projects/:id/events", () => {
 	test("returns 404 for unknown project", async () => {
 		const res = await app.request("/projects/unknown-project-id/events");
 		expect(res.status).toBe(404);
+	});
+
+	test("returns hasOlderEvents: false when no compact_marker", async () => {
+		// Write some events to a session JSONL
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		await eventStore.append("session1", {
+			type: "message",
+			id: "",
+			body: { source: "user", content: "hello" },
+			taskId: "session1",
+			ts: 1000,
+		});
+
+		const res = await app.request(
+			`/projects/${projectId}/events?after=compact`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: unknown[];
+			hasOlderEvents: boolean;
+		};
+		expect(body.events.length).toBe(1);
+		expect(body.hasOlderEvents).toBe(false);
+	});
+
+	test("?after=compact returns only post-compact events with hasOlderEvents", async () => {
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "old" },
+				taskId: "session1",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "old response",
+				taskId: "session1",
+				ts: 1001,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "cp",
+				savedTokens: 5000,
+				taskId: "session1",
+				ts: 2000,
+			},
+			{
+				type: "assistant_text",
+				content: "new response",
+				taskId: "session1",
+				ts: 2001,
+			},
+		];
+		await eventStore.appendBatch("session1", events);
+
+		const res = await app.request(
+			`/projects/${projectId}/events?after=compact`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		expect(body.hasOlderEvents).toBe(true);
+		// Should have compact_marker + the event after it
+		expect(body.events.length).toBe(2);
+		expect(body.events[0]?.type).toBe("compact_marker");
+		expect(body.events[1]?.type).toBe("assistant_text");
+	});
+
+	test("without ?after=compact returns all events", async () => {
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "old" },
+				taskId: "session1",
+				ts: 1000,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "cp",
+				savedTokens: 5000,
+				taskId: "session1",
+				ts: 2000,
+			},
+			{
+				type: "assistant_text",
+				content: "new",
+				taskId: "session1",
+				ts: 2001,
+			},
+		];
+		await eventStore.appendBatch("session1", events);
+
+		const res = await app.request(`/projects/${projectId}/events`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		expect(body.events.length).toBe(3);
+		expect(body.hasOlderEvents).toBe(false);
+	});
+});
+
+describe("GET /projects/:id/events/older", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-older-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-olderdata-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+
+		const res = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await res.json()) as { id: string };
+		projectId = project.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("returns older events before timestamp", async () => {
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "old" },
+				taskId: "session1",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "old response",
+				taskId: "session1",
+				ts: 1500,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "cp",
+				savedTokens: 5000,
+				taskId: "session1",
+				ts: 2000,
+			},
+			{
+				type: "assistant_text",
+				content: "new",
+				taskId: "session1",
+				ts: 2001,
+			},
+		];
+		await eventStore.appendBatch("session1", events);
+
+		const res = await app.request(
+			`/projects/${projectId}/events/older?session=session1&before=2000&limit=100`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasMore: boolean;
+		};
+		expect(body.events.length).toBe(2);
+		expect(body.hasMore).toBe(false);
+	});
+
+	test("respects limit parameter", async () => {
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const events: Event[] = [];
+		for (let i = 0; i < 10; i++) {
+			events.push({
+				type: "assistant_text",
+				content: `msg ${i}`,
+				taskId: "session1",
+				ts: 1000 + i * 100,
+			});
+		}
+		await eventStore.appendBatch("session1", events);
+
+		const res = await app.request(
+			`/projects/${projectId}/events/older?session=session1&before=1800&limit=3`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasMore: boolean;
+		};
+		expect(body.events.length).toBe(3);
+		expect(body.hasMore).toBe(true);
+	});
+
+	test("returns 400 when missing required params", async () => {
+		const res = await app.request(
+			`/projects/${projectId}/events/older?session=s1`,
+		);
+		expect(res.status).toBe(400);
+
+		const res2 = await app.request(
+			`/projects/${projectId}/events/older?before=1000`,
+		);
+		expect(res2.status).toBe(400);
+	});
+
+	test("returns 404 for unknown project", async () => {
+		const res = await app.request(
+			"/projects/unknown/events/older?session=s1&before=1000",
+		);
+		expect(res.status).toBe(404);
+	});
+
+	test("defaults limit to 200 when not specified", async () => {
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		await eventStore.append("session1", {
+			type: "assistant_text",
+			content: "msg",
+			taskId: "session1",
+			ts: 1000,
+		});
+
+		const res = await app.request(
+			`/projects/${projectId}/events/older?session=session1&before=2000`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasMore: boolean;
+		};
+		expect(body.events.length).toBe(1);
+		expect(body.hasMore).toBe(false);
+	});
+});
+
+describe("GET /projects/:id/tasks/:nodeId/events", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let projectId: string;
+	let taskId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-taskev-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-taskevd-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		await result.pm.load();
+
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await projRes.json()) as Project;
+		projectId = project.id;
+
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ title: "Test Task", description: "" }),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+		taskId = task.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("?after=compact returns post-compact events with hasOlderEvents", async () => {
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "old" },
+				taskId: taskId,
+				ts: 1000,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "cp",
+				savedTokens: 3000,
+				taskId: taskId,
+				ts: 2000,
+			},
+			{
+				type: "assistant_text",
+				content: "new",
+				taskId: taskId,
+				ts: 2001,
+			},
+		];
+		await eventStore.appendBatch(taskId, events);
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/events?after=compact`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		expect(body.hasOlderEvents).toBe(true);
+		expect(body.events.length).toBe(2);
+		expect(body.events[0]?.type).toBe("compact_marker");
+	});
+
+	test("without ?after=compact returns all events", async () => {
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "old" },
+				taskId: taskId,
+				ts: 1000,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "cp",
+				savedTokens: 3000,
+				taskId: taskId,
+				ts: 2000,
+			},
+		];
+		await eventStore.appendBatch(taskId, events);
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/events`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		expect(body.hasOlderEvents).toBe(false);
+		expect(body.events.length).toBe(2);
 	});
 });
 

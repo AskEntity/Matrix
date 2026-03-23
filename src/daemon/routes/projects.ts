@@ -75,15 +75,53 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 			return c.json({ error: "Project not found" }, 404);
 		}
 		const eventStore = getEventStore(ctx, project.id);
+		const afterCompact = c.req.query("after") === "compact";
+
 		// Read all sessions and normalize for UI consumption
 		const all: Record<string, unknown>[] = [];
+		let hasOlderEvents = false;
+
 		for (const sessionId of eventStore.listSessions()) {
-			for (const event of eventStore.read(sessionId)) {
-				all.push(normalizeEventForUI(event, sessionId));
+			if (afterCompact) {
+				const result = eventStore.readFromLastCompactMarker(sessionId);
+				if (result.hasOlderEvents) hasOlderEvents = true;
+				for (const event of result.events) {
+					all.push(normalizeEventForUI(event, sessionId));
+				}
+			} else {
+				for (const event of eventStore.read(sessionId)) {
+					all.push(normalizeEventForUI(event, sessionId));
+				}
 			}
 		}
 		all.sort((a, b) => ((a.ts as number) ?? 0) - ((b.ts as number) ?? 0));
-		return c.json({ events: all });
+		return c.json({ events: all, hasOlderEvents });
+	});
+
+	// Fetch older events before a timestamp for a specific session (pagination)
+	app.get("/projects/:id/events/older", async (c) => {
+		const project = ctx.pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const session = c.req.query("session");
+		const beforeStr = c.req.query("before");
+		const limitStr = c.req.query("limit");
+		if (!session || !beforeStr) {
+			return c.json(
+				{ error: "session and before query params are required" },
+				400,
+			);
+		}
+		const before = Number(beforeStr);
+		const limit = limitStr ? Number(limitStr) : 200;
+		if (Number.isNaN(before) || Number.isNaN(limit)) {
+			return c.json({ error: "before and limit must be numbers" }, 400);
+		}
+		const eventStore = getEventStore(ctx, project.id);
+		const result = eventStore.readBefore(session, before, limit);
+		const events = result.events.map((e) => normalizeEventForUI(e, session));
+		return c.json({ events, hasMore: result.hasMore });
 	});
 
 	// Pending clarifications
