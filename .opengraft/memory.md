@@ -495,3 +495,14 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Replaced `EPHEMERAL_EVENT_TYPES` Set and `isEphemeral(type: string)` in event-system.ts.
 - Note: `heartbeat` and `tree_updated` were in old EPHEMERAL_EVENT_TYPES but are NOT in the Event union — they are broadcast as raw objects, not through emitEvent with Event type. The new function only covers typed Event variants.
 - Provider events (assistant_text, tool_call, tool_result, compact_marker) ARE persisted by emitEvent — the old comment saying "already written by provider" was misleading. Providers call emit() which IS emitEvent.
+
+
+## Type-safe Frontend Event Processing
+- `IncomingEvent` type in hooks.ts = `UIEvent | SSEOnlyEvent` — covers everything that arrives over SSE or REST.
+- `SSEOnlyEvent` = `tree_updated | pending_clarifications | heartbeat` — events outside the backend `Event` union.
+- `processEvent` and `handleEvent` accept `IncomingEvent` instead of `Record<string, unknown>`.
+- `processEventBatch` accepts `IncomingEvent[]`.
+- Single `as IncomingEvent` cast at SSE parse boundary (hooks.ts `onmessage`). REST fetch boundaries use `as { events?: IncomingEvent[] }`.
+- All ~50 `as string/number/boolean` casts eliminated from event-handler.ts via discriminated union narrowing.
+- Tests use `satisfies IncomingEvent` / `satisfies IncomingEvent[]` to validate event shapes at compile time.
+- `queueEntryToUIEvent` no longer needs `as UIEvent` casts — TypeScript infers UIOnlyEvent variants correctly from object literals.

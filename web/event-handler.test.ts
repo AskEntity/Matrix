@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import type React from "react";
 import { createEventHandler, type EventHandlerDeps } from "./event-handler.ts";
-import type { LogEntry } from "./hooks.ts";
+import type { IncomingEvent, LogEntry } from "./hooks.ts";
 
 /** Minimal deps that satisfy the EventHandlerDeps interface */
 function makeDeps() {
@@ -52,7 +52,6 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "message",
 				id: "msg-1",
-				source: "child_report",
 				body: {
 					source: "child_report",
 					taskId: "child-1",
@@ -65,9 +64,10 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-1"],
+				taskId: "parent-1",
 				ts: 2000,
 			},
-		]);
+		] satisfies IncomingEvent[]);
 
 		const childReportEntry = capturedLogs.find(
 			(e: LogEntry) => e.type === "child_report",
@@ -93,7 +93,6 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "message",
 				id: "msg-2",
-				source: "parent_update",
 				body: {
 					source: "parent_update",
 					content: "Please also fix bug #42",
@@ -104,9 +103,10 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-2"],
+				taskId: "task-1",
 				ts: 2000,
 			},
-		]);
+		] satisfies IncomingEvent[]);
 
 		const parentEntry = capturedLogs.find(
 			(e: LogEntry) => e.type === "parent_update",
@@ -129,8 +129,6 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "message",
 				id: "msg-3",
-				source: "user",
-				content: "Hello world",
 				body: {
 					source: "user",
 					content: "Hello world",
@@ -141,9 +139,10 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-3"],
+				taskId: "task-1",
 				ts: 2000,
 			},
-		]);
+		] satisfies IncomingEvent[]);
 
 		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
 		expect(userEntry).toBeDefined();
@@ -170,7 +169,6 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "message",
 				id: "msg-4",
-				source: "child_report",
 				body: {
 					source: "child_report",
 					taskId: "child-1",
@@ -181,7 +179,7 @@ describe("event-handler queueEntry handling", () => {
 				ts: 1000,
 			},
 			// No messages_consumed — message is unconsumed
-		]);
+		] satisfies IncomingEvent[]);
 
 		// Non-user messages also appear in pending banner with descriptive text
 		expect(capturedPending.length).toBe(1);
@@ -207,10 +205,11 @@ describe("event-handler queueEntry handling", () => {
 				type: "message",
 				id: "msg-5",
 				body: { source: "user", content: "Please check this" },
+				taskId: "task-1",
 				ts: 1000,
 			},
 			// No messages_consumed — message is unconsumed
-		]);
+		] satisfies IncomingEvent[]);
 
 		expect(capturedPending.length).toBe(1);
 		expect((capturedPending[0] as { text: string }).text).toBe(
@@ -244,9 +243,10 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-6"],
+				taskId: "parent-1",
 				ts: 2000,
 			},
-		]);
+		] satisfies IncomingEvent[]);
 
 		const childReportEntry = capturedLogs.find(
 			(e: LogEntry) => e.type === "child_report",
@@ -282,7 +282,6 @@ describe("event-handler queueEntry handling", () => {
 		handleEvent({
 			type: "message",
 			id: "msg-7",
-			source: "child_report",
 			body: {
 				source: "child_report",
 				taskId: "child-1",
@@ -291,7 +290,7 @@ describe("event-handler queueEntry handling", () => {
 			},
 			taskId: "parent-1",
 			ts: 1000,
-		});
+		} satisfies IncomingEvent);
 
 		// Should be in pending banner with descriptive text
 		expect(capturedPending.length).toBe(1);
@@ -305,8 +304,9 @@ describe("event-handler queueEntry handling", () => {
 		handleEvent({
 			type: "messages_consumed",
 			messageIds: ["msg-7"],
+			taskId: "parent-1",
 			ts: 2000,
-		});
+		} satisfies IncomingEvent);
 
 		// Now should appear in activity log as child_report
 		const childReportEntry = capturedLogs.find(
@@ -349,7 +349,7 @@ describe("event-handler queueEntry handling", () => {
 			body: { source: "user", content: "Build a feature" },
 			taskId: "task-1",
 			ts: 1000,
-		});
+		} satisfies IncomingEvent);
 
 		// Should be in pending banner
 		expect(capturedPending.length).toBe(1);
@@ -359,8 +359,9 @@ describe("event-handler queueEntry handling", () => {
 		handleEvent({
 			type: "messages_consumed",
 			messageIds: ["msg-8"],
+			taskId: "task-1",
 			ts: 2000,
-		});
+		} satisfies IncomingEvent);
 
 		// Should be moved to activity log
 		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");
@@ -389,7 +390,6 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "message",
 				id: "msg-9",
-				source: "clarify_response",
 				body: {
 					source: "clarify_response",
 					answer: "Yes, go ahead with approach A",
@@ -400,9 +400,10 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-9"],
+				taskId: "task-1",
 				ts: 2000,
 			},
-		]);
+		] satisfies IncomingEvent[]);
 
 		const clarifyEntry = capturedLogs.find(
 			(e: LogEntry) => e.type === "clarify_response",
@@ -454,9 +455,9 @@ describe("event-handler JSONL-driven pending state", () => {
 			type: "message",
 			id: "msg-race",
 			body: { source: "user", content: "Hello world" },
-			taskId: null,
+			taskId: "",
 			ts: 1000,
-		});
+		} satisfies IncomingEvent);
 		expect(capturedPending.length).toBe(1);
 		expect(capturedPending[0]?.id).toBe("msg-race");
 		expect(capturedLogs.length).toBe(0);
@@ -466,8 +467,9 @@ describe("event-handler JSONL-driven pending state", () => {
 		handleEvent({
 			type: "messages_consumed",
 			messageIds: ["msg-race"],
+			taskId: "",
 			ts: 2000,
-		});
+		} satisfies IncomingEvent);
 
 		// The user message MUST appear in the activity log
 		const userEntry = capturedLogs.find((e: LogEntry) => e.type === "message");

@@ -27,6 +27,7 @@ import { createEventHandler } from "./event-handler.ts";
 import { createActionHandlers } from "./handlers.ts";
 import {
 	createLogEntry,
+	type IncomingEvent,
 	type LogEntry,
 	type TaskNode,
 	type UIEvent,
@@ -414,10 +415,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 	/** Process event response: update logs and track which sessions have older events */
 	const processEventResponse = useCallback(
-		(data: {
-			events?: Record<string, unknown>[];
-			hasOlderEvents?: boolean;
-		}) => {
+		(data: { events?: IncomingEvent[]; hasOlderEvents?: boolean }) => {
 			if (data.events && data.events.length > 0) {
 				processEventBatch(data.events);
 
@@ -425,8 +423,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				if (data.hasOlderEvents) {
 					const sessionMap = new Map<string, number>();
 					for (const evt of data.events) {
-						const taskId = evt.taskId as string | undefined;
-						const ts = evt.ts as number | undefined;
+						const taskId = "taskId" in evt ? (evt.taskId as string) : undefined;
+						const ts = "ts" in evt ? (evt.ts as number) : undefined;
 						if (taskId && ts !== undefined) {
 							const existing = sessionMap.get(taskId);
 							if (existing === undefined || ts < existing) {
@@ -505,15 +503,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		setOlderEventsAvailable(new Map());
 		authFetch(`/projects/${projectId}/events?after=compact`)
 			.then((r) => r.json())
-			.then(
-				(data: {
-					events?: Record<string, unknown>[];
-					hasOlderEvents?: boolean;
-				}) => {
-					if (cancelled) return;
-					processEventResponse(data);
-				},
-			)
+			.then((data: { events?: IncomingEvent[]; hasOlderEvents?: boolean }) => {
+				if (cancelled) return;
+				processEventResponse(data);
+			})
 			.catch((e) =>
 				console.warn("[App] Failed to fetch events for project:", e),
 			);
@@ -752,7 +745,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					`/projects/${projectId}/events/older?session=${encodeURIComponent(sessionId)}&before=${info.oldestTs}&limit=200`,
 				);
 				const data = (await res.json()) as {
-					events?: Record<string, unknown>[];
+					events?: IncomingEvent[];
 					hasMore?: boolean;
 				};
 				if (data.events && data.events.length > 0) {
@@ -760,7 +753,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					// Simpler than trying to prepend and re-process.
 					const fullRes = await authFetch(`/projects/${projectId}/events`);
 					const fullData = (await fullRes.json()) as {
-						events?: Record<string, unknown>[];
+						events?: IncomingEvent[];
 					};
 					if (fullData.events && fullData.events.length > 0) {
 						processEventBatch(fullData.events);
@@ -772,7 +765,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 							// Find the oldest ts from the older events we received
 							let minTs = info.oldestTs;
 							for (const evt of data.events ?? []) {
-								const ts = evt.ts as number | undefined;
+								const ts = "ts" in evt ? (evt.ts as number) : undefined;
 								if (ts !== undefined && ts < minTs) minTs = ts;
 							}
 							next.set(sessionId, { hasOlder: true, oldestTs: minTs });
