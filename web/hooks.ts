@@ -106,6 +106,35 @@ type UIOnlyEvent =
 export type UIEvent = Event | UIOnlyEvent;
 
 /**
+ * Events that arrive over SSE but aren't part of the backend Event union.
+ * These are ephemeral server pushes for tree state and clarification state.
+ */
+export type SSEOnlyEvent =
+	| {
+			type: "tree_updated";
+			nodes: TaskNode[];
+			rootNodeId?: string;
+	  }
+	| {
+			type: "pending_clarifications";
+			clarifications: Array<{
+				id: string;
+				taskId: string;
+				question: string;
+				title?: string;
+				body?: string;
+				timestamp: number;
+			}>;
+	  }
+	| { type: "heartbeat" };
+
+/**
+ * Everything that can arrive over SSE or from REST event endpoints.
+ * This is the parse-boundary type — JSON.parse returns unknown, we cast to this once.
+ */
+export type IncomingEvent = UIEvent | SSEOnlyEvent;
+
+/**
  * LogEntry = UIEvent + display metadata.
  * `id` for keying. Time is derived from `ts` on render.
  * `taskId` is added by event-handler to route entries to the correct task log.
@@ -132,7 +161,7 @@ const WATCHDOG_TIMEOUT = 45_000;
 
 export function useSSE(
 	projectId: string,
-	onMessage: (msg: Record<string, unknown>) => void,
+	onMessage: (msg: IncomingEvent) => void,
 	onConnect?: () => void,
 	onReconnect?: () => void,
 ) {
@@ -170,7 +199,7 @@ export function useSSE(
 		source.onmessage = (evt) => {
 			lastMessageRef.current = Date.now();
 			try {
-				const data = JSON.parse(evt.data);
+				const data = JSON.parse(evt.data) as IncomingEvent;
 				// Data heartbeats update lastMessageRef but aren't processed
 				if (data.type === "heartbeat") return;
 				onMessage(data);

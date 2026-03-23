@@ -3,6 +3,7 @@ import type { QueueMessage } from "../src/message-queue.ts";
 import {
 	createLogEntry,
 	getLogTaskId,
+	type IncomingEvent,
 	type LogEntry,
 	type TaskNode,
 	type UIEvent,
@@ -154,7 +155,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					success: qe.success,
 					output: qe.output,
 					ts: eventTs,
-				} as UIEvent;
+				};
 			case "tree_change":
 				return {
 					type: "tree_change",
@@ -163,7 +164,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					title: qe.title,
 					taskId: parentTaskId,
 					ts: eventTs,
-				} as UIEvent;
+				};
 			case "user":
 				// User messages use the two-phase lifecycle (pending → consumed)
 				// When called from materialization, we DO want to show them
@@ -175,16 +176,16 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						content: qe.content,
 						...(qe.images?.length ? { images: qe.images } : {}),
 					},
-					taskId: parentTaskId,
+					taskId: parentTaskId ?? "",
 					ts: eventTs,
-				} as UIEvent;
+				};
 			case "parent_update":
 				return {
 					type: "parent_update",
 					content: qe.content,
 					taskId: parentTaskId,
 					ts: eventTs,
-				} as UIEvent;
+				};
 			case "child_report":
 				return {
 					type: "child_report",
@@ -194,7 +195,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					content: qe.content,
 					...(qe.requestReply ? { requestReply: true } : {}),
 					ts: eventTs,
-				} as UIEvent;
+				};
 			case "background_complete":
 				return {
 					type: "background_complete",
@@ -206,7 +207,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					stderr: qe.stderr,
 					taskId: parentTaskId,
 					ts: eventTs,
-				} as UIEvent;
+				};
 			case "cross_project":
 				return {
 					type: "cross_project",
@@ -215,14 +216,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					content: qe.content,
 					taskId: parentTaskId,
 					ts: eventTs,
-				} as UIEvent;
+				};
 			case "clarify_response":
 				return {
 					type: "clarify_response",
 					answer: qe.answer,
 					taskId: parentTaskId,
 					ts: eventTs,
-				} as UIEvent;
+				};
 			default:
 				return null;
 		}
@@ -352,34 +353,39 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	/**
 	 * Single event → entries, in-place updates, and side effects.
 	 * THE unified event processor — used by both live SSE and batch processing.
+	 * Accepts typed IncomingEvent — discriminated union narrowing eliminates all `as` casts.
 	 */
-	function processEvent(msg: Record<string, unknown>): ProcessResult {
+	function processEvent(msg: IncomingEvent): ProcessResult {
 		switch (msg.type) {
 			case "tree_updated":
 				return {
 					entries: [],
 					updates: [],
 					sideEffects: () => {
-						updateFromWS(msg.nodes as TaskNode[]);
-						if (msg.rootNodeId) setRootNodeId(msg.rootNodeId as string);
+						updateFromWS(msg.nodes);
+						if (msg.rootNodeId) setRootNodeId(msg.rootNodeId);
 					},
 				};
+
+			// SSE-only events that processEvent doesn't handle
+			case "pending_clarifications":
+			case "heartbeat":
+				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 
 			// --- Provider events (flat Event types) ---
 
 			case "tool_call": {
-				const tcTool = msg.tool as string;
-				const tcId = (msg.toolCallId as string) || "";
-				if (tcTool && tcId) toolCallToolNames.set(tcId, tcTool);
+				if (msg.tool && msg.toolCallId)
+					toolCallToolNames.set(msg.toolCallId, msg.tool);
 				return {
 					entries: [
 						createLogEntry({
 							type: "tool_call",
-							tool: tcTool,
-							toolCallId: tcId,
-							input: (msg.input as Record<string, unknown>) ?? {},
-							taskId: msg.taskId as string,
-							ts: msg.ts as number,
+							tool: msg.tool,
+							toolCallId: msg.toolCallId,
+							input: msg.input ?? {},
+							taskId: msg.taskId,
+							ts: msg.ts,
 						}),
 					],
 					updates: [],
@@ -388,30 +394,13 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			}
 
 			case "tool_result": {
-				const bgId = msg.backgroundId as string | undefined;
-				const bgCommand = msg.backgroundCommand as string | undefined;
-				const trTaskId = msg.taskId as string | undefined;
-				const trToolCallId = (msg.toolCallId as string) || "";
-				const trTool =
-					(msg.tool as string) || toolCallToolNames.get(trToolCallId) || "";
-				const trContent = (msg.content as string) || "";
-				const trIsError = (msg.isError as boolean) || false;
-				const trImages = msg.images as
-					| Array<{ base64: string; mediaType: string }>
-					| undefined;
-				const trPending = msg.pending as
-					| {
-							runningChildren: Array<{ id: string; title: string }>;
-							pendingClarifications: number;
-					  }
-					| undefined;
-				const trTs = msg.ts as number;
+				const trTool = msg.tool || toolCallToolNames.get(msg.toolCallId) || "";
 
 				// Yield tool_result: remove the tool_call entry entirely
 				if (trTool === "mcp__opengraft__yield") {
 					return {
 						entries: [],
-						updates: [{ type: "remove_tool", toolCallId: trToolCallId }],
+						updates: [{ type: "remove_tool", toolCallId: msg.toolCallId }],
 						sideEffects: NO_SIDE_EFFECTS,
 					};
 				}
@@ -422,27 +411,27 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					updates: [
 						{
 							type: "resolve_tool",
-							toolCallId: trToolCallId,
+							toolCallId: msg.toolCallId,
 							tool: trTool,
-							resultContent: trContent,
-							isError: trIsError,
-							images: trImages,
-							pending: trPending,
-							backgroundId: bgId,
-							backgroundCommand: bgCommand,
-							resultTs: trTs,
+							resultContent: msg.content || "",
+							isError: msg.isError || false,
+							images: msg.images,
+							pending: msg.pending,
+							backgroundId: msg.backgroundId,
+							backgroundCommand: msg.backgroundCommand,
+							resultTs: msg.ts,
 						},
 					],
-					sideEffects: bgId
+					sideEffects: msg.backgroundId
 						? () => {
-								const bgStartTime = trTs;
+								const bgId = msg.backgroundId!;
 								setBackgroundProcesses((prev) => {
 									const next = new Map(prev);
 									next.set(bgId, {
 										id: bgId,
-										command: bgCommand ?? "",
-										startTime: bgStartTime,
-										taskId: trTaskId,
+										command: msg.backgroundCommand ?? "",
+										startTime: msg.ts,
+										taskId: msg.taskId,
 									});
 									return next;
 								});
@@ -452,8 +441,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			}
 
 			case "text_delta": {
-				const deltaText = (msg.content as string) || "";
-				if (!deltaText) {
+				if (!msg.content) {
 					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 				}
 				return {
@@ -461,9 +449,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					updates: [
 						{
 							type: "merge_text",
-							taskId: msg.taskId as string | undefined,
-							text: deltaText,
-							ts: msg.ts as number | undefined,
+							taskId: msg.taskId,
+							text: msg.content,
+							ts: msg.ts,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -471,8 +459,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			}
 
 			case "assistant_text": {
-				const fullText = (msg.content as string) || "";
-				if (!fullText) {
+				if (!msg.content) {
 					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 				}
 				return {
@@ -480,9 +467,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					updates: [
 						{
 							type: "replace_text",
-							taskId: msg.taskId as string | undefined,
-							text: fullText,
-							ts: msg.ts as number | undefined,
+							taskId: msg.taskId,
+							text: msg.content,
+							ts: msg.ts,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -494,14 +481,13 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					entries: [],
 					updates: [],
 					sideEffects: () => {
-						const usageKey =
-							(msg.taskId as string | undefined) ?? "orchestrator";
+						const usageKey = msg.taskId || "orchestrator";
 						setTokenUsage((prev) => ({
 							...prev,
 							[usageKey]: {
-								inputTokens: msg.inputTokens as number,
-								contextWindow: msg.contextWindow as number,
-								estimated: (msg.estimated as boolean) || false,
+								inputTokens: msg.inputTokens,
+								contextWindow: msg.contextWindow,
+								estimated: msg.estimated || false,
 							},
 						}));
 					},
@@ -512,8 +498,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					entries: [
 						createLogEntry({
 							type: "compact_started",
-							taskId: msg.taskId as string,
-							ts: msg.ts as number,
+							taskId: msg.taskId,
+							ts: msg.ts,
 						}),
 					],
 					updates: [],
@@ -527,10 +513,10 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						{
 							type: "complete_compact",
 							text: `Context compacted (saved ~${msg.savedTokens} tokens)`,
-							checkpoint: msg.checkpoint as string,
-							savedTokens: msg.savedTokens as number,
-							taskId: msg.taskId as string | undefined,
-							ts: msg.ts as number | undefined,
+							checkpoint: msg.checkpoint,
+							savedTokens: msg.savedTokens,
+							taskId: msg.taskId,
+							ts: msg.ts,
 						},
 					],
 					sideEffects: NO_SIDE_EFFECTS,
@@ -543,15 +529,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			// --- Lifecycle events ---
 
 			case "orchestration_started": {
-				const startRootId = msg.taskId as string | undefined;
 				const entries: LogEntry[] = [];
 				if (msg.resume) {
 					entries.push(
 						createLogEntry({
 							type: "lifecycle",
 							content: "↻ Session resumed",
-							taskId: startRootId,
-							ts: msg.ts as number,
+							taskId: msg.taskId,
+							ts: msg.ts,
 						}),
 					);
 				}
@@ -561,12 +546,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					entries,
 					updates: [],
 					sideEffects: () => {
-						if (startRootId) {
-							setRootNodeId(startRootId);
-							setActiveAgents((prev) => new Set(prev).add(startRootId));
+						if (msg.taskId) {
+							setRootNodeId(msg.taskId);
+							setActiveAgents((prev) => new Set(prev).add(msg.taskId));
 						}
-						if (msg.provider) setAgentProvider(msg.provider as string);
-						if (msg.model) setAgentModel(msg.model as string);
+						if (msg.provider) setAgentProvider(msg.provider);
+						if (msg.model) setAgentModel(msg.model);
 					},
 				};
 			}
@@ -576,19 +561,19 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					entries: [],
 					updates: [],
 					sideEffects: () => {
-						if (msg.turns !== undefined) setLastTurns(msg.turns as number);
+						if (msg.turns !== undefined) setLastTurns(msg.turns);
 						if (msg.inputTokens !== undefined)
-							setLastInputTokens(msg.inputTokens as number);
+							setLastInputTokens(msg.inputTokens);
 						if (msg.cacheCreationTokens !== undefined)
-							setLastCacheCreationTokens(msg.cacheCreationTokens as number);
+							setLastCacheCreationTokens(msg.cacheCreationTokens);
 						if (msg.cacheReadTokens !== undefined)
-							setLastCacheReadTokens(msg.cacheReadTokens as number);
+							setLastCacheReadTokens(msg.cacheReadTokens);
 						if (msg.outputTokens !== undefined)
-							setLastOutputTokens(msg.outputTokens as number);
+							setLastOutputTokens(msg.outputTokens);
 						if (msg.taskId) {
 							setActiveAgents((prev) => {
 								const next = new Set(prev);
-								next.delete(msg.taskId as string);
+								next.delete(msg.taskId);
 								return next;
 							});
 						}
@@ -604,7 +589,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						if (msg.taskId) {
 							setActiveAgents((prev) => {
 								const next = new Set(prev);
-								next.delete(msg.taskId as string);
+								next.delete(msg.taskId);
 								return next;
 							});
 						}
@@ -618,9 +603,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					updates: [],
 					sideEffects: () => {
 						if (msg.taskId) {
-							setActiveAgents((prev) =>
-								new Set(prev).add(msg.taskId as string),
-							);
+							setActiveAgents((prev) => new Set(prev).add(msg.taskId));
 						}
 					},
 				};
@@ -633,34 +616,31 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						if (msg.taskId) {
 							setActiveAgents((prev) => {
 								const next = new Set(prev);
-								next.delete(msg.taskId as string);
+								next.delete(msg.taskId);
 								return next;
 							});
 						}
 					},
 				};
 
-			case "task_started": {
-				const ts = msg.ts as number;
+			case "task_started":
 				// Only show in the child task's own view — parent sees it via
 				// queue message two-phase lifecycle (pending → consumed)
 				return {
 					entries: [
 						createLogEntry({
 							type: "task_started",
-							taskId: msg.taskId as string,
-							title: msg.title as string,
-							ts,
+							taskId: msg.taskId,
+							title: msg.title,
+							ts: msg.ts,
 						}),
 					],
 					updates: [],
 					sideEffects: NO_SIDE_EFFECTS,
 				};
-			}
 
 			case "task_completed":
-				// Removed — done() tool card replaces this in child view,
-				// child_complete queue message handles parent view
+				// UIOnlyEvent — materialized from child_complete queue messages
 				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 
 			case "compacted_resume":
@@ -668,11 +648,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 
 			case "message": {
-				const body = msg.body as QueueMessage | undefined;
+				const { body } = msg;
 				const source = body?.source;
-				const umId = msg.id as string | undefined;
-				const umTaskId = msg.taskId as string | null | undefined;
-				const umTs = msg.ts as number;
+				const umId = msg.id || undefined;
 				const umContent =
 					body && (body.source === "user" || body.source === "parent_update")
 						? body.content
@@ -684,8 +662,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					deferredMessages.set(umId, {
 						content: umContent,
 						images: umImages,
-						taskId: umTaskId,
-						ts: umTs,
+						taskId: msg.taskId,
+						ts: msg.ts,
 						source,
 						queueEntry: body,
 					});
@@ -715,8 +693,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				if (body && source && source !== "user") {
 					const uiEvent = queueEntryToUIEvent(
 						body,
-						umTaskId ?? undefined,
-						umTs,
+						msg.taskId ?? undefined,
+						msg.ts,
 					);
 					if (uiEvent) {
 						return {
@@ -739,8 +717,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 								content: umContent,
 								...(umImages?.length ? { images: umImages } : {}),
 							},
-							taskId: umTaskId ?? "",
-							ts: umTs,
+							taskId: msg.taskId ?? "",
+							ts: msg.ts,
 						}),
 					],
 					updates: [],
@@ -750,18 +728,17 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 			case "messages_consumed": {
 				// Move consumed messages from pending/deferred to activity log
-				const consumedIds = new Set(msg.messageIds as string[]);
+				const consumedIds = new Set(msg.messageIds);
 				if (consumedIds.size === 0) {
 					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 				}
-				const consumeTs = msg.ts as number;
 				const newEntries: LogEntry[] = [];
 
 				// Materialize immediately (not as side effect) so batch mode works
 				for (const id of consumedIds) {
 					const deferred = deferredMessages.get(id);
 					if (deferred) {
-						const entry = materialize(deferred, consumeTs);
+						const entry = materialize(deferred, msg.ts);
 						if (entry) newEntries.push(entry);
 						deferredMessages.delete(id);
 					}
@@ -780,9 +757,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					entries: [
 						createLogEntry({
 							type: "error",
-							message: msg.message as string,
-							taskId: (msg.taskId as string) ?? "",
-							ts: msg.ts as number,
+							message: msg.message,
+							taskId: msg.taskId ?? "",
+							ts: msg.ts,
 						}),
 					],
 					updates: [],
@@ -1081,7 +1058,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	 * Process a batch of events (used for REST-fetched event history on page load/reconnect).
 	 * Resets all state and reprocesses from scratch through the unified processEvent path.
 	 */
-	function processEventBatch(events: Record<string, unknown>[]): void {
+	function processEventBatch(events: IncomingEvent[]): void {
 		// Clear deferred state — reprocessing from scratch
 		deferredMessages.clear();
 		toolCallToolNames.clear();
@@ -1091,12 +1068,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		const deferredSideEffects: (() => void)[] = [];
 
 		for (const evt of events) {
-			// Skip provider-internal prompt events and compacted_resume
-			const evtType = evt.type as string;
-			if (evtType === "message" && evt.cwd && !evt.id) {
+			// Skip provider-internal prompt events (message with empty id) and compacted_resume
+			if (evt.type === "message" && !evt.id) {
 				continue;
 			}
-			if (evtType === "compacted_resume") {
+			if (evt.type === "compacted_resume") {
 				continue;
 			}
 
@@ -1117,19 +1093,10 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 	// --- Main handler ---
 
-	function handleEvent(msg: Record<string, unknown>) {
+	function handleEvent(msg: IncomingEvent) {
 		// pending_clarifications: pass-through (still ephemeral/in-memory)
 		if (msg.type === "pending_clarifications") {
-			setPendingClarifications(
-				msg.clarifications as {
-					id: string;
-					taskId: string;
-					question: string;
-					title?: string;
-					body?: string;
-					timestamp: number;
-				}[],
-			);
+			setPendingClarifications(msg.clarifications);
 			return;
 		}
 
