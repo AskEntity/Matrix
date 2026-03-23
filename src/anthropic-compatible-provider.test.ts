@@ -15,17 +15,16 @@ import {
 	getContextWindow,
 	getModelPricing,
 } from "./anthropic-compatible-provider.ts";
-import { EventStore } from "./event-store.ts";
-import type { Event } from "./events.ts";
-import { MessageQueue } from "./message-queue.ts";
 import {
 	buildCompactedContext,
 	buildSummarizationInstruction,
 	extractCheckpoint,
 	getCompactionThresholds,
 	SUMMARIZATION_INSTRUCTION,
-	zodShapeToJsonSchema,
-} from "./provider-shared.ts";
+} from "./compaction.ts";
+import { EventStore } from "./event-store.ts";
+import type { Event } from "./events.ts";
+import { MessageQueue } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { attachMockSession, mockOrchestratorDeps } from "./test-utils.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
@@ -41,6 +40,7 @@ import {
 	truncateSearchOutput,
 } from "./tools/index.ts";
 import type { AgentResult } from "./types.ts";
+import { zodShapeToJsonSchema } from "./zod-schema.ts";
 
 /** Create a MessageQueue pre-loaded with a user message (for tests). */
 function queueWithPrompt(content: string, cwd?: string): MessageQueue {

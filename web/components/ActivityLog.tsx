@@ -2,46 +2,21 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getLogTaskId, type LogEntry, type TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { LogEntryView, ToolCard } from "./ToolCard.tsx";
+import { getEntryText } from "./tools/utils.ts";
 
-/** Get searchable text content from a LogEntry. */
+/** Get searchable text content from a LogEntry. Uses getEntryText as base, adds extra searchable fields. */
 function getSearchableText(entry: LogEntry): string {
+	const base = getEntryText(entry);
+	// Add extra searchable context for specific types
 	switch (entry.type) {
-		case "assistant_text":
-		case "text_delta":
-			return entry.content.trimStart();
-		case "tool_call":
-			return entry.tool;
-		case "tool_result":
-			return entry.content;
 		case "tool_pair":
-			return `${entry.tool} ${entry.resultContent}`;
-		case "error":
-			return entry.message;
-		case "message":
-			return entry.body.source === "user" ? entry.body.content : "";
-		case "lifecycle":
-		case "parent_update":
-		case "child_report":
-		case "cross_project":
-			return entry.content ?? "";
-		case "background_complete":
-			return entry.command;
-		case "task_started":
-		case "task_completed":
-		case "budget_exceeded":
-			return entry.title;
-		case "tree_change":
-			return entry.title ?? entry.action;
+			// Include tool name in search (getEntryText only returns resultContent)
+			return `${entry.tool} ${base}`;
 		case "compact_marker":
-			return entry.checkpoint;
-		case "compact_started":
-			return "Compacting context...";
-		case "clarification_requested":
-			return entry.title ?? entry.question;
-		case "clarification_answered":
-			return entry.answer;
+			// Include checkpoint text in search
+			return `${base} ${entry.checkpoint}`;
 		default:
-			return "";
+			return base;
 	}
 }
 
