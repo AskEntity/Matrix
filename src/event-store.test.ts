@@ -500,6 +500,31 @@ describe("EventStore", () => {
 		expect(store.read("s1")).toEqual([event]);
 	});
 
+	test("read skips malformed JSONL lines", async () => {
+		const { appendFileSync } = await import("node:fs");
+		const validEvent: Event = {
+			type: "assistant_text",
+			content: "hello",
+			taskId: "test",
+			ts: 1000,
+		};
+		await store.append("corrupt", validEvent);
+		// Manually inject a corrupted line
+		appendFileSync(join(TEST_DIR, "corrupt.jsonl"), "this is not valid json\n");
+		const validEvent2: Event = {
+			type: "assistant_text",
+			content: "world",
+			taskId: "test",
+			ts: 2000,
+		};
+		await store.append("corrupt", validEvent2);
+
+		const events = store.read("corrupt");
+		expect(events).toHaveLength(2);
+		expect(events[0]?.type).toBe("assistant_text");
+		expect(events[1]?.type).toBe("assistant_text");
+	});
+
 	test("separate sessions do not interfere", async () => {
 		const e1: Event = {
 			type: "message",

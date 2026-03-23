@@ -35,8 +35,14 @@ export async function persistMessage(
 	try {
 		const raw = await readFile(filePath, "utf-8");
 		existing = JSON.parse(raw) as QueueMessage[];
-	} catch {
-		// File doesn't exist yet — start with empty array
+		if (!Array.isArray(existing)) existing = [];
+	} catch (e) {
+		// File doesn't exist (ENOENT) — start fresh. Corrupt file — warn and start fresh.
+		if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+			console.warn(
+				`[PersistentQueue] Corrupt message file for ${taskId}, starting fresh`,
+			);
+		}
 	}
 
 	existing.push(msg);
@@ -54,8 +60,14 @@ export async function loadPersistedMessages(
 	const filePath = messagePath(dataDir, projectId, taskId);
 	try {
 		const raw = await readFile(filePath, "utf-8");
-		return JSON.parse(raw) as QueueMessage[];
-	} catch {
+		const parsed = JSON.parse(raw) as QueueMessage[];
+		return Array.isArray(parsed) ? parsed : [];
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+			console.warn(
+				`[PersistentQueue] Corrupt message file for ${taskId}, returning empty`,
+			);
+		}
 		return [];
 	}
 }

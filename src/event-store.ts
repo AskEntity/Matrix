@@ -72,18 +72,26 @@ export class EventStore {
 		const p = this.path(sessionId);
 		if (!existsSync(p)) return [];
 		const text = readFileSync(p, "utf-8");
-		return text
-			.trim()
-			.split("\n")
-			.filter(Boolean)
-			.map((line) => {
-				const event = JSON.parse(line) as Event;
-				// Backward compat: old JSONL files may not have taskId
-				if (!("taskId" in event) || event.taskId === undefined) {
-					(event as Record<string, unknown>).taskId = sessionId;
-				}
-				return event;
-			});
+		const events: Event[] = [];
+		for (const line of text.trim().split("\n")) {
+			if (!line) continue;
+			let event: Event;
+			try {
+				event = JSON.parse(line) as Event; // Safe: always written by our code in a known format
+			} catch {
+				// Skip malformed JSONL lines (e.g. truncated by crash mid-write)
+				console.warn(
+					`[EventStore] Skipping malformed JSONL line in session ${sessionId}`,
+				);
+				continue;
+			}
+			// Backward compat: old JSONL files may not have taskId
+			if (!("taskId" in event) || event.taskId === undefined) {
+				(event as Record<string, unknown>).taskId = sessionId;
+			}
+			events.push(event);
+		}
+		return events;
 	}
 
 	/** Read events after the last compact_marker (for provider message reconstruction) */
