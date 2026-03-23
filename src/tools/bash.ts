@@ -526,7 +526,8 @@ export async function executeBashWithTimeout(
 						// Queue may be closed
 					}
 				}
-			} catch {
+			} catch (e) {
+				console.warn(`[bash] Background process ${bgId} failed:`, e);
 				bgEntry.status = "failed";
 			} finally {
 				bgEntry.resolveCompletion?.();
@@ -657,7 +658,8 @@ export async function executeBashWithTimeout(
 					// Queue may be closed
 				}
 			}
-		} catch {
+		} catch (e) {
+			console.warn(`[bash] Background process ${bgId} failed:`, e);
 			bgEntry.status = "failed";
 		} finally {
 			bgEntry.resolveCompletion?.();

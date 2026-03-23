@@ -64,7 +64,7 @@ export const AppHeader = memo(function AppHeader({
 						: "";
 				setVersionInfo(`v${data.version ?? "?"}${hash}`);
 			})
-			.catch(() => {});
+			.catch((e) => console.warn("[AppHeader] Failed to fetch version:", e));
 	}, []);
 
 	return (

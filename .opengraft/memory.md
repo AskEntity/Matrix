@@ -459,3 +459,12 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `buildToolResultEvents()` takes `toolIds: Array<{id: string; name: string}>` — callers must pass name.
 - `findOrphanedToolCalls()` and `writeOrphanedToolResults()` both include tool name from the matching tool_call.
 - Frontend fallback: `toolCallToolNames` Map in event-handler.ts maps toolCallId→tool name, populated on tool_call events, used as fallback on tool_result when tool field is empty (handles old JSONL files).
+
+
+## Silent Error Swallowing Audit
+- Audited ~70 empty catch blocks across src/ and web/.
+- 19 catches changed from silent swallow to console.warn — these are cases where silent failure masks bugs (JSONL write failures, tracker save failures, frontend fetch failures, background process errors).
+- ~50 catches kept as-is — genuinely safe (queue lifecycle races, file existence checks, JSON parse of untrusted input, cleanup operations, SSE disconnects, auth verification, config defaults).
+- Pattern: `console.warn("[context] description:", error)` — one-line, enough to identify the problem in logs.
+- Key distinction: "queue may be closed" catches are correct (racing with lifecycle), but "tracker.save failed" or "appendFile failed" are data loss that should be visible.
+

@@ -1510,7 +1510,12 @@ export function createOrchestratorTools(
 						if (!directParentQueue || directParentQueue !== parentQueue) {
 							lifecycleDeps
 								.deliverMessage(node.parentId, completionMsg)
-								.catch(() => {});
+								.catch((e) => {
+									console.warn(
+										`[done] Failed to deliver child_complete to parent ${node.parentId}:`,
+										e,
+									);
+								});
 						}
 					}
 				}

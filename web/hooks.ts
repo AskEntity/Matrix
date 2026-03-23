@@ -174,8 +174,8 @@ export function useSSE(
 				// Data heartbeats update lastMessageRef but aren't processed
 				if (data.type === "heartbeat") return;
 				onMessage(data);
-			} catch {
-				/* ignore */
+			} catch (e) {
+				console.warn("[SSE] Failed to parse message:", e);
 			}
 		};
 
@@ -218,8 +218,8 @@ export function useProjects() {
 			if (!res.ok) return;
 			const data = await res.json();
 			if (Array.isArray(data)) setProjects(data);
-		} catch {
-			/* ignore */
+		} catch (e) {
+			console.warn("[useProjects] Failed to fetch projects:", e);
 		}
 	}, []);
 
@@ -274,8 +274,8 @@ export function useTasks(
 			if (data.rootNodeId && setRootNodeId) {
 				setRootNodeId(data.rootNodeId);
 			}
-		} catch {
-			/* ignore */
+		} catch (e) {
+			console.warn("[useTasks] Failed to fetch tasks:", e);
 		}
 	}, [projectId, setRootNodeId]);
 
@@ -320,8 +320,8 @@ export function useAgent(projectId: string) {
 			const data = await res.json();
 			if (data.provider) setProvider(data.provider);
 			if (data.model) setModel(data.model);
-		} catch {
-			/* ignore */
+		} catch (e) {
+			console.warn("[useAgent] Failed to check agent status:", e);
 		}
 	}, [projectId]);
 
@@ -519,7 +519,7 @@ export function useProjectConfig(projectId: string | null) {
 		authFetch(`/projects/${projectId}/config`)
 			.then((r) => r.json())
 			.then(setConfig)
-			.catch(() => {});
+			.catch((e) => console.warn("[useConfig] Failed to fetch config:", e));
 	}, [projectId]);
 
 	const updateConfig = useCallback(
@@ -565,8 +565,8 @@ export function useThreeLayerConfig(projectId: string | null) {
 		try {
 			const res = await authFetch(`/projects/${projectId}/config/all`);
 			if (res.ok) setLayers(await res.json());
-		} catch {
-			/* ignore */
+		} catch (e) {
+			console.warn("[useConfigLayers] Failed to fetch config:", e);
 		} finally {
 			setLoading(false);
 		}

@@ -748,7 +748,9 @@ export async function launchAgent(
 	const rootNode = tracker.ensureRootNode("Orchestrator", "");
 	const rootNodeId = rootNode.id;
 	tracker.updateStatus(rootNodeId, "in_progress");
-	tracker.save().catch(() => {});
+	tracker.save().catch((e) => {
+		console.warn("[agent-lifecycle] Failed to save tracker on agent start:", e);
+	});
 
 	const queue = new MessageQueue();
 
@@ -915,8 +917,11 @@ export async function launchAgent(
 			// Save tree state regardless of how the agent exited.
 			try {
 				await tracker.save();
-			} catch {
-				// Don't let save failure prevent cleanup
+			} catch (e) {
+				console.warn(
+					"[agent-lifecycle] Failed to save tracker during cleanup:",
+					e,
+				);
 			}
 			session.stop();
 			// Only clean up if this session is still the active one.

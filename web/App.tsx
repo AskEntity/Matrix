@@ -457,7 +457,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		authFetch(`/projects/${projectId}/events?after=compact`)
 			.then((r) => r.json())
 			.then(processEventResponse)
-			.catch(() => {});
+			.catch((e) =>
+				console.warn("[App] Failed to re-fetch events on reconnect:", e),
+			);
 		// Re-fetch pending clarifications (still ephemeral/in-memory)
 		authFetch(`/projects/${projectId}/clarifications`)
 			.then((r) => r.json())
@@ -473,7 +475,12 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					}[];
 				}) => setPendingClarifications(data.clarifications ?? []),
 			)
-			.catch(() => {});
+			.catch((e) =>
+				console.warn(
+					"[App] Failed to re-fetch clarifications on reconnect:",
+					e,
+				),
+			);
 	}, [projectId, processEventResponse]);
 
 	const { connected } = useSSE(
@@ -507,7 +514,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					processEventResponse(data);
 				},
 			)
-			.catch(() => {});
+			.catch((e) =>
+				console.warn("[App] Failed to fetch events for project:", e),
+			);
 		return () => {
 			cancelled = true;
 		};
