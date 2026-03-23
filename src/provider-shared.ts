@@ -522,7 +522,11 @@ export async function* handleImplicitYield(
 		compactOnly: boolean;
 	} | null
 > {
-	const idleEvt: Event = { type: "agent_idle", taskId: "", ts: Date.now() };
+	const idleEvt: Event = {
+		type: "agent_idle",
+		taskId: "",
+		ts: Date.now(),
+	};
 	emit?.(idleEvt);
 	yield idleEvt;
 	try {
@@ -596,6 +600,7 @@ export function recordQueueEvents(
 	emit: (event: Event) => void,
 	queueMsgs: QueueMessage[],
 	additionalConsumedIds?: string[],
+	taskId = "",
 ): void {
 	const consumedIds: string[] = [...(additionalConsumedIds ?? [])];
 
@@ -604,7 +609,7 @@ export function recordQueueEvents(
 			// message already written to JSONL at send time — don't duplicate
 			consumedIds.push(msg.id);
 		} else {
-			const evt = queueMessageToEvent(msg);
+			const evt = queueMessageToEvent(msg, taskId);
 			const evtId = (evt as { id?: string }).id;
 			if (evtId) consumedIds.push(evtId);
 			emit(evt);
@@ -615,6 +620,7 @@ export function recordQueueEvents(
 		emit({
 			type: "messages_consumed",
 			messageIds: consumedIds,
+			taskId,
 			ts: Date.now(),
 		});
 	}
@@ -651,6 +657,7 @@ export function buildToolResultEvents(
 	toolIds: Array<{ id: string }>,
 	execResults: ToolExecResult[],
 	cancellationQueueMsgs: QueueMessage[],
+	taskId = "",
 ): Event[] {
 	const toolEvents: Event[] = [];
 
@@ -662,7 +669,7 @@ export function buildToolResultEvents(
 			// message already written to JSONL at send time — just track ID
 			consumedIds.push(qm.id);
 		} else {
-			const evt = queueMessageToEvent(qm);
+			const evt = queueMessageToEvent(qm, taskId);
 			const evtId = (evt as { id?: string }).id;
 			if (evtId) consumedIds.push(evtId);
 			nonUserQueueEvents.push(evt);
@@ -702,6 +709,7 @@ export function buildToolResultEvents(
 			...(exec.backgroundCommand
 				? { backgroundCommand: exec.backgroundCommand }
 				: {}),
+			taskId,
 			ts: Date.now(),
 		});
 	}
@@ -713,7 +721,7 @@ export function buildToolResultEvents(
 				if (qm.source === "user" && qm.id) {
 					consumedIds.push(qm.id);
 				} else {
-					const evt = queueMessageToEvent(qm);
+					const evt = queueMessageToEvent(qm, taskId);
 					const evtId = (evt as { id?: string }).id;
 					if (evtId) consumedIds.push(evtId);
 					nonUserQueueEvents.push(evt);
@@ -736,6 +744,7 @@ export function buildToolResultEvents(
 		toolEvents.push({
 			type: "messages_consumed",
 			messageIds: allConsumedIds,
+			taskId,
 			ts: Date.now(),
 		});
 	}
@@ -782,12 +791,14 @@ export async function* processCompaction(
 				type: "compact_marker",
 				checkpoint,
 				savedTokens: compactSavedTokens,
+				taskId: "",
 				ts: Date.now(),
 			});
 			emit({
 				type: "compacted_resume",
 				content: userContent,
 				cwd,
+				taskId: "",
 				ts: Date.now(),
 			});
 		}
@@ -797,6 +808,7 @@ export async function* processCompaction(
 			inputTokens: estimatedPostCompactTokens,
 			contextWindow,
 			estimated: true,
+			taskId: "",
 			ts: Date.now(),
 		};
 		emit?.(usageEvt);
@@ -806,6 +818,7 @@ export async function* processCompaction(
 			type: "compact_marker",
 			checkpoint,
 			savedTokens: compactSavedTokens,
+			taskId: "",
 			ts: Date.now(),
 		};
 
@@ -813,6 +826,7 @@ export async function* processCompaction(
 	} catch (e) {
 		const errEvt: Event = {
 			type: "error",
+			taskId: "",
 			message: `Compaction rebuild failed: ${e instanceof Error ? e.message : String(e)}`,
 			ts: Date.now(),
 		};
@@ -854,11 +868,13 @@ export function checkBudget(
 export function recordBudgetWarning(
 	emit: ((event: Event) => void) | undefined,
 	warning: string,
+	taskId = "",
 ): void {
 	if (emit) {
 		emit({
 			type: "budget_warning",
 			warning,
+			taskId,
 			ts: Date.now(),
 		});
 	}
@@ -1424,6 +1440,7 @@ export async function* runProviderLoop(
 		const evt: Event = {
 			type: "status",
 			message: `Starting agent loop (model: ${model})`,
+			taskId: "",
 			ts: Date.now(),
 		};
 		emit?.(evt);
@@ -1433,7 +1450,12 @@ export async function* runProviderLoop(
 	while (true) {
 		// Check abort signal
 		if (request.signal?.aborted) {
-			const evt: Event = { type: "status", message: "Aborted", ts: Date.now() };
+			const evt: Event = {
+				type: "status",
+				message: "Aborted",
+				taskId: "",
+				ts: Date.now(),
+			};
 			emit?.(evt);
 			yield evt;
 			break;
@@ -1492,6 +1514,7 @@ export async function* runProviderLoop(
 			const s1: Event = {
 				type: "status",
 				message: "Context is too short to compact",
+				taskId: "",
 				ts: Date.now(),
 			};
 			emit?.(s1);
@@ -1503,6 +1526,7 @@ export async function* runProviderLoop(
 				type: "compact_marker",
 				checkpoint: "Context too short for meaningful compaction",
 				savedTokens: 0,
+				taskId: "",
 				ts: Date.now(),
 			};
 			emit?.(s3);
@@ -1555,6 +1579,7 @@ export async function* runProviderLoop(
 				const cs2: Event = {
 					type: "status",
 					message: compactStatusMsg,
+					taskId: "",
 					ts: Date.now(),
 				};
 				emit?.(cs2);
@@ -1569,6 +1594,7 @@ export async function* runProviderLoop(
 					emit({
 						type: "summarization_request",
 						instruction: summarizationInstruction,
+						taskId: "",
 						ts: Date.now(),
 					});
 				}
@@ -1603,6 +1629,7 @@ export async function* runProviderLoop(
 				emit({
 					type: "text_delta",
 					content: streamEvent.content,
+					taskId: "",
 					ts: Date.now(),
 				});
 			}
@@ -1623,6 +1650,7 @@ export async function* runProviderLoop(
 			type: "usage",
 			inputTokens: usage.totalContextTokens,
 			contextWindow,
+			taskId: "",
 			ts: Date.now(),
 		};
 		emit?.(usageEvt);
@@ -1635,7 +1663,12 @@ export async function* runProviderLoop(
 			if (!compactionPending) {
 				// assistant_text is also emitted via buildResponseEvents — this yield
 				// is only for consumer loop advancement
-				yield { type: "assistant_text", content: responseText, ts: Date.now() };
+				yield {
+					type: "assistant_text",
+					content: responseText,
+					taskId: "",
+					ts: Date.now(),
+				};
 			}
 		}
 
@@ -1648,6 +1681,7 @@ export async function* runProviderLoop(
 					tool: tu.name,
 					toolCallId: tu.id,
 					input: tu.input,
+					taskId: "",
 					ts: Date.now(),
 				};
 			}
@@ -1680,6 +1714,7 @@ export async function* runProviderLoop(
 				const noQEvt: Event = {
 					type: "status",
 					message: "Agent ended turn (no queue for yield)",
+					taskId: "",
 					ts: Date.now(),
 				};
 				emit?.(noQEvt);
@@ -1691,6 +1726,7 @@ export async function* runProviderLoop(
 				type: "status",
 				message:
 					"Agent ended turn — entering idle state (waiting for messages)",
+				taskId: "",
 				ts: Date.now(),
 			};
 			emit?.(idleStatusEvt);
@@ -1788,6 +1824,7 @@ export async function* runProviderLoop(
 				...(exec.backgroundCommand
 					? { backgroundCommand: exec.backgroundCommand }
 					: {}),
+				taskId: "",
 				ts: Date.now(),
 			};
 		}
@@ -1874,6 +1911,7 @@ export async function* runProviderLoop(
 				const bwEvt: Event = {
 					type: "status",
 					message: budgetResult.warning,
+					taskId: "",
 					ts: Date.now(),
 				};
 				emit?.(bwEvt);

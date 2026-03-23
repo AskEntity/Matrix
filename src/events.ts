@@ -47,7 +47,7 @@ export interface MessageEvent {
 	/** ULID — identifies this message for two-phase lifecycle. */
 	id: string;
 	/** Task/session ID — used for JSONL routing and SSE broadcast targeting. */
-	taskId?: string;
+	taskId: string;
 	/** Structured message body — contains ALL message data. */
 	body: MessageBody;
 	ts: number;
@@ -55,13 +55,13 @@ export interface MessageEvent {
 
 export type Event =
 	| MessageEvent
-	| { type: "assistant_text"; content: string; taskId?: string; ts: number }
+	| { type: "assistant_text"; content: string; taskId: string; ts: number }
 	| {
 			type: "tool_call";
 			tool: string;
 			toolCallId: string;
 			input: Record<string, unknown>;
-			taskId?: string;
+			taskId: string;
 			ts: number;
 	  }
 	| {
@@ -81,14 +81,14 @@ export type Event =
 			/** Background command — set when bash moves a command to background. */
 			backgroundCommand?: string;
 
-			taskId?: string;
+			taskId: string;
 			ts: number;
 	  }
 	// Ephemeral events — broadcast over WS but not persisted to JSONL
-	| { type: "text_delta"; content: string; taskId?: string; ts: number }
+	| { type: "text_delta"; content: string; taskId: string; ts: number }
 	| {
 			type: "usage";
-			taskId?: string;
+			taskId: string;
 			inputTokens: number;
 			contextWindow: number;
 			estimated?: boolean;
@@ -96,21 +96,32 @@ export type Event =
 	  }
 	| { type: "agent_idle"; taskId: string; ts: number }
 	| { type: "agent_active"; taskId: string; ts: number }
-	| { type: "status"; message: string; taskId?: string; ts: number }
+	| { type: "status"; message: string; taskId: string; ts: number }
 	| {
 			type: "clarification_timeout";
-			taskId?: string;
+			taskId: string;
 			timeoutMs: number;
 			ts: number;
 	  }
-	| { type: "compacted_resume"; content: string; cwd?: string; ts: number }
-	| { type: "summarization_request"; instruction: string; ts: number }
-	| { type: "budget_warning"; warning: string; ts: number }
+	| {
+			type: "compacted_resume";
+			content: string;
+			cwd?: string;
+			taskId: string;
+			ts: number;
+	  }
+	| {
+			type: "summarization_request";
+			instruction: string;
+			taskId: string;
+			ts: number;
+	  }
+	| { type: "budget_warning"; warning: string; taskId: string; ts: number }
 	| {
 			type: "compact_marker";
 			checkpoint: string;
 			savedTokens: number;
-			taskId?: string;
+			taskId: string;
 			ts: number;
 	  }
 	// Lifecycle events — persisted to JSONL for activity log replay
@@ -141,7 +152,7 @@ export type Event =
 			ts: number;
 	  }
 	| { type: "task_started"; taskId: string; title: string; ts: number }
-	| { type: "error"; taskId?: string; message: string; ts: number }
+	| { type: "error"; taskId: string; message: string; ts: number }
 	| {
 			type: "budget_exceeded";
 			taskId: string;
@@ -170,15 +181,16 @@ export type Event =
 			type: "tree_mutation";
 			action: string;
 			nodeId: string;
+			taskId: string;
 			title?: string;
 			ts: number;
 	  }
 	| { type: "compact_started"; taskId: string; ts: number }
-	| { type: "agent_stopped"; taskId?: string; ts: number }
+	| { type: "agent_stopped"; taskId: string; ts: number }
 	| {
 			type: "messages_consumed";
 			messageIds: string[];
-			taskId?: string;
+			taskId: string;
 			ts: number;
 	  };
 
@@ -194,7 +206,10 @@ export function isQueueEvent(event: Event): boolean {
 }
 
 /** Convert a QueueMessage to a unified `message` Event with body. */
-export function queueMessageToEvent(msg: QueueMessage): MessageEvent {
+export function queueMessageToEvent(
+	msg: QueueMessage,
+	taskId: string,
+): MessageEvent {
 	const ts = Date.now();
 	const id = msg.source === "user" && msg.id ? msg.id : ulid();
 	// Build body directly from the QueueMessage — source discriminates the shape
@@ -263,7 +278,7 @@ export function queueMessageToEvent(msg: QueueMessage): MessageEvent {
 				return { source: "compact" };
 		}
 	})();
-	return { type: "message", id, taskId: undefined, body, ts };
+	return { type: "message", id, taskId, body, ts };
 }
 
 /**
@@ -362,7 +377,10 @@ export function formatPendingSection(pending: {
  * Call this BEFORE eventsToAnthropicMessages/eventsToOpenAIMessages on resume
  * to fix orphans once and persist the fix.
  */
-export function findOrphanedToolCalls(events: Event[]): Event[] {
+export function findOrphanedToolCalls(
+	events: Event[],
+	taskId: string,
+): Event[] {
 	// Build sets of tool_call IDs and tool_result IDs
 	const toolCallIds = new Map<string, string>(); // id → tool name
 	const toolResultIds = new Set<string>();
@@ -386,6 +404,7 @@ export function findOrphanedToolCalls(events: Event[]): Event[] {
 				content:
 					"Tool execution was interrupted by daemon restart. Results were lost.",
 				isError: true,
+				taskId,
 				ts: Date.now(),
 			});
 		}

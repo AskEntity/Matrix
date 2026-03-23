@@ -319,7 +319,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				content: msg.content,
 				...(msg.images?.length ? { images: msg.images } : {}),
 			},
-			taskId: msg.taskId ?? undefined,
+			taskId: msg.taskId ?? "",
 			ts,
 		});
 	}
@@ -703,7 +703,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 								content: umContent,
 								...(umImages?.length ? { images: umImages } : {}),
 							},
-							taskId: umTaskId ?? undefined,
+							taskId: umTaskId ?? "",
 							ts: umTs,
 						}),
 					],
@@ -745,7 +745,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						createLogEntry({
 							type: "error",
 							message: msg.message as string,
-							taskId: msg.taskId as string | undefined,
+							taskId: (msg.taskId as string) ?? "",
 							ts: msg.ts as number,
 						}),
 					],
@@ -762,6 +762,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							type: "tree_mutation",
 							action,
 							nodeId: msg.nodeId as string,
+							taskId: (msg.taskId as string) ?? "",
 							title: title || undefined,
 							ts: msg.ts as number,
 						}),

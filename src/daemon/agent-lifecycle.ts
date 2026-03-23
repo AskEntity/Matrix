@@ -300,6 +300,7 @@ async function writeOrphanedToolResults(
 			content:
 				"Tool execution was interrupted by daemon restart. Results were lost.",
 			isError: true,
+			taskId: sessionId,
 			ts: Date.now(),
 		}),
 	);
@@ -382,10 +383,10 @@ export async function stopAgent(
 		}
 	}
 
-	const rootNodeId = tracker?.rootNodeId;
+	const rootNodeId = tracker?.rootNodeId ?? "";
 	emitEvent(ctx, projectId, {
 		type: "agent_stopped",
-		...(rootNodeId ? { taskId: rootNodeId } : {}),
+		taskId: rootNodeId,
 		ts: Date.now(),
 	});
 }
@@ -555,7 +556,7 @@ export async function runChildAgentInBackground(
 			? eventStore.readActive(nodeId)
 			: [];
 		if (activeEvents.length > 0) {
-			const orphanFixes = findOrphanedToolCalls(activeEvents);
+			const orphanFixes = findOrphanedToolCalls(activeEvents, nodeId);
 			if (orphanFixes.length > 0) {
 				await eventStore.appendBatch(nodeId, orphanFixes);
 				activeEvents = [...activeEvents, ...orphanFixes];
@@ -809,7 +810,7 @@ export async function launchAgent(
 		? eventStore.readActive(rootNodeId)
 		: [];
 	if (rootActiveEvents.length > 0) {
-		const orphanFixes = findOrphanedToolCalls(rootActiveEvents);
+		const orphanFixes = findOrphanedToolCalls(rootActiveEvents, rootNodeId);
 		if (orphanFixes.length > 0) {
 			await eventStore.appendBatch(rootNodeId, orphanFixes);
 			rootActiveEvents = [...rootActiveEvents, ...orphanFixes];

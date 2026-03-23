@@ -33,6 +33,7 @@ describe("EventStore", () => {
 			type: "message",
 			id: "",
 			body: { source: "user", content: "hello" },
+			taskId: "test",
 			ts: 1000,
 		};
 		await store.append("s1", event);
@@ -45,11 +46,13 @@ describe("EventStore", () => {
 			type: "message",
 			id: "",
 			body: { source: "user", content: "hello" },
+			taskId: "test",
 			ts: 1000,
 		};
 		const e2: Event = {
 			type: "assistant_text",
 			content: "hi there",
+			taskId: "test",
 			ts: 1001,
 		};
 		await store.append("s1", e1);
@@ -63,14 +66,16 @@ describe("EventStore", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "hello" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "hi", ts: 1001 },
+			{ type: "assistant_text", content: "hi", taskId: "test", ts: 1001 },
 			{
 				type: "tool_call",
 				tool: "bash",
 				toolCallId: "tc1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 1002,
 			},
 		];
@@ -92,6 +97,7 @@ describe("EventStore", () => {
 			type: "message",
 			id: "",
 			body: { source: "user", content: "hello" },
+			taskId: "test",
 			ts: 1000,
 		});
 		expect(store.has("s1")).toBe(true);
@@ -111,9 +117,10 @@ describe("EventStore", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "hello" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "hi", ts: 1001 },
+			{ type: "assistant_text", content: "hi", taskId: "test", ts: 1001 },
 		];
 		await store.appendBatch("s1", events);
 		expect(store.readActive("s1")).toEqual(events);
@@ -125,24 +132,51 @@ describe("EventStore", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "old msg" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "old response", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "old response",
+				taskId: "test",
+				ts: 1001,
+			},
 			{
 				type: "compact_marker",
 				checkpoint: "checkpoint text",
 				savedTokens: 5000,
+				taskId: "test",
 				ts: 2000,
 			},
-			{ type: "compacted_resume", content: "checkpoint text", ts: 2001 },
-			{ type: "assistant_text", content: "new response", ts: 2002 },
+			{
+				type: "compacted_resume",
+				content: "checkpoint text",
+				taskId: "test",
+				ts: 2001,
+			},
+			{
+				type: "assistant_text",
+				content: "new response",
+				taskId: "test",
+				ts: 2002,
+			},
 		];
 		await store.appendBatch("s1", events);
 
 		const active = store.readActive("s1");
 		expect(active).toEqual([
-			{ type: "compacted_resume", content: "checkpoint text", ts: 2001 },
-			{ type: "assistant_text", content: "new response", ts: 2002 },
+			{
+				type: "compacted_resume",
+				content: "checkpoint text",
+				taskId: "test",
+				ts: 2001,
+			},
+			{
+				type: "assistant_text",
+				content: "new response",
+				taskId: "test",
+				ts: 2002,
+			},
 		]);
 	});
 
@@ -152,33 +186,47 @@ describe("EventStore", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "very old" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
 				type: "compact_marker",
 				checkpoint: "first",
 				savedTokens: 1000,
+				taskId: "test",
 				ts: 2000,
 			},
 			{
 				type: "message",
 				id: "",
 				body: { source: "user", content: "somewhat old" },
+				taskId: "test",
 				ts: 2001,
 			},
 			{
 				type: "compact_marker",
 				checkpoint: "second",
 				savedTokens: 2000,
+				taskId: "test",
 				ts: 3000,
 			},
-			{ type: "compacted_resume", content: "second checkpoint", ts: 3001 },
+			{
+				type: "compacted_resume",
+				content: "second checkpoint",
+				taskId: "test",
+				ts: 3001,
+			},
 		];
 		await store.appendBatch("s1", events);
 
 		const active = store.readActive("s1");
 		expect(active).toEqual([
-			{ type: "compacted_resume", content: "second checkpoint", ts: 3001 },
+			{
+				type: "compacted_resume",
+				content: "second checkpoint",
+				taskId: "test",
+				ts: 3001,
+			},
 		]);
 	});
 
@@ -193,6 +241,7 @@ describe("EventStore", () => {
 			content: 'result with "quotes" and\nnewlines',
 			isError: false,
 			images: [{ base64: "abc123", mediaType: "image/png" }],
+			taskId: "test",
 			ts: 1234,
 		};
 		await store.append("s1", event);
@@ -204,12 +253,14 @@ describe("EventStore", () => {
 			type: "message",
 			id: "",
 			body: { source: "user", content: "session 1" },
+			taskId: "test",
 			ts: 1000,
 		};
 		const e2: Event = {
 			type: "message",
 			id: "",
 			body: { source: "user", content: "session 2" },
+			taskId: "test",
 			ts: 2000,
 		};
 		await store.append("s1", e1);

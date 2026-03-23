@@ -548,6 +548,7 @@ function createAnthropicAdapter(
 								yield {
 									type: "text_delta" as const,
 									content: textBuffer,
+									taskId: "",
 									ts: Date.now(),
 								};
 								textBuffer = "";
@@ -559,6 +560,7 @@ function createAnthropicAdapter(
 						yield {
 							type: "text_delta" as const,
 							content: textBuffer,
+							taskId: "",
 							ts: Date.now(),
 						};
 					}
@@ -576,6 +578,7 @@ function createAnthropicAdapter(
 					const delay = Math.min(2000 * 2 ** attempt, 60000);
 					yield {
 						type: "error" as const,
+						taskId: "",
 						message: `API error (retry ${attempt + 1}/4): ${e.message}`,
 						ts: Date.now(),
 					};
@@ -654,6 +657,7 @@ function createAnthropicAdapter(
 					events.push({
 						type: "assistant_text",
 						content: block.text,
+						taskId: "",
 						ts: Date.now(),
 					});
 				} else if (block.type === "tool_use" && !isCompacting) {
@@ -662,6 +666,7 @@ function createAnthropicAdapter(
 						tool: block.name,
 						toolCallId: block.id,
 						input: block.input as Record<string, unknown>,
+						taskId: "",
 						ts: Date.now(),
 					});
 				}

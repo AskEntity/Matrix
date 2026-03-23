@@ -1940,6 +1940,7 @@ describe("lifecycle: child completion notification paths", () => {
 				yield {
 					type: "assistant_text" as const,
 					content: "Working...",
+					taskId: "",
 					ts: Date.now(),
 				};
 
@@ -2023,6 +2024,7 @@ describe("lifecycle: child completion notification paths", () => {
 				yield {
 					type: "assistant_text" as const,
 					content: "Working...",
+					taskId: "",
 					ts: Date.now(),
 				};
 
