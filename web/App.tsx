@@ -9,8 +9,8 @@ import { CuteCat } from "./components/CuteCat.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import {
 	IconArrowDown,
+	IconBack,
 	IconChevron,
-	IconClose,
 	IconExpand,
 	IconHexagon,
 	IconMinimize,
@@ -770,7 +770,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 										onClick={() => setSelectedTaskId(rootNodeId)}
 										data-tip={t("tasks.clearFilter")}
 									>
-										<IconClose size={11} />
+										<IconBack size={11} />
 									</button>
 								</>
 							)}
