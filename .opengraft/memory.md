@@ -444,3 +444,12 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Frontend `QueueEntryLike` flat interface deleted from event-handler.ts. Replaced with `QueueMessage` import from `../src/message-queue.ts`.
 - All code accessing `body.content` or `body.images` must narrow by `body.source` first (discriminated union rules).
 - JSONL disk format unchanged — QueueMessage serializes identically to old MessageBody.
+
+## Lazy-Load Activity Log (Compact Barrier)
+- `EventStore.readFromLastCompactMarker(sessionId)` returns events from last `compact_marker` onward (inclusive) + `hasOlderEvents: boolean`. Different from `readActive` which returns events AFTER the marker (exclusive).
+- `EventStore.readBefore(sessionId, beforeTs, limit)` returns events strictly before a timestamp, last `limit` entries (most recent ones near the boundary).
+- `GET /projects/:id/events?after=compact` — returns only post-compact events per session. Without param, returns all events.
+- `GET /projects/:id/events/older?session=X&before=TS&limit=N` — paginated older events endpoint.
+- Frontend "Load earlier history" button: on click, fetches full events (no compact param) and re-runs processEventBatch on the complete set. Simple approach — avoids complex prepend logic.
+- `olderEventsAvailable` state in App.tsx: `Map<sessionId, { hasOlder, oldestTs }>` — tracks per-session availability.
+
