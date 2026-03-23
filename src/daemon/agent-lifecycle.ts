@@ -92,7 +92,42 @@ async function createAgentContext(
 	}
 
 	const { toolDefs, hasRunningChildren } = createOrchestratorTools(
-		ctx,
+		{
+			tracker: opts.tracker,
+			repoPath: project.path,
+			emit: (event) => {
+				const ts = (event.ts as number) || Date.now();
+				if (event.type === "agent_event") {
+					const evtTaskId = (event.taskId as string) || "";
+					const eventType = event.eventType as string;
+					const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
+					emitEvent(ctx, project.id, {
+						type: eventType,
+						taskId: evtTaskId,
+						ts,
+						...rest,
+					} as unknown as Event);
+				} else {
+					const withTs = event.ts ? event : { ...event, ts };
+					emitEvent(ctx, project.id, withTs as unknown as Event);
+				}
+			},
+			broadcastTree: () => broadcastTreeUpdate(ctx, project.id, opts.tracker),
+			clearEventStore: (sessionId) =>
+				getEventStore(ctx, project.id).clear(sessionId),
+			dataDir: ctx.config.dataDir,
+			getClarifyTimeoutMs: () => ctx.globalConfig?.clarifyTimeoutMs,
+			getDefaultBudgetUsd: () => ctx.globalConfig?.budgetUsd,
+			listProjects: () =>
+				ctx.pm.list().map((p) => ({
+					id: p.id,
+					name: p.name,
+					path: p.path,
+					hasActiveAgent: ctx.activeSessions.has(p.id),
+				})),
+			getProject: (id) => ctx.pm.get(id),
+			getTracker: (projectId) => ctx.trackers.get(projectId),
+		},
 		project.id,
 		opts.currentTaskId,
 		{
