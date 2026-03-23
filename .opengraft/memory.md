@@ -459,3 +459,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `buildToolResultEvents()` takes `toolIds: Array<{id: string; name: string}>` — callers must pass name.
 - `findOrphanedToolCalls()` and `writeOrphanedToolResults()` both include tool name from the matching tool_call.
 - Frontend fallback: `toolCallToolNames` Map in event-handler.ts maps toolCallId→tool name, populated on tool_call events, used as fallback on tool_result when tool field is empty (handles old JSONL files).
+
+
+## Serialization Boundary Audit
+- EventStore.read() now has per-line try/catch — malformed JSONL lines are skipped with console.warn instead of crashing the entire session load.
+- persistent-queue.ts: corrupt message files now log a warning (distinguishes ENOENT from actual corruption). Also validates Array.isArray on parsed result.
+- All other JSON.parse + as cast sites are safe: config.ts returns {} on error, auth.ts uses Partial<> + defaults, cli.ts has try/catch, openai provider has try/catch defaults to {}.
+- Frontend processEvent() as-casts are type-level necessities (data from our SSE), not runtime concerns — documented as known tech debt.
+- REST c.req.json<T>() is type-only (no runtime validation) but all routes manually validate required fields.
