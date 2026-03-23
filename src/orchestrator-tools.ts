@@ -1,13 +1,18 @@
 /**
  * MCP tool definitions and handlers for orchestration tools.
  *
- * Extracted from agent-tools.ts for maintainability.
+ * Extracted for maintainability.
  * Contains createOrchestratorTools() and all tool definitions
  * (create_task, update_task, send_message_to_child, yield, done, etc.).
  */
 
 import { join } from "node:path";
 import { z } from "zod";
+import type { Event } from "./events.ts";
+import type { QueueMessage } from "./message-queue.ts";
+import { clearPersistedMessages } from "./persistent-queue.ts";
+import type { PendingState } from "./shared-types.ts";
+import type { TaskTracker } from "./task-tracker.ts";
 import {
 	findParentQueue,
 	formatQueueMessage,
@@ -15,16 +20,7 @@ import {
 	isDescendantOf,
 	resolveColor,
 	slugify,
-} from "./agent-tools.ts";
-import type { DaemonContext } from "./daemon/context.ts";
-import {
-	broadcastTreeUpdate as broadcastTreeUpdateFn,
-	emitEvent,
-} from "./daemon/event-system.ts";
-import { getEventStore } from "./daemon/helpers.ts";
-import type { Event } from "./events.ts";
-import type { QueueMessage } from "./message-queue.ts";
-import { clearPersistedMessages } from "./persistent-queue.ts";
+} from "./task-utils.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 
@@ -51,6 +47,43 @@ async function isGitClean(projectPath: string): Promise<{
 		clean: false,
 		message: `Working tree has ${lines.length} uncommitted change(s):\n${output}\n\nCommit or stash changes before spawning tasks.`,
 	};
+}
+
+/**
+ * Narrow dependency interface for orchestrator tools.
+ * The daemon layer constructs this from DaemonContext when calling createOrchestratorTools.
+ * This keeps orchestrator-tools.ts free of daemon/ imports.
+ */
+export interface OrchestratorToolsDeps {
+	/** TaskTracker for this project. */
+	tracker: TaskTracker;
+	/** Project path (repo root). */
+	repoPath: string;
+	/** Emit an event (broadcast + optionally persist). */
+	emit: (event: Event | Record<string, unknown>) => void;
+	/** Broadcast tree update to SSE clients. */
+	broadcastTree: () => void;
+	/** Clear event store JSONL for a session/task. */
+	clearEventStore: (sessionId: string) => void;
+	/** Data directory for persisted messages. Undefined if not configured. */
+	dataDir?: string;
+	/** Get clarify timeout from config. */
+	getClarifyTimeoutMs: () => number | undefined;
+	/** Get default budget from config. */
+	getDefaultBudgetUsd: () => number | undefined;
+	/** List all projects with their metadata. */
+	listProjects: () => Array<{
+		id: string;
+		name: string;
+		path: string;
+		hasActiveAgent: boolean;
+	}>;
+	/** Get a project by ID. */
+	getProject: (
+		id: string,
+	) => { id: string; name: string; path: string } | undefined;
+	/** Get a tracker for another project (cross-project messaging). */
+	getTracker: (projectId: string) => TaskTracker | undefined;
 }
 
 /**
@@ -82,29 +115,18 @@ export interface OrchestratorToolsResult {
 /**
  * Create orchestrator tools for an agent.
  *
- * All state is derived from ctx + projectId + taskId at call time.
+ * deps provides all external state/callbacks needed by tools.
  * lifecycleDeps provides functions that would cause circular imports if imported directly.
  */
 export function createOrchestratorTools(
-	ctx: DaemonContext,
+	deps: OrchestratorToolsDeps,
 	projectId: string,
 	taskId: string | null,
 	lifecycleDeps?: LifecycleDeps,
 ): OrchestratorToolsResult {
-	// Derive tracker from ctx — the single source of truth for task state.
-	const trackerOrUndefined = ctx.trackers.get(projectId);
-	if (!trackerOrUndefined) {
-		throw new Error(
-			`No tracker found for project ${projectId}. Ensure project is loaded before creating tools.`,
-		);
-	}
-	// TypeScript can't always narrow Map.get() results across closure boundaries.
-	// The throw above guarantees this is never undefined.
-	const tracker = trackerOrUndefined;
+	const { tracker, repoPath } = deps;
 
 	const currentTaskId = taskId;
-	const project = ctx.pm.get(projectId);
-	const repoPath = project?.path ?? "";
 
 	// Derive depth, queue, and projectPath from session on the task node.
 	const getSession = () => (taskId ? tracker.get(taskId)?.session : undefined);
@@ -117,26 +139,12 @@ export function createOrchestratorTools(
 
 	/** Emit an event through the daemon's unified event system. */
 	const emit = (event: Record<string, unknown>) => {
-		const ts = (event.ts as number) || Date.now();
-		if (event.type === "agent_event") {
-			const evtTaskId = (event.taskId as string) || "";
-			const eventType = event.eventType as string;
-			const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
-			emitEvent(ctx, projectId, {
-				type: eventType,
-				taskId: evtTaskId,
-				ts,
-				...rest,
-			} as unknown as Event);
-		} else {
-			const withTs = event.ts ? event : { ...event, ts };
-			emitEvent(ctx, projectId, withTs as unknown as Event);
-		}
-		broadcastTreeUpdateFn(ctx, projectId, tracker);
+		deps.emit(event);
+		deps.broadcastTree();
 	};
 
 	const broadcastTree = () => {
-		broadcastTreeUpdateFn(ctx, projectId, tracker);
+		deps.broadcastTree();
 	};
 	/** Count of outstanding clarify() calls that have not yet received a clarify_response. */
 	let pendingClarifications = 0;
@@ -153,12 +161,10 @@ export function createOrchestratorTools(
 			| { type: "image"; data: string; mimeType: string }
 		>;
 		isError?: boolean;
-		_consumedMessageIds?: string[];
-		_formattedQueueMessages?: string;
-		_pending?: {
-			runningChildren: Array<{ id: string; title: string }>;
-			pendingClarifications: number;
-		};
+		consumedMessageIds?: string[];
+		consumedQueueMessages?: QueueMessage[];
+		formattedQueueMessages?: string;
+		pending?: PendingState;
 	} | null> {
 		const queue = getQueue();
 		if (!queue) return null;
@@ -172,7 +178,7 @@ export function createOrchestratorTools(
 				}
 
 				// Resolve clarifyTimeoutMs from config at call time (cheap, cached)
-				const clarifyTimeoutMs = ctx.globalConfig?.clarifyTimeoutMs;
+				const clarifyTimeoutMs = deps.getClarifyTimeoutMs();
 				const timeoutMs =
 					pendingClarifications > 0 ? clarifyTimeoutMs : undefined;
 				const result = await queue.waitForMessage(timeoutMs);
@@ -296,13 +302,13 @@ export function createOrchestratorTools(
 					...imageBlocks,
 				],
 				...(userConsumedIds.length > 0
-					? { _consumedMessageIds: userConsumedIds }
+					? { consumedMessageIds: userConsumedIds }
 					: {}),
 				...(queueMessages.length > 0
-					? { _consumedQueueMessages: queueMessages }
+					? { consumedQueueMessages: queueMessages }
 					: {}),
-				...(formatted ? { _formattedQueueMessages: formatted } : {}),
-				_pending: pendingData,
+				...(formatted ? { formattedQueueMessages: formatted } : {}),
+				pending: pendingData,
 			};
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -406,7 +412,7 @@ export function createOrchestratorTools(
 						draft?: boolean;
 						editedBy: "agent";
 					} = { editedBy: "agent" };
-					const defaultBudgetUsd = ctx.globalConfig?.budgetUsd;
+					const defaultBudgetUsd = deps.getDefaultBudgetUsd();
 					if (defaultBudgetUsd) opts.budgetUsd = defaultBudgetUsd;
 					if (args.draft) opts.draft = true;
 					const node = effectiveParentId
@@ -951,11 +957,11 @@ export function createOrchestratorTools(
 					}
 
 					// Delete event JSONL files
-					getEventStore(ctx, projectId).clear(node.id);
+					deps.clearEventStore(node.id);
 
 					// Clear persisted messages for this task and all descendants
-					if (ctx.config.dataDir) {
-						const dd = ctx.config.dataDir;
+					if (deps.dataDir) {
+						const dd = deps.dataDir;
 						const collectIds = (id: string): string[] => {
 							const n = tracker.get(id);
 							if (!n) return [];
@@ -1044,15 +1050,11 @@ export function createOrchestratorTools(
 					}
 
 					// Delete event JSONL files
-					getEventStore(ctx, projectId).clear(node.id);
+					deps.clearEventStore(node.id);
 
 					// Clear persisted messages (follows session lifecycle)
-					if (ctx.config.dataDir) {
-						await clearPersistedMessages(
-							ctx.config.dataDir,
-							projectId,
-							node.id,
-						);
+					if (deps.dataDir) {
+						await clearPersistedMessages(deps.dataDir, projectId, node.id);
 					}
 
 					tracker.updateStatus(node.id, "pending");
@@ -1282,12 +1284,7 @@ export function createOrchestratorTools(
 						isError: true,
 					};
 				}
-				const projects = ctx.pm.list().map((p) => ({
-					id: p.id,
-					name: p.name,
-					path: p.path,
-					hasActiveAgent: ctx.activeSessions.has(p.id),
-				}));
+				const projects = deps.listProjects();
 				return {
 					content: [
 						{
@@ -1322,7 +1319,7 @@ export function createOrchestratorTools(
 					};
 				}
 
-				const targetProject = ctx.pm.get(args.projectId);
+				const targetProject = deps.getProject(args.projectId);
 				if (!targetProject) {
 					return {
 						content: [
@@ -1336,12 +1333,12 @@ export function createOrchestratorTools(
 				}
 
 				// Determine sender identity
-				const senderProject = ctx.pm.get(projectId);
+				const senderProject = deps.getProject(projectId);
 				const fromProjectId = projectId;
 				const fromProjectName = senderProject?.name ?? "unknown";
 
 				// Try direct enqueue if target agent is already running
-				const targetTracker = ctx.trackers.get(args.projectId);
+				const targetTracker = deps.getTracker(args.projectId);
 				const targetRootId = targetTracker?.rootNodeId;
 				const targetQueue = targetRootId
 					? targetTracker?.get(targetRootId)?.session?.queue

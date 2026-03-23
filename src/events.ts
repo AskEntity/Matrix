@@ -1,5 +1,8 @@
 import type { QueueMessage } from "./message-queue.ts";
+import type { EventImageData, PendingState } from "./shared-types.ts";
 import { ulid } from "./ulid.ts";
+
+export type { EventImageData, PendingState } from "./shared-types.ts";
 
 /**
  * Strongly-typed event — provider-agnostic, one event per action.
@@ -42,12 +45,9 @@ export type Event =
 			toolCallId: string;
 			content: string;
 			isError: boolean;
-			images?: Array<{ base64: string; mediaType: string }>;
+			images?: EventImageData[];
 			/** Structured pending state (running children + clarifications). */
-			pending?: {
-				runningChildren: Array<{ id: string; title: string }>;
-				pendingClarifications: number;
-			};
+			pending?: PendingState;
 			/** Background process ID — set when bash moves a command to background. */
 			backgroundId?: string;
 			/** Background command — set when bash moves a command to background. */
@@ -293,10 +293,7 @@ export function formatEventForAI(event: Event): string {
  * Format a structured pending section into text for AI consumption.
  * Converts the structured `pending` field on tool_result into the `## Pending` text format.
  */
-export function formatPendingSection(pending: {
-	runningChildren: Array<{ id: string; title: string }>;
-	pendingClarifications: number;
-}): string {
+export function formatPendingSection(pending: PendingState): string {
 	const runningChildrenText =
 		pending.runningChildren.length > 0
 			? pending.runningChildren.map((c) => `"${c.title}" (${c.id})`).join(", ")

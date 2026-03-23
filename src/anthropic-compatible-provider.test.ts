@@ -7,7 +7,6 @@ import type {
 	MessageParam,
 	TextBlockParam,
 } from "@anthropic-ai/sdk/resources/messages/messages";
-import { createOrchestratorTools } from "./agent-tools.ts";
 import {
 	AnthropicCompatibleProvider,
 	addMessagesCacheControl,
@@ -25,8 +24,9 @@ import {
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
+import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { TaskTracker } from "./task-tracker.ts";
-import { attachMockSession, mockDaemonContext } from "./test-utils.ts";
+import { attachMockSession, mockOrchestratorDeps } from "./test-utils.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
 import {
@@ -1719,12 +1719,12 @@ describe("done tool", () => {
 		taskId: string | null,
 		args: { status: "passed" | "failed"; summary: string },
 	) {
-		const ctx = mockDaemonContext({
+		const deps = mockOrchestratorDeps({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
 		});
-		const { toolDefs } = createOrchestratorTools(ctx, "test-project", taskId);
+		const { toolDefs } = createOrchestratorTools(deps, "test-project", taskId);
 		const doneTool = toolDefs.find((t) => t.name === "done");
 		if (!doneTool) throw new Error("done tool not found");
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
@@ -1758,13 +1758,13 @@ describe("done tool", () => {
 	});
 
 	test("hasRunningChildren returns false when no children", async () => {
-		const ctx = mockDaemonContext({
+		const deps = mockOrchestratorDeps({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
 		});
 		const { hasRunningChildren } = createOrchestratorTools(
-			ctx,
+			deps,
 			"test-project",
 			"",
 		);
@@ -1772,7 +1772,7 @@ describe("done tool", () => {
 	});
 
 	test("hasRunningChildren returns true when child has session on tracker", async () => {
-		const ctx = mockDaemonContext({
+		const deps = mockOrchestratorDeps({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
@@ -1786,7 +1786,7 @@ describe("done tool", () => {
 		attachMockSession(child, childQueue);
 
 		const { hasRunningChildren } = createOrchestratorTools(
-			ctx,
+			deps,
 			"test-project",
 			parentId,
 		);
@@ -1798,7 +1798,7 @@ describe("done tool", () => {
 	});
 
 	test("hasRunningChildren detects running grandchildren (descendants)", async () => {
-		const ctx = mockDaemonContext({
+		const deps = mockOrchestratorDeps({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
@@ -1812,7 +1812,7 @@ describe("done tool", () => {
 		attachMockSession(grandchild, grandchildQueue);
 
 		const { hasRunningChildren } = createOrchestratorTools(
-			ctx,
+			deps,
 			"test-project",
 			parentId,
 		);
@@ -1839,12 +1839,12 @@ describe("done tool", () => {
 			foregroundExecutions: new Map(),
 		};
 
-		const ctx = mockDaemonContext({
+		const deps = mockOrchestratorDeps({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
 		});
-		const { toolDefs } = createOrchestratorTools(ctx, "test-project", node.id);
+		const { toolDefs } = createOrchestratorTools(deps, "test-project", node.id);
 		const doneTool = toolDefs.find((t) => t.name === "done");
 		if (!doneTool) throw new Error("done tool not found");
 
@@ -1872,8 +1872,8 @@ describe("done tool", () => {
 			"You previously called done(passed)",
 		);
 		expect(result.content[0].text).toContain("## Pending");
-		// Queue messages are returned as _formattedQueueMessages, not embedded in content
-		expect(result._formattedQueueMessages).toContain(
+		// Queue messages are returned as formattedQueueMessages, not embedded in content
+		expect(result.formattedQueueMessages).toContain(
 			"Resume with new instructions",
 		);
 
@@ -1895,12 +1895,12 @@ describe("done tool", () => {
 			foregroundExecutions: new Map(),
 		};
 
-		const ctx = mockDaemonContext({
+		const deps = mockOrchestratorDeps({
 			tracker,
 			projectId: "test-project",
 			projectPath: tempDir,
 		});
-		const { toolDefs } = createOrchestratorTools(ctx, "test-project", node.id);
+		const { toolDefs } = createOrchestratorTools(deps, "test-project", node.id);
 		const doneTool = toolDefs.find((t) => t.name === "done");
 		if (!doneTool) throw new Error("done tool not found");
 

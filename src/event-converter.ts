@@ -5,14 +5,11 @@
  * their respective message formats.
  */
 import { type Event, formatEventForAI, isQueueEvent } from "./events.ts";
+import type { EventImageData, PendingState } from "./shared-types.ts";
+
+export type { EventImageData } from "./shared-types.ts";
 
 // ── Types ──
-
-/** Image data extracted from events (provider-agnostic). */
-export interface EventImageData {
-	base64: string;
-	mediaType: string;
-}
 
 /** A single tool call in an assistant turn. */
 export interface AssistantToolCall {
@@ -35,10 +32,7 @@ export interface ToolResultData {
 	content: string;
 	isError: boolean;
 	images?: EventImageData[];
-	pending?: {
-		runningChildren: Array<{ id: string; title: string }>;
-		pendingClarifications: number;
-	};
+	pending?: PendingState;
 }
 
 /** Consumed messages resolved from a messages_consumed event. */

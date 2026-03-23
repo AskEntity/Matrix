@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import type { QueueMessage } from "./message-queue.ts";
+import { TaskTracker } from "./task-tracker.ts";
 import {
 	buildTaskPrompt,
 	formatQueueMessage,
 	getDescendantIds,
 	isDescendantOf,
 	slugify,
-} from "./agent-tools.ts";
-import type { QueueMessage } from "./message-queue.ts";
-import { TaskTracker } from "./task-tracker.ts";
+} from "./task-utils.ts";
 import type { TaskNode } from "./types.ts";
 
 function makeNode(overrides: Partial<TaskNode> & { id: string }): TaskNode {

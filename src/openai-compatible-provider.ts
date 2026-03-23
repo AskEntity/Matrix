@@ -760,9 +760,9 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 					content: exec.content,
 				});
 
-				if (exec._formattedQueueMessages) {
+				if (exec.formattedQueueMessages) {
 					yieldQueueTexts.push(
-						`[Messages received while you were idle:]\n${exec._formattedQueueMessages}`,
+						`[Messages received while you were idle:]\n${exec.formattedQueueMessages}`,
 					);
 					if (exec.mcpImages?.length) {
 						for (const img of exec.mcpImages) {

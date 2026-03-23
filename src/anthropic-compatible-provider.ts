@@ -710,10 +710,10 @@ function createAnthropicAdapter(
 				mimeType: string;
 			}> = [];
 			for (const exec of params.execResults) {
-				if (exec._formattedQueueMessages) {
+				if (exec.formattedQueueMessages) {
 					yieldQueueTextBlocks.push({
 						type: "text" as const,
-						text: `[Messages received while you were idle:]\n${exec._formattedQueueMessages}`,
+						text: `[Messages received while you were idle:]\n${exec.formattedQueueMessages}`,
 					});
 					if (exec.mcpImages?.length) {
 						for (const img of exec.mcpImages) {
