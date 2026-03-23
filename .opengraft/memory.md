@@ -452,3 +452,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `GET /projects/:id/events/older?session=X&before=TS&limit=N` — paginated older events endpoint.
 - Frontend "Load earlier history" button: on click, fetches full events (no compact param) and re-runs processEventBatch on the complete set. Simple approach — avoids complex prepend logic.
 - `olderEventsAvailable` state in App.tsx: `Map<sessionId, { hasOlder, oldestTs }>` — tracks per-session availability.
+
+## tool_result Event tool field
+- `tool` is REQUIRED on `Event` tool_result variant (not optional). All creation sites must include it.
+- `buildToolResultEvents()` takes `toolIds: Array<{id: string; name: string}>` — callers must pass name.
+- `findOrphanedToolCalls()` and `writeOrphanedToolResults()` both include tool name from the matching tool_call.
+- Frontend fallback: `toolCallToolNames` Map in event-handler.ts maps toolCallId→tool name, populated on tool_call events, used as fallback on tool_result when tool field is empty (handles old JSONL files).
