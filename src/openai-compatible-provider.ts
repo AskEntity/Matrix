@@ -677,6 +677,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 				events.push({
 					type: "assistant_text",
 					content: choice.message.content,
+					taskId: "",
 					ts: Date.now(),
 				});
 			}
@@ -694,6 +695,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 						tool: tc.function.name,
 						toolCallId: tc.id,
 						input: parsedInput,
+						taskId: "",
 						ts: Date.now(),
 					});
 				}

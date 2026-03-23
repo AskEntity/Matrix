@@ -1460,7 +1460,9 @@ describe("buildCompactedContext", () => {
 			);
 
 			const result = await buildCompactedContext("checkpoint content", tempDir);
-			expect(result).toContain("# .opengraft/memory.md (Preloaded, do not read again)");
+			expect(result).toContain(
+				"# .opengraft/memory.md (Preloaded, do not read again)",
+			);
 			expect(result).toContain("important note");
 		} finally {
 			await rm(tempDir, { recursive: true });
@@ -2711,11 +2713,13 @@ describe("Event deterministic verification", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Old message before compaction" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
 				type: "assistant_text",
 				content: "Old response",
+				taskId: "test",
 				ts: 1001,
 			},
 		];
@@ -2726,6 +2730,7 @@ describe("Event deterministic verification", () => {
 			type: "compact_marker",
 			checkpoint: "Checkpoint: completed old task",
 			savedTokens: 5000,
+			taskId: "test",
 			ts: 2000,
 		});
 
@@ -2735,11 +2740,13 @@ describe("Event deterministic verification", () => {
 				type: "compacted_resume",
 				content: "Resuming from checkpoint",
 				cwd: testDir,
+				taskId: "test",
 				ts: 2001,
 			},
 			{
 				type: "assistant_text",
 				content: "Continuing work.",
+				taskId: "test",
 				ts: 2002,
 			},
 		];
@@ -2780,11 +2787,13 @@ describe("Event deterministic verification", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start working" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
 				type: "assistant_text",
 				content: "Working on it.",
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -2792,6 +2801,7 @@ describe("Event deterministic verification", () => {
 				tool: "bash",
 				toolCallId: "tc1",
 				input: { command: "echo hi" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -2799,16 +2809,19 @@ describe("Event deterministic verification", () => {
 				toolCallId: "tc1",
 				content: "hi",
 				isError: false,
+				taskId: "test",
 				ts: 1003,
 			},
 			{
 				type: "budget_warning",
 				warning: "⚠️ Budget exceeded (0.50 / 0.40 budget). Call done() now.",
+				taskId: "test",
 				ts: 1004,
 			},
 			{
 				type: "assistant_text",
 				content: "Wrapping up.",
+				taskId: "test",
 				ts: 1005,
 			},
 		];

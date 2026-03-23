@@ -100,6 +100,7 @@ function notifyAgentOfTreeChange(
 		type: "tree_mutation",
 		action,
 		nodeId,
+		taskId: nodeId,
 		title,
 		ts: Date.now(),
 	});

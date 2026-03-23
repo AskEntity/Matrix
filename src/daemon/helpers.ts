@@ -188,16 +188,13 @@ export function stripEventForUI(
 
 /**
  * Normalize an Event from JSONL for UI consumption.
- * Adds taskId to events that don't have it (all events need taskId for routing).
  * Strips UI-irrelevant fields (e.g. body.header).
+ * Events already have taskId — this is now just stripEventForUI.
+ * (Kept as a named function for callers that pass sessionId for old JSONL backward compat.)
  */
 export function normalizeEventForUI(
 	event: Event,
-	sessionId: string,
+	_sessionId: string,
 ): Record<string, unknown> {
-	const base = event as unknown as Record<string, unknown>;
-	return stripEventForUI({
-		...base,
-		taskId: sessionId,
-	});
+	return stripEventForUI(event as unknown as Record<string, unknown>);
 }

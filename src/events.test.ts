@@ -5,11 +5,14 @@ import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
 
 describe("queueMessageToEvent", () => {
 	test("converts user message — all data in body", () => {
-		const event = queueMessageToEvent({
-			source: "user",
-			content: "hello",
-			images: [{ base64: "abc", mediaType: "image/png" }],
-		});
+		const event = queueMessageToEvent(
+			{
+				source: "user",
+				content: "hello",
+				images: [{ base64: "abc", mediaType: "image/png" }],
+			},
+			"test",
+		);
 		expect(event.type).toBe("message");
 		expect(event.id).toBeTruthy();
 		expect(event.body.source).toBe("user");
@@ -18,22 +21,28 @@ describe("queueMessageToEvent", () => {
 	});
 
 	test("converts user message — preserves existing id", () => {
-		const event = queueMessageToEvent({
-			source: "user",
-			id: "existing-id",
-			content: "hello",
-		});
+		const event = queueMessageToEvent(
+			{
+				source: "user",
+				id: "existing-id",
+				content: "hello",
+			},
+			"test",
+		);
 		expect(event.id).toBe("existing-id");
 	});
 
 	test("converts child_complete — all data in body", () => {
-		const event = queueMessageToEvent({
-			source: "child_complete",
-			taskId: "t1",
-			title: "Auth",
-			success: true,
-			output: "done",
-		});
+		const event = queueMessageToEvent(
+			{
+				source: "child_complete",
+				taskId: "t1",
+				title: "Auth",
+				success: true,
+				output: "done",
+			},
+			"test",
+		);
 		expect(event.type).toBe("message");
 		expect(event.id).toBeTruthy();
 		expect(event.body.source).toBe("child_complete");
@@ -44,25 +53,31 @@ describe("queueMessageToEvent", () => {
 	});
 
 	test("converts compact — all data in body", () => {
-		const event = queueMessageToEvent({ source: "compact" });
+		const event = queueMessageToEvent({ source: "compact" }, "test");
 		expect(event.type).toBe("message");
 		expect(event.body.source).toBe("compact");
 	});
 
 	test("converts system — all data in body", () => {
-		const event = queueMessageToEvent({ source: "system", content: "hi" });
+		const event = queueMessageToEvent(
+			{ source: "system", content: "hi" },
+			"test",
+		);
 		expect(event.type).toBe("message");
 		expect(event.body.source).toBe("system");
 		expect(event.body.content).toBe("hi");
 	});
 
 	test("converts parent_update — all data in body, includes header", () => {
-		const event = queueMessageToEvent({
-			source: "parent_update",
-			content: "update",
-			requestReply: true,
-			header: "## Task Context\nTitle: Fix Bug",
-		});
+		const event = queueMessageToEvent(
+			{
+				source: "parent_update",
+				content: "update",
+				requestReply: true,
+				header: "## Task Context\nTitle: Fix Bug",
+			},
+			"test",
+		);
 		expect(event.type).toBe("message");
 		expect(event.body.source).toBe("parent_update");
 		expect(event.body.content).toBe("update");
@@ -71,11 +86,14 @@ describe("queueMessageToEvent", () => {
 	});
 
 	test("converts user message with header", () => {
-		const event = queueMessageToEvent({
-			source: "user",
-			content: "Build a feature",
-			header: "Working directory: /tmp\n\n## Memory\nSome memory",
-		});
+		const event = queueMessageToEvent(
+			{
+				source: "user",
+				content: "Build a feature",
+				header: "Working directory: /tmp\n\n## Memory\nSome memory",
+			},
+			"test",
+		);
 		expect(event.body.source).toBe("user");
 		expect(event.body.content).toBe("Build a feature");
 		expect(event.body.header).toBe(
@@ -90,6 +108,7 @@ describe("formatEventForAI", () => {
 			type: "message",
 			id: "test",
 			body: { source: "user", content: "Hello world" },
+			taskId: "test",
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe("Hello world");
@@ -106,6 +125,7 @@ describe("formatEventForAI", () => {
 				success: true,
 				output: "All tests pass",
 			},
+			taskId: "test",
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
@@ -122,6 +142,7 @@ describe("formatEventForAI", () => {
 				content: "What status?",
 				requestReply: true,
 			},
+			taskId: "test",
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
@@ -134,6 +155,7 @@ describe("formatEventForAI", () => {
 			type: "message",
 			id: "test",
 			body: { source: "clarify_response", answer: "Yes" },
+			taskId: "test",
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
@@ -146,6 +168,7 @@ describe("formatEventForAI", () => {
 			type: "message",
 			id: "test",
 			body: { source: "compact" },
+			taskId: "test",
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe("Manual compaction requested");
@@ -163,6 +186,7 @@ describe("eventsToAnthropicMessages", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Hello world" },
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -177,6 +201,7 @@ describe("eventsToAnthropicMessages", () => {
 				type: "compacted_resume",
 				content: "Checkpoint summary",
 				cwd: "/tmp",
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -187,7 +212,12 @@ describe("eventsToAnthropicMessages", () => {
 
 	test("converts summarization_request", () => {
 		const events: Event[] = [
-			{ type: "summarization_request", instruction: "Summarize now", ts: 1000 },
+			{
+				type: "summarization_request",
+				instruction: "Summarize now",
+				taskId: "test",
+				ts: 1000,
+			},
 		];
 		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "Summarize now" },
@@ -196,7 +226,12 @@ describe("eventsToAnthropicMessages", () => {
 
 	test("converts budget_warning", () => {
 		const events: Event[] = [
-			{ type: "budget_warning", warning: "⚠️ Over budget", ts: 1000 },
+			{
+				type: "budget_warning",
+				warning: "⚠️ Over budget",
+				taskId: "test",
+				ts: 1000,
+			},
 		];
 		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "⚠️ Over budget" },
@@ -205,7 +240,12 @@ describe("eventsToAnthropicMessages", () => {
 
 	test("converts assistant_text only → array content format", () => {
 		const events: Event[] = [
-			{ type: "assistant_text", content: "I'll help you.", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "I'll help you.",
+				taskId: "test",
+				ts: 1000,
+			},
 		];
 		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
@@ -217,12 +257,18 @@ describe("eventsToAnthropicMessages", () => {
 
 	test("converts assistant_text + tool_calls → single assistant message", () => {
 		const events: Event[] = [
-			{ type: "assistant_text", content: "Let me check.", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "Let me check.",
+				taskId: "test",
+				ts: 1000,
+			},
 			{
 				type: "tool_call",
 				tool: "bash",
 				toolCallId: "tc1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -230,6 +276,7 @@ describe("eventsToAnthropicMessages", () => {
 				tool: "read_file",
 				toolCallId: "tc2",
 				input: { path: "src/main.ts" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -237,6 +284,7 @@ describe("eventsToAnthropicMessages", () => {
 				toolCallId: "tc1",
 				content: "file.ts",
 				isError: false,
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -244,6 +292,7 @@ describe("eventsToAnthropicMessages", () => {
 				toolCallId: "tc2",
 				content: "contents",
 				isError: false,
+				taskId: "test",
 				ts: 1004,
 			},
 		];
@@ -277,6 +326,7 @@ describe("eventsToAnthropicMessages", () => {
 				tool: "bash",
 				toolCallId: "tc1",
 				input: { command: "echo hi" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -284,6 +334,7 @@ describe("eventsToAnthropicMessages", () => {
 				toolCallId: "tc1",
 				content: "hi",
 				isError: false,
+				taskId: "test",
 				ts: 1001,
 			},
 		];
@@ -309,6 +360,7 @@ describe("eventsToAnthropicMessages", () => {
 				toolCallId: "tc1",
 				content: "file1.ts\nfile2.ts",
 				isError: false,
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -316,6 +368,7 @@ describe("eventsToAnthropicMessages", () => {
 				toolCallId: "tc2",
 				content: "contents of file",
 				isError: false,
+				taskId: "test",
 				ts: 1001,
 			},
 		];
@@ -348,6 +401,7 @@ describe("eventsToAnthropicMessages", () => {
 				content: "screenshot taken",
 				isError: false,
 				images: [{ base64: "abc123", mediaType: "image/png" }],
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -389,6 +443,7 @@ describe("eventsToAnthropicMessages", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Please check this" },
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -406,15 +461,22 @@ describe("eventsToAnthropicMessages", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "hello" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
 				type: "compact_marker",
 				checkpoint: "summary",
 				savedTokens: 5000,
+				taskId: "test",
 				ts: 2000,
 			},
-			{ type: "compacted_resume", content: "summary", ts: 2001 },
+			{
+				type: "compacted_resume",
+				content: "summary",
+				taskId: "test",
+				ts: 2001,
+			},
 		];
 		expect(eventsToAnthropicMessages(events)).toEqual([
 			{ role: "user", content: "hello" },
@@ -431,14 +493,21 @@ describe("eventsToAnthropicMessages", () => {
 					source: "user",
 					content: "Working directory: /tmp\n\nBuild a feature",
 				},
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "I'll build that.", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "I'll build that.",
+				taskId: "test",
+				ts: 1001,
+			},
 			{
 				type: "tool_call",
 				tool: "bash",
 				toolCallId: "tu_1",
 				input: { command: "echo hi" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -446,9 +515,10 @@ describe("eventsToAnthropicMessages", () => {
 				toolCallId: "tu_1",
 				content: "hi\n",
 				isError: false,
+				taskId: "test",
 				ts: 1003,
 			},
-			{ type: "assistant_text", content: "Done!", ts: 1004 },
+			{ type: "assistant_text", content: "Done!", taskId: "test", ts: 1004 },
 		];
 
 		const messages = eventsToAnthropicMessages(events);
@@ -493,11 +563,13 @@ describe("eventsToAnthropicMessages", () => {
 				type: "compacted_resume",
 				content: "## Checkpoint\n\nCompleted steps 1-3.",
 				cwd: "/tmp",
+				taskId: "test",
 				ts: 2000,
 			},
 			{
 				type: "assistant_text",
 				content: "Continuing from checkpoint.",
+				taskId: "test",
 				ts: 2001,
 			},
 			{
@@ -505,6 +577,7 @@ describe("eventsToAnthropicMessages", () => {
 				tool: "bash",
 				toolCallId: "tc1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 2002,
 			},
 			{
@@ -512,11 +585,13 @@ describe("eventsToAnthropicMessages", () => {
 				toolCallId: "tc1",
 				content: "src/",
 				isError: false,
+				taskId: "test",
 				ts: 2003,
 			},
 			{
 				type: "assistant_text",
 				content: "Found the source directory.",
+				taskId: "test",
 				ts: 2004,
 			},
 		];
@@ -536,6 +611,7 @@ describe("eventsToAnthropicMessages", () => {
 				toolCallId: "tc1",
 				content: "Command failed with exit code 1",
 				isError: true,
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -562,6 +638,7 @@ describe("eventsToAnthropicMessages", () => {
 				content: "screenshot 1",
 				isError: false,
 				images: [{ base64: "img1", mediaType: "image/png" }],
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -570,6 +647,7 @@ describe("eventsToAnthropicMessages", () => {
 				content: "screenshot 2",
 				isError: false,
 				images: [{ base64: "img2", mediaType: "image/jpeg" }],
+				taskId: "test",
 				ts: 1001,
 			},
 		];
@@ -596,6 +674,7 @@ describe("eventsToAnthropicMessages", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Continue the task" },
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -616,6 +695,7 @@ describe("eventsToOpenAIMessages", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Hello world" },
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -630,6 +710,7 @@ describe("eventsToOpenAIMessages", () => {
 				type: "compacted_resume",
 				content: "Checkpoint summary",
 				cwd: "/tmp",
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -640,7 +721,12 @@ describe("eventsToOpenAIMessages", () => {
 
 	test("converts summarization_request", () => {
 		const events: Event[] = [
-			{ type: "summarization_request", instruction: "Summarize now", ts: 1000 },
+			{
+				type: "summarization_request",
+				instruction: "Summarize now",
+				taskId: "test",
+				ts: 1000,
+			},
 		];
 		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "user", content: "Summarize now" },
@@ -649,7 +735,12 @@ describe("eventsToOpenAIMessages", () => {
 
 	test("converts budget_warning", () => {
 		const events: Event[] = [
-			{ type: "budget_warning", warning: "⚠️ Over budget", ts: 1000 },
+			{
+				type: "budget_warning",
+				warning: "⚠️ Over budget",
+				taskId: "test",
+				ts: 1000,
+			},
 		];
 		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "user", content: "⚠️ Over budget" },
@@ -658,7 +749,12 @@ describe("eventsToOpenAIMessages", () => {
 
 	test("converts assistant_text only → content string, no tool_calls", () => {
 		const events: Event[] = [
-			{ type: "assistant_text", content: "I'll help you.", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "I'll help you.",
+				taskId: "test",
+				ts: 1000,
+			},
 		];
 		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "assistant", content: "I'll help you." },
@@ -667,12 +763,18 @@ describe("eventsToOpenAIMessages", () => {
 
 	test("converts assistant_text + tool_calls → single message with tool_calls array", () => {
 		const events: Event[] = [
-			{ type: "assistant_text", content: "Let me check.", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "Let me check.",
+				taskId: "test",
+				ts: 1000,
+			},
 			{
 				type: "tool_call",
 				tool: "bash",
 				toolCallId: "call_1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -680,6 +782,7 @@ describe("eventsToOpenAIMessages", () => {
 				tool: "read_file",
 				toolCallId: "call_2",
 				input: { path: "src/main.ts" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -687,6 +790,7 @@ describe("eventsToOpenAIMessages", () => {
 				toolCallId: "call_1",
 				content: "file.ts",
 				isError: false,
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -694,6 +798,7 @@ describe("eventsToOpenAIMessages", () => {
 				toolCallId: "call_2",
 				content: "contents",
 				isError: false,
+				taskId: "test",
 				ts: 1004,
 			},
 		];
@@ -729,6 +834,7 @@ describe("eventsToOpenAIMessages", () => {
 				tool: "bash",
 				toolCallId: "call_1",
 				input: { command: "echo hi" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -736,6 +842,7 @@ describe("eventsToOpenAIMessages", () => {
 				toolCallId: "call_1",
 				content: "hi",
 				isError: false,
+				taskId: "test",
 				ts: 1001,
 			},
 		];
@@ -763,6 +870,7 @@ describe("eventsToOpenAIMessages", () => {
 				tool: "bash",
 				toolCallId: "call_1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -770,6 +878,7 @@ describe("eventsToOpenAIMessages", () => {
 				toolCallId: "call_1",
 				content: "file1.ts\nfile2.ts",
 				isError: false,
+				taskId: "test",
 				ts: 1001,
 			},
 		];
@@ -789,6 +898,7 @@ describe("eventsToOpenAIMessages", () => {
 				toolCallId: "orphan_call",
 				content: "result",
 				isError: false,
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -809,6 +919,7 @@ describe("eventsToOpenAIMessages", () => {
 				tool: "take_screenshot",
 				toolCallId: "call_1",
 				input: {},
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -817,6 +928,7 @@ describe("eventsToOpenAIMessages", () => {
 				content: "screenshot taken",
 				isError: false,
 				images: [{ base64: "abc123", mediaType: "image/png" }],
+				taskId: "test",
 				ts: 1001,
 			},
 		];
@@ -843,15 +955,22 @@ describe("eventsToOpenAIMessages", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "hello" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
 				type: "compact_marker",
 				checkpoint: "summary",
 				savedTokens: 5000,
+				taskId: "test",
 				ts: 2000,
 			},
-			{ type: "compacted_resume", content: "summary", ts: 2001 },
+			{
+				type: "compacted_resume",
+				content: "summary",
+				taskId: "test",
+				ts: 2001,
+			},
 		];
 		expect(eventsToOpenAIMessages(events)).toEqual([
 			{ role: "user", content: "hello" },
@@ -868,14 +987,21 @@ describe("eventsToOpenAIMessages", () => {
 					source: "user",
 					content: "Working directory: /tmp\n\nBuild a feature",
 				},
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "I'll build that.", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "I'll build that.",
+				taskId: "test",
+				ts: 1001,
+			},
 			{
 				type: "tool_call",
 				tool: "bash",
 				toolCallId: "call_1",
 				input: { command: "echo hi" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -883,9 +1009,10 @@ describe("eventsToOpenAIMessages", () => {
 				toolCallId: "call_1",
 				content: "hi\n",
 				isError: false,
+				taskId: "test",
 				ts: 1003,
 			},
-			{ type: "assistant_text", content: "Done!", ts: 1004 },
+			{ type: "assistant_text", content: "Done!", taskId: "test", ts: 1004 },
 		];
 
 		const messages = eventsToOpenAIMessages(events);
@@ -929,6 +1056,7 @@ describe("eventsToOpenAIMessages", () => {
 
 				body: { source: "user", content: "Continue the task" },
 
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -944,6 +1072,7 @@ describe("eventsToOpenAIMessages", () => {
 				tool: "screenshot1",
 				toolCallId: "call_1",
 				input: {},
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -951,6 +1080,7 @@ describe("eventsToOpenAIMessages", () => {
 				tool: "screenshot2",
 				toolCallId: "call_2",
 				input: {},
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -959,6 +1089,7 @@ describe("eventsToOpenAIMessages", () => {
 				content: "shot1",
 				isError: false,
 				images: [{ base64: "img1", mediaType: "image/png" }],
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -967,6 +1098,7 @@ describe("eventsToOpenAIMessages", () => {
 				content: "shot2",
 				isError: false,
 				images: [{ base64: "img2", mediaType: "image/jpeg" }],
+				taskId: "test",
 				ts: 1003,
 			},
 		];
@@ -982,11 +1114,13 @@ describe("eventsToOpenAIMessages", () => {
 				type: "compacted_resume",
 				content: "## Checkpoint\n\nCompleted steps 1-3.",
 				cwd: "/tmp",
+				taskId: "test",
 				ts: 2000,
 			},
 			{
 				type: "assistant_text",
 				content: "Continuing from checkpoint.",
+				taskId: "test",
 				ts: 2001,
 			},
 			{
@@ -994,6 +1128,7 @@ describe("eventsToOpenAIMessages", () => {
 				tool: "bash",
 				toolCallId: "call_1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 2002,
 			},
 			{
@@ -1001,11 +1136,13 @@ describe("eventsToOpenAIMessages", () => {
 				toolCallId: "call_1",
 				content: "src/",
 				isError: false,
+				taskId: "test",
 				ts: 2003,
 			},
 			{
 				type: "assistant_text",
 				content: "Found the source directory.",
+				taskId: "test",
 				ts: 2004,
 			},
 		];
@@ -1025,6 +1162,7 @@ describe("eventsToOpenAIMessages", () => {
 				tool: "bash",
 				toolCallId: "call_1",
 				input: { command: "exit 1" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -1032,6 +1170,7 @@ describe("eventsToOpenAIMessages", () => {
 				toolCallId: "call_1",
 				content: "Command failed with exit code 1",
 				isError: true,
+				taskId: "test",
 				ts: 1001,
 			},
 		];
@@ -1049,6 +1188,7 @@ describe("eventsToOpenAIMessages", () => {
 			{
 				type: "assistant_text",
 				content: "Creating task and reading files.",
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -1056,14 +1196,21 @@ describe("eventsToOpenAIMessages", () => {
 				tool: "create_task",
 				toolCallId: "call_1",
 				input: { title: "Fix bug" },
+				taskId: "test",
 				ts: 1001,
 			},
-			{ type: "assistant_text", content: "Also checking source.", ts: 1002 },
+			{
+				type: "assistant_text",
+				content: "Also checking source.",
+				taskId: "test",
+				ts: 1002,
+			},
 			{
 				type: "tool_call",
 				tool: "read_file",
 				toolCallId: "call_2",
 				input: { path: "src/foo.ts" },
+				taskId: "test",
 				ts: 1003,
 			},
 			// Tool results for both
@@ -1072,6 +1219,7 @@ describe("eventsToOpenAIMessages", () => {
 				toolCallId: "call_1",
 				content: "Task created",
 				isError: false,
+				taskId: "test",
 				ts: 1004,
 			},
 			{
@@ -1079,6 +1227,7 @@ describe("eventsToOpenAIMessages", () => {
 				toolCallId: "call_2",
 				content: "file contents",
 				isError: false,
+				taskId: "test",
 				ts: 1005,
 			},
 		];
@@ -1113,9 +1262,15 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Hello" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Hi there!", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "Hi there!",
+				taskId: "test",
+				ts: 1001,
+			},
 		];
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages[1]).toEqual({
@@ -1126,8 +1281,18 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 
 	test("Bug 1: multiple assistant_text blocks still produce array format", () => {
 		const events: Event[] = [
-			{ type: "assistant_text", content: "First paragraph.", ts: 1000 },
-			{ type: "assistant_text", content: "Second paragraph.", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "First paragraph.",
+				taskId: "test",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "Second paragraph.",
+				taskId: "test",
+				ts: 1001,
+			},
 		];
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages[0]).toEqual({
@@ -1141,12 +1306,18 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 
 	test("Bug 1: assistant_text + tool_calls still produce array format (unchanged)", () => {
 		const events: Event[] = [
-			{ type: "assistant_text", content: "Let me check.", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "Let me check.",
+				taskId: "test",
+				ts: 1000,
+			},
 			{
 				type: "tool_call",
 				tool: "bash",
 				toolCallId: "tc1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 1001,
 			},
 		];
@@ -1173,6 +1344,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 			{
 				type: "assistant_text",
 				content: "I'll create the task and read files.",
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -1180,11 +1352,13 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 				tool: "create_task",
 				toolCallId: "toolu_01Foy",
 				input: { title: "Fix bug" },
+				taskId: "test",
 				ts: 1001,
 			},
 			{
 				type: "assistant_text",
 				content: "Let me also check the source.",
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -1192,6 +1366,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 				tool: "read_file",
 				toolCallId: "toolu_02Bar",
 				input: { path: "src/foo.ts" },
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -1199,6 +1374,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 				tool: "read_file",
 				toolCallId: "toolu_03Baz",
 				input: { path: "src/bar.ts" },
+				taskId: "test",
 				ts: 1004,
 			},
 			// Tool results for all three
@@ -1207,6 +1383,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 				toolCallId: "toolu_01Foy",
 				content: "Task created",
 				isError: false,
+				taskId: "test",
 				ts: 1005,
 			},
 			{
@@ -1214,6 +1391,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 				toolCallId: "toolu_02Bar",
 				content: "file contents",
 				isError: false,
+				taskId: "test",
 				ts: 1006,
 			},
 			{
@@ -1221,6 +1399,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 				toolCallId: "toolu_03Baz",
 				content: "file contents",
 				isError: false,
+				taskId: "test",
 				ts: 1007,
 			},
 		];
@@ -1261,20 +1440,32 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 
 	test("Bug: interleaved text+tool with tool_results — all results reference same assistant msg", () => {
 		const events: Event[] = [
-			{ type: "assistant_text", content: "Checking files.", ts: 1000 },
+			{
+				type: "assistant_text",
+				content: "Checking files.",
+				taskId: "test",
+				ts: 1000,
+			},
 			{
 				type: "tool_call",
 				tool: "read_file",
 				toolCallId: "tc1",
 				input: { path: "a.ts" },
+				taskId: "test",
 				ts: 1001,
 			},
-			{ type: "assistant_text", content: "And this one too.", ts: 1002 },
+			{
+				type: "assistant_text",
+				content: "And this one too.",
+				taskId: "test",
+				ts: 1002,
+			},
 			{
 				type: "tool_call",
 				tool: "read_file",
 				toolCallId: "tc2",
 				input: { path: "b.ts" },
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -1282,6 +1473,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 				toolCallId: "tc1",
 				content: "file a contents",
 				isError: false,
+				taskId: "test",
 				ts: 1004,
 			},
 			{
@@ -1289,6 +1481,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 				toolCallId: "tc2",
 				content: "file b contents",
 				isError: false,
+				taskId: "test",
 				ts: 1005,
 			},
 		];
@@ -1307,9 +1500,15 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Hello" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Working...", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "Working...",
+				taskId: "test",
+				ts: 1001,
+			},
 			// Agent calls done(), enters idle state. User sends new message.
 			{
 				type: "message",
@@ -1318,14 +1517,21 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				body: { source: "user", content: "Please also check X" },
 
+				taskId: "test",
 				ts: 2000,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-1"],
+				taskId: "test",
 				ts: 3000,
 			},
-			{ type: "assistant_text", content: "I'll check X.", ts: 3001 },
+			{
+				type: "assistant_text",
+				content: "I'll check X.",
+				taskId: "test",
+				ts: 3001,
+			},
 		];
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(4);
@@ -1350,14 +1556,16 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Do a task" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "OK", ts: 1001 },
+			{ type: "assistant_text", content: "OK", taskId: "test", ts: 1001 },
 			{
 				type: "tool_call",
 				tool: "bash",
 				toolCallId: "tc1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -1367,6 +1575,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				body: { source: "user", content: "Also do Y" },
 
+				taskId: "test",
 				ts: 1500,
 			},
 			{
@@ -1374,14 +1583,16 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				toolCallId: "tc1",
 				content: "ok",
 				isError: false,
+				taskId: "test",
 				ts: 2000,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-1"],
+				taskId: "test",
 				ts: 2001,
 			},
-			{ type: "assistant_text", content: "I see Y.", ts: 2002 },
+			{ type: "assistant_text", content: "I see Y.", taskId: "test", ts: 2002 },
 		];
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(4);
@@ -1410,6 +1621,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				body: { source: "user", content: "First" },
 
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -1419,14 +1631,21 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				body: { source: "user", content: "Second" },
 
+				taskId: "test",
 				ts: 1500,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-1", "msg-2"],
+				taskId: "test",
 				ts: 2000,
 			},
-			{ type: "assistant_text", content: "Got both.", ts: 2001 },
+			{
+				type: "assistant_text",
+				content: "Got both.",
+				taskId: "test",
+				ts: 2001,
+			},
 		];
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(2);
@@ -1442,14 +1661,16 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "OK", ts: 1001 },
+			{ type: "assistant_text", content: "OK", taskId: "test", ts: 1001 },
 			{
 				type: "tool_call",
 				tool: "bash",
 				toolCallId: "tc1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -1460,6 +1681,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 					content: "Look at this",
 					images: [{ base64: "abc123", mediaType: "image/png" }],
 				},
+				taskId: "test",
 				ts: 1500,
 			},
 			{
@@ -1467,11 +1689,13 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				toolCallId: "tc1",
 				content: "ok",
 				isError: false,
+				taskId: "test",
 				ts: 2000,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-1"],
+				taskId: "test",
 				ts: 2001,
 			},
 		];
@@ -1503,9 +1727,15 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Hello" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Working...", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "Working...",
+				taskId: "test",
+				ts: 1001,
+			},
 			{
 				type: "message",
 
@@ -1513,14 +1743,21 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				body: { source: "user", content: "Please also check X" },
 
+				taskId: "test",
 				ts: 2000,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-1"],
+				taskId: "test",
 				ts: 3000,
 			},
-			{ type: "assistant_text", content: "I'll check X.", ts: 3001 },
+			{
+				type: "assistant_text",
+				content: "I'll check X.",
+				taskId: "test",
+				ts: 3001,
+			},
 		];
 		const messages = eventsToOpenAIMessages(events);
 		expect(messages).toHaveLength(4);
@@ -1545,14 +1782,16 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Do a task" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "OK", ts: 1001 },
+			{ type: "assistant_text", content: "OK", taskId: "test", ts: 1001 },
 			{
 				type: "tool_call",
 				tool: "bash",
 				toolCallId: "call_1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -1562,6 +1801,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				body: { source: "user", content: "Also do Y" },
 
+				taskId: "test",
 				ts: 1500,
 			},
 			{
@@ -1569,14 +1809,16 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				toolCallId: "call_1",
 				content: "ok",
 				isError: false,
+				taskId: "test",
 				ts: 2000,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-1"],
+				taskId: "test",
 				ts: 2001,
 			},
-			{ type: "assistant_text", content: "I see Y.", ts: 2002 },
+			{ type: "assistant_text", content: "I see Y.", taskId: "test", ts: 2002 },
 		];
 		const messages = eventsToOpenAIMessages(events);
 		expect(messages).toHaveLength(4);
@@ -1593,9 +1835,10 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			{
 				type: "messages_consumed",
 				messageIds: ["nonexistent-id"],
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "OK", ts: 1001 },
+			{ type: "assistant_text", content: "OK", taskId: "test", ts: 1001 },
 		];
 		const messages = eventsToAnthropicMessages(events);
 		// No user message generated for unknown IDs
@@ -1612,14 +1855,16 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Do a task" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "OK", ts: 1001 },
+			{ type: "assistant_text", content: "OK", taskId: "test", ts: 1001 },
 			{
 				type: "tool_call",
 				tool: "bash",
 				toolCallId: "tc1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -1629,6 +1874,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				body: { source: "user", content: "Also do Y" },
 
+				taskId: "test",
 				ts: 1500,
 			},
 			{
@@ -1636,14 +1882,16 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				toolCallId: "tc1",
 				content: "ok",
 				isError: false,
+				taskId: "test",
 				ts: 2000,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-1"],
+				taskId: "test",
 				ts: 2001,
 			},
-			{ type: "assistant_text", content: "I see Y.", ts: 2002 },
+			{ type: "assistant_text", content: "I see Y.", taskId: "test", ts: 2002 },
 		];
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(4);
@@ -1668,14 +1916,16 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Do a task" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "OK", ts: 1001 },
+			{ type: "assistant_text", content: "OK", taskId: "test", ts: 1001 },
 			{
 				type: "tool_call",
 				tool: "bash",
 				toolCallId: "call_1",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -1685,6 +1935,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				body: { source: "user", content: "Also do Y" },
 
+				taskId: "test",
 				ts: 1500,
 			},
 			{
@@ -1692,14 +1943,16 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				toolCallId: "call_1",
 				content: "ok",
 				isError: false,
+				taskId: "test",
 				ts: 2000,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-1"],
+				taskId: "test",
 				ts: 2001,
 			},
-			{ type: "assistant_text", content: "I see Y.", ts: 2002 },
+			{ type: "assistant_text", content: "I see Y.", taskId: "test", ts: 2002 },
 		];
 		const messages = eventsToOpenAIMessages(events);
 		expect(messages).toHaveLength(4);
@@ -1716,6 +1969,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Direct message" },
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -1735,20 +1989,23 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 				type: "orchestration_started",
 				resume: false,
 				prompt: "hello",
+				taskId: "test",
 				ts: 1,
 			} as Event,
 			{
 				type: "message",
 				id: "",
 				body: { source: "user", content: "hello" },
+				taskId: "test",
 				ts: 2,
 			} as Event,
-			{ type: "assistant_text", content: "hi", ts: 3 } as Event,
-			{ type: "agent_stopped", ts: 4 } as Event,
+			{ type: "assistant_text", content: "hi", taskId: "test", ts: 3 } as Event,
+			{ type: "agent_stopped", taskId: "test", ts: 4 } as Event,
 			{
 				type: "orchestration_started",
 				resume: true,
 				prompt: "resume",
+				taskId: "test",
 				ts: 5,
 			} as Event,
 		];
@@ -1763,20 +2020,23 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 				type: "orchestration_started",
 				resume: false,
 				prompt: "hello",
+				taskId: "test",
 				ts: 1,
 			} as Event,
 			{
 				type: "message",
 				id: "",
 				body: { source: "user", content: "hello" },
+				taskId: "test",
 				ts: 2,
 			} as Event,
-			{ type: "assistant_text", content: "hi", ts: 3 } as Event,
-			{ type: "agent_stopped", ts: 4 } as Event,
+			{ type: "assistant_text", content: "hi", taskId: "test", ts: 3 } as Event,
+			{ type: "agent_stopped", taskId: "test", ts: 4 } as Event,
 			{
 				type: "orchestration_started",
 				resume: true,
 				prompt: "resume",
+				taskId: "test",
 				ts: 5,
 			} as Event,
 		];
@@ -1792,14 +2052,21 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Run a command" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "I'll run that.", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "I'll run that.",
+				taskId: "test",
+				ts: 1001,
+			},
 			{
 				type: "tool_call",
 				toolCallId: "toolu_abc123",
 				tool: "bash",
 				input: { command: "ls -la" },
+				taskId: "test",
 				ts: 1002,
 			},
 			// No tool_result — daemon died during execution
@@ -1831,14 +2098,21 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Do both" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Running two tools.", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "Running two tools.",
+				taskId: "test",
+				ts: 1001,
+			},
 			{
 				type: "tool_call",
 				toolCallId: "toolu_first",
 				tool: "bash",
 				input: { command: "echo hi" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -1846,6 +2120,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "toolu_second",
 				tool: "read_file",
 				input: { path: "foo.ts" },
+				taskId: "test",
 				ts: 1003,
 			},
 			// Daemon died — no tool_results
@@ -1869,6 +2144,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Run something" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -1876,6 +2152,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "toolu_ok",
 				tool: "bash",
 				input: { command: "echo ok" },
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -1883,6 +2160,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "toolu_ok",
 				content: "ok",
 				isError: false,
+				taskId: "test",
 				ts: 1002,
 			},
 		];
@@ -1901,6 +2179,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Hello" },
+				taskId: "test",
 				ts: 1000,
 			},
 		];
@@ -1915,9 +2194,10 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Hi" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Hello!", ts: 1001 },
+			{ type: "assistant_text", content: "Hello!", taskId: "test", ts: 1001 },
 		];
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(2);
@@ -1929,14 +2209,21 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Run a command" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "I'll run that.", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "I'll run that.",
+				taskId: "test",
+				ts: 1001,
+			},
 			{
 				type: "tool_call",
 				toolCallId: "call_abc123",
 				tool: "bash",
 				input: { command: "ls -la" },
+				taskId: "test",
 				ts: 1002,
 			},
 			// No tool_result — daemon died
@@ -1963,6 +2250,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Do both" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -1970,6 +2258,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "call_first",
 				tool: "bash",
 				input: { command: "echo hi" },
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -1977,6 +2266,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "call_second",
 				tool: "read_file",
 				input: { path: "foo.ts" },
+				taskId: "test",
 				ts: 1002,
 			},
 		];
@@ -2008,6 +2298,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Run" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
@@ -2015,6 +2306,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "call_ok",
 				tool: "bash",
 				input: { command: "echo ok" },
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -2022,6 +2314,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "call_ok",
 				content: "ok",
 				isError: false,
+				taskId: "test",
 				ts: 1002,
 			},
 		];
@@ -2038,14 +2331,21 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Do something" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Running tool", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "Running tool",
+				taskId: "test",
+				ts: 1001,
+			},
 			{
 				type: "tool_call",
 				toolCallId: "orphan1",
 				tool: "bash",
 				input: { command: "sleep 100" },
+				taskId: "test",
 				ts: 1002,
 			},
 			// NO tool_result for orphan1 — daemon restarted
@@ -2053,6 +2353,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 			{
 				type: "assistant_text",
 				content: "Continuing after restart",
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -2060,6 +2361,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "tc2",
 				tool: "read_file",
 				input: { path: "foo.ts" },
+				taskId: "test",
 				ts: 1004,
 			},
 			{
@@ -2067,6 +2369,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "tc2",
 				content: "file contents",
 				isError: false,
+				taskId: "test",
 				ts: 1005,
 			},
 		];
@@ -2123,20 +2426,28 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Do something" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Running tool", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "Running tool",
+				taskId: "test",
+				ts: 1001,
+			},
 			{
 				type: "tool_call",
 				toolCallId: "orphan1",
 				tool: "bash",
 				input: { command: "sleep 100" },
+				taskId: "test",
 				ts: 1002,
 			},
 			// NO tool_result for orphan1
 			{
 				type: "assistant_text",
 				content: "Continuing after restart",
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -2144,6 +2455,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "tc2",
 				tool: "read_file",
 				input: { path: "foo.ts" },
+				taskId: "test",
 				ts: 1004,
 			},
 			{
@@ -2151,6 +2463,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "tc2",
 				content: "file contents",
 				isError: false,
+				taskId: "test",
 				ts: 1005,
 			},
 		];
@@ -2185,14 +2498,16 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Run it" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Running", ts: 1001 },
+			{ type: "assistant_text", content: "Running", taskId: "test", ts: 1001 },
 			{
 				type: "tool_call",
 				toolCallId: "tc1",
 				tool: "bash",
 				input: { command: "ls" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -2200,9 +2515,10 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 				toolCallId: "tc1",
 				content: "output",
 				isError: false,
+				taskId: "test",
 				ts: 1003,
 			},
-			{ type: "assistant_text", content: "Done", ts: 1004 },
+			{ type: "assistant_text", content: "Done", taskId: "test", ts: 1004 },
 		];
 		const messages = eventsToAnthropicMessages(events);
 		// user, assistant(tool_call), user(tool_result), assistant(done)
@@ -2229,11 +2545,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
 				type: "assistant_text",
 				content: "Working...",
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -2241,6 +2559,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				toolCallId: "tc1",
 				tool: "bash",
 				input: { command: "echo hi" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -2253,6 +2572,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					success: true,
 					output: "All tests pass",
 				},
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -2260,11 +2580,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				toolCallId: "tc1",
 				content: "hi",
 				isError: false,
+				taskId: "test",
 				ts: 1004,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-child"],
+				taskId: "test",
 				ts: 1005,
 			},
 		];
@@ -2294,11 +2616,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
 				type: "assistant_text",
 				content: "Done for now",
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -2309,11 +2633,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					content: "New instructions here",
 					requestReply: true,
 				},
+				taskId: "test",
 				ts: 1002,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-parent"],
+				taskId: "test",
 				ts: 1003,
 			},
 		];
@@ -2338,11 +2664,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
 				type: "assistant_text",
 				content: "Working...",
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -2350,6 +2678,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				toolCallId: "tc1",
 				tool: "bash",
 				input: { command: "echo hi" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -2362,6 +2691,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					success: true,
 					output: "All tests pass",
 				},
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -2369,11 +2699,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				toolCallId: "tc1",
 				content: "hi",
 				isError: false,
+				taskId: "test",
 				ts: 1004,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-child"],
+				taskId: "test",
 				ts: 1005,
 			},
 		];
@@ -2399,11 +2731,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
 				type: "assistant_text",
 				content: "Yielding",
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -2411,6 +2745,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				toolCallId: "tc-yield",
 				tool: "mcp__opengraft__yield",
 				input: {},
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -2422,6 +2757,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					title: "Build",
 					content: "50% done",
 				},
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -2433,11 +2769,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					runningChildren: [{ id: "t2", title: "Build" }],
 					pendingClarifications: 0,
 				},
+				taskId: "test",
 				ts: 1004,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-report"],
+				taskId: "test",
 				ts: 1005,
 			},
 		];
@@ -2461,11 +2799,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
 				type: "assistant_text",
 				content: "Yielding",
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -2473,6 +2813,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				toolCallId: "tc-yield",
 				tool: "mcp__opengraft__yield",
 				input: {},
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -2484,6 +2825,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					title: "Build",
 					content: "50% done",
 				},
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -2495,11 +2837,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					runningChildren: [{ id: "t2", title: "Build" }],
 					pendingClarifications: 0,
 				},
+				taskId: "test",
 				ts: 1004,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-report"],
+				taskId: "test",
 				ts: 1005,
 			},
 		];
@@ -2521,11 +2865,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start" },
+				taskId: "test",
 				ts: 1000,
 			},
 			{
 				type: "assistant_text",
 				content: "Done",
+				taskId: "test",
 				ts: 1001,
 			},
 			{
@@ -2536,11 +2882,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					content: "Look at this",
 					images: [{ base64: "abc123", mediaType: "image/png" }],
 				},
+				taskId: "test",
 				ts: 1002,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-img"],
+				taskId: "test",
 				ts: 1003,
 			},
 		];
@@ -2561,14 +2909,16 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Working", ts: 1001 },
+			{ type: "assistant_text", content: "Working", taskId: "test", ts: 1001 },
 			{
 				type: "tool_call",
 				toolCallId: "tc1",
 				tool: "bash",
 				input: { command: "echo" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -2581,12 +2931,14 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					success: true,
 					output: "Fixed",
 				},
+				taskId: "test",
 				ts: 1003,
 			},
 			{
 				type: "message",
 				id: "msg-user",
 				body: { source: "user", content: "Also do this" },
+				taskId: "test",
 				ts: 1004,
 			},
 			{
@@ -2594,11 +2946,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				toolCallId: "tc1",
 				content: "done",
 				isError: false,
+				taskId: "test",
 				ts: 1005,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-complete", "msg-user"],
+				taskId: "test",
 				ts: 1006,
 			},
 		];
@@ -2625,14 +2979,16 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Working", ts: 1001 },
+			{ type: "assistant_text", content: "Working", taskId: "test", ts: 1001 },
 			{
 				type: "tool_call",
 				toolCallId: "tc1",
 				tool: "bash",
 				input: { command: "echo" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -2645,12 +3001,14 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					success: true,
 					output: "Fixed",
 				},
+				taskId: "test",
 				ts: 1003,
 			},
 			{
 				type: "message",
 				id: "msg-user",
 				body: { source: "user", content: "Also do this" },
+				taskId: "test",
 				ts: 1004,
 			},
 			{
@@ -2658,11 +3016,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				toolCallId: "tc1",
 				content: "done",
 				isError: false,
+				taskId: "test",
 				ts: 1005,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-complete", "msg-user"],
+				taskId: "test",
 				ts: 1006,
 			},
 		];
@@ -2688,14 +3048,16 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Yielding", ts: 1001 },
+			{ type: "assistant_text", content: "Yielding", taskId: "test", ts: 1001 },
 			{
 				type: "tool_call",
 				toolCallId: "tc-yield",
 				tool: "mcp__opengraft__yield",
 				input: {},
+				taskId: "test",
 				ts: 1002,
 			},
 			// Written by waitForQueueMessages to JSONL
@@ -2709,6 +3071,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					success: true,
 					output: "All tests pass",
 				},
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -2718,6 +3081,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					source: "parent_update",
 					content: "Keep going",
 				},
+				taskId: "test",
 				ts: 1004,
 			},
 			// tool_result with pure yield output (no embedded queue text)
@@ -2731,12 +3095,14 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					runningChildren: [],
 					pendingClarifications: 0,
 				},
+				taskId: "test",
 				ts: 1005,
 			},
 			// Standalone messages_consumed written by provider
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-child-done", "msg-parent"],
+				taskId: "test",
 				ts: 1006,
 			},
 		];
@@ -2764,14 +3130,21 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "",
 				body: { source: "user", content: "Start" },
+				taskId: "test",
 				ts: 1000,
 			},
-			{ type: "assistant_text", content: "Running tools", ts: 1001 },
+			{
+				type: "assistant_text",
+				content: "Running tools",
+				taskId: "test",
+				ts: 1001,
+			},
 			{
 				type: "tool_call",
 				toolCallId: "tc-read",
 				tool: "read_file",
 				input: { path: "foo.ts" },
+				taskId: "test",
 				ts: 1002,
 			},
 			{
@@ -2779,6 +3152,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				toolCallId: "tc-bash",
 				tool: "bash",
 				input: { command: "echo ok" },
+				taskId: "test",
 				ts: 1003,
 			},
 			{
@@ -2790,6 +3164,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 					title: "Worker",
 					content: "Progress: 75%",
 				},
+				taskId: "test",
 				ts: 1004,
 			},
 			{
@@ -2797,6 +3172,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				toolCallId: "tc-read",
 				content: "const x = 1;",
 				isError: false,
+				taskId: "test",
 				ts: 1005,
 			},
 			{
@@ -2804,11 +3180,13 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				toolCallId: "tc-bash",
 				content: "ok",
 				isError: false,
+				taskId: "test",
 				ts: 1006,
 			},
 			{
 				type: "messages_consumed",
 				messageIds: ["msg-report"],
+				taskId: "test",
 				ts: 1007,
 			},
 		];
@@ -2844,6 +3222,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 						content: "Do this next",
 						requestReply: false,
 					},
+					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
 			];
@@ -2865,6 +3244,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 						content: "Do this next",
 						requestReply: false,
 					},
+					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
 			];
@@ -2878,7 +3258,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 
 		test("Anthropic: message with no content and no body falls back to (empty)", () => {
 			const events: Event[] = [
-				{ type: "message", ts: 1000 } as unknown as Event,
+				{ type: "message", taskId: "test", ts: 1000 } as unknown as Event,
 			];
 			const messages = eventsToAnthropicMessages(events);
 			expect(messages).toHaveLength(1);
@@ -2896,6 +3276,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 						source: "system",
 						content: "Agent stopped",
 					},
+					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
 			];
@@ -2916,6 +3297,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 						source: "system",
 						content: "Agent stopped",
 					},
+					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
 			];
@@ -2929,7 +3311,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 
 		test("OpenAI: message with no content and no body falls back to (empty)", () => {
 			const events: Event[] = [
-				{ type: "message", ts: 1000 } as unknown as Event,
+				{ type: "message", taskId: "test", ts: 1000 } as unknown as Event,
 			];
 			const messages = eventsToOpenAIMessages(events);
 			expect(messages).toHaveLength(1);
@@ -2949,11 +3331,17 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					type: "message",
 					id: "",
 					body: { source: "user", content: "Hello" },
+					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
 				// assistant_text with empty content still produces a block, so we test
 				// the structural guard by checking the output is always valid
-				{ type: "assistant_text", content: "", ts: 1001 } as unknown as Event,
+				{
+					type: "assistant_text",
+					content: "",
+					taskId: "test",
+					ts: 1001,
+				} as unknown as Event,
 			];
 			const messages = eventsToAnthropicMessages(events);
 			expect(messages).toHaveLength(2);
@@ -2973,9 +3361,15 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					type: "message",
 					id: "",
 					body: { source: "user", content: "Hello" },
+					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
-				{ type: "assistant_text", content: "", ts: 1001 } as unknown as Event,
+				{
+					type: "assistant_text",
+					content: "",
+					taskId: "test",
+					ts: 1001,
+				} as unknown as Event,
 			];
 			const messages = eventsToOpenAIMessages(events);
 			expect(messages).toHaveLength(2);
@@ -2996,11 +3390,13 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					type: "message",
 					id: "",
 					body: { source: "user", content: "Run it" },
+					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
 				{
 					type: "assistant_text",
 					content: "Running...",
+					taskId: "test",
 					ts: 1001,
 				} as unknown as Event,
 				{
@@ -3008,12 +3404,14 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					toolCallId: "tc1",
 					tool: "bash",
 					input: { command: "ls" },
+					taskId: "test",
 					ts: 1002,
 				} as unknown as Event,
 				{
 					type: "tool_result",
 					toolCallId: "tc1",
 					// content is undefined — simulating corrupt JSONL
+					taskId: "test",
 					ts: 1003,
 				} as unknown as Event,
 			];
@@ -3040,11 +3438,13 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					type: "message",
 					id: "",
 					body: { source: "user", content: "Run it" },
+					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
 				{
 					type: "assistant_text",
 					content: "Running...",
+					taskId: "test",
 					ts: 1001,
 				} as unknown as Event,
 				{
@@ -3052,12 +3452,14 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					toolCallId: "tc1",
 					tool: "bash",
 					input: { command: "ls" },
+					taskId: "test",
 					ts: 1002,
 				} as unknown as Event,
 				{
 					type: "tool_result",
 					toolCallId: "tc1",
 					// content is undefined — simulating corrupt JSONL
+					taskId: "test",
 					ts: 1003,
 				} as unknown as Event,
 			];
@@ -3077,11 +3479,13 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					type: "message",
 					id: "",
 					body: { source: "user", content: "Hello" },
+					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
 				{
 					type: "assistant_text",
 					content: "Running",
+					taskId: "test",
 					ts: 1001,
 				} as unknown as Event,
 				{
@@ -3089,12 +3493,14 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					toolCallId: "tc1",
 					tool: "bash",
 					input: {},
+					taskId: "test",
 					ts: 1002,
 				} as unknown as Event,
 				{
 					type: "tool_result",
 					toolCallId: "tc1",
 					content: "output",
+					taskId: "test",
 					ts: 1003,
 				} as unknown as Event,
 			];

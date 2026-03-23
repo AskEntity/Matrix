@@ -84,7 +84,7 @@ export function getDescendantIds(
 
 /** Format a QueueMessage for display to the agent. */
 export function formatQueueMessage(msg: QueueMessage): string {
-	const evt = queueMessageToEvent(msg);
+	const evt = queueMessageToEvent(msg, "");
 	const time = new Date(evt.ts).toLocaleTimeString("en-GB", {
 		hour: "2-digit",
 		minute: "2-digit",

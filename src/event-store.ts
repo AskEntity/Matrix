@@ -76,7 +76,14 @@ export class EventStore {
 			.trim()
 			.split("\n")
 			.filter(Boolean)
-			.map((line) => JSON.parse(line) as Event);
+			.map((line) => {
+				const event = JSON.parse(line) as Event;
+				// Backward compat: old JSONL files may not have taskId
+				if (!("taskId" in event) || event.taskId === undefined) {
+					(event as Record<string, unknown>).taskId = sessionId;
+				}
+				return event;
+			});
 	}
 
 	/** Read events after the last compact_marker (for provider message reconstruction) */

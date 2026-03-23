@@ -122,6 +122,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				addLog({
 					type: "error",
 					message: (err as Error).message,
+					taskId: "",
 					ts: Date.now(),
 				});
 			}
@@ -144,6 +145,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				addLog({
 					type: "error",
 					message: (err as Error).message,
+					taskId: "",
 					ts: Date.now(),
 				});
 			}
@@ -189,6 +191,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			addLog({
 				type: "error",
 				message: (err as Error).message,
+				taskId: "",
 				ts: Date.now(),
 			});
 		}
@@ -201,6 +204,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			addLog({
 				type: "error",
 				message: (err as Error).message,
+				taskId: "",
 				ts: Date.now(),
 			});
 		}
@@ -229,6 +233,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 				addLog({
 					type: "error",
 					message: `Failed to answer clarification: ${body.error}`,
+					taskId: "",
 					ts: Date.now(),
 				});
 				return;
@@ -248,6 +253,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			addLog({
 				type: "error",
 				message: (err as Error).message,
+				taskId: "",
 				ts: Date.now(),
 			});
 		}
@@ -270,6 +276,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			addLog({
 				type: "error",
 				message: (err as Error).message,
+				taskId: "",
 				ts: Date.now(),
 			});
 		}
@@ -287,6 +294,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			addLog({
 				type: "error",
 				message: (err as Error).message,
+				taskId: "",
 				ts: Date.now(),
 			});
 		}
@@ -303,6 +311,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			addLog({
 				type: "error",
 				message: (err as Error).message,
+				taskId: "",
 				ts: Date.now(),
 			});
 		}
@@ -318,6 +327,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			addLog({
 				type: "error",
 				message: (err as Error).message,
+				taskId: "",
 				ts: Date.now(),
 			});
 		}
@@ -340,6 +350,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			addLog({
 				type: "error",
 				message: (err as Error).message,
+				taskId: "",
 				ts: Date.now(),
 			});
 		} finally {
@@ -364,6 +375,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			addLog({
 				type: "error",
 				message: (err as Error).message,
+				taskId: "",
 				ts: Date.now(),
 			});
 		}
@@ -392,6 +404,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			addLog({
 				type: "error",
 				message: (err as Error).message,
+				taskId: "",
 				ts: Date.now(),
 			});
 		}
@@ -411,6 +424,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			addLog({
 				type: "error",
 				message: (err as Error).message,
+				taskId: "",
 				ts: Date.now(),
 			});
 		}
