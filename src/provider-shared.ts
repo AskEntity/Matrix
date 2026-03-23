@@ -890,7 +890,7 @@ export interface AssistantContent {
 /** A single tool result extracted from events. */
 export interface ToolResultData {
 	toolCallId: string;
-	content: string | undefined;
+	content: string;
 	isError: boolean;
 	images?: EventImageData[];
 	pending?: {
