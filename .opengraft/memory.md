@@ -15,6 +15,7 @@ If the answer to #2 reveals a structural problem — **DO NOT patch the symptom.
 - **Lifecycle dependency coupling**: When A's completion triggers B's cleanup which triggers C's notification — and a failure in B silently breaks C. Decouple: each step should be self-contained, not chained through side effects.
 - **Legacy fallback masking bugs**: A "backward compat" fallback that silently handles the case where the new path fails. The fallback works, so the bug in the new path goes unnoticed for weeks. Remove fallbacks — let failures be loud.
 - **Stale mental model in new code**: Old design assumed X (e.g. "agent result carries the summary"), new design says Y (e.g. "message carries the summary"), but the code still reconstructs from X as primary and uses Y as optional. Fully commit to the new model — delete the old reconstruction path.
+- **Lazy optional fields**: Making a field `?` when it should be required. TypeScript won't catch missing fields at creation sites. Every `optional` must be justified: "when is this field genuinely absent?" If the answer is "never in practice" — make it required and let the compiler enforce it. Example: `tool_result.tool` was optional, so one creation path omitted it silently, breaking frontend yield detection.
 
 ## ⚠️ CRITICAL — Task Execution Discipline
 
