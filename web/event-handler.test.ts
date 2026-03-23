@@ -476,6 +476,403 @@ describe("event-handler JSONL-driven pending state", () => {
 	});
 });
 
+describe("event-handler tool_pair creation", () => {
+	it("processEventBatch: tool_call + tool_result creates a tool_pair entry", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "tool_call",
+				tool: "mcp__opengraft__bash",
+				toolCallId: "tc-1",
+				input: { command: "ls" },
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__opengraft__bash",
+				toolCallId: "tc-1",
+				content: "file1.ts\nfile2.ts",
+				isError: false,
+				taskId: "task-1",
+				ts: 2000,
+			},
+		]);
+
+		// Should produce a single tool_pair entry, not separate tool_call + tool_result
+		expect(capturedLogs.length).toBe(1);
+		const pair = capturedLogs[0];
+		expect(pair?.type).toBe("tool_pair");
+		if (pair?.type === "tool_pair") {
+			expect(pair.tool).toBe("mcp__opengraft__bash");
+			expect(pair.toolCallId).toBe("tc-1");
+			expect(pair.input).toEqual({ command: "ls" });
+			expect(pair.resultContent).toBe("file1.ts\nfile2.ts");
+			expect(pair.isError).toBe(false);
+			expect(pair.taskId).toBe("task-1");
+			expect(pair.ts).toBe(1000); // original tool_call timestamp
+			expect(pair.resultTs).toBe(2000);
+		}
+	});
+
+	it("processEventBatch: yield tool_call + tool_result are hidden entirely", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "tool_call",
+				tool: "mcp__opengraft__yield",
+				toolCallId: "tc-yield",
+				input: {},
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__opengraft__yield",
+				toolCallId: "tc-yield",
+				content: "resumed",
+				isError: false,
+				taskId: "task-1",
+				ts: 5000,
+			},
+		]);
+
+		// Yield pairs should be completely hidden
+		expect(capturedLogs.length).toBe(0);
+	});
+
+	it("processEventBatch: unresolved tool_call remains as pending tool_call", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "tool_call",
+				tool: "mcp__opengraft__bash",
+				toolCallId: "tc-pending",
+				input: { command: "sleep 10" },
+				taskId: "task-1",
+				ts: 1000,
+			},
+			// No tool_result — still pending
+		]);
+
+		expect(capturedLogs.length).toBe(1);
+		expect(capturedLogs[0]?.type).toBe("tool_call");
+	});
+
+	it("handleEvent: live tool_call then tool_result replaces entry with tool_pair", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		// 1. tool_call arrives
+		handleEvent({
+			type: "tool_call",
+			tool: "mcp__opengraft__read_file",
+			toolCallId: "tc-live",
+			input: { path: "foo.ts" },
+			taskId: "task-1",
+			ts: 1000,
+		});
+
+		expect(capturedLogs.length).toBe(1);
+		expect(capturedLogs[0]?.type).toBe("tool_call");
+
+		// 2. tool_result arrives
+		handleEvent({
+			type: "tool_result",
+			tool: "mcp__opengraft__read_file",
+			toolCallId: "tc-live",
+			content: "const x = 1;",
+			isError: false,
+			taskId: "task-1",
+			ts: 2000,
+		});
+
+		// Should replace tool_call with tool_pair — same count
+		expect(capturedLogs.length).toBe(1);
+		const pair = capturedLogs[0];
+		expect(pair?.type).toBe("tool_pair");
+		if (pair?.type === "tool_pair") {
+			expect(pair.tool).toBe("mcp__opengraft__read_file");
+			expect(pair.resultContent).toBe("const x = 1;");
+			expect(pair.isError).toBe(false);
+		}
+	});
+
+	it("handleEvent: live yield tool_call then tool_result removes entry entirely", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		handleEvent({
+			type: "tool_call",
+			tool: "mcp__opengraft__yield",
+			toolCallId: "tc-yield-live",
+			input: {},
+			taskId: "task-1",
+			ts: 1000,
+		});
+
+		expect(capturedLogs.length).toBe(1);
+		expect(capturedLogs[0]?.type).toBe("tool_call");
+
+		handleEvent({
+			type: "tool_result",
+			tool: "mcp__opengraft__yield",
+			toolCallId: "tc-yield-live",
+			content: "resumed",
+			isError: false,
+			taskId: "task-1",
+			ts: 5000,
+		});
+
+		// Yield pair should be removed entirely
+		expect(capturedLogs.length).toBe(0);
+	});
+
+	it("processEventBatch: tool_result with backgroundId still tracks background process", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		let bgProcesses: Map<
+			string,
+			{ id: string; command: string; startTime: number; taskId?: string }
+		> = new Map();
+		(deps as Record<string, unknown>).setBackgroundProcesses = mock(
+			(
+				updater: React.SetStateAction<
+					Map<
+						string,
+						{
+							id: string;
+							command: string;
+							startTime: number;
+							taskId?: string;
+						}
+					>
+				>,
+			) => {
+				bgProcesses =
+					typeof updater === "function" ? updater(bgProcesses) : updater;
+			},
+		);
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "tool_call",
+				tool: "mcp__opengraft__bash",
+				toolCallId: "tc-bg",
+				input: { command: "long-running-cmd" },
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__opengraft__bash",
+				toolCallId: "tc-bg",
+				content: "moved to background",
+				isError: false,
+				backgroundId: "bg-123",
+				backgroundCommand: "long-running-cmd",
+				taskId: "task-1",
+				ts: 2000,
+			},
+		]);
+
+		// Should create tool_pair with backgroundId
+		expect(capturedLogs.length).toBe(1);
+		const pair = capturedLogs[0];
+		expect(pair?.type).toBe("tool_pair");
+		if (pair?.type === "tool_pair") {
+			expect(pair.backgroundId).toBe("bg-123");
+			expect(pair.backgroundCommand).toBe("long-running-cmd");
+		}
+
+		// Background process should be tracked via side effect
+		expect(bgProcesses.has("bg-123")).toBe(true);
+	});
+
+	it("processEventBatch: tool_result with isError=true creates error tool_pair", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "tool_call",
+				tool: "mcp__opengraft__bash",
+				toolCallId: "tc-err",
+				input: { command: "failing-cmd" },
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__opengraft__bash",
+				toolCallId: "tc-err",
+				content: "command not found",
+				isError: true,
+				taskId: "task-1",
+				ts: 2000,
+			},
+		]);
+
+		expect(capturedLogs.length).toBe(1);
+		const pair = capturedLogs[0];
+		expect(pair?.type).toBe("tool_pair");
+		if (pair?.type === "tool_pair") {
+			expect(pair.isError).toBe(true);
+			expect(pair.resultContent).toBe("command not found");
+		}
+	});
+
+	it("processEventBatch: orphan tool_result (no matching tool_call) creates standalone tool_pair", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "tool_result",
+				tool: "mcp__opengraft__bash",
+				toolCallId: "tc-orphan",
+				content: "orphan result",
+				isError: false,
+				taskId: "task-1",
+				ts: 2000,
+			},
+		]);
+
+		// Should still render as tool_pair (with empty input)
+		expect(capturedLogs.length).toBe(1);
+		const pair = capturedLogs[0];
+		expect(pair?.type).toBe("tool_pair");
+		if (pair?.type === "tool_pair") {
+			expect(pair.tool).toBe("mcp__opengraft__bash");
+			expect(pair.input).toEqual({});
+			expect(pair.resultContent).toBe("orphan result");
+		}
+	});
+
+	it("processEventBatch: multiple tool_call + tool_result pairs resolve correctly", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "tool_call",
+				tool: "mcp__opengraft__bash",
+				toolCallId: "tc-a",
+				input: { command: "echo a" },
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__opengraft__bash",
+				toolCallId: "tc-a",
+				content: "a",
+				isError: false,
+				taskId: "task-1",
+				ts: 1500,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__opengraft__read_file",
+				toolCallId: "tc-b",
+				input: { path: "b.ts" },
+				taskId: "task-1",
+				ts: 2000,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__opengraft__read_file",
+				toolCallId: "tc-b",
+				content: "content of b",
+				isError: false,
+				taskId: "task-1",
+				ts: 2500,
+			},
+		]);
+
+		expect(capturedLogs.length).toBe(2);
+		expect(capturedLogs[0]?.type).toBe("tool_pair");
+		expect(capturedLogs[1]?.type).toBe("tool_pair");
+		if (capturedLogs[0]?.type === "tool_pair") {
+			expect(capturedLogs[0].tool).toBe("mcp__opengraft__bash");
+			expect(capturedLogs[0].resultContent).toBe("a");
+		}
+		if (capturedLogs[1]?.type === "tool_pair") {
+			expect(capturedLogs[1].tool).toBe("mcp__opengraft__read_file");
+			expect(capturedLogs[1].resultContent).toBe("content of b");
+		}
+	});
+});
+
 describe("event-handler compact_marker savedTokens", () => {
 	it("processEvent returns savedTokens in the complete_compact UpdateOp", () => {
 		const { deps } = makeDeps();
