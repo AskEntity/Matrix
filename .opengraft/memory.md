@@ -518,3 +518,15 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `zod-schema.ts`: zodShapeToJsonSchema, zodTypeToJsonProp.
 - `provider-shared.ts` retains: runProviderLoop, ProviderAdapter, executeTool, ToolExecResult + internal helpers.
 - resolvePath deduplicated: definitions.ts imports from executor.ts.
+
+
+## agent-tools.ts Removal + shared-types.ts
+- `src/agent-tools.ts` deleted. Helpers moved to `src/task-utils.ts`. Re-exports replaced with direct imports.
+- `src/shared-types.ts` has `PendingState`, `EventImageData`, `InternalToolResult`.
+- `event-converter.ts` re-exports `EventImageData` from `shared-types.ts`.
+- `events.ts` re-exports `EventImageData` and `PendingState` from `shared-types.ts`.
+- `orchestrator-tools.ts` no longer imports from `daemon/`. Uses `OrchestratorToolsDeps` interface.
+- `OrchestratorToolsDeps` constructed in `agent-lifecycle.ts` from `DaemonContext`.
+- Tests use `mockOrchestratorDeps()` from test-utils.ts (not `mockDaemonContext` which is deprecated for tool tests).
+- ToolExecResult no longer has underscore-prefixed fields. Field names: `consumedMessageIds`, `consumedQueueMessages`, `formattedQueueMessages`, `pending`, `cwd`, `backgroundId`, `backgroundCommand`, `isImage`, `imageData`, `mediaType`.
+- `InternalToolResult` in shared-types.ts is the typed return from tool handlers. `executeTool` casts to it instead of `as any`.
