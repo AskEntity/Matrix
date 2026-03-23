@@ -6,7 +6,7 @@ import { ulid } from "./ulid.ts";
  * Each event represents a single atomic action (no batching).
  *
  * All injected content uses `type: "message"` with a `body` field.
- * `body.source` discriminates: "user", "system", "child_complete", etc.
+ * `body.source` discriminates: "user", "tree_change", "child_complete", etc.
  */
 /**
  * MessageBody — structured body of a message event.
@@ -22,6 +22,8 @@ export interface MessageBody {
 	output?: string;
 	requestReply?: boolean;
 	answer?: string;
+	action?: string;
+	nodeId?: string;
 	fromProjectId?: string;
 	fromProjectName?: string;
 	command?: string;
@@ -177,14 +179,6 @@ export type Event =
 			answer: string;
 			ts: number;
 	  }
-	| {
-			type: "tree_mutation";
-			action: string;
-			nodeId: string;
-			taskId: string;
-			title?: string;
-			ts: number;
-	  }
 	| { type: "compact_started"; taskId: string; ts: number }
 	| { type: "agent_stopped"; taskId: string; ts: number }
 	| {
@@ -272,8 +266,13 @@ export function queueMessageToEvent(
 					...(msg.stdout ? { stdout: msg.stdout } : {}),
 					...(msg.stderr ? { stderr: msg.stderr } : {}),
 				};
-			case "system":
-				return { source: "system", content: msg.content };
+			case "tree_change":
+				return {
+					source: "tree_change",
+					action: msg.action,
+					nodeId: msg.nodeId,
+					...(msg.title ? { title: msg.title } : {}),
+				};
 			case "compact":
 				return { source: "compact" };
 		}
@@ -305,8 +304,8 @@ function formatBodyForAI(body: MessageBody): string {
 					: `exit code: ${body.exitCode}`;
 			return `<background_complete command="${body.command}" id="${body.commandId}" exit="${body.exitCode}" duration="${body.durationMs}ms">${innerContent}</background_complete>`;
 		}
-		case "system":
-			return `<system_notification>${body.content}</system_notification>`;
+		case "tree_change":
+			return `<tree_change action="${body.action}" nodeId="${body.nodeId}"${body.title ? ` title="${body.title}"` : ""}>Call get_tree to see latest state.</tree_change>`;
 		case "compact":
 			return "Manual compaction requested";
 		case "user":

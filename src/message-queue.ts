@@ -13,7 +13,12 @@ export type QueueMessage =
 			images?: QueueImage[];
 			header?: string;
 	  }
-	| { source: "system"; content: string }
+	| {
+			source: "tree_change";
+			action: "created" | "updated" | "deleted" | "reordered";
+			nodeId: string;
+			title?: string;
+	  }
 	| {
 			source: "child_complete";
 			taskId: string;
@@ -81,10 +86,16 @@ export class MessageQueue {
 	/** Optional callback fired after messages are drained (consumed) from the queue. */
 	onDrain?: () => void;
 
-	/** Add a message to the queue. If someone is waiting via wait(), resolve them immediately. */
-	enqueue(msg: QueueMessage): void {
+	/** Add a message to the queue. If someone is waiting via wait(), resolve them immediately.
+	 * When `quiet` is true, the message is added without waking a pending wait() — picked up on next drain() or wait() with pending messages. */
+	enqueue(msg: QueueMessage, options?: { quiet?: boolean }): void {
 		if (this.closed) {
 			throw new Error("Queue closed");
+		}
+
+		if (options?.quiet) {
+			this.messages.push(msg);
+			return;
 		}
 
 		this.onEnqueue?.(msg);
@@ -99,14 +110,6 @@ export class MessageQueue {
 		}
 	}
 
-	/** Add a message to the queue without waking a pending wait(). Picked up on next drain() or wait() with pending messages. */
-	enqueueQuiet(msg: QueueMessage): void {
-		if (this.closed) {
-			throw new Error("Queue closed");
-		}
-		this.messages.push(msg);
-	}
-
 	/** Return a shallow copy of pending messages without consuming them. */
 	peekMessages(): QueueMessage[] {
 		return [...this.messages];
@@ -118,45 +121,6 @@ export class MessageQueue {
 		this.messages = [];
 		if (msgs.length > 0) this.onDrain?.();
 		return msgs;
-	}
-
-	/**
-	 * Drain with deduplication: merges consecutive system messages with similar content
-	 * into a single summary. Non-system messages pass through unchanged.
-	 */
-	drainMerged(): QueueMessage[] {
-		const msgs = this.drain();
-		if (msgs.length <= 1) return msgs;
-
-		const result: QueueMessage[] = [];
-		const systemMessages: Array<Extract<QueueMessage, { source: "system" }>> =
-			[];
-
-		const flushSystem = () => {
-			if (systemMessages.length === 0) return;
-			if (systemMessages.length === 1) {
-				result.push(...systemMessages);
-			} else {
-				// Merge multiple system messages into one summary
-				result.push({
-					source: "system",
-					content: `Tree updated ${systemMessages.length} times. Call get_tree to see the latest state.`,
-				});
-			}
-			systemMessages.length = 0;
-		};
-
-		for (const msg of msgs) {
-			if (msg.source === "system") {
-				systemMessages.push(msg);
-			} else {
-				flushSystem();
-				result.push(msg);
-			}
-		}
-		flushSystem();
-
-		return result;
 	}
 
 	/** Block until at least one message arrives. If messages already pending, resolve immediately. */

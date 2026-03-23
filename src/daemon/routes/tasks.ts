@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { Hono } from "hono";
 import { buildTaskPrompt, slugify } from "../../agent-tools.ts";
 import type { Event } from "../../events.ts";
+import type { QueueMessage } from "../../message-queue.ts";
 
 import {
 	clearPersistedMessages,
@@ -87,36 +88,50 @@ async function notifyParentChain(
 	}
 }
 
-/** Notify the running agent (if any) that the task tree was modified by the user. */
-function notifyAgentOfTreeChange(
+/** Notify running agents in the parent chain that the task tree was modified by the user.
+ * Walks from nodeId up through parentId, then to root. Quiet enqueue — doesn't interrupt yield. */
+function notifyTreeChange(
 	ctx: DaemonContext,
 	projectId: string,
-	action: "task_created" | "task_updated" | "task_reordered" | "task_deleted",
+	action: "created" | "updated" | "reordered" | "deleted",
 	nodeId: string,
 	title?: string,
 ): void {
-	// Structured WS event for UI rendering
-	emitEvent(ctx, projectId, {
-		type: "tree_mutation",
+	const tracker = ctx.trackers.get(projectId);
+	if (!tracker) return;
+
+	const msg: QueueMessage = {
+		source: "tree_change",
 		action,
 		nodeId,
-		taskId: nodeId,
-		title,
-		ts: Date.now(),
-	});
+		...(title ? { title } : {}),
+	};
 
-	// Non-waking queue message for agent awareness — picked up on next drain(), doesn't interrupt yield
-	// Look up root queue via session on tracker node
-	const tracker = ctx.trackers.get(projectId);
-	const rootNodeId = tracker?.rootNodeId;
-	if (rootNodeId) {
-		const rootQueue = tracker?.get(rootNodeId)?.session?.queue;
+	// Walk up from the changed node's parent to root, quiet-enqueue to each running agent
+	const node = tracker.get(nodeId);
+	let currentId = node?.parentId;
+	while (currentId) {
+		const ancestor = tracker.get(currentId);
+		if (!ancestor) break;
+		const queue = ancestor.session?.queue;
+		if (queue) {
+			try {
+				queue.enqueue(msg, { quiet: true });
+			} catch {
+				/* queue may be closed */
+			}
+		}
+		if (!ancestor.parentId) break;
+		currentId = ancestor.parentId;
+	}
+
+	// Also notify root if we haven't reached it yet (nodeId might be a root-level task)
+	const rootNodeId = tracker.rootNodeId;
+	if (rootNodeId && currentId !== rootNodeId) {
+		const rootQueue = tracker.get(rootNodeId)?.session?.queue;
 		if (rootQueue) {
 			try {
-				rootQueue.enqueueQuiet({
-					source: "system",
-					content: `Tree ${action.replace("task_", "")}${title ? `: "${title}"` : ""} (${nodeId}). Call get_tree to see the latest state.`,
-				});
+				rootQueue.enqueue(msg, { quiet: true });
 			} catch {
 				/* queue may be closed */
 			}
@@ -169,13 +184,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				: tracker.addTask(body.title, body.description ?? "", opts);
 			await tracker.save();
 			broadcastTreeUpdate(ctx, project.id, tracker);
-			notifyAgentOfTreeChange(
-				ctx,
-				project.id,
-				"task_created",
-				node.id,
-				node.title,
-			);
+			notifyTreeChange(ctx, project.id, "created", node.id, node.title);
 			return c.json(node, 201);
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -231,13 +240,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyAgentOfTreeChange(
-			ctx,
-			project.id,
-			"task_updated",
-			nodeId,
-			node.title,
-		);
+		notifyTreeChange(ctx, project.id, "updated", nodeId, node.title);
 		return c.json(tracker.get(nodeId));
 	});
 
@@ -266,13 +269,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		}
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyAgentOfTreeChange(
-			ctx,
-			project.id,
-			"task_reordered",
-			nodeId,
-			node.title,
-		);
+		notifyTreeChange(ctx, project.id, "reordered", nodeId, node.title);
 		return c.json({ ok: true });
 	});
 
@@ -469,13 +466,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		tracker.remove(nodeId);
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyAgentOfTreeChange(
-			ctx,
-			project.id,
-			"task_deleted",
-			nodeId,
-			node.title,
-		);
+		notifyTreeChange(ctx, project.id, "deleted", nodeId, node.title);
 		return c.json({ ok: true });
 	});
 

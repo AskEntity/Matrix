@@ -30,7 +30,7 @@ function getSearchableText(entry: LogEntry): string {
 		case "task_completed":
 		case "budget_exceeded":
 			return entry.title;
-		case "tree_mutation":
+		case "tree_change":
 			return entry.title ?? entry.action;
 		case "compact_marker":
 			return entry.checkpoint;

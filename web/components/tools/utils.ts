@@ -27,7 +27,7 @@ export function getEntryText(entry: LogEntry): string {
 			return entry.title;
 		case "task_completed":
 			return entry.title;
-		case "tree_mutation":
+		case "tree_change":
 			return entry.title ?? entry.action;
 		case "compact_marker":
 			return `Context compacted (saved ~${entry.savedTokens} tokens)`;

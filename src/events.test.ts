@@ -58,14 +58,21 @@ describe("queueMessageToEvent", () => {
 		expect(event.body.source).toBe("compact");
 	});
 
-	test("converts system — all data in body", () => {
+	test("converts tree_change — all data in body", () => {
 		const event = queueMessageToEvent(
-			{ source: "system", content: "hi" },
+			{
+				source: "tree_change",
+				action: "created",
+				nodeId: "node-1",
+				title: "My Task",
+			},
 			"test",
 		);
 		expect(event.type).toBe("message");
-		expect(event.body.source).toBe("system");
-		expect(event.body.content).toBe("hi");
+		expect(event.body.source).toBe("tree_change");
+		expect(event.body.action).toBe("created");
+		expect(event.body.nodeId).toBe("node-1");
+		expect(event.body.title).toBe("My Task");
 	});
 
 	test("converts parent_update — all data in body, includes header", () => {
@@ -3267,14 +3274,16 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			expect(msg.content).toBe("(empty)");
 		});
 
-		test("OpenAI: message with body and source uses formatEventForAI fallback", () => {
+		test("OpenAI: message with body and source uses formatEventForAI", () => {
 			const events: Event[] = [
 				{
 					type: "message",
-					source: "system",
+					id: "",
 					body: {
-						source: "system",
-						content: "Agent stopped",
+						source: "tree_change",
+						action: "created",
+						nodeId: "node-1",
+						title: "My Task",
 					},
 					taskId: "test",
 					ts: 1000,
@@ -3284,8 +3293,8 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			expect(messages).toHaveLength(1);
 			const msg = messages[0] as { role: string; content: string };
 			expect(msg.role).toBe("user");
-			expect(msg.content).toContain("system_notification");
-			expect(msg.content).toContain("Agent stopped");
+			expect(msg.content).toContain("tree_change");
+			expect(msg.content).toContain("created");
 		});
 
 		test("OpenAI: message with body but no source uses body to format", () => {
@@ -3293,9 +3302,11 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			const events: Event[] = [
 				{
 					type: "message",
+					id: "",
 					body: {
-						source: "system",
-						content: "Agent stopped",
+						source: "tree_change",
+						action: "updated",
+						nodeId: "node-2",
 					},
 					taskId: "test",
 					ts: 1000,
@@ -3305,8 +3316,8 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			expect(messages).toHaveLength(1);
 			const msg = messages[0] as { role: string; content: string };
 			expect(msg.role).toBe("user");
-			expect(msg.content).toContain("system_notification");
-			expect(msg.content).toContain("Agent stopped");
+			expect(msg.content).toContain("tree_change");
+			expect(msg.content).toContain("updated");
 		});
 
 		test("OpenAI: message with no content and no body falls back to (empty)", () => {

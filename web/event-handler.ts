@@ -138,6 +138,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		output?: string;
 		requestReply?: boolean;
 		answer?: string;
+		action?: string;
+		nodeId?: string;
 		fromProjectId?: string;
 		fromProjectName?: string;
 		command?: string;
@@ -173,10 +175,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					output: qe.output,
 					ts: eventTs,
 				} as UIEvent;
-			case "system":
+			case "tree_change":
 				return {
-					type: "lifecycle",
-					content: qe.content ?? "",
+					type: "tree_change",
+					action: qe.action ?? "",
+					nodeId: qe.nodeId ?? "",
+					title: qe.title,
 					taskId: parentTaskId,
 					ts: eventTs,
 				} as UIEvent;
@@ -277,6 +281,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			}
 			case "background_complete":
 				return `⚙ bg: ${queueEntry?.command ?? "done"}`;
+			case "tree_change": {
+				const title = queueEntry?.title ?? "";
+				const action = queueEntry?.action ?? "changed";
+				return title ? `🌿 ${action}: ${title}` : `🌿 tree ${action}`;
+			}
 			default:
 				return content || `[${source}]`;
 		}
@@ -795,25 +804,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					updates: [],
 					sideEffects: NO_SIDE_EFFECTS,
 				};
-
-			case "tree_mutation": {
-				const action = msg.action as string;
-				const title = (msg.title as string) || "";
-				return {
-					entries: [
-						createLogEntry({
-							type: "tree_mutation",
-							action,
-							nodeId: msg.nodeId as string,
-							taskId: (msg.taskId as string) ?? "",
-							title: title || undefined,
-							ts: msg.ts as number,
-						}),
-					],
-					updates: [],
-					sideEffects: NO_SIDE_EFFECTS,
-				};
-			}
 
 			default:
 				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };

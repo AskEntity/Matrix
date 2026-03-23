@@ -162,7 +162,7 @@ export function emitEvent(ctx: DaemonContext, projectId: string, event: Event) {
 /**
  * Broadcast a tree update to all subscribers of a project.
  * This is ephemeral — carries full tree data for immediate UI update.
- * The tree_mutation lifecycle events in JSONL provide the persistent record.
+ * Tree changes are also delivered as structured queue messages to running agents.
  */
 export function broadcastTreeUpdate(
 	ctx: DaemonContext,

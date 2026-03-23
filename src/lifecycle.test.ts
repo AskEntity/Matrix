@@ -688,12 +688,15 @@ describe("lifecycle: queue state transitions", () => {
 		);
 	});
 
-	test("enqueueQuiet on closed queue throws", () => {
+	test("quiet enqueue on closed queue throws", () => {
 		const queue = new MessageQueue();
 		queue.close();
 
 		expect(() =>
-			queue.enqueueQuiet({ source: "system", content: "test" }),
+			queue.enqueue(
+				{ source: "tree_change", action: "created", nodeId: "n1" },
+				{ quiet: true },
+			),
 		).toThrow("Queue closed");
 	});
 
@@ -724,7 +727,7 @@ describe("lifecycle: queue state transitions", () => {
 		queue.close();
 	});
 
-	test("enqueueQuiet does not wake pending waiter", async () => {
+	test("quiet enqueue does not wake pending waiter", async () => {
 		const queue = new MessageQueue();
 		let woken = false;
 
@@ -734,8 +737,11 @@ describe("lifecycle: queue state transitions", () => {
 			return msg;
 		});
 
-		// enqueueQuiet should NOT resolve the waiter
-		queue.enqueueQuiet({ source: "system", content: "quiet" });
+		// quiet enqueue should NOT resolve the waiter
+		queue.enqueue(
+			{ source: "tree_change", action: "created", nodeId: "n1" },
+			{ quiet: true },
+		);
 
 		await delay(50);
 		expect(woken).toBe(false);
@@ -751,7 +757,7 @@ describe("lifecycle: queue state transitions", () => {
 		// The quiet message should still be in the queue
 		const remaining = queue.drain();
 		expect(remaining).toHaveLength(1);
-		expect(remaining[0]?.source).toBe("system");
+		expect(remaining[0]?.source).toBe("tree_change");
 
 		queue.close();
 	});
@@ -1159,60 +1165,6 @@ describe("lifecycle: orchestrator message routing", () => {
 		// Stop
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
 		await delay(100);
-	});
-});
-
-describe("lifecycle: MessageQueue drainMerged", () => {
-	test("merges consecutive system messages", () => {
-		const queue = new MessageQueue();
-		queue.enqueue({ source: "system", content: "Tree updated: task_created" });
-		queue.enqueue({
-			source: "system",
-			content: "Tree updated: task_updated",
-		});
-		queue.enqueue({
-			source: "system",
-			content: "Tree updated: task_reordered",
-		});
-
-		const msgs = queue.drainMerged();
-		expect(msgs).toHaveLength(1);
-		expect(msgs[0]?.source).toBe("system");
-		expect((msgs[0] as { content: string }).content).toContain(
-			"Tree updated 3 times",
-		);
-
-		queue.close();
-	});
-
-	test("preserves non-system messages in order", () => {
-		const queue = new MessageQueue();
-		queue.enqueue({ source: "user", content: "hello" });
-		queue.enqueue({ source: "system", content: "a" });
-		queue.enqueue({ source: "system", content: "b" });
-		queue.enqueue({ source: "user", content: "world" });
-
-		const msgs = queue.drainMerged();
-		expect(msgs).toHaveLength(3);
-		expect(msgs[0]?.source).toBe("user");
-		expect((msgs[0] as { content: string }).content).toBe("hello");
-		expect(msgs[1]?.source).toBe("system");
-		expect((msgs[1] as { content: string }).content).toContain("2 times");
-		expect(msgs[2]?.source).toBe("user");
-		expect((msgs[2] as { content: string }).content).toBe("world");
-
-		queue.close();
-	});
-
-	test("single system message passes through unchanged", () => {
-		const queue = new MessageQueue();
-		queue.enqueue({ source: "system", content: "one update" });
-
-		const msgs = queue.drainMerged();
-		expect(msgs).toHaveLength(1);
-		expect((msgs[0] as { content: string }).content).toBe("one update");
-
-		queue.close();
 	});
 });
 
