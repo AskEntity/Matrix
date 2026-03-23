@@ -414,3 +414,12 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `QueueEntryLike` flat interface with all-optional fields is a type-system artifact of flattening a discriminated union. The `?? ""` fallbacks in switch branches are type-level necessities, not runtime concerns.
 - MCP tool result parsing fallbacks (`?? "image/png"`, `?? ""` on external data) are legitimate — external data is untyped.
 - `buildCompactedContext` test expected old `"Project Memory (fresh)"` header but implementation uses `"# .opengraft/memory.md (Preloaded, do not read again)"`. Fixed test.
+
+
+## taskId Required on All Events
+- `taskId: string` is now required on EVERY Event variant (was optional on ~13 variants).
+- `queueMessageToEvent(msg, taskId)` and `findOrphanedToolCalls(events, taskId)` both require taskId parameter.
+- Provider events use `taskId: ""` as placeholder — daemon emit wrappers (`emitWithTask`/`rootEmit`) override with real taskId via spread.
+- `normalizeEventForUI` simplified — events already have taskId, just strips headers.
+- `EventStore.read()` injects taskId from sessionId for backward compat with old JSONL files.
+- Events that previously had no taskId at all (compacted_resume, summarization_request, budget_warning, tree_mutation) now require it.
