@@ -257,12 +257,6 @@ export async function verifyJWT(
 	return payload;
 }
 
-/** Clear the in-memory cache (for testing). */
-export function clearAuthCache(): void {
-	authDataCache = null;
-	challenges.clear();
-}
-
 // ── Base64/Base64URL helpers ───────────────────────────────────────────────
 
 function toBase64Url(str: string): string {

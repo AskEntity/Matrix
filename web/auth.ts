@@ -22,13 +22,6 @@ export function clearToken(): void {
 	localStorage.removeItem(TOKEN_KEY);
 }
 
-/** Get Authorization headers for fetch calls. Returns empty object if no token. */
-export function authHeaders(): Record<string, string> {
-	const token = getToken();
-	if (!token) return {};
-	return { Authorization: `Bearer ${token}` };
-}
-
 /**
  * Authenticated fetch wrapper. Adds Authorization: Bearer header automatically.
  * If the response is 401, clears the token (it's expired or invalid).
