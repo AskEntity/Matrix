@@ -106,7 +106,8 @@ function notifyTreeChange(
 		...(title ? { title } : {}),
 	};
 
-	// Walk up from the changed node's parent to root, quiet-enqueue to each running agent
+	// Walk up from the changed node's parent to root, quiet-enqueue to each running agent.
+	// The loop naturally reaches root (parentId chain ends at root whose parentId is null).
 	const node = tracker.get(nodeId);
 	let currentId = node?.parentId;
 	while (currentId) {
@@ -122,19 +123,6 @@ function notifyTreeChange(
 		}
 		if (!ancestor.parentId) break;
 		currentId = ancestor.parentId;
-	}
-
-	// Also notify root if we haven't reached it yet (nodeId might be a root-level task)
-	const rootNodeId = tracker.rootNodeId;
-	if (rootNodeId && currentId !== rootNodeId) {
-		const rootQueue = tracker.get(rootNodeId)?.session?.queue;
-		if (rootQueue) {
-			try {
-				rootQueue.enqueue(msg, { quiet: true });
-			} catch {
-				/* queue may be closed */
-			}
-		}
 	}
 }
 

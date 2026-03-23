@@ -1453,44 +1453,28 @@ export function createOrchestratorTools(
 					broadcastTree();
 				}
 
-				// Deliver child_complete message directly to parent queue (child agents only).
-				// This is the canonical delivery — runChildAgentInBackground skips it when done() was called.
+				// Deliver child_complete to parent via deliverMessage (child agents only).
+				// deliverMessage handles both paths: enqueue if parent is running, persist if not.
+				// runChildAgentInBackground skips delivery when done() was called.
 				const depth = getDepth();
-				if (currentTaskId && depth > 0) {
+				if (currentTaskId && depth > 0 && lifecycleDeps?.deliverMessage) {
 					const node = tracker.get(currentTaskId);
-					const completionMsg: QueueMessage = {
-						source: "child_complete",
-						taskId: currentTaskId,
-						title: node?.title ?? "unknown",
-						success: args.status === "passed",
-						output: args.summary.slice(0, 2000),
-					};
-					// Try direct enqueue to parent's queue first
-					const parentResult = findParentQueue(tracker, currentTaskId);
-					const parentQueue = parentResult?.queue;
-					if (parentQueue) {
-						try {
-							parentQueue.enqueue(completionMsg);
-						} catch {
-							// Queue closed — persist via deliverMessage fallback below
-						}
-					}
-					// Always persist to immediate parent for eventual resumption
-					// (parent may not be running, or may be a different ancestor)
-					if (node?.parentId && lifecycleDeps?.deliverMessage) {
-						const directParentQueue = tracker.get(node.parentId)?.session
-							?.queue;
-						// Only persist if we didn't already enqueue to the direct parent
-						if (!directParentQueue || directParentQueue !== parentQueue) {
-							lifecycleDeps
-								.deliverMessage(node.parentId, completionMsg)
-								.catch((e) => {
-									console.warn(
-										`[done] Failed to deliver child_complete to parent ${node.parentId}:`,
-										e,
-									);
-								});
-						}
+					if (node?.parentId) {
+						const completionMsg: QueueMessage = {
+							source: "child_complete",
+							taskId: currentTaskId,
+							title: node.title ?? "unknown",
+							success: args.status === "passed",
+							output: args.summary.slice(0, 2000),
+						};
+						lifecycleDeps
+							.deliverMessage(node.parentId, completionMsg)
+							.catch((e) => {
+								console.warn(
+									`[done] Failed to deliver child_complete to parent ${node.parentId}:`,
+									e,
+								);
+							});
 					}
 				}
 

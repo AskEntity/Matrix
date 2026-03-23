@@ -46,6 +46,39 @@ import {
 // Shared helpers — extracted from launchAgent / runChildAgentInBackground
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a user message with pre-loaded context header.
+ * Reads memory.md, constructs the header, generates a msgId, and returns
+ * both the QueueMessage and the corresponding Event for broadcast.
+ */
+function prepareAgentMessage(
+	projectPath: string,
+	taskId: string,
+	content: string,
+	images?: QueueImage[],
+): { msg: QueueMessage; event: Event } {
+	const memory = readProjectMemory(projectPath);
+	const header = memory
+		? `Working directory: ${projectPath}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${memory}`
+		: `Working directory: ${projectPath}`;
+	const msgId = ulid();
+	const msg: QueueMessage = {
+		source: "user",
+		id: msgId,
+		content,
+		...(images?.length ? { images } : {}),
+		header,
+	};
+	const event: Event = {
+		type: "message",
+		id: msgId,
+		taskId,
+		body: msg,
+		ts: Date.now(),
+	};
+	return { msg, event };
+}
+
 /** Config + tools bundle produced by createAgentContext(). */
 interface AgentContextResult {
 	provider: ReturnType<typeof getProjectProvider>;
@@ -1050,29 +1083,17 @@ export async function handleOrchestrate(
 	// Now enqueue the user message with header — provider is waiting for queue drain
 	const orchRootId2 = orchTracker.rootNodeId;
 	if (orchRootId2) {
-		const orchMemory = readProjectMemory(project.path);
-		const orchHeader = orchMemory
-			? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${orchMemory}`
-			: `Working directory: ${project.path}`;
-		const orchMsgId2 = ulid();
-
-		emitEvent(ctx, projectId, {
-			type: "message",
-			id: orchMsgId2,
-			taskId: orchRootId2,
-			body: { source: "user", content: prompt, header: orchHeader },
-			ts: Date.now(),
-		});
+		const { msg, event } = prepareAgentMessage(
+			project.path,
+			orchRootId2,
+			prompt,
+		);
+		emitEvent(ctx, projectId, event);
 
 		const orchRootQueue = orchTracker.get(orchRootId2)?.session?.queue;
 		if (orchRootQueue) {
 			try {
-				orchRootQueue.enqueue({
-					source: "user",
-					id: orchMsgId2,
-					content: prompt,
-					header: orchHeader,
-				});
+				orchRootQueue.enqueue(msg);
 			} catch {
 				// Queue may have closed
 			}
@@ -1110,48 +1131,24 @@ export async function handleInjectMessage(
 	if (!rootNodeId) {
 		// No session at all — launch a brand new agent with this message as the prompt
 		if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
-			// Build header with pre-loaded context (memory.md)
-			const memory = readProjectMemory(project.path);
-			const header = memory
-				? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${memory}`
-				: `Working directory: ${project.path}`;
-
-			const freshMsgId = ulid();
-
-			// Persist the user message to disk BEFORE launching — the provider
-			// will drain it from the queue as its first message.
-			// We need the rootNodeId, but it doesn't exist yet. Create it by
-			// launching first, then persist.
+			// Launch first to create rootNodeId, then enqueue message
 			await launchAgent(ctx, project, {}, orchestratorSystemPrompt);
 
 			const freshRootNodeId = tracker.rootNodeId;
 			if (freshRootNodeId) {
-				// Write + broadcast message at send time (Phase 1 of two-phase lifecycle)
-				const userMsgEvent: Event = {
-					type: "message",
-					id: freshMsgId,
-					taskId: freshRootNodeId,
-					body: {
-						source: "user",
-						content: message,
-						...(images?.length ? { images } : {}),
-						header,
-					},
-					ts: Date.now(),
-				};
-				emitEvent(ctx, projectId, userMsgEvent);
+				const { msg, event } = prepareAgentMessage(
+					project.path,
+					freshRootNodeId,
+					message,
+					images,
+				);
+				emitEvent(ctx, projectId, event);
 
 				// Enqueue directly to the running agent's queue — it's waiting for first message
 				const rootQueue = tracker.get(freshRootNodeId)?.session?.queue;
 				if (rootQueue) {
 					try {
-						rootQueue.enqueue({
-							source: "user",
-							id: freshMsgId,
-							content: message,
-							...(images?.length ? { images } : {}),
-							header,
-						});
+						rootQueue.enqueue(msg);
 					} catch {
 						// Queue may have closed already
 					}
@@ -1166,45 +1163,19 @@ export async function handleInjectMessage(
 		};
 	}
 
-	const msgId = ulid();
 	const eventStore = getEventStore(ctx, projectId);
 
 	// Check resume BEFORE writing message (the event we're about to write
 	// shouldn't influence the fresh-vs-resume decision)
 	const shouldResume = eventStore.has(rootNodeId);
 
-	// Build header with fresh context for messages that will start/resume the agent.
-	// Header is ALWAYS how context gets into the conversation — no special codepaths.
-	const memory = readProjectMemory(project.path);
-	const header = memory
-		? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${memory}`
-		: `Working directory: ${project.path}`;
-
-	// Write + broadcast message at send time (Phase 1 of two-phase lifecycle)
-	// Frontend derives pending state from message events without matching messages_consumed.
-	const userMsgEvent: Event = {
-		type: "message",
-		id: msgId,
-		taskId: rootNodeId,
-		body: {
-			source: "user",
-			content: message,
-			...(images?.length ? { images } : {}),
-			header,
-		},
-		ts: Date.now(),
-	};
-	emitEvent(ctx, projectId, userMsgEvent);
-
-	// Unified delivery: enqueue if running, persist if not
-	// Pass msgId through QueueMessage so providers can write messages_consumed
-	const msg: QueueMessage = {
-		source: "user",
-		id: msgId,
-		content: message,
-		...(images?.length ? { images } : {}),
-		header,
-	};
+	const { msg, event } = prepareAgentMessage(
+		project.path,
+		rootNodeId,
+		message,
+		images,
+	);
+	emitEvent(ctx, projectId, event);
 
 	const result = await deliverMessage(ctx, project, rootNodeId, msg);
 
