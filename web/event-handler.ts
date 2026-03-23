@@ -771,60 +771,61 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		}
 	}
 
-	// --- Update application helpers ---
+	// --- Update application helper ---
 
 	/**
-	 * Apply update operations to an entries array (batch/replay mode).
-	 * Mutates the array in-place for efficiency during batch processing.
+	 * Apply a single UpdateOp to an entries array. Pure function — returns a new array.
+	 * Used by both batch processing and live React state updates.
 	 */
-	function applyUpdateToArray(entries: LogEntry[], op: UpdateOp): void {
+	function applyUpdate(entries: LogEntry[], op: UpdateOp): LogEntry[] {
 		switch (op.type) {
 			case "merge_text": {
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
 					if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
-						entries[i] = { ...e, content: e.content + op.text };
-						return;
+						const updated = [...entries];
+						updated[i] = { ...e, content: e.content + op.text };
+						return updated;
 					}
 					if (e && getLogTaskId(e) === op.taskId && e.type !== "assistant_text")
 						break;
 				}
-				// No existing text entry — create new
-				entries.push(
+				return [
+					...entries,
 					createLogEntry({
 						type: "assistant_text",
 						content: op.text,
 						taskId: op.taskId ?? "",
 						ts: op.ts ?? Date.now(),
 					}),
-				);
-				break;
+				];
 			}
 			case "replace_text": {
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
 					if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
-						entries[i] = { ...e, content: op.text };
-						return;
+						const updated = [...entries];
+						updated[i] = { ...e, content: op.text };
+						return updated;
 					}
 					if (e && getLogTaskId(e) === op.taskId && e.type !== "assistant_text")
 						break;
 				}
-				entries.push(
+				return [
+					...entries,
 					createLogEntry({
 						type: "assistant_text",
 						content: op.text,
 						taskId: op.taskId ?? "",
 						ts: op.ts ?? Date.now(),
 					}),
-				);
-				break;
+				];
 			}
 			case "complete_compact": {
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
 					if (e && e.type === "compact_started") {
-						// Replace compact_started with compact_marker
+						const updated = [...entries];
 						const replacement = createLogEntry({
 							type: "compact_marker",
 							checkpoint: op.checkpoint,
@@ -834,12 +835,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						});
 						// Preserve the original entry's timestamp
 						(replacement as { ts: number }).ts = e.ts;
-						entries[i] = replacement;
-						return;
+						updated[i] = replacement;
+						return updated;
 					}
 				}
-				// No pending compact entry — create completed one
-				entries.push(
+				return [
+					...entries,
 					createLogEntry({
 						type: "compact_marker",
 						checkpoint: op.checkpoint,
@@ -847,15 +848,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						taskId: op.taskId ?? "",
 						ts: op.ts ?? Date.now(),
 					}),
-				);
-				break;
+				];
 			}
 			case "resolve_tool": {
 				for (let i = entries.length - 1; i >= 0; i--) {
 					const e = entries[i];
 					if (e && e.type === "tool_call" && e.toolCallId === op.toolCallId) {
-						// Replace tool_call with tool_pair
-						entries[i] = createLogEntry({
+						const updated = [...entries];
+						updated[i] = createLogEntry({
 							type: "tool_pair",
 							tool: e.tool,
 							toolCallId: e.toolCallId,
@@ -870,11 +870,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							taskId: e.taskId,
 							ts: e.ts,
 						});
-						return;
+						return updated;
 					}
 				}
-				// Orphan tool_result — no matching tool_call found. Create as standalone tool_pair.
-				entries.push(
+				// Orphan tool_result — no matching tool_call found
+				return [
+					...entries,
 					createLogEntry({
 						type: "tool_pair",
 						tool: op.tool,
@@ -889,8 +890,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						resultTs: op.resultTs,
 						ts: op.resultTs,
 					}),
-				);
-				break;
+				];
 			}
 			case "remove_tool": {
 				for (let i = entries.length - 1; i >= 0; i--) {
@@ -900,158 +900,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						(e.type === "tool_call" || e.type === "tool_pair") &&
 						e.toolCallId === op.toolCallId
 					) {
-						entries.splice(i, 1);
-						return;
+						return entries.filter((_, idx) => idx !== i);
 					}
 				}
-				break;
+				return entries;
 			}
 		}
-	}
-
-	/**
-	 * Apply update operations via setLogs (live mode).
-	 * Uses React state updater to get access to prev state.
-	 */
-	function applyUpdateLive(op: UpdateOp): void {
-		setLogs((prev) => {
-			switch (op.type) {
-				case "merge_text": {
-					for (let i = prev.length - 1; i >= 0; i--) {
-						const e = prev[i];
-						if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
-							const updated = [...prev];
-							updated[i] = { ...e, content: e.content + op.text };
-							return updated;
-						}
-						if (
-							e &&
-							getLogTaskId(e) === op.taskId &&
-							e.type !== "assistant_text"
-						)
-							break;
-					}
-					return [
-						...prev,
-						createLogEntry({
-							type: "assistant_text",
-							content: op.text,
-							taskId: op.taskId ?? "",
-							ts: op.ts ?? Date.now(),
-						}),
-					];
-				}
-				case "replace_text": {
-					for (let i = prev.length - 1; i >= 0; i--) {
-						const e = prev[i];
-						if (e && e.type === "assistant_text" && e.taskId === op.taskId) {
-							const updated = [...prev];
-							updated[i] = { ...e, content: op.text };
-							return updated;
-						}
-						if (
-							e &&
-							getLogTaskId(e) === op.taskId &&
-							e.type !== "assistant_text"
-						)
-							break;
-					}
-					return [
-						...prev,
-						createLogEntry({
-							type: "assistant_text",
-							content: op.text,
-							taskId: op.taskId ?? "",
-							ts: op.ts ?? Date.now(),
-						}),
-					];
-				}
-				case "complete_compact": {
-					for (let i = prev.length - 1; i >= 0; i--) {
-						const e = prev[i];
-						if (e && e.type === "compact_started") {
-							const updated = [...prev];
-							const replacement = createLogEntry({
-								type: "compact_marker",
-								checkpoint: op.checkpoint,
-								savedTokens: op.savedTokens,
-								taskId: op.taskId ?? "",
-								ts: op.ts ?? Date.now(),
-							});
-							// Preserve the original entry's timestamp
-							(replacement as { ts: number }).ts = e.ts;
-							updated[i] = replacement;
-							return updated;
-						}
-					}
-					return [
-						...prev,
-						createLogEntry({
-							type: "compact_marker",
-							checkpoint: op.checkpoint,
-							savedTokens: op.savedTokens,
-							taskId: op.taskId ?? "",
-							ts: op.ts ?? Date.now(),
-						}),
-					];
-				}
-				case "resolve_tool": {
-					for (let i = prev.length - 1; i >= 0; i--) {
-						const e = prev[i];
-						if (e && e.type === "tool_call" && e.toolCallId === op.toolCallId) {
-							const updated = [...prev];
-							updated[i] = createLogEntry({
-								type: "tool_pair",
-								tool: e.tool,
-								toolCallId: e.toolCallId,
-								input: e.input,
-								resultContent: op.resultContent,
-								isError: op.isError,
-								images: op.images,
-								pending: op.pending,
-								backgroundId: op.backgroundId,
-								backgroundCommand: op.backgroundCommand,
-								resultTs: op.resultTs,
-								taskId: e.taskId,
-								ts: e.ts,
-							});
-							return updated;
-						}
-					}
-					// Orphan tool_result — no matching tool_call found
-					return [
-						...prev,
-						createLogEntry({
-							type: "tool_pair",
-							tool: op.tool,
-							toolCallId: op.toolCallId,
-							input: {},
-							resultContent: op.resultContent,
-							isError: op.isError,
-							images: op.images,
-							pending: op.pending,
-							backgroundId: op.backgroundId,
-							backgroundCommand: op.backgroundCommand,
-							resultTs: op.resultTs,
-							ts: op.resultTs,
-						}),
-					];
-				}
-				case "remove_tool": {
-					for (let i = prev.length - 1; i >= 0; i--) {
-						const e = prev[i];
-						if (
-							e &&
-							(e.type === "tool_call" || e.type === "tool_pair") &&
-							e.toolCallId === op.toolCallId
-						) {
-							return prev.filter((_, idx) => idx !== i);
-						}
-					}
-					return prev;
-				}
-			}
-		});
 	}
 
 	/**
@@ -1064,7 +918,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		toolCallToolNames.clear();
 		setBackgroundProcesses(new Map());
 
-		const entries: LogEntry[] = [];
+		let entries: LogEntry[] = [];
 		const deferredSideEffects: (() => void)[] = [];
 
 		for (const evt of events) {
@@ -1078,7 +932,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 			const result = processEvent(evt);
 			for (const entry of result.entries) entries.push(entry);
-			for (const op of result.updates) applyUpdateToArray(entries, op);
+			for (const op of result.updates) entries = applyUpdate(entries, op);
 			// Collect side effects but DON'T execute them yet.
 			// For messages_consumed, processEvent puts entries directly in result.entries
 			// and syncPendingBanner in sideEffects.
@@ -1105,7 +959,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		if (result.entries.length > 0) {
 			setLogs((prev) => [...prev, ...result.entries]);
 		}
-		for (const op of result.updates) applyUpdateLive(op);
+		for (const op of result.updates) {
+			setLogs((prev) => applyUpdate(prev, op));
+		}
 		result.sideEffects();
 	}
 
