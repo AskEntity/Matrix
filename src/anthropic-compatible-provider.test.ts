@@ -11,24 +11,28 @@ import { createOrchestratorTools } from "./agent-tools.ts";
 import {
 	AnthropicCompatibleProvider,
 	addMessagesCacheControl,
-	buildCompactedContext,
-	buildSummarizationInstruction,
-	cleanupSessionBackgroundProcesses,
 	eventsToAnthropicMessages,
-	executeBashWithTimeout,
-	executeTool,
-	extractCheckpoint,
-	getBackgroundStatus,
-	getCompactionThresholds,
 	getContextWindow,
 	getModelPricing,
+} from "./anthropic-compatible-provider.ts";
+import {
+	SUMMARIZATION_INSTRUCTION,
+	buildCompactedContext,
+	buildSummarizationInstruction,
+	extractCheckpoint,
+	getCompactionThresholds,
+	zodShapeToJsonSchema,
+} from "./provider-shared.ts";
+import {
+	cleanupSessionBackgroundProcesses,
+	executeBashWithTimeout,
+	executeTool,
+	getBackgroundStatus,
 	jsSearch,
 	killBackgroundProcess,
 	resolvePath,
-	SUMMARIZATION_INSTRUCTION,
 	truncateSearchOutput,
-	zodShapeToJsonSchema,
-} from "./anthropic-compatible-provider.ts";
+} from "./tools/index.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
