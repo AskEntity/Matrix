@@ -127,6 +127,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		setBackgroundProcesses,
 	} = deps;
 
+	/** Fallback map: toolCallId → tool name, for old JSONL files missing tool field on tool_result. */
+	const toolCallToolNames = new Map<string, string>();
+
 	/**
 	 * Convert a QueueMessage body into a UIEvent for rendering.
 	 * Works for both live SSE messages AND JSONL body fields.
@@ -364,13 +367,16 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 			// --- Provider events (flat Event types) ---
 
-			case "tool_call":
+			case "tool_call": {
+				const tcTool = msg.tool as string;
+				const tcId = (msg.toolCallId as string) || "";
+				if (tcTool && tcId) toolCallToolNames.set(tcId, tcTool);
 				return {
 					entries: [
 						createLogEntry({
 							type: "tool_call",
-							tool: msg.tool as string,
-							toolCallId: (msg.toolCallId as string) || "",
+							tool: tcTool,
+							toolCallId: tcId,
 							input: (msg.input as Record<string, unknown>) ?? {},
 							taskId: msg.taskId as string,
 							ts: msg.ts as number,
@@ -379,13 +385,15 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					updates: [],
 					sideEffects: NO_SIDE_EFFECTS,
 				};
+			}
 
 			case "tool_result": {
 				const bgId = msg.backgroundId as string | undefined;
 				const bgCommand = msg.backgroundCommand as string | undefined;
 				const trTaskId = msg.taskId as string | undefined;
 				const trToolCallId = (msg.toolCallId as string) || "";
-				const trTool = (msg.tool as string) || "";
+				const trTool =
+					(msg.tool as string) || toolCallToolNames.get(trToolCallId) || "";
 				const trContent = (msg.content as string) || "";
 				const trIsError = (msg.isError as boolean) || false;
 				const trImages = msg.images as
@@ -1076,6 +1084,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	function processEventBatch(events: Record<string, unknown>[]): void {
 		// Clear deferred state — reprocessing from scratch
 		deferredMessages.clear();
+		toolCallToolNames.clear();
 		setBackgroundProcesses(new Map());
 
 		const entries: LogEntry[] = [];

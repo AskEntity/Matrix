@@ -294,8 +294,9 @@ async function writeOrphanedToolResults(
 	);
 
 	const syntheticEvents: Event[] = orphanedToolCallIds.map(
-		({ toolCallId }) => ({
+		({ toolCallId, tool }) => ({
 			type: "tool_result" as const,
+			tool,
 			toolCallId,
 			content:
 				"Tool execution was interrupted by daemon restart. Results were lost.",

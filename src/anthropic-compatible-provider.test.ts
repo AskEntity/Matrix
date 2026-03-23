@@ -2806,6 +2806,7 @@ describe("Event deterministic verification", () => {
 			},
 			{
 				type: "tool_result",
+				tool: "bash",
 				toolCallId: "tc1",
 				content: "hi",
 				isError: false,
