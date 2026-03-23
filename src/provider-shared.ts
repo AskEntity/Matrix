@@ -19,7 +19,11 @@ import {
 } from "./compaction.ts";
 import { type Event, queueMessageToEvent } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
-import type { EventImageData, PendingState } from "./shared-types.ts";
+import type {
+	EventImageData,
+	InternalToolResult,
+	PendingState,
+} from "./shared-types.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 
@@ -45,11 +49,14 @@ export interface ToolExecResult {
 	imageData?: string;
 	mediaType?: string;
 	mcpImages?: Array<EventImageData & { data?: string }>;
-	_consumedMessageIds?: string[];
+	/** User message IDs consumed (already persisted at send time). */
+	consumedMessageIds?: string[];
 	/** Raw queue messages from yield/done that need to flow through emit for SSE broadcast + persistence. */
-	_consumedQueueMessages?: QueueMessage[];
-	_formattedQueueMessages?: string;
-	_pending?: PendingState;
+	consumedQueueMessages?: QueueMessage[];
+	/** Formatted text of all consumed queue messages for display. */
+	formattedQueueMessages?: string;
+	/** Structured pending state after yield/done. */
+	pending?: PendingState;
 }
 
 /**
@@ -106,51 +113,31 @@ export async function executeTool(
 				textParts.push(JSON.stringify(c));
 			}
 		}
-		// Extract non-standard properties from handler results
-		// biome-ignore lint/suspicious/noExplicitAny: reading non-standard properties from handler results
-		const r = mcpResult as any;
-		const consumedIds = Array.isArray(r._consumedMessageIds)
-			? (r._consumedMessageIds as string[])
-			: undefined;
-		const consumedQueueMsgs = Array.isArray(r._consumedQueueMessages)
-			? (r._consumedQueueMessages as QueueMessage[])
-			: undefined;
-		const pending = r._pending as ToolExecResult["_pending"];
-		const formattedQueueMessages =
-			typeof r._formattedQueueMessages === "string"
-				? r._formattedQueueMessages
-				: undefined;
-		// Built-in tool extended properties
-		const _cwd = typeof r._cwd === "string" ? r._cwd : undefined;
-		const _backgroundId =
-			typeof r._backgroundId === "string" ? r._backgroundId : undefined;
-		const _backgroundCommand =
-			typeof r._backgroundCommand === "string"
-				? r._backgroundCommand
-				: undefined;
-		const _isImage = typeof r._isImage === "boolean" ? r._isImage : undefined;
-		const _imageData =
-			typeof r._imageData === "string" ? r._imageData : undefined;
-		const _mediaType =
-			typeof r._mediaType === "string" ? r._mediaType : undefined;
+		// Extract non-standard properties from handler results.
+		// InternalToolResult has typed fields — no `as any` needed.
+		const r = mcpResult as InternalToolResult;
 
 		return {
 			content: textParts.join("\n"),
-			isError: (mcpResult.isError as boolean) ?? false,
-			isImage: _isImage ?? mcpImages.length > 0,
-			...(_cwd ? { cwd: _cwd } : {}),
-			...(_backgroundId ? { backgroundId: _backgroundId } : {}),
-			...(_backgroundCommand ? { backgroundCommand: _backgroundCommand } : {}),
-			...(_imageData ? { imageData: _imageData } : {}),
-			...(_mediaType ? { mediaType: _mediaType } : {}),
-			mcpImages,
-			...(consumedIds?.length ? { _consumedMessageIds: consumedIds } : {}),
-			...(consumedQueueMsgs?.length
-				? { _consumedQueueMessages: consumedQueueMsgs }
+			isError: mcpResult.isError ?? false,
+			isImage: r.isImage ?? mcpImages.length > 0,
+			...(r.cwd ? { cwd: r.cwd } : {}),
+			...(r.backgroundId ? { backgroundId: r.backgroundId } : {}),
+			...(r.backgroundCommand
+				? { backgroundCommand: r.backgroundCommand }
 				: {}),
-			...(pending ? { _pending: pending } : {}),
-			...(formattedQueueMessages
-				? { _formattedQueueMessages: formattedQueueMessages }
+			...(r.imageData ? { imageData: r.imageData } : {}),
+			...(r.mediaType ? { mediaType: r.mediaType } : {}),
+			mcpImages,
+			...(r.consumedMessageIds?.length
+				? { consumedMessageIds: r.consumedMessageIds }
+				: {}),
+			...(r.consumedQueueMessages?.length
+				? { consumedQueueMessages: r.consumedQueueMessages }
+				: {}),
+			...(r.pending ? { pending: r.pending } : {}),
+			...(r.formattedQueueMessages
+				? { formattedQueueMessages: r.formattedQueueMessages }
 				: {}),
 		};
 	} catch (e) {
@@ -355,7 +342,7 @@ function collectToolResultImages(
 	exec: ToolExecResult,
 ): EventImageData[] {
 	const images: EventImageData[] = [];
-	if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
+	if (!exec.formattedQueueMessages && exec.mcpImages?.length) {
 		for (const img of exec.mcpImages) {
 			images.push({
 				base64: img.base64 ?? img.data ?? "",
@@ -403,7 +390,7 @@ function buildToolResultEvents(
 		// Record pure tool output — queue text is NOT embedded.
 		// The converter reconstructs queue messages from messagesConsumed + message events.
 		const images: EventImageData[] = [];
-		if (!exec._formattedQueueMessages && exec.mcpImages?.length) {
+		if (!exec.formattedQueueMessages && exec.mcpImages?.length) {
 			for (const img of exec.mcpImages) {
 				images.push({
 					base64: img.base64 ?? img.data ?? "",
@@ -425,7 +412,7 @@ function buildToolResultEvents(
 			content: exec.content,
 			isError: exec.isError,
 			...(images.length > 0 ? { images } : {}),
-			...(isLast && exec._pending ? { pending: exec._pending } : {}),
+			...(isLast && exec.pending ? { pending: exec.pending } : {}),
 			...(exec.backgroundId ? { backgroundId: exec.backgroundId } : {}),
 			...(exec.backgroundCommand
 				? { backgroundCommand: exec.backgroundCommand }
@@ -437,8 +424,8 @@ function buildToolResultEvents(
 
 	// Process queue messages from yield/done tool results (same pattern as cancellation)
 	for (const exec of execResults) {
-		if (exec._consumedQueueMessages?.length) {
-			for (const qm of exec._consumedQueueMessages) {
+		if (exec.consumedQueueMessages?.length) {
+			for (const qm of exec.consumedQueueMessages) {
 				if (qm.source === "user" && qm.id) {
 					consumedIds.push(qm.id);
 				} else {
@@ -459,7 +446,7 @@ function buildToolResultEvents(
 	// Record standalone messages_consumed event AFTER tool_results and queue events
 	const allConsumedIds = [
 		...consumedIds,
-		...execResults.flatMap((exec) => exec._consumedMessageIds ?? []),
+		...execResults.flatMap((exec) => exec.consumedMessageIds ?? []),
 	];
 	if (allConsumedIds.length > 0) {
 		toolEvents.push({

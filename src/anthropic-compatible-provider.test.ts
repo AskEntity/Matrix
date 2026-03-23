@@ -1872,8 +1872,8 @@ describe("done tool", () => {
 			"You previously called done(passed)",
 		);
 		expect(result.content[0].text).toContain("## Pending");
-		// Queue messages are returned as _formattedQueueMessages, not embedded in content
-		expect(result._formattedQueueMessages).toContain(
+		// Queue messages are returned as formattedQueueMessages, not embedded in content
+		expect(result.formattedQueueMessages).toContain(
 			"Resume with new instructions",
 		);
 

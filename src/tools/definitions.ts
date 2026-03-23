@@ -19,20 +19,9 @@ export { resolvePath };
 
 /**
  * Extended CallToolResult with non-standard properties for built-in tools.
- * These are read by executeTool() to populate ToolExecResult fields.
- * Index signature required for CallToolResult compatibility (Zod-generated type).
+ * Uses InternalToolResult field names — executeTool() reads these typed fields directly.
  */
-interface BuiltinToolResult {
-	[key: string]: unknown;
-	content: Array<{ type: "text"; text: string }>;
-	isError?: boolean;
-	_cwd?: string;
-	_backgroundId?: string;
-	_backgroundCommand?: string;
-	_isImage?: boolean;
-	_imageData?: string;
-	_mediaType?: string;
-}
+type BuiltinToolResult = import("../shared-types.ts").InternalToolResult;
 
 /** Helper to build a text CallToolResult with optional extended properties. */
 function textResult(
@@ -106,9 +95,9 @@ export function createBuiltinTools(
 					session?.foregroundExecutions,
 				);
 				return textResult(result.content, result.isError, {
-					_cwd: result.cwd,
-					_backgroundId: result.backgroundId,
-					_backgroundCommand: result.backgroundCommand,
+					cwd: result.cwd,
+					backgroundId: result.backgroundId,
+					backgroundCommand: result.backgroundCommand,
 				});
 			} catch (e) {
 				return textResult(
@@ -207,9 +196,9 @@ export function createBuiltinTools(
 						content: [
 							{ type: "text" as const, text: `[Image: ${basename(path)}]` },
 						],
-						_isImage: true,
-						_imageData: base64,
-						_mediaType: imageMediaType,
+						isImage: true,
+						imageData: base64,
+						mediaType: imageMediaType,
 					};
 				} catch (e) {
 					return textResult(

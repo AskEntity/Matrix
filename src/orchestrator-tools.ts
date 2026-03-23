@@ -160,9 +160,10 @@ export function createOrchestratorTools(
 			| { type: "image"; data: string; mimeType: string }
 		>;
 		isError?: boolean;
-		_consumedMessageIds?: string[];
-		_formattedQueueMessages?: string;
-		_pending?: PendingState;
+		consumedMessageIds?: string[];
+		consumedQueueMessages?: QueueMessage[];
+		formattedQueueMessages?: string;
+		pending?: PendingState;
 	} | null> {
 		const queue = getQueue();
 		if (!queue) return null;
@@ -300,13 +301,13 @@ export function createOrchestratorTools(
 					...imageBlocks,
 				],
 				...(userConsumedIds.length > 0
-					? { _consumedMessageIds: userConsumedIds }
+					? { consumedMessageIds: userConsumedIds }
 					: {}),
 				...(queueMessages.length > 0
-					? { _consumedQueueMessages: queueMessages }
+					? { consumedQueueMessages: queueMessages }
 					: {}),
-				...(formatted ? { _formattedQueueMessages: formatted } : {}),
-				_pending: pendingData,
+				...(formatted ? { formattedQueueMessages: formatted } : {}),
+				pending: pendingData,
 			};
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
