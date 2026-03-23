@@ -420,7 +420,6 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `tool_pair` UIOnlyEvent in hooks.ts — combines tool_call + tool_result into one LogEntry.
 - `resolve_tool` / `remove_tool` UpdateOps in event-handler.ts handle merging at event processing time, not render time.
 - Yield pairs hidden via `remove_tool`. ActivityLog.tsx renders entries directly (no mergedVisible pairing).
-- `remove_tool` matches both `tool_call` AND `tool_pair` entries by toolCallId. Both `applyUpdate` (mutable) and `applyUpdateImmutable` paths must stay in sync.
 - ToolCard accepts `Extract<LogEntry, { type: "tool_pair" }>`. Orphan tool_results create tool_pairs with empty input.
 
 ## taskId Required on All Events
