@@ -981,6 +981,7 @@ export function buildEventIndex(events: Event[]): Map<string, Event> {
  */
 export function extractConsumedEventImages(event: Event): EventImageData[] {
 	if (event.type !== "message") return [];
+	if (event.body.source !== "user") return [];
 	const imgs = event.body.images ?? [];
 	return imgs.map((img) => ({
 		base64: img.base64,

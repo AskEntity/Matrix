@@ -1,4 +1,5 @@
 import type React from "react";
+import type { QueueMessage } from "../src/message-queue.ts";
 import {
 	createLogEntry,
 	getLogTaskId,
@@ -126,37 +127,13 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		setBackgroundProcesses,
 	} = deps;
 
-	/** Shape of a MessageBody / rawMessage — shared by both formats. */
-	interface QueueEntryLike {
-		source: string;
-		content?: string;
-		images?: Array<{ base64: string; mediaType: string }>;
-		taskId?: string;
-		title?: string;
-		summary?: string;
-		success?: boolean;
-		output?: string;
-		requestReply?: boolean;
-		answer?: string;
-		action?: string;
-		nodeId?: string;
-		fromProjectId?: string;
-		fromProjectName?: string;
-		command?: string;
-		commandId?: string;
-		exitCode?: number | null;
-		durationMs?: number;
-		stdout?: string;
-		stderr?: string;
-	}
-
 	/**
-	 * Convert a MessageBody (or rawMessage) into a UIEvent for rendering.
-	 * Works for both live SSE rawMessages AND JSONL body fields.
+	 * Convert a QueueMessage body into a UIEvent for rendering.
+	 * Works for both live SSE messages AND JSONL body fields.
 	 * Returns null for sources that should be skipped.
 	 */
 	function queueEntryToUIEvent(
-		qe: QueueEntryLike,
+		qe: QueueMessage,
 		parentTaskId: string | undefined,
 		ts: number,
 	): UIEvent | null {
@@ -170,16 +147,16 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				return {
 					type: "task_completed",
 					taskId: parentTaskId,
-					title: qe.title ?? "",
-					success: qe.success ?? true,
+					title: qe.title,
+					success: qe.success,
 					output: qe.output,
 					ts: eventTs,
 				} as UIEvent;
 			case "tree_change":
 				return {
 					type: "tree_change",
-					action: qe.action ?? "",
-					nodeId: qe.nodeId ?? "",
+					action: qe.action,
+					nodeId: qe.nodeId,
 					title: qe.title,
 					taskId: parentTaskId,
 					ts: eventTs,
@@ -192,7 +169,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					id: "",
 					body: {
 						source: "user",
-						content: qe.content ?? "",
+						content: qe.content,
 						...(qe.images?.length ? { images: qe.images } : {}),
 					},
 					taskId: parentTaskId,
@@ -201,7 +178,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			case "parent_update":
 				return {
 					type: "parent_update",
-					content: qe.content ?? "",
+					content: qe.content,
 					taskId: parentTaskId,
 					ts: eventTs,
 				} as UIEvent;
@@ -209,19 +186,19 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				return {
 					type: "child_report",
 					taskId: parentTaskId,
-					title: qe.title ?? "",
+					title: qe.title,
 					summary: qe.summary ?? "",
-					content: qe.content ?? "",
+					content: qe.content,
 					...(qe.requestReply ? { requestReply: true } : {}),
 					ts: eventTs,
 				} as UIEvent;
 			case "background_complete":
 				return {
 					type: "background_complete",
-					command: qe.command ?? "",
-					commandId: qe.commandId ?? "",
-					exitCode: qe.exitCode ?? null,
-					durationMs: qe.durationMs ?? 0,
+					command: qe.command,
+					commandId: qe.commandId,
+					exitCode: qe.exitCode,
+					durationMs: qe.durationMs,
 					stdout: qe.stdout,
 					stderr: qe.stderr,
 					taskId: parentTaskId,
@@ -230,16 +207,16 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			case "cross_project":
 				return {
 					type: "cross_project",
-					fromProjectId: qe.fromProjectId ?? "",
-					fromProjectName: qe.fromProjectName ?? "",
-					content: qe.content ?? "",
+					fromProjectId: qe.fromProjectId,
+					fromProjectName: qe.fromProjectName,
+					content: qe.content,
 					taskId: parentTaskId,
 					ts: eventTs,
 				} as UIEvent;
 			case "clarify_response":
 				return {
 					type: "clarify_response",
-					answer: qe.answer ?? qe.content ?? "",
+					answer: qe.answer,
 					taskId: parentTaskId,
 					ts: eventTs,
 				} as UIEvent;
@@ -255,36 +232,32 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	function pendingChipText(
 		source: string | undefined,
 		content: string,
-		queueEntry?: QueueEntryLike,
+		queueEntry?: QueueMessage,
 	): string {
 		if (!source || source === "user") return content;
-		switch (source) {
+		if (!queueEntry) return content || `[${source}]`;
+		switch (queueEntry.source) {
 			case "child_report": {
-				const summary = queueEntry?.summary;
-				const title = queueEntry?.title;
-				const body = queueEntry?.content ?? content;
-				if (summary) return `↑ ${summary}`;
-				return title ? `↑ ${title}: ${body}` : `↑ ${body}`;
+				if (queueEntry.summary) return `↑ ${queueEntry.summary}`;
+				return queueEntry.title
+					? `↑ ${queueEntry.title}: ${queueEntry.content}`
+					: `↑ ${queueEntry.content}`;
 			}
-			case "child_complete": {
-				const title = queueEntry?.title ?? "";
-				const ok = queueEntry?.success ? "✓" : "✗";
-				return `${ok} ${title}`;
-			}
+			case "child_complete":
+				return `${queueEntry.success ? "✓" : "✗"} ${queueEntry.title}`;
 			case "parent_update":
-				return `← Parent: ${queueEntry?.content ?? content}`;
+				return `← Parent: ${queueEntry.content}`;
 			case "clarify_response":
-				return `💬 ${queueEntry?.answer ?? content}`;
-			case "cross_project": {
-				const name = queueEntry?.fromProjectName ?? "";
-				return `← ${name}: ${queueEntry?.content ?? content}`;
-			}
+				return `💬 ${queueEntry.answer}`;
+			case "cross_project":
+				return `← ${queueEntry.fromProjectName}: ${queueEntry.content}`;
 			case "background_complete":
-				return `⚙ bg: ${queueEntry?.command ?? "done"}`;
+				return `⚙ bg: ${queueEntry.command}`;
 			case "tree_change": {
-				const title = queueEntry?.title ?? "";
-				const action = queueEntry?.action ?? "changed";
-				return title ? `🌿 ${action}: ${title}` : `🌿 tree ${action}`;
+				const title = queueEntry.title ?? "";
+				return title
+					? `🌿 ${queueEntry.action}: ${title}`
+					: `🌿 tree ${queueEntry.action}`;
 			}
 			default:
 				return content || `[${source}]`;
@@ -303,7 +276,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			taskId?: string | null;
 			ts: number;
 			source?: string;
-			queueEntry?: QueueEntryLike;
+			queueEntry?: QueueMessage;
 		}
 	>();
 
@@ -325,7 +298,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			taskId?: string | null;
 			ts: number;
 			source?: string;
-			queueEntry?: QueueEntryLike;
+			queueEntry?: QueueMessage;
 		},
 		ts: number,
 	): LogEntry | null {
@@ -687,13 +660,16 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 
 			case "message": {
-				const body = msg.body as QueueEntryLike | undefined;
+				const body = msg.body as QueueMessage | undefined;
 				const source = body?.source;
 				const umId = msg.id as string | undefined;
 				const umTaskId = msg.taskId as string | null | undefined;
 				const umTs = msg.ts as number;
-				const umContent = body?.content ?? "";
-				const umImages = body?.images;
+				const umContent =
+					body && (body.source === "user" || body.source === "parent_update")
+						? body.content
+						: "";
+				const umImages = body?.source === "user" ? body.images : undefined;
 
 				if (umId) {
 					// message with id = deferred until messages_consumed.
@@ -708,7 +684,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 					// Remove completed background processes immediately on receipt
 					const bgCompleteId =
-						source === "background_complete" ? body?.commandId : undefined;
+						body?.source === "background_complete" ? body.commandId : undefined;
 
 					return {
 						entries: [],

@@ -480,14 +480,12 @@ export const LogEntryView = memo(function LogEntryView({
 	}
 
 	// User message — special bubble rendering, not a card
-	if (entry.type === "message") {
+	if (entry.type === "message" && entry.body.source === "user") {
 		return (
 			<div className="og-log-entry og-event-user_message">
 				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				<div className="og-user-prompt-bubble">
-					<span className="og-user-prompt-text">
-						{entry.body.content ?? ""}
-					</span>
+					<span className="og-user-prompt-text">{entry.body.content}</span>
 					{entry.body.images && entry.body.images.length > 0 && (
 						<div className="og-user-images">
 							{entry.body.images.map(
