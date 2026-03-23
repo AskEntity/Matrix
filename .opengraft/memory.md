@@ -506,3 +506,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - All ~50 `as string/number/boolean` casts eliminated from event-handler.ts via discriminated union narrowing.
 - Tests use `satisfies IncomingEvent` / `satisfies IncomingEvent[]` to validate event shapes at compile time.
 - `queueEntryToUIEvent` no longer needs `as UIEvent` casts — TypeScript infers UIOnlyEvent variants correctly from object literals.
+
+
+## applyUpdate Unification
+- `applyUpdateToArray` (mutable batch) and `applyUpdateLive` (immutable React state) merged into single `applyUpdate(entries, op)` pure function returning new array.
+- Batch path: `entries = applyUpdate(entries, op)` in loop. Live path: `setLogs(prev => applyUpdate(prev, op))`.
+- `getSearchableText` in ActivityLog.tsx now calls `getEntryText` from tools/utils.ts as base, adding extra search fields for tool_pair (tool name) and compact_marker (checkpoint text).
