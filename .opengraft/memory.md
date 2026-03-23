@@ -506,3 +506,12 @@ Daemon (Hono: HTTP + SSE on :7433)
 - All ~50 `as string/number/boolean` casts eliminated from event-handler.ts via discriminated union narrowing.
 - Tests use `satisfies IncomingEvent` / `satisfies IncomingEvent[]` to validate event shapes at compile time.
 - `queueEntryToUIEvent` no longer needs `as UIEvent` casts — TypeScript infers UIOnlyEvent variants correctly from object literals.
+
+## provider-shared.ts Split (completed)
+- Split into 4 focused modules: `compaction.ts`, `event-converter.ts`, `zod-schema.ts`, and slimmed `provider-shared.ts`.
+- `compaction.ts`: SUMMARIZATION_INSTRUCTION, extractCheckpoint, buildCompactedContext, buildSummarizationInstruction, getCompactionThresholds, processCompaction.
+- `event-converter.ts`: walkEventsToMessages, EventConverterCallbacks, AssistantContent, AssistantToolCall, ToolResultData, ConsumedMessages, EventImageData.
+- `zod-schema.ts`: zodShapeToJsonSchema, zodTypeToJsonProp.
+- `provider-shared.ts` retains: runProviderLoop, ProviderAdapter, executeTool, ToolExecResult, extractQueueImages/extractQueueImageParts, ProviderToolUse, ProviderTokenUsage, plus internal helpers (handleImplicitYield, drainQueueAtCancellationPoint, recordQueueEvents, collectToolResultImages, buildToolResultEvents, checkBudget, recordBudgetWarning).
+- Only 3 files import from provider-shared.ts: both provider files + the anthropic test file.
+- resolvePath deduplicated: definitions.ts imports from executor.ts instead of duplicating.
