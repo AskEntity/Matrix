@@ -459,3 +459,13 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `buildToolResultEvents()` takes `toolIds: Array<{id: string; name: string}>` — callers must pass name.
 - `findOrphanedToolCalls()` and `writeOrphanedToolResults()` both include tool name from the matching tool_call.
 - Frontend fallback: `toolCallToolNames` Map in event-handler.ts maps toolCallId→tool name, populated on tool_call events, used as fallback on tool_result when tool field is empty (handles old JSONL files).
+
+
+## Optional Field Audit (completed)
+- `orchestration_started.provider/model`: optional → required. Always provided at creation site. Old JSONL gets "unknown" default in EventStore.read().
+- `budget_exceeded.costUsd/budgetUsd`: optional → required. Always provided at only creation site. Old JSONL gets 0 default.
+- `clarification_requested.title`: optional → required. Always set (first line or full question). Old JSONL gets question text as default.
+- `HealthResponse.gitHash`, `VersionResponse.gitHash`: optional → required. GIT_HASH always a string (defaults to "unknown").
+- `task_completed.output` (UIOnlyEvent): optional → required. Always provided from child_complete.output.
+- Backward compat defaults added at EventStore.read() deserialization boundary for old JSONL.
+- Config types, function params, genuinely conditional fields (images, pending, backgroundId, etc.) kept optional.
