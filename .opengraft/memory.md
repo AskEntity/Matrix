@@ -406,3 +406,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Applied in both paths: `broadcast()` (live SSE) and `normalizeEventForUI()` (REST API).
 - JSONL persistence keeps full events — AI needs header on resume.
 - `broadcast()` strips before ring buffer storage, so reconnect catch-up also gets stripped events.
+
+## Fallback Audit (completed)
+- All JSONL events have `ts: number` — `?? Date.now()` fallbacks in event-handler.ts were never triggered. Removed.
+- `ToolResultData.content` changed from `string | undefined` to `string` — all data sources always provide string content. Converter fallbacks changed from `??` to `||` to guard empty strings (API 400 prevention) without masking undefined.
+- `processEvent(msg: Record<string, unknown>)` forces `as` casts on every field. The real fix is proper typing of the msg parameter (discriminated union), but that is a larger refactor.
+- `QueueEntryLike` flat interface with all-optional fields is a type-system artifact of flattening a discriminated union. The `?? ""` fallbacks in switch branches are type-level necessities, not runtime concerns.
+- MCP tool result parsing fallbacks (`?? "image/png"`, `?? ""` on external data) are legitimate — external data is untyped.
+- `buildCompactedContext` test expected old `"Project Memory (fresh)"` header but implementation uses `"# .opengraft/memory.md (Preloaded, do not read again)"`. Fixed test.

@@ -239,7 +239,7 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 					}
 					contentParts.push({
 						type: "text",
-						text: result.content ?? "(empty)",
+						text: result.content || "(empty)",
 					});
 					resultBlocks.push({
 						type: "tool_result",
@@ -250,7 +250,7 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 					resultBlocks.push({
 						type: "tool_result",
 						tool_use_id: result.toolCallId,
-						content: result.content ?? "(empty)",
+						content: result.content || "(empty)",
 						is_error: result.isError,
 					});
 				}

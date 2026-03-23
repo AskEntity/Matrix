@@ -373,13 +373,13 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 					role: "tool",
 					tool_call_id: result.toolCallId,
 					name: toolName,
-					content: result.content ?? "(empty)",
+					content: result.content || "(empty)",
 				});
 
 				if (result.images) {
 					for (const img of result.images) {
 						toolImageResults.push({
-							text: result.content ?? "(empty)",
+							text: result.content || "(empty)",
 							dataUri: `data:${img.mediaType};base64,${img.base64}`,
 						});
 					}

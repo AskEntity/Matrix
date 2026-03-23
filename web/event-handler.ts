@@ -136,10 +136,10 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	 */
 	function queueEntryToUIEvent(
 		qe: QueueEntryLike,
-		parentTaskId?: string,
-		ts?: number,
+		parentTaskId: string | undefined,
+		ts: number,
 	): UIEvent | null {
-		const eventTs = ts ?? Date.now();
+		const eventTs = ts;
 		switch (qe.source) {
 			// Compact messages are internal — never shown in activity log
 			case "compact":
@@ -372,7 +372,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							toolCallId: (msg.toolCallId as string) || "",
 							input: (msg.input as Record<string, unknown>) ?? {},
 							taskId: msg.taskId as string,
-							ts: (msg.ts as number) ?? Date.now(),
+							ts: msg.ts as number,
 						}),
 					],
 					updates: [],
@@ -395,14 +395,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
 								| Array<{ base64: string; mediaType: string }>
 								| undefined,
 							taskId: trTaskId as string,
-							ts: (msg.ts as number) ?? Date.now(),
+							ts: msg.ts as number,
 						}),
 					],
 					updates: [],
 					sideEffects: bgId
 						? () => {
 								// Use event timestamp as startTime (from server, not component mount time)
-								const bgStartTime = (msg.ts as number) ?? Date.now();
+								const bgStartTime = msg.ts as number;
 								setBackgroundProcesses((prev) => {
 									const next = new Map(prev);
 									next.set(bgId, {
@@ -480,7 +480,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						createLogEntry({
 							type: "compact_started",
 							taskId: msg.taskId as string,
-							ts: (msg.ts as number) ?? Date.now(),
+							ts: msg.ts as number,
 						}),
 					],
 					updates: [],
@@ -495,7 +495,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							type: "complete_compact",
 							text: `Context compacted (saved ~${msg.savedTokens} tokens)`,
 							checkpoint: msg.checkpoint as string,
-							savedTokens: (msg.savedTokens as number) ?? 0,
+							savedTokens: msg.savedTokens as number,
 							taskId: msg.taskId as string | undefined,
 							ts: msg.ts as number | undefined,
 						},
@@ -518,7 +518,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							type: "lifecycle",
 							content: "↻ Session resumed",
 							taskId: startRootId,
-							ts: (msg.ts as number) ?? Date.now(),
+							ts: msg.ts as number,
 						}),
 					);
 				}
@@ -608,7 +608,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				};
 
 			case "task_started": {
-				const ts = (msg.ts as number) ?? Date.now();
+				const ts = msg.ts as number;
 				// Only show in the child task's own view — parent sees it via
 				// queue message two-phase lifecycle (pending → consumed)
 				return {
@@ -639,7 +639,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				const source = body?.source;
 				const umId = msg.id as string | undefined;
 				const umTaskId = msg.taskId as string | null | undefined;
-				const umTs = (msg.ts as number) ?? Date.now();
+				const umTs = msg.ts as number;
 				const umContent = body?.content ?? "";
 				const umImages = body?.images;
 
@@ -714,11 +714,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 			case "messages_consumed": {
 				// Move consumed messages from pending/deferred to activity log
-				const consumedIds = new Set((msg.messageIds as string[]) ?? []);
+				const consumedIds = new Set(msg.messageIds as string[]);
 				if (consumedIds.size === 0) {
 					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 				}
-				const consumeTs = (msg.ts as number) ?? Date.now();
+				const consumeTs = msg.ts as number;
 				const newEntries: LogEntry[] = [];
 
 				// Materialize immediately (not as side effect) so batch mode works
@@ -746,7 +746,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							type: "error",
 							message: msg.message as string,
 							taskId: msg.taskId as string | undefined,
-							ts: (msg.ts as number) ?? Date.now(),
+							ts: msg.ts as number,
 						}),
 					],
 					updates: [],
@@ -763,7 +763,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							action,
 							nodeId: msg.nodeId as string,
 							title: title || undefined,
-							ts: (msg.ts as number) ?? Date.now(),
+							ts: msg.ts as number,
 						}),
 					],
 					updates: [],
@@ -991,14 +991,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// pending_clarifications: pass-through (still ephemeral/in-memory)
 		if (msg.type === "pending_clarifications") {
 			setPendingClarifications(
-				(msg.clarifications as {
+				msg.clarifications as {
 					id: string;
 					taskId: string;
 					question: string;
 					title?: string;
 					body?: string;
 					timestamp: number;
-				}[]) ?? [],
+				}[],
 			);
 			return;
 		}

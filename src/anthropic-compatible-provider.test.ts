@@ -1460,7 +1460,7 @@ describe("buildCompactedContext", () => {
 			);
 
 			const result = await buildCompactedContext("checkpoint content", tempDir);
-			expect(result).toContain("Project Memory (fresh)");
+			expect(result).toContain("# .opengraft/memory.md (Preloaded, do not read again)");
 			expect(result).toContain("important note");
 		} finally {
 			await rm(tempDir, { recursive: true });
