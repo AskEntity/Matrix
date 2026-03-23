@@ -530,3 +530,19 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Tests use `mockOrchestratorDeps()` from test-utils.ts (not `mockDaemonContext` which is deprecated for tool tests).
 - ToolExecResult no longer has underscore-prefixed fields. Field names: `consumedMessageIds`, `consumedQueueMessages`, `formattedQueueMessages`, `pending`, `cwd`, `backgroundId`, `backgroundCommand`, `isImage`, `imageData`, `mediaType`.
 - `InternalToolResult` in shared-types.ts is the typed return from tool handlers. `executeTool` casts to it instead of `as any`.
+
+
+## notifyTreeChange Parent Chain Walk
+- The while loop in notifyTreeChange correctly reaches root for all cases: root-level tasks (parentId=rootNodeId), deep tasks, etc.
+- The separate rootNodeId check after the loop was redundant — it only fired for broken parent chains (deleted intermediate ancestors), which masks data integrity issues rather than helping.
+- Pattern: when a while loop walks a parent chain and breaks on `!ancestor.parentId`, the current ID is already the root at break time.
+
+## done() Child Complete Delivery
+- done() now uses single `deliverMessage(parentId, msg)` call instead of separate findParentQueue + conditional deliverMessage.
+- deliverMessage handles both paths: direct queue enqueue (running parent) and persist-to-disk + auto-launch (stopped parent).
+- runChildAgentInBackground fallback still uses findParentQueue for the non-done() path (agent exited without calling done).
+
+## prepareAgentMessage Helper
+- `prepareAgentMessage(projectPath, taskId, content, images?)` in agent-lifecycle.ts builds header (memory + working dir), generates msgId, returns `{ msg: QueueMessage, event: Event }`.
+- Used by handleOrchestrate (fresh launch) and handleInjectMessage (both fresh and resume paths).
+- The "already running" path in handleOrchestrate intentionally skips the header — agent already has context.
