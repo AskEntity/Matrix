@@ -420,6 +420,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `tool_pair` UIOnlyEvent in hooks.ts — combines tool_call + tool_result into one LogEntry.
 - `resolve_tool` / `remove_tool` UpdateOps in event-handler.ts handle merging at event processing time, not render time.
 - Yield pairs hidden via `remove_tool`. ActivityLog.tsx renders entries directly (no mergedVisible pairing).
+- `remove_tool` matches both `tool_call` AND `tool_pair` entries by toolCallId. Both `applyUpdate` (mutable) and `applyUpdateImmutable` paths must stay in sync.
 - ToolCard accepts `Extract<LogEntry, { type: "tool_pair" }>`. Orphan tool_results create tool_pairs with empty input.
 
 ## taskId Required on All Events
@@ -444,10 +445,6 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Frontend `QueueEntryLike` flat interface deleted from event-handler.ts. Replaced with `QueueMessage` import from `../src/message-queue.ts`.
 - All code accessing `body.content` or `body.images` must narrow by `body.source` first (discriminated union rules).
 - JSONL disk format unchanged — QueueMessage serializes identically to old MessageBody.
-
-## remove_tool matches both tool_call and tool_pair
-- `remove_tool` UpdateOp in event-handler.ts checks both `tool_call` and `tool_pair` types when searching by toolCallId.
-- Both mutable (`applyUpdate`) and immutable (`applyUpdateImmutable`) paths must be kept in sync.
 
 ## Lazy-Load Activity Log (Compact Barrier)
 - `EventStore.readFromLastCompactMarker(sessionId)` returns events from last `compact_marker` onward (inclusive) + `hasOlderEvents: boolean`. Different from `readActive` which returns events AFTER the marker (exclusive).
