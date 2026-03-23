@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 /** Info about a created worktree. */
-export interface WorktreeInfo {
+interface WorktreeInfo {
 	/** Absolute path to the worktree directory. */
 	path: string;
 	/** Branch name associated with the worktree. */

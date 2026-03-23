@@ -570,10 +570,7 @@ function getDefaultLocale(): Locale {
 	}
 }
 
-export type TFunction = (
-	key: string,
-	params?: Record<string, string>,
-) => string;
+type TFunction = (key: string, params?: Record<string, string>) => string;
 
 interface LocaleContextValue {
 	locale: Locale;

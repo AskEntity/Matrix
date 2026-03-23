@@ -473,3 +473,17 @@ Daemon (Hono: HTTP + SSE on :7433)
 ## Silent Error Swallowing Audit
 - 19 catches changed from silent swallow to console.warn (JSONL write, tracker save, frontend fetch, background process errors).
 - ~50 catches kept as-is (queue lifecycle races, file existence checks, cleanup operations, auth verification).
+
+
+## Dead Code Audit (completed)
+- `toRawMessage` in agent-tools.ts was flagged dead in memory, now removed along with test.
+- `CostAccumulator` class: defined, exported, re-exported but never instantiated. Removed.
+- `useProjectConfig` hook: defined, never called. Removed.
+- `clearAuthCache`, `authHeaders`: exported but never imported. Removed.
+- `getToolArgs`: exported, never used. `IconStop`/`IconPlay`/`IconRepeat`: dead icon components. Removed.
+- `daemon/index.ts` barrel file: re-exported types that everyone imports directly. Deleted.
+- anthropic-compatible-provider.ts had 15 "backward compat" re-exports from provider-shared.ts and tools/. Removed after updating test imports.
+- agent-tools.ts, tools/index.ts, ToolCard.tsx had unused re-exports. Cleaned up.
+- provider-shared.ts: 14 internal-only symbols unexported (constants, helpers, interfaces).
+- Other files: unexported 8 types/functions only used within their own file (StoredCredential, WorktreeInfo, MessageEvent, OpenAIMessage, ThemeConfig, TFunction, UIOnlyEvent, ActionHandlerDeps).
+- Pattern to watch: "backward compatibility" re-exports accumulate when code gets refactored. Periodically audit that re-exports are still imported by someone.

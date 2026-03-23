@@ -58,16 +58,6 @@ export function getToolName(entry: LogEntry): string {
 	return "";
 }
 
-/** Get tool args from entry (for tool_call/tool_pair). */
-export function getToolArgs(
-	entry: LogEntry,
-): Record<string, unknown> | undefined {
-	if (entry.type === "tool_call" || entry.type === "tool_pair") {
-		return entry.input;
-	}
-	return undefined;
-}
-
 /** Get a basename from a file path */
 export function basename(path: string): string {
 	const parts = path.split("/");

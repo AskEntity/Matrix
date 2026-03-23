@@ -187,7 +187,7 @@ export function getPendingClarifications(
 	return ctx.pendingClarifications.get(projectId) as PendingClarification[];
 }
 
-export function addPendingClarification(
+function addPendingClarification(
 	ctx: DaemonContext,
 	projectId: string,
 	taskId: string,

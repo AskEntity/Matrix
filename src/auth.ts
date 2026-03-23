@@ -15,7 +15,7 @@ import type {
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-export interface StoredCredential {
+interface StoredCredential {
 	credentialID: Base64URLString;
 	publicKey: string; // base64url-encoded
 	counter: number;
@@ -255,12 +255,6 @@ export async function verifyJWT(
 	if (payload.exp <= now) return null;
 
 	return payload;
-}
-
-/** Clear the in-memory cache (for testing). */
-export function clearAuthCache(): void {
-	authDataCache = null;
-	challenges.clear();
 }
 
 // ── Base64/Base64URL helpers ───────────────────────────────────────────────

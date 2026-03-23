@@ -20,7 +20,7 @@ interface McpServerHandle {
  * Connect to a single MCP server via stdio transport.
  * Spawns the server process, performs protocol handshake, and discovers tools.
  */
-export async function startMcpServer(
+async function startMcpServer(
 	name: string,
 	config: McpServerConfig,
 ): Promise<McpServerHandle> {

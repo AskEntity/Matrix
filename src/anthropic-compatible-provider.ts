@@ -65,30 +65,6 @@ export function getModelPricing(model: string): {
 	return MODEL_PRICING.sonnet as { inputPer1M: number; outputPer1M: number };
 }
 
-// ── Re-exports from provider-shared.ts for backward compatibility ──
-export {
-	buildCompactedContext,
-	buildSummarizationInstruction,
-	extractCheckpoint,
-	getCompactionThresholds,
-	SUMMARIZATION_INSTRUCTION,
-	zodShapeToJsonSchema,
-} from "./provider-shared.ts";
-
-export type { BackgroundProcess } from "./tools/index.ts";
-// ── Re-exports from extracted tool modules ──
-// These were extracted from this file; re-exported to preserve backward compatibility.
-export {
-	cleanupSessionBackgroundProcesses,
-	executeBashWithTimeout,
-	executeTool,
-	getBackgroundStatus,
-	jsSearch,
-	killBackgroundProcess,
-	resolvePath,
-	truncateSearchOutput,
-} from "./tools/index.ts";
-
 /**
  * Add cache_control breakpoints to the messages array for prompt caching.
  *

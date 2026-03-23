@@ -70,29 +70,6 @@ export interface LifecycleDeps {
 	) => Promise<{ ok: boolean; error?: string }>;
 }
 
-/** Tracks accumulated costs from all child agent executions. */
-export class CostAccumulator {
-	private _totalCost = 0;
-	private _totalTurns = 0;
-	private _taskCount = 0;
-
-	add(costUsd: number | undefined, turns: number | undefined): void {
-		if (costUsd) this._totalCost += costUsd;
-		if (turns) this._totalTurns += turns;
-		this._taskCount++;
-	}
-
-	get totalCostUsd(): number {
-		return this._totalCost;
-	}
-	get totalTurns(): number {
-		return this._totalTurns;
-	}
-	get taskCount(): number {
-		return this._taskCount;
-	}
-}
-
 /** Result of createOrchestratorTools — raw tool definitions for provider forwarding. */
 export interface OrchestratorToolsResult {
 	/** Raw tool definitions for provider forwarding. */

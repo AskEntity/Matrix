@@ -11,31 +11,35 @@ import { createOrchestratorTools } from "./agent-tools.ts";
 import {
 	AnthropicCompatibleProvider,
 	addMessagesCacheControl,
-	buildCompactedContext,
-	buildSummarizationInstruction,
-	cleanupSessionBackgroundProcesses,
 	eventsToAnthropicMessages,
-	executeBashWithTimeout,
-	executeTool,
-	extractCheckpoint,
-	getBackgroundStatus,
-	getCompactionThresholds,
 	getContextWindow,
 	getModelPricing,
-	jsSearch,
-	killBackgroundProcess,
-	resolvePath,
-	SUMMARIZATION_INSTRUCTION,
-	truncateSearchOutput,
-	zodShapeToJsonSchema,
 } from "./anthropic-compatible-provider.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
+import {
+	buildCompactedContext,
+	buildSummarizationInstruction,
+	extractCheckpoint,
+	getCompactionThresholds,
+	SUMMARIZATION_INSTRUCTION,
+	zodShapeToJsonSchema,
+} from "./provider-shared.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { attachMockSession, mockDaemonContext } from "./test-utils.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
+import {
+	cleanupSessionBackgroundProcesses,
+	executeBashWithTimeout,
+	executeTool,
+	getBackgroundStatus,
+	jsSearch,
+	killBackgroundProcess,
+	resolvePath,
+	truncateSearchOutput,
+} from "./tools/index.ts";
 import type { AgentResult } from "./types.ts";
 
 /** Create a MessageQueue pre-loaded with a user message (for tests). */

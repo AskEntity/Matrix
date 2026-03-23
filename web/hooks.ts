@@ -21,7 +21,7 @@ export interface Project {
  * Queue-originated message types (parent_update, child_report, etc.) are
  * created by event-handler.ts when materializing deferred messages.
  */
-export type UIOnlyEvent =
+type UIOnlyEvent =
 	| { type: "lifecycle"; content: string; taskId?: string; ts: number }
 	| {
 			type: "parent_update";
@@ -504,38 +504,6 @@ export function formatTime(ts: number): string {
 export function getLogTaskId(entry: LogEntry): string | undefined {
 	if ("taskId" in entry) return entry.taskId as string | undefined;
 	return undefined;
-}
-
-// --- useProjectConfig ---
-
-export function useProjectConfig(projectId: string | null) {
-	const [config, setConfig] = useState<Record<string, unknown>>({});
-
-	useEffect(() => {
-		if (!projectId) {
-			setConfig({});
-			return;
-		}
-		authFetch(`/projects/${projectId}/config`)
-			.then((r) => r.json())
-			.then(setConfig)
-			.catch((e) => console.warn("[useConfig] Failed to fetch config:", e));
-	}, [projectId]);
-
-	const updateConfig = useCallback(
-		async (partial: Record<string, unknown>) => {
-			if (!projectId) return;
-			const res = await authFetch(`/projects/${projectId}/config`, {
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(partial),
-			});
-			if (res.ok) setConfig(await res.json());
-		},
-		[projectId],
-	);
-
-	return { config, updateConfig };
 }
 
 // --- useThreeLayerConfig ---

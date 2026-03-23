@@ -5,7 +5,6 @@ import {
 	getDescendantIds,
 	isDescendantOf,
 	slugify,
-	toRawMessage,
 } from "./agent-tools.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import { TaskTracker } from "./task-tracker.ts";
@@ -399,20 +398,5 @@ describe("formatQueueMessage", () => {
 		expect(result).toContain('projectId="proj-123"');
 		expect(result).toContain("Hello from another project");
 		expect(result).toContain("</cross_project>");
-	});
-});
-
-describe("toRawMessage", () => {
-	test("converts cross_project message to raw format", () => {
-		const result = toRawMessage({
-			source: "cross_project",
-			fromProjectId: "proj-456",
-			fromProjectName: "OtherProject",
-			content: "Status update",
-		});
-		expect(result.source).toBe("cross_project");
-		expect(result.content).toContain("OtherProject");
-		expect(result.content).toContain("proj-456");
-		expect(result.content).toContain("Status update");
 	});
 });

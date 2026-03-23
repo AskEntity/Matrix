@@ -26,7 +26,7 @@ import { ulid } from "./ulid.ts";
 
 // ── Types ──
 
-export interface OpenAIMessage {
+interface OpenAIMessage {
 	role: "system" | "user" | "assistant" | "tool";
 	content:
 		| string

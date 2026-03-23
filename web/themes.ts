@@ -1,6 +1,6 @@
 /** Data-driven theme system. Each theme is a set of CSS variable overrides. */
 
-export interface ThemeConfig {
+interface ThemeConfig {
 	/** i18n key for display name */
 	name: string;
 	/** CSS variable overrides (applied on document.documentElement.style) */

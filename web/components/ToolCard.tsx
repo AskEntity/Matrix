@@ -17,15 +17,7 @@ import {
 	isTitleOnlyCard,
 } from "./tools/utils.ts";
 
-// Re-export sub-components and utilities for backward compatibility
 export { LogEntryView } from "./tools/LogEntryView.tsx";
-export {
-	basename,
-	formatArgs,
-	formatMcpToolResult,
-	getToolCardTitle,
-	isTitleOnlyCard,
-} from "./tools/utils.ts";
 
 /** Resolved tool_pair card — tool_call + tool_result merged in event processing layer */
 export const ToolCard = memo(function ToolCard({

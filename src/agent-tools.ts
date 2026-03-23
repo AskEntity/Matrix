@@ -14,18 +14,8 @@ import { formatEventForAI, queueMessageToEvent } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 
-export {
-	CostAccumulator,
-	createOrchestratorTools,
-	type LifecycleDeps,
-	type OrchestratorToolsResult,
-} from "./orchestrator-tools.ts";
-// Re-export everything from the split modules so existing imports keep working
-export {
-	buildSystemPrompt,
-	ROOT_ORCHESTRATOR_ROLE,
-	SYSTEM_PROMPT,
-} from "./system-prompts.ts";
+export { createOrchestratorTools } from "./orchestrator-tools.ts";
+export { buildSystemPrompt, SYSTEM_PROMPT } from "./system-prompts.ts";
 
 /** Named color → hex mapping for agent tools. Accepts common names and converts to hex. */
 const NAMED_COLORS: Record<string, string> = {
@@ -92,55 +82,6 @@ export function formatQueueMessage(msg: QueueMessage): string {
 		hour12: false,
 	});
 	return `[${time}] ${formatEventForAI(evt)}`;
-}
-
-/** Convert a QueueMessage to a simplified { source, content } for structured WS events. */
-export function toRawMessage(msg: QueueMessage): {
-	source: string;
-	content: string;
-	id?: string;
-	images?: { base64: string; mediaType: string }[];
-} {
-	switch (msg.source) {
-		case "child_complete":
-			return {
-				source: msg.source,
-				content: `Task "${msg.title}" (${msg.taskId}) ${msg.success ? "passed" : "failed"}: ${msg.output.slice(0, 500)}`,
-			};
-		case "user":
-			return {
-				source: msg.source,
-				content: msg.content,
-				...(msg.id ? { id: msg.id } : {}),
-				...(msg.images?.length ? { images: msg.images } : {}),
-			};
-		case "tree_change":
-			return {
-				source: msg.source,
-				content: `Tree ${msg.action}${msg.title ? `: "${msg.title}"` : ""} (${msg.nodeId})`,
-			};
-		case "parent_update":
-			return { source: msg.source, content: msg.content };
-		case "clarify_response":
-			return { source: msg.source, content: msg.answer };
-		case "child_report":
-			return {
-				source: msg.source,
-				content: `From child "${msg.title}" (${msg.taskId}): ${msg.content}`,
-			};
-		case "cross_project":
-			return {
-				source: msg.source,
-				content: `From project "${msg.fromProjectName}" (${msg.fromProjectId}): ${msg.content}`,
-			};
-		case "background_complete":
-			return {
-				source: msg.source,
-				content: `Command "${msg.command}" (${msg.commandId}): exit=${msg.exitCode}, duration=${msg.durationMs}ms. Use read_file on output files to see results.`,
-			};
-		case "compact":
-			return { source: msg.source, content: "Manual compaction requested" };
-	}
 }
 
 /** @internal Exported for testing */
