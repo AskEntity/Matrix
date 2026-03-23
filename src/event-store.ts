@@ -61,8 +61,11 @@ export class EventStore {
 		if (events.length === 0) return Promise.resolve();
 		return this.enqueueWrite(sessionId, () => {
 			const lines = `${events.map((e) => JSON.stringify(e)).join("\n")}\n`;
-			return appendFile(this.path(sessionId), lines).catch(() => {
-				/* non-fatal */
+			return appendFile(this.path(sessionId), lines).catch((e) => {
+				console.warn(
+					`[EventStore] Failed to append events for session ${sessionId}:`,
+					e,
+				);
 			});
 		});
 	}

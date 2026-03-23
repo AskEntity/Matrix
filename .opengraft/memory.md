@@ -467,9 +467,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Backward compat defaults in EventStore.read() for old JSONL: orchestration_started gets provider/model="unknown", budget_exceeded gets costUsd/budgetUsd=0, clarification_requested gets title from question text.
 
 ## Optional Field Audit (completed)
-- `orchestration_started.provider/model`: optional → required. Old JSONL gets "unknown" default.
-- `budget_exceeded.costUsd/budgetUsd`: optional → required. Old JSONL gets 0 default.
-- `clarification_requested.title`: optional → required. Old JSONL gets question text default.
-- `HealthResponse.gitHash`, `VersionResponse.gitHash`: optional → required. GIT_HASH defaults to "unknown".
-- `task_completed.output` (UIOnlyEvent): optional → required. Always from child_complete.output.
-- Config types, function params, genuinely conditional fields (images, pending, backgroundId, etc.) kept optional.
+- 8 fields tightened: orchestration_started.provider/model, budget_exceeded.costUsd/budgetUsd, clarification_requested.title, HealthResponse/VersionResponse.gitHash, task_completed.output.
+- Config types, function params, genuinely conditional fields kept optional.
+
+## Silent Error Swallowing Audit
+- 19 catches changed from silent swallow to console.warn (JSONL write, tracker save, frontend fetch, background process errors).
+- ~50 catches kept as-is (queue lifecycle races, file existence checks, cleanup operations, auth verification).

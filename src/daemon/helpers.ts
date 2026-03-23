@@ -143,7 +143,10 @@ export async function pruneSessionFiles(
 ): Promise<{ pruned: number; remaining: number }> {
 	const sessionsDir = join(ctx.config.dataDir, "sessions", projectId);
 	try {
-		const files = await readdir(sessionsDir).catch(() => []);
+		const files = await readdir(sessionsDir).catch((e) => {
+			console.warn(`[helpers] Failed to read sessions dir ${sessionsDir}:`, e);
+			return [] as string[];
+		});
 		const jsonlFiles = files.filter((f) => f.endsWith(".events.jsonl"));
 
 		if (jsonlFiles.length <= keepCount) {
@@ -162,7 +165,11 @@ export async function pruneSessionFiles(
 		await Promise.all(toDelete.map((f) => unlink(join(sessionsDir, f.name))));
 
 		return { pruned: toDelete.length, remaining: keepCount };
-	} catch {
+	} catch (e) {
+		console.warn(
+			`[helpers] Failed to prune session files for ${projectId}:`,
+			e,
+		);
 		return { pruned: 0, remaining: 0 };
 	}
 }

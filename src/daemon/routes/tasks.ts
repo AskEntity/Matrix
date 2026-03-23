@@ -505,7 +505,8 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 					};
 				});
 			return c.json({ commits });
-		} catch {
+		} catch (e) {
+			console.warn(`[tasks] Failed to get commits for ${nodeId}:`, e);
 			return c.json({ commits: [] });
 		}
 	});
