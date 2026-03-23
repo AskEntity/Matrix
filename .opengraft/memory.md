@@ -448,3 +448,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 ## remove_tool matches both tool_call and tool_pair
 - `remove_tool` UpdateOp in event-handler.ts checks both `tool_call` and `tool_pair` types when searching by toolCallId.
 - Both mutable (`applyUpdate`) and immutable (`applyUpdateImmutable`) paths must be kept in sync.
+
+## Lazy-Load Activity Log (Compact Barrier)
+- `EventStore.readFromLastCompactMarker(sessionId)` returns events from last `compact_marker` onward (inclusive) + `hasOlderEvents: boolean`. Different from `readActive` which returns events AFTER the marker (exclusive).
+- `EventStore.readBefore(sessionId, beforeTs, limit)` returns events strictly before a timestamp, last `limit` entries (most recent ones near the boundary).
+- `GET /projects/:id/events?after=compact` — returns only post-compact events per session. Without param, returns all events.
+- `GET /projects/:id/events/older?session=X&before=TS&limit=N` — paginated older events endpoint.
+- Frontend "Load earlier history" button: on click, fetches full events (no compact param) and re-runs processEventBatch on the complete set. Simple approach — avoids complex prepend logic.
+- `olderEventsAvailable` state in App.tsx: `Map<sessionId, { hasOlder, oldestTs }>` — tracks per-session availability.

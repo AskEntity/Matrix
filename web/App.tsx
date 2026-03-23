@@ -232,6 +232,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			}
 		>
 	>(() => new Map());
+	/** Per-session flag indicating older events exist before the compact barrier */
+	const [olderEventsAvailable, setOlderEventsAvailable] = useState<
+		Map<string, { hasOlder: boolean; oldestTs: number }>
+	>(() => new Map());
+	const [loadingOlderEvents, setLoadingOlderEvents] = useState(false);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
 	const {
@@ -407,21 +412,51 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		],
 	);
 
+	/** Process event response: update logs and track which sessions have older events */
+	const processEventResponse = useCallback(
+		(data: {
+			events?: Record<string, unknown>[];
+			hasOlderEvents?: boolean;
+		}) => {
+			if (data.events && data.events.length > 0) {
+				processEventBatch(data.events);
+
+				// Track per-session older events availability
+				if (data.hasOlderEvents) {
+					const sessionMap = new Map<string, number>();
+					for (const evt of data.events) {
+						const taskId = evt.taskId as string | undefined;
+						const ts = evt.ts as number | undefined;
+						if (taskId && ts !== undefined) {
+							const existing = sessionMap.get(taskId);
+							if (existing === undefined || ts < existing) {
+								sessionMap.set(taskId, ts);
+							}
+						}
+					}
+					setOlderEventsAvailable((prev) => {
+						const next = new Map(prev);
+						for (const [sid, oldestTs] of sessionMap) {
+							next.set(sid, { hasOlder: true, oldestTs });
+						}
+						return next;
+					});
+				}
+			}
+		},
+		[processEventBatch],
+	);
+
 	// Re-fetch full event history on SSE reconnect.
 	// The SSE ring buffer handles short disconnects via Last-Event-ID,
 	// but for longer gaps we need to re-fetch everything.
 	// Pending messages are derived from JSONL events (no separate endpoint).
-	// biome-ignore lint/correctness/useExhaustiveDependencies: processEventBatch is stable within useMemo
 	const handleReconnect = useCallback(() => {
 		if (!projectId) return;
-		// Re-fetch events — processEventBatch derives pending state from JSONL events
-		authFetch(`/projects/${projectId}/events`)
+		// Re-fetch events with compact barrier — processEventBatch derives pending state from JSONL events
+		authFetch(`/projects/${projectId}/events?after=compact`)
 			.then((r) => r.json())
-			.then((data: { events?: Record<string, unknown>[] }) => {
-				if (data.events && data.events.length > 0) {
-					processEventBatch(data.events);
-				}
-			})
+			.then(processEventResponse)
 			.catch(() => {});
 		// Re-fetch pending clarifications (still ephemeral/in-memory)
 		authFetch(`/projects/${projectId}/clarifications`)
@@ -439,7 +474,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				}) => setPendingClarifications(data.clarifications ?? []),
 			)
 			.catch(() => {});
-	}, [projectId]);
+	}, [projectId, processEventResponse]);
 
 	const { connected } = useSSE(
 		projectId,
@@ -455,19 +490,23 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		if (first) setProjectId(first.id);
 	}, [projects, projectId]);
 
-	// Fetch event history from JSONL EventStore on project change
-	// biome-ignore lint/correctness/useExhaustiveDependencies: processEventBatch is stable within useMemo
+	// Fetch event history from JSONL EventStore on project change (compact barrier optimization)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: processEventResponse is stable (wraps useMemo'd processEventBatch)
 	useEffect(() => {
 		if (!projectId) return;
 		let cancelled = false;
-		authFetch(`/projects/${projectId}/events`)
+		setOlderEventsAvailable(new Map());
+		authFetch(`/projects/${projectId}/events?after=compact`)
 			.then((r) => r.json())
-			.then((data: { events?: Record<string, unknown>[] }) => {
-				if (cancelled) return;
-				if (data.events && data.events.length > 0) {
-					processEventBatch(data.events);
-				}
-			})
+			.then(
+				(data: {
+					events?: Record<string, unknown>[];
+					hasOlderEvents?: boolean;
+				}) => {
+					if (cancelled) return;
+					processEventResponse(data);
+				},
+			)
 			.catch(() => {});
 		return () => {
 			cancelled = true;
@@ -494,6 +533,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setPendingClarifications([]);
 				setBackgroundProcesses(new Map());
 				setActiveAgents(new Set());
+				setOlderEventsAvailable(new Map());
 			} else if (ht && ht !== selectedTaskId) {
 				setSelectedTaskId(ht);
 			} else if (!ht && selectedTaskId !== rootNodeId) {
@@ -647,6 +687,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			setPendingClarifications([]);
 			setBackgroundProcesses(new Map());
 			setActiveAgents(new Set());
+			setOlderEventsAvailable(new Map());
 		},
 		[setActiveAgents],
 	);
@@ -687,6 +728,65 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				[clarificationId]: value,
 			})),
 		[],
+	);
+
+	/** Load older events before the compact barrier for a given session */
+	const handleLoadOlderEvents = useCallback(
+		async (sessionId: string) => {
+			if (!projectId || loadingOlderEvents) return;
+			const info = olderEventsAvailable.get(sessionId);
+			if (!info?.hasOlder) return;
+
+			setLoadingOlderEvents(true);
+			try {
+				const res = await authFetch(
+					`/projects/${projectId}/events/older?session=${encodeURIComponent(sessionId)}&before=${info.oldestTs}&limit=200`,
+				);
+				const data = (await res.json()) as {
+					events?: Record<string, unknown>[];
+					hasMore?: boolean;
+				};
+				if (data.events && data.events.length > 0) {
+					// Re-fetch all events to get a complete picture, then re-process.
+					// Simpler than trying to prepend and re-process.
+					const fullRes = await authFetch(`/projects/${projectId}/events`);
+					const fullData = (await fullRes.json()) as {
+						events?: Record<string, unknown>[];
+					};
+					if (fullData.events && fullData.events.length > 0) {
+						processEventBatch(fullData.events);
+					}
+					// Update older events availability
+					setOlderEventsAvailable((prev) => {
+						const next = new Map(prev);
+						if (data.hasMore) {
+							// Find the oldest ts from the older events we received
+							let minTs = info.oldestTs;
+							for (const evt of data.events ?? []) {
+								const ts = evt.ts as number | undefined;
+								if (ts !== undefined && ts < minTs) minTs = ts;
+							}
+							next.set(sessionId, { hasOlder: true, oldestTs: minTs });
+						} else {
+							next.delete(sessionId);
+						}
+						return next;
+					});
+				} else {
+					// No older events returned
+					setOlderEventsAvailable((prev) => {
+						const next = new Map(prev);
+						next.delete(sessionId);
+						return next;
+					});
+				}
+			} catch {
+				// Silently fail — user can retry
+			} finally {
+				setLoadingOlderEvents(false);
+			}
+		},
+		[projectId, loadingOlderEvents, olderEventsAvailable, processEventBatch],
 	);
 
 	const filterLabel = isOrchestratorNode
@@ -991,6 +1091,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 							onAutoScrollChange={setAutoScroll}
 							isActive={isSelectedTaskActive}
 							projectId={projectId}
+							olderEventsAvailable={olderEventsAvailable}
+							loadingOlderEvents={loadingOlderEvents}
+							onLoadOlderEvents={handleLoadOlderEvents}
 						/>
 					</div>
 				</section>

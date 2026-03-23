@@ -234,6 +234,257 @@ describe("EventStore", () => {
 		expect(store.readActive("missing")).toEqual([]);
 	});
 
+	// ── readFromLastCompactMarker ────────────────────────────────────────
+
+	test("readFromLastCompactMarker returns all events when no compact_marker", async () => {
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "hello" },
+				taskId: "test",
+				ts: 1000,
+			},
+			{ type: "assistant_text", content: "hi", taskId: "test", ts: 1001 },
+		];
+		await store.appendBatch("s1", events);
+		const result = store.readFromLastCompactMarker("s1");
+		expect(result.events).toEqual(events);
+		expect(result.hasOlderEvents).toBe(false);
+	});
+
+	test("readFromLastCompactMarker returns events from last compact_marker (inclusive)", async () => {
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "old msg" },
+				taskId: "test",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "old response",
+				taskId: "test",
+				ts: 1001,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "checkpoint text",
+				savedTokens: 5000,
+				taskId: "test",
+				ts: 2000,
+			},
+			{
+				type: "assistant_text",
+				content: "new response",
+				taskId: "test",
+				ts: 2002,
+			},
+		];
+		await store.appendBatch("s1", events);
+
+		const result = store.readFromLastCompactMarker("s1");
+		expect(result.hasOlderEvents).toBe(true);
+		expect(result.events).toEqual([
+			{
+				type: "compact_marker",
+				checkpoint: "checkpoint text",
+				savedTokens: 5000,
+				taskId: "test",
+				ts: 2000,
+			},
+			{
+				type: "assistant_text",
+				content: "new response",
+				taskId: "test",
+				ts: 2002,
+			},
+		]);
+	});
+
+	test("readFromLastCompactMarker with multiple markers uses the last one", async () => {
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "very old" },
+				taskId: "test",
+				ts: 1000,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "first",
+				savedTokens: 1000,
+				taskId: "test",
+				ts: 2000,
+			},
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "mid" },
+				taskId: "test",
+				ts: 2001,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "second",
+				savedTokens: 2000,
+				taskId: "test",
+				ts: 3000,
+			},
+			{
+				type: "assistant_text",
+				content: "latest",
+				taskId: "test",
+				ts: 3001,
+			},
+		];
+		await store.appendBatch("s1", events);
+
+		const result = store.readFromLastCompactMarker("s1");
+		expect(result.hasOlderEvents).toBe(true);
+		expect(result.events).toEqual([
+			{
+				type: "compact_marker",
+				checkpoint: "second",
+				savedTokens: 2000,
+				taskId: "test",
+				ts: 3000,
+			},
+			{
+				type: "assistant_text",
+				content: "latest",
+				taskId: "test",
+				ts: 3001,
+			},
+		]);
+	});
+
+	test("readFromLastCompactMarker with compact_marker at index 0", async () => {
+		const events: Event[] = [
+			{
+				type: "compact_marker",
+				checkpoint: "start",
+				savedTokens: 100,
+				taskId: "test",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "after marker",
+				taskId: "test",
+				ts: 1001,
+			},
+		];
+		await store.appendBatch("s1", events);
+
+		const result = store.readFromLastCompactMarker("s1");
+		expect(result.hasOlderEvents).toBe(false);
+		expect(result.events).toEqual(events);
+	});
+
+	test("readFromLastCompactMarker returns empty for non-existent session", () => {
+		const result = store.readFromLastCompactMarker("missing");
+		expect(result.events).toEqual([]);
+		expect(result.hasOlderEvents).toBe(false);
+	});
+
+	// ── readBefore ───────────────────────────────────────────────────────
+
+	test("readBefore returns events before timestamp", async () => {
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "first" },
+				taskId: "test",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "second",
+				taskId: "test",
+				ts: 2000,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "cp",
+				savedTokens: 500,
+				taskId: "test",
+				ts: 3000,
+			},
+			{
+				type: "assistant_text",
+				content: "fourth",
+				taskId: "test",
+				ts: 4000,
+			},
+		];
+		await store.appendBatch("s1", events);
+
+		const result = store.readBefore("s1", 3000, 100);
+		expect(result.hasMore).toBe(false);
+		expect(result.events).toEqual([
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "first" },
+				taskId: "test",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "second",
+				taskId: "test",
+				ts: 2000,
+			},
+		]);
+	});
+
+	test("readBefore respects limit and returns most recent events", async () => {
+		const events: Event[] = [];
+		for (let i = 0; i < 10; i++) {
+			events.push({
+				type: "assistant_text",
+				content: `msg ${i}`,
+				taskId: "test",
+				ts: 1000 + i * 100,
+			});
+		}
+		await store.appendBatch("s1", events);
+
+		const result = store.readBefore("s1", 1800, 3);
+		expect(result.hasMore).toBe(true);
+		expect(result.events.length).toBe(3);
+		// Should be the 3 most recent events before ts=1800
+		expect(result.events[0]?.ts).toBe(1500);
+		expect(result.events[1]?.ts).toBe(1600);
+		expect(result.events[2]?.ts).toBe(1700);
+	});
+
+	test("readBefore returns empty for non-existent session", () => {
+		const result = store.readBefore("missing", 5000, 100);
+		expect(result.events).toEqual([]);
+		expect(result.hasMore).toBe(false);
+	});
+
+	test("readBefore returns empty when no events before timestamp", async () => {
+		const events: Event[] = [
+			{
+				type: "assistant_text",
+				content: "first",
+				taskId: "test",
+				ts: 5000,
+			},
+		];
+		await store.appendBatch("s1", events);
+
+		const result = store.readBefore("s1", 1000, 100);
+		expect(result.events).toEqual([]);
+		expect(result.hasMore).toBe(false);
+	});
+
 	test("preserves all event fields through round-trip", async () => {
 		const event: Event = {
 			type: "tool_result",
