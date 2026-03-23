@@ -116,7 +116,12 @@ describe("persistent-queue", () => {
 				exitCode: 0,
 				durationMs: 100,
 			},
-			{ source: "system", content: "tree updated" },
+			{
+				source: "tree_change",
+				action: "created",
+				nodeId: "node-1",
+				title: "New Task",
+			},
 		];
 
 		for (const msg of messages) {

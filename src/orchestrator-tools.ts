@@ -215,9 +215,9 @@ export function createOrchestratorTools(
 						}),
 					);
 					pendingClarifications = 0;
-					all = [...synthesized, ...queue.drainMerged()];
+					all = [...synthesized, ...queue.drain()];
 				} else {
-					const rest = queue.drainMerged();
+					const rest = queue.drain();
 					all = [result, ...rest];
 					for (const msg of all) {
 						if (msg.source === "clarify_response") {

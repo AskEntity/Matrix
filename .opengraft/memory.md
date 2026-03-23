@@ -426,3 +426,13 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `taskId: string` required on EVERY Event variant. `queueMessageToEvent(msg, taskId)` and `findOrphanedToolCalls(events, taskId)` require taskId.
 - Provider events use `taskId: ""` placeholder — daemon emit wrappers override with real taskId.
 - `normalizeEventForUI` simplified to just `stripEventForUI`. `EventStore.read()` injects taskId from sessionId for old JSONL backward compat.
+
+
+## tree_change QueueMessage + Parent Chain Notification
+- `source: "system"` removed from QueueMessage. Replaced by `source: "tree_change"` with structured fields: `action: "created" | "updated" | "deleted" | "reordered"`, `nodeId: string`, `title?: string`.
+- `tree_mutation` Event type removed entirely. UI sidebar updates via `tree_updated` ephemeral SSE event. Activity log cards use `tree_change` UIOnlyEvent (materialized from two-phase message lifecycle).
+- `enqueueQuiet()` merged into `enqueue(msg, { quiet: true })`. One method, quiet flag controls whether to wake waiter.
+- `drainMerged()` deleted. Callers use `drain()` instead — each tree_change delivered individually.
+- Tree change notifications walk parent chain (not just root): `notifyTreeChange()` in tasks.ts quiet-enqueues to each running ancestor.
+- `formatBodyForAI` for tree_change: `<tree_change action="..." nodeId="..." title="...">Call get_tree to see latest state.</tree_change>`
+- `MessageBody` has `action?: string` and `nodeId?: string` fields for tree_change body serialization.

@@ -273,7 +273,7 @@ describe("MessageQueue", () => {
 		await expect(q.waitForMessage(100)).rejects.toThrow("Queue closed");
 	});
 
-	test("enqueueQuiet does not resolve a pending wait()", async () => {
+	test("enqueue with quiet option does not resolve a pending wait()", async () => {
 		const q = new MessageQueue();
 
 		const promise = q.wait();
@@ -283,7 +283,15 @@ describe("MessageQueue", () => {
 		});
 
 		// Quiet enqueue should NOT wake the waiter
-		q.enqueueQuiet({ source: "system", content: "tree changed" });
+		q.enqueue(
+			{
+				source: "tree_change",
+				action: "created",
+				nodeId: "n1",
+				title: "Task A",
+			},
+			{ quiet: true },
+		);
 		await Promise.resolve();
 		await Promise.resolve();
 		expect(resolved).toBe(false);
@@ -297,108 +305,69 @@ describe("MessageQueue", () => {
 		expect(msg).toEqual({ source: "user", content: "hello" });
 	});
 
-	test("enqueueQuiet message is included in drain()", () => {
+	test("quiet enqueue message is included in drain()", () => {
 		const q = new MessageQueue();
-		q.enqueueQuiet({ source: "system", content: "quiet msg" });
+		q.enqueue(
+			{
+				source: "tree_change",
+				action: "created",
+				nodeId: "n1",
+				title: "Task A",
+			},
+			{ quiet: true },
+		);
 		q.enqueue({ source: "user", content: "normal msg" });
 
 		const msgs = q.drain();
 		expect(msgs).toHaveLength(2);
-		expect(msgs[0]).toEqual({ source: "system", content: "quiet msg" });
+		expect(msgs[0]?.source).toBe("tree_change");
 		expect(msgs[1]).toEqual({ source: "user", content: "normal msg" });
 	});
 
-	test("enqueueQuiet message is picked up by wait() when already pending", async () => {
+	test("quiet enqueue message is picked up by wait() when already pending", async () => {
 		const q = new MessageQueue();
-		q.enqueueQuiet({ source: "system", content: "quiet" });
+		q.enqueue(
+			{
+				source: "tree_change",
+				action: "updated",
+				nodeId: "n2",
+			},
+			{ quiet: true },
+		);
 
 		// wait() checks pending messages first — should resolve immediately
 		const msg = await q.wait();
-		expect(msg).toEqual({ source: "system", content: "quiet" });
+		expect(msg.source).toBe("tree_change");
 	});
 
-	test("enqueueQuiet throws on closed queue", () => {
+	test("quiet enqueue throws on closed queue", () => {
 		const q = new MessageQueue();
 		q.close();
-		expect(() => q.enqueueQuiet({ source: "system", content: "nope" })).toThrow(
-			"Queue closed",
+		expect(() =>
+			q.enqueue(
+				{
+					source: "tree_change",
+					action: "created",
+					nodeId: "n1",
+				},
+				{ quiet: true },
+			),
+		).toThrow("Queue closed");
+	});
+
+	test("quiet enqueue increments pending count", () => {
+		const q = new MessageQueue();
+		expect(q.pending).toBe(0);
+		q.enqueue(
+			{ source: "tree_change", action: "created", nodeId: "n1" },
+			{ quiet: true },
 		);
-	});
-
-	test("enqueueQuiet increments pending count", () => {
-		const q = new MessageQueue();
-		expect(q.pending).toBe(0);
-		q.enqueueQuiet({ source: "system", content: "a" });
 		expect(q.pending).toBe(1);
-		q.enqueueQuiet({ source: "system", content: "b" });
+		q.enqueue(
+			{ source: "tree_change", action: "updated", nodeId: "n2" },
+			{ quiet: true },
+		);
 		expect(q.pending).toBe(2);
-	});
-
-	test("drainMerged returns empty array on empty queue", () => {
-		const q = new MessageQueue();
-		expect(q.drainMerged()).toEqual([]);
-	});
-
-	test("drainMerged passes through single message unchanged", () => {
-		const q = new MessageQueue();
-		q.enqueue({ source: "system", content: "tree updated" });
-		const msgs = q.drainMerged();
-		expect(msgs).toHaveLength(1);
-		expect(msgs[0]).toEqual({ source: "system", content: "tree updated" });
-	});
-
-	test("drainMerged merges consecutive system messages", () => {
-		const q = new MessageQueue();
-		q.enqueueQuiet({ source: "system", content: "tree updated: task A" });
-		q.enqueueQuiet({ source: "system", content: "tree updated: task B" });
-		q.enqueueQuiet({ source: "system", content: "tree updated: task C" });
-
-		const msgs = q.drainMerged();
-		expect(msgs).toHaveLength(1);
-		expect(msgs[0]?.source).toBe("system");
-		expect(
-			(msgs[0] as { source: "system"; content: string }).content,
-		).toContain("3 times");
-	});
-
-	test("drainMerged preserves non-system messages in order", () => {
-		const q = new MessageQueue();
-		q.enqueue({ source: "user", content: "hello" });
-		q.enqueue({ source: "user", content: "world" });
-
-		const msgs = q.drainMerged();
-		expect(msgs).toHaveLength(2);
-		expect(msgs[0]).toEqual({ source: "user", content: "hello" });
-		expect(msgs[1]).toEqual({ source: "user", content: "world" });
-	});
-
-	test("drainMerged merges system messages between non-system messages", () => {
-		const q = new MessageQueue();
-		q.enqueueQuiet({ source: "system", content: "update 1" });
-		q.enqueueQuiet({ source: "system", content: "update 2" });
-		q.enqueue({ source: "user", content: "hello" });
-		q.enqueueQuiet({ source: "system", content: "update 3" });
-
-		const msgs = q.drainMerged();
-		expect(msgs).toHaveLength(3);
-		// First: merged system messages
-		expect(msgs[0]?.source).toBe("system");
-		expect(
-			(msgs[0] as { source: "system"; content: string }).content,
-		).toContain("2 times");
-		// Second: user message
-		expect(msgs[1]).toEqual({ source: "user", content: "hello" });
-		// Third: single system message passes through
-		expect(msgs[2]).toEqual({ source: "system", content: "update 3" });
-	});
-
-	test("drainMerged clears the queue", () => {
-		const q = new MessageQueue();
-		q.enqueue({ source: "system", content: "a" });
-		q.enqueue({ source: "system", content: "b" });
-		q.drainMerged();
-		expect(q.pending).toBe(0);
-		expect(q.drainMerged()).toEqual([]);
 	});
 
 	test("onEnqueue fires when message goes to array (no waiter)", () => {
@@ -437,12 +406,15 @@ describe("MessageQueue", () => {
 		expect(msg).toEqual({ source: "user", content: "direct to waiter" });
 	});
 
-	test("onEnqueue does not fire for enqueueQuiet", () => {
+	test("onEnqueue does not fire for quiet enqueue", () => {
 		const q = new MessageQueue();
 		const received: QueueMessage[] = [];
 		q.onEnqueue = (msg) => received.push(msg);
 
-		q.enqueueQuiet({ source: "system", content: "quiet" });
+		q.enqueue(
+			{ source: "tree_change", action: "created", nodeId: "n1" },
+			{ quiet: true },
+		);
 		expect(received).toHaveLength(0);
 
 		// But normal enqueue does fire it

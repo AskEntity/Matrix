@@ -72,6 +72,14 @@ export type UIOnlyEvent =
 			ts: number;
 	  }
 	| {
+			type: "tree_change";
+			action: string;
+			nodeId: string;
+			title?: string;
+			taskId?: string;
+			ts: number;
+	  }
+	| {
 			type: "tool_pair";
 			tool: string;
 			toolCallId: string;

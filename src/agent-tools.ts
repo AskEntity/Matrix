@@ -114,8 +114,11 @@ export function toRawMessage(msg: QueueMessage): {
 				...(msg.id ? { id: msg.id } : {}),
 				...(msg.images?.length ? { images: msg.images } : {}),
 			};
-		case "system":
-			return { source: msg.source, content: msg.content };
+		case "tree_change":
+			return {
+				source: msg.source,
+				content: `Tree ${msg.action}${msg.title ? `: "${msg.title}"` : ""} (${msg.nodeId})`,
+			};
 		case "parent_update":
 			return { source: msg.source, content: msg.content };
 		case "clarify_response":

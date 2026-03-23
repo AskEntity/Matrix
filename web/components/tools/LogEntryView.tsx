@@ -327,8 +327,8 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
-	// tree_mutation
-	if (entry.type === "tree_mutation") {
+	// tree_change
+	if (entry.type === "tree_change") {
 		const text = entry.title ? `${entry.action}: ${entry.title}` : entry.action;
 		return (
 			<LogEntryWrapper ts={entry.ts} taskLabel={taskLabel}>
