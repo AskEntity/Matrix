@@ -487,3 +487,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 - provider-shared.ts: 14 internal-only symbols unexported (constants, helpers, interfaces).
 - Other files: unexported 8 types/functions only used within their own file (StoredCredential, WorktreeInfo, MessageEvent, OpenAIMessage, ThemeConfig, TFunction, UIOnlyEvent, ActionHandlerDeps).
 - Pattern to watch: "backward compatibility" re-exports accumulate when code gets refactored. Periodically audit that re-exports are still imported by someone.
+
+
+## Centralized Ephemeral Event Classification
+- `isPersistedByEmitEvent(event: Event): boolean` in events.ts — single source of truth for whether emitEvent persists an event to JSONL.
+- Exhaustive switch with `default: never` — adding a new Event type without handling it causes a compile error.
+- Replaced `EPHEMERAL_EVENT_TYPES` Set and `isEphemeral(type: string)` in event-system.ts.
+- Note: `heartbeat` and `tree_updated` were in old EPHEMERAL_EVENT_TYPES but are NOT in the Event union — they are broadcast as raw objects, not through emitEvent with Event type. The new function only covers typed Event variants.
+- Provider events (assistant_text, tool_call, tool_result, compact_marker) ARE persisted by emitEvent — the old comment saying "already written by provider" was misleading. Providers call emit() which IS emitEvent.

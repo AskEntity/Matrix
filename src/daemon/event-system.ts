@@ -1,4 +1,4 @@
-import type { Event } from "../events.ts";
+import { type Event, isPersistedByEmitEvent } from "../events.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import type {
 	DaemonContext,
@@ -93,29 +93,6 @@ export function broadcast(
 	}
 }
 
-// --- Ephemeral event detection ---
-
-/**
- * Ephemeral events are NOT persisted to JSONL — they're live-only.
- * Provider events (assistant_text, tool_call, tool_result, compact_marker) are
- * already written to JSONL by the provider — emitEvent skips them to prevent double-write.
- */
-const EPHEMERAL_EVENT_TYPES = new Set([
-	"text_delta",
-	"usage",
-	"agent_idle",
-	"agent_active",
-	"status",
-	"clarification_timeout",
-	"heartbeat",
-	// tree_updated carries full tree payload — ephemeral push, not JSONL
-	"tree_updated",
-]);
-
-function isEphemeral(type: string): boolean {
-	return EPHEMERAL_EVENT_TYPES.has(type);
-}
-
 // --- Unified event emission ---
 
 /**
@@ -134,8 +111,8 @@ export function emitEvent(ctx: DaemonContext, projectId: string, event: Event) {
 		event as unknown as Record<string, unknown>,
 	);
 
-	// Persist non-ephemeral events to JSONL
-	if (!isEphemeral(event.type)) {
+	// Persist to JSONL (skips ephemeral events like text_delta, usage, etc.)
+	if (isPersistedByEmitEvent(event)) {
 		const rootNodeId = ctx.trackers.get(projectId)?.rootNodeId ?? undefined;
 		const taskId =
 			"taskId" in event ? (event.taskId as string | undefined) : undefined;

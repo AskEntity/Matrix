@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
-import { type Event, formatEventForAI, queueMessageToEvent } from "./events.ts";
+import {
+	type Event,
+	formatEventForAI,
+	isPersistedByEmitEvent,
+	queueMessageToEvent,
+} from "./events.ts";
 import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
 
 describe("queueMessageToEvent", () => {
@@ -3549,5 +3554,87 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			};
 			expect(toolResultMsg.content.length).toBeGreaterThan(0);
 		});
+	});
+});
+
+describe("isPersistedByEmitEvent", () => {
+	test("ephemeral events return false", () => {
+		const ephemeralTypes: Event["type"][] = [
+			"text_delta",
+			"usage",
+			"agent_idle",
+			"agent_active",
+			"status",
+			"clarification_timeout",
+		];
+		for (const type of ephemeralTypes) {
+			const event = { type, taskId: "test", ts: 1000 } as Event;
+			expect(isPersistedByEmitEvent(event)).toBe(false);
+		}
+	});
+
+	test("persisted events return true", () => {
+		const persistedTypes: Event["type"][] = [
+			"message",
+			"assistant_text",
+			"tool_call",
+			"tool_result",
+			"compacted_resume",
+			"summarization_request",
+			"budget_warning",
+			"compact_marker",
+			"orchestration_started",
+			"orchestration_completed",
+			"task_started",
+			"error",
+			"budget_exceeded",
+			"clarification_requested",
+			"clarification_answered",
+			"compact_started",
+			"agent_stopped",
+			"messages_consumed",
+		];
+		for (const type of persistedTypes) {
+			const event = { type, taskId: "test", ts: 1000 } as Event;
+			expect(isPersistedByEmitEvent(event)).toBe(true);
+		}
+	});
+
+	test("covers all Event types (exhaustive switch ensures compile-time safety)", () => {
+		// This test documents that isPersistedByEmitEvent has a `default: never` guard.
+		// If a new Event type is added to the union without handling it in the switch,
+		// TypeScript will report a compile error: "Type '...' is not assignable to type 'never'".
+		// The typecheck passing IS the test — this test just verifies every known type is handled.
+		const allTypes: Event["type"][] = [
+			"message",
+			"assistant_text",
+			"tool_call",
+			"tool_result",
+			"text_delta",
+			"usage",
+			"agent_idle",
+			"agent_active",
+			"status",
+			"clarification_timeout",
+			"compacted_resume",
+			"summarization_request",
+			"budget_warning",
+			"compact_marker",
+			"orchestration_started",
+			"orchestration_completed",
+			"task_started",
+			"error",
+			"budget_exceeded",
+			"clarification_requested",
+			"clarification_answered",
+			"compact_started",
+			"agent_stopped",
+			"messages_consumed",
+		];
+		for (const type of allTypes) {
+			const event = { type, taskId: "test", ts: 1000 } as Event;
+			const result = isPersistedByEmitEvent(event);
+			expect(typeof result).toBe("boolean");
+		}
 	});
 });
