@@ -678,6 +678,107 @@ describe("event-handler tool_pair creation", () => {
 		expect(capturedLogs.length).toBe(0);
 	});
 
+	it("handleEvent: remove_tool removes tool_pair entries (not just tool_call)", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		// 1. yield tool_call arrives
+		handleEvent({
+			type: "tool_call",
+			tool: "mcp__opengraft__yield",
+			toolCallId: "tc-yield-pair",
+			input: {},
+			taskId: "task-1",
+			ts: 1000,
+		});
+		expect(capturedLogs.length).toBe(1);
+		expect(capturedLogs[0]?.type).toBe("tool_call");
+
+		// 2. A tool_result with the same toolCallId resolves it to a tool_pair
+		//    (e.g., duplicate event during reconnect replay)
+		handleEvent({
+			type: "tool_result",
+			tool: "mcp__opengraft__read_file",
+			toolCallId: "tc-yield-pair",
+			content: "some content",
+			isError: false,
+			taskId: "task-1",
+			ts: 2000,
+		});
+		expect(capturedLogs.length).toBe(1);
+		expect(capturedLogs[0]?.type).toBe("tool_pair");
+
+		// 3. The actual yield tool_result arrives with remove_tool
+		handleEvent({
+			type: "tool_result",
+			tool: "mcp__opengraft__yield",
+			toolCallId: "tc-yield-pair",
+			content: "resumed",
+			isError: false,
+			taskId: "task-1",
+			ts: 5000,
+		});
+
+		// Should remove the tool_pair entry entirely
+		expect(capturedLogs.length).toBe(0);
+	});
+
+	it("processEventBatch: remove_tool removes tool_pair entries (not just tool_call)", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			// tool_call for yield
+			{
+				type: "tool_call",
+				tool: "mcp__opengraft__yield",
+				toolCallId: "tc-yield-batch",
+				input: {},
+				taskId: "task-1",
+				ts: 1000,
+			},
+			// A non-yield tool_result resolves it to tool_pair first
+			{
+				type: "tool_result",
+				tool: "mcp__opengraft__read_file",
+				toolCallId: "tc-yield-batch",
+				content: "content",
+				isError: false,
+				taskId: "task-1",
+				ts: 2000,
+			},
+			// Then the actual yield tool_result fires remove_tool
+			{
+				type: "tool_result",
+				tool: "mcp__opengraft__yield",
+				toolCallId: "tc-yield-batch",
+				content: "resumed",
+				isError: false,
+				taskId: "task-1",
+				ts: 5000,
+			},
+		]);
+
+		// The tool_pair should be removed
+		expect(capturedLogs.length).toBe(0);
+	});
+
 	it("processEventBatch: tool_result with backgroundId still tracks background process", () => {
 		const { deps } = makeDeps();
 

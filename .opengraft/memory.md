@@ -444,3 +444,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Frontend `QueueEntryLike` flat interface deleted from event-handler.ts. Replaced with `QueueMessage` import from `../src/message-queue.ts`.
 - All code accessing `body.content` or `body.images` must narrow by `body.source` first (discriminated union rules).
 - JSONL disk format unchanged — QueueMessage serializes identically to old MessageBody.
+
+## remove_tool matches both tool_call and tool_pair
+- `remove_tool` UpdateOp in event-handler.ts checks both `tool_call` and `tool_pair` types when searching by toolCallId.
+- Both mutable (`applyUpdate`) and immutable (`applyUpdateImmutable`) paths must be kept in sync.
