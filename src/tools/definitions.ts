@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname } from "node:path";
 import { z } from "zod";
 import type { MessageQueue } from "../message-queue.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
@@ -14,12 +14,7 @@ import { jsSearch } from "./search.ts";
  */
 export type GetSessionFn = (sessionId: string) => TaskSession | undefined;
 
-/** Resolve a path relative to cwd, or return as-is if absolute. */
-function resolvePath(p: string, cwd: string): string {
-	return isAbsolute(p) ? p : join(cwd, p);
-}
-
-// Re-export for tests/backward compat
+import { resolvePath } from "./executor.ts";
 export { resolvePath };
 
 /**
