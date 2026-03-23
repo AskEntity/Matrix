@@ -10,6 +10,8 @@ export function getEntryText(entry: LogEntry): string {
 			return entry.tool;
 		case "tool_result":
 			return entry.content;
+		case "tool_pair":
+			return entry.resultContent;
 		case "error":
 			return entry.message;
 		case "message":
@@ -44,19 +46,23 @@ export function getEntryText(entry: LogEntry): string {
 	}
 }
 
-/** Get tool name from entry (only for tool_call/tool_result). */
+/** Get tool name from entry (for tool_call/tool_result/tool_pair). */
 export function getToolName(entry: LogEntry): string {
-	if (entry.type === "tool_call" || entry.type === "tool_result") {
+	if (
+		entry.type === "tool_call" ||
+		entry.type === "tool_result" ||
+		entry.type === "tool_pair"
+	) {
 		return "tool" in entry ? (entry.tool as string) : "";
 	}
 	return "";
 }
 
-/** Get tool args from entry (only for tool_call). */
+/** Get tool args from entry (for tool_call/tool_pair). */
 export function getToolArgs(
 	entry: LogEntry,
 ): Record<string, unknown> | undefined {
-	if (entry.type === "tool_call") {
+	if (entry.type === "tool_call" || entry.type === "tool_pair") {
 		return entry.input;
 	}
 	return undefined;

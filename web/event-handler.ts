@@ -29,6 +29,25 @@ type UpdateOp =
 			savedTokens: number;
 			taskId: string | undefined;
 			ts?: number;
+	  }
+	| {
+			type: "resolve_tool";
+			toolCallId: string;
+			tool: string;
+			resultContent: string;
+			isError: boolean;
+			images?: Array<{ base64: string; mediaType: string }>;
+			pending?: {
+				runningChildren: Array<{ id: string; title: string }>;
+				pendingClarifications: number;
+			};
+			backgroundId?: string;
+			backgroundCommand?: string;
+			resultTs: number;
+	  }
+	| {
+			type: "remove_tool";
+			toolCallId: string;
 	  };
 
 export interface EventHandlerDeps {
@@ -383,26 +402,50 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				const bgId = msg.backgroundId as string | undefined;
 				const bgCommand = msg.backgroundCommand as string | undefined;
 				const trTaskId = msg.taskId as string | undefined;
+				const trToolCallId = (msg.toolCallId as string) || "";
+				const trTool = (msg.tool as string) || "";
+				const trContent = (msg.content as string) || "";
+				const trIsError = (msg.isError as boolean) || false;
+				const trImages = msg.images as
+					| Array<{ base64: string; mediaType: string }>
+					| undefined;
+				const trPending = msg.pending as
+					| {
+							runningChildren: Array<{ id: string; title: string }>;
+							pendingClarifications: number;
+					  }
+					| undefined;
+				const trTs = msg.ts as number;
+
+				// Yield tool_result: remove the tool_call entry entirely
+				if (trTool === "mcp__opengraft__yield") {
+					return {
+						entries: [],
+						updates: [{ type: "remove_tool", toolCallId: trToolCallId }],
+						sideEffects: NO_SIDE_EFFECTS,
+					};
+				}
+
+				// Normal tool_result: replace matching tool_call with tool_pair
 				return {
-					entries: [
-						createLogEntry({
-							type: "tool_result",
-							tool: msg.tool as string,
-							toolCallId: (msg.toolCallId as string) || "",
-							content: (msg.content as string) || "",
-							isError: (msg.isError as boolean) || false,
-							images: msg.images as
-								| Array<{ base64: string; mediaType: string }>
-								| undefined,
-							taskId: trTaskId as string,
-							ts: msg.ts as number,
-						}),
+					entries: [],
+					updates: [
+						{
+							type: "resolve_tool",
+							toolCallId: trToolCallId,
+							tool: trTool,
+							resultContent: trContent,
+							isError: trIsError,
+							images: trImages,
+							pending: trPending,
+							backgroundId: bgId,
+							backgroundCommand: bgCommand,
+							resultTs: trTs,
+						},
 					],
-					updates: [],
 					sideEffects: bgId
 						? () => {
-								// Use event timestamp as startTime (from server, not component mount time)
-								const bgStartTime = msg.ts as number;
+								const bgStartTime = trTs;
 								setBackgroundProcesses((prev) => {
 									const next = new Map(prev);
 									next.set(bgId, {
@@ -855,6 +898,58 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				);
 				break;
 			}
+			case "resolve_tool": {
+				for (let i = entries.length - 1; i >= 0; i--) {
+					const e = entries[i];
+					if (e && e.type === "tool_call" && e.toolCallId === op.toolCallId) {
+						// Replace tool_call with tool_pair
+						entries[i] = createLogEntry({
+							type: "tool_pair",
+							tool: e.tool,
+							toolCallId: e.toolCallId,
+							input: e.input,
+							resultContent: op.resultContent,
+							isError: op.isError,
+							images: op.images,
+							pending: op.pending,
+							backgroundId: op.backgroundId,
+							backgroundCommand: op.backgroundCommand,
+							resultTs: op.resultTs,
+							taskId: e.taskId,
+							ts: e.ts,
+						});
+						return;
+					}
+				}
+				// Orphan tool_result — no matching tool_call found. Create as standalone tool_pair.
+				entries.push(
+					createLogEntry({
+						type: "tool_pair",
+						tool: op.tool,
+						toolCallId: op.toolCallId,
+						input: {},
+						resultContent: op.resultContent,
+						isError: op.isError,
+						images: op.images,
+						pending: op.pending,
+						backgroundId: op.backgroundId,
+						backgroundCommand: op.backgroundCommand,
+						resultTs: op.resultTs,
+						ts: op.resultTs,
+					}),
+				);
+				break;
+			}
+			case "remove_tool": {
+				for (let i = entries.length - 1; i >= 0; i--) {
+					const e = entries[i];
+					if (e && e.type === "tool_call" && e.toolCallId === op.toolCallId) {
+						entries.splice(i, 1);
+						return;
+					}
+				}
+				break;
+			}
 		}
 	}
 
@@ -943,6 +1038,57 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							ts: op.ts ?? Date.now(),
 						}),
 					];
+				}
+				case "resolve_tool": {
+					for (let i = prev.length - 1; i >= 0; i--) {
+						const e = prev[i];
+						if (e && e.type === "tool_call" && e.toolCallId === op.toolCallId) {
+							const updated = [...prev];
+							updated[i] = createLogEntry({
+								type: "tool_pair",
+								tool: e.tool,
+								toolCallId: e.toolCallId,
+								input: e.input,
+								resultContent: op.resultContent,
+								isError: op.isError,
+								images: op.images,
+								pending: op.pending,
+								backgroundId: op.backgroundId,
+								backgroundCommand: op.backgroundCommand,
+								resultTs: op.resultTs,
+								taskId: e.taskId,
+								ts: e.ts,
+							});
+							return updated;
+						}
+					}
+					// Orphan tool_result — no matching tool_call found
+					return [
+						...prev,
+						createLogEntry({
+							type: "tool_pair",
+							tool: op.tool,
+							toolCallId: op.toolCallId,
+							input: {},
+							resultContent: op.resultContent,
+							isError: op.isError,
+							images: op.images,
+							pending: op.pending,
+							backgroundId: op.backgroundId,
+							backgroundCommand: op.backgroundCommand,
+							resultTs: op.resultTs,
+							ts: op.resultTs,
+						}),
+					];
+				}
+				case "remove_tool": {
+					for (let i = prev.length - 1; i >= 0; i--) {
+						const e = prev[i];
+						if (e && e.type === "tool_call" && e.toolCallId === op.toolCallId) {
+							return prev.filter((_, idx) => idx !== i);
+						}
+					}
+					return prev;
 				}
 			}
 		});

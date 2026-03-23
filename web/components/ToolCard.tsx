@@ -13,10 +13,7 @@ import {
 	bashBgExcludeKeys,
 	formatArgs,
 	formatMcpToolResult,
-	getEntryText,
-	getToolArgs,
 	getToolCardTitle,
-	getToolName,
 	isTitleOnlyCard,
 } from "./tools/utils.ts";
 
@@ -30,29 +27,23 @@ export {
 	isTitleOnlyCard,
 } from "./tools/utils.ts";
 
-/** Merged tool_use + tool_result card */
+/** Resolved tool_pair card — tool_call + tool_result merged in event processing layer */
 export const ToolCard = memo(function ToolCard({
-	useEntry,
-	resultEntry,
+	entry,
 	nodeMap,
 }: {
-	useEntry: LogEntry;
-	resultEntry: LogEntry;
+	entry: Extract<LogEntry, { type: "tool_pair" }>;
 	nodeMap: Map<string, TaskNode>;
 }) {
 	const { t } = useLocale();
 
-	const toolName = getToolName(useEntry);
-	const toolArgs = getToolArgs(useEntry);
+	const toolName = entry.tool;
+	const toolArgs = entry.input;
 	const isDone = toolName === "mcp__opengraft__done";
 	const argsExclude = bashBgExcludeKeys(toolName, toolArgs);
 	const argsStr = formatArgs(toolArgs, argsExclude);
-	const resultContent =
-		resultEntry.type === "tool_result"
-			? resultEntry.content
-			: getEntryText(resultEntry);
-	const isErr =
-		resultEntry.type === "tool_result" ? resultEntry.isError : false;
+	const resultContent = entry.resultContent;
+	const isErr = entry.isError;
 	const isOk = !isErr;
 
 	const isOpengraft = toolName.startsWith("mcp__opengraft__");
@@ -72,14 +63,14 @@ export const ToolCard = memo(function ToolCard({
 		const borderClass = donePassed
 			? "og-tool-card-done-passed"
 			: "og-tool-card-done-failed";
-		const doneTaskId = getLogTaskId(useEntry);
+		const doneTaskId = getLogTaskId(entry);
 		const doneTaskTitle = doneTaskId
 			? nodeMap?.get(doneTaskId)?.title
 			: undefined;
 		const doneTitle = `Task ${donePassed ? "Passed" : "Failed"}: ${doneTaskTitle || "Orchestrator"}`;
 		return (
 			<div className="og-log-entry og-event-tool_card">
-				<span className="og-log-time">{formatTime(useEntry.ts)}</span>
+				<span className="og-log-time">{formatTime(entry.ts)}</span>
 				<Card
 					title={`${donePassed ? "✓" : "✗"} ${doneTitle}`}
 					className={borderClass}
@@ -105,7 +96,7 @@ export const ToolCard = memo(function ToolCard({
 				resultContent={resultContent}
 				isOk={isOk}
 				t={t}
-				taskId={getLogTaskId(useEntry)}
+				taskId={getLogTaskId(entry)}
 			/>
 		) : null;
 
@@ -115,16 +106,13 @@ export const ToolCard = memo(function ToolCard({
 	const statusClass = isErr ? "og-tool-card-err" : "og-tool-card-ok";
 	const accentClass = isOpengraft ? "og-tool-card-mcp" : "";
 
-	const hasImages =
-		resultEntry.type === "tool_result" &&
-		resultEntry.images &&
-		resultEntry.images.length > 0;
+	const hasImages = entry.images && entry.images.length > 0;
 
 	return (
 		<div className="og-log-entry og-event-tool_card">
-			<span className="og-log-time">{formatTime(useEntry.ts)}</span>
+			<span className="og-log-time">{formatTime(entry.ts)}</span>
 			{taskLabel && (
-				<span className="og-log-badge" title={getLogTaskId(useEntry)}>
+				<span className="og-log-badge" title={getLogTaskId(entry)}>
 					{taskLabel}
 				</span>
 			)}
@@ -154,14 +142,9 @@ export const ToolCard = memo(function ToolCard({
 								)}
 							</div>
 						)}
-						{hasImages && (
+						{hasImages && entry.images && (
 							<div className="og-tool-card-body">
-								<ToolResultImages
-									images={
-										(resultEntry as Extract<LogEntry, { type: "tool_result" }>)
-											.images!
-									}
-								/>
+								<ToolResultImages images={entry.images} />
 							</div>
 						)}
 					</>

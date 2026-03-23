@@ -70,6 +70,28 @@ export type UIOnlyEvent =
 			success: boolean;
 			output?: string;
 			ts: number;
+	  }
+	| {
+			type: "tool_pair";
+			tool: string;
+			toolCallId: string;
+			input: Record<string, unknown>;
+			resultContent: string;
+			isError: boolean;
+			images?: Array<{ base64: string; mediaType: string }>;
+			/** Structured pending state from tool_result. */
+			pending?: {
+				runningChildren: Array<{ id: string; title: string }>;
+				pendingClarifications: number;
+			};
+			/** Background process ID — set when bash moves a command to background. */
+			backgroundId?: string;
+			/** Background command — set when bash moves a command to background. */
+			backgroundCommand?: string;
+			/** Timestamp of the tool_result event. */
+			resultTs: number;
+			taskId?: string;
+			ts: number;
 	  };
 
 /** All event types the UI can display. */

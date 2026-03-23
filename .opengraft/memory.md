@@ -414,3 +414,14 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `QueueEntryLike` flat interface with all-optional fields is a type-system artifact of flattening a discriminated union. The `?? ""` fallbacks in switch branches are type-level necessities, not runtime concerns.
 - MCP tool result parsing fallbacks (`?? "image/png"`, `?? ""` on external data) are legitimate — external data is untyped.
 - `buildCompactedContext` test expected old `"Project Memory (fresh)"` header but implementation uses `"# .opengraft/memory.md (Preloaded, do not read again)"`. Fixed test.
+
+
+## Card Rendering Pipeline Refactor (tool_pair)
+- `tool_pair` is a UIOnlyEvent type in hooks.ts — combines tool_call + tool_result data into one LogEntry
+- Event processing (event-handler.ts) now resolves tool_call → tool_pair via `resolve_tool` UpdateOp when tool_result arrives
+- Yield pairs removed entirely via `remove_tool` UpdateOp (hidden from activity log)
+- ActivityLog.tsx no longer has 100+ lines of mergedVisible pairing logic — entries render directly
+- ToolCard.tsx accepts `Extract<LogEntry, { type: "tool_pair" }>` — no more separate useEntry/resultEntry
+- Orphan tool_results (no matching tool_call) create tool_pairs with empty input
+- getToolName/getToolArgs/getEntryText in utils.ts updated to handle tool_pair type
+- getSearchableText in ActivityLog.tsx handles tool_pair: searches both tool name and resultContent

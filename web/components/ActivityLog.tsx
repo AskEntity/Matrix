@@ -13,6 +13,8 @@ function getSearchableText(entry: LogEntry): string {
 			return entry.tool;
 		case "tool_result":
 			return entry.content;
+		case "tool_pair":
+			return `${entry.tool} ${entry.resultContent}`;
 		case "error":
 			return entry.message;
 		case "message":
@@ -155,117 +157,6 @@ export const ActivityLog = memo(function ActivityLog({
 
 	const { t } = useLocale();
 
-	// Merge tool_use + tool_result into combined entries for rendering.
-	// Pairs tool_use → tool_result by unique toolUseId.
-	const mergedVisible = useMemo(() => {
-		const result: Array<
-			| { kind: "single"; entry: LogEntry }
-			| {
-					kind: "tool_card";
-					useEntry: LogEntry;
-					resultEntry: LogEntry;
-			  }
-		> = [];
-
-		// Get tool name from typed entry (handles both Event and BroadcastEvent variants)
-		const getToolName = (entry: LogEntry): string => {
-			if (entry.type === "tool_call" || entry.type === "tool_result") {
-				return "tool" in entry ? (entry.tool as string) : "";
-			}
-			return "";
-		};
-
-		// --- ID-based pairing ---
-		// Match tool_use → tool_result by toolUseId (unique per call).
-		const paired = new Map<number, number>(); // useIdx → resultIdx
-		const pairedResults = new Set<number>(); // result indices already consumed
-
-		// Index tool_use entries by toolUseId for O(1) lookup
-		const useByToolUseId = new Map<string, number>();
-		// Indices to hide: yield pairs
-		const hiddenIndices = new Set<number>();
-
-		// Get tool call ID from entry (unified: toolCallId)
-		const getToolUseId = (entry: LogEntry): string | undefined => {
-			if ("toolCallId" in entry) return entry.toolCallId as string;
-			// Backward compat for old cached entries
-			if ("toolUseId" in entry) return entry.toolUseId as string;
-			return undefined;
-		};
-
-		// First pass: register all tool_call entries by toolUseId
-		for (let j = 0; j < visible.length; j++) {
-			const entry = visible[j];
-			if (!entry || entry.type !== "tool_call") continue;
-			const uid = getToolUseId(entry);
-			if (uid) {
-				useByToolUseId.set(uid, j);
-			}
-		}
-
-		// Second pass: match tool_result entries to tool_call entries
-		for (let j = 0; j < visible.length; j++) {
-			const entry = visible[j];
-			if (!entry || entry.type !== "tool_result") continue;
-
-			// Match by toolUseId/toolCallId
-			const uid = getToolUseId(entry);
-			if (uid) {
-				const useIdx = useByToolUseId.get(uid);
-				if (useIdx !== undefined) {
-					paired.set(useIdx, j);
-					pairedResults.add(j);
-				}
-			}
-		}
-
-		// Pre-scan: hide completed yield pairs.
-		// Only an unmatched yield tool_use at the end (agent waiting) stays visible.
-		for (const [useIdx, resultIdx] of paired) {
-			const entry = visible[useIdx];
-			if (entry && getToolName(entry) === "mcp__opengraft__yield") {
-				hiddenIndices.add(useIdx);
-				hiddenIndices.add(resultIdx);
-			}
-		}
-
-		let i = 0;
-		while (i < visible.length) {
-			const cur = visible[i];
-			if (!cur) {
-				i += 1;
-				continue;
-			}
-
-			// Skip hidden entries (yield pairs, consumed results)
-			if (hiddenIndices.has(i) || pairedResults.has(i)) {
-				i += 1;
-				continue;
-			}
-
-			if (cur.type === "tool_call") {
-				// Check for a paired tool_result
-				const resultIdx = paired.get(i);
-				const resultEntry =
-					resultIdx !== undefined ? visible[resultIdx] : undefined;
-				if (resultEntry) {
-					result.push({
-						kind: "tool_card",
-						useEntry: cur,
-						resultEntry,
-					});
-					i += 1;
-					continue;
-				}
-			}
-
-			result.push({ kind: "single", entry: cur });
-			i += 1;
-		}
-
-		return result;
-	}, [visible]);
-
 	return (
 		<>
 			<div className="og-log-search-bar">
@@ -278,18 +169,13 @@ export const ActivityLog = memo(function ActivityLog({
 				/>
 			</div>
 			<div className="og-activity-log" ref={logRef} onScroll={handleScroll}>
-				{mergedVisible.map((item) =>
-					item.kind === "tool_card" ? (
-						<ToolCard
-							key={item.useEntry.id}
-							useEntry={item.useEntry}
-							resultEntry={item.resultEntry}
-							nodeMap={nodeMap}
-						/>
+				{visible.map((entry) =>
+					entry.type === "tool_pair" ? (
+						<ToolCard key={entry.id} entry={entry} nodeMap={nodeMap} />
 					) : (
 						<LogEntryView
-							key={item.entry.id}
-							entry={item.entry}
+							key={entry.id}
+							entry={entry}
 							nodeMap={nodeMap}
 							projectId={projectId}
 							rootNodeId={rootNodeId}
@@ -307,7 +193,7 @@ export const ActivityLog = memo(function ActivityLog({
 						</span>
 					</div>
 				)}
-				{mergedVisible.length === 0 && !showThinking && (
+				{visible.length === 0 && !showThinking && (
 					<div
 						style={{
 							padding: "32px 20px",
