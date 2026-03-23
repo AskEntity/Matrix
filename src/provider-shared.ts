@@ -11,7 +11,6 @@
  * Zod-to-JSON-Schema: see ./zod-schema.ts
  */
 import type { AgentRequest } from "./agent-provider.ts";
-import { formatQueueMessage } from "./task-utils.ts";
 import {
 	buildSummarizationInstruction,
 	getCompactionThresholds,
@@ -24,6 +23,7 @@ import type {
 	InternalToolResult,
 	PendingState,
 } from "./shared-types.ts";
+import { formatQueueMessage } from "./task-utils.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 
@@ -338,9 +338,7 @@ function recordQueueEvents(
  * When `_formattedQueueMessages` is set, mcpImages are user queue images
  * — they go alongside the queue text, not in the tool_result.
  */
-function collectToolResultImages(
-	exec: ToolExecResult,
-): EventImageData[] {
+function collectToolResultImages(exec: ToolExecResult): EventImageData[] {
 	const images: EventImageData[] = [];
 	if (!exec.formattedQueueMessages && exec.mcpImages?.length) {
 		for (const img of exec.mcpImages) {

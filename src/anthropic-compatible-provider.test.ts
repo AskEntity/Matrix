@@ -7,7 +7,6 @@ import type {
 	MessageParam,
 	TextBlockParam,
 } from "@anthropic-ai/sdk/resources/messages/messages";
-import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import {
 	AnthropicCompatibleProvider,
 	addMessagesCacheControl,
@@ -25,6 +24,7 @@ import {
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
+import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { attachMockSession, mockOrchestratorDeps } from "./test-utils.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
