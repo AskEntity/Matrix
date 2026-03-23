@@ -160,6 +160,60 @@ export type Event =
 	  };
 
 /**
+ * Whether emitEvent() should persist this event to JSONL.
+ *
+ * Returns false for:
+ * - Truly ephemeral events (text_delta, usage, status, etc.) — broadcast only, never persisted
+ *
+ * Returns true for all other events, which are persisted by emitEvent to JSONL.
+ * This includes provider events (assistant_text, tool_call, tool_result, compact_marker)
+ * which flow through emitEvent via the provider's emit callback.
+ *
+ * Uses an exhaustive switch — adding a new Event type without handling it here
+ * causes a compile error (default: never check).
+ */
+export function isPersistedByEmitEvent(event: Event): boolean {
+	switch (event.type) {
+		// Ephemeral — broadcast only, never persisted
+		case "text_delta":
+		case "usage":
+		case "agent_idle":
+		case "agent_active":
+		case "status":
+		case "clarification_timeout":
+			return false;
+
+		// Persisted — written to JSONL by emitEvent
+		case "message":
+		case "assistant_text":
+		case "tool_call":
+		case "tool_result":
+		case "compacted_resume":
+		case "summarization_request":
+		case "budget_warning":
+		case "compact_marker":
+		case "orchestration_started":
+		case "orchestration_completed":
+		case "task_started":
+		case "error":
+		case "budget_exceeded":
+		case "clarification_requested":
+		case "clarification_answered":
+		case "compact_started":
+		case "agent_stopped":
+		case "messages_consumed":
+			return true;
+
+		default: {
+			// Exhaustive check — TypeScript error if a new Event type is added
+			// without handling it above.
+			const _exhaustive: never = event;
+			return _exhaustive;
+		}
+	}
+}
+
+/**
  * Check if an event originated from the message queue.
  * A `message` event is a queue event if `body.source` is present and not "user".
  */
