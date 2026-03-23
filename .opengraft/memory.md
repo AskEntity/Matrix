@@ -461,9 +461,15 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Frontend fallback: `toolCallToolNames` Map in event-handler.ts maps toolCallId→tool name, populated on tool_call events, used as fallback on tool_result when tool field is empty (handles old JSONL files).
 
 
-## Serialization Boundary Audit
-- EventStore.read() now has per-line try/catch — malformed JSONL lines are skipped with console.warn instead of crashing the entire session load.
-- persistent-queue.ts: corrupt message files now log a warning (distinguishes ENOENT from actual corruption). Also validates Array.isArray on parsed result.
-- All other JSON.parse + as cast sites are safe: config.ts returns {} on error, auth.ts uses Partial<> + defaults, cli.ts has try/catch, openai provider has try/catch defaults to {}.
-- Frontend processEvent() as-casts are type-level necessities (data from our SSE), not runtime concerns — documented as known tech debt.
-- REST c.req.json<T>() is type-only (no runtime validation) but all routes manually validate required fields.
+## Serialization Boundary Hardening
+- EventStore.read() has per-line try/catch — malformed JSONL lines skipped with console.warn instead of crashing session load.
+- persistent-queue.ts: corrupt message files log warning, validate Array.isArray on parsed result.
+- Backward compat defaults in EventStore.read() for old JSONL: orchestration_started gets provider/model="unknown", budget_exceeded gets costUsd/budgetUsd=0, clarification_requested gets title from question text.
+
+## Optional Field Audit (completed)
+- `orchestration_started.provider/model`: optional → required. Old JSONL gets "unknown" default.
+- `budget_exceeded.costUsd/budgetUsd`: optional → required. Old JSONL gets 0 default.
+- `clarification_requested.title`: optional → required. Old JSONL gets question text default.
+- `HealthResponse.gitHash`, `VersionResponse.gitHash`: optional → required. GIT_HASH defaults to "unknown".
+- `task_completed.output` (UIOnlyEvent): optional → required. Always from child_complete.output.
+- Config types, function params, genuinely conditional fields (images, pending, backgroundId, etc.) kept optional.

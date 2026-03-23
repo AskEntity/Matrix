@@ -77,17 +77,29 @@ export class EventStore {
 			if (!line) continue;
 			let event: Event;
 			try {
-				event = JSON.parse(line) as Event; // Safe: always written by our code in a known format
+				event = JSON.parse(line) as Event;
 			} catch {
-				// Skip malformed JSONL lines (e.g. truncated by crash mid-write)
 				console.warn(
 					`[EventStore] Skipping malformed JSONL line in session ${sessionId}`,
 				);
 				continue;
 			}
+			const raw = event as Record<string, unknown>;
 			// Backward compat: old JSONL files may not have taskId
 			if (!("taskId" in event) || event.taskId === undefined) {
-				(event as Record<string, unknown>).taskId = sessionId;
+				raw.taskId = sessionId;
+			}
+			// Backward compat: old JSONL may be missing fields that are now required
+			if (event.type === "orchestration_started") {
+				if (!raw.provider) raw.provider = "unknown";
+				if (!raw.model) raw.model = "unknown";
+			}
+			if (event.type === "budget_exceeded") {
+				if (raw.costUsd === undefined) raw.costUsd = 0;
+				if (raw.budgetUsd === undefined) raw.budgetUsd = 0;
+			}
+			if (event.type === "clarification_requested") {
+				if (!raw.title) raw.title = (raw.question as string) ?? "";
 			}
 			events.push(event);
 		}

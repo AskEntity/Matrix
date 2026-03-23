@@ -101,9 +101,10 @@ export type Event =
 			type: "orchestration_started";
 			taskId: string;
 			resume: boolean;
+			/** @deprecated Legacy field — prompt is now delivered via queue. Present in old JSONL only. */
 			prompt?: string;
-			model?: string;
-			provider?: string;
+			model: string;
+			provider: string;
 			ts: number;
 	  }
 	| {
@@ -129,16 +130,16 @@ export type Event =
 			type: "budget_exceeded";
 			taskId: string;
 			title: string;
-			costUsd?: number;
-			budgetUsd?: number;
+			costUsd: number;
+			budgetUsd: number;
 			ts: number;
 	  }
 	| {
 			type: "clarification_requested";
 			taskId: string;
 			question: string;
-			/** Short title extracted from question (first line). */
-			title?: string;
+			/** Short title extracted from question (first line or full question). */
+			title: string;
 			/** Detailed body (remaining lines after title). */
 			body?: string;
 			ts: number;

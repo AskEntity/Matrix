@@ -68,7 +68,7 @@ export type UIOnlyEvent =
 			taskId?: string;
 			title: string;
 			success: boolean;
-			output?: string;
+			output: string;
 			ts: number;
 	  }
 	| {
