@@ -14,17 +14,8 @@ import { formatEventForAI, queueMessageToEvent } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 
-export {
-	createOrchestratorTools,
-	type LifecycleDeps,
-	type OrchestratorToolsResult,
-} from "./orchestrator-tools.ts";
-// Re-export everything from the split modules so existing imports keep working
-export {
-	buildSystemPrompt,
-	ROOT_ORCHESTRATOR_ROLE,
-	SYSTEM_PROMPT,
-} from "./system-prompts.ts";
+export { createOrchestratorTools } from "./orchestrator-tools.ts";
+export { buildSystemPrompt, SYSTEM_PROMPT } from "./system-prompts.ts";
 
 /** Named color → hex mapping for agent tools. Accepts common names and converts to hex. */
 const NAMED_COLORS: Record<string, string> = {
