@@ -548,6 +548,135 @@ describe("EventStore", () => {
 		expect(store.has("s1")).toBe(false);
 		expect(store.has("s2")).toBe(true);
 	});
+
+	// ── copySessionFrom ─────────────────────────────────────────────────
+
+	test("copySessionFrom copies all events when no compact_marker", async () => {
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "hello" },
+				taskId: "source",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "hi there",
+				taskId: "source",
+				ts: 1001,
+			},
+		];
+		await store.appendBatch("source", events);
+
+		const result = await store.copySessionFrom("source", "target");
+		expect(result.eventCount).toBe(2);
+
+		const targetEvents = store.read("target");
+		// 2 copied events + 1 fork_marker
+		expect(targetEvents).toHaveLength(3);
+		expect(targetEvents[0]?.type).toBe("message");
+		expect(targetEvents[1]?.type).toBe("assistant_text");
+		expect(targetEvents[2]?.type).toBe("fork_marker");
+		const marker = targetEvents[2] as Extract<Event, { type: "fork_marker" }>;
+		expect(marker.sourceTaskId).toBe("source");
+		expect(marker.taskId).toBe("target");
+	});
+
+	test("copySessionFrom copies only post-compact events", async () => {
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "old msg" },
+				taskId: "source",
+				ts: 1000,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "checkpoint",
+				savedTokens: 5000,
+				taskId: "source",
+				ts: 2000,
+			},
+			{
+				type: "compacted_resume",
+				content: "checkpoint",
+				taskId: "source",
+				ts: 2001,
+			},
+			{
+				type: "assistant_text",
+				content: "new response",
+				taskId: "source",
+				ts: 2002,
+			},
+		];
+		await store.appendBatch("source", events);
+
+		const result = await store.copySessionFrom("source", "target");
+		// Only events after compact_marker: compacted_resume + assistant_text
+		expect(result.eventCount).toBe(2);
+
+		const targetEvents = store.read("target");
+		expect(targetEvents).toHaveLength(3); // 2 events + fork_marker
+		expect(targetEvents[0]?.type).toBe("compacted_resume");
+		expect(targetEvents[1]?.type).toBe("assistant_text");
+		expect(targetEvents[2]?.type).toBe("fork_marker");
+	});
+
+	test("copySessionFrom errors if source has no events", async () => {
+		await expect(store.copySessionFrom("missing", "target")).rejects.toThrow(
+			'Source session "missing" has no events',
+		);
+	});
+
+	test("copySessionFrom errors if target already exists", async () => {
+		await store.append("source", {
+			type: "assistant_text",
+			content: "hello",
+			taskId: "source",
+			ts: 1000,
+		});
+		await store.append("target", {
+			type: "assistant_text",
+			content: "existing",
+			taskId: "target",
+			ts: 2000,
+		});
+
+		await expect(store.copySessionFrom("source", "target")).rejects.toThrow(
+			"already has session data",
+		);
+	});
+
+	test("copySessionFrom with empty active context still appends fork_marker", async () => {
+		// All events before compact_marker, nothing after it
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", content: "old" },
+				taskId: "source",
+				ts: 1000,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "cp",
+				savedTokens: 100,
+				taskId: "source",
+				ts: 2000,
+			},
+		];
+		await store.appendBatch("source", events);
+
+		const result = await store.copySessionFrom("source", "target");
+		expect(result.eventCount).toBe(0);
+
+		const targetEvents = store.read("target");
+		expect(targetEvents).toHaveLength(1); // just fork_marker
+		expect(targetEvents[0]?.type).toBe("fork_marker");
+	});
 });
 
 // ---------------------------------------------------------------------------

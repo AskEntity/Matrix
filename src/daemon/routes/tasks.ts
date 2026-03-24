@@ -620,4 +620,63 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 
 		return c.json({ cleared: true, taskId: nodeId });
 	});
+
+	// Fork context from a source task into this task
+	app.post("/projects/:id/tasks/:nodeId/fork", async (c) => {
+		const project = ctx.pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const tracker = await getTracker(ctx, project.id);
+		const nodeId = c.req.param("nodeId");
+		const node = tracker.get(nodeId);
+		if (!node) {
+			return c.json({ error: "Task not found" }, 404);
+		}
+
+		const body = await c.req.json<{ sourceTaskId: string }>();
+		if (!body.sourceTaskId) {
+			return c.json({ error: "sourceTaskId is required" }, 400);
+		}
+
+		const eventStore = getEventStore(ctx, project.id);
+
+		// Validate source has session data
+		if (!eventStore.has(body.sourceTaskId)) {
+			return c.json(
+				{
+					error: `Source task "${body.sourceTaskId}" has no session data to fork from.`,
+				},
+				400,
+			);
+		}
+
+		// Validate target doesn't already have session data
+		if (eventStore.has(nodeId)) {
+			return c.json(
+				{
+					error: `Target task "${nodeId}" already has session data. Clear the session first.`,
+				},
+				409,
+			);
+		}
+
+		try {
+			const result = await eventStore.copySessionFrom(
+				body.sourceTaskId,
+				nodeId,
+			);
+			const sourceNode = tracker.get(body.sourceTaskId);
+			return c.json({
+				ok: true,
+				taskId: nodeId,
+				sourceTaskId: body.sourceTaskId,
+				sourceTitle: sourceNode?.title ?? body.sourceTaskId,
+				eventCount: result.eventCount,
+			});
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 500);
+		}
+	});
 }

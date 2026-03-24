@@ -157,6 +157,13 @@ export type Event =
 			messageIds: string[];
 			taskId: string;
 			ts: number;
+	  }
+	| {
+			type: "fork_marker";
+			/** Task ID of the source session whose context was copied. */
+			sourceTaskId: string;
+			taskId: string;
+			ts: number;
 	  };
 
 /**
@@ -202,6 +209,7 @@ export function isPersistedByEmitEvent(event: Event): boolean {
 		case "compact_started":
 		case "agent_stopped":
 		case "messages_consumed":
+		case "fork_marker":
 			return true;
 
 		default: {

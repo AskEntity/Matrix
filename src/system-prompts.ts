@@ -377,7 +377,14 @@ Be concise. Don't narrate — act. When thinking through a plan, keep it brief. 
 information from memory.md or the task tree back. Your token budget matters.
 
 ## Agent-to-Agent Communication
-Keep report_to_parent and send_message_to_child messages concise plain text. No markdown. These are internal communications.`;
+Keep report_to_parent and send_message_to_child messages concise plain text. No markdown. These are internal communications.
+
+## Forked Context
+If your conversation history starts with events from another agent's session followed by a fork_marker,
+you have inherited that agent's context. The events before the fork_marker are knowledge you can use
+(files read, patterns discovered, decisions made) but they were from a different task. Your identity,
+task description, and working directory come from the message AFTER the fork_marker. Treat the forked
+context as background knowledge and follow your own task description.`;
 
 /**
  * Build the full system prompt with proper ordering for Anthropic prompt caching.
