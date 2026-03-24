@@ -1,5 +1,3 @@
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import type { Hono } from "hono";
 import { stopAgent } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
@@ -40,24 +38,7 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 		try {
 			await ctx.pm.delete(projectId);
 
-			// Clean up orphaned files on disk
-			try {
-				await rm(join(ctx.config.dataDir, "events", `${projectId}.json`), {
-					force: true,
-				});
-				await rm(join(ctx.config.dataDir, "sessions", projectId), {
-					recursive: true,
-					force: true,
-				});
-				await rm(join(ctx.config.dataDir, "projects", projectId), {
-					recursive: true,
-					force: true,
-				});
-			} catch {
-				// Files may not exist — ignore cleanup errors
-			}
-
-			// Clean up all in-memory state for this project
+			// Clean up in-memory caches (disk data preserved for re-adding)
 			ctx.trackers.delete(projectId);
 			ctx.pendingClarifications.delete(projectId);
 			ctx.eventStores.delete(projectId);
