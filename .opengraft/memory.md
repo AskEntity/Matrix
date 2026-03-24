@@ -546,3 +546,10 @@ Daemon (Hono: HTTP + SSE on :7433)
 - `prepareAgentMessage(projectPath, taskId, content, images?)` in agent-lifecycle.ts builds header (memory + working dir), generates msgId, returns `{ msg: QueueMessage, event: Event }`.
 - Used by handleOrchestrate (fresh launch) and handleInjectMessage (both fresh and resume paths).
 - The "already running" path in handleOrchestrate intentionally skips the header — agent already has context.
+
+## Mobile Settings Access
+- Settings gear button in header has class `og-settings-toggle-btn` for reliable CSS targeting.
+- CSS mobile selector uses class-based `:not(.og-settings-toggle-btn)` instead of attribute selectors `[title="Settings"]` — attribute selectors break with i18n (actual value is "Project settings" in English, "项目设置" in Chinese).
+- Sidebar has a settings gear button (`og-sidebar-settings-btn`) that is `display: none` on desktop and shown on mobile via double-class selector `.og-sidebar-settings-btn.og-sidebar-settings-btn { display: flex }`.
+- Delete project button moved from AppHeader to SettingsPanel danger zone section.
+
