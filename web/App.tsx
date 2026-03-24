@@ -1076,7 +1076,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								)}
 								<button
 									type="button"
-									className="og-btn-icon"
+									className="og-btn-icon og-fullscreen-btn"
 									onClick={() => setFullscreen((f) => !f)}
 									title={
 										fullscreen

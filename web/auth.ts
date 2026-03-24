@@ -5,7 +5,7 @@
  * SSE EventSource passes token as query param (can't set custom headers).
  */
 
-const TOKEN_KEY = "og_jwt";
+const TOKEN_KEY = "og-jwt";
 
 /** Store the JWT token after successful authentication. */
 export function setToken(token: string): void {

@@ -553,3 +553,8 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Sidebar has a settings gear button (`og-sidebar-settings-btn`) that is `display: none` on desktop and shown on mobile via double-class selector `.og-sidebar-settings-btn.og-sidebar-settings-btn { display: flex }`.
 - Delete project button moved from AppHeader to SettingsPanel danger zone section.
 
+
+## localStorage Key Convention
+- All localStorage keys use hyphen prefix: `og-` (e.g., `og-jwt`, `og-theme`, `og-detail-collapsed`, `og-prompt-draft`, `og-locale`).
+- The old `og_jwt` (underscore) key was renamed to `og-jwt` — existing users will need to re-authenticate.
+- Desktop sidebar has no collapse state — it is always visible. Only mobile has a slide-in overlay (`sidebarOpen` state), which is transient and not persisted.
