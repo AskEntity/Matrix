@@ -637,6 +637,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setCreatingProject,
 				setNewProjectPath,
 				setShowAddProject,
+				setShowSettings,
 				setIsCreatingTask,
 				start,
 				stop,

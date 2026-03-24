@@ -1,8 +1,9 @@
 import type React from "react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconImage, IconSend } from "./icons.tsx";
+import { SLASH_COMMANDS, SlashCommandMenu } from "./SlashCommandMenu.tsx";
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
@@ -31,6 +32,36 @@ export const InputBar = memo(function InputBar({
 	const [attachedImages, setAttachedImages] = useState<
 		{ base64: string; mediaType: string }[]
 	>([]);
+
+	// Slash command autocomplete state
+	const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+	const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
+
+	// Compute filtered commands from prompt
+	const slashFilteredCommands = useMemo(() => {
+		if (!prompt.startsWith("/")) return [];
+		const filter = prompt.slice(1).toLowerCase();
+		return SLASH_COMMANDS.filter((cmd) => cmd.name.startsWith(filter));
+	}, [prompt]);
+
+	// Open/close menu based on prompt
+	useEffect(() => {
+		if (!prompt.startsWith("/") || slashFilteredCommands.length === 0) {
+			setSlashMenuOpen(false);
+			return;
+		}
+		// Don't show menu if prompt exactly matches a command (user already selected)
+		const filter = prompt.slice(1).toLowerCase();
+		const isExactMatch =
+			slashFilteredCommands.length === 1 &&
+			slashFilteredCommands[0]?.name === filter;
+		if (isExactMatch) {
+			setSlashMenuOpen(false);
+		} else {
+			setSlashMenuOpen(true);
+			setSlashSelectedIndex(0);
+		}
+	}, [prompt, slashFilteredCommands]);
 
 	// localStorage draft save with 2s debounce
 	useEffect(() => {
@@ -79,6 +110,12 @@ export const InputBar = memo(function InputBar({
 		reader.readAsDataURL(file);
 	}
 
+	const handleSlashSelect = useCallback((cmd: { name: string }) => {
+		setPrompt(`/${cmd.name}`);
+		setSlashMenuOpen(false);
+		textareaRef.current?.focus();
+	}, []);
+
 	const handleSubmit = useCallback(
 		(e: React.FormEvent | React.KeyboardEvent) => {
 			e.preventDefault();
@@ -120,6 +157,14 @@ export const InputBar = memo(function InputBar({
 					))}
 				</div>
 			)}
+			{/* Slash command menu — positioned above the form */}
+			{slashMenuOpen && (
+				<SlashCommandMenu
+					commands={slashFilteredCommands}
+					selectedIndex={slashSelectedIndex}
+					onSelect={handleSlashSelect}
+				/>
+			)}
 			<textarea
 				ref={textareaRef}
 				className="og-prompt-input"
@@ -129,6 +174,7 @@ export const InputBar = memo(function InputBar({
 					setPrompt(e.target.value);
 					adjustTextareaHeight();
 				}}
+				onBlur={() => setSlashMenuOpen(false)}
 				onPaste={(e) => {
 					const items = e.clipboardData?.items;
 					if (!items) return;
@@ -149,6 +195,35 @@ export const InputBar = memo(function InputBar({
 					}, 0);
 				}}
 				onKeyDown={(e) => {
+					// Slash menu keyboard navigation
+					if (slashMenuOpen && slashFilteredCommands.length > 0) {
+						if (e.key === "ArrowUp") {
+							e.preventDefault();
+							setSlashSelectedIndex((prev) =>
+								prev <= 0 ? slashFilteredCommands.length - 1 : prev - 1,
+							);
+							return;
+						}
+						if (e.key === "ArrowDown") {
+							e.preventDefault();
+							setSlashSelectedIndex((prev) =>
+								prev >= slashFilteredCommands.length - 1 ? 0 : prev + 1,
+							);
+							return;
+						}
+						if (e.key === "Enter" && !e.shiftKey) {
+							e.preventDefault();
+							const cmd = slashFilteredCommands[slashSelectedIndex];
+							if (cmd) handleSlashSelect(cmd);
+							return;
+						}
+						if (e.key === "Escape") {
+							e.preventDefault();
+							setSlashMenuOpen(false);
+							return;
+						}
+					}
+
 					if (
 						e.key === "Enter" &&
 						!e.shiftKey &&

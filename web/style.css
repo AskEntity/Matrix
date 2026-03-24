@@ -2232,6 +2232,7 @@ button.og-tool-card-header:hover {
 	flex-wrap: wrap;
 	align-items: flex-end;
 	gap: 8px;
+	position: relative;
 }
 
 /* On mobile, vertically center input row and tighten gap */
@@ -2345,6 +2346,60 @@ button.og-tool-card-header:hover {
 	align-items: center;
 	gap: 6px;
 	flex-shrink: 0;
+}
+
+/* Slash command autocomplete menu */
+.og-slash-menu {
+	position: absolute;
+	bottom: 100%;
+	left: 0;
+	right: 0;
+	margin-bottom: 4px;
+	background: var(--bg-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+	max-height: 200px;
+	overflow-y: auto;
+	z-index: 100;
+	padding: 4px;
+}
+
+.og-slash-menu-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+	padding: 8px 10px;
+	border: none;
+	background: transparent;
+	color: var(--text-primary);
+	font-size: 13px;
+	font-family: inherit;
+	cursor: pointer;
+	border-radius: var(--radius);
+	text-align: left;
+	transition: background var(--t-fast);
+}
+
+.og-slash-menu-item:hover {
+	background: var(--bg-overlay);
+}
+
+.og-slash-menu-item-selected {
+	background: var(--accent-muted);
+}
+
+.og-slash-menu-name {
+	font-weight: 600;
+	font-family: var(--font-mono);
+	color: var(--accent);
+	flex-shrink: 0;
+}
+
+.og-slash-menu-desc {
+	color: var(--text-secondary);
+	font-size: 12px;
 }
 
 /* Token usage badge */

@@ -52,6 +52,7 @@ interface ActionHandlerDeps {
 	setCreatingProject: React.Dispatch<React.SetStateAction<boolean>>;
 	setNewProjectPath: React.Dispatch<React.SetStateAction<string>>;
 	setShowAddProject: React.Dispatch<React.SetStateAction<boolean>>;
+	setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
 	setIsCreatingTask: React.Dispatch<React.SetStateAction<boolean>>;
 
 	start: (opts: { prompt: string }) => Promise<void>;
@@ -98,6 +99,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		setCreatingProject,
 		setNewProjectPath,
 		setShowAddProject,
+		setShowSettings,
 		setIsCreatingTask,
 		start,
 		stop,
@@ -118,6 +120,19 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		if (cmd === "/compact") {
 			try {
 				await compact();
+			} catch (err) {
+				addLog({
+					type: "error",
+					message: (err as Error).message,
+					taskId: "",
+					ts: Date.now(),
+				});
+			}
+			return true;
+		}
+		if (cmd === "/stop") {
+			try {
+				await stop();
 			} catch (err) {
 				addLog({
 					type: "error",
@@ -149,6 +164,10 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 					ts: Date.now(),
 				});
 			}
+			return true;
+		}
+		if (cmd === "/settings") {
+			setShowSettings(true);
 			return true;
 		}
 		return false;
