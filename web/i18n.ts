@@ -183,6 +183,10 @@ const en: Translations = {
 	"settings.mcpServerCommand": "Command",
 	"settings.mcpServerArgs": "Args (space-separated)",
 	"settings.inherited": "inherited",
+	"settings.dangerZone": "Danger Zone",
+	"settings.removeProject": "Remove Project",
+	"settings.removeProjectDescription":
+		"Remove this project from OpenGraft. This does not delete any files on disk.",
 
 	// Footer
 	"footer.sendMessage": "Send a message…",
@@ -457,6 +461,10 @@ const zh: Translations = {
 	"settings.mcpServerCommand": "命令",
 	"settings.mcpServerArgs": "参数（空格分隔）",
 	"settings.inherited": "继承",
+	"settings.dangerZone": "危险操作",
+	"settings.removeProject": "移除项目",
+	"settings.removeProjectDescription":
+		"从 OpenGraft 中移除此项目。这不会删除磁盘上的任何文件。",
 
 	// Footer
 	"footer.sendMessage": "发送消息…",
