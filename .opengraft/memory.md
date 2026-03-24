@@ -553,3 +553,10 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Sidebar has a settings gear button (`og-sidebar-settings-btn`) that is `display: none` on desktop and shown on mobile via double-class selector `.og-sidebar-settings-btn.og-sidebar-settings-btn { display: flex }`.
 - Delete project button moved from AppHeader to SettingsPanel danger zone section.
 
+
+## Slash Command Autocomplete
+- SlashCommandMenu.tsx: defines SLASH_COMMANDS array and dropdown component. Commands are pure data (name + description).
+- InputBar.tsx: manages slashMenuOpen, slashSelectedIndex state. Uses useMemo for filtered commands. Menu items use mousedown (not click) with e.preventDefault() to fire before textarea blur.
+- handlers.ts handleSlashCommand: routes /compact, /stop, /clear, /settings. Returns true if handled, preventing normal send.
+- Exact match suppression: when prompt exactly matches a single command (e.g. "/compact"), menu auto-closes to avoid reopening after selection.
+
