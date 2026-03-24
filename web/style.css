@@ -3556,6 +3556,11 @@ button.og-tool-card-header:hover {
 	.og-footer-controls .og-select {
 		display: none;
 	}
+
+	/* Hide fullscreen toggle on mobile (layout is already full-screen) */
+	.og-fullscreen-btn {
+		display: none;
+	}
 }
 
 /* Hamburger button: hidden on desktop, shown on mobile via above rule */
