@@ -121,6 +121,18 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
+	if (entry.type === "fork_marker") {
+		return (
+			<div className="og-compact-boundary">
+				<div className="og-compact-bar">
+					<span className="og-compact-label">
+						⑂ Forked from {entry.sourceTaskId}
+					</span>
+				</div>
+			</div>
+		);
+	}
+
 	// Standalone tool_use (not merged with result) — show as a card
 	if (entry.type === "tool_call") {
 		const toolName = getToolName(entry);

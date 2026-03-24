@@ -158,6 +158,54 @@ export class EventStore {
 		};
 	}
 
+	/**
+	 * Copy events from a source session to a target session, then append a fork_marker.
+	 * Only copies events after the last compact_marker (active context) from the source.
+	 * Target must NOT already have a session file — call has() first to check.
+	 * Returns the number of events copied (excluding the fork_marker).
+	 */
+	async copySessionFrom(
+		sourceId: string,
+		targetId: string,
+	): Promise<{ eventCount: number }> {
+		const sourcePath = this.path(sourceId);
+		const targetPath = this.path(targetId);
+
+		if (!existsSync(sourcePath)) {
+			throw new Error(`Source session "${sourceId}" has no events`);
+		}
+		if (existsSync(targetPath)) {
+			throw new Error(
+				`Target session "${targetId}" already has session data. Use reset_task first to clear it.`,
+			);
+		}
+
+		// Read source events, find last compact_marker to only copy active context
+		const allEvents = this.read(sourceId);
+		const lastMarker = allEvents.findLastIndex(
+			(e) => e.type === "compact_marker",
+		);
+		const activeEvents =
+			lastMarker === -1 ? allEvents : allEvents.slice(lastMarker + 1);
+
+		// Write active events to target
+		if (activeEvents.length > 0) {
+			const lines = `${activeEvents.map((e) => JSON.stringify(e)).join("\n")}\n`;
+			await appendFile(targetPath, lines);
+		}
+
+		// Append fork_marker
+		const forkMarker: Event = {
+			type: "fork_marker",
+			sourceTaskId: sourceId,
+			taskId: targetId,
+			ts: Date.now(),
+		};
+		await appendFile(targetPath, `${JSON.stringify(forkMarker)}\n`);
+
+		return { eventCount: activeEvents.length };
+	}
+
 	/** Clear all events for a session */
 	clear(sessionId: string): void {
 		const p = this.path(sessionId);

@@ -190,6 +190,8 @@ export function formatMcpToolResult(
 			return t("log.clarifyAsked");
 		case "yield":
 			return t("log.yieldReceived");
+		case "fork_task_context":
+			return content.startsWith("Error") ? null : "⑂ Context forked";
 		default:
 			return null;
 	}
@@ -408,6 +410,16 @@ export function getToolCardTitle(
 			}
 			return "? Clarify";
 		}
+		case "mcp__opengraft__fork_task_context": {
+			const sourceId = getArg(toolArgs, "sourceTaskId");
+			const targetId = getArg(toolArgs, "targetTaskId");
+			if (sourceId && targetId) {
+				const sourceTitle = nodeMap?.get(sourceId)?.title ?? sourceId;
+				const targetTitle = nodeMap?.get(targetId)?.title ?? targetId;
+				return `⑂ Fork: ${sourceTitle} → ${targetTitle}`;
+			}
+			return "⑂ Fork Context";
+		}
 		default:
 			return toolName;
 	}
@@ -426,6 +438,7 @@ export function isTitleOnlyCard(
 		case "mcp__opengraft__reset_task":
 		case "mcp__opengraft__reorder_tasks":
 		case "mcp__opengraft__list_projects":
+		case "mcp__opengraft__fork_task_context":
 			return true;
 		case "mcp__opengraft__update_task": {
 			// Expandable when surgical edit (old_description/new_description) is used

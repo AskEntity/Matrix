@@ -282,6 +282,7 @@ export function walkEventsToMessages(
 			}
 
 			case "compact_marker":
+			case "fork_marker":
 				i++;
 				break;
 

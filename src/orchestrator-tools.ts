@@ -65,6 +65,13 @@ export interface OrchestratorToolsDeps {
 	broadcastTree: () => void;
 	/** Clear event store JSONL for a session/task. */
 	clearEventStore: (sessionId: string) => void;
+	/** Check if a session has JSONL events. */
+	hasEventStore: (sessionId: string) => boolean;
+	/** Copy session events from source to target, appending a fork_marker. Returns event count. */
+	copySessionFrom: (
+		sourceId: string,
+		targetId: string,
+	) => Promise<{ eventCount: number }>;
 	/** Data directory for persisted messages. Undefined if not configured. */
 	dataDir?: string;
 	/** Get clarify timeout from config. */
@@ -1419,6 +1426,112 @@ export function createOrchestratorTools(
 							{
 								type: "text" as const,
 								text: `Error sending message: ${message}`,
+							},
+						],
+						isError: true,
+					};
+				}
+			},
+		),
+
+		tool(
+			"fork_task_context",
+			"Copy another agent's conversation context into a target task's session. " +
+				"The target task starts with the source's full conversation history but has its own identity. " +
+				"Use this to give a new task the knowledge of a previous agent (files read, patterns discovered, etc.) " +
+				"without cold-starting. After forking, use send_message_to_child to start the target agent.",
+			{
+				sourceTaskId: z
+					.string()
+					.describe(
+						"ID of the task whose session context to copy. Must have an existing JSONL session.",
+					),
+				targetTaskId: z
+					.string()
+					.describe(
+						"ID of the task to receive the forked context. Must NOT have an existing session.",
+					),
+			},
+			async (args) => {
+				// Validate source exists and has session data
+				if (!deps.hasEventStore(args.sourceTaskId)) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: Source task "${args.sourceTaskId}" has no session data to fork from.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				// Validate target exists
+				const targetNode = tracker.get(args.targetTaskId);
+				if (!targetNode) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: Target task "${args.targetTaskId}" not found.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				// Validate target doesn't already have session data
+				if (deps.hasEventStore(args.targetTaskId)) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: Target task "${args.targetTaskId}" already has session data. Use reset_task first to clear it.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				// Scope validation: agent can only fork into tasks it can manage
+				if (
+					currentTaskId !== null &&
+					args.targetTaskId !== currentTaskId &&
+					!isDescendantOf(tracker, args.targetTaskId, currentTaskId)
+				) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: Target task "${args.targetTaskId}" is not your task or descendant.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				try {
+					const result = await deps.copySessionFrom(
+						args.sourceTaskId,
+						args.targetTaskId,
+					);
+					const sourceNode = tracker.get(args.sourceTaskId);
+					const sourceTitle = sourceNode?.title ?? args.sourceTaskId;
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Forked context from "${sourceTitle}" (${args.sourceTaskId}) → "${targetNode.title}" (${args.targetTaskId}). Copied ${result.eventCount} events. Use send_message_to_child to start the target agent.`,
+							},
+						],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error forking context: ${message}`,
 							},
 						],
 						isError: true,

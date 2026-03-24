@@ -564,3 +564,14 @@ Daemon (Hono: HTTP + SSE on :7433)
 - InputBar.tsx: manages slashMenuOpen, slashSelectedIndex state. Uses useMemo for filtered commands. Menu items use mousedown (not click) with e.preventDefault() to fire before textarea blur.
 - handlers.ts handleSlashCommand: routes /compact, /stop, /clear, /settings. Returns true if handled, preventing normal send.
 - Exact match suppression: when prompt exactly matches a single command (e.g. "/compact"), menu auto-closes to avoid reopening after selection.
+
+
+## Fork Task Context Feature
+- `fork_marker` Event type: `{ type: "fork_marker", sourceTaskId, taskId, ts }`. Persisted to JSONL.
+- `EventStore.copySessionFrom(sourceId, targetId)`: copies post-compact events from source to target, appends fork_marker. Target must not already have a session file.
+- `fork_task_context` MCP tool in orchestrator-tools.ts: validates source has session, target has no session, target is descendant. Returns event count.
+- `POST /projects/:id/tasks/:nodeId/fork` REST endpoint: same validation, body `{ sourceTaskId }`.
+- `OrchestratorToolsDeps` extended with `hasEventStore` and `copySessionFrom` callbacks.
+- Event converter: fork_marker treated as transparent pass-through (like compact_marker).
+- System prompt: paragraph about forked context added at end of SYSTEM_PROMPT.
+- Frontend: fork_marker rendered as "⑂ Forked from {sourceTaskId}" bar in activity log (reuses compact boundary styles). Tool card title: "⑂ Fork: source → target".

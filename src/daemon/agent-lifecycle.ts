@@ -148,6 +148,10 @@ async function createAgentContext(
 			broadcastTree: () => broadcastTreeUpdate(ctx, project.id, opts.tracker),
 			clearEventStore: (sessionId) =>
 				getEventStore(ctx, project.id).clear(sessionId),
+			hasEventStore: (sessionId) =>
+				getEventStore(ctx, project.id).has(sessionId),
+			copySessionFrom: (sourceId, targetId) =>
+				getEventStore(ctx, project.id).copySessionFrom(sourceId, targetId),
 			dataDir: ctx.config.dataDir,
 			getClarifyTimeoutMs: () => ctx.globalConfig?.clarifyTimeoutMs,
 			getDefaultBudgetUsd: () => ctx.globalConfig?.budgetUsd,

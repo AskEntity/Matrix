@@ -3593,6 +3593,7 @@ describe("isPersistedByEmitEvent", () => {
 			"compact_started",
 			"agent_stopped",
 			"messages_consumed",
+			"fork_marker",
 		];
 		for (const type of persistedTypes) {
 			const event = { type, taskId: "test", ts: 1000 } as Event;
