@@ -558,3 +558,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - All localStorage keys use hyphen prefix: `og-` (e.g., `og-jwt`, `og-theme`, `og-detail-collapsed`, `og-prompt-draft`, `og-locale`).
 - The old `og_jwt` (underscore) key was renamed to `og-jwt` — existing users will need to re-authenticate.
 - Desktop sidebar has no collapse state — it is always visible. Only mobile has a slide-in overlay (`sidebarOpen` state), which is transient and not persisted.
+
+## Slash Command Autocomplete
+- SlashCommandMenu.tsx: defines SLASH_COMMANDS array and dropdown component. Commands are pure data (name + description).
+- InputBar.tsx: manages slashMenuOpen, slashSelectedIndex state. Uses useMemo for filtered commands. Menu items use mousedown (not click) with e.preventDefault() to fire before textarea blur.
+- handlers.ts handleSlashCommand: routes /compact, /stop, /clear, /settings. Returns true if handled, preventing normal send.
+- Exact match suppression: when prompt exactly matches a single command (e.g. "/compact"), menu auto-closes to avoid reopening after selection.
