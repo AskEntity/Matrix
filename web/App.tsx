@@ -12,6 +12,7 @@ import {
 	IconBack,
 	IconChevron,
 	IconExpand,
+	IconGear,
 	IconHexagon,
 	IconMinimize,
 	IconPlus,
@@ -811,7 +812,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				showSettings={showSettings}
 				theme={theme}
 				onProjectChange={handleProjectChange}
-				onDeleteProject={handleDeleteProject}
 				onShowAddProject={handleShowAddProject}
 				onAddProject={handleAddProject}
 				onNewProjectPathChange={setNewProjectPath}
@@ -831,6 +831,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					updateRepo={updateRepo}
 					updateLocal={updateLocal}
 					onClose={() => setShowSettings(false)}
+					onDeleteProject={handleDeleteProject}
 					onRestart={async () => {
 						try {
 							await authFetch("/restart-daemon", { method: "POST" });
@@ -895,6 +896,19 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 							>
 								<IconRefresh size={13} />
 							</button>
+							{projectId && (
+								<button
+									type="button"
+									className="og-btn-icon og-sidebar-settings-btn"
+									onClick={() => {
+										setSidebarOpen(false);
+										handleToggleSettings();
+									}}
+									data-tip={t("project.settings")}
+								>
+									<IconGear size={13} />
+								</button>
+							)}
 						</div>
 					</div>
 					<TaskTree

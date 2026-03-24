@@ -9,7 +9,6 @@ import {
 	IconHexagon,
 	IconLogout,
 	IconPlus,
-	IconTrash,
 } from "./icons.tsx";
 
 export const AppHeader = memo(function AppHeader({
@@ -22,7 +21,6 @@ export const AppHeader = memo(function AppHeader({
 	showSettings,
 	theme,
 	onProjectChange,
-	onDeleteProject,
 	onShowAddProject,
 	onAddProject,
 	onNewProjectPathChange,
@@ -41,7 +39,6 @@ export const AppHeader = memo(function AppHeader({
 	showSettings: boolean;
 	theme: string;
 	onProjectChange: (id: string) => void;
-	onDeleteProject: () => void;
 	onShowAddProject: () => void;
 	onAddProject: (e: React.FormEvent) => void;
 	onNewProjectPathChange: (path: string) => void;
@@ -191,16 +188,6 @@ export const AppHeader = memo(function AppHeader({
 								{t("project.noProjects")}
 							</span>
 						)}
-						{projectId && (
-							<button
-								type="button"
-								className="og-btn-icon"
-								title={t("project.remove")}
-								onClick={onDeleteProject}
-							>
-								<IconTrash size={13} />
-							</button>
-						)}
 						<button
 							type="button"
 							className="og-btn-icon"
@@ -214,7 +201,7 @@ export const AppHeader = memo(function AppHeader({
 				{projectId && (
 					<button
 						type="button"
-						className={`og-btn-icon${showSettings ? " active" : ""}`}
+						className={`og-btn-icon og-settings-toggle-btn${showSettings ? " active" : ""}`}
 						title={t("project.settings")}
 						aria-label={t("project.settings")}
 						onClick={onToggleSettings}

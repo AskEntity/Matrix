@@ -3228,6 +3228,31 @@ button.og-tool-card-header:hover {
 	margin-top: 4px;
 }
 
+/* Settings: Danger Zone */
+.og-settings-danger-zone {
+	margin-top: 16px;
+	padding: 12px;
+	border: 1px solid var(--color-failed);
+	border-radius: var(--radius-md);
+	background: rgba(239, 68, 68, 0.06);
+}
+
+.og-settings-danger-zone .og-settings-section-title {
+	color: var(--color-failed);
+}
+
+.og-settings-danger-description {
+	font-size: 11px;
+	color: var(--text-muted);
+	margin: 4px 0 10px;
+	line-height: 1.4;
+}
+
+/* Sidebar settings button: hidden on desktop, shown on mobile */
+.og-sidebar-settings-btn {
+	display: none;
+}
+
 /* =========================================================
    Conversation History
    ========================================================= */
@@ -3429,9 +3454,7 @@ button.og-tool-card-header:hover {
 
 	.og-header-right .og-select,
 	.og-header-right
-		.og-btn-icon:not(.og-hamburger-btn):not([aria-label="Settings"]):not(
-			[title="Settings"]
-		) {
+		.og-btn-icon:not(.og-hamburger-btn):not(.og-settings-toggle-btn) {
 		display: none;
 	}
 
@@ -3521,6 +3544,11 @@ button.og-tool-card-header:hover {
 
 	/* Hamburger button */
 	.og-hamburger-btn.og-hamburger-btn {
+		display: flex;
+	}
+
+	/* Show settings button in sidebar on mobile */
+	.og-sidebar-settings-btn.og-sidebar-settings-btn {
 		display: flex;
 	}
 
