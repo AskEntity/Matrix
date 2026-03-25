@@ -587,3 +587,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 - QueueMessage source types unchanged (child_complete, child_report, parent_update remain internal identifiers).
 - system-prompts.ts uses ownership framing: agents "own" tasks. "sub task" for downward, "the task above" for upward.
 - Section renames: "Parent Messages" → "Incoming Messages", "Communication with Parent" → "Communicating Up", "Parent Handling of Child Results" → "Handling Sub Task Results".
+
+
+## Frontend + Test Updates for send_message Unification
+- i18n: `send_message_to_child` + `report_to_parent` keys merged into single `send_message` key.
+- utils.ts/McpToolCard.tsx: new `send_message` cases added alongside backward compat for old `send_message_to_child`/`report_to_parent` JSONL names.
+- Test XML tag expectations: `<child_complete>` → `<task_complete>`, `<child_report>` → `<task_message>`, `<parent_update>` → `<task_message>`, `Running children` → `Running sub tasks`.
+- Internal QueueMessage source types (`child_complete`, `child_report`, `parent_update`) are UNCHANGED — only the agent-facing XML tags and tool names changed.
+- Frontend UIOnlyEvent types (`parent_update`, `child_report`, etc.) are unchanged — these are UI rendering types, not agent-facing.

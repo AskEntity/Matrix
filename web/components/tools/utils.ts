@@ -164,9 +164,10 @@ export function formatMcpToolResult(
 			}
 			return null;
 		}
-		case "send_message_to_child":
+		case "send_message_to_child": // backward compat (old JSONL)
+		case "send_message":
 			return t("log.messageSent");
-		case "report_to_parent":
+		case "report_to_parent": // backward compat (old JSONL)
 			return t("log.reportSent");
 		case "close_task": {
 			if (json && typeof json.title === "string") {
@@ -359,13 +360,14 @@ export function getToolCardTitle(
 			}
 			return "Task Updated";
 		}
+		case "mcp__opengraft__send_message":
 		case "mcp__opengraft__send_message_to_child": {
 			const taskId = getArg(toolArgs, "taskId");
 			if (taskId) {
 				const title = nodeMap?.get(taskId)?.title;
-				return `→ Message Child: ${title ?? taskId}`;
+				return `→ Message: ${title ?? taskId}`;
 			}
-			return "→ Message Child";
+			return "→ Send Message";
 		}
 		case "mcp__opengraft__close_task": {
 			const taskId = getArg(toolArgs, "taskId");
@@ -392,12 +394,13 @@ export function getToolCardTitle(
 			return projectId ? `→ Cross-project: ${projectId}` : "→ Cross-project";
 		}
 		case "mcp__opengraft__report_to_parent": {
+			// backward compat for old JSONL events
 			const title = getArg(toolArgs, "title");
 			if (title) {
 				const display = title.length > 60 ? `${title.slice(0, 60)}…` : title;
 				return `← ${display}`;
 			}
-			return "← Report to Parent";
+			return "← Report";
 		}
 		case "mcp__opengraft__clarify": {
 			const question = getArg(toolArgs, "question");
@@ -447,7 +450,7 @@ export function isTitleOnlyCard(
 			return !(oldDesc != null && newDesc != null);
 		}
 		case "mcp__opengraft__report_to_parent": {
-			// Always expandable — title is in header, message is in body
+			// backward compat for old JSONL events
 			const msg = getArg(toolArgs, "message");
 			return !msg;
 		}
