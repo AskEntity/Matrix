@@ -344,6 +344,10 @@ export async function writeOrphanedToolResults(
 	for (let i = events.length - 1; i >= 0; i--) {
 		const event = events[i] as Event;
 		if (event.type === "tool_call") {
+			// Skip yield tool_calls — handled by provider loop's loop-level pause
+			if (event.tool === "mcp__opengraft__yield") {
+				continue;
+			}
 			orphanedToolCallIds.push({
 				toolCallId: event.toolCallId,
 				tool: event.tool,
