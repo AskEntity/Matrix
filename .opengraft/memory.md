@@ -248,3 +248,7 @@ VitePress docs at og-docs project. Build with npm (not bun — hangs due to vuej
 
 This applies to: `tool_result.content`, `tool_call.input`, `message.body`, `assistant_text.text` — anything in JSONL that gets reconstructed into API messages via `walkEventsToMessages`.
 
+
+## Compact During Yield Bug
+
+The compactOnly path in provider-shared.ts (explicit yield block) was clearing `pendingYieldToolCall` without emitting a `tool_result` event to JSONL. The end-of-turn implicit yield path does NOT have this issue because there is no `pendingYieldToolCall` — that path handles agent end_turn (no tool calls), not yield tool_use.
