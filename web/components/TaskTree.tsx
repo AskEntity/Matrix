@@ -98,7 +98,9 @@ export const TaskTree = memo(function TaskTree({
 	}, []);
 
 	const [taskFilter, setTaskFilter] = useState("");
-	const [hideCompleted, setHideCompleted] = useState(false);
+	const [hideCompleted, setHideCompleted] = useState(
+		() => localStorage.getItem("og-hide-closed") === "true",
+	);
 
 	/** Set of node IDs that should be hidden because they (or an ancestor) are completed */
 	const completedIds = useMemo((): Set<string> | null => {
@@ -333,7 +335,13 @@ export const TaskTree = memo(function TaskTree({
 				<button
 					type="button"
 					className={`og-hide-completed-btn${hideCompleted ? " active" : ""}`}
-					onClick={() => setHideCompleted((v) => !v)}
+					onClick={() =>
+						setHideCompleted((v) => {
+							const next = !v;
+							localStorage.setItem("og-hide-closed", String(next));
+							return next;
+						})
+					}
 					title={t("tasks.hideCompleted")}
 				>
 					<IconEyeOff size={12} />
