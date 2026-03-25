@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
@@ -3257,119 +3257,6 @@ describe("GET /projects/:id/clarifications", () => {
 		// Initially empty — no clarifications fired yet
 		expect(body.clarifications).toBeInstanceOf(Array);
 		expect(body.clarifications.length).toBe(0);
-	});
-});
-
-describe("autoResumeProjects — auto-prune old sessions", () => {
-	let tempDir: string;
-	let dataDir: string;
-	let projectId: string;
-
-	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-autoresume-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-autoresume-data-"));
-
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		await result.pm.load();
-
-		const res = await result.app.request("/projects", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ path: tempDir }),
-		});
-		const project = (await res.json()) as { id: string };
-		projectId = project.id;
-	});
-
-	afterEach(async () => {
-		await rm(tempDir, { recursive: true });
-		await rm(dataDir, { recursive: true });
-	});
-
-	test("prunes old sessions keeping sessionKeep most recent on startup", async () => {
-		const sessionsDir = join(dataDir, "sessions", projectId);
-		await mkdir(sessionsDir, { recursive: true });
-
-		// Create 8 event JSONL files one by one with small delays to ensure distinct mtimes
-		for (let i = 0; i < 8; i++) {
-			await writeFile(
-				join(sessionsDir, `session-${i}.events.jsonl`),
-				`{"i":${i}}`,
-			);
-			await new Promise((r) => setTimeout(r, 5));
-		}
-
-		// session-7 is newest, session-0 is oldest
-		// sessionKeep=3 → keep session-5, session-6, session-7; delete session-0..4
-		const result = createApp({
-			dataDir,
-			agentProvider: mockProvider,
-			initialConfig: { sessionKeep: 3 },
-		});
-		await result.pm.load();
-		await result.autoResumeProjects();
-
-		const remaining = await readdir(sessionsDir);
-		const jsonlFiles = remaining.filter((f) => f.endsWith(".events.jsonl"));
-		expect(jsonlFiles.length).toBe(3);
-	});
-
-	test("does not prune when session count is within limit", async () => {
-		const sessionsDir = join(dataDir, "sessions", projectId);
-		await mkdir(sessionsDir, { recursive: true });
-
-		for (let i = 0; i < 3; i++) {
-			await writeFile(
-				join(sessionsDir, `session-${i}.events.jsonl`),
-				`{"i":${i}}`,
-			);
-		}
-
-		const result = createApp({
-			dataDir,
-			agentProvider: mockProvider,
-			initialConfig: { sessionKeep: 5 },
-		});
-		await result.pm.load();
-		await result.autoResumeProjects();
-
-		const remaining = await readdir(sessionsDir);
-		const jsonlFiles = remaining.filter((f) => f.endsWith(".events.jsonl"));
-		expect(jsonlFiles.length).toBe(3);
-	});
-
-	test("defaults to keeping 5 sessions when sessionKeep not set", async () => {
-		const sessionsDir = join(dataDir, "sessions", projectId);
-		await mkdir(sessionsDir, { recursive: true });
-
-		for (let i = 0; i < 9; i++) {
-			await writeFile(
-				join(sessionsDir, `session-${i}.events.jsonl`),
-				`{"i":${i}}`,
-			);
-			await new Promise((r) => setTimeout(r, 5));
-		}
-
-		// No initialConfig.sessionKeep → defaults to 5
-		const result = createApp({ dataDir, agentProvider: mockProvider });
-		await result.pm.load();
-		await result.autoResumeProjects();
-
-		const remaining = await readdir(sessionsDir);
-		const jsonlFiles = remaining.filter((f) => f.endsWith(".events.jsonl"));
-		expect(jsonlFiles.length).toBe(5);
-	});
-
-	test("does not fail when sessions directory does not exist", async () => {
-		// No sessionsDir created — should be a no-op
-		const result = createApp({
-			dataDir,
-			agentProvider: mockProvider,
-			initialConfig: { sessionKeep: 5 },
-		});
-		await result.pm.load();
-		// Should not throw
-		await result.autoResumeProjects();
 	});
 });
 

@@ -16,7 +16,6 @@ import type {
 import {
 	getEventStore,
 	getTracker,
-	pruneSessionFiles,
 	readProjectMemory,
 } from "./daemon/helpers.ts";
 import { registerAgentRoutes } from "./daemon/routes/agent.ts";
@@ -235,17 +234,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	/** Auto-resume orchestrations that were running before daemon restart. */
 	async function autoResumeProjects(): Promise<void> {
-		const sessionKeep = ctx.globalConfig.sessionKeep ?? 5;
 		const projects = ctx.pm.list();
 		for (const project of projects) {
-			// Auto-prune old session files to prevent unbounded disk growth
-			const result = await pruneSessionFiles(ctx, project.id, sessionKeep);
-			if (result.pruned > 0) {
-				console.log(
-					`Auto-pruned ${result.pruned} old session(s) for ${project.name}`,
-				);
-			}
-
 			const tracker = await getTracker(ctx, project.id);
 			const rootNode = tracker.rootNodeId
 				? tracker.get(tracker.rootNodeId)
