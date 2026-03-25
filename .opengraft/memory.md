@@ -180,14 +180,14 @@ System prompt + tools: `ttl: "1h"`. Messages: orchestrator `1h`, child agents `5
 - User prefers discussing architecture before executing.
 - Remove project = non-destructive (registry removal only, data preserved).
 
-## Task Tree Scroll Containment
-- `.og-task-tree` is a flex column container (no overflow-y: auto)
-- `.og-tree-header` (flex-shrink: 0): search bar, orchestrator row, root drop zone, divider — stays fixed
-- `.og-task-list` (flex: 1, overflow-y: auto): task nodes, empty states, inline create, trash drop zone — scrollable
+## Child Agent Lifecycle Events
+
+- `runChildAgentInBackground()` emits `orchestration_started` before `runChildCore()` and `agent_stopped` in its `finally` block.
+- Root agents: normal completion emits `orchestration_completed`; `agent_stopped` only on error. Child agents: always `agent_stopped` in `finally`.
 
 ## UI Visual Polish Notes
 
 - CSS file is `web/style.css` (not `styles.css`)
-- TaskTree sidebar structure: `.og-task-tree` > `.og-tree-header` (fixed) + `.og-task-list` (scrollable)
-- Root task depth starts at 0 (not 1) — padding formula: `12 + depth * 10`px
+- TaskTree: `.og-task-tree` > `.og-tree-header` (fixed) + `.og-task-list` (scrollable)
+- Root task depth starts at 0 — padding: `12 + depth * 10`px
 - localStorage key for hide-closed toggle: `og-hide-closed`
