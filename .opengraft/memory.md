@@ -217,3 +217,12 @@ Old code versions persisted `tree_updated` ephemeral events to JSONL. On page lo
 1. Frontend: `processEventBatch` skips `tree_updated` events (they come live via SSE, not from JSONL)
 2. Backend: REST events endpoints filter via `isStaleEphemeralEvent()` (defense in depth)
 3. Migration: `runEventMigrations()` strips `tree_updated` lines from existing JSONL files at daemon startup
+
+
+## rootNodeId Bug
+
+`orchestration_started` handler in event-handler.ts had `setRootNodeId(msg.taskId)`. When child agents also emit `orchestration_started` (added this session), the last-processed event in `processEventBatch` overrides rootNodeId to child ID — UI "chroots" into child namespace. Fix: removed `setRootNodeId` from `orchestration_started`. rootNodeId set only by REST `/tasks` and SSE `tree_updated`.
+
+## Event Side Effect Discipline
+
+When extending an event to new emitters (e.g., child agents now emit `orchestration_started`), audit ALL consumers of that event for assumptions about who emits it. Stale assumption "only root emits this" caused the rootNodeId bug.
