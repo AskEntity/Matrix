@@ -38,11 +38,11 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 | File | Purpose |
 |------|---------|
-| src/daemon.ts | Hono app, routes |
+| src/daemon.ts | Hono app, routes, autoResumeProjects |
 | src/daemon/ | context, event-system, helpers, agent-lifecycle, routes/ |
 | src/system-prompts.ts | SYSTEM_PROMPT, ROOT_ORCHESTRATOR_ROLE, buildSystemPrompt() |
 | src/orchestrator-tools.ts | MCP tool definitions + handlers |
-| src/provider-shared.ts | Run loop, ProviderAdapter, executeTool |
+| src/provider-shared.ts | Run loop, ProviderAdapter, executeTool, yield loop-level pause |
 | src/compaction.ts | extractCheckpoint, buildCompactedContext, processCompaction |
 | src/event-converter.ts | walkEventsToMessages, EventConverterCallbacks |
 | src/anthropic-compatible-provider.ts | Anthropic provider |
@@ -51,9 +51,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 | src/config.ts | Config system, auth groups |
 | src/task-tracker.ts | Task tree CRUD, JSON persistence |
 | src/worktree-manager.ts | Git worktree lifecycle |
-| src/message-queue.ts | MessageQueue |
+| src/message-queue.ts | MessageQueue, migrateQueueMessage() |
 | src/persistent-queue.ts | Disk-backed message persistence |
-| src/events.ts | Event types + helpers |
+| src/events.ts | Event types + helpers, findOrphanedToolCalls |
 | src/event-store.ts | JSONL EventStore |
 | src/types.ts | TaskSession interface |
 | src/shared-types.ts | PendingState, EventImageData, InternalToolResult |
@@ -71,6 +71,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **`task.session`** = sole source of truth for running agents. `session != null` = agent running.
 - **Single event path**: `emitEvent()` handles SSE broadcast + JSONL persistence.
 - **Two-phase message lifecycle**: Phase 1: `message` event persisted → frontend defers. Phase 2: `messages_consumed` → frontend materializes into activity log.
+- **Session JSONL = most valuable asset**: Contains complete agent thought process. Never auto-delete. Migration should backup, not delete.
 
 ## Tool Architecture
 
@@ -82,18 +83,34 @@ All tools are `ToolDefinition[]` under `mcp__opengraft__*` namespace. ONE execut
 
 ## Message Schema
 
-`MessageEvent.body` = `QueueMessage` discriminated union. `body.source` discriminates: `user`, `child_complete`, `parent_update`, `child_report`, `cross_project`, `background_complete`, `tree_change`, `clarify_response`.
+`MessageEvent.body` = `QueueMessage` discriminated union. `body.source` discriminates: `user`, `task_complete`, `task_message`, `user_message_forwarded`, `cross_project`, `background_complete`, `tree_change`, `clarify_response`.
 
-- `header?: string` on `user` and `parent_update` — context prepended for AI, stripped before UI delivery.
+- `header?: string` on `user` and `task_message` — context prepended for AI, stripped before UI delivery.
 - Messages with `id: ""` = provider prompts (filtered by frontend).
 - `send_message` tool: direction determined by comparing taskId to currentNode.parentId.
+- `migrateQueueMessage()` handles backward compat from old source names (child_report, parent_update, child_complete).
 
 ## Agent Lifecycle
 
-- `done()` → update status + deliver `child_complete` to parent + close queue (child) or block (root).
-- `yield()` + `done()` share `waitForQueueMessages()`. Loop exits when queue closed.
+- `done()` → update status + deliver `task_complete` to parent + close queue (child) or block (root).
+- `yield()` = loop-level pause (not JS await). See "Yield as Loop-Level Pause" section.
 - `stopAgent()` cascades: closes child queues, sets children to `failed`.
-- done() directly enqueues child_complete to parent (stateless). runChildAgentInBackground only handles fallback.
+- done() directly enqueues task_complete to parent (stateless). runChildAgentInBackground only handles fallback.
+
+## Yield as Loop-Level Pause
+
+yield() is a loop-level pause, not a JS await. Provider loop in provider-shared.ts intercepts yield tool_use BEFORE executeTool, sets `pendingYieldToolCall`, and continues to top of while(true). There, `handleImplicitYield` waits for queue messages. On resume, `buildYieldPendingSection` callback (from orchestrator-tools.ts) provides live tracker data for ## Pending section.
+
+**On JSONL resume**: detects pending yield from last tool_call event (no matching tool_result) → skips initial queue drain, enters yield-wait directly. `findOrphanedToolCalls` skips yield tool_calls — they're handled by the loop.
+
+**Key benefit**: yield state is serializable/recoverable across daemon restart. No synthetic orphan results needed.
+
+## Daemon Restart Behavior
+
+- **Orphan cleanup always runs**: `writeOrphanedToolResults` moved before `hasActiveChildren` check in `autoResumeProjects`. Cleans up non-yield orphans (bg processes, etc.) regardless of whether agent auto-resumes.
+- **Root idle (no active children)**: orphan cleanup runs, then skip auto-resume (saves money).
+- **Root with active children**: mark children failed, orphan cleanup, resume root.
+- **Yield on restart**: yield tool_call detected from JSONL → enters loop-level pause without API call. Agent only wakes when message arrives.
 
 ## Event System
 
@@ -105,16 +122,19 @@ All tools are `ToolDefinition[]` under `mcp__opengraft__*` namespace. ONE execut
 
 **Event converters**: `walkEventsToMessages()` + `EventConverterCallbacks`. Two-phase: events with `id` deferred until `messages_consumed`. `TOOL_NAME_ALIASES` for backward compat with old JSONL.
 
+**Side effect discipline**: When extending an event to new emitters, audit ALL consumers for assumptions about who emits it.
+
 ## Frontend
 
 - `IncomingEvent` type = `UIEvent | SSEOnlyEvent`. Single `as IncomingEvent` cast at SSE boundary.
-- `processEvent` / `processEventBatch` — unified for live + batch.
+- `processEvent` / `processEventBatch` — unified for live + batch. Skips `tree_updated` from JSONL.
 - `tool_pair` UIOnlyEvent combines tool_call + tool_result. `resolve_tool` / `remove_tool` UpdateOps.
 - `applyUpdate(entries, op)` pure function for all log mutations.
 - `Card.tsx` — base card component. `ToolCard` extends it.
 - All major components wrapped with `React.memo`.
 - `SLASH_COMMANDS` in SlashCommandMenu.tsx: `/compact`, `/stop`, `/clear`, `/settings`.
 - localStorage keys: `og-` prefix (e.g., `og-jwt`, `og-theme`, `og-locale`).
+- CSS file is `web/style.css` (not `styles.css`).
 
 ## Known Pitfalls
 
@@ -125,7 +145,6 @@ All tools are `ToolDefinition[]` under `mcp__opengraft__*` namespace. ONE execut
 - **Template literals**: `${"$"}` for literal `$` in backtick strings.
 - **React**: `override` keyword on ErrorBoundary. Always `type="button"` on buttons.
 - **Daemon reload**: System daemon (LaunchAgent), not `bun --watch`. Commits do NOT auto-restart.
-- **Compact signal in yield**: MUST `break` after re-enqueue — prevents infinite sync loop.
 - **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
 - **Don't edit src/ directly as orchestrator**: Use child tasks in worktrees.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
@@ -146,15 +165,22 @@ Two tools: `bash` (execute) + `background` (manage: list/status/kill/await). `fo
 
 ## Fork Task Context
 
-`fork_task_context` MCP tool + `POST /tasks/:nodeId/fork` REST. Copies post-compact events from source session to target (which must have no existing session). Appends `fork_marker` event. Converter treats fork_marker as transparent pass-through.
+`fork_task_context` MCP tool + `POST /tasks/:nodeId/fork` REST. Copies post-compact events from source session to target (which must have no existing session). Appends `fork_marker` event — generates visible `<fork_marker>` XML so forked agents know their identity boundary. Fork is almost always cheaper than cold start due to prompt cache hit.
 
 ## Ownership Framing
 
 System prompt uses ownership language: agents "own" tasks. "sub task" for downward, "the task above" for upward. No "parent/child" agent language. `send_message` is unified — direction determined by taskId comparison. `clarify` always goes to user (UI).
 
+## XML Attribute Naming Convention
+
+All XML tags use consistent attribute naming:
+- `from_task` = task ID (unique identifier)
+- `task_name` = human-readable title
+- Tags: `task_complete`, `user_message_forwarded`, `task_message`
+
 ## Tree Change Notifications
 
-`source: "tree_change"` QueueMessage with `action`, `nodeId`, `title`. `notifyTreeChange()` walks parent chain, quiet-enqueues to each running ancestor. UI sidebar updates via `tree_updated` ephemeral event.
+`source: "tree_change"` QueueMessage with `action`, `nodeId`, `title`. `notifyTreeChange()` walks parent chain, quiet-enqueues to each running ancestor. Also notifies the modified node itself for "updated" actions. UI sidebar updates via `tree_updated` ephemeral event.
 
 ## Lazy-Load Activity Log
 
@@ -166,11 +192,16 @@ System prompt uses ownership language: agents "own" tasks. "sub task" for downwa
 
 ## Orphan Tool Call Defense
 
-Three layers: (1) `writeOrphanedToolResults()` at stopAgent, (2) `findOrphanedToolCalls()` on resume, (3) converter full-scan safety net.
+Three layers: (1) `writeOrphanedToolResults()` at stopAgent and autoResumeProjects, (2) `findOrphanedToolCalls()` on resume, (3) converter full-scan safety net. Yield tool_calls are excluded — handled by loop-level pause.
 
 ## Anthropic Cache TTL
 
 System prompt + tools: `ttl: "1h"`. Messages: orchestrator `1h`, child agents `5m` (default).
+
+## send_message Header Gating
+
+- `send_message` in orchestrator-tools.ts only includes header on cold start (`node.session == null`). Running agents skip header to save tokens.
+- Cold-start header uses `buildTaskPrompt()` from task-utils.ts (includes memory, siblings, budget).
 
 ## User Preferences
 
@@ -180,134 +211,18 @@ System prompt + tools: `ttl: "1h"`. Messages: orchestrator `1h`, child agents `5
 - User prefers discussing architecture before executing.
 - Remove project = non-destructive (registry removal only, data preserved).
 
-## Child Agent Lifecycle Events
-
-- `runChildAgentInBackground()` emits `orchestration_started` before `runChildCore()` and `agent_stopped` in its `finally` block.
-- Root agents: normal completion emits `orchestration_completed`; `agent_stopped` only on error. Child agents: always `agent_stopped` in `finally`.
-
-## UI Visual Polish Notes
-
-- CSS file is `web/style.css` (not `styles.css`)
-- TaskTree: `.og-task-tree` > `.og-tree-header` (fixed) + `.og-task-list` (scrollable)
-- Root task depth starts at 0 — padding: `12 + depth * 10`px
-- localStorage key for hide-closed toggle: `og-hide-closed`
-
-## Forwarded User Messages
-
-- `QueueMessage` child_report variant has `forwarded?: true` to distinguish auto-forwarded user messages from agent send_message reports.
-- In `formatBodyForAI`, forwarded child_reports use `<user_message_forwarded>` XML tag; regular ones use `<task_message>`.
-- Frontend materializes forwarded messages as `type: "user_message_forwarded"` (UIOnlyEvent) with muted styling.
-- The forwarding path is in `src/daemon/routes/tasks.ts` — sets `forwarded: true` when `!wasResumed`.
-
-## send_message Header Gating
-
-- `send_message` in orchestrator-tools.ts only includes header on cold start (`node.session == null`). Running agents skip header to save tokens.
-- Cold-start header now uses `buildTaskPrompt()` from task-utils.ts (same as REST path), which includes memory, siblings, budget — the manual headerParts construction was removed.
-- `readFileSync` is used inline to read memory.md since `readProjectMemory` lives in daemon/helpers.ts (importing from daemon/ is not allowed in orchestrator-tools.ts).
-
-## Self-Notification on update_task
-
-- update_task in orchestrator-tools.ts now quiet-enqueues a `tree_change` message to the modified node if title/description changed and the target is a different agent.
-- REST path in daemon/routes/tasks.ts: `notifyTreeChange()` also notifies the modified node itself for "updated" actions.
-
-
-## tree_updated JSONL Bug
-
-Old code versions persisted `tree_updated` ephemeral events to JSONL. On page load, REST events endpoint returns these with stale/empty `nodes` arrays, causing `updateFromWS()` to wipe the task tree. Fixed via:
-1. Frontend: `processEventBatch` skips `tree_updated` events (they come live via SSE, not from JSONL)
-2. Backend: REST events endpoints filter via `isStaleEphemeralEvent()` (defense in depth)
-3. Migration: `runEventMigrations()` strips `tree_updated` lines from existing JSONL files at daemon startup
-
-
-## rootNodeId Bug
-
-`orchestration_started` handler in event-handler.ts had `setRootNodeId(msg.taskId)`. When child agents also emit `orchestration_started` (added this session), the last-processed event in `processEventBatch` overrides rootNodeId to child ID — UI "chroots" into child namespace. Fix: removed `setRootNodeId` from `orchestration_started`. rootNodeId set only by REST `/tasks` and SSE `tree_updated`.
-
-## Event Side Effect Discipline
-
-When extending an event to new emitters (e.g., child agents now emit `orchestration_started`), audit ALL consumers of that event for assumptions about who emits it. Stale assumption "only root emits this" caused the rootNodeId bug.
-
 ## Competitive Landscape (2026-03)
 
-Key competitors researched: Claude Code Agent Teams, OpenClaw, Cursor 2.0, OpenAI Codex App, Devin, Stoneforge, Intent (Augment Code), GitHub Copilot Coding Agent.
+Key competitors: Claude Code Agent Teams, OpenClaw, Cursor 2.0, OpenAI Codex App, Devin, Stoneforge, Intent (Augment Code), GitHub Copilot Coding Agent.
 
-**OpenGraft unique features** (no competitor has ALL of these):
-- Recursive task tree (infinite nesting) — competitors max at 2 levels
-- Cross-project communication — completely unique
-- Real-time MessageQueue for agent communication — competitors use file inbox or nothing
-- Compaction + fork context combo — unique
-- "All-projects connection layer" positioning — unique
+**OpenGraft unique features** (no competitor has ALL): recursive task tree (infinite nesting), cross-project communication, real-time MessageQueue, compaction + fork context combo.
 
-**Positioning**: OpenGraft sits between "global personal agent" (OpenClaw, too broad) and "per-project worker" (Composio/Stoneforge, too narrow). Each project has scope (task tree, memory, git workflow) but projects aren't isolated (cross-project messaging). "Scoped connection" — each orchestrator is a domain expert, cross-project = expert consultation.
+**Positioning**: "Scoped connectivity" — between global agent (OpenClaw) and per-project worker (Composio/Stoneforge). Each project is scoped (task tree, memory, git) but projects aren't isolated (cross-project messaging = expert consultation).
 
-**Closest competitor**: Stoneforge (Director → Workers + Stewards, dispatch daemon, git worktree isolation, web dashboard). But uses external CLI agents (Claude Code/Codex), can't do compaction/fork/API control.
+**Closest competitor**: Stoneforge (Director → Workers, dispatch daemon, git worktree isolation). But uses external CLI agents, can't do compaction/fork/API control.
 
-**Biggest threat**: Claude Code Agent Teams evolution. Currently experimental, file-poll based, non-recursive. If Anthropic makes it recursive + real-time, our core advantage erodes.
+**Biggest threat**: Claude Code Agent Teams — if Anthropic makes it recursive + real-time.
 
+## og-docs
 
-## XML Attribute Naming Convention in formatBodyForAI
-
-All XML tags use consistent attribute naming:
-- `from_task` = task ID (unique identifier)
-- `task_name` = human-readable title
-- Tags: task_complete, user_message_forwarded, task_message (child_report & parent_update)
-- parent_update QueueMessage has optional `taskId` and `title` fields for source attribution
-
-
-## QueueMessage Source Unification
-
-Old → New source mapping:
-- `child_report` (non-forwarded) → `task_message` (fromTaskId + fromTitle, summary→title)
-- `child_report` (forwarded) → `user_message_forwarded` (standalone source)
-- `parent_update` → `task_message` (same type, direction implicit from tree)
-- `child_complete` → `task_complete`
-
-`migrateQueueMessage()` in message-queue.ts handles JSONL/persistent-queue backward compat.
-Applied in event-store.ts readAll() and persistent-queue.ts loadPersistedMessages().
-
-Frontend UIOnlyEvent types: `parent_update` and `child_report` → `task_message`. CSS class: `og-tool-card-task-message`.
-
-## Session 2026-03-25 Completed Work
-
-**Merged to main this session:**
-1. Forwarded label fix: `📨 forwarded to` → `📨 user →`
-2. XML attribute standardization: `from_task` (ID) + `task_name` (title) across all tags
-3. Remove auto-prune of session files on daemon startup (was silently deleting JSONL history)
-4. Fork marker visibility: fork_marker now generates `<fork_marker>` XML visible to AI
-5. QueueMessage source unification: child_report/parent_update → task_message, child_complete → task_complete, forwarded → user_message_forwarded
-
-**Key discoveries:**
-- Auto-prune (v1 legacy) was deleting session JSONL on every daemon restart, keeping only 5 most recent. Broke fork_task_context. Manual prune endpoint preserved.
-- fork_marker was invisible to AI (transparent pass-through like compact_marker). Caused complete identity confusion in forked agents. Now generates visible XML.
-- Fork identity confusion: even with visible marker, long source context creates "identity inertia" — forked agent may still behave as source. Compaction before fork may be needed for long contexts.
-- Daemon restart doesn't notify agents about lost background processes. UI shows stale bg process entries until page refresh.
-
-**og-docs:** VitePress configured, 7 docs written, build successful. Ready for CF Pages deployment. Waiting for user to do wrangler deploy + custom domain setup.
-
-## Yield Restart Architecture Constraint
-
-yield() hangs on `await waitForQueueMessages()` — a JS Promise in the call stack. This runtime state is not serializable/recoverable after daemon restart. Cannot "resume into yield" without re-running the provider loop.
-
-Current approach: synthetic tool_result for orphaned yield tool_calls (simulates normal yield return). Agent sees no difference. But the JSONL has a synthetic event.
-
-Long-term: state machine refactor of provider loop (LoopState enum, serializable snapshot). Would allow true "resume into yield" without API call. Major refactor — not urgent since synthetic result works.
-
-## Daemon Restart Behavior (current)
-
-- **Root idle (no active children)**: skip auto-resume. Orphan cleanup also skipped (bug — should always run).
-- **Root with active children**: mark children failed, write orphan results, resume root.
-- **Yield orphan**: written as `isError: true` (bug — should be non-error, normal yield format).
-- **Missing state**: "loaded but not running" — session structure in memory (queue exists) but no provider loop. Would allow children to enqueue directly instead of persisting to disk.
-
-
-## Yield as Loop-Level Pause (refactored)
-
-yield() is now a loop-level pause, not a JS await. Provider loop in provider-shared.ts intercepts yield tool_use BEFORE executeTool, sets pendingYieldToolCall, and continues. At top of while(true), pendingYieldToolCall triggers handleImplicitYield (queue wait). On resume, buildYieldPendingSection callback (from orchestrator-tools.ts) provides live tracker data for ## Pending section.
-
-Key changes:
-- provider-shared.ts: pendingYieldToolCall detection from JSONL on resume + tool interception during execution
-- orchestrator-tools.ts: yield handler returns immediately (_isYield), never awaits. buildYieldPendingSection exported.
-- events.ts: findOrphanedToolCalls skips yield tool_calls (handled by loop)
-- daemon.ts: orphan cleanup moved before hasActiveChildren continue check
-- agent-provider.ts: buildYieldPendingSection callback on AgentRequest
-
+VitePress docs at og-docs project. Build with npm (not bun — hangs due to vuejs/vitepress#2943). Deploy: `npm install && npx vitepress build docs && npx wrangler pages deploy docs/.vitepress/dist --project-name=og-docs`. CF Pages custom domain: `docs.opengraft.com`. Pending user deployment.
