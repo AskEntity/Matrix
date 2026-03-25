@@ -165,6 +165,23 @@ function anthropicImageBlock(img: EventImageData): unknown {
 	};
 }
 
+/** Check if last message is a user message containing tool_result blocks (working context). */
+function isAnthropicWorkingContext(messages: unknown[]): boolean {
+	const lastMsg = messages[messages.length - 1] as
+		| { role: string; content: unknown }
+		| undefined;
+	return (
+		lastMsg?.role === "user" &&
+		Array.isArray(lastMsg.content) &&
+		(lastMsg.content as unknown[]).some(
+			(b) =>
+				b &&
+				typeof b === "object" &&
+				(b as Record<string, unknown>).type === "tool_result",
+		)
+	);
+}
+
 /**
  * Reconstruct Anthropic-format messages from JSONL events.
  * Uses the shared event walker with Anthropic-specific callbacks.
@@ -271,18 +288,19 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 		},
 
 		onConsumedMessages(messages: unknown[], consumed: ConsumedMessages): void {
-			const wrapper = consumed.isWorkingContext
-				? "[Messages received while you were working:]"
-				: "[Messages received while you were idle:]";
-			const text = `${wrapper}\n${consumed.formattedTexts.join("\n")}`;
+			const textBlocks = consumed.formattedTexts.map((t) => ({
+				type: "text" as const,
+				text: t,
+			}));
 			const imageBlocks = consumed.images.map(anthropicImageBlock);
 
-			if (consumed.isWorkingContext) {
+			// In working context (last message has tool_results), append to it
+			if (isAnthropicWorkingContext(messages)) {
 				const lastMsg = messages[messages.length - 1] as
 					| { role: string; content: unknown[] }
 					| undefined;
 				if (lastMsg && Array.isArray(lastMsg.content)) {
-					(lastMsg.content as unknown[]).push({ type: "text", text });
+					(lastMsg.content as unknown[]).push(...textBlocks);
 					if (imageBlocks.length > 0) {
 						(lastMsg.content as unknown[]).push(...imageBlocks);
 						(lastMsg.content as unknown[]).push({
@@ -294,31 +312,26 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 				}
 			}
 
+			// Idle context — create new user message
 			if (imageBlocks.length > 0) {
 				messages.push({
 					role: "user",
-					content: [{ type: "text", text }, ...imageBlocks],
+					content: [...textBlocks, ...imageBlocks],
+				});
+			} else if (textBlocks.length === 1) {
+				messages.push({
+					role: "user",
+					content: textBlocks[0]?.text ?? "(empty)",
 				});
 			} else {
-				messages.push({ role: "user", content: text });
+				messages.push({
+					role: "user",
+					content: textBlocks,
+				});
 			}
 		},
 
-		isWorkingContext(messages: unknown[]): boolean {
-			const lastMsg = messages[messages.length - 1] as
-				| { role: string; content: unknown }
-				| undefined;
-			return (
-				lastMsg?.role === "user" &&
-				Array.isArray(lastMsg.content) &&
-				(lastMsg.content as unknown[]).some(
-					(b) =>
-						b &&
-						typeof b === "object" &&
-						(b as Record<string, unknown>).type === "tool_result",
-				)
-			);
-		},
+		isWorkingContext: isAnthropicWorkingContext,
 	});
 }
 
@@ -631,73 +644,71 @@ function createAnthropicAdapter(
 				}
 			}
 
-			// Collect formatted queue messages from yield/done tools
-			const yieldQueueTextBlocks: Array<{ type: "text"; text: string }> = [];
-			const yieldQueueImageBlocks: Array<{
+			// Collect all queue messages as individual text blocks — no "idle"/"working" distinction.
+			// Each queue message from yield/done tools or cancellation point becomes its own text block.
+			const queueTextBlocks: Array<{ type: "text"; text: string }> = [];
+			const queueImageBlocks: Array<{
 				type: "image";
-				data: string;
-				mimeType: string;
+				source: {
+					type: "base64";
+					media_type: ImageMediaType;
+					data: string;
+				};
 			}> = [];
+
+			// Queue messages from yield/done tools
 			for (const exec of params.execResults) {
 				if (exec.formattedQueueMessages) {
-					yieldQueueTextBlocks.push({
-						type: "text" as const,
-						text: `[Messages received while you were idle:]\n${exec.formattedQueueMessages}`,
-					});
+					// Each queue message is already formatted with timestamp via formatQueueMessage.
+					// Split them back into individual text blocks.
+					for (const line of exec.formattedQueueMessages.split("\n")) {
+						if (line.trim()) {
+							queueTextBlocks.push({ type: "text" as const, text: line });
+						}
+					}
 					if (exec.mcpImages?.length) {
 						for (const img of exec.mcpImages) {
-							yieldQueueImageBlocks.push({
-								type: "image",
-								data: img.base64 ?? img.data ?? "",
-								mimeType: img.mediaType,
+							queueImageBlocks.push({
+								type: "image" as const,
+								source: {
+									type: "base64" as const,
+									media_type: img.mediaType as ImageMediaType,
+									data: img.base64 ?? img.data ?? "",
+								},
 							});
 						}
 					}
 				}
 			}
 
-			// Build cancellation blocks
-			const cancellationTextBlocks: Array<{ type: "text"; text: string }> = [];
-			const cancellationImageBlocks = extractQueueImages(
-				params.cancellationQueueMsgs,
-			);
+			// Queue messages from cancellation point
 			if (
 				params.cancellationQueueMsgs.length > 0 &&
 				params.cancellationFormatted
 			) {
-				cancellationTextBlocks.push({
-					type: "text" as const,
-					text: `[Messages received while you were working:]\n${params.cancellationFormatted}`,
-				});
+				for (const line of params.cancellationFormatted.split("\n")) {
+					if (line.trim()) {
+						queueTextBlocks.push({ type: "text" as const, text: line });
+					}
+				}
+				const cancellationImageBlocks = extractQueueImages(
+					params.cancellationQueueMsgs,
+				);
+				for (const img of cancellationImageBlocks) {
+					queueImageBlocks.push(img);
+				}
 			}
 
-			// Anthropic user message content can mix tool_result, text, and image blocks
+			// Anthropic user message content: tool_results first, then queue text blocks, then images
 			const userContentBlocks = [
 				...toolResults,
-				...yieldQueueTextBlocks,
-				...yieldQueueImageBlocks.map((img) => ({
-					type: "image" as const,
-					source: {
-						type: "base64" as const,
-						media_type: img.mimeType as ImageMediaType,
-						data: img.data,
-					},
-				})),
-				...(yieldQueueImageBlocks.length > 0
+				...queueTextBlocks,
+				...queueImageBlocks,
+				...(queueImageBlocks.length > 0
 					? [
 							{
 								type: "text" as const,
-								text: `[${yieldQueueImageBlocks.length} image(s) attached by user]`,
-							},
-						]
-					: []),
-				...cancellationTextBlocks,
-				...cancellationImageBlocks,
-				...(cancellationImageBlocks.length > 0
-					? [
-							{
-								type: "text" as const,
-								text: `[${cancellationImageBlocks.length} image(s) attached by user]`,
+								text: `[${queueImageBlocks.length} image(s) attached by user]`,
 							},
 						]
 					: []),
@@ -713,21 +724,33 @@ function createAnthropicAdapter(
 
 		buildImplicitYieldMessage(formatted: string, nonCompact) {
 			const imageBlocks = extractQueueImages(nonCompact);
-			if (imageBlocks.length > 0) {
+			// Each queue message is its own text block — split by newline
+			const textBlocks = formatted
+				.split("\n")
+				.filter((line) => line.trim())
+				.map((line) => ({ type: "text" as const, text: line }));
+
+			if (imageBlocks.length > 0 || textBlocks.length > 1) {
 				return {
 					role: "user" as const,
 					content: [
-						{
-							type: "text" as const,
-							text: `[Messages received while you were idle:]\n${formatted}`,
-						},
+						...textBlocks,
 						...imageBlocks,
+						...(imageBlocks.length > 0
+							? [
+									{
+										type: "text" as const,
+										text: `[${imageBlocks.length} image(s) attached by user]`,
+									},
+								]
+							: []),
 					],
 				};
 			}
+			// Single queue message, no images — use string content
 			return {
 				role: "user" as const,
-				content: `[Messages received while you were idle:]\n${formatted}`,
+				content: textBlocks[0]?.text ?? formatted,
 			};
 		},
 

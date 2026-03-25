@@ -1599,7 +1599,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		});
 		expect(messages[2]).toEqual({
 			role: "user",
-			content: "[Messages received while you were idle:]\nPlease also check X",
+			content: "Please also check X",
 		});
 		expect(messages[3]).toEqual({
 			role: "assistant",
@@ -1666,7 +1666,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		});
 		expect(toolResultMsg.content[1]).toEqual({
 			type: "text",
-			text: "[Messages received while you were working:]\nAlso do Y",
+			text: "Also do Y",
 		});
 	});
 
@@ -1707,9 +1707,13 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		];
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(2);
+		// Multiple messages → array of text blocks
 		expect(messages[0]).toEqual({
 			role: "user",
-			content: "[Messages received while you were idle:]\nFirst\nSecond",
+			content: [
+				{ type: "text", text: "First" },
+				{ type: "text", text: "Second" },
+			],
 		});
 	});
 
@@ -1764,7 +1768,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		expect(toolResultMsg.content).toHaveLength(4);
 		expect(toolResultMsg.content[1]).toEqual({
 			type: "text",
-			text: "[Messages received while you were working:]\nLook at this",
+			text: "Look at this",
 		});
 		expect(toolResultMsg.content[2]).toEqual({
 			type: "image",
@@ -1827,7 +1831,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		});
 		expect(messages[2]).toEqual({
 			role: "user",
-			content: "[Messages received while you were idle:]\nPlease also check X",
+			content: "Please also check X",
 		});
 		expect(messages[3]).toEqual({
 			role: "assistant",
@@ -1884,9 +1888,6 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		expect(messages).toHaveLength(4);
 		// Tool result should have consumed messages appended
 		const toolResult = messages[2] as { content: string };
-		expect(toolResult.content).toContain(
-			"[Messages received while you were working:]",
-		);
 		expect(toolResult.content).toContain("Also do Y");
 	});
 
@@ -1967,7 +1968,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		});
 		expect(toolResultMsg.content[1]).toEqual({
 			type: "text",
-			text: "[Messages received while you were working:]\nAlso do Y",
+			text: "Also do Y",
 		});
 	});
 
@@ -2019,9 +2020,6 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		const messages = eventsToOpenAIMessages(events);
 		expect(messages).toHaveLength(4);
 		const toolResult = messages[2] as { content: string };
-		expect(toolResult.content).toContain(
-			"[Messages received while you were working:]",
-		);
 		expect(toolResult.content).toContain("Also do Y");
 	});
 
@@ -2167,12 +2165,12 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		expect(messages).toHaveLength(3);
 		const userMsg = messages[2] as { role: string; content: unknown[] };
 		expect(userMsg.role).toBe("user");
-		// Should have tool_result + text block with formatted queue message
+		// Should have tool_result + text block with formatted queue message (no wrapper)
 		const textBlocks = (
 			userMsg.content as { type: string; text?: string }[]
 		).filter((b) => b.type === "text");
 		const queueTextBlock = textBlocks.find((b) =>
-			b.text?.includes("[Messages received while you were working:]"),
+			b.text?.includes("task_complete"),
 		);
 		expect(queueTextBlock).toBeDefined();
 		expect(queueTextBlock?.text).toContain(
@@ -2222,9 +2220,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		expect(messages).toHaveLength(3);
 		const idleMsg = messages[2] as { role: string; content: string };
 		expect(idleMsg.role).toBe("user");
-		expect(idleMsg.content).toContain(
-			"[Messages received while you were idle:]",
-		);
 		expect(idleMsg.content).toContain(
 			'<task_message from_task="p1" task_name="Orchestrator" requestReply="true">New instructions here</task_message>',
 		);
@@ -2290,9 +2285,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		const toolMsg = messages[2] as { role: string; content: string };
 		expect(toolMsg.role).toBe("tool");
 		expect(toolMsg.content).toContain("hi");
-		expect(toolMsg.content).toContain(
-			"[Messages received while you were working:]",
-		);
 		expect(toolMsg.content).toContain(
 			'<task_complete from_task="t1" task_name="Auth module" status="passed">All tests pass</task_complete>',
 		);
@@ -2362,7 +2354,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			.filter((b) => b.type === "text")
 			.map((b) => b.text)
 			.join("");
-		expect(allText).toContain("[Messages received while you were working:]");
 		expect(allText).toContain("## Pending");
 		expect(allText).toContain('"Build" (t2)');
 	});
@@ -2427,9 +2418,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		const toolMsg = messages[2] as { role: string; content: string };
 		expect(toolMsg.role).toBe("tool");
 		// The tool content should have the pure yield content + queue text + pending
-		expect(toolMsg.content).toContain(
-			"[Messages received while you were working:]",
-		);
 		expect(toolMsg.content).toContain("## Pending");
 		expect(toolMsg.content).toContain('"Build" (t2)');
 	});
@@ -2539,14 +2527,11 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		const textBlocks = (
 			userMsg.content as { type: string; text?: string }[]
 		).filter((b) => b.type === "text");
-		const queueText = textBlocks.find((b) =>
-			b.text?.includes("[Messages received while you were working:]"),
-		);
-		expect(queueText).toBeDefined();
-		// Both messages should be formatted
-		expect(queueText?.text).toContain("task_complete");
-		expect(queueText?.text).toContain("Fix bug");
-		expect(queueText?.text).toContain("Also do this");
+		// Each queue message is now its own text block (no wrapper)
+		const allText = textBlocks.map((b) => b.text).join("\n");
+		expect(allText).toContain("task_complete");
+		expect(allText).toContain("Fix bug");
+		expect(allText).toContain("Also do this");
 	});
 
 	test("OpenAI: multiple queue messages at once (child_complete + user) via messages_consumed", () => {
@@ -2608,9 +2593,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		const toolMsg = messages[2] as { role: string; content: string };
 		expect(toolMsg.role).toBe("tool");
 		expect(toolMsg.content).toContain("done");
-		expect(toolMsg.content).toContain(
-			"[Messages received while you were working:]",
-		);
 		expect(toolMsg.content).toContain("task_complete");
 		expect(toolMsg.content).toContain("Also do this");
 	});
@@ -2696,7 +2678,6 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		).filter((b) => b.type === "text");
 		// Should have: tool_result content + queue messages text + pending text
 		const allText = textBlocks.map((b) => b.text).join("");
-		expect(allText).toContain("[Messages received while you were working:]");
 		expect(allText).toContain("Build UI");
 		expect(allText).toContain("Keep going");
 		expect(allText).toContain("## Pending");
@@ -2775,18 +2756,15 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(3);
 		const userMsg = messages[2] as { role: string; content: unknown[] };
-		// Should have: 2 tool_results + 1 text block with queue message
+		// Should have: 2 tool_results + 1 text block with queue message (no wrapper)
 		const toolResults = (userMsg.content as { type: string }[]).filter(
 			(b) => b.type === "tool_result",
 		);
 		expect(toolResults).toHaveLength(2);
 		const textBlocks = (
 			userMsg.content as { type: string; text?: string }[]
-		).filter(
-			(b) => b.type === "text" && b.text?.includes("while you were working"),
-		);
+		).filter((b) => b.type === "text" && b.text?.includes("Worker"));
 		expect(textBlocks).toHaveLength(1);
-		expect(textBlocks[0]?.text).toContain("Worker");
 		expect(textBlocks[0]?.text).toContain("Progress: 75%");
 	});
 });

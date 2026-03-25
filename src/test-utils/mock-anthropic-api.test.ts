@@ -422,7 +422,7 @@ describe("ValidatingMockAPI", () => {
 			const instruction = JSON.stringify({
 				blocks: [{ type: "text", text: "Found embedded" }],
 			});
-			const wrappedText = `[Messages received while you were working:]\n[15:42:00] ${instruction}`;
+			const wrappedText = `[15:42:00] ${instruction}`;
 
 			const stream = mock.createStream({
 				messages: [{ role: "user", content: wrappedText }],

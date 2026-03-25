@@ -301,6 +301,12 @@ function openaiImagePart(img: EventImageData): unknown {
 	};
 }
 
+/** Check if last message is a tool result (working context for OpenAI). */
+function isOpenAIWorkingContext(messages: unknown[]): boolean {
+	const lastMsg = messages[messages.length - 1] as { role: string } | undefined;
+	return lastMsg?.role === "tool";
+}
+
 /**
  * Reconstruct OpenAI-format messages from JSONL events.
  * Uses the shared event walker with OpenAI-specific callbacks.
@@ -440,41 +446,50 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 		},
 
 		onConsumedMessages(messages: unknown[], consumed: ConsumedMessages): void {
-			const wrapper = consumed.isWorkingContext
-				? "[Messages received while you were working:]"
-				: "[Messages received while you were idle:]";
-			const text = `${wrapper}\n${consumed.formattedTexts.join("\n")}`;
-
-			if (consumed.isWorkingContext) {
+			// In working context (last message is tool result), append each message to last tool result
+			if (isOpenAIWorkingContext(messages)) {
 				const lastMsg = messages[messages.length - 1] as
 					| { role: string; content: string }
 					| undefined;
 				if (lastMsg?.role === "tool" && typeof lastMsg.content === "string") {
-					lastMsg.content += `\n\n---\n${text}`;
+					for (const text of consumed.formattedTexts) {
+						lastMsg.content += `\n\n---\n${text}`;
+					}
 					return;
 				}
 			}
 
+			// Idle context — create new user message with individual text blocks
 			if (consumed.images.length > 0) {
+				const textParts = consumed.formattedTexts.map((t) => ({
+					type: "text" as const,
+					text: t,
+				}));
 				const imageParts: unknown[] = consumed.images.flatMap((img) => [
 					{ type: "text", text: "[User-attached image]" },
 					openaiImagePart(img),
 				]);
 				messages.push({
 					role: "user",
-					content: [{ type: "text", text }, ...imageParts],
+					content: [...textParts, ...imageParts],
+				});
+			} else if (consumed.formattedTexts.length === 1) {
+				messages.push({
+					role: "user",
+					content: consumed.formattedTexts[0],
 				});
 			} else {
-				messages.push({ role: "user", content: text });
+				messages.push({
+					role: "user",
+					content: consumed.formattedTexts.map((t) => ({
+						type: "text" as const,
+						text: t,
+					})),
+				});
 			}
 		},
 
-		isWorkingContext(messages: unknown[]): boolean {
-			const lastMsg = messages[messages.length - 1] as
-				| { role: string }
-				| undefined;
-			return lastMsg?.role === "tool";
-		},
+		isWorkingContext: isOpenAIWorkingContext,
 	});
 }
 
@@ -675,9 +690,9 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 				dataUri: string;
 			}> = [];
 
-			// Queue messages from yield/done tools
-			const yieldQueueTexts: string[] = [];
-			const yieldQueueImageParts: Array<
+			// All queue text blocks from any source — unified, no idle/working distinction
+			const allQueueTexts: string[] = [];
+			const allQueueImageParts: Array<
 				| { type: "text"; text: string }
 				| {
 						type: "image_url";
@@ -698,12 +713,15 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 				});
 
 				if (exec.formattedQueueMessages) {
-					yieldQueueTexts.push(
-						`[Messages received while you were idle:]\n${exec.formattedQueueMessages}`,
-					);
+					// Each queue message is its own text — split by newline
+					for (const line of exec.formattedQueueMessages.split("\n")) {
+						if (line.trim()) {
+							allQueueTexts.push(line);
+						}
+					}
 					if (exec.mcpImages?.length) {
 						for (const img of exec.mcpImages) {
-							yieldQueueImageParts.push(
+							allQueueImageParts.push(
 								{
 									type: "text" as const,
 									text: "[User-attached image]",
@@ -757,24 +775,6 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 				result.push({ role: "user", content: imageParts });
 			}
 
-			// Inject queue messages from yield/done as a separate user message
-			if (yieldQueueTexts.length > 0 || yieldQueueImageParts.length > 0) {
-				const parts: Array<
-					| { type: "text"; text: string }
-					| {
-							type: "image_url";
-							image_url: { url: string; detail: "auto" };
-					  }
-				> = [
-					...yieldQueueTexts.map((t) => ({
-						type: "text" as const,
-						text: t,
-					})),
-					...yieldQueueImageParts,
-				];
-				result.push({ role: "user", content: parts });
-			}
-
 			// Append done() reminder to the last tool result
 			let lastTool: OpenAIMessage | undefined;
 			for (let i = result.length - 1; i >= 0; i--) {
@@ -788,30 +788,40 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 					"\n\n[CRITICAL: If your work is complete, call done() with status 'passed' or 'failed'. Do NOT stop without calling done().]";
 			}
 
-			// Cancellation point: append to last tool result
+			// Cancellation point queue messages — add to unified collection
 			if (
 				params.cancellationQueueMsgs.length > 0 &&
 				params.cancellationFormatted
 			) {
-				if (lastTool?.role === "tool" && typeof lastTool.content === "string") {
-					lastTool.content += `\n\n---\n[Messages received while you were working:]\n${params.cancellationFormatted}`;
+				for (const line of params.cancellationFormatted.split("\n")) {
+					if (line.trim()) {
+						allQueueTexts.push(line);
+					}
 				}
-				// Add any queued images as a user message
 				const queueImageParts = extractQueueImageParts(
 					params.cancellationQueueMsgs,
 				);
-				if (queueImageParts.length > 0) {
-					result.push({
-						role: "user",
-						content: [
-							{
-								type: "text" as const,
-								text: `[${queueImageParts.length} image(s) attached by user]`,
-							},
-							...queueImageParts,
-						],
-					});
+				for (const part of queueImageParts) {
+					allQueueImageParts.push(part);
 				}
+			}
+
+			// Inject all queue messages as a separate user message
+			if (allQueueTexts.length > 0 || allQueueImageParts.length > 0) {
+				const parts: Array<
+					| { type: "text"; text: string }
+					| {
+							type: "image_url";
+							image_url: { url: string; detail: "auto" };
+					  }
+				> = [
+					...allQueueTexts.map((t) => ({
+						type: "text" as const,
+						text: t,
+					})),
+					...allQueueImageParts,
+				];
+				result.push({ role: "user", content: parts });
 			}
 
 			return result;
@@ -819,21 +829,22 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 
 		buildImplicitYieldMessage(formatted: string, nonCompact: QueueMessage[]) {
 			const imageParts = extractQueueImageParts(nonCompact);
-			if (imageParts.length > 0) {
+			// Each queue message as its own text block
+			const textParts = formatted
+				.split("\n")
+				.filter((line) => line.trim())
+				.map((line) => ({ type: "text" as const, text: line }));
+
+			if (imageParts.length > 0 || textParts.length > 1) {
 				return {
 					role: "user" as const,
-					content: [
-						{
-							type: "text" as const,
-							text: `[Messages received while you were idle:]\n${formatted}`,
-						},
-						...imageParts,
-					],
+					content: [...textParts, ...imageParts],
 				};
 			}
+			// Single queue message, no images — use string content
 			return {
 				role: "user" as const,
-				content: `[Messages received while you were idle:]\n${formatted}`,
+				content: textParts[0]?.text ?? formatted,
 			};
 		},
 

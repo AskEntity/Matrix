@@ -292,3 +292,17 @@ Orphan tool_call detection is ONE path — `findOrphanedToolCalls()` in events.t
 - Remove emit callback → CAUGHT (JSONL tool_result count check)
 - Remove yield messages.push → CAUGHT (unpaired tool_use validation)
 - NOT tested: compactOnly yield path (needs compact-during-yield scenario)
+
+## Queue Message Format Unification (March 2025)
+
+**Before**: Two separate label systems (`[Messages received while you were idle:]` / `[Messages received while you were working:]`) applied differently in live vs resume paths, causing cache misses on every daemon restart.
+
+**After**: No wrappers. Each queue message is its own text block with just the formatted content (timestamp + XML or raw text). Live path (`buildToolResultsMessage`, `buildImplicitYieldMessage`) and resume path (`onConsumedMessages`, `onToolResults`) now produce identical message structures.
+
+Key changes:
+- `ConsumedMessages.isWorkingContext` field removed — the callback's `isWorkingContext` is still used for structural decisions (append vs new message) but no longer for label text
+- `isAnthropicWorkingContext` / `isOpenAIWorkingContext` extracted as standalone functions (needed because object literal methods can't reference `this` or `callbacks` variable)
+- Both providers' `buildToolResultsMessage` unified: `yieldQueueTextBlocks` + `cancellationTextBlocks` merged into single `queueTextBlocks` / `allQueueTexts`
+- `buildImplicitYieldMessage` splits formatted string into individual text blocks per queue message
+- Event converter's interleaved `messages_consumed` no longer wraps with `[Messages received while you were working:]`
+- Single-message idle context → string content (cache-friendly); multi-message → array of text blocks

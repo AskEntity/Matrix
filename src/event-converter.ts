@@ -39,7 +39,6 @@ export interface ToolResultData {
 export interface ConsumedMessages {
 	formattedTexts: string[];
 	images: EventImageData[];
-	isWorkingContext: boolean;
 }
 
 /**
@@ -73,8 +72,8 @@ export interface EventConverterCallbacks {
 	onConsumedMessages(messages: unknown[], consumed: ConsumedMessages): void;
 
 	/**
-	 * Determine if the current message context is "working" (between tool results).
-	 * Used to decide "[Messages received while you were working/idle:]" wrapper.
+	 * Determine if the current message context is "working" (last message has tool results).
+	 * Used to decide whether to append to existing user message or create a new one.
 	 */
 	isWorkingContext(messages: unknown[]): boolean;
 }
@@ -134,7 +133,6 @@ function extractConsumedEventImages(event: Event): EventImageData[] {
 function resolveConsumedMessages(
 	messageIds: string[],
 	eventIndex: Map<string, Event>,
-	isWorking: boolean,
 ): ConsumedMessages | null {
 	const consumedEvents: Event[] = [];
 	for (const id of messageIds) {
@@ -150,7 +148,7 @@ function resolveConsumedMessages(
 		images.push(...extractConsumedEventImages(msg));
 	}
 
-	return { formattedTexts, images, isWorkingContext: isWorking };
+	return { formattedTexts, images };
 }
 
 // ── Main walker ──
@@ -188,12 +186,7 @@ export function walkEventsToMessages(
 			}
 
 			case "messages_consumed": {
-				const isWorking = callbacks.isWorkingContext(messages);
-				const consumed = resolveConsumedMessages(
-					event.messageIds,
-					eventIndex,
-					isWorking,
-				);
+				const consumed = resolveConsumedMessages(event.messageIds, eventIndex);
 				if (consumed) {
 					callbacks.onConsumedMessages(messages, consumed);
 				}
@@ -266,15 +259,15 @@ export function walkEventsToMessages(
 						});
 						i++;
 					} else if (current.type === "messages_consumed") {
-						// messages_consumed between tool_results → working context
+						// messages_consumed between tool_results — each message as its own text block
 						const consumed = resolveConsumedMessages(
 							current.messageIds,
 							eventIndex,
-							true,
 						);
 						if (consumed) {
-							const mcText = `[Messages received while you were working:]\n${consumed.formattedTexts.join("\n")}`;
-							interleavedText.push({ type: "text", text: mcText });
+							for (const text of consumed.formattedTexts) {
+								interleavedText.push({ type: "text", text });
+							}
 							queueImages.push(...consumed.images);
 						}
 						i++;
