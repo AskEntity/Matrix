@@ -245,6 +245,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				? tracker.get(tracker.rootNodeId)
 				: null;
 			if (rootNode && rootNode.status === "in_progress") {
+				// Always write synthetic tool_results for orphaned tool_calls (except yield).
+				// Daemon restart kills bg processes but their tool_call events persist in JSONL.
+				// Without cleanup, UI shows permanently pending bg process cards.
+				// Note: yield orphans are intentionally skipped by findOrphanedToolCalls —
+				// they're handled by the provider loop's loop-level pause mechanism.
+				const eventStore = getEventStore(ctx, project.id);
+				for (const node of tracker.allNodes()) {
+					await writeOrphanedToolResults(eventStore, node.id);
+				}
+
 				// Check if any children were actively running — if not, the root was
 				// just idle-yielding and doesn't need auto-resume (saves money)
 				const hasActiveChildren = tracker
@@ -269,14 +279,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					}
 				}
 				if (orphanCount > 0) await tracker.save();
-
-				// Write synthetic tool_results for orphaned tool_calls in ALL sessions.
-				// Daemon restart kills bg processes but their tool_call events persist in JSONL.
-				// Without cleanup, UI shows permanently pending bg process cards.
-				const eventStore = getEventStore(ctx, project.id);
-				for (const node of tracker.allNodes()) {
-					await writeOrphanedToolResults(eventStore, node.id);
-				}
 
 				// Extract recent error events from JSONL so the agent knows what went wrong
 				const rootEvents = tracker.rootNodeId
