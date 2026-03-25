@@ -29,6 +29,8 @@ export type QueueMessage =
 	| {
 			source: "parent_update";
 			content: string;
+			taskId?: string;
+			title?: string;
 			requestReply?: boolean;
 			header?: string;
 	  }

@@ -343,9 +343,13 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			const content = body.message
 				? body.message
 				: "Continue working. Pick up where you left off and complete the task.";
+			const parentNode = node.parentId ? tracker.get(node.parentId) : undefined;
 			await persistMessage(ctx.config.dataDir, project.id, nodeId, {
 				source: "parent_update",
 				content,
+				...(parentNode
+					? { taskId: parentNode.id, title: parentNode.title }
+					: {}),
 				header,
 			});
 
@@ -381,9 +385,15 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				const updatedNode = tracker.get(nodeId);
 				const header = buildTaskPrompt(updatedNode ?? node, tracker, memory);
 				const content = body.message ?? "Start working on this task.";
+				const parentNode2 = node.parentId
+					? tracker.get(node.parentId)
+					: undefined;
 				await persistMessage(ctx.config.dataDir, project.id, nodeId, {
 					source: "parent_update",
 					content,
+					...(parentNode2
+						? { taskId: parentNode2.id, title: parentNode2.title }
+						: {}),
 					header,
 				});
 

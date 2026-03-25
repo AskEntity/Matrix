@@ -248,14 +248,14 @@ export function queueMessageToEvent(
 function formatBodyForAI(body: QueueMessage): string {
 	switch (body.source) {
 		case "child_complete":
-			return `<task_complete task="${body.title}" id="${body.taskId}" status="${body.success ? "passed" : "failed"}">${body.output.slice(0, 500)}</task_complete>`;
+			return `<task_complete from_task="${body.taskId}" task_name="${body.title}" status="${body.success ? "passed" : "failed"}">${body.output.slice(0, 500)}</task_complete>`;
 		case "clarify_response":
 			return `<clarify_response>${body.answer}</clarify_response>`;
 		case "child_report":
 			if (body.forwarded) {
-				return `<user_message_forwarded task="${body.title}" id="${body.taskId}">${body.content}</user_message_forwarded>`;
+				return `<user_message_forwarded from_task="${body.taskId}" task_name="${body.title}">${body.content}</user_message_forwarded>`;
 			}
-			return `<task_message from="${body.title}" id="${body.taskId}"${body.summary ? ` summary="${body.summary}"` : ""}${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</task_message>`;
+			return `<task_message from_task="${body.taskId}" task_name="${body.title}"${body.summary ? ` summary="${body.summary}"` : ""}${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</task_message>`;
 		case "cross_project":
 			return `<cross_project from="${body.fromProjectName}" projectId="${body.fromProjectId}">${body.content}</cross_project>`;
 		case "background_complete": {
@@ -277,11 +277,16 @@ function formatBodyForAI(body: QueueMessage): string {
 				return `${body.header}\n\n${body.content}`;
 			}
 			return body.content;
-		case "parent_update":
+		case "parent_update": {
+			const fromAttr = body.taskId ? ` from_task="${body.taskId}"` : "";
+			const nameAttr = body.title ? ` task_name="${body.title}"` : "";
+			const replyAttr = body.requestReply ? ' requestReply="true"' : "";
+			const tag = `<task_message${fromAttr}${nameAttr}${replyAttr}>${body.content}</task_message>`;
 			if (body.header) {
-				return `${body.header}\n\n<task_message${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</task_message>`;
+				return `${body.header}\n\n${tag}`;
 			}
-			return `<task_message${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</task_message>`;
+			return tag;
+		}
 		default:
 			return "";
 	}
