@@ -2,7 +2,11 @@ import type { Hono } from "hono";
 import { stopAgent } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
 import { getPendingClarifications } from "../event-system.ts";
-import { getEventStore, normalizeEventForUI } from "../helpers.ts";
+import {
+	getEventStore,
+	isStaleEphemeralEvent,
+	normalizeEventForUI,
+} from "../helpers.ts";
 
 export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 	// Projects CRUD
@@ -67,10 +71,12 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 				const result = eventStore.readFromLastCompactMarker(sessionId);
 				if (result.hasOlderEvents) hasOlderEvents = true;
 				for (const event of result.events) {
+					if (isStaleEphemeralEvent(event)) continue;
 					all.push(normalizeEventForUI(event, sessionId));
 				}
 			} else {
 				for (const event of eventStore.read(sessionId)) {
+					if (isStaleEphemeralEvent(event)) continue;
 					all.push(normalizeEventForUI(event, sessionId));
 				}
 			}
@@ -101,7 +107,9 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 		}
 		const eventStore = getEventStore(ctx, project.id);
 		const result = eventStore.readBefore(session, before, limit);
-		const events = result.events.map((e) => normalizeEventForUI(e, session));
+		const events = result.events
+			.filter((e) => !isStaleEphemeralEvent(e))
+			.map((e) => normalizeEventForUI(e, session));
 		return c.json({ events, hasMore: result.hasMore });
 	});
 

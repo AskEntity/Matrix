@@ -20,6 +20,7 @@ import {
 	collectDescendants,
 	getEventStore,
 	getTracker,
+	isStaleEphemeralEvent,
 	normalizeEventForUI,
 	readProjectMemory,
 } from "../helpers.ts";
@@ -529,7 +530,9 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 
 		if (afterCompact) {
 			const result = eventStore.readFromLastCompactMarker(nodeId);
-			const events = result.events.map((e) => normalizeEventForUI(e, nodeId));
+			const events = result.events
+				.filter((e) => !isStaleEphemeralEvent(e))
+				.map((e) => normalizeEventForUI(e, nodeId));
 			return c.json({
 				events,
 				hasOlderEvents: result.hasOlderEvents,
@@ -538,6 +541,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 
 		const events = eventStore
 			.read(nodeId)
+			.filter((e) => !isStaleEphemeralEvent(e))
 			.map((e) => normalizeEventForUI(e, nodeId));
 		return c.json({ events, hasOlderEvents: false });
 	});

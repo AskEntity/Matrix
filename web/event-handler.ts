@@ -946,6 +946,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			if (evt.type === "compacted_resume") {
 				continue;
 			}
+			// Skip tree_updated from historical JSONL — old code versions persisted these
+			// ephemeral events. Stale/empty nodes arrays overwrite current tree state.
+			// Tree state comes from the REST /tasks endpoint, not from JSONL.
+			if (evt.type === "tree_updated") {
+				continue;
+			}
 
 			const result = processEvent(evt);
 			for (const entry of result.entries) entries.push(entry);

@@ -194,6 +194,23 @@ export function stripEventForUI(
 }
 
 /**
+ * Event types that should never appear in REST responses.
+ * Old code versions persisted these ephemeral events to JSONL.
+ * Filter them at the REST boundary to prevent stale data from corrupting UI state.
+ */
+const FILTERED_EVENT_TYPES = new Set(["tree_updated"]);
+
+/**
+ * Check if an event from JSONL should be excluded from REST responses.
+ * Old JSONL files may contain ephemeral events that were mistakenly persisted.
+ */
+export function isStaleEphemeralEvent(event: Event): boolean {
+	return FILTERED_EVENT_TYPES.has(
+		(event as unknown as Record<string, unknown>).type as string,
+	);
+}
+
+/**
  * Normalize an Event from JSONL for UI consumption.
  * Strips UI-irrelevant fields (e.g. body.header).
  * Events already have taskId — this is now just stripEventForUI.
