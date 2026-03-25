@@ -324,3 +324,13 @@ Key changes:
 - Restart E: prefix validation self-test
 
 **Key pattern**: `recreateApp()` creates new app+provider from same `dataDir` + same `mockAPI` instance (survives across restarts). autoResumeProjects skips root-only agents (no active children). User message triggers handleInjectMessage → launchAgent(resume: true).
+
+
+## Unconsumed Messages on Restart (March 2025)
+
+**Bug**: Messages sent while a tool is executing (e.g., bash sleep) go into the live queue AND get persisted to JSONL as `message` events. If daemon crashes before the provider loop drains the queue (emitting `messages_consumed`), the message is lost — it exists in JSONL but the event converter skips it (deferred message with id, no consumption event).
+
+**Fix**: `findUnconsumedMessages()` in events.ts scans for `message` events with IDs that have no corresponding `messages_consumed`. On resume, these are re-enqueued to the agent queue in both `launchAgent` (root) and `runChildAgentInBackground` (child). The provider loop picks them up normally via queue drain, emits `messages_consumed`, and on next resume the converter materializes them correctly.
+
+**Root cause**: Two-phase message lifecycle (message → messages_consumed) assumes the provider loop always completes consumption. Daemon crash breaks this assumption. The fix recovers from the broken state by detecting and re-enqueuing unconsumed messages.
+
