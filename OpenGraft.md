@@ -1022,3 +1022,67 @@ interface ToolPlugin {
 ### Tool 设计
 - [SWE-Agent ACI Documentation](https://swe-agent.com/0.7/background/aci/)
 - [Anthropic Agents Cookbook](https://github.com/anthropics/anthropic-cookbook/tree/main/patterns/agents)
+
+## 十四、实现状态评估（2026-03-25）
+
+> 本节记录设计文档各部分的实现状态。由系统自身评估生成。
+
+### ✅ 完全实现
+
+| 设计章节 | 状态 | 备注 |
+|---------|------|------|
+| §一 系统目标 | ✅ | 核心循环完整运行。系统已自举。 |
+| §二 技术选型 | ✅ | TypeScript strict + Bun + Biome。快速反馈循环（662 测试秒级）。 |
+| §三 核心方法论 | ✅ | 垂直迭代、测试驱动、实际执行消灭幻觉、调试协议、替换铁律、膨胀防控——全部注入 system prompt。 |
+| §4.2 系统结构 | ✅ | Daemon (Hono HTTP+SSE)。REST API 完整。Agent 树 = 任务树，每 agent 一个 worktree + branch。 |
+| §4.2.1 数据分离 | ✅ | `.opengraft/memory.md` 在 git。tree.json / sessions / events 在 daemon 侧。配置三层（global > repo > local）。 |
+| §4.3 Agent 内部结构 | ✅ | Task Tracker (task-tracker.ts)、Context Manager (compaction.ts)、Stimulus Generator (system prompt 优先级规则)。 |
+| §4.3 记忆系统 | ✅ | scratch pad 式 memory.md。子 agent 自由写入、append-only。合并后上层整理。分支丢弃 = 记忆丢弃。 |
+| §4.3 任务树即 UI | ✅ | 节点状态、分支信息、点击展开 agent 对话流（activity log）、实时 SSE streaming。 |
+| §4.3 Context 压缩 | ✅ | 结构化 checkpoint (7 sections)。Fresh memory 重读。UI compact boundary。 |
+| §4.3 Prompt Caching | ✅ | Anthropic cache breakpoints。System prompt + tools 1h TTL。Messages cache control (orchestrator 1h, child 5m)。 |
+| §4.4 Tool 设计 | ✅ | Worker tools (bash, read_file, write_file, edit_file, list_files, search) + Orchestration tools (get_tree, create_task, update_task, yield, done, clarify, send_message 等)。输出有界、结构化返回。 |
+| §4.5 演进路径 | ✅ | Phase 0-1 跳过（直接自建 tool 层）。Phase 2 完成（直接 API 调用）。Phase 3 进行中（Anthropic + OpenAI 两个 provider）。Phase 4 自举已达成。 |
+| §4.6 认证配置 | ✅ | API Key 和 Claude OAuth 均支持。Auth group 配置 `claudeOauthToken`。OAuth 模式自动加 Bearer + beta flag。 |
+| §5.1 永不停止 | ✅ | Root agent 持续运行。done() passed/failed。隐式 yield (end_turn)。clarify 非阻塞。send_message 替代了 report_to_parent。 |
+| §5.3 澄清与通信 | ✅ | clarify(question) 非阻塞。send_message 统一上下通信。yield() 接收所有消息类型。 |
+| §5.4 用户中途交互 | ✅ | inject message、update task、send_message to running agent。中断处理：完成当前原子操作后处理。 |
+| §5.7 可观测性 | ✅ | 任务树 UI + 结构化 JSONL 事件日志 + Token/成本追踪 (usage events)。 |
+| §九 方法论注入 | ✅ | system-prompts.ts 中 SYSTEM_PROMPT 涵盖所有核心规则。Ownership framing 超出原设计。 |
+| §十一 自举 | ✅ ⭐ | 系统在自身之上开发自己。Worktree 隔离修改。完整测试套件保护。 |
+
+### ⚠️ 部分实现
+
+| 设计章节 | 状态 | 已实现 | 缺失 |
+|---------|------|--------|------|
+| §4.5 多 provider | 70% | Anthropic + OpenAI 两个 provider | 更多 provider（Gemini 等） |
+| §5.2 自主程度 | 30% | system prompt 有 autonomy 概念（Level 10/4/0） | 无 per-project 可配置的 1-10 级别、无 per-scope override、无 timeout/timeout_action |
+| §5.6 成本控制 | 40% | Token 追踪 (usage events)、项目预算 (budget_exceeded) | 无节点预算、无单步预算、无循环检测、无空转检测、无模型自动分级 |
+| §六 失败模式防御 | 25% | failCount tracking、基本重试逻辑 | 无自动 stuck 标记、无无限循环检测、无分支漂移检测、无镀金检测 |
+
+### ❌ 未实现
+
+| 设计章节 | 状态 | 说明 |
+|---------|------|------|
+| §七 安全模型 | 10% | 无文件系统沙箱、无网络限制、无命令白名单、无 security.yaml per project。Agent 有完整系统访问权限。自用阶段可接受，hosted 部署必须解决。 |
+| §十二 元可扩展 | 20% | MCP server 模式部分替代插件体系。AI 自修改概念上在运行但无正式化 PR 生成。无版本号方案、无 patch stack。 |
+| §5.5 配置示例 | 10% | autonomy level 配置、per-scope override、timeout 机制均未实现。 |
+
+### 🆕 超出原设计的功能
+
+| 功能 | 说明 |
+|------|------|
+| WebAuthn/Passkey 认证 | 比设计文档的 API key/OAuth 更先进的浏览器认证方案 |
+| SSE 实时推送 | 设计文档提到 WebSocket，实际用了更简单的 SSE + ring buffer 重连 |
+| Fork task context | 设计文档未提及。复制 agent 对话上下文到新 task，加速冷启动 |
+| 跨项目通信 | send_message_to_project 跨项目 agent 通信 |
+| External MCP server 集成 | McpClientManager，支持外部 MCP 工具（如 Chrome DevTools） |
+| Ownership framing | 对 agent 心理模型的洞察——"拥有"任务 vs "被分配"任务影响 agent 自主性 |
+| Lazy-load activity log | Compact barrier 分页加载，大幅减少初始加载时间 |
+| Background process management | bash foreground_timeout + move-to-background + REST 管理 |
+| Slash command autocomplete | /compact、/stop、/clear、/settings 快捷命令 |
+| i18n 支持 | 中英文界面切换 |
+
+### 总结
+
+系统的核心设计愿景已基本实现：自主编程循环、任务树 orchestration、记忆系统、context 管理、自举运行。最大的缺口是安全/沙箱模型（§七），这是走向多用户/hosted 部署的关键阻碍。成本控制和失败模式防御有基础但不完整。元可扩展（§十二）的正式化机制尚未建立，但概念上已在日常开发中运行。
