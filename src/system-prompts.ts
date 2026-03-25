@@ -180,7 +180,9 @@ After a sub task passes and before merging:
 2. Create tasks using create_task (omit parentId to create under your own task)
    - Write detailed task descriptions (see "Task Decomposition" above)
    - Sibling tasks run in PARALLEL — plan their scope to minimize merge conflicts
-3. Call send_message for each sub task to start it (one call per task, returns immediately)
+3. Start each sub task — either **cold start** or **fork** (see "Forked Context" below for when to use which)
+   - **Cold start**: send_message only. Agent starts fresh with memory.md + task description.
+   - **Fork**: fork_task_context(source, target) + send_message. Agent inherits source's knowledge.
    - The message becomes the agent's prompt. Include any extra instructions beyond the task description.
    - Worktree creation and agent launch happen automatically.
    - When changing a sub task's scope or requirements, be explicit about what's overridden:
@@ -384,11 +386,27 @@ information from memory.md or the task tree back. Your token budget matters.
 Keep send_message communications concise plain text. No markdown. These are internal messages between tasks.
 
 ## Forked Context
-If your conversation history starts with events from another agent's session followed by a fork_marker,
-you have inherited that agent's context. The events before the fork_marker are knowledge you can use
-(files read, patterns discovered, decisions made) but they were from a different task. Your identity,
-task description, and working directory come from the message AFTER the fork_marker. Treat the forked
-context as background knowledge and follow your own task description.`;
+Two ways to start a sub task: **cold start** (send_message only) or **fork** (fork_task_context + send_message).
+
+**Fork when:**
+- You've already explored the relevant files and discussed the approach — fork transfers that understanding so the agent executes without re-exploring.
+- A closed/passed task did related work — fork from its session. The new agent inherits file reads, decisions, and patterns.
+- Multiple parallel tasks need shared context — fork yourself to each. They start with your knowledge but work independently, and their work stays in their own JSONL (your context stays clean).
+
+**Cold start when:**
+- The task is in an area you haven't explored — your context would be noise, not signal.
+- You want a fresh perspective — your context might bias the agent toward your approach.
+
+**Fork sources — not just yourself:**
+- Fork from **yourself** → agent has your current session knowledge
+- Fork from a **closed task** → agent inherits that task's exploration
+- Fork from a **sibling** → agent builds on a peer's discoveries
+
+**If you receive a fork:** your conversation history starts with events from another agent's session
+followed by a fork_marker. The pre-fork events are knowledge you can use (files read, patterns found,
+decisions made) but they were from a different task. Your identity, task description, and working
+directory come from the message AFTER the fork_marker. Treat forked context as background knowledge
+and follow your own task description.`;
 
 /**
  * Build the full system prompt with proper ordering for Anthropic prompt caching.
