@@ -272,6 +272,30 @@ async function* handleImplicitYield(
 	}
 }
 
+/**
+ * Format queue messages with headers extracted to message level.
+ * For user messages: header placed before raw content (not via formatQueueMessage which embeds header).
+ * For task_messages with header: header placed before the XML-formatted content (sans header).
+ * Other messages: formatted normally via formatQueueMessage.
+ */
+function formatQueueMessagesWithHeaders(msgs: QueueMessage[]): string {
+	const parts: string[] = [];
+	for (const msg of msgs) {
+		if (msg.source === "user" && msg.header) {
+			parts.push(msg.header);
+			parts.push(msg.content);
+		} else if (msg.source === "task_message" && msg.header) {
+			parts.push(msg.header);
+			// Format without header to avoid duplication (formatQueueMessage includes header)
+			const stripped = { ...msg, header: undefined };
+			parts.push(formatQueueMessage(stripped));
+		} else {
+			parts.push(formatQueueMessage(msg));
+		}
+	}
+	return parts.join("\n\n");
+}
+
 // ── Cancellation point queue drain ──
 
 /**
@@ -852,12 +876,15 @@ export async function* runProviderLoop(
 				continue;
 			}
 
-			// Build yield tool_result (same format as normal tool execution) and add to messages.
-			// This produces a proper tool_result message matching the yield tool_use in the
-			// assistant message — the API requires tool_use → tool_result pairing.
+			// Build yield tool_result with pending section + queue messages as additional
+			// text blocks in the same user message. Headers (memory.md + working dir) are
+			// stripped from queue messages — they shouldn't appear in tool_result content.
 			const pendingSection =
 				request.buildYieldPendingSection?.() ??
 				"## Pending\n- Running sub tasks: unknown\n- Pending clarifications: none";
+			const yieldFormatted = formatQueueMessagesWithHeaders(
+				yieldResult.nonCompact,
+			);
 			const toolResultMsgs = adapter.buildToolResultsMessage({
 				toolUses: [
 					{
@@ -873,7 +900,7 @@ export async function* runProviderLoop(
 					},
 				],
 				cancellationQueueMsgs: yieldResult.nonCompact,
-				cancellationFormatted: yieldResult.formatted,
+				cancellationFormatted: yieldFormatted,
 			});
 			for (const msg of toolResultMsgs) {
 				messages.push(msg);
@@ -884,12 +911,14 @@ export async function* runProviderLoop(
 				recordQueueEvents(emit, yieldResult.nonCompact);
 			}
 
-			// Emit the yield tool_result event
+			// Emit the yield tool_result event with FULL content (not truncated).
+			// On resume, event converter reads this from JSONL to rebuild the tool_result
+			// message — truncation would cause prompt cache misses.
 			const yieldResultEvt: Event = {
 				type: "tool_result",
 				tool: pendingYieldToolCall.name,
 				toolCallId: pendingYieldToolCall.id,
-				content: yieldResult.formatted.slice(0, 500),
+				content: pendingSection,
 				isError: false,
 				taskId: "",
 				ts: Date.now(),
@@ -1223,9 +1252,14 @@ export async function* runProviderLoop(
 				continue;
 			}
 
-			// Inject messages as a new user turn and continue the loop
+			// Inject messages as a new user turn and continue the loop.
+			// Headers extracted to message level (defense-in-depth — headers shouldn't
+			// be present during running sessions, but strip them if they are).
+			const endTurnFormatted = formatQueueMessagesWithHeaders(
+				yieldResult.nonCompact,
+			);
 			const implicitYieldMsg = adapter.buildImplicitYieldMessage(
-				yieldResult.formatted,
+				endTurnFormatted,
 				yieldResult.nonCompact,
 			);
 			messages.push(implicitYieldMsg);
@@ -1274,7 +1308,7 @@ export async function* runProviderLoop(
 			}
 		}
 
-		// Yield tool_result events for consumer loop (full events emitted via buildToolResultEvents below)
+		// Yield tool_result events for consumer loop
 		for (let i = 0; i < toolUses.length; i++) {
 			const toolUse = toolUses[i] as ProviderToolUse;
 			const exec = execResults[i] as ToolExecResult;
@@ -1283,7 +1317,7 @@ export async function* runProviderLoop(
 				type: "tool_result" as const,
 				tool: toolUse.name,
 				toolCallId: toolUse.id,
-				content: exec.content.slice(0, 500),
+				content: exec.content,
 				isError: exec.isError,
 				...(images.length > 0 ? { images } : {}),
 				...(exec.backgroundId ? { backgroundId: exec.backgroundId } : {}),

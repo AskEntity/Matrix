@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
@@ -2746,6 +2746,151 @@ describe("lifecycle edge cases — session continuity", () => {
 		expect(eventsAfterResume.length).toBeGreaterThan(stopEventCount);
 
 		// Cleanup
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Header only on cold start (no header on resume)
+// ---------------------------------------------------------------------------
+
+describe("lifecycle: header only on cold start", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let projectDir: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "og-lc-header-"));
+		dataDir = await mkdtemp(join(tmpdir(), "og-lc-headerd-"));
+		projectDir = join(tempDir, "proj");
+		await mkdir(join(projectDir, ".git"), { recursive: true });
+		// Write a memory.md so header content is non-trivial
+		await mkdir(join(projectDir, ".opengraft"), { recursive: true });
+		await writeFile(
+			join(projectDir, ".opengraft", "memory.md"),
+			"# Test Memory\n\n- Important fact: tests are good\n",
+		);
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true, force: true });
+		await rm(dataDir, { recursive: true, force: true });
+	});
+
+	test("cold start message includes header with memory.md", async () => {
+		const { provider, queueMessages } = createCapturingProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+		const project = await createProject(app, projectDir);
+
+		// Send message to fresh project (no JSONL exists) — cold start
+		await app.request(`/projects/${project.id}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "hello world" }),
+		});
+		await delay(200);
+
+		// Find the user message in queue
+		const msgs = queueMessages[0] ?? [];
+		const userMsg = msgs.find(
+			(m) => m.source === "user" && m.content === "hello world",
+		) as (QueueMessage & { header?: string }) | undefined;
+		expect(userMsg).toBeDefined();
+		// Cold start should have header with memory.md content
+		expect(userMsg?.header).toBeDefined();
+		expect(userMsg?.header).toContain("memory.md");
+		expect(userMsg?.header).toContain("Important fact");
+
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+	});
+
+	test("resume message has NO header (agent has context from JSONL)", async () => {
+		const { provider, queueMessages } = createCapturingProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+		const project = await createProject(app, projectDir);
+
+		// First: launch agent (cold start) to create JSONL
+		await app.request(`/projects/${project.id}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "initial task" }),
+		});
+		await delay(200);
+
+		// Stop agent — JSONL is preserved on disk
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+
+		// Second: send new message — should resume (JSONL exists)
+		await app.request(`/projects/${project.id}/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ message: "resume task" }),
+		});
+		await delay(200);
+
+		// Find the resume message in the second session's queue
+		const msgs = queueMessages[1] ?? [];
+		const resumeMsg = msgs.find(
+			(m) => m.source === "user" && m.content === "resume task",
+		) as (QueueMessage & { header?: string }) | undefined;
+		expect(resumeMsg).toBeDefined();
+		// Resume should NOT have header — agent already has context from JSONL
+		expect(resumeMsg?.header).toBeUndefined();
+
+		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
+		await delay(100);
+	});
+
+	test("restart message has NO header", async () => {
+		const { provider, queueMessages } = createCapturingProvider();
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+		await pm.load();
+		markReady();
+		const project = await createProject(app, projectDir);
+
+		// Launch agent
+		await app.request(`/projects/${project.id}/orchestrate/agent`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ prompt: "start" }),
+		});
+		await delay(200);
+
+		// Restart agent — stops then resumes with resume:true
+		await app.request(`/projects/${project.id}/restart`, {
+			method: "POST",
+		});
+		await delay(300);
+
+		// The restart creates a new session (index 1). Check the persisted
+		// restart message that gets drained into the queue.
+		const restartMsgs = queueMessages[1] ?? [];
+		const restartMsg = restartMsgs.find(
+			(m) =>
+				m.source === "user" &&
+				(m as { content: string }).content.includes("restarted"),
+		) as (QueueMessage & { header?: string }) | undefined;
+		// Restart is always a resume — no header
+		if (restartMsg) {
+			expect(restartMsg.header).toBeUndefined();
+		}
+
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
 		await delay(100);
 	});

@@ -1163,12 +1163,35 @@ export async function handleInjectMessage(
 	// shouldn't influence the fresh-vs-resume decision)
 	const shouldResume = eventStore.has(rootNodeId);
 
-	const { msg, event } = prepareAgentMessage(
-		project.path,
-		rootNodeId,
-		message,
-		images,
-	);
+	// Only include header (memory.md + working dir) on true cold start.
+	// Resume agents already have context from their JSONL session.
+	let msg: QueueMessage;
+	let event: Event;
+	if (shouldResume) {
+		const msgId = ulid();
+		msg = {
+			source: "user",
+			id: msgId,
+			content: message,
+			...(images?.length ? { images } : {}),
+		};
+		event = {
+			type: "message",
+			id: msgId,
+			taskId: rootNodeId,
+			body: msg,
+			ts: Date.now(),
+		};
+	} else {
+		const prepared = prepareAgentMessage(
+			project.path,
+			rootNodeId,
+			message,
+			images,
+		);
+		msg = prepared.msg;
+		event = prepared.event;
+	}
 	emitEvent(ctx, projectId, event);
 
 	const result = await deliverMessage(ctx, project, rootNodeId, msg);
