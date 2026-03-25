@@ -952,4 +952,85 @@ describe("Integration: daemon restart with prefix consistency", () => {
 			}),
 		).toThrow(MockValidationError);
 	}, 10000);
+
+	test("Restart F: messages enqueued during bash survive restart", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Turn 1: start long bash sleep
+		// Turn 2: after restart, agent sees interrupted bash + both messages → done
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running long command." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Got all messages, finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "both messages received after restart",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for bash to start executing
+		const start = Date.now();
+		while (ctx.mockAPI.getRequestCount() < 1 && Date.now() - start < 5000) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBe(1);
+		await new Promise((r) => setTimeout(r, 200));
+
+		// Send message1 while bash is running — goes into live queue
+		const msg1Resp = await sendMessage(ctx, "MESSAGE_ONE_BEFORE_CRASH");
+		expect(msg1Resp.status).toBe(200);
+
+		// === CRASH ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Send message2 after restart — triggers agent resume
+		const msg2Resp = await sendMessage(ctx, "MESSAGE_TWO_AFTER_RESTART");
+		expect(msg2Resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Find the API call after restart that contains user messages
+		// It should contain BOTH message1 and message2
+		const history = ctx.mockAPI.getRequestHistory();
+		const postRestartReq = history[history.length - 1];
+		expect(postRestartReq).toBeDefined();
+
+		// Collect all text from user messages in the post-restart request
+		const allUserText = postRestartReq!.messages
+			.filter((m) => m.role === "user")
+			.map((m) => getTextContent(m))
+			.join(" ");
+
+		// BOTH messages must be present
+		expect(allUserText).toContain("MESSAGE_ONE_BEFORE_CRASH");
+		expect(allUserText).toContain("MESSAGE_TWO_AFTER_RESTART");
+	}, 30000);
 });

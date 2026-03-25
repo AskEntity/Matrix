@@ -379,3 +379,35 @@ export function findOrphanedToolCalls(
 	}
 	return orphans;
 }
+
+/**
+ * Find message events that were persisted to JSONL but never consumed.
+ * A message is "unconsumed" if it has a non-empty `id` and no `messages_consumed`
+ * event references that id. This happens when a message arrives while a tool is
+ * executing, gets enqueued to the live queue and persisted to JSONL as a `message`
+ * event, but the daemon crashes before the provider loop can drain the queue and
+ * emit a `messages_consumed` event.
+ *
+ * Returns the QueueMessage bodies of unconsumed messages (in order).
+ * These should be enqueued to the agent's queue on resume so they're delivered.
+ */
+export function findUnconsumedMessages(events: Event[]): QueueMessage[] {
+	// Collect all message IDs that were consumed
+	const consumedIds = new Set<string>();
+	for (const e of events) {
+		if (e.type === "messages_consumed") {
+			for (const id of e.messageIds) {
+				consumedIds.add(id);
+			}
+		}
+	}
+
+	// Find message events with IDs that were never consumed
+	const unconsumed: QueueMessage[] = [];
+	for (const e of events) {
+		if (e.type === "message" && e.id && !consumedIds.has(e.id)) {
+			unconsumed.push(e.body);
+		}
+	}
+	return unconsumed;
+}

@@ -1,7 +1,11 @@
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
 import { DEFAULT_MODEL } from "../config.ts";
-import { type Event, findOrphanedToolCalls } from "../events.ts";
+import {
+	type Event,
+	findOrphanedToolCalls,
+	findUnconsumedMessages,
+} from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { MessageQueue } from "../message-queue.ts";
@@ -602,6 +606,12 @@ export async function runChildAgentInBackground(
 				await eventStore.appendBatch(nodeId, orphanFixes);
 				activeEvents = [...activeEvents, ...orphanFixes];
 			}
+
+			// Recover unconsumed messages (same issue as root — see launchAgent)
+			const unconsumed = findUnconsumedMessages(activeEvents);
+			for (const msg of unconsumed) {
+				childQueue.enqueue(msg);
+			}
 		}
 
 		// Build emit callback: emitEvent with taskId injected
@@ -875,6 +885,16 @@ export async function launchAgent(
 		if (orphanFixes.length > 0) {
 			await eventStore.appendBatch(rootNodeId, orphanFixes);
 			rootActiveEvents = [...rootActiveEvents, ...orphanFixes];
+		}
+
+		// Recover messages that were persisted to JSONL but never consumed.
+		// This happens when a message arrives during tool execution (enqueued to live queue),
+		// gets written to JSONL as a `message` event, but daemon crashes before the provider
+		// loop can drain the queue and emit `messages_consumed`. Re-enqueue them so the
+		// agent receives them on resume.
+		const unconsumed = findUnconsumedMessages(rootActiveEvents);
+		for (const msg of unconsumed) {
+			queue.enqueue(msg);
 		}
 	}
 
