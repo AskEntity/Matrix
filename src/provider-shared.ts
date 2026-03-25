@@ -713,11 +713,37 @@ export async function* runProviderLoop(
 		? adapter.convertEventsToMessages(activeEvents)
 		: [];
 
+	// Detect pending yield from JSONL: if last tool_call is yield with no matching result,
+	// the agent was in yield state when the daemon restarted. We restore this at loop level
+	// instead of writing a synthetic orphan result — yield is a loop-level pause, not a JS await.
+	let pendingYieldToolCall: { id: string; name: string } | null = null;
+	if (isResume) {
+		const lastToolCall = [...activeEvents]
+			.reverse()
+			.find((e) => e.type === "tool_call");
+		if (
+			lastToolCall?.type === "tool_call" &&
+			lastToolCall.tool === "mcp__opengraft__yield"
+		) {
+			const hasResult = activeEvents.some(
+				(e) =>
+					e.type === "tool_result" && e.toolCallId === lastToolCall.toolCallId,
+			);
+			if (!hasResult) {
+				pendingYieldToolCall = {
+					id: lastToolCall.toolCallId,
+					name: lastToolCall.tool,
+				};
+			}
+		}
+	}
+
 	// Drain the queue for messages — both fresh start and resume.
 	// Fresh start: first message has header with working dir + pre-loaded memory.
 	// Resume: message has header with fresh context (re-read memory from disk).
 	// Header is ALWAYS how context gets into the conversation — no special codepaths.
-	if (queue) {
+	// Skip initial drain if resuming into yield — messages will be consumed by the yield handler.
+	if (queue && !pendingYieldToolCall) {
 		// Wait for at least one message in the queue
 		const firstMsg = await queue.wait();
 		const rest = queue.drain();
@@ -782,6 +808,99 @@ export async function* runProviderLoop(
 	}
 
 	while (true) {
+		// ── Handle pending yield (loop-level pause) ──
+		// This fires when: (a) resuming from JSONL where last event was yield tool_call,
+		// or (b) yield was detected in tool execution and deferred to loop level.
+		// Wait for messages, write yield tool_result, then continue to next API call.
+		if (pendingYieldToolCall && queue) {
+			const yieldGen = handleImplicitYield(queue, emit);
+			let yieldStep = await yieldGen.next();
+			while (!yieldStep.done) {
+				yield yieldStep.value;
+				yieldStep = await yieldGen.next();
+			}
+			const yieldResult = yieldStep.value;
+
+			if (yieldResult === null) {
+				// Queue closed — exit
+				const cost = adapter.computeCost(
+					model,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				);
+				const buildResult = adapter.buildResult ?? defaultBuildResult;
+				return buildResult({
+					success: true,
+					output: lastText,
+					costUsd: cost,
+					turns,
+					sessionId,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				});
+			}
+
+			if (yieldResult.manualCompactRequested) {
+				manualCompactRequested = true;
+			}
+			if (yieldResult.compactOnly) {
+				pendingYieldToolCall = null;
+				continue;
+			}
+
+			// Build yield tool_result (same format as normal tool execution) and add to messages.
+			// This produces a proper tool_result message matching the yield tool_use in the
+			// assistant message — the API requires tool_use → tool_result pairing.
+			const pendingSection =
+				request.buildYieldPendingSection?.() ??
+				"## Pending\n- Running sub tasks: unknown\n- Pending clarifications: none";
+			const toolResultMsgs = adapter.buildToolResultsMessage({
+				toolUses: [
+					{
+						id: pendingYieldToolCall.id,
+						name: pendingYieldToolCall.name,
+						input: {},
+					},
+				],
+				execResults: [
+					{
+						content: pendingSection,
+						isError: false,
+					},
+				],
+				cancellationQueueMsgs: yieldResult.nonCompact,
+				cancellationFormatted: yieldResult.formatted,
+			});
+			for (const msg of toolResultMsgs) {
+				messages.push(msg);
+			}
+
+			// Emit queue events for consumed messages
+			if (emit) {
+				recordQueueEvents(emit, yieldResult.nonCompact);
+			}
+
+			// Emit the yield tool_result event
+			const yieldResultEvt: Event = {
+				type: "tool_result",
+				tool: pendingYieldToolCall.name,
+				toolCallId: pendingYieldToolCall.id,
+				content: yieldResult.formatted.slice(0, 500),
+				isError: false,
+				taskId: "",
+				ts: Date.now(),
+			};
+			emit?.(yieldResultEvt);
+			yield yieldResultEvt;
+
+			pendingYieldToolCall = null;
+			continue;
+		}
+
 		// Check abort signal
 		if (request.signal?.aborted) {
 			const evt: Event = {
@@ -1115,6 +1234,19 @@ export async function* runProviderLoop(
 			if (emit) {
 				recordQueueEvents(emit, yieldResult.nonCompact);
 			}
+			continue;
+		}
+
+		// ── Check for yield tool — handle at loop level instead of inside executeTool ──
+		const yieldToolUse = toolUses.find(
+			(tu) => tu.name === "mcp__opengraft__yield",
+		);
+		if (yieldToolUse) {
+			// Yield is a loop-level pause: set pendingYield, skip tool execution.
+			// The assistant message + tool_call events are already recorded above.
+			// The yield result will be produced at the top of the next while(true) iteration
+			// when messages arrive in the queue. This makes yield state serializable/recoverable.
+			pendingYieldToolCall = { id: yieldToolUse.id, name: yieldToolUse.name };
 			continue;
 		}
 

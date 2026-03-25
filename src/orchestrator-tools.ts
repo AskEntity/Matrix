@@ -119,6 +119,8 @@ export interface OrchestratorToolsResult {
 	toolDefs: ToolDefinition<any>[];
 	/** Returns true if this agent has running children (checked via session on tracker). */
 	hasRunningChildren?: () => boolean;
+	/** Build the ## Pending section for yield tool_result using live tracker data. */
+	buildYieldPendingSection?: () => string;
 }
 
 /**
@@ -695,19 +697,16 @@ export function createOrchestratorTools(
 				"Zero token burn while waiting.",
 			{},
 			async () => {
-				const result = await waitForQueueMessages();
-				if (!result) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: "No message queue available",
-							},
-						],
-						isError: true,
-					};
-				}
-				return result;
+				// Return immediately with _isYield signal. The provider loop intercepts this
+				// and enters a loop-level pause instead of sending this result to the API.
+				// When messages arrive, the loop calls buildYieldPendingSection() to get
+				// live pending data, then constructs the full tool_result.
+				// This makes yield state serializable and recoverable across daemon restarts.
+				return {
+					content: [{ type: "text" as const, text: "" }],
+					isError: false,
+					_isYield: true,
+				};
 			},
 		),
 
@@ -1635,6 +1634,30 @@ export function createOrchestratorTools(
 			return getDescendantIds(tracker, currentTaskId).some(
 				(id) => tracker.get(id)?.session != null,
 			);
+		},
+		buildYieldPendingSection: () => {
+			// Build ## Pending section using live tracker data at resume time
+			const myDescendants = currentTaskId
+				? getDescendantIds(tracker, currentTaskId)
+				: [];
+			const runningChildren = myDescendants.filter(
+				(id) => tracker.get(id)?.session != null,
+			);
+			const runningChildrenData = runningChildren.map((id) => ({
+				id,
+				title: tracker.get(id)?.title ?? id,
+			}));
+			const runningChildrenText =
+				runningChildrenData.length > 0
+					? runningChildrenData.map((c) => `"${c.title}" (${c.id})`).join(", ")
+					: "none";
+			const clarifyText =
+				pendingClarifications > 0 ? String(pendingClarifications) : "none";
+			return [
+				"## Pending",
+				`- Running sub tasks: ${runningChildrenText}`,
+				`- Pending clarifications: ${clarifyText}`,
+			].join("\n");
 		},
 	};
 }

@@ -298,3 +298,16 @@ Long-term: state machine refactor of provider loop (LoopState enum, serializable
 - **Root with active children**: mark children failed, write orphan results, resume root.
 - **Yield orphan**: written as `isError: true` (bug — should be non-error, normal yield format).
 - **Missing state**: "loaded but not running" — session structure in memory (queue exists) but no provider loop. Would allow children to enqueue directly instead of persisting to disk.
+
+
+## Yield as Loop-Level Pause (refactored)
+
+yield() is now a loop-level pause, not a JS await. Provider loop in provider-shared.ts intercepts yield tool_use BEFORE executeTool, sets pendingYieldToolCall, and continues. At top of while(true), pendingYieldToolCall triggers handleImplicitYield (queue wait). On resume, buildYieldPendingSection callback (from orchestrator-tools.ts) provides live tracker data for ## Pending section.
+
+Key changes:
+- provider-shared.ts: pendingYieldToolCall detection from JSONL on resume + tool interception during execution
+- orchestrator-tools.ts: yield handler returns immediately (_isYield), never awaits. buildYieldPendingSection exported.
+- events.ts: findOrphanedToolCalls skips yield tool_calls (handled by loop)
+- daemon.ts: orphan cleanup moved before hasActiveChildren continue check
+- agent-provider.ts: buildYieldPendingSection callback on AgentRequest
+

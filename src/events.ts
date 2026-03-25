@@ -356,6 +356,12 @@ export function findOrphanedToolCalls(
 	const orphans: Event[] = [];
 	for (const [id, tool] of toolCallIds) {
 		if (!toolResultIds.has(id)) {
+			// Skip yield tool_calls — they're handled by the provider loop's
+			// loop-level pause mechanism. The yield result is generated at resume time
+			// when messages arrive, not as a synthetic orphan fix.
+			if (tool === "mcp__opengraft__yield") {
+				continue;
+			}
 			console.warn(
 				`[findOrphanedToolCalls] Orphaned tool_call: ${id} (${tool})`,
 			);

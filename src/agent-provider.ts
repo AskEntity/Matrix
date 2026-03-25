@@ -47,6 +47,13 @@ export interface AgentRequest {
 	 * Used by tool execution to access session-scoped state (backgroundProcesses, foregroundExecutions).
 	 */
 	getSession?: (sessionId: string) => TaskSession | undefined;
+	/**
+	 * Build the ## Pending section for yield tool_result at resume time.
+	 * Called by the provider loop when yield resumes after receiving messages.
+	 * Uses live tracker data to report running sub tasks and pending clarifications.
+	 * Returns the pending section text (e.g. "## Pending\n- Running sub tasks: ...").
+	 */
+	buildYieldPendingSection?: () => string;
 }
 
 /** Handle to a running agent session that supports message injection. */
