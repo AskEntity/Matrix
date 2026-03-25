@@ -639,6 +639,16 @@ export async function runChildAgentInBackground(
 			emitEvent(ctx, project.id, withTaskId as Event);
 		};
 
+		// Notify UI that this child agent is now active
+		emitEvent(ctx, project.id, {
+			type: "orchestration_started",
+			taskId: nodeId,
+			resume: eventStore.has(nodeId),
+			provider: agentCtx.provider.name,
+			model: agentCtx.effectiveCfg.model ?? DEFAULT_MODEL,
+			ts: Date.now(),
+		});
+
 		const agentResult = await runChildCore({
 			provider: agentCtx.provider,
 			tracker,
@@ -792,6 +802,13 @@ export async function runChildAgentInBackground(
 			finalNode.session = undefined;
 		}
 		await mcpManager.disconnectAll();
+
+		// Notify UI that this child agent is no longer active
+		emitEvent(ctx, project.id, {
+			type: "agent_stopped",
+			taskId: nodeId,
+			ts: Date.now(),
+		});
 	}
 }
 

@@ -179,3 +179,12 @@ System prompt + tools: `ttl: "1h"`. Messages: orchestrator `1h`, child agents `5
 - User communicates in Chinese, expects Chinese for conversation.
 - User prefers discussing architecture before executing.
 - Remove project = non-destructive (registry removal only, data preserved).
+
+
+## Child Agent Lifecycle Events
+
+- `runChildAgentInBackground()` originally did NOT emit `orchestration_started` or `agent_stopped` events.
+- Only `launchAgent()` (root agent path) emitted these. The frontend relies on `orchestration_started` to add taskId to `activeAgents` Set, and `agent_stopped`/`orchestration_completed` to remove it.
+- Fix: emit `orchestration_started` before `runChildCore()` and `agent_stopped` in the `finally` block of `runChildAgentInBackground()`.
+- For root agents, normal completion emits `orchestration_completed` (not `agent_stopped`); `agent_stopped` only emits on error. For child agents, we always emit `agent_stopped` in `finally` since child agents dont have `orchestration_completed`.
+
