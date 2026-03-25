@@ -9,6 +9,7 @@ import {
 import { appendFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Event } from "./events.ts";
+import { migrateQueueMessage } from "./message-queue.ts";
 
 /**
  * JSONL-based event store for Event persistence.
@@ -104,6 +105,10 @@ export class EventStore {
 			}
 			if (event.type === "clarification_requested") {
 				if (!raw.title) raw.title = (raw.question as string) ?? "";
+			}
+			// Backward compat: migrate old QueueMessage source names in message events
+			if (event.type === "message" && raw.body) {
+				raw.body = migrateQueueMessage(raw.body);
 			}
 			events.push(event);
 		}

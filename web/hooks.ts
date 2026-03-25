@@ -18,22 +18,16 @@ export interface Project {
 
 /**
  * UI-only event types that only exist in the frontend rendering layer.
- * Queue-originated message types (parent_update, child_report, etc.) are
+ * Queue-originated message types (task_message, user_message_forwarded, etc.) are
  * created by event-handler.ts when materializing deferred messages.
  */
 type UIOnlyEvent =
 	| { type: "lifecycle"; content: string; taskId?: string; ts: number }
 	| {
-			type: "parent_update";
-			content: string;
+			type: "task_message";
 			taskId?: string;
-			ts: number;
-	  }
-	| {
-			type: "child_report";
-			taskId?: string;
+			fromTitle: string;
 			title: string;
-			summary?: string;
 			content: string;
 			requestReply?: boolean;
 			ts: number;
@@ -42,7 +36,6 @@ type UIOnlyEvent =
 			type: "user_message_forwarded";
 			taskId?: string;
 			title: string;
-			summary?: string;
 			content: string;
 			ts: number;
 	  }

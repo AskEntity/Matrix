@@ -24,7 +24,9 @@ describe("persistent-queue", () => {
 	test("persistMessage creates file and appends messages", async () => {
 		const msg1: QueueMessage = { source: "user", content: "hello" };
 		const msg2: QueueMessage = {
-			source: "parent_update",
+			source: "task_message",
+			fromTaskId: "p1",
+			fromTitle: "Orchestrator",
 			content: "update",
 		};
 
@@ -96,7 +98,7 @@ describe("persistent-queue", () => {
 		const messages: QueueMessage[] = [
 			{ source: "user", content: "hello" },
 			{
-				source: "child_complete",
+				source: "task_complete",
 				taskId: "c1",
 				title: "Auth",
 				success: true,

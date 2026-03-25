@@ -9,7 +9,7 @@ export type { EventImageData, PendingState } from "./shared-types.ts";
  * Each event represents a single atomic action (no batching).
  *
  * All injected content uses `type: "message"` with a `body` field.
- * `body.source` discriminates: "user", "tree_change", "child_complete", etc.
+ * `body.source` discriminates: "user", "tree_change", "task_complete", "task_message", etc.
  */
 
 /**
@@ -247,15 +247,21 @@ export function queueMessageToEvent(
  */
 function formatBodyForAI(body: QueueMessage): string {
 	switch (body.source) {
-		case "child_complete":
+		case "task_complete":
 			return `<task_complete from_task="${body.taskId}" task_name="${body.title}" status="${body.success ? "passed" : "failed"}">${body.output.slice(0, 500)}</task_complete>`;
 		case "clarify_response":
 			return `<clarify_response>${body.answer}</clarify_response>`;
-		case "child_report":
-			if (body.forwarded) {
-				return `<user_message_forwarded from_task="${body.taskId}" task_name="${body.title}">${body.content}</user_message_forwarded>`;
+		case "user_message_forwarded":
+			return `<user_message_forwarded from_task="${body.fromTaskId}" task_name="${body.fromTitle}">${body.content}</user_message_forwarded>`;
+		case "task_message": {
+			const titleAttr = body.title ? ` title="${body.title}"` : "";
+			const replyAttr = body.requestReply ? ' requestReply="true"' : "";
+			const tag = `<task_message from_task="${body.fromTaskId}" task_name="${body.fromTitle}"${titleAttr}${replyAttr}>${body.content}</task_message>`;
+			if (body.header) {
+				return `${body.header}\n\n${tag}`;
 			}
-			return `<task_message from_task="${body.taskId}" task_name="${body.title}"${body.summary ? ` summary="${body.summary}"` : ""}${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</task_message>`;
+			return tag;
+		}
 		case "cross_project":
 			return `<cross_project from="${body.fromProjectName}" projectId="${body.fromProjectId}">${body.content}</cross_project>`;
 		case "background_complete": {
@@ -277,16 +283,6 @@ function formatBodyForAI(body: QueueMessage): string {
 				return `${body.header}\n\n${body.content}`;
 			}
 			return body.content;
-		case "parent_update": {
-			const fromAttr = body.taskId ? ` from_task="${body.taskId}"` : "";
-			const nameAttr = body.title ? ` task_name="${body.title}"` : "";
-			const replyAttr = body.requestReply ? ' requestReply="true"' : "";
-			const tag = `<task_message${fromAttr}${nameAttr}${replyAttr}>${body.content}</task_message>`;
-			if (body.header) {
-				return `${body.header}\n\n${tag}`;
-			}
-			return tag;
-		}
 		default:
 			return "";
 	}

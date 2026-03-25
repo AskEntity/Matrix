@@ -310,44 +310,53 @@ describe("getDescendantIds", () => {
 });
 
 describe("formatQueueMessage", () => {
-	test("parent_update without requestReply", () => {
+	test("task_message without requestReply", () => {
 		const msg: QueueMessage = {
-			source: "parent_update",
+			source: "task_message",
+			fromTaskId: "p1",
+			fromTitle: "Orchestrator",
 			content: "Priority changed",
 		};
 		const result = formatQueueMessage(msg);
-		expect(result).toContain("<task_message>Priority changed</task_message>");
+		expect(result).toContain(
+			'<task_message from_task="p1" task_name="Orchestrator">Priority changed</task_message>',
+		);
 		expect(result).not.toContain("requestReply");
 	});
 
-	test("parent_update with requestReply=true uses XML attribute", () => {
+	test("task_message with requestReply=true uses XML attribute", () => {
 		const msg: QueueMessage = {
-			source: "parent_update",
+			source: "task_message",
+			fromTaskId: "p1",
+			fromTitle: "Orchestrator",
 			content: "What is the status?",
 			requestReply: true,
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toContain(
-			'<task_message requestReply="true">What is the status?</task_message>',
+			'<task_message from_task="p1" task_name="Orchestrator" requestReply="true">What is the status?</task_message>',
 		);
 	});
 
-	test("parent_update with requestReply=false does not have attribute", () => {
+	test("task_message with requestReply=false does not have attribute", () => {
 		const msg: QueueMessage = {
-			source: "parent_update",
+			source: "task_message",
+			fromTaskId: "p1",
+			fromTitle: "Orchestrator",
 			content: "FYI update",
-			requestReply: false,
 		};
 		const result = formatQueueMessage(msg);
-		expect(result).toContain("<task_message>FYI update</task_message>");
+		expect(result).toContain(
+			'<task_message from_task="p1" task_name="Orchestrator">FYI update</task_message>',
+		);
 		expect(result).not.toContain("requestReply");
 	});
 
-	test("child_report without requestReply", () => {
+	test("task_message from sub task without requestReply", () => {
 		const msg: QueueMessage = {
-			source: "child_report",
-			taskId: "task-1",
-			title: "Auth Module",
+			source: "task_message",
+			fromTaskId: "task-1",
+			fromTitle: "Auth Module",
 			content: "50% done",
 		};
 		const result = formatQueueMessage(msg);
@@ -357,11 +366,11 @@ describe("formatQueueMessage", () => {
 		expect(result).not.toContain("requestReply");
 	});
 
-	test("child_report with requestReply=true uses XML attribute", () => {
+	test("task_message from sub task with requestReply=true uses XML attribute", () => {
 		const msg: QueueMessage = {
-			source: "child_report",
-			taskId: "task-2",
-			title: "DB Module",
+			source: "task_message",
+			fromTaskId: "task-2",
+			fromTitle: "DB Module",
 			content: "Need clarification on schema",
 			requestReply: true,
 		};
@@ -371,13 +380,12 @@ describe("formatQueueMessage", () => {
 		);
 	});
 
-	test("child_report with requestReply=false does not have attribute", () => {
+	test("task_message from sub task with requestReply=false does not have attribute", () => {
 		const msg: QueueMessage = {
-			source: "child_report",
-			taskId: "task-3",
-			title: "UI",
+			source: "task_message",
+			fromTaskId: "task-3",
+			fromTitle: "UI",
 			content: "All good",
-			requestReply: false,
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toContain(

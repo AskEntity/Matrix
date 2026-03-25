@@ -1861,7 +1861,9 @@ describe("done tool", () => {
 		// Send a wake message after a short delay
 		setTimeout(() => {
 			queue.enqueue({
-				source: "parent_update",
+				source: "task_message",
+				fromTaskId: "p1",
+				fromTitle: "Orchestrator",
 				content: "Resume with new instructions",
 			});
 		}, 10);

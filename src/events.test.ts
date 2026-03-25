@@ -33,9 +33,9 @@ describe("queueMessageToEvent", () => {
 		expect(event.id).toBe("existing-id");
 	});
 
-	test("converts child_complete — body is the QueueMessage directly", () => {
+	test("converts task_complete — body is the QueueMessage directly", () => {
 		const msg = {
-			source: "child_complete" as const,
+			source: "task_complete" as const,
 			taskId: "t1",
 			title: "Auth",
 			success: true as const,
@@ -66,9 +66,11 @@ describe("queueMessageToEvent", () => {
 		expect(event.body).toBe(msg);
 	});
 
-	test("converts parent_update — body is the QueueMessage directly", () => {
+	test("converts task_message — body is the QueueMessage directly", () => {
 		const msg = {
-			source: "parent_update" as const,
+			source: "task_message" as const,
+			fromTaskId: "p1",
+			fromTitle: "Orchestrator",
 			content: "update",
 			requestReply: true,
 			header: "## Task Context\nTitle: Fix Bug",
@@ -101,12 +103,12 @@ describe("formatEventForAI", () => {
 		expect(formatEventForAI(event)).toBe("Hello world");
 	});
 
-	test("formats child_complete", () => {
+	test("formats task_complete", () => {
 		const event: Event = {
 			type: "message",
 			id: "test",
 			body: {
-				source: "child_complete",
+				source: "task_complete",
 				taskId: "t1",
 				title: "Auth",
 				success: true,
@@ -120,12 +122,14 @@ describe("formatEventForAI", () => {
 		);
 	});
 
-	test("formats parent_update with requestReply", () => {
+	test("formats task_message with requestReply", () => {
 		const event: Event = {
 			type: "message",
 			id: "test",
 			body: {
-				source: "parent_update",
+				source: "task_message",
+				fromTaskId: "p1",
+				fromTitle: "Orchestrator",
 				content: "What status?",
 				requestReply: true,
 			},
@@ -133,7 +137,7 @@ describe("formatEventForAI", () => {
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
-			'<task_message requestReply="true">What status?</task_message>',
+			'<task_message from_task="p1" task_name="Orchestrator" requestReply="true">What status?</task_message>',
 		);
 	});
 
@@ -161,16 +165,15 @@ describe("formatEventForAI", () => {
 		expect(formatEventForAI(event)).toBe("Manual compaction requested");
 	});
 
-	test("formats forwarded child_report with user_message_forwarded tag", () => {
+	test("formats user_message_forwarded tag", () => {
 		const event: Event = {
 			type: "message",
 			id: "test",
 			body: {
-				source: "child_report",
-				taskId: "t1",
-				title: "Worker",
+				source: "user_message_forwarded",
+				fromTaskId: "t1",
+				fromTitle: "Worker",
 				content: "User sent a message to child task 'Worker' (t1): fix the bug",
-				forwarded: true,
 			},
 			taskId: "test",
 			ts: 1000,
@@ -180,22 +183,22 @@ describe("formatEventForAI", () => {
 		);
 	});
 
-	test("formats non-forwarded child_report with task_message tag", () => {
+	test("formats task_message with title", () => {
 		const event: Event = {
 			type: "message",
 			id: "test",
 			body: {
-				source: "child_report",
-				taskId: "t1",
-				title: "Worker",
+				source: "task_message",
+				fromTaskId: "t1",
+				fromTitle: "Worker",
 				content: "Progress: 50%",
-				summary: "halfway",
+				title: "halfway",
 			},
 			taskId: "test",
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
-			'<task_message from_task="t1" task_name="Worker" summary="halfway">Progress: 50%</task_message>',
+			'<task_message from_task="t1" task_name="Worker" title="halfway">Progress: 50%</task_message>',
 		);
 	});
 });
@@ -2603,7 +2606,7 @@ describe("orphaned tool_use on resume — daemon stop mid-tool", () => {
 });
 
 describe("structured JSONL — queueEntry on user_message", () => {
-	test("Anthropic: user_message with body.source=child_complete formats correctly via standalone messages_consumed", () => {
+	test("Anthropic: user_message with body.source=task_complete formats correctly via standalone messages_consumed", () => {
 		const events: Event[] = [
 			{
 				type: "message",
@@ -2630,7 +2633,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "msg-child",
 				body: {
-					source: "child_complete",
+					source: "task_complete",
 					taskId: "t1",
 					title: "Auth module",
 					success: true,
@@ -2694,7 +2697,9 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "msg-parent",
 				body: {
-					source: "parent_update",
+					source: "task_message",
+					fromTaskId: "p1",
+					fromTitle: "Orchestrator",
 					content: "New instructions here",
 					requestReply: true,
 				},
@@ -2719,11 +2724,11 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			"[Messages received while you were idle:]",
 		);
 		expect(idleMsg.content).toContain(
-			'<task_message requestReply="true">New instructions here</task_message>',
+			'<task_message from_task="p1" task_name="Orchestrator" requestReply="true">New instructions here</task_message>',
 		);
 	});
 
-	test("OpenAI: user_message with body.source=child_complete formats at cancellation point via standalone messages_consumed", () => {
+	test("OpenAI: user_message with body.source=task_complete formats at cancellation point via standalone messages_consumed", () => {
 		const events: Event[] = [
 			{
 				type: "message",
@@ -2750,7 +2755,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "msg-child",
 				body: {
-					source: "child_complete",
+					source: "task_complete",
 					taskId: "t1",
 					title: "Auth module",
 					success: true,
@@ -2818,9 +2823,9 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "msg-report",
 				body: {
-					source: "child_report",
-					taskId: "t2",
-					title: "Build",
+					source: "task_message",
+					fromTaskId: "t2",
+					fromTitle: "Build",
 					content: "50% done",
 				},
 				taskId: "test",
@@ -2887,9 +2892,9 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "msg-report",
 				body: {
-					source: "child_report",
-					taskId: "t2",
-					title: "Build",
+					source: "task_message",
+					fromTaskId: "t2",
+					fromTitle: "Build",
 					content: "50% done",
 				},
 				taskId: "test",
@@ -2993,7 +2998,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "msg-complete",
 				body: {
-					source: "child_complete",
+					source: "task_complete",
 					taskId: "t1",
 					title: "Fix bug",
 					success: true,
@@ -3064,7 +3069,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "msg-complete",
 				body: {
-					source: "child_complete",
+					source: "task_complete",
 					taskId: "t1",
 					title: "Fix bug",
 					success: true,
@@ -3135,7 +3140,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "msg-child-done",
 				body: {
-					source: "child_complete",
+					source: "task_complete",
 					taskId: "t1",
 					title: "Build UI",
 					success: true,
@@ -3148,7 +3153,9 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "msg-parent",
 				body: {
-					source: "parent_update",
+					source: "task_message",
+					fromTaskId: "p1",
+					fromTitle: "Orchestrator",
 					content: "Keep going",
 				},
 				taskId: "test",
@@ -3160,7 +3167,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				tool: "test_tool",
 				toolCallId: "tc-yield",
 				content:
-					'<task_complete from_task="t1" task_name="Build UI" status="passed">All tests pass</task_complete>\n<task_message>Keep going</task_message>\n\n## Pending\n- Running sub tasks: none\n- Pending clarifications: none',
+					'<task_complete from_task="t1" task_name="Build UI" status="passed">All tests pass</task_complete>\n<task_message from_task="p1" task_name="Orchestrator">Keep going</task_message>\n\n## Pending\n- Running sub tasks: none\n- Pending clarifications: none',
 				isError: false,
 				pending: {
 					runningChildren: [],
@@ -3230,9 +3237,9 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "message",
 				id: "msg-report",
 				body: {
-					source: "child_report",
-					taskId: "t2",
-					title: "Worker",
+					source: "task_message",
+					fromTaskId: "t2",
+					fromTitle: "Worker",
 					content: "Progress: 75%",
 				},
 				taskId: "test",
@@ -3289,11 +3296,12 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			const events: Event[] = [
 				{
 					type: "message",
-					source: "parent_update",
+					source: "task_message",
 					body: {
-						source: "parent_update",
+						source: "task_message",
+						fromTaskId: "p1",
+						fromTitle: "Orchestrator",
 						content: "Do this next",
-						requestReply: false,
 					},
 					taskId: "test",
 					ts: 1000,
@@ -3313,9 +3321,10 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 				{
 					type: "message",
 					body: {
-						source: "parent_update",
+						source: "task_message",
+						fromTaskId: "p1",
+						fromTitle: "Orchestrator",
 						content: "Do this next",
-						requestReply: false,
 					},
 					taskId: "test",
 					ts: 1000,

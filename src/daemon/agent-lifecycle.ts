@@ -717,14 +717,14 @@ export async function runChildAgentInBackground(
 		}
 		await tracker.save();
 
-		// Fallback child_complete delivery: only when done() was NOT called.
-		// When done() was called, it already delivered child_complete directly to the parent queue.
+		// Fallback task_complete delivery: only when done() was NOT called.
+		// When done() was called, it already delivered task_complete directly to the parent queue.
 		// This handles agents that exit without calling done() (daemon restart, error, budget exceeded).
 		if (!doneWasCalled) {
 			const completionOutput = (agentResult.output ?? "").slice(0, 2000);
 			const completionResult = findParentQueue(tracker, nodeId);
 			const completionNotification = {
-				source: "child_complete" as const,
+				source: "task_complete" as const,
 				taskId: nodeId,
 				title: node.title,
 				success: success ?? true,
@@ -764,10 +764,10 @@ export async function runChildAgentInBackground(
 			ts: Date.now(),
 		});
 
-		// Enqueue child_complete (failure) to parent's queue (bubbles up through non-running intermediates)
+		// Enqueue task_complete (failure) to parent's queue (bubbles up through non-running intermediates)
 		const errorResult = findParentQueue(tracker, nodeId);
 		const errorNotification = {
-			source: "child_complete" as const,
+			source: "task_complete" as const,
 			taskId: nodeId,
 			title: node.title,
 			success: false,

@@ -252,3 +252,17 @@ All XML tags use consistent attribute naming:
 - `task_name` = human-readable title
 - Tags: task_complete, user_message_forwarded, task_message (child_report & parent_update)
 - parent_update QueueMessage has optional `taskId` and `title` fields for source attribution
+
+
+## QueueMessage Source Unification
+
+Old → New source mapping:
+- `child_report` (non-forwarded) → `task_message` (fromTaskId + fromTitle, summary→title)
+- `child_report` (forwarded) → `user_message_forwarded` (standalone source)
+- `parent_update` → `task_message` (same type, direction implicit from tree)
+- `child_complete` → `task_complete`
+
+`migrateQueueMessage()` in message-queue.ts handles JSONL/persistent-queue backward compat.
+Applied in event-store.ts readAll() and persistent-queue.ts loadPersistedMessages().
+
+Frontend UIOnlyEvent types: `parent_update` and `child_report` → `task_message`. CSS class: `og-tool-card-task-message`.

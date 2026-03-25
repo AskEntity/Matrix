@@ -882,14 +882,14 @@ describe("lifecycle: parent chain notifications", () => {
 		expect(childMsgs).toHaveLength(1);
 		expect(childMsgs[0]?.source).toBe("user");
 
-		// Parent should have a child_report notification
+		// Parent should have a user_message_forwarded notification (auto-forwarded user message)
 		const parentMsgs = parentQueue.drain();
 		expect(parentMsgs.length).toBeGreaterThanOrEqual(1);
-		const notification = parentMsgs.find((m) => m.source === "child_report");
+		const notification = parentMsgs.find(
+			(m) => m.source === "user_message_forwarded",
+		);
 		expect(notification).toBeTruthy();
 		expect((notification as { content: string }).content).toContain("Child");
-		// Auto-forwarded user messages should be marked as forwarded
-		expect((notification as { forwarded?: boolean }).forwarded).toBe(true);
 
 		tracker.get(parent.id)!.session = undefined;
 		tracker.get(child.id)!.session = undefined;
@@ -932,11 +932,13 @@ describe("lifecycle: parent chain notifications", () => {
 
 		// Parent gets notification
 		const pMsgs = pQueue.drain();
-		expect(pMsgs.some((m) => m.source === "child_report")).toBe(true);
+		expect(pMsgs.some((m) => m.source === "user_message_forwarded")).toBe(true);
 
 		// Grandparent gets notification
 		const gpMsgs = gpQueue.drain();
-		expect(gpMsgs.some((m) => m.source === "child_report")).toBe(true);
+		expect(gpMsgs.some((m) => m.source === "user_message_forwarded")).toBe(
+			true,
+		);
 
 		tracker.get(grandparent.id)!.session = undefined;
 		tracker.get(parent.id)!.session = undefined;
@@ -979,7 +981,9 @@ describe("lifecycle: parent chain notifications", () => {
 			parent.id,
 		);
 		expect(persisted.length).toBeGreaterThanOrEqual(1);
-		const notification = persisted.find((m) => m.source === "child_report");
+		const notification = persisted.find(
+			(m) => m.source === "user_message_forwarded",
+		);
 		expect(notification).toBeTruthy();
 
 		tracker.get(child.id)!.session = undefined;
@@ -1019,10 +1023,12 @@ describe("lifecycle: parent chain notifications", () => {
 		expect(childMsgs).toHaveLength(1);
 		expect(childMsgs[0]?.source).toBe("user");
 
-		// Root orchestrator should have a child_report notification
+		// Root orchestrator should have a user_message_forwarded notification
 		const rootMsgs = rootQueue.drain();
 		expect(rootMsgs.length).toBeGreaterThanOrEqual(1);
-		const notification = rootMsgs.find((m) => m.source === "child_report");
+		const notification = rootMsgs.find(
+			(m) => m.source === "user_message_forwarded",
+		);
 		expect(notification).toBeTruthy();
 		expect((notification as { content: string }).content).toContain(
 			"Child task",
@@ -1772,9 +1778,9 @@ describe("lifecycle: child completion notification paths", () => {
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	test("reset task then re-start: child_complete reaches parent", async () => {
-		// Test the full cycle: child runs → completes → parent gets child_complete
-		// → reset → child runs again → parent gets child_complete again.
+	test("reset task then re-start: task_complete reaches parent", async () => {
+		// Test the full cycle: child runs → completes → parent gets task_complete
+		// → reset → child runs again → parent gets task_complete again.
 		// Uses runChildCore directly to avoid needing real git worktrees.
 
 		const trackerPath = join(dataDir, "test-reset-tracker.json");
@@ -1802,18 +1808,18 @@ describe("lifecycle: child completion notification paths", () => {
 		});
 		expect(result1.success).toBe(true);
 
-		// Simulate runChildAgentInBackground's post-completion: send child_complete
+		// Simulate runChildAgentInBackground's post-completion: send task_complete
 		parentQueue.enqueue({
-			source: "child_complete" as const,
+			source: "task_complete" as const,
 			taskId: childNode.id,
 			title: childNode.title,
 			success: true,
 			output: "",
 		});
 
-		// Verify child_complete in parent queue
+		// Verify task_complete in parent queue
 		let parentMsgs = parentQueue.drain();
-		const firstComplete = parentMsgs.find((m) => m.source === "child_complete");
+		const firstComplete = parentMsgs.find((m) => m.source === "task_complete");
 		expect(firstComplete).toBeTruthy();
 		expect((firstComplete as { taskId: string }).taskId).toBe(childNode.id);
 
@@ -1837,20 +1843,18 @@ describe("lifecycle: child completion notification paths", () => {
 		});
 		expect(result2.success).toBe(true);
 
-		// Simulate child_complete again
+		// Simulate task_complete again
 		parentQueue.enqueue({
-			source: "child_complete" as const,
+			source: "task_complete" as const,
 			taskId: childNode.id,
 			title: childNode.title,
 			success: true,
 			output: "",
 		});
 
-		// Verify second child_complete arrives
+		// Verify second task_complete arrives
 		parentMsgs = parentQueue.drain();
-		const secondComplete = parentMsgs.find(
-			(m) => m.source === "child_complete",
-		);
+		const secondComplete = parentMsgs.find((m) => m.source === "task_complete");
 		expect(secondComplete).toBeTruthy();
 		expect((secondComplete as { taskId: string }).taskId).toBe(childNode.id);
 
