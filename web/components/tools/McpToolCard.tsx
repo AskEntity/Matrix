@@ -8,8 +8,9 @@ export const MCP_CARD_BODY_TOOLS = new Set([
 	"yield",
 	"delete_task",
 	"get_tree",
-	"send_message_to_child",
-	"report_to_parent",
+	"send_message",
+	"send_message_to_child", // backward compat (old JSONL)
+	"report_to_parent", // backward compat (old JSONL)
 	"send_message_to_project",
 	"execute_tasks",
 	"edit_file",
@@ -171,15 +172,10 @@ export function McpToolCardBody({
 				</div>
 			);
 		}
-		case "send_message_to_child": {
-			const msg = getArg(toolArgs, "message") ?? "";
-			return (
-				<div className="og-mcp-body">
-					{msg && <div className="og-mcp-task-desc">{msg}</div>}
-				</div>
-			);
-		}
+		case "send_message":
+		case "send_message_to_child": // backward compat (old JSONL)
 		case "report_to_parent": {
+			// backward compat (old JSONL)
 			const msg = getArg(toolArgs, "message") ?? "";
 			if (!msg) return null;
 			return (
