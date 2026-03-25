@@ -327,7 +327,7 @@ export async function runChildCore(
  * The event converter also has a fix for this (fixOrphanedAnthropicToolUse),
  * but writing to JSONL is cleaner — the fix persists and avoids repeated synthesis.
  */
-async function writeOrphanedToolResults(
+export async function writeOrphanedToolResults(
 	eventStore: import("../event-store.ts").EventStore,
 	sessionId: string,
 ): Promise<void> {

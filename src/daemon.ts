@@ -6,7 +6,11 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import type { AgentSession } from "./agent-provider.ts";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
-import { launchAgent, stopAgent } from "./daemon/agent-lifecycle.ts";
+import {
+	launchAgent,
+	stopAgent,
+	writeOrphanedToolResults,
+} from "./daemon/agent-lifecycle.ts";
 import type {
 	DaemonConfig,
 	DaemonContext,
@@ -266,8 +270,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				}
 				if (orphanCount > 0) await tracker.save();
 
-				// Extract recent error events from JSONL so the agent knows what went wrong
+				// Write synthetic tool_results for orphaned tool_calls in ALL sessions.
+				// Daemon restart kills bg processes but their tool_call events persist in JSONL.
+				// Without cleanup, UI shows permanently pending bg process cards.
 				const eventStore = getEventStore(ctx, project.id);
+				for (const node of tracker.allNodes()) {
+					await writeOrphanedToolResults(eventStore, node.id);
+				}
+
+				// Extract recent error events from JSONL so the agent knows what went wrong
 				const rootEvents = tracker.rootNodeId
 					? eventStore.read(tracker.rootNodeId)
 					: [];
