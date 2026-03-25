@@ -198,3 +198,15 @@ System prompt + tools: `ttl: "1h"`. Messages: orchestrator `1h`, child agents `5
 - In `formatBodyForAI`, forwarded child_reports use `<user_message_forwarded>` XML tag; regular ones use `<task_message>`.
 - Frontend materializes forwarded messages as `type: "user_message_forwarded"` (UIOnlyEvent) with muted styling.
 - The forwarding path is in `src/daemon/routes/tasks.ts` — sets `forwarded: true` when `!wasResumed`.
+
+## send_message Header Gating
+
+- `send_message` in orchestrator-tools.ts only includes header on cold start (`node.session == null`). Running agents skip header to save tokens.
+- Cold-start header now uses `buildTaskPrompt()` from task-utils.ts (same as REST path), which includes memory, siblings, budget — the manual headerParts construction was removed.
+- `readFileSync` is used inline to read memory.md since `readProjectMemory` lives in daemon/helpers.ts (importing from daemon/ is not allowed in orchestrator-tools.ts).
+
+## Self-Notification on update_task
+
+- update_task in orchestrator-tools.ts now quiet-enqueues a `tree_change` message to the modified node if title/description changed and the target is a different agent.
+- REST path in daemon/routes/tasks.ts: `notifyTreeChange()` also notifies the modified node itself for "updated" actions.
+
