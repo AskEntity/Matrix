@@ -235,3 +235,16 @@ VitePress docs at og-docs project. Build with npm (not bun — hangs due to vuej
 - **Consumer loop yield vs emit**: The `yield` at the bottom of the tool execution loop (for SSE consumer) is NOT persisted to JSONL — `buildToolResultEvents` via `emit()` handles JSONL with full content. The `.slice(0, 500)` was removed from the yield too per principle: backend = full fidelity, frontend = display optimization.
 - **`formatBodyForAI` embeds header**: For `user` and `task_message` with header, `formatBodyForAI` returns `header + content`. So `formatQueueMessage` → `formatBodyForAI` includes the header. Use `formatQueueMessagesWithHeaders` to extract headers to message level and pass headerless copies to `formatQueueMessage`.
 
+
+
+## ⚠️ JSONL Content Fidelity (CRITICAL)
+
+**JSONL event content = exact content sent to API. Zero transformation.**
+
+- No `.slice()`, no truncation, no preview formatting on any persisted event content
+- UI truncation happens ONLY in `stripEventForUI` (SSE layer) and frontend rendering
+- Header (memory.md) ONLY on true cold start (`!eventStore.has(sessionId)`) — resume agents already have context from JSONL
+- Violation = prompt cache miss on every resume = wasted money
+
+This applies to: `tool_result.content`, `tool_call.input`, `message.body`, `assistant_text.text` — anything in JSONL that gets reconstructed into API messages via `walkEventsToMessages`.
+
