@@ -269,3 +269,14 @@ All orphan detection paths must skip `mcp__opengraft__yield` tool_calls:
 3. `fixOrphanedOpenAIToolCalls` in openai-compatible-provider.ts — skips by tc.function.name
 
 Yield has NO aliases in TOOL_NAME_ALIASES (only send_message has aliases). If yield aliases are ever added, all three paths must be updated.
+
+
+## Single Orphan Detection Path (Post-Refactor)
+
+Orphan tool_call detection is now a SINGLE path:
+1. `findOrphanedToolCalls()` in events.ts — provider-agnostic, Event-level scan
+2. `writeOrphanedToolResults()` at stopAgent/autoResume — writes synthetic tool_results to JSONL
+3. Converter (`walkEventsToMessages`) reads clean JSONL — no orphan fixing needed
+
+Removed: `fixOrphanedAnthropicToolUse`, `fixOrphanedOpenAIToolCalls`, `fixOrphans` from `EventConverterCallbacks`.
+The converter no longer has orphan detection — it trusts JSONL to be clean.
