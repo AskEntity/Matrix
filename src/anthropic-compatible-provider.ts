@@ -341,6 +341,13 @@ function fixOrphanedAnthropicToolUse(messages: unknown[]): void {
 				typeof block === "object" &&
 				(block as Record<string, unknown>).type === "tool_use"
 			) {
+				// Skip yield tool_use — handled by provider loop's loop-level pause,
+				// which produces its own tool_result on resume.
+				if (
+					(block as Record<string, unknown>).name === "mcp__opengraft__yield"
+				) {
+					continue;
+				}
 				toolUseIds.push((block as Record<string, unknown>).id as string);
 			}
 		}

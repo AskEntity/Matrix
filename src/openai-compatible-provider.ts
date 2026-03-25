@@ -510,7 +510,11 @@ function fixOrphanedOpenAIToolCalls(messages: unknown[]): void {
 		}
 
 		const orphanedCalls = msg.tool_calls.filter(
-			(tc) => !existingResultIds.has(tc.id),
+			(tc) =>
+				!existingResultIds.has(tc.id) &&
+				// Skip yield tool_calls — handled by provider loop's loop-level pause,
+				// which produces its own tool_result on resume.
+				tc.function.name !== "mcp__opengraft__yield",
 		);
 		if (orphanedCalls.length === 0) continue;
 

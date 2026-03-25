@@ -259,3 +259,13 @@ Every code path that produces a tool_result must do ALL three:
 Missing any one causes a different bug class: (1) orphan on resume, (2) missing UI feedback, (3) API 400 unpaired tool_use.
 
 **Compact during yield** hit this twice: first fix added step 1+2, second fix added step 3. The end-of-turn implicit yield compactOnly path doesn't need this — no `pendingYieldToolCall` exists there.
+
+
+## Orphan Detection — Yield Skip (ALL Three Paths)
+
+All orphan detection paths must skip `mcp__opengraft__yield` tool_calls:
+1. `findOrphanedToolCalls` in events.ts (line ~362) — skips by tool name
+2. `fixOrphanedAnthropicToolUse` in anthropic-compatible-provider.ts — skips by block.name
+3. `fixOrphanedOpenAIToolCalls` in openai-compatible-provider.ts — skips by tc.function.name
+
+Yield has NO aliases in TOOL_NAME_ALIASES (only send_message has aliases). If yield aliases are ever added, all three paths must be updated.
