@@ -283,3 +283,18 @@ Frontend UIOnlyEvent types: `parent_update` and `child_report` → `task_message
 - Daemon restart doesn't notify agents about lost background processes. UI shows stale bg process entries until page refresh.
 
 **og-docs:** VitePress configured, 7 docs written, build successful. Ready for CF Pages deployment. Waiting for user to do wrangler deploy + custom domain setup.
+
+## Yield Restart Architecture Constraint
+
+yield() hangs on `await waitForQueueMessages()` — a JS Promise in the call stack. This runtime state is not serializable/recoverable after daemon restart. Cannot "resume into yield" without re-running the provider loop.
+
+Current approach: synthetic tool_result for orphaned yield tool_calls (simulates normal yield return). Agent sees no difference. But the JSONL has a synthetic event.
+
+Long-term: state machine refactor of provider loop (LoopState enum, serializable snapshot). Would allow true "resume into yield" without API call. Major refactor — not urgent since synthetic result works.
+
+## Daemon Restart Behavior (current)
+
+- **Root idle (no active children)**: skip auto-resume. Orphan cleanup also skipped (bug — should always run).
+- **Root with active children**: mark children failed, write orphan results, resume root.
+- **Yield orphan**: written as `isError: true` (bug — should be non-error, normal yield format).
+- **Missing state**: "loaded but not running" — session structure in memory (queue exists) but no provider loop. Would allow children to enqueue directly instead of persisting to disk.
