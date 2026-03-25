@@ -789,7 +789,32 @@ export async function* runProviderLoop(
 			}
 		}
 		const firstUserContent = parts.join("\n\n");
-		messages.push({ role: "user" as const, content: firstUserContent });
+
+		// On resume from a crash during tool execution, the last reconstructed message
+		// may be a user message (tool_result). Appending another user message would
+		// violate the Anthropic API's strict role alternation. Instead, combine queue
+		// content into the existing last user message as additional text blocks.
+		const lastMsg = messages[messages.length - 1] as
+			| { role: string; content: unknown }
+			| undefined;
+		if (lastMsg && lastMsg.role === "user" && Array.isArray(lastMsg.content)) {
+			// Last message is a user message with content blocks (e.g., tool_results).
+			// Append queue text as additional text blocks.
+			(lastMsg.content as unknown[]).push({
+				type: "text",
+				text: firstUserContent,
+			});
+		} else if (
+			lastMsg &&
+			lastMsg.role === "user" &&
+			typeof lastMsg.content === "string"
+		) {
+			// Last message is a plain string user message — combine as string.
+			lastMsg.content = `${lastMsg.content}\n\n${firstUserContent}`;
+		} else {
+			// Normal case: no prior user message, push new one.
+			messages.push({ role: "user" as const, content: firstUserContent });
+		}
 
 		// Record queue events for the consumed messages
 		if (emit) {

@@ -599,3 +599,357 @@ describe("Integration: full stack with mock API", () => {
 		).toThrow(MockValidationError);
 	}, 10000);
 });
+
+// ── Restart tests ──
+
+/**
+ * Recreate app with same dataDir/projectDir but new provider (wrapping the same mock).
+ * Simulates daemon restart: all in-memory state is lost, rebuilt from disk.
+ */
+async function recreateApp(
+	ctx: TestContext,
+): Promise<ReturnType<typeof createApp>> {
+	const provider = createMockedProviderWithMock(ctx.mockAPI);
+	const newApp = createApp({
+		dataDir: ctx.dataDir,
+		agentProvider: provider,
+	});
+	await newApp.pm.load();
+	newApp.markReady();
+	return newApp;
+}
+
+describe("Integration: daemon restart with prefix consistency", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("Restart A: crash during explicit yield", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Turn 1: agent yields → waits for input
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Waiting for input." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__yield",
+					input: {},
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for agent to enter idle (yield) state
+		await waitForIdle(ctx);
+		expect(ctx.app.activeSessions.has(ctx.projectId)).toBe(true);
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+		expect(preRestartRequests).toBe(1);
+
+		// === CRASH: shutdown the daemon ===
+		await ctx.app.shutdown();
+		// Small delay to let cleanup complete
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART: recreate app from disk ===
+		ctx.app = await recreateApp(ctx);
+
+		// autoResume skips (no active children) — agent doesn't wake
+		await ctx.app.autoResumeProjects();
+
+		// Agent should NOT have made new API calls yet (no children = skip resume)
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests);
+
+		// Send message to wake the agent — this triggers handleInjectMessage → launchAgent(resume)
+		// Post-restart turn: agent should call done()
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Finished after restart." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "survived yield restart" },
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Prefix validation ran automatically in mock — if we got here, prefixes are consistent
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+	}, 30000);
+
+	test("Restart B: crash during bash sleep", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Turn 1: start a long-running bash command
+		// Turn 2 (queued): after bash completes → call done
+		// Turn 3 (queued): fallback after interrupted bash → call done
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running a long command." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					// After restart, the interrupted bash tool_result arrives with isError
+					// The agent gets this and should call done
+					blocks: [
+						{ type: "text", text: "Bash was interrupted, finishing up." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "handled bash interruption",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for bash to start executing (the API call happened, tool execution started)
+		// We detect this by waiting for the first API request + a small delay
+		const start = Date.now();
+		while (ctx.mockAPI.getRequestCount() < 1 && Date.now() - start < 5000) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBe(1);
+		// Give bash a moment to actually start
+		await new Promise((r) => setTimeout(r, 200));
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+
+		// === CRASH: shutdown while bash is running ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART: recreate app ===
+		ctx.app = await recreateApp(ctx);
+
+		// autoResume runs orphan cleanup (writes synthetic error tool_result for interrupted bash)
+		// but skips auto-resume (no active children)
+		await ctx.app.autoResumeProjects();
+
+		// Send message to wake agent — it will see the interrupted bash result
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Continue after crash." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "recovered from bash crash" },
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Prefix validation passed automatically
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+
+		// Verify JSONL has the orphan tool_result for bash
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = readSessionEvents(ctx, rootNodeId);
+		const toolResults = events.filter((e) => e.type === "tool_result");
+		// At least one tool_result should be the interrupted bash (isError: true)
+		const errorResults = toolResults.filter(
+			(e) => "isError" in e && e.isError === true,
+		);
+		expect(errorResults.length).toBeGreaterThanOrEqual(1);
+	}, 30000);
+
+	test("Restart C: crash during implicit yield (end_turn)", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Agent returns text-only (end_turn) → enters implicit yield
+		const instruction = JSON.stringify({
+			blocks: [{ type: "text", text: "I have nothing to do, waiting." }],
+			stop_reason: "end_turn",
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for agent to enter idle
+		await waitForIdle(ctx);
+		expect(ctx.app.activeSessions.has(ctx.projectId)).toBe(true);
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+		expect(preRestartRequests).toBe(1);
+
+		// === CRASH ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// No active children → no auto-resume
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests);
+
+		// Wake with message → done
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Wrapping up after restart." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: {
+						status: "passed",
+						summary: "survived implicit yield restart",
+					},
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Prefix consistency validated by mock
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+	}, 30000);
+
+	test("Restart D: crash after done() — root idle-yield", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Agent immediately calls done (root enters idle-yield)
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Done immediately." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "quick done" },
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for root to reach "passed" status
+		const firstStatus = await waitForDone(ctx);
+		expect(firstStatus).toBe("passed");
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+
+		// === CRASH ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Root status was "passed" → autoResume only checks in_progress → skip
+		// Agent should NOT auto-resume
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests);
+
+		// Now send a new message → this should launch a fresh resume session
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "New task after restart." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "second pass after restart" },
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		// Root was already "passed" from first run. launchAgent sets it to "in_progress",
+		// then agent resumes and calls done() again → "passed". We need to wait for
+		// the transition: passed → in_progress → passed. Poll for in_progress first.
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		if (!rootNodeId) throw new Error("No root node");
+
+		// Wait for status to become in_progress (agent started)
+		const start = Date.now();
+		while (Date.now() - start < 5000) {
+			const node = tracker.get(rootNodeId);
+			if (node?.status === "in_progress") break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+
+		// Now wait for the second done
+		const secondStatus = await waitForDone(ctx, 20000);
+		expect(secondStatus).toBe("passed");
+
+		// Prefix validation passed
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+	}, 30000);
+
+	test("Restart E: prefix validation catches inconsistency", async () => {
+		// This test verifies the prefix validation itself works by intentionally
+		// creating an inconsistency and checking it throws.
+		const { MockValidationError } = await import(
+			"./test-utils/mock-anthropic-api.ts"
+		);
+
+		const mockAPI = new ValidatingMockAPI();
+		mockAPI.enablePrefixValidation();
+
+		// First call: establishes prefix
+		mockAPI.createStream({
+			messages: [{ role: "user", content: "hello" }],
+		});
+
+		// Second call: valid extension (prefix match + new messages)
+		mockAPI.createStream({
+			messages: [
+				{ role: "user", content: "hello" },
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "hi" }],
+				},
+				{ role: "user", content: "bye" },
+			],
+		});
+
+		// Third call: INVALID — changes message at index 0
+		expect(() =>
+			mockAPI.createStream({
+				messages: [
+					{ role: "user", content: "CHANGED" },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "hi" }],
+					},
+					{ role: "user", content: "bye" },
+				],
+			}),
+		).toThrow(MockValidationError);
+	}, 10000);
+});

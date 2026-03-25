@@ -306,3 +306,21 @@ Key changes:
 - `buildImplicitYieldMessage` splits formatted string into individual text blocks per queue message
 - Event converter's interleaved `messages_consumed` no longer wraps with `[Messages received while you were working:]`
 - Single-message idle context → string content (cache-friendly); multi-message → array of text blocks
+
+
+## Restart Integration Tests & Resume Path Fix
+
+**Bug found**: When resuming from a crash during tool execution (e.g., bash interrupted), the last reconstructed message from JSONL is a user message (tool_result). The initial queue drain in `runProviderLoop` was pushing a SECOND user message, violating Anthropic API strict role alternation.
+
+**Fix** (provider-shared.ts): When the last reconstructed message is already a user message (from tool_result), combine the queue drain content into it as additional text blocks instead of creating a new user message.
+
+**Prefix validation** in `ValidatingMockAPI`: Validates that API messages are strictly monotonically increasing across calls. Each request's messages must be a prefix extension of the previous request. Normalizes content comparison by stripping `cache_control` annotations and converting string content to array form.
+
+**Crash test scenarios** (integration.test.ts):
+- Restart A: crash during explicit yield → agent resumes in yield, wakes on message
+- Restart B: crash during bash sleep → orphan tool_result written, agent resumes
+- Restart C: crash during implicit yield (end_turn) → same as yield restart
+- Restart D: crash after done() → root was "passed", agent relaunches on message
+- Restart E: prefix validation self-test
+
+**Key pattern**: `recreateApp()` creates new app+provider from same `dataDir` + same `mockAPI` instance (survives across restarts). autoResumeProjects skips root-only agents (no active children). User message triggers handleInjectMessage → launchAgent(resume: true).
