@@ -575,3 +575,14 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Event converter: fork_marker treated as transparent pass-through (like compact_marker).
 - System prompt: paragraph about forked context added at end of SYSTEM_PROMPT.
 - Frontend: fork_marker rendered as "⑂ Forked from {sourceTaskId}" bar in activity log (reuses compact boundary styles). Tool card title: "⑂ Fork: source → target".
+
+
+## System Prompt Language Overhaul
+- system-prompts.ts now uses ownership framing: agents "own" tasks, not parent/child hierarchy.
+- "sub task" for downward references, "the task above" for upward references.
+- Tool names in prompt: `send_message` (unified), not `send_message_to_child`/`report_to_parent`.
+- XML tags: `task_complete`, `task_message` (not `child_complete`, `child_report`, `parent_update`).
+- Section "Parent Messages (parent_update)" → "Incoming Messages (task_message)".
+- Section "Communication with Parent" → "Communicating Up".
+- Section "Parent Handling of Child Results" → "Handling Sub Task Results".
+- `buildSystemPrompt()` signature/logic unchanged.
