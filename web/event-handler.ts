@@ -564,7 +564,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					updates: [],
 					sideEffects: () => {
 						if (msg.taskId) {
-							setRootNodeId(msg.taskId);
 							setActiveAgents((prev) => new Set(prev).add(msg.taskId));
 						}
 						if (msg.provider) setAgentProvider(msg.provider);
