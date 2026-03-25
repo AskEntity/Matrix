@@ -42,3 +42,4 @@ test-project-*
 # Claude Code local config
 .claude
 .vscode/
+.test-event-store/
