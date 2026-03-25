@@ -524,12 +524,103 @@ function createMockAnthropicStream(
 	};
 }
 
+// ── Prefix validation helpers ──
+
+/**
+ * Normalize message content for comparison.
+ * - Strips `cache_control` from content blocks (provider adds these for caching)
+ * - Normalizes string content to array form: "text" → [{type: "text", text: "text"}]
+ *
+ * This ensures prefix comparison is semantically correct — the same content
+ * may have different cache_control annotations or string-vs-array wrapping
+ * between initial send and JSONL reconstruction.
+ */
+function normalizeContent(content: unknown): unknown {
+	if (typeof content === "string") {
+		return [{ type: "text", text: content }];
+	}
+	if (Array.isArray(content)) {
+		return content.map((block) => {
+			if (block && typeof block === "object") {
+				const { cache_control: _, ...rest } = block as Record<string, unknown>;
+				return rest;
+			}
+			return block;
+		});
+	}
+	return content;
+}
+
+/**
+ * Deep equality check for Anthropic message objects.
+ * Normalizes content (strips cache_control, converts string to array form)
+ * so the comparison is semantically meaningful across live/resume boundaries.
+ */
+function deepEqualMessage(
+	a: MessageParam | undefined,
+	b: MessageParam | undefined,
+): boolean {
+	if (a === b) return true;
+	if (a == null || b == null) return false;
+	if (a.role !== b.role) return false;
+
+	const aNorm = normalizeContent(a.content);
+	const bNorm = normalizeContent(b.content);
+	return deepEqualContent(aNorm, bNorm);
+}
+
+function deepEqualContent(a: unknown, b: unknown): boolean {
+	if (a === b) return true;
+	if (a == null || b == null) return a === b;
+	if (typeof a !== typeof b) return false;
+
+	if (typeof a === "string") return a === b;
+
+	if (Array.isArray(a)) {
+		if (!Array.isArray(b)) return false;
+		if (a.length !== b.length) return false;
+		for (let i = 0; i < a.length; i++) {
+			if (!deepEqualContent(a[i], b[i])) return false;
+		}
+		return true;
+	}
+
+	if (typeof a === "object") {
+		const aObj = a as Record<string, unknown>;
+		const bObj = b as Record<string, unknown>;
+		const aKeys = Object.keys(aObj).sort();
+		const bKeys = Object.keys(bObj).sort();
+		if (aKeys.length !== bKeys.length) return false;
+		for (let i = 0; i < aKeys.length; i++) {
+			if (aKeys[i] !== bKeys[i]) return false;
+			const key = aKeys[i] as string;
+			if (!deepEqualContent(aObj[key], bObj[key])) return false;
+		}
+		return true;
+	}
+
+	return a === b;
+}
+
+/**
+ * JSON replacer that abbreviates long content fields for error messages.
+ * Shows first 120 chars of long strings.
+ */
+function abbreviateContent(_key: string, value: unknown): unknown {
+	if (typeof value === "string" && value.length > 120) {
+		return `${value.slice(0, 120)}... (${value.length} chars)`;
+	}
+	return value;
+}
+
 // ── ValidatingMockAPI class ──
 
 export class ValidatingMockAPI {
 	private requestHistory: RequestRecord[] = [];
 	/** Queued turns from multi-turn instructions. Consumed one per API call. */
 	private turnQueue: SingleTurnInstruction[] = [];
+	/** When enabled, validates messages are strictly monotonically increasing across API calls. */
+	private prefixValidationEnabled = false;
 
 	/**
 	 * Creates a stream handler that replaces `client.messages.stream`.
@@ -557,6 +648,11 @@ export class ValidatingMockAPI {
 
 		// Validate request structure
 		validateRequest(messages);
+
+		// Validate prefix consistency across calls
+		if (this.prefixValidationEnabled) {
+			this.validatePrefix(messages);
+		}
 
 		const modelName = (model as string) ?? "claude-sonnet-4-6";
 
@@ -616,10 +712,70 @@ export class ValidatingMockAPI {
 		return this.turnQueue.length;
 	}
 
+	/**
+	 * Enable prefix consistency validation.
+	 * When enabled, every API call's messages must be a strict prefix extension
+	 * of the previous call's messages. i.e., messages[0..N-1] from the previous
+	 * call must deep-equal messages[0..N-1] of the current call.
+	 *
+	 * This catches JSONL reconstruction bugs that cause prompt cache misses.
+	 */
+	enablePrefixValidation(): void {
+		this.prefixValidationEnabled = true;
+	}
+
+	/**
+	 * Validate that current messages are a prefix extension of the previous request's messages.
+	 * The previous request's messages must appear as an exact prefix of the current messages.
+	 *
+	 * Compaction is a valid reset point — after compaction, prefix restarts from scratch.
+	 */
+	private validatePrefix(messages: MessageParam[]): void {
+		if (this.requestHistory.length < 2) return;
+
+		// Find previous non-compaction request to compare against
+		let prevMessages: MessageParam[] | null = null;
+		for (let i = this.requestHistory.length - 2; i >= 0; i--) {
+			const prev = this.requestHistory[i];
+			if (prev && !isCompactionRequest(prev.messages)) {
+				prevMessages = prev.messages;
+				break;
+			}
+		}
+		if (!prevMessages) return;
+
+		// Current request might be a compaction — skip prefix check for compactions
+		if (isCompactionRequest(messages)) return;
+
+		// The previous messages must be a prefix of the current messages.
+		// Current messages length must be >= previous messages length.
+		if (messages.length < prevMessages.length) {
+			throw new MockValidationError(
+				`Prefix violation: current request has ${messages.length} messages, ` +
+					`but previous request had ${prevMessages.length}. Messages must be monotonically increasing.`,
+			);
+		}
+
+		// Deep-compare each message position that existed in the previous request
+		for (let i = 0; i < prevMessages.length; i++) {
+			const prev = prevMessages[i];
+			const curr = messages[i];
+			if (!deepEqualMessage(prev, curr)) {
+				throw new MockValidationError(
+					`Prefix violation at message index ${i}: ` +
+						`previous and current messages differ.\n` +
+						`Previous: ${JSON.stringify(prev, abbreviateContent, 2)}\n` +
+						`Current:  ${JSON.stringify(curr, abbreviateContent, 2)}`,
+				);
+			}
+		}
+	}
+
 	/** Reset state between tests. */
 	reset(): void {
 		this.requestHistory = [];
 		this.turnQueue = [];
+		this.prefixValidationEnabled = false;
 		toolUseCounter = 0;
 	}
 }
