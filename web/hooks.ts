@@ -39,6 +39,14 @@ type UIOnlyEvent =
 			ts: number;
 	  }
 	| {
+			type: "user_message_forwarded";
+			taskId?: string;
+			title: string;
+			summary?: string;
+			content: string;
+			ts: number;
+	  }
+	| {
 			type: "cross_project";
 			fromProjectId: string;
 			fromProjectName: string;

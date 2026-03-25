@@ -421,6 +421,23 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
+	// user_message_forwarded — CC'd user message to sub task, rendered muted
+	if (entry.type === "user_message_forwarded") {
+		const childTitle = entry.title ?? "";
+		const label = `📨 forwarded to ${childTitle}`;
+		const text = getEntryText(entry);
+
+		return (
+			<LogEntryWrapper
+				ts={entry.ts}
+				taskLabel={taskLabel}
+				taskId={getLogTaskId(entry)}
+			>
+				<Card title={label} detail={text} className="og-tool-card-forwarded" />
+			</LogEntryWrapper>
+		);
+	}
+
 	// background_complete — now collapsible via Card
 	if (entry.type === "background_complete") {
 		const command = entry.command;
