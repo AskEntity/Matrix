@@ -872,6 +872,20 @@ export async function* runProviderLoop(
 				manualCompactRequested = true;
 			}
 			if (yieldResult.compactOnly) {
+				// Emit yield tool_result before compaction to avoid orphan tool_call in JSONL.
+				// Without this, the yield tool_call remains unpaired → on resume, converter
+				// finds tool_use without tool_result → duplicate tool_result blocks → API 400.
+				const compactYieldEvt: Event = {
+					type: "tool_result",
+					tool: pendingYieldToolCall.name,
+					toolCallId: pendingYieldToolCall.id,
+					content: "Manual compaction requested",
+					isError: false,
+					taskId: "",
+					ts: Date.now(),
+				};
+				emit?.(compactYieldEvt);
+				yield compactYieldEvt;
 				pendingYieldToolCall = null;
 				continue;
 			}
