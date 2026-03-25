@@ -82,6 +82,25 @@ export interface EventConverterCallbacks {
 	isWorkingContext(messages: unknown[]): boolean;
 }
 
+// ── Tool name backward compat ──
+
+/**
+ * Map old tool names from JSONL to their current equivalents.
+ * Old JSONL files may have tool_call events with names that have since been
+ * renamed (e.g., send_message_to_child → send_message). The provider sends
+ * these to the API which checks that tool names in conversation history match
+ * current tool definitions. This mapping prevents API errors on resume.
+ */
+const TOOL_NAME_ALIASES: Record<string, string> = {
+	mcp__opengraft__send_message_to_child: "mcp__opengraft__send_message",
+	mcp__opengraft__report_to_parent: "mcp__opengraft__send_message",
+};
+
+/** Resolve a tool name, mapping old aliases to current names. */
+function resolveToolName(name: string): string {
+	return TOOL_NAME_ALIASES[name] ?? name;
+}
+
 // ── Internal helpers ──
 
 /**
@@ -216,7 +235,7 @@ export function walkEventsToMessages(
 					} else if (cur.type === "tool_call") {
 						const call: AssistantToolCall = {
 							id: cur.toolCallId,
-							name: cur.tool,
+							name: resolveToolName(cur.tool),
 							input: cur.input,
 						};
 						content.items.push({ type: "tool_call", call });

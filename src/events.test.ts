@@ -116,7 +116,7 @@ describe("formatEventForAI", () => {
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
-			'<child_complete task="Auth" id="t1" status="passed">All tests pass</child_complete>',
+			'<task_complete task="Auth" id="t1" status="passed">All tests pass</task_complete>',
 		);
 	});
 
@@ -133,7 +133,7 @@ describe("formatEventForAI", () => {
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
-			'<parent_update requestReply="true">What status?</parent_update>',
+			'<task_message requestReply="true">What status?</task_message>',
 		);
 	});
 
@@ -2633,7 +2633,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		);
 		expect(queueTextBlock).toBeDefined();
 		expect(queueTextBlock?.text).toContain(
-			'<child_complete task="Auth module" id="t1" status="passed">All tests pass</child_complete>',
+			'<task_complete task="Auth module" id="t1" status="passed">All tests pass</task_complete>',
 		);
 	});
 
@@ -2681,7 +2681,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			"[Messages received while you were idle:]",
 		);
 		expect(idleMsg.content).toContain(
-			'<parent_update requestReply="true">New instructions here</parent_update>',
+			'<task_message requestReply="true">New instructions here</task_message>',
 		);
 	});
 
@@ -2749,7 +2749,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			"[Messages received while you were working:]",
 		);
 		expect(toolMsg.content).toContain(
-			'<child_complete task="Auth module" id="t1" status="passed">All tests pass</child_complete>',
+			'<task_complete task="Auth module" id="t1" status="passed">All tests pass</task_complete>',
 		);
 	});
 
@@ -2999,7 +2999,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		);
 		expect(queueText).toBeDefined();
 		// Both messages should be formatted
-		expect(queueText?.text).toContain("child_complete");
+		expect(queueText?.text).toContain("task_complete");
 		expect(queueText?.text).toContain("Fix bug");
 		expect(queueText?.text).toContain("Also do this");
 	});
@@ -3066,7 +3066,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		expect(toolMsg.content).toContain(
 			"[Messages received while you were working:]",
 		);
-		expect(toolMsg.content).toContain("child_complete");
+		expect(toolMsg.content).toContain("task_complete");
 		expect(toolMsg.content).toContain("Also do this");
 	});
 
@@ -3122,7 +3122,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				tool: "test_tool",
 				toolCallId: "tc-yield",
 				content:
-					'<child_complete task="Build UI" id="t1" status="passed">All tests pass</child_complete>\n<parent_update>Keep going</parent_update>\n\n## Pending\n- Running children: none\n- Pending clarifications: none',
+					'<task_complete task="Build UI" id="t1" status="passed">All tests pass</task_complete>\n<task_message>Keep going</task_message>\n\n## Pending\n- Running sub tasks: none\n- Pending clarifications: none',
 				isError: false,
 				pending: {
 					runningChildren: [],
@@ -3265,7 +3265,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			expect(messages).toHaveLength(1);
 			const msg = messages[0] as { role: string; content: string };
 			expect(msg.role).toBe("user");
-			expect(msg.content).toContain("parent_update");
+			expect(msg.content).toContain("task_message");
 			expect(msg.content).toContain("Do this next");
 		});
 
@@ -3287,7 +3287,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 			expect(messages).toHaveLength(1);
 			const msg = messages[0] as { role: string; content: string };
 			expect(msg.role).toBe("user");
-			expect(msg.content).toContain("parent_update");
+			expect(msg.content).toContain("task_message");
 			expect(msg.content).toContain("Do this next");
 		});
 

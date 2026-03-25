@@ -316,7 +316,7 @@ describe("formatQueueMessage", () => {
 			content: "Priority changed",
 		};
 		const result = formatQueueMessage(msg);
-		expect(result).toContain("<parent_update>Priority changed</parent_update>");
+		expect(result).toContain("<task_message>Priority changed</task_message>");
 		expect(result).not.toContain("requestReply");
 	});
 
@@ -328,7 +328,7 @@ describe("formatQueueMessage", () => {
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toContain(
-			'<parent_update requestReply="true">What is the status?</parent_update>',
+			'<task_message requestReply="true">What is the status?</task_message>',
 		);
 	});
 
@@ -339,7 +339,7 @@ describe("formatQueueMessage", () => {
 			requestReply: false,
 		};
 		const result = formatQueueMessage(msg);
-		expect(result).toContain("<parent_update>FYI update</parent_update>");
+		expect(result).toContain("<task_message>FYI update</task_message>");
 		expect(result).not.toContain("requestReply");
 	});
 
@@ -352,7 +352,7 @@ describe("formatQueueMessage", () => {
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toContain(
-			'<child_report from="Auth Module" id="task-1">50% done</child_report>',
+			'<task_message from="Auth Module" id="task-1">50% done</task_message>',
 		);
 		expect(result).not.toContain("requestReply");
 	});
@@ -367,7 +367,7 @@ describe("formatQueueMessage", () => {
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toContain(
-			'<child_report from="DB Module" id="task-2" requestReply="true">Need clarification on schema</child_report>',
+			'<task_message from="DB Module" id="task-2" requestReply="true">Need clarification on schema</task_message>',
 		);
 	});
 
@@ -381,7 +381,7 @@ describe("formatQueueMessage", () => {
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toContain(
-			'<child_report from="UI" id="task-3">All good</child_report>',
+			'<task_message from="UI" id="task-3">All good</task_message>',
 		);
 		expect(result).not.toContain("requestReply");
 	});

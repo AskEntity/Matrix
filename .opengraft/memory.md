@@ -147,7 +147,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 - 7 statuses: draft, pending, in_progress, testing, passed, failed, stuck, closed.
 - `close_task`: removes worktree, status → closed. `delete_task`: full removal. `reset_task`: removes worktree + session, status → pending.
-- `send_message_to_child` is universal: auto-creates worktree + launches agent. Resumes if passed/failed/closed.
+- `send_message` (was `send_message_to_child`): auto-creates worktree + launches agent when targeting sub tasks. Resumes if passed/failed/closed.
 - `deliverMessage()`: single delivery path. Returns `"enqueued" | "persisted"`.
 
 ## Auth
@@ -206,7 +206,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 ## Miscellaneous
 
 - **CF Tunnel**: macOS LaunchAgent, domain `t.opengraft.com`. rpID must match page domain.
-- **clarify** tool: ALWAYS goes to user (UI), never parent. Use `report_to_parent` with `requestReply: true` for parent guidance.
+- **clarify** tool: ALWAYS goes to user (UI), never to parent task. Use `send_message` with `requestReply: true` for upward communication.
 - **Tool images vs queue images**: `tool_result.images` = MCP screenshots. Queue message images = user-attached, go as sibling blocks.
 - **Chrome MCP**: Use `take_screenshot` for root (safe). `take_snapshot` only for child tasks with short logs.
 - **Done counter**: UI counts both `passed` and `closed` tasks as "done".
@@ -274,7 +274,7 @@ Daemon (Hono: HTTP + SSE on :7433)
 
 
 ## done() → child_complete Direct Delivery
-- done() handler directly enqueues child_complete to parent queue (stateless, like report_to_parent). No reconstruction from tracker state.
+- done() handler directly enqueues child_complete to parent queue (stateless). No reconstruction from tracker state.
 - runChildAgentInBackground only delivers child_complete as fallback when done() was NOT called (daemon restart, error).
 - done() card and child_complete card both show "Task Passed/Failed: {title}" format with green/red border.
 
@@ -309,9 +309,9 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Do NOT create children under a parent task and then manage them yourself as the grandparent. The parent agent gets confused by child_complete messages from children it didn't create.
 - child_complete delivered by done() wakes the parent agent. If you closed the parent, child_complete auto-reopens it with no context → garbage output.
 
-## send_message_to_child Direct Children Only
-- `send_message_to_child` only allows messaging direct children (node.parentId === currentTaskId), not any descendant.
-- Root orchestrator checks node.parentId === tracker.rootNodeId || node.parentId === null.
+## send_message Direct Sub Tasks Only
+- `send_message` only allows messaging direct sub tasks (node.parentId === currentTaskId) or the task above (currentNode.parentId === targetId), not any descendant.
+- Root orchestrator checks node.parentId === tracker.rootNodeId || node.parentId === null for downward messages.
 - Other tools (create_task, update_task, reorder_tasks) still use isDescendantOf for broader scope validation — those are correct to allow subtree operations.
 
 ## Unified Tool Architecture (Phases 1-5 Refactor)
@@ -575,3 +575,13 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Event converter: fork_marker treated as transparent pass-through (like compact_marker).
 - System prompt: paragraph about forked context added at end of SYSTEM_PROMPT.
 - Frontend: fork_marker rendered as "⑂ Forked from {sourceTaskId}" bar in activity log (reuses compact boundary styles). Tool card title: "⑂ Fork: source → target".
+
+
+## send_message Unification + Ownership Framing
+- `send_message_to_child` + `report_to_parent` merged into `send_message({ taskId, title, message, requestReply? })`. Direction determined by comparing taskId to currentNode.parentId (upward) or node.parentId === currentTaskId (downward).
+- Agent-facing XML tags renamed: `<child_complete>` → `<task_complete>`, `<child_report>` → `<task_message>`, `<parent_update>` → `<task_message>`.
+- Internal QueueMessage source types UNCHANGED: `child_complete`, `child_report`, `parent_update` remain as-is. Frontend UIOnlyEvent types also unchanged.
+- Backward compat: `TOOL_NAME_ALIASES` in event-converter.ts maps old JSONL tool names to new. Frontend utils.ts has backward compat for old tool names in activity log rendering.
+- `buildTaskPrompt` includes "Your task is part of X" line. Inline header in send_message handler does the same.
+- system-prompts.ts uses ownership framing: agents "own" tasks. "sub task" for downward, "the task above" for upward. No "parent/child" agent language.
+- **clarify** tool still goes to user (UI), never to parent task. Use `send_message` with `requestReply: true` for upward communication.
