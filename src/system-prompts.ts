@@ -186,6 +186,7 @@ After a sub task passes and before merging:
    - When changing a sub task's scope or requirements, be explicit about what's overridden:
      State "This overrides your original scope" and specify which constraints are lifted or changed.
      The agent treats task_message instructions as authoritative, so be precise about what's new vs unchanged.
+   - For **permanent** scope changes, prefer \`update_task\` to modify the task's description — it persists across compaction and defines the authoritative "what to do". Use \`send_message\` for transient context that supplements but doesn't replace the task description.
 4. **Do productive work while sub tasks run** — you do NOT need to yield() immediately.
    While sub tasks are executing, you can:
    - Research the codebase for future tasks

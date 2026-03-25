@@ -6,6 +6,7 @@
  * (create_task, update_task, send_message, yield, done, etc.).
  */
 
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Event } from "./events.ts";
@@ -14,6 +15,7 @@ import { clearPersistedMessages } from "./persistent-queue.ts";
 import type { PendingState } from "./shared-types.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import {
+	buildTaskPrompt,
 	findParentQueue,
 	formatQueueMessage,
 	getDescendantIds,
@@ -637,6 +639,35 @@ export function createOrchestratorTools(
 					}
 					await tracker.save();
 					broadcastTree();
+
+					// Notify the modified node itself if title/description changed
+					// and a different agent is running on it (quiet — doesn't interrupt yield)
+					const descriptionChanged =
+						args.description !== undefined ||
+						(args.old_description !== undefined &&
+							args.new_description !== undefined);
+					if (
+						(args.title !== undefined || descriptionChanged) &&
+						args.taskId !== currentTaskId
+					) {
+						const targetNode = tracker.get(args.taskId);
+						if (targetNode?.session?.queue) {
+							try {
+								targetNode.session.queue.enqueue(
+									{
+										source: "tree_change",
+										action: "updated",
+										nodeId: args.taskId,
+										title: targetNode.title,
+									},
+									{ quiet: true },
+								);
+							} catch {
+								/* queue may be closed */
+							}
+						}
+					}
+
 					const node = tracker.get(args.taskId);
 					return {
 						content: [
@@ -828,30 +859,23 @@ export function createOrchestratorTools(
 						tracker.assignWorktree(node.id, wt.branch, wt.path);
 					}
 
-					// Build header with task context for sub task startup
-					// Header includes task description + git context — the "what to do" part
-					// Content is the parent's specific message — the "instructions" part
-					const headerParts: string[] = [];
-					headerParts.push(`## Task: ${node.title}`);
-					headerParts.push(`Task ID: \`${node.id}\``);
-					// Add "Your task is part of" line
-					if (currentTaskId) {
-						const senderTitle = currentNode?.title ?? "unknown";
-						headerParts.push(
-							`\nYour task is part of "${senderTitle}" (\`${currentTaskId}\`). Send messages to \`${currentTaskId}\` to discuss questions or coordinate.`,
-						);
+					// Only include full header on cold start (agent not yet running).
+					// Running agents already have context — avoid wasting tokens.
+					const isRunning = node.session != null;
+					let header: string | undefined;
+					if (!isRunning) {
+						// Read project memory from the node's worktree (or repo root)
+						let memory = "";
+						try {
+							memory = readFileSync(
+								join(node.worktreePath ?? repoPath, ".opengraft", "memory.md"),
+								"utf-8",
+							);
+						} catch {
+							/* no memory file */
+						}
+						header = buildTaskPrompt(node, tracker, memory);
 					}
-					if (node.description) headerParts.push(node.description);
-					if (node.branch) {
-						headerParts.push(
-							`\n## Git Context`,
-							`You are on branch: \`${node.branch}\``,
-							`Your working directory is already set to \`${node.worktreePath ?? "unknown"}\` — do NOT cd to it.`,
-							`Do NOT switch branches. All commits go on \`${node.branch}\`.`,
-						);
-					}
-					const header =
-						headerParts.length > 0 ? headerParts.join("\n") : undefined;
 
 					// Deliver message via unified path: persist → enqueue/launch
 					// The message is NOT included in the launch prompt — it arrives
@@ -874,12 +898,11 @@ export function createOrchestratorTools(
 						}
 					}
 
-					const wasRunning = tracker.get(args.taskId)?.session != null;
 					return {
 						content: [
 							{
 								type: "text" as const,
-								text: wasRunning
+								text: isRunning
 									? `Message sent to running task "${node.title}" (${args.taskId})`
 									: `Started task "${node.title}" (${args.taskId}) on branch ${node.branch}`,
 							},

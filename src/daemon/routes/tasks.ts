@@ -107,6 +107,19 @@ function notifyTreeChange(
 		...(title ? { title } : {}),
 	};
 
+	// For "updated" actions, also notify the modified node itself (if it has a running agent).
+	// The node needs to know its own description/title changed.
+	if (action === "updated") {
+		const self = tracker.get(nodeId);
+		if (self?.session?.queue) {
+			try {
+				self.session.queue.enqueue(msg, { quiet: true });
+			} catch {
+				/* queue may be closed */
+			}
+		}
+	}
+
 	// Walk up from the changed node's parent to root, quiet-enqueue to each running agent.
 	// The loop naturally reaches root (parentId chain ends at root whose parentId is null).
 	const node = tracker.get(nodeId);
