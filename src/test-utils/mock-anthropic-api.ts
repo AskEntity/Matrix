@@ -238,8 +238,7 @@ function tryParseInstruction(text: string): MockInstruction | null {
 	}
 
 	// Second try: find JSON objects embedded in the text.
-	// The formatQueueMessage wrapper adds prefixes like:
-	// "[Messages received while you were working:]\n[HH:MM:SS] {..."
+	// Queue messages are formatted with timestamp prefix like "[HH:MM:SS] {..."
 	// We scan for '{' characters and try to parse from each position.
 	let searchFrom = 0;
 	while (searchFrom < text.length) {
