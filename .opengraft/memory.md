@@ -192,7 +192,7 @@ All XML tags use consistent attribute naming:
 
 ## Orphan Tool Call Defense
 
-Three layers: (1) `writeOrphanedToolResults()` at stopAgent and autoResumeProjects, (2) `findOrphanedToolCalls()` on resume, (3) converter full-scan safety net. Yield tool_calls are excluded — handled by loop-level pause.
+Single path: `findOrphanedToolCalls()` (events.ts) → `writeOrphanedToolResults()` at stopAgent and autoResumeProjects → JSONL fixed before resume. Yield tool_calls excluded — handled by loop-level pause. Provider-specific converter fixOrphans was removed (caused duplicate tool_result bugs).
 
 ## Anthropic Cache TTL
 
@@ -261,22 +261,10 @@ Missing any one causes a different bug class: (1) orphan on resume, (2) missing 
 **Compact during yield** hit this twice: first fix added step 1+2, second fix added step 3. The end-of-turn implicit yield compactOnly path doesn't need this — no `pendingYieldToolCall` exists there.
 
 
-## Orphan Detection — Yield Skip (ALL Three Paths)
+## Single Orphan Detection Path
 
-All orphan detection paths must skip `mcp__opengraft__yield` tool_calls:
-1. `findOrphanedToolCalls` in events.ts (line ~362) — skips by tool name
-2. `fixOrphanedAnthropicToolUse` in anthropic-compatible-provider.ts — skips by block.name
-3. `fixOrphanedOpenAIToolCalls` in openai-compatible-provider.ts — skips by tc.function.name
-
-Yield has NO aliases in TOOL_NAME_ALIASES (only send_message has aliases). If yield aliases are ever added, all three paths must be updated.
-
-
-## Single Orphan Detection Path (Post-Refactor)
-
-Orphan tool_call detection is now a SINGLE path:
-1. `findOrphanedToolCalls()` in events.ts — provider-agnostic, Event-level scan
-2. `writeOrphanedToolResults()` at stopAgent/autoResume — writes synthetic tool_results to JSONL
-3. Converter (`walkEventsToMessages`) reads clean JSONL — no orphan fixing needed
-
-Removed: `fixOrphanedAnthropicToolUse`, `fixOrphanedOpenAIToolCalls`, `fixOrphans` from `EventConverterCallbacks`.
-The converter no longer has orphan detection — it trusts JSONL to be clean.
+Orphan tool_call detection is ONE path — `findOrphanedToolCalls()` in events.ts:
+- Skips `mcp__opengraft__yield` (loop-level pause, not an orphan)
+- Called by `writeOrphanedToolResults()` at stopAgent/autoResume → writes synthetic tool_results to JSONL
+- Converter reads clean JSONL — no orphan fixing needed (removed `fixOrphans` from `EventConverterCallbacks`)
+- **Never add provider-specific orphan detection** — it caused duplicate tool_result bugs and was deleted
