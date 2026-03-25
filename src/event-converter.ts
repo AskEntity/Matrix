@@ -72,9 +72,6 @@ export interface EventConverterCallbacks {
 	 */
 	onConsumedMessages(messages: unknown[], consumed: ConsumedMessages): void;
 
-	/** Fix orphaned tool uses in the final message array. */
-	fixOrphans(messages: unknown[]): void;
-
 	/**
 	 * Determine if the current message context is "working" (between tool results).
 	 * Used to decide "[Messages received while you were working/idle:]" wrapper.
@@ -329,6 +326,5 @@ export function walkEventsToMessages(
 		}
 	}
 
-	callbacks.fixOrphans(messages);
 	return messages;
 }

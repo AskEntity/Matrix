@@ -475,74 +475,7 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 				| undefined;
 			return lastMsg?.role === "tool";
 		},
-
-		fixOrphans: fixOrphanedOpenAIToolCalls,
 	});
-}
-
-/**
- * Detect and fix orphaned tool_calls in OpenAI message arrays.
- * Scans ALL assistant messages for tool_calls without matching tool role messages.
- */
-function fixOrphanedOpenAIToolCalls(messages: unknown[]): void {
-	for (let mi = messages.length - 1; mi >= 0; mi--) {
-		const msg = messages[mi] as {
-			role?: string;
-			tool_calls?: Array<{
-				id: string;
-				type: string;
-				function: { name: string; arguments: string };
-			}>;
-		};
-		if (msg.role !== "assistant" || !msg.tool_calls?.length) continue;
-
-		const existingResultIds = new Set<string>();
-		for (let j = mi + 1; j < messages.length; j++) {
-			const followingMsg = messages[j] as {
-				role?: string;
-				tool_call_id?: string;
-			};
-			if (followingMsg.role === "tool" && followingMsg.tool_call_id) {
-				existingResultIds.add(followingMsg.tool_call_id);
-			} else if (followingMsg.role !== "tool" && followingMsg.role !== "user") {
-				break;
-			}
-		}
-
-		const orphanedCalls = msg.tool_calls.filter(
-			(tc) =>
-				!existingResultIds.has(tc.id) &&
-				// Skip yield tool_calls — handled by provider loop's loop-level pause,
-				// which produces its own tool_result on resume.
-				tc.function.name !== "mcp__opengraft__yield",
-		);
-		if (orphanedCalls.length === 0) continue;
-
-		console.warn(
-			"[event-converter] Orphaned tool_calls found at message index",
-			mi,
-			"- ids:",
-			orphanedCalls.map((tc) => tc.id),
-		);
-
-		let insertAt = mi + 1;
-		while (
-			insertAt < messages.length &&
-			(messages[insertAt] as { role?: string }).role === "tool"
-		) {
-			insertAt++;
-		}
-
-		const syntheticResults = orphanedCalls.map((tc) => ({
-			role: "tool",
-			tool_call_id: tc.id,
-			name: tc.function.name,
-			content:
-				"Tool execution was interrupted by daemon restart. Results were lost.",
-		}));
-
-		messages.splice(insertAt, 0, ...syntheticResults);
-	}
 }
 
 // ── OpenAI Provider Adapter ──
