@@ -226,3 +226,12 @@ Key competitors: Claude Code Agent Teams, OpenClaw, Cursor 2.0, OpenAI Codex App
 ## og-docs
 
 VitePress docs at og-docs project. Build with npm (not bun — hangs due to vuejs/vitepress#2943). Deploy: `npm install && npx vitepress build docs && npx wrangler pages deploy docs/.vitepress/dist --project-name=og-docs`. CF Pages custom domain: `docs.opengraft.com`. Pending user deployment.
+
+## Yield Resume & Header Fixes
+
+- **Header only on cold start**: `prepareAgentMessage` (which adds memory.md + working dir header) should only be called when there is NO existing JSONL session. Resume agents already have context from their session. Fixed in `handleInjectMessage` (agent-lifecycle.ts), POST `/orchestrate/agent` and POST `/restart` (routes/agent.ts).
+- **Yield tool_result content**: The yield tool_result event emitted to JSONL must have FULL content (no `.slice(0, 500)`). On resume, event converter reads JSONL to rebuild API messages — truncation causes prompt cache misses.
+- **Yield resume message structure**: Queue messages arriving during yield go as additional text blocks in the same user message (via `cancellationQueueMsgs`/`cancellationFormatted`), not in a separate user message. Headers stripped via `formatQueueMessagesWithHeaders` to prevent memory.md duplication.
+- **Consumer loop yield vs emit**: The `yield` at the bottom of the tool execution loop (for SSE consumer) is NOT persisted to JSONL — `buildToolResultEvents` via `emit()` handles JSONL with full content. The `.slice(0, 500)` was removed from the yield too per principle: backend = full fidelity, frontend = display optimization.
+- **`formatBodyForAI` embeds header**: For `user` and `task_message` with header, `formatBodyForAI` returns `header + content`. So `formatQueueMessage` → `formatBodyForAI` includes the header. Use `formatQueueMessagesWithHeaders` to extract headers to message level and pass headerless copies to `formatQueueMessage`.
+

@@ -98,21 +98,29 @@ export function registerAgentRoutes(
 		const { prompt: _prompt, ...launchOpts } = body;
 		await launchAgent(ctx, project, launchOpts, orchestratorSystemPrompt);
 
-		// Enqueue the user message with header — provider is waiting for queue drain
+		// Enqueue the user message — provider is waiting for queue drain.
+		// Only include header (memory.md + working dir) on true cold start.
+		// Resume agents already have context from their JSONL session.
 		const startTracker = await getTracker(ctx, project.id);
 		const startRootId = startTracker.rootNodeId;
 		if (startRootId) {
 			const startQueue = startTracker.get(startRootId)?.session?.queue;
 			if (startQueue) {
-				const startMemory = readProjectMemory(project.path);
-				const startHeader = startMemory
-					? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${startMemory}`
-					: `Working directory: ${project.path}`;
+				const startEventStore = getEventStore(ctx, project.id);
+				const isResume = startEventStore.has(startRootId);
+				const startHeader = isResume
+					? undefined
+					: (() => {
+							const startMemory = readProjectMemory(project.path);
+							return startMemory
+								? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${startMemory}`
+								: `Working directory: ${project.path}`;
+						})();
 				try {
 					startQueue.enqueue({
 						source: "user",
 						content: body.prompt,
-						header: startHeader,
+						...(startHeader ? { header: startHeader } : {}),
 					});
 				} catch {
 					// Queue may have closed
@@ -228,19 +236,14 @@ export function registerAgentRoutes(
 		try {
 			await stopAgent(ctx, project.id);
 
-			// Persist a resume message with fresh context header
+			// Persist a resume message — no header needed, agent has context from JSONL
 			const restartTracker = await getTracker(ctx, project.id);
 			const restartRootId = restartTracker.rootNodeId;
 			if (restartRootId) {
-				const restartMemory = readProjectMemory(project.path);
-				const restartHeader = restartMemory
-					? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${restartMemory}`
-					: `Working directory: ${project.path}`;
 				await persistMessage(ctx.config.dataDir, project.id, restartRootId, {
 					source: "user",
 					content:
 						"Orchestrator restarted to pick up new config. Continue where you left off.",
-					header: restartHeader,
 				});
 			}
 
