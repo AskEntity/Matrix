@@ -268,3 +268,27 @@ Orphan tool_call detection is ONE path — `findOrphanedToolCalls()` in events.t
 - Called by `writeOrphanedToolResults()` at stopAgent/autoResume → writes synthetic tool_results to JSONL
 - Converter reads clean JSONL — no orphan fixing needed (removed `fixOrphans` from `EventConverterCallbacks`)
 - **Never add provider-specific orphan detection** — it caused duplicate tool_result bugs and was deleted
+
+
+## Integration Test Framework
+
+**Mock API** (`src/test-utils/mock-anthropic-api.ts`):
+- `ValidatingMockAPI`: instruction-driven mock that validates every request
+- Instruction JSON embedded in user messages: `{"blocks": [...]}` (single turn) or `{"turns": [...]}` (multi-turn)
+- Parser handles JSON embedded in formatQueueMessage wrappers (timestamps, "[Messages received while you were working:]")
+- Validates: turn interleaving, tool_use/tool_result pairing, no empty content, no duplicates
+- `createMockedProviderWithMock(mockAPI)`: wires mock into real AnthropicCompatibleProvider
+
+**Integration tests** (`src/integration.test.ts`):
+- 7 scenarios: multi-turn tools, multiple tools, yield+wake, implicit yield, JSONL verification, message injection, validation
+- Each test: real app + mock provider + temp git project + temp dataDir
+- Inject provider via `ctx.config.agentProvider` (DaemonConfig field)
+- Root agents (depth 0) dont close queue on done() — they enter idle-yield. Detect completion via node status polling, not activeSessions.
+- `waitForDone()`: polls root node status. `waitForIdle()`: polls queue.idle.
+
+**Mutation testing results** (4/4 caught):
+- Duplicate messages.push → CAUGHT (consecutive same-role validation)
+- Remove messages.push → CAUGHT (missing tool_result validation)
+- Remove emit callback → CAUGHT (JSONL tool_result count check)
+- Remove yield messages.push → CAUGHT (unpaired tool_use validation)
+- NOT tested: compactOnly yield path (needs compact-during-yield scenario)
