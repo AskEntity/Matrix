@@ -249,16 +249,13 @@ VitePress docs at og-docs project. Build with npm (not bun — hangs due to vuej
 This applies to: `tool_result.content`, `tool_call.input`, `message.body`, `assistant_text.text` — anything in JSONL that gets reconstructed into API messages via `walkEventsToMessages`.
 
 
-## Compact During Yield Bug
+## Tool Result Three-Part Invariant (CRITICAL)
 
-The compactOnly path in provider-shared.ts (explicit yield block) was clearing `pendingYieldToolCall` without emitting a `tool_result` event to JSONL. The end-of-turn implicit yield path does NOT have this issue because there is no `pendingYieldToolCall` — that path handles agent end_turn (no tool calls), not yield tool_use.
+Every code path that produces a tool_result must do ALL three:
+1. **JSONL**: `emit(tool_result_event)` — for resume/replay
+2. **SSE**: `yield tool_result_event` — for frontend
+3. **messages[]**: `adapter.buildToolResultsMessage()` + push — for next API call
 
+Missing any one causes a different bug class: (1) orphan on resume, (2) missing UI feedback, (3) API 400 unpaired tool_use.
 
-## Tool Result Three-Part Invariant
-
-When a tool_call needs a matching tool_result, three things must happen:
-1. **JSONL**: emit tool_result event (for resume/replay)
-2. **SSE**: yield tool_result event (for frontend)
-3. **messages[]**: push tool_result via adapter.buildToolResultsMessage() (for next API call)
-
-Missing any one causes bugs: (1) orphan on resume, (2) missing UI feedback, (3) API 400 unpaired tool_use. The compact-during-yield bug was missing step 3.
+**Compact during yield** hit this twice: first fix added step 1+2, second fix added step 3. The end-of-turn implicit yield compactOnly path doesn't need this — no `pendingYieldToolCall` exists there.
