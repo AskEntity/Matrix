@@ -4,6 +4,7 @@ import {
 	readdirSync,
 	readFileSync,
 	unlinkSync,
+	writeFileSync,
 } from "node:fs";
 import { appendFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -260,9 +261,44 @@ export class EventStore {
 
 /**
  * Run event migrations on all JSONL files.
- * Currently no active migrations — returns 0.
- * Kept as a no-op stub for the daemon startup call.
+ * Migrations are idempotent — safe to re-run.
+ *
+ * Active migrations:
+ * - Remove `tree_updated` events: old code versions persisted these ephemeral events.
+ *   They cause UI state corruption when loaded from REST (stale/empty nodes arrays).
  */
-export function runEventMigrations(_sessionsDir: string): number {
-	return 0;
+export function runEventMigrations(sessionsDir: string): number {
+	if (!existsSync(sessionsDir)) return 0;
+
+	let migrated = 0;
+	const files = readdirSync(sessionsDir).filter((f) =>
+		f.endsWith(".events.jsonl"),
+	);
+
+	for (const file of files) {
+		const filePath = join(sessionsDir, file);
+		const content = readFileSync(filePath, "utf-8");
+
+		// Check if file contains tree_updated events (fast check before parsing lines)
+		if (!content.includes('"tree_updated"')) continue;
+
+		const lines = content.split("\n");
+		const filtered = lines.filter((line) => {
+			if (!line.trim()) return true; // keep empty lines
+			if (!line.includes('"tree_updated"')) return true; // fast path
+			try {
+				const parsed = JSON.parse(line);
+				return parsed.type !== "tree_updated";
+			} catch {
+				return true; // keep unparseable lines
+			}
+		});
+
+		if (filtered.length < lines.length) {
+			writeFileSync(filePath, filtered.join("\n"));
+			migrated++;
+		}
+	}
+
+	return migrated;
 }

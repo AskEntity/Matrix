@@ -210,3 +210,10 @@ System prompt + tools: `ttl: "1h"`. Messages: orchestrator `1h`, child agents `5
 - update_task in orchestrator-tools.ts now quiet-enqueues a `tree_change` message to the modified node if title/description changed and the target is a different agent.
 - REST path in daemon/routes/tasks.ts: `notifyTreeChange()` also notifies the modified node itself for "updated" actions.
 
+
+## tree_updated JSONL Bug
+
+Old code versions persisted `tree_updated` ephemeral events to JSONL. On page load, REST events endpoint returns these with stale/empty `nodes` arrays, causing `updateFromWS()` to wipe the task tree. Fixed via:
+1. Frontend: `processEventBatch` skips `tree_updated` events (they come live via SSE, not from JSONL)
+2. Backend: REST events endpoints filter via `isStaleEphemeralEvent()` (defense in depth)
+3. Migration: `runEventMigrations()` strips `tree_updated` lines from existing JSONL files at daemon startup
