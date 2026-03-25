@@ -889,9 +889,7 @@ describe("lifecycle: parent chain notifications", () => {
 		expect(notification).toBeTruthy();
 		expect((notification as { content: string }).content).toContain("Child");
 		// Auto-forwarded user messages should be marked as forwarded
-		expect(
-			(notification as { forwarded?: boolean }).forwarded,
-		).toBe(true);
+		expect((notification as { forwarded?: boolean }).forwarded).toBe(true);
 
 		tracker.get(parent.id)!.session = undefined;
 		tracker.get(child.id)!.session = undefined;
