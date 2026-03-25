@@ -577,12 +577,13 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Frontend: fork_marker rendered as "⑂ Forked from {sourceTaskId}" bar in activity log (reuses compact boundary styles). Tool card title: "⑂ Fork: source → target".
 
 
-## System Prompt Language Overhaul
-- system-prompts.ts now uses ownership framing: agents "own" tasks, not parent/child hierarchy.
-- "sub task" for downward references, "the task above" for upward references.
-- Tool names in prompt: `send_message` (unified), not `send_message_to_child`/`report_to_parent`.
-- XML tags: `task_complete`, `task_message` (not `child_complete`, `child_report`, `parent_update`).
-- Section "Parent Messages (parent_update)" → "Incoming Messages (task_message)".
-- Section "Communication with Parent" → "Communicating Up".
-- Section "Parent Handling of Child Results" → "Handling Sub Task Results".
-- `buildSystemPrompt()` signature/logic unchanged.
+## Agent Identity Rethink — send_message Unification + Ownership Framing
+- `send_message_to_child` + `report_to_parent` merged into `send_message` tool with direction detection.
+- Schema: `send_message({ taskId, title, message, requestReply? })`. Direction determined by comparing taskId to currentNode.parentId (upward) or node.parentId === currentTaskId (downward).
+- XML tags renamed: `<child_complete>` → `<task_complete>`, `<child_report>` → `<task_message>`, `<parent_update>` → `<task_message>`.
+- Backward compat: `TOOL_NAME_ALIASES` map in event-converter.ts maps old JSONL tool names to new ones during resume.
+- `buildTaskPrompt` now includes "Your task is part of X" line with parent task title and ID.
+- Tool descriptions updated: "child" → "sub task" throughout orchestrator tool descriptions.
+- QueueMessage source types unchanged (child_complete, child_report, parent_update remain internal identifiers).
+- system-prompts.ts uses ownership framing: agents "own" tasks. "sub task" for downward, "the task above" for upward.
+- Section renames: "Parent Messages" → "Incoming Messages", "Communication with Parent" → "Communicating Up", "Parent Handling of Child Results" → "Handling Sub Task Results".
