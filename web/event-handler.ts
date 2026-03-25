@@ -188,7 +188,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				};
 			case "child_report":
 				return {
-					type: "child_report",
+					type: qe.forwarded ? "user_message_forwarded" : "child_report",
 					taskId: parentTaskId,
 					title: qe.title,
 					summary: qe.summary ?? "",
@@ -242,6 +242,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		if (!queueEntry) return content || `[${source}]`;
 		switch (queueEntry.source) {
 			case "child_report": {
+				if (queueEntry.forwarded) {
+					return `📨 ${queueEntry.title}: ${queueEntry.content}`;
+				}
 				if (queueEntry.summary) return `↑ ${queueEntry.summary}`;
 				return queueEntry.title
 					? `↑ ${queueEntry.title}: ${queueEntry.content}`

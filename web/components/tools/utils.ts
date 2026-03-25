@@ -20,6 +20,7 @@ export function getEntryText(entry: LogEntry): string {
 		case "parent_update":
 		case "child_report":
 		case "cross_project":
+		case "user_message_forwarded":
 			return entry.content ?? "";
 		case "background_complete":
 			return `${entry.command} (exit ${entry.exitCode})`;

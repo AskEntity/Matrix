@@ -40,6 +40,8 @@ export type QueueMessage =
 			summary?: string;
 			content: string;
 			requestReply?: boolean;
+			/** True when this is an auto-forwarded user message (parent is CC'd), not an agent's deliberate report. */
+			forwarded?: true;
 	  }
 	| {
 			source: "cross_project";

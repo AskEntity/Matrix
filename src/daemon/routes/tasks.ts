@@ -62,6 +62,7 @@ async function notifyParentChain(
 			taskId,
 			title: taskTitle,
 			content,
+			...(wasResumed ? {} : { forwarded: true as const }),
 		};
 
 		// Agent queues are on session of tracker nodes

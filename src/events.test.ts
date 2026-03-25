@@ -160,6 +160,44 @@ describe("formatEventForAI", () => {
 		};
 		expect(formatEventForAI(event)).toBe("Manual compaction requested");
 	});
+
+	test("formats forwarded child_report with user_message_forwarded tag", () => {
+		const event: Event = {
+			type: "message",
+			id: "test",
+			body: {
+				source: "child_report",
+				taskId: "t1",
+				title: "Worker",
+				content: "User sent a message to child task 'Worker' (t1): fix the bug",
+				forwarded: true,
+			},
+			taskId: "test",
+			ts: 1000,
+		};
+		expect(formatEventForAI(event)).toBe(
+			`<user_message_forwarded task="Worker" id="t1">User sent a message to child task 'Worker' (t1): fix the bug</user_message_forwarded>`,
+		);
+	});
+
+	test("formats non-forwarded child_report with task_message tag", () => {
+		const event: Event = {
+			type: "message",
+			id: "test",
+			body: {
+				source: "child_report",
+				taskId: "t1",
+				title: "Worker",
+				content: "Progress: 50%",
+				summary: "halfway",
+			},
+			taskId: "test",
+			ts: 1000,
+		};
+		expect(formatEventForAI(event)).toBe(
+			'<task_message from="Worker" id="t1" summary="halfway">Progress: 50%</task_message>',
+		);
+	});
 });
 
 describe("eventsToAnthropicMessages", () => {

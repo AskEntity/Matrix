@@ -191,3 +191,10 @@ System prompt + tools: `ttl: "1h"`. Messages: orchestrator `1h`, child agents `5
 - TaskTree: `.og-task-tree` > `.og-tree-header` (fixed) + `.og-task-list` (scrollable)
 - Root task depth starts at 0 — padding: `12 + depth * 10`px
 - localStorage key for hide-closed toggle: `og-hide-closed`
+
+## Forwarded User Messages
+
+- `QueueMessage` child_report variant has `forwarded?: true` to distinguish auto-forwarded user messages from agent send_message reports.
+- In `formatBodyForAI`, forwarded child_reports use `<user_message_forwarded>` XML tag; regular ones use `<task_message>`.
+- Frontend materializes forwarded messages as `type: "user_message_forwarded"` (UIOnlyEvent) with muted styling.
+- The forwarding path is in `src/daemon/routes/tasks.ts` — sets `forwarded: true` when `!wasResumed`.

@@ -252,6 +252,9 @@ function formatBodyForAI(body: QueueMessage): string {
 		case "clarify_response":
 			return `<clarify_response>${body.answer}</clarify_response>`;
 		case "child_report":
+			if (body.forwarded) {
+				return `<user_message_forwarded task="${body.title}" id="${body.taskId}">${body.content}</user_message_forwarded>`;
+			}
 			return `<task_message from="${body.title}" id="${body.taskId}"${body.summary ? ` summary="${body.summary}"` : ""}${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</task_message>`;
 		case "cross_project":
 			return `<cross_project from="${body.fromProjectName}" projectId="${body.fromProjectId}">${body.content}</cross_project>`;
