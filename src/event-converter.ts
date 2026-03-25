@@ -301,9 +301,26 @@ export function walkEventsToMessages(
 			}
 
 			case "compact_marker":
-			case "fork_marker":
 				i++;
 				break;
+
+			case "fork_marker": {
+				const forkEvent = events[i] as Extract<
+					(typeof events)[number],
+					{ type: "fork_marker" }
+				>;
+				messages.push(
+					callbacks.onUserMessage(
+						`<fork_marker source_task="${forkEvent.sourceTaskId}">\n` +
+							`Everything above is inherited context from another agent's session. ` +
+							`Your identity, task, and working directory are defined by the message that follows this marker. ` +
+							`The inherited context is background knowledge — use it, but follow YOUR task description.\n` +
+							`</fork_marker>`,
+					),
+				);
+				i++;
+				break;
+			}
 
 			default:
 				// Skip lifecycle/broadcast events
