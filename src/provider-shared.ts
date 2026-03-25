@@ -906,14 +906,10 @@ export async function* runProviderLoop(
 				messages.push(msg);
 			}
 
-			// Emit queue events for consumed messages
-			if (emit) {
-				recordQueueEvents(emit, yieldResult.nonCompact);
-			}
-
-			// Emit the yield tool_result event with FULL content (not truncated).
+			// Emit the yield tool_result event FIRST with FULL content (not truncated).
 			// On resume, event converter reads this from JSONL to rebuild the tool_result
 			// message — truncation would cause prompt cache misses.
+			// tool_result must come before messages_consumed to match normal tool path order.
 			const yieldResultEvt: Event = {
 				type: "tool_result",
 				tool: pendingYieldToolCall.name,
@@ -925,6 +921,11 @@ export async function* runProviderLoop(
 			};
 			emit?.(yieldResultEvt);
 			yield yieldResultEvt;
+
+			// Emit queue events for consumed messages AFTER tool_result
+			if (emit) {
+				recordQueueEvents(emit, yieldResult.nonCompact);
+			}
 
 			pendingYieldToolCall = null;
 			continue;
