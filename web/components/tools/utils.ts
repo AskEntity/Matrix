@@ -17,8 +17,7 @@ export function getEntryText(entry: LogEntry): string {
 		case "message":
 			return entry.body.source === "user" ? entry.body.content : "";
 		case "lifecycle":
-		case "parent_update":
-		case "child_report":
+		case "task_message":
 		case "cross_project":
 		case "user_message_forwarded":
 			return entry.content ?? "";

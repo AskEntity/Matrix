@@ -7,7 +7,7 @@
 
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { QueueMessage } from "./message-queue.ts";
+import { migrateQueueMessage, type QueueMessage } from "./message-queue.ts";
 
 /** Build the path for a task's persisted message file. */
 function messagePath(
@@ -61,7 +61,9 @@ export async function loadPersistedMessages(
 	try {
 		const raw = await readFile(filePath, "utf-8");
 		const parsed = JSON.parse(raw) as QueueMessage[];
-		return Array.isArray(parsed) ? parsed : [];
+		if (!Array.isArray(parsed)) return [];
+		// Backward compat: migrate old source names
+		return parsed.map(migrateQueueMessage);
 	} catch (e) {
 		if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
 			console.warn(

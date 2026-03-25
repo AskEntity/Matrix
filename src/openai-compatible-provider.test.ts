@@ -1260,12 +1260,12 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const queueMsgEvent = events.find(
 					(e) =>
 						e.type === "message" &&
-						e.body.source === "parent_update" &&
+						e.body.source === "user" &&
 						e.body.content.includes("New instruction"),
 				);
 				if (
 					queueMsgEvent?.type === "message" &&
-					queueMsgEvent.body.source === "parent_update"
+					queueMsgEvent.body.source === "user"
 				) {
 					expect(queueMsgEvent.body.content).toContain(
 						"New instruction for you",

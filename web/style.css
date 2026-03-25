@@ -1811,12 +1811,12 @@ button.og-tool-card-header:hover {
 	margin-left: 0.5em;
 }
 
-.og-tool-card-child-report {
+.og-tool-card-task-message {
 	border-color: rgba(56, 139, 253, 0.3);
 	background: rgba(56, 139, 253, 0.05);
 }
 
-.og-tool-card-child-report .og-tool-card-name {
+.og-tool-card-task-message .og-tool-card-name {
 	color: rgba(56, 139, 253, 0.9);
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -1824,7 +1824,7 @@ button.og-tool-card-header:hover {
 	flex-shrink: 1;
 }
 
-.og-tool-card-child-report .og-tool-card-detail {
+.og-tool-card-task-message .og-tool-card-detail {
 	color: rgba(56, 139, 253, 0.6);
 	font-size: 0.85em;
 	margin-left: 0.5em;

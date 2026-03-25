@@ -38,7 +38,7 @@ function makeDeps() {
 }
 
 describe("event-handler queueEntry handling", () => {
-	it("processEventBatch: user_message with queueEntry.source=child_report materializes as child_report", () => {
+	it("processEventBatch: user_message with queueEntry.source=task_message materializes as task_message", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -53,9 +53,9 @@ describe("event-handler queueEntry handling", () => {
 				type: "message",
 				id: "msg-1",
 				body: {
-					source: "child_report",
-					taskId: "child-1",
-					title: "My Child Task",
+					source: "task_message",
+					fromTaskId: "child-1",
+					fromTitle: "My Child Task",
 					content: "Progress update: 50% done",
 				},
 				taskId: "parent-1",
@@ -69,17 +69,17 @@ describe("event-handler queueEntry handling", () => {
 			},
 		] satisfies IncomingEvent[]);
 
-		const childReportEntry = capturedLogs.find(
-			(e: LogEntry) => e.type === "child_report",
+		const taskMessageEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "task_message",
 		);
-		expect(childReportEntry).toBeDefined();
-		expect(childReportEntry?.content).toBe("Progress update: 50% done");
-		expect(childReportEntry?.title).toBe("My Child Task");
+		expect(taskMessageEntry).toBeDefined();
+		expect(taskMessageEntry?.content).toBe("Progress update: 50% done");
+		expect(taskMessageEntry?.fromTitle).toBe("My Child Task");
 		// taskId should be the PARENT's (consuming agent), not the child's
-		expect(childReportEntry?.taskId).toBe("parent-1");
+		expect(taskMessageEntry?.taskId).toBe("parent-1");
 	});
 
-	it("processEventBatch: user_message with queueEntry.source=parent_update materializes as parent_update", () => {
+	it("processEventBatch: user_message with queueEntry.source=task_message (downward) materializes as task_message", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -94,7 +94,9 @@ describe("event-handler queueEntry handling", () => {
 				type: "message",
 				id: "msg-2",
 				body: {
-					source: "parent_update",
+					source: "task_message",
+					fromTaskId: "p1",
+					fromTitle: "Orchestrator",
 					content: "Please also fix bug #42",
 				},
 				taskId: "task-1",
@@ -108,11 +110,11 @@ describe("event-handler queueEntry handling", () => {
 			},
 		] satisfies IncomingEvent[]);
 
-		const parentEntry = capturedLogs.find(
-			(e: LogEntry) => e.type === "parent_update",
+		const taskMessageEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "task_message",
 		);
-		expect(parentEntry).toBeDefined();
-		expect(parentEntry?.content).toBe("Please also fix bug #42");
+		expect(taskMessageEntry).toBeDefined();
+		expect(taskMessageEntry?.content).toBe("Please also fix bug #42");
 	});
 
 	it("processEventBatch: user_message with queueEntry.source=user still renders as user_message", () => {
@@ -170,9 +172,9 @@ describe("event-handler queueEntry handling", () => {
 				type: "message",
 				id: "msg-4",
 				body: {
-					source: "child_report",
-					taskId: "child-1",
-					title: "Worker",
+					source: "task_message",
+					fromTaskId: "child-1",
+					fromTitle: "Worker",
 					content: "Phase 1 done",
 				},
 				taskId: "parent-1",
@@ -217,7 +219,7 @@ describe("event-handler queueEntry handling", () => {
 		);
 	});
 
-	it("processEventBatch: message with body.source=child_report materializes correctly", () => {
+	it("processEventBatch: message with body.source=task_message materializes correctly", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -232,9 +234,9 @@ describe("event-handler queueEntry handling", () => {
 				type: "message",
 				id: "msg-6",
 				body: {
-					source: "child_report",
-					taskId: "child-1",
-					title: "New Task",
+					source: "task_message",
+					fromTaskId: "child-1",
+					fromTitle: "New Task",
 					content: "Report content",
 				},
 				taskId: "parent-1",
@@ -248,15 +250,15 @@ describe("event-handler queueEntry handling", () => {
 			},
 		] satisfies IncomingEvent[]);
 
-		const childReportEntry = capturedLogs.find(
-			(e: LogEntry) => e.type === "child_report",
+		const taskMessageEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "task_message",
 		);
-		expect(childReportEntry).toBeDefined();
-		expect(childReportEntry?.content).toBe("Report content");
-		expect(childReportEntry?.title).toBe("New Task");
+		expect(taskMessageEntry).toBeDefined();
+		expect(taskMessageEntry?.content).toBe("Report content");
+		expect(taskMessageEntry?.fromTitle).toBe("New Task");
 	});
 
-	it("handleEvent: live user_message with queueEntry.source=child_report deferred, then messages_consumed renders card", () => {
+	it("handleEvent: live user_message with queueEntry.source=task_message deferred, then messages_consumed renders card", () => {
 		const { deps } = makeDeps();
 
 		let capturedLogs: LogEntry[] = [];
@@ -283,9 +285,9 @@ describe("event-handler queueEntry handling", () => {
 			type: "message",
 			id: "msg-7",
 			body: {
-				source: "child_report",
-				taskId: "child-1",
-				title: "Worker Task",
+				source: "task_message",
+				fromTaskId: "child-1",
+				fromTitle: "Worker Task",
 				content: "I'm done with phase 1",
 			},
 			taskId: "parent-1",
@@ -308,14 +310,14 @@ describe("event-handler queueEntry handling", () => {
 			ts: 2000,
 		} satisfies IncomingEvent);
 
-		// Now should appear in activity log as child_report
-		const childReportEntry = capturedLogs.find(
-			(e: LogEntry) => e.type === "child_report",
+		// Now should appear in activity log as task_message
+		const taskMessageEntry = capturedLogs.find(
+			(e: LogEntry) => e.type === "task_message",
 		);
-		expect(childReportEntry).toBeDefined();
-		expect(childReportEntry?.content).toBe("I'm done with phase 1");
+		expect(taskMessageEntry).toBeDefined();
+		expect(taskMessageEntry?.content).toBe("I'm done with phase 1");
 		// taskId should be the PARENT's (consuming agent), not the child's
-		expect(childReportEntry?.taskId).toBe("parent-1");
+		expect(taskMessageEntry?.taskId).toBe("parent-1");
 		// Pending should be cleared
 		expect(capturedPending.length).toBe(0);
 	});

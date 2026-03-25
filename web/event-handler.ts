@@ -146,7 +146,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			// Compact messages are internal — never shown in activity log
 			case "compact":
 				return null;
-			case "child_complete":
+			case "task_complete":
 				// Render as task_completed card at consumption time
 				return {
 					type: "task_completed",
@@ -179,21 +179,22 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					taskId: parentTaskId ?? "",
 					ts: eventTs,
 				};
-			case "parent_update":
+			case "task_message":
 				return {
-					type: "parent_update",
-					content: qe.content,
+					type: "task_message",
 					taskId: parentTaskId,
-					ts: eventTs,
-				};
-			case "child_report":
-				return {
-					type: qe.forwarded ? "user_message_forwarded" : "child_report",
-					taskId: parentTaskId,
-					title: qe.title,
-					summary: qe.summary ?? "",
+					fromTitle: qe.fromTitle,
+					title: qe.title ?? "",
 					content: qe.content,
 					...(qe.requestReply ? { requestReply: true } : {}),
+					ts: eventTs,
+				};
+			case "user_message_forwarded":
+				return {
+					type: "user_message_forwarded",
+					taskId: parentTaskId,
+					title: qe.fromTitle,
+					content: qe.content,
 					ts: eventTs,
 				};
 			case "background_complete":
@@ -241,19 +242,16 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		if (!source || source === "user") return content;
 		if (!queueEntry) return content || `[${source}]`;
 		switch (queueEntry.source) {
-			case "child_report": {
-				if (queueEntry.forwarded) {
-					return `📨 ${queueEntry.title}: ${queueEntry.content}`;
-				}
-				if (queueEntry.summary) return `↑ ${queueEntry.summary}`;
-				return queueEntry.title
-					? `↑ ${queueEntry.title}: ${queueEntry.content}`
+			case "task_message": {
+				if (queueEntry.title) return `↑ ${queueEntry.title}`;
+				return queueEntry.fromTitle
+					? `↑ ${queueEntry.fromTitle}: ${queueEntry.content}`
 					: `↑ ${queueEntry.content}`;
 			}
-			case "child_complete":
+			case "user_message_forwarded":
+				return `📨 ${queueEntry.fromTitle}: ${queueEntry.content}`;
+			case "task_complete":
 				return `${queueEntry.success ? "✓" : "✗"} ${queueEntry.title}`;
-			case "parent_update":
-				return `← Parent: ${queueEntry.content}`;
 			case "clarify_response":
 				return `💬 ${queueEntry.answer}`;
 			case "cross_project":
@@ -656,7 +654,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				};
 
 			case "task_completed":
-				// UIOnlyEvent — materialized from child_complete queue messages
+				// UIOnlyEvent — materialized from task_complete queue messages
 				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
 
 			case "compacted_resume":
@@ -668,7 +666,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				const source = body?.source;
 				const umId = msg.id || undefined;
 				const umContent =
-					body && (body.source === "user" || body.source === "parent_update")
+					body &&
+					(body.source === "user" ||
+						(body.source === "task_message" && body.header))
 						? body.content
 						: "";
 				const umImages = body?.source === "user" ? body.images : undefined;

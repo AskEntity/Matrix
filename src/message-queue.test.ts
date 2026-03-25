@@ -138,10 +138,10 @@ describe("MessageQueue", () => {
 		expect(q.drain()).toEqual([msg]);
 	});
 
-	test("different message types: child_complete", () => {
+	test("different message types: task_complete", () => {
 		const q = new MessageQueue();
 		const msg: QueueMessage = {
-			source: "child_complete",
+			source: "task_complete",
 			taskId: "task-123",
 			title: "Auth module",
 			success: true,
@@ -151,20 +151,24 @@ describe("MessageQueue", () => {
 		expect(q.drain()).toEqual([msg]);
 	});
 
-	test("different message types: parent_update", () => {
+	test("different message types: task_message", () => {
 		const q = new MessageQueue();
 		const msg: QueueMessage = {
-			source: "parent_update",
+			source: "task_message",
+			fromTaskId: "p1",
+			fromTitle: "Orchestrator",
 			content: "Priority changed",
 		};
 		q.enqueue(msg);
 		expect(q.drain()).toEqual([msg]);
 	});
 
-	test("parent_update with requestReply flag", () => {
+	test("task_message with requestReply flag", () => {
 		const q = new MessageQueue();
 		const msg: QueueMessage = {
-			source: "parent_update",
+			source: "task_message",
+			fromTaskId: "p1",
+			fromTitle: "Orchestrator",
 			content: "What is the status?",
 			requestReply: true,
 		};
@@ -172,16 +176,16 @@ describe("MessageQueue", () => {
 		const drained = q.drain();
 		expect(drained).toEqual([msg]);
 		expect(
-			drained[0]?.source === "parent_update" && drained[0].requestReply,
+			drained[0]?.source === "task_message" && drained[0].requestReply,
 		).toBe(true);
 	});
 
-	test("child_report with requestReply flag", () => {
+	test("task_message from sub task with requestReply flag", () => {
 		const q = new MessageQueue();
 		const msg: QueueMessage = {
-			source: "child_report",
-			taskId: "task-1",
-			title: "Auth",
+			source: "task_message",
+			fromTaskId: "task-1",
+			fromTitle: "Auth",
 			content: "Need help",
 			requestReply: true,
 		};
@@ -189,7 +193,7 @@ describe("MessageQueue", () => {
 		const drained = q.drain();
 		expect(drained).toEqual([msg]);
 		expect(
-			drained[0]?.source === "child_report" && drained[0].requestReply,
+			drained[0]?.source === "task_message" && drained[0].requestReply,
 		).toBe(true);
 	});
 
@@ -207,13 +211,18 @@ describe("MessageQueue", () => {
 		const q = new MessageQueue();
 		q.enqueue({ source: "user", content: "start" });
 		q.enqueue({
-			source: "child_complete",
+			source: "task_complete",
 			taskId: "t1",
 			title: "DB",
 			success: true,
 			output: "done",
 		});
-		q.enqueue({ source: "parent_update", content: "hurry up" });
+		q.enqueue({
+			source: "task_message",
+			fromTaskId: "p1",
+			fromTitle: "Orchestrator",
+			content: "hurry up",
+		});
 		q.enqueue({ source: "clarify_response", answer: "42" });
 
 		const first = await q.wait();
@@ -221,8 +230,8 @@ describe("MessageQueue", () => {
 
 		const rest = q.drain();
 		expect(rest).toHaveLength(3);
-		expect(rest[0]?.source).toBe("child_complete");
-		expect(rest[1]?.source).toBe("parent_update");
+		expect(rest[0]?.source).toBe("task_complete");
+		expect(rest[1]?.source).toBe("task_message");
 		expect(rest[2]?.source).toBe("clarify_response");
 	});
 

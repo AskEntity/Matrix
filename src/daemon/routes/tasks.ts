@@ -58,13 +58,19 @@ async function notifyParentChain(
 			content = `User sent a message to child task '${taskTitle}' (${taskId}): ${messageContent}`;
 		}
 
-		const notification = {
-			source: "child_report" as const,
-			taskId,
-			title: taskTitle,
-			content,
-			...(wasResumed ? {} : { forwarded: true as const }),
-		};
+		const notification: QueueMessage = wasResumed
+			? {
+					source: "task_message",
+					fromTaskId: taskId,
+					fromTitle: taskTitle,
+					content,
+				}
+			: {
+					source: "user_message_forwarded",
+					fromTaskId: taskId,
+					fromTitle: taskTitle,
+					content,
+				};
 
 		// Agent queues are on session of tracker nodes
 		const ancestorQueue = ancestor.session?.queue;
@@ -311,9 +317,9 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				if (parentQueue) {
 					try {
 						parentQueue.enqueue({
-							source: "child_report",
-							taskId: nodeId,
-							title: node.title,
+							source: "task_message",
+							fromTaskId: nodeId,
+							fromTitle: node.title,
 							content: `User continued child task "${node.title}" (${nodeId}).`,
 						});
 					} catch {
@@ -345,11 +351,10 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 				: "Continue working. Pick up where you left off and complete the task.";
 			const parentNode = node.parentId ? tracker.get(node.parentId) : undefined;
 			await persistMessage(ctx.config.dataDir, project.id, nodeId, {
-				source: "parent_update",
+				source: "task_message",
+				fromTaskId: parentNode?.id ?? "",
+				fromTitle: parentNode?.title ?? "User",
 				content,
-				...(parentNode
-					? { taskId: parentNode.id, title: parentNode.title }
-					: {}),
 				header,
 			});
 
@@ -389,11 +394,10 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 					? tracker.get(node.parentId)
 					: undefined;
 				await persistMessage(ctx.config.dataDir, project.id, nodeId, {
-					source: "parent_update",
+					source: "task_message",
+					fromTaskId: parentNode2?.id ?? "",
+					fromTitle: parentNode2?.title ?? "User",
 					content,
-					...(parentNode2
-						? { taskId: parentNode2.id, title: parentNode2.title }
-						: {}),
 					header,
 				});
 

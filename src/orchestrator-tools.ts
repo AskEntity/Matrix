@@ -239,8 +239,8 @@ export function createOrchestratorTools(
 			const completedIds = new Set(
 				all
 					.filter(
-						(m): m is Extract<QueueMessage, { source: "child_complete" }> =>
-							m.source === "child_complete",
+						(m): m is Extract<QueueMessage, { source: "task_complete" }> =>
+							m.source === "task_complete",
 					)
 					.map((m) => m.taskId),
 			);
@@ -793,10 +793,10 @@ export function createOrchestratorTools(
 
 					try {
 						parentQueue.enqueue({
-							source: "child_report",
-							taskId: currentTaskId ?? "unknown",
-							title: taskTitle,
-							summary: args.title,
+							source: "task_message",
+							fromTaskId: currentTaskId ?? "unknown",
+							fromTitle: taskTitle,
+							title: args.title,
 							content: args.message,
 							...(args.requestReply ? { requestReply: true } : {}),
 						});
@@ -881,10 +881,10 @@ export function createOrchestratorTools(
 					// The message is NOT included in the launch prompt — it arrives
 					// via queue drain of persisted messages (exactly-once delivery).
 					const queueMessage: QueueMessage = {
-						source: "parent_update",
+						source: "task_message",
+						fromTaskId: currentTaskId ?? "unknown",
+						fromTitle: currentNode?.title ?? "unknown",
 						content: args.message,
-						...(currentTaskId ? { taskId: currentTaskId } : {}),
-						...(currentNode?.title ? { title: currentNode.title } : {}),
 						...(args.requestReply ? { requestReply: true } : {}),
 						...(header ? { header } : {}),
 					};
@@ -1568,7 +1568,7 @@ export function createOrchestratorTools(
 					broadcastTree();
 				}
 
-				// Deliver child_complete to parent via deliverMessage (child agents only).
+				// Deliver task_complete to parent via deliverMessage (child agents only).
 				// deliverMessage handles both paths: enqueue if parent is running, persist if not.
 				// runChildAgentInBackground skips delivery when done() was called.
 				const depth = getDepth();
@@ -1576,7 +1576,7 @@ export function createOrchestratorTools(
 					const node = tracker.get(currentTaskId);
 					if (node?.parentId) {
 						const completionMsg: QueueMessage = {
-							source: "child_complete",
+							source: "task_complete",
 							taskId: currentTaskId,
 							title: node.title ?? "unknown",
 							success: args.status === "passed",
@@ -1586,7 +1586,7 @@ export function createOrchestratorTools(
 							.deliverMessage(node.parentId, completionMsg)
 							.catch((e) => {
 								console.warn(
-									`[done] Failed to deliver child_complete to parent ${node.parentId}:`,
+									`[done] Failed to deliver task_complete to parent ${node.parentId}:`,
 									e,
 								);
 							});

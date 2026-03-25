@@ -354,45 +354,15 @@ export const LogEntryView = memo(function LogEntryView({
 		);
 	}
 
-	// parent_update
-	if (entry.type === "parent_update") {
-		const text = getEntryText(entry);
-		const isLong = text.length > 100 || text.includes("\n");
-		const headerText =
-			text.length > 100
-				? `${text.slice(0, 100)}…`
-				: (text.split("\n")[0] ?? text);
-
-		return (
-			<LogEntryWrapper
-				ts={entry.ts}
-				taskLabel={taskLabel}
-				taskId={getLogTaskId(entry)}
-			>
-				<Card
-					title="← Parent"
-					detail={isLong ? headerText : text}
-					className="og-tool-card-parent"
-				>
-					{isLong ? (
-						<div className="og-tool-card-body">
-							<div className="og-tool-card-result">{text.trim()}</div>
-						</div>
-					) : null}
-				</Card>
-			</LogEntryWrapper>
-		);
-	}
-
-	// child_report
-	if (entry.type === "child_report") {
-		const childTitle = entry.title ?? "";
-		const summary = entry.summary ?? "";
-		const label = summary
-			? `↑ ${summary}`
-			: childTitle
-				? `↑ from ${childTitle}`
-				: "↑ Child Report";
+	// task_message (from another task — either direction)
+	if (entry.type === "task_message") {
+		const fromTitle = entry.fromTitle ?? "";
+		const msgTitle = entry.title ?? "";
+		const label = msgTitle
+			? `↑ ${msgTitle}`
+			: fromTitle
+				? `↑ from ${fromTitle}`
+				: "↑ Task Message";
 		const text = getEntryText(entry);
 		const isLong = text.length > 100 || text.includes("\n");
 		const headerText =
@@ -409,7 +379,7 @@ export const LogEntryView = memo(function LogEntryView({
 				<Card
 					title={label}
 					detail={isLong ? headerText : text}
-					className="og-tool-card-child-report"
+					className="og-tool-card-task-message"
 				>
 					{isLong ? (
 						<div className="og-tool-card-body">

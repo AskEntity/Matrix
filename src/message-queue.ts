@@ -20,30 +20,29 @@ export type QueueMessage =
 			title?: string;
 	  }
 	| {
-			source: "child_complete";
+			source: "task_complete";
 			taskId: string;
 			title: string;
 			success: boolean;
 			output: string;
 	  }
 	| {
-			source: "parent_update";
+			source: "task_message";
+			fromTaskId: string;
+			fromTitle: string;
 			content: string;
-			taskId?: string;
+			/** Message subject line (from send_message's title param). */
 			title?: string;
 			requestReply?: boolean;
+			/** Only on cold-start downward messages. */
 			header?: string;
 	  }
 	| { source: "clarify_response"; answer: string }
 	| {
-			source: "child_report";
-			taskId: string;
-			title: string;
-			summary?: string;
+			source: "user_message_forwarded";
+			fromTaskId: string;
+			fromTitle: string;
 			content: string;
-			requestReply?: boolean;
-			/** True when this is an auto-forwarded user message (parent is CC'd), not an agent's deliberate report. */
-			forwarded?: true;
 	  }
 	| {
 			source: "cross_project";
@@ -63,6 +62,51 @@ export type QueueMessage =
 			stderr?: string;
 	  }
 	| { source: "compact" };
+
+/**
+ * Migrate a QueueMessage from old source names to current ones.
+ * Handles JSONL and persistent queue backward compatibility:
+ * - child_complete → task_complete
+ * - child_report (forwarded) → user_message_forwarded
+ * - child_report → task_message (fromTaskId/fromTitle, summary→title)
+ * - parent_update → task_message (fromTaskId/fromTitle from optional fields)
+ */
+// biome-ignore lint/suspicious/noExplicitAny: migration handles arbitrary legacy shapes
+export function migrateQueueMessage(raw: any): QueueMessage {
+	if (!raw || typeof raw !== "object" || !raw.source) return raw;
+	switch (raw.source) {
+		case "child_complete":
+			return { ...raw, source: "task_complete" };
+		case "child_report":
+			if (raw.forwarded) {
+				return {
+					source: "user_message_forwarded",
+					fromTaskId: raw.taskId ?? "",
+					fromTitle: raw.title ?? "",
+					content: raw.content ?? "",
+				};
+			}
+			return {
+				source: "task_message",
+				fromTaskId: raw.taskId ?? "",
+				fromTitle: raw.title ?? "",
+				content: raw.content ?? "",
+				...(raw.summary ? { title: raw.summary } : {}),
+				...(raw.requestReply ? { requestReply: true } : {}),
+			};
+		case "parent_update":
+			return {
+				source: "task_message",
+				fromTaskId: raw.taskId ?? "",
+				fromTitle: raw.title ?? "",
+				content: raw.content ?? "",
+				...(raw.requestReply ? { requestReply: true } : {}),
+				...(raw.header ? { header: raw.header } : {}),
+			};
+		default:
+			return raw;
+	}
+}
 
 /**
  * A simple async message queue for inter-agent communication.

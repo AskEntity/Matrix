@@ -727,7 +727,10 @@ export async function* runProviderLoop(
 		// Header (working dir + memory) goes first, then content
 		const parts: string[] = [];
 		for (const msg of allMsgs) {
-			if (msg.source === "user" || msg.source === "parent_update") {
+			if (
+				msg.source === "user" ||
+				(msg.source === "task_message" && msg.header)
+			) {
 				const m = msg as { header?: string; content: string };
 				if (m.header) parts.push(m.header);
 				parts.push(m.content);
