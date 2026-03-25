@@ -542,6 +542,7 @@ function McpServersSection({
 	const [newName, setNewName] = useState("");
 	const [newCommand, setNewCommand] = useState("");
 	const [newArgs, setNewArgs] = useState("");
+	const [newEnv, setNewEnv] = useState("");
 
 	const servers = (draft.mcpServers ?? {}) as Record<string, McpServerConfig>;
 	// inherited from lower layers
@@ -575,14 +576,21 @@ function McpServersSection({
 	const addServer = () => {
 		if (!newName.trim() || !newCommand.trim()) return;
 		const args = newArgs.trim().split(/\s+/).filter(Boolean);
+		const env: Record<string, string> = {};
+		for (const line of newEnv.trim().split("\n").filter(Boolean)) {
+			const eq = line.indexOf("=");
+			if (eq > 0) env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+		}
 		const server: McpServerConfig = {
 			command: newCommand.trim(),
 			...(args.length > 0 ? { args } : {}),
+			...(Object.keys(env).length > 0 ? { env } : {}),
 		};
 		onDraftChange({ mcpServers: { ...servers, [newName.trim()]: server } });
 		setNewName("");
 		setNewCommand("");
 		setNewArgs("");
+		setNewEnv("");
 		setAddingNew(false);
 	};
 
@@ -598,7 +606,16 @@ function McpServersSection({
 				.map(([name, srv]) => (
 					<div key={name} className="og-mcp-server-row og-mcp-server-inherited">
 						<span className="og-mcp-server-name">{name}</span>
-						<span className="og-mcp-server-cmd">{srv.command}</span>
+						<span className="og-mcp-server-cmd">
+							{srv.command}
+							{srv.env && Object.keys(srv.env).length > 0 && (
+								<span className="og-mcp-server-env-badge">
+									{Object.keys(srv.env)
+										.map((k) => `${k}=***`)
+										.join(", ")}
+								</span>
+							)}
+						</span>
 						<span className="og-mcp-server-inherited-badge">
 							{t("settings.inherited")}
 						</span>
@@ -609,7 +626,16 @@ function McpServersSection({
 			{Object.entries(servers).map(([name, srv]) => (
 				<div key={name} className="og-mcp-server-row">
 					<span className="og-mcp-server-name">{name}</span>
-					<span className="og-mcp-server-cmd">{srv.command}</span>
+					<span className="og-mcp-server-cmd">
+						{srv.command}
+						{srv.env && Object.keys(srv.env).length > 0 && (
+							<span className="og-mcp-server-env-badge">
+								{Object.keys(srv.env)
+									.map((k) => `${k}=***`)
+									.join(", ")}
+							</span>
+						)}
+					</span>
 					<button
 						type="button"
 						className="og-btn-icon og-mcp-server-delete"
@@ -644,6 +670,13 @@ function McpServersSection({
 						value={newArgs}
 						onChange={(e) => setNewArgs(e.target.value)}
 					/>
+					<textarea
+						className="og-settings-input og-mcp-env-textarea"
+						placeholder={t("settings.mcpServerEnv")}
+						value={newEnv}
+						onChange={(e) => setNewEnv(e.target.value)}
+						rows={2}
+					/>
 					<div className="og-auth-editor-actions">
 						<button
 							type="button"
@@ -660,6 +693,7 @@ function McpServersSection({
 								setNewName("");
 								setNewCommand("");
 								setNewArgs("");
+								setNewEnv("");
 							}}
 						>
 							{t("settings.cancel")}

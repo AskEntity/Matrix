@@ -3305,6 +3305,19 @@ button.og-tool-card-header:hover {
 	flex-shrink: 0;
 }
 
+.og-mcp-server-env-badge {
+	font-size: 9px;
+	color: var(--text-faint);
+	margin-left: 4px;
+}
+
+.og-mcp-env-textarea {
+	resize: vertical;
+	min-height: 32px;
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+
 .og-mcp-server-add-form {
 	display: flex;
 	flex-direction: column;
