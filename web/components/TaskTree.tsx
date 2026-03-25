@@ -323,118 +323,124 @@ export const TaskTree = memo(function TaskTree({
 
 	return (
 		<div className="og-task-tree">
-			{/* Search bar */}
-			<div className="og-tree-search-bar">
-				<input
-					type="text"
-					className="og-tree-search"
-					placeholder={t("tasks.filter")}
-					value={taskFilter}
-					onChange={(e) => setTaskFilter(e.target.value)}
-				/>
+			{/* Non-scrolling header area */}
+			<div className="og-tree-header">
+				{/* Search bar */}
+				<div className="og-tree-search-bar">
+					<input
+						type="text"
+						className="og-tree-search"
+						placeholder={t("tasks.filter")}
+						value={taskFilter}
+						onChange={(e) => setTaskFilter(e.target.value)}
+					/>
+					<button
+						type="button"
+						className={`og-hide-completed-btn${hideCompleted ? " active" : ""}`}
+						onClick={() =>
+							setHideCompleted((v) => {
+								const next = !v;
+								localStorage.setItem("og-hide-closed", String(next));
+								return next;
+							})
+						}
+						title={t("tasks.hideCompleted")}
+					>
+						<IconEyeOff size={12} />
+					</button>
+				</div>
+
+				{/* Orchestrator row */}
 				<button
 					type="button"
-					className={`og-hide-completed-btn${hideCompleted ? " active" : ""}`}
-					onClick={() =>
-						setHideCompleted((v) => {
-							const next = !v;
-							localStorage.setItem("og-hide-closed", String(next));
-							return next;
-						})
-					}
-					title={t("tasks.hideCompleted")}
+					className={`og-orch-node${isOrchestratorSelected ? " selected" : ""}`}
+					onClick={(e) => {
+						e.stopPropagation();
+						onSelect(rootNodeId);
+					}}
 				>
-					<IconEyeOff size={12} />
+					<span className="og-orch-icon">
+						<IconHexagon size={14} />
+					</span>
+					<span className="og-orch-label">{t("orch.label")}</span>
 				</button>
+
+				{/* Root-level drop zone — visible only during drag for reparenting to root */}
+				{dragState && rootNodeId && onReparent && (
+					<RootDropZone
+						rootNodeId={rootNodeId}
+						dragId={dragState.dragId}
+						dragParentId={dragState.parentId}
+						onReparent={onReparent}
+						onDragEnd={handleDragEnd}
+					/>
+				)}
+
+				{roots.length > 0 && <div className="og-sidebar-divider" />}
 			</div>
 
-			{/* Orchestrator row */}
-			<button
-				type="button"
-				className={`og-orch-node${isOrchestratorSelected ? " selected" : ""}`}
-				onClick={(e) => {
-					e.stopPropagation();
-					onSelect(rootNodeId);
-				}}
-			>
-				<span className="og-orch-icon">
-					<IconHexagon size={14} />
-				</span>
-				<span className="og-orch-label">{t("orch.label")}</span>
-			</button>
+			{/* Scrollable task list */}
+			<div className="og-task-list">
+				{filteredRoots.map((root, i) => (
+					<TaskNodeView
+						key={root.id}
+						node={root}
+						childMap={childMap}
+						depth={0}
+						selectedTaskId={selectedTaskId}
+						rootNodeId={rootNodeId}
+						activeAgents={activeAgents}
+						onSelect={onSelect}
+						collapsed={collapsed}
+						toggleCollapse={toggleCollapse}
+						matchingIds={matchingIds}
+						dragState={dragState}
+						dropIndicator={dropIndicator}
+						reparentTargetId={reparentTargetId}
+						parentId={topLevelParentId}
+						siblingIds={topLevelSiblingIds}
+						siblingIndex={i}
+						onDragStart={handleDragStart}
+						onDragOver={handleDragOver}
+						onDragEnd={handleDragEnd}
+						onDrop={handleDrop}
+					/>
+				))}
 
-			{/* Root-level drop zone — visible only during drag for reparenting to root */}
-			{dragState && rootNodeId && onReparent && (
-				<RootDropZone
-					rootNodeId={rootNodeId}
-					dragId={dragState.dragId}
-					dragParentId={dragState.parentId}
-					onReparent={onReparent}
-					onDragEnd={handleDragEnd}
-				/>
-			)}
+				{roots.length === 0 && (
+					<div className="og-empty-state">
+						<span className="og-empty-icon">
+							<IconHexagon size={24} />
+						</span>
+						<span>{t("tasks.noTasks")}</span>
+						<span style={{ color: "var(--text-faint)", fontSize: "11px" }}>
+							{t("tasks.sendMessage")}
+						</span>
+					</div>
+				)}
 
-			{roots.length > 0 && <div className="og-sidebar-divider" />}
+				{roots.length > 0 && filteredRoots.length === 0 && taskFilter && (
+					<div className="og-tree-empty">
+						{t("tasks.noMatch")} "{taskFilter}"
+					</div>
+				)}
 
-			{filteredRoots.map((root, i) => (
-				<TaskNodeView
-					key={root.id}
-					node={root}
-					childMap={childMap}
-					depth={0}
-					selectedTaskId={selectedTaskId}
-					rootNodeId={rootNodeId}
-					activeAgents={activeAgents}
-					onSelect={onSelect}
-					collapsed={collapsed}
-					toggleCollapse={toggleCollapse}
-					matchingIds={matchingIds}
-					dragState={dragState}
-					dropIndicator={dropIndicator}
-					reparentTargetId={reparentTargetId}
-					parentId={topLevelParentId}
-					siblingIds={topLevelSiblingIds}
-					siblingIndex={i}
-					onDragStart={handleDragStart}
-					onDragOver={handleDragOver}
-					onDragEnd={handleDragEnd}
-					onDrop={handleDrop}
-				/>
-			))}
+				{/* Inline task creation row */}
+				{isCreating && (
+					<InlineCreateRow
+						onConfirm={(title) => onCreateTask?.(title)}
+						onCancel={() => onCancelCreate?.()}
+					/>
+				)}
 
-			{roots.length === 0 && (
-				<div className="og-empty-state">
-					<span className="og-empty-icon">
-						<IconHexagon size={24} />
-					</span>
-					<span>{t("tasks.noTasks")}</span>
-					<span style={{ color: "var(--text-faint)", fontSize: "11px" }}>
-						{t("tasks.sendMessage")}
-					</span>
-				</div>
-			)}
-
-			{roots.length > 0 && filteredRoots.length === 0 && taskFilter && (
-				<div className="og-tree-empty">
-					{t("tasks.noMatch")} "{taskFilter}"
-				</div>
-			)}
-
-			{/* Inline task creation row */}
-			{isCreating && (
-				<InlineCreateRow
-					onConfirm={(title) => onCreateTask?.(title)}
-					onCancel={() => onCancelCreate?.()}
-				/>
-			)}
-
-			{/* Trash drop zone — visible only while dragging */}
-			{dragState && onDeleteTask && (
-				<TrashDropZone
-					onDrop={(taskId) => onDeleteTask(taskId)}
-					onDragEnd={handleDragEnd}
-				/>
-			)}
+				{/* Trash drop zone — visible only while dragging */}
+				{dragState && onDeleteTask && (
+					<TrashDropZone
+						onDrop={(taskId) => onDeleteTask(taskId)}
+						onDragEnd={handleDragEnd}
+					/>
+				)}
+			</div>
 		</div>
 	);
 });

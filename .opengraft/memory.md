@@ -179,3 +179,8 @@ System prompt + tools: `ttl: "1h"`. Messages: orchestrator `1h`, child agents `5
 - User communicates in Chinese, expects Chinese for conversation.
 - User prefers discussing architecture before executing.
 - Remove project = non-destructive (registry removal only, data preserved).
+
+## Task Tree Scroll Containment
+- `.og-task-tree` is a flex column container (no overflow-y: auto)
+- `.og-tree-header` (flex-shrink: 0): search bar, orchestrator row, root drop zone, divider — stays fixed
+- `.og-task-list` (flex: 1, overflow-y: auto): task nodes, empty states, inline create, trash drop zone — scrollable

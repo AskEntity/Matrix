@@ -320,6 +320,18 @@ select {
 /* Task tree */
 .og-task-tree {
 	flex: 1;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	min-height: 0;
+}
+
+.og-tree-header {
+	flex-shrink: 0;
+}
+
+.og-task-list {
+	flex: 1;
 	overflow-y: auto;
 	padding: 6px 0;
 }
