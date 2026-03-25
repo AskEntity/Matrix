@@ -886,6 +886,28 @@ export async function* runProviderLoop(
 				};
 				emit?.(compactYieldEvt);
 				yield compactYieldEvt;
+				// Push tool_result into messages so compaction sees a paired tool_use/tool_result.
+				// Without this, messages has an unpaired tool_use → API 400.
+				const compactToolResultMsgs = adapter.buildToolResultsMessage({
+					toolUses: [
+						{
+							id: pendingYieldToolCall.id,
+							name: pendingYieldToolCall.name,
+							input: {},
+						},
+					],
+					execResults: [
+						{
+							content: "Manual compaction requested",
+							isError: false,
+						},
+					],
+					cancellationQueueMsgs: [],
+					cancellationFormatted: "",
+				});
+				for (const msg of compactToolResultMsgs) {
+					messages.push(msg);
+				}
 				pendingYieldToolCall = null;
 				continue;
 			}
@@ -1264,6 +1286,8 @@ export async function* runProviderLoop(
 				manualCompactRequested = true;
 			}
 			if (yieldResult.compactOnly) {
+				// No tool_result needed here — this is the end-of-turn path (assistant ended
+				// turn without tool calls), so there's no pendingYieldToolCall to pair.
 				continue;
 			}
 

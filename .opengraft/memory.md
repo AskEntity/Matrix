@@ -252,3 +252,13 @@ This applies to: `tool_result.content`, `tool_call.input`, `message.body`, `assi
 ## Compact During Yield Bug
 
 The compactOnly path in provider-shared.ts (explicit yield block) was clearing `pendingYieldToolCall` without emitting a `tool_result` event to JSONL. The end-of-turn implicit yield path does NOT have this issue because there is no `pendingYieldToolCall` — that path handles agent end_turn (no tool calls), not yield tool_use.
+
+
+## Tool Result Three-Part Invariant
+
+When a tool_call needs a matching tool_result, three things must happen:
+1. **JSONL**: emit tool_result event (for resume/replay)
+2. **SSE**: yield tool_result event (for frontend)
+3. **messages[]**: push tool_result via adapter.buildToolResultsMessage() (for next API call)
+
+Missing any one causes bugs: (1) orphan on resume, (2) missing UI feedback, (3) API 400 unpaired tool_use. The compact-during-yield bug was missing step 3.
