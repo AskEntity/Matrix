@@ -243,3 +243,12 @@ Key competitors researched: Claude Code Agent Teams, OpenClaw, Cursor 2.0, OpenA
 **Closest competitor**: Stoneforge (Director → Workers + Stewards, dispatch daemon, git worktree isolation, web dashboard). But uses external CLI agents (Claude Code/Codex), can't do compaction/fork/API control.
 
 **Biggest threat**: Claude Code Agent Teams evolution. Currently experimental, file-poll based, non-recursive. If Anthropic makes it recursive + real-time, our core advantage erodes.
+
+
+## XML Attribute Naming Convention in formatBodyForAI
+
+All XML tags use consistent attribute naming:
+- `from_task` = task ID (unique identifier)
+- `task_name` = human-readable title
+- Tags: task_complete, user_message_forwarded, task_message (child_report & parent_update)
+- parent_update QueueMessage has optional `taskId` and `title` fields for source attribution

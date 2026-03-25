@@ -116,7 +116,7 @@ describe("formatEventForAI", () => {
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
-			'<task_complete task="Auth" id="t1" status="passed">All tests pass</task_complete>',
+			'<task_complete from_task="t1" task_name="Auth" status="passed">All tests pass</task_complete>',
 		);
 	});
 
@@ -176,7 +176,7 @@ describe("formatEventForAI", () => {
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
-			`<user_message_forwarded task="Worker" id="t1">User sent a message to child task 'Worker' (t1): fix the bug</user_message_forwarded>`,
+			`<user_message_forwarded from_task="t1" task_name="Worker">User sent a message to child task 'Worker' (t1): fix the bug</user_message_forwarded>`,
 		);
 	});
 
@@ -195,7 +195,7 @@ describe("formatEventForAI", () => {
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
-			'<task_message from="Worker" id="t1" summary="halfway">Progress: 50%</task_message>',
+			'<task_message from_task="t1" task_name="Worker" summary="halfway">Progress: 50%</task_message>',
 		);
 	});
 });
@@ -2671,7 +2671,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		);
 		expect(queueTextBlock).toBeDefined();
 		expect(queueTextBlock?.text).toContain(
-			'<task_complete task="Auth module" id="t1" status="passed">All tests pass</task_complete>',
+			'<task_complete from_task="t1" task_name="Auth module" status="passed">All tests pass</task_complete>',
 		);
 	});
 
@@ -2787,7 +2787,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			"[Messages received while you were working:]",
 		);
 		expect(toolMsg.content).toContain(
-			'<task_complete task="Auth module" id="t1" status="passed">All tests pass</task_complete>',
+			'<task_complete from_task="t1" task_name="Auth module" status="passed">All tests pass</task_complete>',
 		);
 	});
 
@@ -3160,7 +3160,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				tool: "test_tool",
 				toolCallId: "tc-yield",
 				content:
-					'<task_complete task="Build UI" id="t1" status="passed">All tests pass</task_complete>\n<task_message>Keep going</task_message>\n\n## Pending\n- Running sub tasks: none\n- Pending clarifications: none',
+					'<task_complete from_task="t1" task_name="Build UI" status="passed">All tests pass</task_complete>\n<task_message>Keep going</task_message>\n\n## Pending\n- Running sub tasks: none\n- Pending clarifications: none',
 				isError: false,
 				pending: {
 					runningChildren: [],

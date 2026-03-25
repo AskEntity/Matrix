@@ -352,7 +352,7 @@ describe("formatQueueMessage", () => {
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toContain(
-			'<task_message from="Auth Module" id="task-1">50% done</task_message>',
+			'<task_message from_task="task-1" task_name="Auth Module">50% done</task_message>',
 		);
 		expect(result).not.toContain("requestReply");
 	});
@@ -367,7 +367,7 @@ describe("formatQueueMessage", () => {
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toContain(
-			'<task_message from="DB Module" id="task-2" requestReply="true">Need clarification on schema</task_message>',
+			'<task_message from_task="task-2" task_name="DB Module" requestReply="true">Need clarification on schema</task_message>',
 		);
 	});
 
@@ -381,7 +381,7 @@ describe("formatQueueMessage", () => {
 		};
 		const result = formatQueueMessage(msg);
 		expect(result).toContain(
-			'<task_message from="UI" id="task-3">All good</task_message>',
+			'<task_message from_task="task-3" task_name="UI">All good</task_message>',
 		);
 		expect(result).not.toContain("requestReply");
 	});

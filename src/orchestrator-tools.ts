@@ -883,6 +883,8 @@ export function createOrchestratorTools(
 					const queueMessage: QueueMessage = {
 						source: "parent_update",
 						content: args.message,
+						...(currentTaskId ? { taskId: currentTaskId } : {}),
+						...(currentNode?.title ? { title: currentNode.title } : {}),
 						...(args.requestReply ? { requestReply: true } : {}),
 						...(header ? { header } : {}),
 					};
