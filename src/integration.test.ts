@@ -1,0 +1,601 @@
+/**
+ * Integration tests: drive the full stack from HTTP API → provider loop → mock API → tool execution → JSONL.
+ *
+ * Each test creates a real app with a ValidatingMockAPI. The mock validates every API request
+ * automatically (turn interleaving, tool_use/tool_result pairing, etc.). Tests also verify
+ * JSONL persistence and request history for specific scenarios.
+ *
+ * Key insight: root orchestrator agents (depth 0) never close their queue via done() —
+ * they enter an idle-yield waiting for new messages. We detect "done" by polling the root
+ * node's status (changes from "in_progress" to "passed"/"failed"), then call shutdown().
+ */
+
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp } from "./daemon.ts";
+import { EventStore } from "./event-store.ts";
+import {
+	createMockedProviderWithMock,
+	ValidatingMockAPI,
+} from "./test-utils/mock-anthropic-api.ts";
+
+// ── Test infrastructure ──
+
+interface TestContext {
+	dataDir: string;
+	projectDir: string;
+	app: ReturnType<typeof createApp>;
+	mockAPI: ValidatingMockAPI;
+	projectId: string;
+}
+
+/**
+ * Set up a fresh test environment:
+ * - Temp dataDir for daemon state
+ * - Temp projectDir (git-initialized) as the "project"
+ * - Real app with mock provider injected
+ * - Project registered in the PM
+ */
+async function setupTestContext(): Promise<TestContext> {
+	const dataDir = await mkdtemp(join(tmpdir(), "og-integ-data-"));
+	const projectDir = await mkdtemp(join(tmpdir(), "og-integ-project-"));
+
+	// Initialize git in the project dir (needed for tracker, worktree manager)
+	Bun.spawnSync(["git", "init"], { cwd: projectDir });
+	Bun.spawnSync(["git", "config", "user.email", "test@test.com"], {
+		cwd: projectDir,
+	});
+	Bun.spawnSync(["git", "config", "user.name", "Test"], {
+		cwd: projectDir,
+	});
+	await Bun.write(join(projectDir, "README.md"), "# Test Project\n");
+	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
+	Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
+
+	const mockAPI = new ValidatingMockAPI();
+	const provider = createMockedProviderWithMock(mockAPI);
+
+	const appResult = createApp({
+		dataDir,
+		agentProvider: provider,
+	});
+
+	await appResult.pm.load();
+	const project = await appResult.pm.init(projectDir);
+	appResult.markReady();
+
+	return {
+		dataDir,
+		projectDir,
+		app: appResult,
+		mockAPI,
+		projectId: project.id,
+	};
+}
+
+async function teardownTestContext(ctx: TestContext): Promise<void> {
+	await ctx.app.shutdown();
+	// Small delay to let background cleanup complete before removing dirs
+	await new Promise((r) => setTimeout(r, 50));
+	await rm(ctx.dataDir, { recursive: true, force: true });
+	await rm(ctx.projectDir, { recursive: true, force: true });
+}
+
+/**
+ * Wait for the root node to reach a terminal status (passed/failed).
+ * Root orchestrator (depth 0) doesn't close queue on done() — it enters idle-yield.
+ * We detect completion by polling the node status.
+ */
+async function waitForDone(
+	ctx: TestContext,
+	timeoutMs = 15000,
+): Promise<string> {
+	const tracker = await ctx.app.getTracker(ctx.projectId);
+	const rootNodeId = tracker.rootNodeId;
+	if (!rootNodeId) throw new Error("No root node");
+
+	const start = Date.now();
+	while (Date.now() - start < timeoutMs) {
+		const rootNode = tracker.get(rootNodeId);
+		if (rootNode?.status === "passed" || rootNode?.status === "failed") {
+			return rootNode.status;
+		}
+		await new Promise((r) => setTimeout(r, 50));
+	}
+	throw new Error(`Agent did not call done() within ${timeoutMs}ms`);
+}
+
+/**
+ * Wait for agent to enter idle state (yield or end_turn implicit yield).
+ */
+async function waitForIdle(ctx: TestContext, timeoutMs = 10000): Promise<void> {
+	const tracker = await ctx.app.getTracker(ctx.projectId);
+	const rootNodeId = tracker.rootNodeId;
+	if (!rootNodeId) throw new Error("No root node");
+
+	const start = Date.now();
+	while (Date.now() - start < timeoutMs) {
+		const rootNode = tracker.get(rootNodeId);
+		const queue = rootNode?.session?.queue;
+		if (queue?.idle) {
+			return;
+		}
+		await new Promise((r) => setTimeout(r, 50));
+	}
+	throw new Error(`Agent did not enter idle state within ${timeoutMs}ms`);
+}
+
+/**
+ * Start the agent via HTTP and return the response.
+ */
+async function startAgent(ctx: TestContext, prompt: string): Promise<Response> {
+	return ctx.app.app.request("/agents/start", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ path: ctx.projectDir, prompt }),
+	});
+}
+
+/**
+ * Send a message to a running agent via HTTP.
+ */
+async function sendMessage(
+	ctx: TestContext,
+	message: string,
+): Promise<Response> {
+	return ctx.app.app.request(`/projects/${ctx.projectId}/message`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ message }),
+	});
+}
+
+/**
+ * Read JSONL events for a session from the event store.
+ * Path: {dataDir}/sessions/{projectId}/{sessionId}.events.jsonl
+ */
+function readSessionEvents(ctx: TestContext, sessionId: string) {
+	const store = new EventStore(join(ctx.dataDir, "sessions", ctx.projectId));
+	return store.read(sessionId);
+}
+
+/**
+ * Get root node ID (convenience).
+ */
+async function getRootNodeId(ctx: TestContext): Promise<string> {
+	const tracker = await ctx.app.getTracker(ctx.projectId);
+	const id = tracker.rootNodeId;
+	if (!id) throw new Error("No root node ID");
+	return id;
+}
+
+/**
+ * Get the last user message from a request record.
+ * Throws if the request doesn't exist or last message isn't a user message.
+ */
+function getLastUserMessage(ctx: TestContext, requestIndex: number) {
+	const req = ctx.mockAPI.getRequestHistory()[requestIndex];
+	if (!req) throw new Error(`No request at index ${requestIndex}`);
+	const lastMsg = req.messages[req.messages.length - 1];
+	if (!lastMsg || lastMsg.role !== "user") {
+		throw new Error(
+			`Last message at request ${requestIndex} is not a user message`,
+		);
+	}
+	return lastMsg;
+}
+
+/**
+ * Extract tool_result blocks from a user message content array.
+ */
+function getToolResults(msg: { content: string | unknown[] }) {
+	if (!Array.isArray(msg.content)) return [];
+	return (
+		msg.content as Array<{
+			type: string;
+			tool_use_id?: string;
+			content?: string | unknown;
+		}>
+	).filter((b) => b.type === "tool_result");
+}
+
+/**
+ * Extract text blocks from a user message content array, joined.
+ */
+function getTextContent(msg: { content: string | unknown[] }): string {
+	if (typeof msg.content === "string") return msg.content;
+	if (!Array.isArray(msg.content)) return "";
+	return (msg.content as Array<{ type: string; text?: string }>)
+		.filter((b) => b.type === "text")
+		.map((b) => b.text ?? "")
+		.join(" ");
+}
+
+// ── Tests ──
+
+describe("Integration: full stack with mock API", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("Scenario 1: normal multi-turn with real tool execution", async () => {
+		ctx = await setupTestContext();
+
+		// Instruction: turn 1 runs bash, turn 2 calls done()
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Let me check." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo hello_world" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "All done!" },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "executed echo successfully",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Mock API validated all requests automatically — if we got here, contract is satisfied
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
+
+		// Verify request 2 contains tool_result with real bash output
+		const lastUserMsg = getLastUserMessage(ctx, 1);
+		const toolResults = getToolResults(lastUserMsg);
+		expect(toolResults.length).toBeGreaterThanOrEqual(1);
+
+		// bash `echo hello_world` → output contains "hello_world"
+		const bashContent =
+			typeof toolResults[0]?.content === "string"
+				? toolResults[0].content
+				: JSON.stringify(toolResults[0]?.content);
+		expect(bashContent).toContain("hello_world");
+
+		// Verify JSONL persistence
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = readSessionEvents(ctx, rootNodeId);
+		expect(events.length).toBeGreaterThan(0);
+
+		const eventTypes = events.map((e) => e.type);
+		expect(eventTypes).toContain("assistant_text");
+		expect(eventTypes).toContain("tool_call");
+		expect(eventTypes).toContain("tool_result");
+	}, 20000);
+
+	test("Scenario 2: multiple tools execute with real results", async () => {
+		ctx = await setupTestContext();
+
+		// Write a file to read
+		await Bun.write(join(ctx.projectDir, "test-file.txt"), "file_content_here");
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running two tools." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo tool_one_output" },
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__read_file",
+							input: { path: "test-file.txt" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Got both results." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "multi-tool ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Verify request 2 has both tool_results
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
+		const lastUserMsg = getLastUserMessage(ctx, 1);
+		const toolResults = getToolResults(lastUserMsg);
+
+		// Should have 2 tool_results (bash + read_file)
+		expect(toolResults.length).toBe(2);
+
+		// Check bash output
+		const bashResult = toolResults.find(
+			(r) =>
+				typeof r.content === "string" && r.content.includes("tool_one_output"),
+		);
+		expect(bashResult).toBeDefined();
+
+		// Check read_file output
+		const readResult = toolResults.find(
+			(r) =>
+				typeof r.content === "string" &&
+				r.content.includes("file_content_here"),
+		);
+		expect(readResult).toBeDefined();
+	}, 20000);
+
+	test("Scenario 3: explicit yield + wake with message", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: yield
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Waiting for input." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__yield",
+					input: {},
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for agent to enter idle (yield) state
+		await waitForIdle(ctx);
+
+		// Agent should still be active (in yield)
+		expect(ctx.app.activeSessions.has(ctx.projectId)).toBe(true);
+
+		// Wake from yield with done instruction
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Finished." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "woke from yield" },
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Validate: mock should have received at least 2 API calls
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
+	}, 20000);
+
+	test("Scenario 4: implicit yield (end_turn) + wake with message", async () => {
+		ctx = await setupTestContext();
+
+		// Agent returns text-only (end_turn) → enters implicit yield
+		const instruction = JSON.stringify({
+			blocks: [{ type: "text", text: "I have nothing to do." }],
+			stop_reason: "end_turn",
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for agent to enter idle
+		await waitForIdle(ctx);
+
+		// Still active (in implicit yield)
+		expect(ctx.app.activeSessions.has(ctx.projectId)).toBe(true);
+
+		// Wake with done
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Goodbye." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: {
+						status: "passed",
+						summary: "woke from implicit yield",
+					},
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
+	}, 20000);
+
+	test("Scenario 5: JSONL event sequence is correct", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running bash." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo jsonl_test" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Done." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "jsonl verified" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		await waitForDone(ctx);
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = readSessionEvents(ctx, rootNodeId);
+
+		const persistedTypes = events.map((e) => e.type);
+
+		// Note: done() tool_call has no tool_result in JSONL for root agents.
+		// Root (depth 0) done() enters waitForQueueMessages() which blocks —
+		// the tool_result is only emitted when the agent wakes up or restarts.
+
+		// Should have message events (user messages)
+		expect(
+			persistedTypes.filter((t) => t === "message").length,
+		).toBeGreaterThanOrEqual(1);
+		// Should have assistant_text events
+		expect(
+			persistedTypes.filter((t) => t === "assistant_text").length,
+		).toBeGreaterThanOrEqual(2);
+		// Should have tool_call events
+		expect(
+			persistedTypes.filter((t) => t === "tool_call").length,
+		).toBeGreaterThanOrEqual(2);
+		// Should have at least 1 tool_result (bash).
+		// done() tool_result may not be in JSONL (root agent blocks in waitForQueueMessages).
+		expect(
+			persistedTypes.filter((t) => t === "tool_result").length,
+		).toBeGreaterThanOrEqual(1);
+
+		// Verify every tool_call comes before its corresponding tool_result
+		for (let i = 0; i < events.length; i++) {
+			const evt = events[i];
+			if (evt?.type === "tool_result" && "toolCallId" in evt) {
+				const callIdx = events.findIndex(
+					(e) =>
+						e.type === "tool_call" &&
+						"toolCallId" in e &&
+						e.toolCallId === evt.toolCallId,
+				);
+				expect(callIdx).toBeLessThan(i);
+			}
+		}
+	}, 20000);
+
+	test("Scenario 6: message injection during tool execution", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running slow command." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 0.3 && echo slow_done" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Got everything." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "message received during tool",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for tool to start, then inject message
+		await new Promise((r) => setTimeout(r, 100));
+		const msgResp = await sendMessage(ctx, "Injected message while tool runs");
+		expect(msgResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// The injected message should appear in request 2 alongside tool_results
+		const lastUserMsg = getLastUserMessage(ctx, 1);
+		const allText = getTextContent(lastUserMsg);
+
+		// Should contain the injected message
+		expect(allText).toContain("Injected message while tool runs");
+	}, 20000);
+
+	test("Scenario 7: validation catches contract violations", async () => {
+		ctx = await setupTestContext();
+
+		// This test verifies that the mock API's validation is working
+		// by checking it catches violations in isolation (not through the provider).
+		// The provider itself should never produce violations — that's what the
+		// other tests verify (if they pass without MockValidationError, the provider
+		// is generating correct API calls).
+
+		const { MockValidationError } = await import(
+			"./test-utils/mock-anthropic-api.ts"
+		);
+
+		// Direct mock call with bad messages
+		expect(() =>
+			ctx.mockAPI.createStream({
+				messages: [
+					{ role: "user", content: "hi" },
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "tool_use",
+								id: "tc_1",
+								name: "bash",
+								input: {},
+							},
+						],
+					},
+					// Missing tool_result for tc_1
+					{ role: "user", content: "no results here" },
+				],
+			}),
+		).toThrow(MockValidationError);
+	}, 10000);
+});
