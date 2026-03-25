@@ -248,11 +248,11 @@ export function queueMessageToEvent(
 function formatBodyForAI(body: QueueMessage): string {
 	switch (body.source) {
 		case "child_complete":
-			return `<child_complete task="${body.title}" id="${body.taskId}" status="${body.success ? "passed" : "failed"}">${body.output.slice(0, 500)}</child_complete>`;
+			return `<task_complete task="${body.title}" id="${body.taskId}" status="${body.success ? "passed" : "failed"}">${body.output.slice(0, 500)}</task_complete>`;
 		case "clarify_response":
 			return `<clarify_response>${body.answer}</clarify_response>`;
 		case "child_report":
-			return `<child_report from="${body.title}" id="${body.taskId}"${body.summary ? ` summary="${body.summary}"` : ""}${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</child_report>`;
+			return `<task_message from="${body.title}" id="${body.taskId}"${body.summary ? ` summary="${body.summary}"` : ""}${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</task_message>`;
 		case "cross_project":
 			return `<cross_project from="${body.fromProjectName}" projectId="${body.fromProjectId}">${body.content}</cross_project>`;
 		case "background_complete": {
@@ -276,9 +276,9 @@ function formatBodyForAI(body: QueueMessage): string {
 			return body.content;
 		case "parent_update":
 			if (body.header) {
-				return `${body.header}\n\n<parent_update${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</parent_update>`;
+				return `${body.header}\n\n<task_message${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</task_message>`;
 			}
-			return `<parent_update${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</parent_update>`;
+			return `<task_message${body.requestReply ? ' requestReply="true"' : ""}>${body.content}</task_message>`;
 		default:
 			return "";
 	}
@@ -313,7 +313,7 @@ export function formatPendingSection(pending: PendingState): string {
 	return [
 		"",
 		"## Pending",
-		`- Running children: ${runningChildrenText}`,
+		`- Running sub tasks: ${runningChildrenText}`,
 		`- Pending clarifications: ${clarifyText}`,
 	].join("\n");
 }

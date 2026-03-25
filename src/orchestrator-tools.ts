@@ -3,7 +3,7 @@
  *
  * Extracted for maintainability.
  * Contains createOrchestratorTools() and all tool definitions
- * (create_task, update_task, send_message_to_child, yield, done, etc.).
+ * (create_task, update_task, send_message, yield, done, etc.).
  */
 
 import { join } from "node:path";
@@ -267,7 +267,7 @@ export function createOrchestratorTools(
 			const pendingSection = [
 				"",
 				"## Pending",
-				`- Running children: ${runningChildrenText}`,
+				`- Running sub tasks: ${runningChildrenText}`,
 				`- Pending clarifications: ${clarifyText}`,
 			].join("\n");
 
@@ -362,8 +362,8 @@ export function createOrchestratorTools(
 
 		tool(
 			"create_task",
-			"Create a new task. If parentId is provided, creates a child under that parent. " +
-				"If omitted, creates a child of YOUR current task (or top-level if you are the root orchestrator). " +
+			"Create a new task. If parentId is provided, creates a sub task under that parent. " +
+				"If omitted, creates a sub task of YOUR current task (or top-level if you are the root orchestrator). " +
 				"IMPORTANT: Sibling tasks will run in PARALLEL on separate branches. " +
 				"Each sibling must work on DIFFERENT files/modules to avoid merge conflicts.",
 			{
@@ -375,7 +375,7 @@ export function createOrchestratorTools(
 					.string()
 					.optional()
 					.describe(
-						"Parent task ID. Omit to create a child of your current task.",
+						"Parent task ID. Omit to create a sub task of your current task.",
 					),
 				draft: z
 					.boolean()
@@ -681,28 +681,24 @@ export function createOrchestratorTools(
 		),
 
 		tool(
-			"send_message_to_child",
-			"Send a message to a child task — starts it if not running. " +
-				"If the task has no worktree, one is auto-created. " +
-				"If no agent is running, one is launched with the message as the prompt. " +
-				"If the agent is already running, the message is delivered to its queue. " +
-				"Call once per task for parallel launches.",
+			"send_message",
+			"Send a message to another task. You can message the task yours is part of, " +
+				"or any of your direct sub tasks. When messaging a sub task that isn't running yet, " +
+				"a worktree is auto-created and an agent is launched.",
 			{
-				taskId: z.string().describe("ID of the child task to message or start"),
-				message: z
+				taskId: z
 					.string()
 					.describe(
-						"Message content — becomes the prompt for new tasks, or instructions for running ones",
+						"Target task — the task yours is part of, or any direct sub task",
 					),
+				title: z.string().describe("Short summary of the message"),
+				message: z.string().describe("Message content"),
 				requestReply: z
 					.boolean()
 					.optional()
-					.describe(
-						"If true, signals to the child that a reply (via report_to_parent) is expected.",
-					),
+					.describe("If true, signals that a reply is expected."),
 			},
 			async (args) => {
-				// Validate: task exists and is a descendant
 				const node = tracker.get(args.taskId);
 				if (!node) {
 					return {
@@ -715,33 +711,87 @@ export function createOrchestratorTools(
 						isError: true,
 					};
 				}
-				if (currentTaskId !== null) {
-					// Non-root agent: only direct children allowed
-					if (node.parentId !== currentTaskId) {
+
+				// Determine direction based on taskId
+				const currentNode = currentTaskId
+					? tracker.get(currentTaskId)
+					: undefined;
+				const isUpward =
+					currentNode?.parentId != null && args.taskId === currentNode.parentId;
+				let isDownward = false;
+				if (!isUpward) {
+					if (currentTaskId !== null) {
+						// Non-root agent: direct children only
+						isDownward = node.parentId === currentTaskId;
+					} else {
+						// Root orchestrator: top-level tasks (children of root node)
+						isDownward =
+							node.parentId === tracker.rootNodeId || node.parentId === null;
+					}
+				}
+
+				if (!isUpward && !isDownward) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Error: Can only message the task yours is part of, or your direct sub tasks. "${args.taskId}" is neither.`,
+							},
+						],
+						isError: true,
+					};
+				}
+
+				// ── Upward message (like old report_to_parent) ──
+				if (isUpward) {
+					const parentQueue = currentTaskId
+						? findParentQueue(tracker, currentTaskId)?.queue
+						: undefined;
+					if (!parentQueue) {
 						return {
 							content: [
 								{
 									type: "text" as const,
-									text: `Error: Task "${args.taskId}" is not your direct child.`,
+									text: "No parent agent to report to (you are the top-level orchestrator). Message dropped.",
 								},
 							],
-							isError: true,
 						};
 					}
-				} else {
-					// Root orchestrator: only top-level tasks (children of root node)
-					if (node.parentId !== tracker.rootNodeId && node.parentId !== null) {
+
+					const taskTitle = currentNode?.title ?? "unknown";
+
+					try {
+						parentQueue.enqueue({
+							source: "child_report",
+							taskId: currentTaskId ?? "unknown",
+							title: taskTitle,
+							summary: args.title,
+							content: args.message,
+							...(args.requestReply ? { requestReply: true } : {}),
+						});
 						return {
 							content: [
 								{
 									type: "text" as const,
-									text: `Error: Task "${args.taskId}" is not your direct child.`,
+									text: "Message sent to parent task.",
+								},
+							],
+						};
+					} catch (e) {
+						const message = e instanceof Error ? e.message : "Unknown error";
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Error sending message: ${message}`,
 								},
 							],
 							isError: true,
 						};
 					}
 				}
+
+				// ── Downward message (like old send_message_to_child) ──
 				if (node.status === "draft") {
 					return {
 						content: [
@@ -770,9 +820,6 @@ export function createOrchestratorTools(
 								isError: true,
 							};
 						}
-						const currentNode = currentTaskId
-							? tracker.get(currentTaskId)
-							: undefined;
 						const baseBranch = currentNode?.branch ?? undefined;
 						const slug = slugify(node.title);
 						const wtRoot = join(repoPath, ".worktrees");
@@ -781,12 +828,19 @@ export function createOrchestratorTools(
 						tracker.assignWorktree(node.id, wt.branch, wt.path);
 					}
 
-					// Build header with task context for child startup
+					// Build header with task context for sub task startup
 					// Header includes task description + git context — the "what to do" part
 					// Content is the parent's specific message — the "instructions" part
 					const headerParts: string[] = [];
 					headerParts.push(`## Task: ${node.title}`);
 					headerParts.push(`Task ID: \`${node.id}\``);
+					// Add "Your task is part of" line
+					if (currentTaskId) {
+						const senderTitle = currentNode?.title ?? "unknown";
+						headerParts.push(
+							`\nYour task is part of "${senderTitle}" (\`${currentTaskId}\`). Send messages to \`${currentTaskId}\` to discuss questions or coordinate.`,
+						);
+					}
 					if (node.description) headerParts.push(node.description);
 					if (node.branch) {
 						headerParts.push(
@@ -826,8 +880,8 @@ export function createOrchestratorTools(
 							{
 								type: "text" as const,
 								text: wasRunning
-									? `Message sent to running child "${node.title}" (${args.taskId})`
-									: `Started child "${node.title}" (${args.taskId}) on branch ${node.branch}`,
+									? `Message sent to running task "${node.title}" (${args.taskId})`
+									: `Started task "${node.title}" (${args.taskId}) on branch ${node.branch}`,
 							},
 						],
 					};
@@ -837,7 +891,7 @@ export function createOrchestratorTools(
 						content: [
 							{
 								type: "text" as const,
-								text: `Error starting child: ${message}`,
+								text: `Error starting task: ${message}`,
 							},
 						],
 						isError: true,
@@ -848,9 +902,9 @@ export function createOrchestratorTools(
 
 		tool(
 			"close_task",
-			"Clean up a child task's worktree and branch to reclaim disk space. " +
+			"Clean up a task's worktree and branch to reclaim disk space. " +
 				"Node and session are preserved — status set to 'closed'. " +
-				"Call this AFTER you have already merged the child's branch yourself. " +
+				"Call this AFTER you have already merged the task's branch yourself. " +
 				"Use for merged tasks or deferred tasks where you want to free resources.",
 			{
 				taskId: z.string().describe("ID of the task to close"),
@@ -926,8 +980,8 @@ export function createOrchestratorTools(
 
 		tool(
 			"delete_task",
-			"Fully remove a child task — deletes worktree, session file, and task node from the tree. " +
-				"WARNING: Also deletes ALL children recursively. Verify all children are completed and merged before deleting. " +
+			"Fully remove a task — deletes worktree, session file, and task node from the tree. " +
+				"WARNING: Also deletes ALL sub tasks recursively. Verify all sub tasks are completed and merged before deleting. " +
 				"Use for abandoned tasks you no longer need.",
 			{
 				taskId: z.string().describe("ID of the task to delete"),
@@ -1018,7 +1072,7 @@ export function createOrchestratorTools(
 
 		tool(
 			"reset_task",
-			"Reset a child task for a fresh start — removes worktree and session file but keeps the node. " +
+			"Reset a task for a fresh start — removes worktree and session file but keeps the node. " +
 				"Sets status to pending. Use when you want to retry with a different approach.",
 			{
 				taskId: z.string().describe("ID of the task to reset"),
@@ -1108,9 +1162,7 @@ export function createOrchestratorTools(
 			{
 				question: z
 					.string()
-					.describe(
-						"The clarification question to ask the user or parent orchestrator",
-					),
+					.describe("The clarification question to ask the user"),
 			},
 			async (args) => {
 				const taskId = currentTaskId ?? "orchestrator";
@@ -1139,81 +1191,6 @@ export function createOrchestratorTools(
 						},
 					],
 				};
-			},
-		),
-
-		tool(
-			"report_to_parent",
-			"Send a progress update or status message to your parent agent. " +
-				"Non-blocking: returns immediately. " +
-				"The parent receives this as a child_report message when it calls yield(). " +
-				"Use this to keep the parent informed about important intermediate progress, " +
-				"blockers, or results without waiting for acknowledgement.",
-			{
-				title: z
-					.string()
-					.describe(
-						"Short summary of the report (shown as card title in parent's activity log)",
-					),
-				message: z
-					.string()
-					.describe("The detailed message content to send to the parent agent"),
-				requestReply: z
-					.boolean()
-					.optional()
-					.describe(
-						"If true, signals to the parent that a reply (via send_message_to_child) is expected.",
-					),
-			},
-			async (args) => {
-				// Dynamic parent queue lookup at invocation time
-				const parentQueue = currentTaskId
-					? findParentQueue(tracker, currentTaskId)?.queue
-					: undefined;
-				if (!parentQueue) {
-					// No parent queue — silently no-op (top-level orchestrator has no parent)
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: "No parent agent to report to (you are the top-level orchestrator). Message dropped.",
-							},
-						],
-					};
-				}
-
-				const node = currentTaskId ? tracker.get(currentTaskId) : null;
-				const taskTitle = node?.title ?? "unknown";
-
-				try {
-					parentQueue.enqueue({
-						source: "child_report",
-						taskId: currentTaskId ?? "unknown",
-						title: taskTitle,
-						summary: args.title,
-						content: args.message,
-						...(args.requestReply ? { requestReply: true } : {}),
-					});
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: "Message reported to parent agent.",
-							},
-						],
-					};
-				} catch (e) {
-					const message = e instanceof Error ? e.message : "Unknown error";
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Error reporting to parent: ${message}`,
-							},
-						],
-						isError: true,
-					};
-				}
 			},
 		),
 
@@ -1439,7 +1416,7 @@ export function createOrchestratorTools(
 			"Copy another agent's conversation context into a target task's session. " +
 				"The target task starts with the source's full conversation history but has its own identity. " +
 				"Use this to give a new task the knowledge of a previous agent (files read, patterns discovered, etc.) " +
-				"without cold-starting. After forking, use send_message_to_child to start the target agent.",
+				"without cold-starting. After forking, use send_message to start the target agent.",
 			{
 				sourceTaskId: z
 					.string()
@@ -1521,7 +1498,7 @@ export function createOrchestratorTools(
 						content: [
 							{
 								type: "text" as const,
-								text: `Forked context from "${sourceTitle}" (${args.sourceTaskId}) → "${targetNode.title}" (${args.targetTaskId}). Copied ${result.eventCount} events. Use send_message_to_child to start the target agent.`,
+								text: `Forked context from "${sourceTitle}" (${args.sourceTaskId}) → "${targetNode.title}" (${args.targetTaskId}). Copied ${result.eventCount} events. Use send_message to start the target agent.`,
 							},
 						],
 					};

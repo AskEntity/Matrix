@@ -575,3 +575,13 @@ Daemon (Hono: HTTP + SSE on :7433)
 - Event converter: fork_marker treated as transparent pass-through (like compact_marker).
 - System prompt: paragraph about forked context added at end of SYSTEM_PROMPT.
 - Frontend: fork_marker rendered as "⑂ Forked from {sourceTaskId}" bar in activity log (reuses compact boundary styles). Tool card title: "⑂ Fork: source → target".
+
+
+## send_message Unification (WIP)
+- `send_message_to_child` + `report_to_parent` merged into `send_message` tool with direction detection.
+- Schema: `send_message({ taskId, title, message, requestReply? })`. Direction determined by comparing taskId to currentNode.parentId (upward) or node.parentId === currentTaskId (downward).
+- XML tags renamed: `<child_complete>` → `<task_complete>`, `<child_report>` → `<task_message>`, `<parent_update>` → `<task_message>`.
+- Backward compat: `TOOL_NAME_ALIASES` map in event-converter.ts maps old JSONL tool names to new ones during resume.
+- `buildTaskPrompt` now includes "Your task is part of X" line with parent task title and ID.
+- Tool descriptions updated: "child" → "sub task" throughout orchestrator tool descriptions.
+- QueueMessage source types unchanged (child_complete, child_report, parent_update remain internal identifiers).

@@ -101,6 +101,15 @@ export function buildTaskPrompt(
 
 	parts.push(`# Task: ${node.title}`);
 	parts.push(`Task ID: \`${node.id}\``);
+	// Add "Your task is part of" line for task navigation context
+	if (node.parentId) {
+		const parentNode = tracker.get(node.parentId);
+		if (parentNode) {
+			parts.push(
+				`\nYour task is part of "${parentNode.title}" (\`${node.parentId}\`). Send messages to \`${node.parentId}\` to discuss questions or coordinate.`,
+			);
+		}
+	}
 	if (node.budgetUsd) {
 		parts.push(
 			`**Budget: ${"$"}${node.budgetUsd.toFixed(2)}** — you will be warned at 80% and must wrap up at 100%.`,
