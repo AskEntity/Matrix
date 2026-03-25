@@ -424,7 +424,7 @@ export const LogEntryView = memo(function LogEntryView({
 	// user_message_forwarded — CC'd user message to sub task, rendered muted
 	if (entry.type === "user_message_forwarded") {
 		const childTitle = entry.title ?? "";
-		const label = `📨 forwarded to ${childTitle}`;
+		const label = `📨 user → ${childTitle}`;
 		const text = getEntryText(entry);
 
 		return (
