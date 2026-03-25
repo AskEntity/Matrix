@@ -226,3 +226,20 @@ Old code versions persisted `tree_updated` ephemeral events to JSONL. On page lo
 ## Event Side Effect Discipline
 
 When extending an event to new emitters (e.g., child agents now emit `orchestration_started`), audit ALL consumers of that event for assumptions about who emits it. Stale assumption "only root emits this" caused the rootNodeId bug.
+
+## Competitive Landscape (2026-03)
+
+Key competitors researched: Claude Code Agent Teams, OpenClaw, Cursor 2.0, OpenAI Codex App, Devin, Stoneforge, Intent (Augment Code), GitHub Copilot Coding Agent.
+
+**OpenGraft unique features** (no competitor has ALL of these):
+- Recursive task tree (infinite nesting) — competitors max at 2 levels
+- Cross-project communication — completely unique
+- Real-time MessageQueue for agent communication — competitors use file inbox or nothing
+- Compaction + fork context combo — unique
+- "All-projects connection layer" positioning — unique
+
+**Positioning**: OpenGraft sits between "global personal agent" (OpenClaw, too broad) and "per-project worker" (Composio/Stoneforge, too narrow). Each project has scope (task tree, memory, git workflow) but projects aren't isolated (cross-project messaging). "Scoped connection" — each orchestrator is a domain expert, cross-project = expert consultation.
+
+**Closest competitor**: Stoneforge (Director → Workers + Stewards, dispatch daemon, git worktree isolation, web dashboard). But uses external CLI agents (Claude Code/Codex), can't do compaction/fork/API control.
+
+**Biggest threat**: Claude Code Agent Teams evolution. Currently experimental, file-poll based, non-recursive. If Anthropic makes it recursive + real-time, our core advantage erodes.
