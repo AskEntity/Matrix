@@ -266,3 +266,20 @@ Old → New source mapping:
 Applied in event-store.ts readAll() and persistent-queue.ts loadPersistedMessages().
 
 Frontend UIOnlyEvent types: `parent_update` and `child_report` → `task_message`. CSS class: `og-tool-card-task-message`.
+
+## Session 2026-03-25 Completed Work
+
+**Merged to main this session:**
+1. Forwarded label fix: `📨 forwarded to` → `📨 user →`
+2. XML attribute standardization: `from_task` (ID) + `task_name` (title) across all tags
+3. Remove auto-prune of session files on daemon startup (was silently deleting JSONL history)
+4. Fork marker visibility: fork_marker now generates `<fork_marker>` XML visible to AI
+5. QueueMessage source unification: child_report/parent_update → task_message, child_complete → task_complete, forwarded → user_message_forwarded
+
+**Key discoveries:**
+- Auto-prune (v1 legacy) was deleting session JSONL on every daemon restart, keeping only 5 most recent. Broke fork_task_context. Manual prune endpoint preserved.
+- fork_marker was invisible to AI (transparent pass-through like compact_marker). Caused complete identity confusion in forked agents. Now generates visible XML.
+- Fork identity confusion: even with visible marker, long source context creates "identity inertia" — forked agent may still behave as source. Compaction before fork may be needed for long contexts.
+- Daemon restart doesn't notify agents about lost background processes. UI shows stale bg process entries until page refresh.
+
+**og-docs:** VitePress configured, 7 docs written, build successful. Ready for CF Pages deployment. Waiting for user to do wrangler deploy + custom domain setup.
