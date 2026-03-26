@@ -398,4 +398,4 @@ Restart H violated this: checked JSONL had background_complete but never resumed
 
 ## Anthropic `caller` Field on tool_use
 
-`caller: {type: "direct"} | {type: "server_tool", tool_id: "..."}` — official API field on tool_use blocks. Our `eventsToAnthropicMessages` hardcodes `caller: {type: "direct"}` on JSONL reconstruction. Mock prefix validation strips it (like `cache_control`) since it is metadata, not semantic content.
+`caller: {type: "direct"} | {type: "server_tool", tool_id: "..."}` — official API field on tool_use blocks. Our `eventsToAnthropicMessages` hardcodes `caller: {type: "direct"}` on JSONL reconstruction. Mock API includes `caller: {type: "direct"}` on all tool_use blocks (matching real API). Prefix validation does NOT strip caller — if live/resume diverge on this field, it's a real bug we want to catch. Only `cache_control` is stripped (legitimately added differently by our caching logic).
