@@ -373,3 +373,14 @@ Lifetime issues (daemon restart, message loss, orphan cleanup, queue drain timin
 **Bug**: After daemon restart, UI shows stale background processes (e.g., `⚙ Background bg-XXXX sleep 30`) that will never complete. Frontend rebuilds state from JSONL — sees `tool_result` with `backgroundId` but no `background_complete` message → adds to active processes map permanently.
 
 **Fix**: `findOrphanedBackgroundProcesses()` in events.ts scans for `tool_result` events with `backgroundId` that have no matching `background_complete` message event. Generates synthetic `background_complete` events with `exitCode: null` and `stderr: "Background process interrupted by daemon restart"`. Called in three places: `autoResumeProjects` (daemon.ts), `launchAgent` (root), and `runChildAgentInBackground` (child).
+
+
+## Yield JSONL Invariant (CRITICAL)
+
+**For yielding agents, NOTHING should be written to JSONL after the yield tool_call except by the provider loop itself.** External events (bg_complete, orphan fixes) must go to the queue, not JSONL. Writing events between yield tool_call and its tool_result breaks the event converter → API 400.
+
+`hasPendingYield()` in events.ts detects this state. Used by autoResumeProjects (daemon.ts), launchAgent, and runChildAgentInBackground to route bg_complete events to queue instead of JSONL.
+
+## Anthropic `caller` Field on tool_use
+
+`caller: {type: "direct"} | {type: "server_tool", tool_id: "..."}` — official API field on tool_use blocks. Our `eventsToAnthropicMessages` hardcodes `caller: {type: "direct"}` on JSONL reconstruction. Mock prefix validation strips it (like `cache_control`) since it is metadata, not semantic content.

@@ -1122,11 +1122,13 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		expect(matches?.length).toBe(1);
 	}, 30000);
 
-	test("Restart H: orphan background processes get synthetic background_complete", async () => {
+	test("Restart H: bg process + yield crash → resume works (bg_complete delivered via queue)", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: bash with run_in_background:true (returns immediately with backgroundId).
 		// Turn 2: agent yields to wait for input.
+		// Turn 3 (post-restart): agent receives wake message + bg_complete → calls done.
 		const instruction = JSON.stringify({
 			turns: [
 				{
@@ -1147,6 +1149,20 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							type: "tool_use",
 							name: "mcp__opengraft__yield",
 							input: {},
+						},
+					],
+				},
+				{
+					// Post-restart: agent wakes from yield, sees bg_complete + user message
+					blocks: [
+						{ type: "text", text: "Background was interrupted, finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "survived bg + yield restart",
+							},
 						},
 					],
 				},
@@ -1181,20 +1197,21 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		);
 		expect(preRestartBgComplete.length).toBe(0);
 
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+
 		// === CRASH ===
 		await ctx.app.shutdown();
 		await new Promise((r) => setTimeout(r, 100));
 
 		// === RESTART ===
 		ctx.app = await recreateApp(ctx);
-
-		// autoResumeProjects should write synthetic background_complete to JSONL
-		// even though it skips auto-resume (no active children)
 		await ctx.app.autoResumeProjects();
 
-		// Verify JSONL now contains a synthetic background_complete for the orphaned bg process
+		// bg_complete should NOT be in JSONL for yielding agents (it goes to queue instead)
+		// This is the key: writing bg_complete to JSONL between yield tool_call and its
+		// tool_result breaks the converter → API 400.
 		const postRestartEvents = readSessionEvents(ctx, rootNodeId);
-		const bgCompleteEvents = postRestartEvents.filter(
+		const bgCompleteInJSONL = postRestartEvents.filter(
 			(e) =>
 				e.type === "message" &&
 				"body" in e &&
@@ -1203,13 +1220,31 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				"source" in e.body &&
 				e.body.source === "background_complete",
 		);
-		expect(bgCompleteEvents.length).toBeGreaterThanOrEqual(1);
+		// For yielding agents, bg_complete goes to queue, not JSONL
+		expect(bgCompleteInJSONL.length).toBe(0);
 
-		// The synthetic background_complete should match the orphaned bg process
-		const bgCompleteBody = (
-			bgCompleteEvents[0] as { body: { commandId: string; command: string } }
-		).body;
-		expect(bgCompleteBody.commandId).toBe(bgId);
-		expect(bgCompleteBody.command).toContain("sleep 30");
+		// Send message to wake agent — triggers resume with yield detection
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Continue after bg restart." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: {
+						status: "passed",
+						summary: "survived bg + yield restart",
+					},
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		// Agent should resume from yield, process bg_complete + wake message, call done
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Prefix validation passed — no API 400 from misplaced bg_complete
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
 	}, 30000);
 });
