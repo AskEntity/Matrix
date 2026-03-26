@@ -529,11 +529,12 @@ function createMockAnthropicStream(
 /**
  * Normalize message content for comparison.
  * - Strips `cache_control` from content blocks (provider adds these for caching)
+ * - Strips `caller` from tool_use blocks (API adds this on response, persisted to JSONL)
  * - Normalizes string content to array form: "text" → [{type: "text", text: "text"}]
  *
  * This ensures prefix comparison is semantically correct — the same content
- * may have different cache_control annotations or string-vs-array wrapping
- * between initial send and JSONL reconstruction.
+ * may have different cache_control annotations, caller fields, or string-vs-array
+ * wrapping between initial send and JSONL reconstruction.
  */
 function normalizeContent(content: unknown): unknown {
 	if (typeof content === "string") {
@@ -542,7 +543,11 @@ function normalizeContent(content: unknown): unknown {
 	if (Array.isArray(content)) {
 		return content.map((block) => {
 			if (block && typeof block === "object") {
-				const { cache_control: _, ...rest } = block as Record<string, unknown>;
+				const {
+					cache_control: _,
+					caller: __,
+					...rest
+				} = block as Record<string, unknown>;
 				return rest;
 			}
 			return block;

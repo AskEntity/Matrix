@@ -389,3 +389,13 @@ Pattern:
 7. Prefix validation confirms API messages are consistent
 
 Restart H violated this: checked JSONL had background_complete but never resumed the agent. The synthetic event broke yield resume (API 400) and the test missed it.
+
+## Yield JSONL Invariant (CRITICAL)
+
+**For yielding agents, NOTHING should be written to JSONL after the yield tool_call except by the provider loop itself.** External events (bg_complete, orphan fixes) must go to the queue, not JSONL. Writing events between yield tool_call and its tool_result breaks the event converter → API 400.
+
+`hasPendingYield()` in events.ts detects this state. Used by autoResumeProjects (daemon.ts), launchAgent, and runChildAgentInBackground to route bg_complete events to queue instead of JSONL.
+
+## Anthropic `caller` Field on tool_use
+
+`caller: {type: "direct"} | {type: "server_tool", tool_id: "..."}` — official API field on tool_use blocks. Our `eventsToAnthropicMessages` hardcodes `caller: {type: "direct"}` on JSONL reconstruction. Mock prefix validation strips it (like `cache_control`) since it is metadata, not semantic content.

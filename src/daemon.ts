@@ -32,7 +32,7 @@ import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
 import { runEventMigrations } from "./event-store.ts";
-import { findOrphanedBackgroundProcesses } from "./events.ts";
+import { findOrphanedBackgroundProcesses, hasPendingYield } from "./events.ts";
 import { persistMessage } from "./persistent-queue.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { buildSystemPrompt } from "./system-prompts.ts";
@@ -257,15 +257,20 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 					// Write synthetic background_complete for bg processes killed by restart.
 					// Frontend uses these to remove stale entries from the background processes UI.
+					// EXCEPT for yielding agents — writing events after a yield tool_call (before
+					// its tool_result) breaks the converter. For yielding agents, bg_complete
+					// events are delivered via queue at resume time instead.
 					const nodeEvents = eventStore.has(node.id)
 						? eventStore.readActive(node.id)
 						: [];
-					const bgOrphans = findOrphanedBackgroundProcesses(
-						nodeEvents,
-						node.id,
-					);
-					if (bgOrphans.length > 0) {
-						await eventStore.appendBatch(node.id, bgOrphans);
+					if (!hasPendingYield(nodeEvents)) {
+						const bgOrphans = findOrphanedBackgroundProcesses(
+							nodeEvents,
+							node.id,
+						);
+						if (bgOrphans.length > 0) {
+							await eventStore.appendBatch(node.id, bgOrphans);
+						}
 					}
 				}
 

@@ -413,6 +413,30 @@ export function findUnconsumedMessages(events: Event[]): QueueMessage[] {
 }
 
 /**
+ * Check if the last tool_call in events is a yield with no matching tool_result.
+ * This means the agent was in yield state when the daemon restarted.
+ * When a yield is pending, NOTHING should be written to JSONL after the yield
+ * tool_call — the provider loop handles yield resolution at resume time.
+ * External events (bg_complete, etc.) should go to the queue instead.
+ */
+export function hasPendingYield(events: Event[]): boolean {
+	const lastToolCall = [...events]
+		.reverse()
+		.find((e) => e.type === "tool_call");
+	if (
+		lastToolCall?.type === "tool_call" &&
+		lastToolCall.tool === "mcp__opengraft__yield"
+	) {
+		const hasResult = events.some(
+			(e) =>
+				e.type === "tool_result" && e.toolCallId === lastToolCall.toolCallId,
+		);
+		return !hasResult;
+	}
+	return false;
+}
+
+/**
  * Find background processes that were started but never completed.
  * A background process is "orphaned" if a tool_result has a `backgroundId`
  * but no `message` event with `source: "background_complete"` and matching

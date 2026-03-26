@@ -6,6 +6,7 @@ import {
 	findOrphanedBackgroundProcesses,
 	findOrphanedToolCalls,
 	findUnconsumedMessages,
+	hasPendingYield,
 } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
@@ -621,11 +622,21 @@ export async function runChildAgentInBackground(
 				activeEvents = [...activeEvents, ...orphanFixes];
 			}
 
-			// Write synthetic background_complete for bg processes killed by restart
+			// Write synthetic background_complete for bg processes killed by restart.
+			// For yielding agents: enqueue to queue instead of writing to JSONL
+			// (events between yield tool_call and its tool_result break the converter).
 			const bgOrphans = findOrphanedBackgroundProcesses(activeEvents, nodeId);
-			if (bgOrphans.length > 0) {
+			const childIsYielding = hasPendingYield(activeEvents);
+			if (bgOrphans.length > 0 && !childIsYielding) {
 				await eventStore.appendBatch(nodeId, bgOrphans);
 				activeEvents = [...activeEvents, ...bgOrphans];
+			}
+			if (bgOrphans.length > 0 && childIsYielding) {
+				for (const orphan of bgOrphans) {
+					if (orphan.type === "message" && orphan.body) {
+						childQueue.enqueue(orphan.body);
+					}
+				}
 			}
 
 			// Recover unconsumed messages (same issue as root — see launchAgent)
@@ -900,13 +911,26 @@ export async function launchAgent(
 
 		// Write synthetic background_complete for bg processes killed by restart.
 		// Frontend uses these to remove stale entries from the background processes UI.
+		// For yielding agents: DON'T write to JSONL (breaks converter — events between
+		// yield tool_call and its tool_result cause API 400). Enqueue to queue instead.
 		const bgOrphans = findOrphanedBackgroundProcesses(
 			rootActiveEvents,
 			rootNodeId,
 		);
-		if (bgOrphans.length > 0) {
+		const isYielding = hasPendingYield(rootActiveEvents);
+		if (bgOrphans.length > 0 && !isYielding) {
 			await eventStore.appendBatch(rootNodeId, bgOrphans);
 			rootActiveEvents = [...rootActiveEvents, ...bgOrphans];
+		}
+
+		// For yielding agents, enqueue bg_complete to queue instead of JSONL.
+		// The provider loop will deliver them to the agent via queue drain when yield resolves.
+		if (bgOrphans.length > 0 && isYielding) {
+			for (const orphan of bgOrphans) {
+				if (orphan.type === "message" && orphan.body) {
+					queue.enqueue(orphan.body);
+				}
+			}
 		}
 
 		// Recover messages that were persisted to JSONL but never consumed.
