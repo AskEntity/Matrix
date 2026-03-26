@@ -1038,4 +1038,87 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const idx2 = allUserText.indexOf("MESSAGE_TWO_AFTER_RESTART");
 		expect(idx1).toBeLessThan(idx2);
 	}, 30000);
+
+	test("Restart G: message sent after restart is not duplicated", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Agent immediately calls done → enters idle-yield (root)
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Done immediately." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "quick done" },
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		const firstStatus = await waitForDone(ctx);
+		expect(firstStatus).toBe("passed");
+
+		// === CRASH ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Send a message after restart — this triggers handleInjectMessage → launchAgent(resume)
+		// The message gets written to JSONL (emitEvent) AND persistent queue (deliverMessage).
+		// On launchAgent, findUnconsumedMessages reads it from JSONL, loadPersistedMessages
+		// reads it from disk. Without dedup, the message appears TWICE in the queue.
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "UNIQUE_RESTART_MESSAGE" },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "no duplicates" },
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		// Wait for status transition: passed → in_progress → passed
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		if (!rootNodeId) throw new Error("No root node");
+		const start = Date.now();
+		while (Date.now() - start < 5000) {
+			const node = tracker.get(rootNodeId);
+			if (node?.status === "in_progress") break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		const secondStatus = await waitForDone(ctx, 20000);
+		expect(secondStatus).toBe("passed");
+
+		// Find the post-restart API call
+		const history = ctx.mockAPI.getRequestHistory();
+		// The last request is the post-restart one
+		const postRestartReq = history[history.length - 1];
+		expect(postRestartReq).toBeDefined();
+
+		// Collect ALL text from ALL user messages in the post-restart request
+		const allUserTexts: string[] = [];
+		for (const msg of postRestartReq!.messages) {
+			if (msg.role === "user") {
+				const text = getTextContent(msg);
+				if (text) allUserTexts.push(text);
+			}
+		}
+		const allUserText = allUserTexts.join(" ");
+
+		// The message must appear exactly ONCE, not twice
+		expect(allUserText).toContain("UNIQUE_RESTART_MESSAGE");
+
+		// Count occurrences — must be exactly 1
+		const matches = allUserText.match(/UNIQUE_RESTART_MESSAGE/g);
+		expect(matches?.length).toBe(1);
+	}, 30000);
 });

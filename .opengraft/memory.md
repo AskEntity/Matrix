@@ -359,3 +359,10 @@ Lifetime issues (daemon restart, message loss, orphan cleanup, queue drain timin
 **Bug**: After crash during tool execution, JSONL has orphan tool_result (user role) as last event. Resume reconstructs messages ending with user message. Provider loop then pushes queue messages as another user message → consecutive user messages → API 400.
 
 **Fix**: In provider-shared.ts, when pushing initial queue messages, check if last reconstructed message is already user role. If so, merge into existing message as additional text blocks instead of pushing a new user message.
+
+
+## Message Deduplication on Restart (March 2025)
+
+**Bug**: `handleInjectMessage` writes the same message to BOTH JSONL (`emitEvent`) and persistent queue (`deliverMessage→persistMessage`). When `launchAgent` resumes, `findUnconsumedMessages()` finds it in JSONL and `loadPersistedMessages()` finds it on disk — message delivered twice.
+
+**Fix**: Track unconsumed message IDs in a `Set<string>`. When loading persistent messages, skip any with matching IDs. Applied in both `launchAgent` (root) and `runChildAgentInBackground→runChildCore` (child) via `unconsumedIds` param on `RunChildCoreParams`.

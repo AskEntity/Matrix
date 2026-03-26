@@ -252,6 +252,8 @@ export interface RunChildCoreParams {
 		dataDir: string;
 		projectId: string;
 	};
+	/** IDs of messages already recovered from JSONL (unconsumed). Skip these when loading persisted messages. */
+	unconsumedIds?: Set<string>;
 }
 
 /**
@@ -266,14 +268,22 @@ export interface RunChildCoreParams {
 export async function runChildCore(
 	params: RunChildCoreParams,
 ): Promise<AgentResult> {
-	const { provider, tracker, taskId, sessionRequest, persistedMessages } =
-		params;
+	const {
+		provider,
+		tracker,
+		taskId,
+		sessionRequest,
+		persistedMessages,
+		unconsumedIds,
+	} = params;
 
 	// Use pre-created queue or create a new one
 	const childQueue = params.queue ?? new MessageQueue();
 	sessionRequest.queue = childQueue;
 
-	// Load any persisted messages from disk and enqueue them
+	// Load any persisted messages from disk and enqueue them.
+	// Skip messages already recovered from JSONL (unconsumed) to avoid duplicates —
+	// handleInjectMessage writes to both JSONL (emitEvent) and persistent queue (deliverMessage).
 	if (persistedMessages) {
 		const persisted = await loadPersistedMessages(
 			persistedMessages.dataDir,
@@ -281,6 +291,8 @@ export async function runChildCore(
 			taskId,
 		);
 		for (const msg of persisted) {
+			if (unconsumedIds && "id" in msg && msg.id && unconsumedIds.has(msg.id))
+				continue;
 			childQueue.enqueue(msg);
 		}
 		if (persisted.length > 0) {
@@ -600,6 +612,7 @@ export async function runChildAgentInBackground(
 		let activeEvents = eventStore.has(nodeId)
 			? eventStore.readActive(nodeId)
 			: [];
+		const childUnconsumedIds = new Set<string>();
 		if (activeEvents.length > 0) {
 			const orphanFixes = findOrphanedToolCalls(activeEvents, nodeId);
 			if (orphanFixes.length > 0) {
@@ -611,6 +624,7 @@ export async function runChildAgentInBackground(
 			const unconsumed = findUnconsumedMessages(activeEvents);
 			for (const msg of unconsumed) {
 				childQueue.enqueue(msg);
+				if ("id" in msg && msg.id) childUnconsumedIds.add(msg.id);
 			}
 		}
 
@@ -651,6 +665,7 @@ export async function runChildAgentInBackground(
 				dataDir: ctx.config.dataDir,
 				projectId: project.id,
 			},
+			unconsumedIds: childUnconsumedIds,
 		});
 
 		// --- Post-completion logic (unified for both MCP and daemon paths) ---
@@ -867,6 +882,7 @@ export async function launchAgent(
 	let rootActiveEvents = eventStore.has(rootNodeId)
 		? eventStore.readActive(rootNodeId)
 		: [];
+	const unconsumedIds = new Set<string>();
 	if (rootActiveEvents.length > 0) {
 		const orphanFixes = findOrphanedToolCalls(rootActiveEvents, rootNodeId);
 		if (orphanFixes.length > 0) {
@@ -883,17 +899,23 @@ export async function launchAgent(
 		const unconsumed = findUnconsumedMessages(rootActiveEvents);
 		for (const msg of unconsumed) {
 			queue.enqueue(msg);
+			// Track IDs to dedup against persistent queue (handleInjectMessage writes
+			// the same message to BOTH JSONL and persistent queue on disk)
+			if ("id" in msg && msg.id) unconsumedIds.add(msg.id);
 		}
 	}
 
 	// Load persisted messages from disk (sent after restart, before agent launched).
 	// These come AFTER unconsumed messages in the queue since they're chronologically later.
+	// Skip messages already recovered from JSONL (unconsumed) to avoid duplicates —
+	// handleInjectMessage writes to both JSONL (emitEvent) and persistent queue (deliverMessage).
 	const persistedMsgs = await loadPersistedMessages(
 		ctx.config.dataDir,
 		project.id,
 		rootNodeId,
 	);
 	for (const msg of persistedMsgs) {
+		if ("id" in msg && msg.id && unconsumedIds.has(msg.id)) continue;
 		queue.enqueue(msg);
 	}
 	if (persistedMsgs.length > 0) {
