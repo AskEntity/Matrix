@@ -411,3 +411,67 @@ export function findUnconsumedMessages(events: Event[]): QueueMessage[] {
 	}
 	return unconsumed;
 }
+
+/**
+ * Find background processes that were started but never completed.
+ * A background process is "orphaned" if a tool_result has a `backgroundId`
+ * but no `message` event with `source: "background_complete"` and matching
+ * `commandId` exists. This happens when the daemon crashes while a background
+ * process is running — the process is killed but no completion event is generated.
+ *
+ * Returns synthetic message events with `background_complete` bodies that should
+ * be appended to JSONL so the frontend can clean up the stale UI entries.
+ */
+export function findOrphanedBackgroundProcesses(
+	events: Event[],
+	taskId: string,
+): Event[] {
+	// Collect all background processes started (from tool_result events)
+	const bgProcesses = new Map<string, { command: string; ts: number }>();
+	for (const e of events) {
+		if (e.type === "tool_result" && e.backgroundId) {
+			bgProcesses.set(e.backgroundId, {
+				command: e.backgroundCommand ?? "",
+				ts: e.ts,
+			});
+		}
+	}
+
+	// Collect all completed background processes (from message events)
+	const completedIds = new Set<string>();
+	for (const e of events) {
+		if (
+			e.type === "message" &&
+			e.body &&
+			typeof e.body === "object" &&
+			"source" in e.body &&
+			e.body.source === "background_complete" &&
+			"commandId" in e.body
+		) {
+			completedIds.add((e.body as { commandId: string }).commandId);
+		}
+	}
+
+	// Generate synthetic background_complete for orphaned processes
+	const orphans: Event[] = [];
+	for (const [bgId, info] of bgProcesses) {
+		if (!completedIds.has(bgId)) {
+			orphans.push({
+				type: "message",
+				id: "",
+				taskId,
+				body: {
+					source: "background_complete",
+					commandId: bgId,
+					command: info.command,
+					exitCode: null,
+					durationMs: 0,
+					stdout: "",
+					stderr: "Background process interrupted by daemon restart",
+				},
+				ts: Date.now(),
+			});
+		}
+	}
+	return orphans;
+}
