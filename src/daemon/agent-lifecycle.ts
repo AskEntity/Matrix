@@ -822,19 +822,6 @@ export async function launchAgent(
 
 	const queue = new MessageQueue();
 
-	// Load any persisted messages from disk and enqueue them
-	const persistedMsgs = await loadPersistedMessages(
-		ctx.config.dataDir,
-		project.id,
-		rootNodeId,
-	);
-	for (const msg of persistedMsgs) {
-		queue.enqueue(msg);
-	}
-	if (persistedMsgs.length > 0) {
-		await clearPersistedMessages(ctx.config.dataDir, project.id, rootNodeId);
-	}
-
 	const mcpManager = new McpClientManager();
 
 	// getSession lookup: find session from tracker by sessionId
@@ -891,11 +878,26 @@ export async function launchAgent(
 		// This happens when a message arrives during tool execution (enqueued to live queue),
 		// gets written to JSONL as a `message` event, but daemon crashes before the provider
 		// loop can drain the queue and emit `messages_consumed`. Re-enqueue them so the
-		// agent receives them on resume.
+		// agent receives them on resume. These are chronologically BEFORE any persistent
+		// queue messages (which were sent after the restart), so enqueue them first.
 		const unconsumed = findUnconsumedMessages(rootActiveEvents);
 		for (const msg of unconsumed) {
 			queue.enqueue(msg);
 		}
+	}
+
+	// Load persisted messages from disk (sent after restart, before agent launched).
+	// These come AFTER unconsumed messages in the queue since they're chronologically later.
+	const persistedMsgs = await loadPersistedMessages(
+		ctx.config.dataDir,
+		project.id,
+		rootNodeId,
+	);
+	for (const msg of persistedMsgs) {
+		queue.enqueue(msg);
+	}
+	if (persistedMsgs.length > 0) {
+		await clearPersistedMessages(ctx.config.dataDir, project.id, rootNodeId);
 	}
 
 	// Build emit callback: emitEvent with taskId injected
