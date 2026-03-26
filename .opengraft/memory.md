@@ -346,3 +346,16 @@ Lifetime issues (daemon restart, message loss, orphan cleanup, queue drain timin
 5. Run full suite for regression
 
 **Never guess-fix lifetime bugs.** The integration test framework (`ValidatingMockAPI` + `recreateApp()` + prefix validation) makes it cheap to write crash/restart scenarios. Use it.
+
+
+## Unconsumed Messages on Restart (March 2025)
+
+**Bug**: Messages sent while a tool is executing (e.g., bash sleep) go into the live queue AND get persisted to JSONL as `message` events. If daemon crashes before the provider loop drains the queue (emitting `messages_consumed`), the message is lost — it exists in JSONL but the event converter skips it (deferred message with id, no consumption event).
+
+**Fix**: `findUnconsumedMessages()` in events.ts scans for `message` events with IDs that have no corresponding `messages_consumed`. On resume, these are re-enqueued to the agent queue in both `launchAgent` (root) and `runChildAgentInBackground` (child). The provider loop picks them up normally via queue drain, emits `messages_consumed`, and on next resume the converter materializes them correctly.
+
+## Consecutive User Messages on Resume
+
+**Bug**: After crash during tool execution, JSONL has orphan tool_result (user role) as last event. Resume reconstructs messages ending with user message. Provider loop then pushes queue messages as another user message → consecutive user messages → API 400.
+
+**Fix**: In provider-shared.ts, when pushing initial queue messages, check if last reconstructed message is already user role. If so, merge into existing message as additional text blocks instead of pushing a new user message.
