@@ -334,3 +334,15 @@ Key changes:
 
 **Root cause**: Two-phase message lifecycle (message → messages_consumed) assumes the provider loop always completes consumption. Daemon crash breaks this assumption. The fix recovers from the broken state by detecting and re-enqueuing unconsumed messages.
 
+
+
+## TDD for Lifetime/Restart Bugs (CRITICAL)
+
+Lifetime issues (daemon restart, message loss, orphan cleanup, queue drain timing) MUST use TDD:
+1. Write failing test FIRST — reproduce the exact bug scenario
+2. Confirm test fails — verify it catches the real issue
+3. Find root cause — understand WHY before fixing
+4. Fix and verify test passes
+5. Run full suite for regression
+
+**Never guess-fix lifetime bugs.** The integration test framework (`ValidatingMockAPI` + `recreateApp()` + prefix validation) makes it cheap to write crash/restart scenarios. Use it.
