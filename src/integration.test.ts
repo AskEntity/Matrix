@@ -1121,4 +1121,95 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const matches = allUserText.match(/UNIQUE_RESTART_MESSAGE/g);
 		expect(matches?.length).toBe(1);
 	}, 30000);
+
+	test("Restart H: orphan background processes get synthetic background_complete", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: bash with run_in_background:true (returns immediately with backgroundId).
+		// Turn 2: agent yields to wait for input.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running background process." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 30", run_in_background: true },
+						},
+					],
+				},
+				{
+					// After bash returns (backgrounded), agent yields
+					blocks: [
+						{ type: "text", text: "Waiting for input." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for agent to enter idle (yield) state — bash already backgrounded
+		await waitForIdle(ctx);
+
+		// Verify a background process was started — check JSONL for tool_result with backgroundId
+		const rootNodeId = await getRootNodeId(ctx);
+		const preRestartEvents = readSessionEvents(ctx, rootNodeId);
+		const bgToolResults = preRestartEvents.filter(
+			(e) => e.type === "tool_result" && "backgroundId" in e && e.backgroundId,
+		);
+		expect(bgToolResults.length).toBe(1);
+		const bgId = (bgToolResults[0] as { backgroundId: string }).backgroundId;
+		expect(bgId).toMatch(/^bg-/);
+
+		// Before restart: no background_complete in JSONL
+		const preRestartBgComplete = preRestartEvents.filter(
+			(e) =>
+				e.type === "message" &&
+				"body" in e &&
+				e.body &&
+				typeof e.body === "object" &&
+				"source" in e.body &&
+				e.body.source === "background_complete",
+		);
+		expect(preRestartBgComplete.length).toBe(0);
+
+		// === CRASH ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+
+		// autoResumeProjects should write synthetic background_complete to JSONL
+		// even though it skips auto-resume (no active children)
+		await ctx.app.autoResumeProjects();
+
+		// Verify JSONL now contains a synthetic background_complete for the orphaned bg process
+		const postRestartEvents = readSessionEvents(ctx, rootNodeId);
+		const bgCompleteEvents = postRestartEvents.filter(
+			(e) =>
+				e.type === "message" &&
+				"body" in e &&
+				e.body &&
+				typeof e.body === "object" &&
+				"source" in e.body &&
+				e.body.source === "background_complete",
+		);
+		expect(bgCompleteEvents.length).toBeGreaterThanOrEqual(1);
+
+		// The synthetic background_complete should match the orphaned bg process
+		const bgCompleteBody = (
+			bgCompleteEvents[0] as { body: { commandId: string; command: string } }
+		).body;
+		expect(bgCompleteBody.commandId).toBe(bgId);
+		expect(bgCompleteBody.command).toContain("sleep 30");
+	}, 30000);
 });

@@ -366,3 +366,10 @@ Lifetime issues (daemon restart, message loss, orphan cleanup, queue drain timin
 **Bug**: `handleInjectMessage` writes the same message to BOTH JSONL (`emitEvent`) and persistent queue (`deliverMessage→persistMessage`). When `launchAgent` resumes, `findUnconsumedMessages()` finds it in JSONL and `loadPersistedMessages()` finds it on disk — message delivered twice.
 
 **Fix**: Track unconsumed message IDs in a `Set<string>`. When loading persistent messages, skip any with matching IDs. Applied in both `launchAgent` (root) and `runChildAgentInBackground→runChildCore` (child) via `unconsumedIds` param on `RunChildCoreParams`.
+
+
+## Orphan Background Process Cleanup on Restart (March 2025)
+
+**Bug**: After daemon restart, UI shows stale background processes (e.g., `⚙ Background bg-XXXX sleep 30`) that will never complete. Frontend rebuilds state from JSONL — sees `tool_result` with `backgroundId` but no `background_complete` message → adds to active processes map permanently.
+
+**Fix**: `findOrphanedBackgroundProcesses()` in events.ts scans for `tool_result` events with `backgroundId` that have no matching `background_complete` message event. Generates synthetic `background_complete` events with `exitCode: null` and `stderr: "Background process interrupted by daemon restart"`. Called in three places: `autoResumeProjects` (daemon.ts), `launchAgent` (root), and `runChildAgentInBackground` (child).

@@ -32,6 +32,7 @@ import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
 import { runEventMigrations } from "./event-store.ts";
+import { findOrphanedBackgroundProcesses } from "./events.ts";
 import { persistMessage } from "./persistent-queue.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { buildSystemPrompt } from "./system-prompts.ts";
@@ -253,6 +254,19 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 				const eventStore = getEventStore(ctx, project.id);
 				for (const node of tracker.allNodes()) {
 					await writeOrphanedToolResults(eventStore, node.id);
+
+					// Write synthetic background_complete for bg processes killed by restart.
+					// Frontend uses these to remove stale entries from the background processes UI.
+					const nodeEvents = eventStore.has(node.id)
+						? eventStore.readActive(node.id)
+						: [];
+					const bgOrphans = findOrphanedBackgroundProcesses(
+						nodeEvents,
+						node.id,
+					);
+					if (bgOrphans.length > 0) {
+						await eventStore.appendBatch(node.id, bgOrphans);
+					}
 				}
 
 				// Check if any children were actively running — if not, the root was

@@ -3,6 +3,7 @@ import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
 import { DEFAULT_MODEL } from "../config.ts";
 import {
 	type Event,
+	findOrphanedBackgroundProcesses,
 	findOrphanedToolCalls,
 	findUnconsumedMessages,
 } from "../events.ts";
@@ -620,6 +621,13 @@ export async function runChildAgentInBackground(
 				activeEvents = [...activeEvents, ...orphanFixes];
 			}
 
+			// Write synthetic background_complete for bg processes killed by restart
+			const bgOrphans = findOrphanedBackgroundProcesses(activeEvents, nodeId);
+			if (bgOrphans.length > 0) {
+				await eventStore.appendBatch(nodeId, bgOrphans);
+				activeEvents = [...activeEvents, ...bgOrphans];
+			}
+
 			// Recover unconsumed messages (same issue as root — see launchAgent)
 			const unconsumed = findUnconsumedMessages(activeEvents);
 			for (const msg of unconsumed) {
@@ -888,6 +896,17 @@ export async function launchAgent(
 		if (orphanFixes.length > 0) {
 			await eventStore.appendBatch(rootNodeId, orphanFixes);
 			rootActiveEvents = [...rootActiveEvents, ...orphanFixes];
+		}
+
+		// Write synthetic background_complete for bg processes killed by restart.
+		// Frontend uses these to remove stale entries from the background processes UI.
+		const bgOrphans = findOrphanedBackgroundProcesses(
+			rootActiveEvents,
+			rootNodeId,
+		);
+		if (bgOrphans.length > 0) {
+			await eventStore.appendBatch(rootNodeId, bgOrphans);
+			rootActiveEvents = [...rootActiveEvents, ...bgOrphans];
 		}
 
 		// Recover messages that were persisted to JSONL but never consumed.
