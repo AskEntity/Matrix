@@ -373,3 +373,19 @@ Lifetime issues (daemon restart, message loss, orphan cleanup, queue drain timin
 **Bug**: After daemon restart, UI shows stale background processes (e.g., `⚙ Background bg-XXXX sleep 30`) that will never complete. Frontend rebuilds state from JSONL — sees `tool_result` with `backgroundId` but no `background_complete` message → adds to active processes map permanently.
 
 **Fix**: `findOrphanedBackgroundProcesses()` in events.ts scans for `tool_result` events with `backgroundId` that have no matching `background_complete` message event. Generates synthetic `background_complete` events with `exitCode: null` and `stderr: "Background process interrupted by daemon restart"`. Called in three places: `autoResumeProjects` (daemon.ts), `launchAgent` (root), and `runChildAgentInBackground` (child).
+
+
+## Restart Test Discipline (CRITICAL)
+
+**Every restart test MUST complete the full lifecycle**: crash → restart → agent resume → done(). NEVER stop at "JSONL has correct events" — that only validates writing, not that the system can recover and continue.
+
+Pattern:
+1. Start agent → reach specific state
+2. Crash (shutdown)  
+3. Restart (recreateApp)
+4. autoResumeProjects
+5. Send message to wake agent (if needed)
+6. **waitForDone()** — agent must successfully resume and complete
+7. Prefix validation confirms API messages are consistent
+
+Restart H violated this: checked JSONL had background_complete but never resumed the agent. The synthetic event broke yield resume (API 400) and the test missed it.
