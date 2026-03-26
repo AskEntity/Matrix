@@ -1032,5 +1032,10 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		// BOTH messages must be present
 		expect(allUserText).toContain("MESSAGE_ONE_BEFORE_CRASH");
 		expect(allUserText).toContain("MESSAGE_TWO_AFTER_RESTART");
+
+		// ORDER matters: message1 (sent before crash) must appear BEFORE message2 (sent after restart)
+		const idx1 = allUserText.indexOf("MESSAGE_ONE_BEFORE_CRASH");
+		const idx2 = allUserText.indexOf("MESSAGE_TWO_AFTER_RESTART");
+		expect(idx1).toBeLessThan(idx2);
 	}, 30000);
 });
