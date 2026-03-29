@@ -1335,22 +1335,49 @@ export async function* runProviderLoop(
 			continue;
 		}
 
-		// ── Check for yield tool — handle at loop level instead of inside executeTool ──
+		// ── Check for yield/done conflicts with other tools in same turn ──
 		const yieldToolUse = toolUses.find(
 			(tu) => tu.name === "mcp__opengraft__yield",
 		);
-		if (yieldToolUse) {
-			// Yield is a loop-level pause: set pendingYield, skip tool execution.
-			// The assistant message + tool_call events are already recorded above.
-			// The yield result will be produced at the top of the next while(true) iteration
-			// when messages arrive in the queue. This makes yield state serializable/recoverable.
+		const doneToolUse = toolUses.find(
+			(tu) => tu.name === "mcp__opengraft__done",
+		);
+		const otherToolUses = toolUses.filter(
+			(tu) =>
+				tu.name !== "mcp__opengraft__yield" &&
+				tu.name !== "mcp__opengraft__done",
+		);
+		const hasOtherTools = otherToolUses.length > 0;
+
+		// Yield alone: loop-level pause (existing behavior)
+		if (yieldToolUse && !hasOtherTools && !doneToolUse) {
 			pendingYieldToolCall = { id: yieldToolUse.id, name: yieldToolUse.name };
 			continue;
 		}
 
 		// ── Execute tools concurrently ──
+		// When yield/done appear alongside other tools:
+		// - Other tools execute normally
+		// - yield returns success (no-op — other tool results ARE the "messages")
+		// - done returns error (can't finish without seeing other tools' results)
 		const execResults = await Promise.all(
 			toolUses.map(async (toolUse) => {
+				// yield + other tools: yield becomes no-op success
+				if (toolUse.name === "mcp__opengraft__yield" && hasOtherTools) {
+					return {
+						content:
+							"yield() ignored — other tools in the same turn produced results. Process them first.",
+						isError: false,
+					} satisfies ToolExecResult;
+				}
+				// done + other tools: done returns error
+				if (toolUse.name === "mcp__opengraft__done" && hasOtherTools) {
+					return {
+						content:
+							"Cannot call done() alongside other tools — you must process their results first before finishing.",
+						isError: true,
+					} satisfies ToolExecResult;
+				}
 				return executeTool(
 					toolUse.name,
 					toolUse.input,

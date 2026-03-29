@@ -1251,3 +1251,183 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
 	}, 30000);
 });
+
+// ── Same-turn tool conflict tests ──
+
+describe("Integration: same-turn tool conflicts", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("yield + bash same turn: bash executes, yield returns success (no-op)", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: bash + yield in same turn
+		// Expected: bash executes normally, yield returns success without waiting
+		// Turn 2: assert both results, then done
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running bash and yielding." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo yield_bash_test" },
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					assert: [
+						{ length: 2 },
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "yield_bash_test",
+							isError: false,
+						},
+						{ block: 1, type: "tool_result", isError: false },
+					],
+					blocks: [
+						{ type: "text", text: "Both tools handled." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "yield + bash same turn ok",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+
+	test("bash + yield reverse order: same behavior regardless of order", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: yield first, bash second — should behave identically to bash+yield
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Yield first, then bash." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo reverse_order_test" },
+						},
+					],
+				},
+				{
+					assert: [
+						{ length: 2 },
+						{ block: 0, type: "tool_result", isError: false },
+						{
+							block: 1,
+							type: "tool_result",
+							contains: "reverse_order_test",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "reverse order ok",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+
+	test("done + bash same turn: bash executes, done returns error", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: bash + done in same turn
+		// Expected: bash executes normally, done returns error (can't finish without seeing results)
+		// Turn 2: assert bash succeeded and done errored, then actually done
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Trying to bash and done together." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo done_bash_test" },
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "premature done" },
+						},
+					],
+				},
+				{
+					assert: [
+						{ length: 2 },
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "done_bash_test",
+							isError: false,
+						},
+						{
+							block: 1,
+							type: "tool_result",
+							isError: true,
+							contains: "Cannot call done",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Now properly done." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "done after seeing error",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+});

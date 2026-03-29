@@ -421,3 +421,14 @@ Pitfall: Use `split().join()` not `replaceAll()` for variable substitution — `
 
 This enables asserting on text blocks (e.g., injected queue messages) alongside tool_results, validating content order simultaneously.
  Also supports `{length: N}` to validate total block count (no block/type/contains — just count). Critical for timing tests verifying a message has NOT arrived yet.
+
+
+## Same-Turn Tool Conflict Rules (March 2025)
+
+When yield or done appear alongside other tools in the same assistant turn:
+- **yield + other tools** → other tools execute normally, yield returns success (no-op). Rationale: other tools will produce results immediately, no need to wait for queue messages.
+- **done + other tools** → other tools execute normally, done returns error "Cannot call done() alongside other tools". Rationale: agent must see other tools' results before finishing.
+- **yield/done alone** → existing behavior (yield waits, done completes).
+- Order within the turn does not matter — detection is based on presence, not position.
+
+Implementation: in provider-shared.ts, yield/done are detected before Promise.all. When other tools are present, synthetic ToolExecResults are returned instead of calling executeTool for yield/done. Only yield-alone triggers the loop-level pendingYieldToolCall pause.
