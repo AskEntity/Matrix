@@ -17,18 +17,37 @@ const NEW_PROJECT_MEMORY = `# Project Memory
 
 This file is the agent's scratch pad. Discoveries, patterns, and lessons go here.
 
-## First Launch
-Verify \`.opengraft/hooks/setup_worktree.sh\` correctly sets up worktree environments.
-Create a test task to validate: spawn a child, check if it can run the project's test suite.
+## CRITICAL: First Launch Setup
+
+\`.opengraft/hooks/setup_worktree.sh\` is THE most important config.
+It runs every time a sub task starts — installs deps, sets up env.
+If it's wrong, EVERY sub task fails on startup and wastes money.
+
+DO THIS FIRST:
+1. Review \`.opengraft/hooks/setup_worktree.sh.example\`
+2. Customize it for this project (deps, env vars, build steps)
+3. Rename to \`setup_worktree.sh\` and make executable (\`chmod +x\`)
+4. TEST IT: create a test task, verify it can run the project's test suite
+5. Only after this passes, begin actual work
 `;
 
 const CONVERTED_PROJECT_MEMORY = `# Project Memory
 
-Converted existing project. Check existing documentation (CLAUDE.md, AGENTS.md, README.md, etc.)
+Converted existing project. Check existing documentation (README.md, AGENTS.md, etc.)
 to understand the project, then update this file with key knowledge for future sessions.
 
-## First Launch
-- Verify \`.opengraft/hooks/setup_worktree.sh\` correctly sets up worktree environments
+## CRITICAL: First Launch Setup
+
+\`.opengraft/hooks/setup_worktree.sh\` is THE most important config.
+It runs every time a sub task starts — installs deps, sets up env.
+If it's wrong, EVERY sub task fails on startup and wastes money.
+
+DO THIS FIRST:
+1. Review \`.opengraft/hooks/setup_worktree.sh.example\`
+2. Customize it for this project (deps, env vars, build steps)
+3. Rename to \`setup_worktree.sh\` and make executable (\`chmod +x\`)
+4. TEST IT: create a test task, verify it can run the project's test suite
+5. Only after this passes, begin actual work
 `;
 
 /** Manages project lifecycle: creation, initialization, deletion. */
@@ -101,7 +120,9 @@ export class ProjectManager {
 
 		await this.createSetupHook(projectPath);
 
-		// Initialize git repo
+		// Initialize git repo with a minimal first commit (.gitignore only).
+		// Everything else (.opengraft/, src/) stays uncommitted —
+		// the agent reviews and commits as part of first-launch setup.
 		await this.exec(["git", "init"], projectPath);
 		await this.excludeWorktrees(projectPath);
 
@@ -111,11 +132,8 @@ export class ProjectManager {
 			"utf-8",
 		);
 
-		await this.exec(["git", "add", "-A"], projectPath);
-		await this.exec(
-			["git", "commit", "-m", "Initial project structure"],
-			projectPath,
-		);
+		await this.exec(["git", "add", ".gitignore"], projectPath);
+		await this.exec(["git", "commit", "-m", "Initial commit"], projectPath);
 
 		return this.register(projectPath);
 	}
@@ -127,13 +145,11 @@ export class ProjectManager {
 
 		// Only write memory.md if it doesn't already exist
 		const memoryPath = join(projectPath, ".opengraft", "memory.md");
-		let createdMemory = false;
 		if (!existsSync(memoryPath)) {
 			await writeFile(memoryPath, CONVERTED_PROJECT_MEMORY, "utf-8");
-			createdMemory = true;
 		}
 
-		const createdHook = await this.createSetupHook(projectPath);
+		await this.createSetupHook(projectPath);
 
 		// Initialize git if not already a repo
 		if (!existsSync(join(projectPath, ".git"))) {
@@ -141,15 +157,8 @@ export class ProjectManager {
 		}
 		await this.excludeWorktrees(projectPath);
 
-		// Commit new .opengraft/ files so the working tree stays clean
-		// (spawn_task/spawn_children require a clean working tree)
-		if (createdMemory || createdHook) {
-			await this.exec(["git", "add", ".opengraft/"], projectPath);
-			await this.exec(
-				["git", "commit", "-m", "Add .opengraft/ project structure"],
-				projectPath,
-			);
-		}
+		// Don't auto-commit .opengraft/ files — the agent reviews and commits
+		// as part of first-launch setup (especially the setup hook).
 
 		return this.register(projectPath);
 	}
@@ -160,9 +169,11 @@ export class ProjectManager {
 	 */
 	private async createSetupHook(projectPath: string): Promise<boolean> {
 		const hookDir = join(projectPath, ".opengraft", "hooks");
-		const hookPath = join(hookDir, "setup_worktree.sh");
+		const hookPath = join(hookDir, "setup_worktree.sh.example");
 
-		if (existsSync(hookPath)) return false;
+		// Don't create .example if either the final or example file already exists
+		if (existsSync(hookPath) || existsSync(join(hookDir, "setup_worktree.sh")))
+			return false;
 
 		await mkdir(hookDir, { recursive: true });
 

@@ -36,7 +36,7 @@ The task tree is a tree, not a list — each level of decomposition multiplies p
 Only implement directly if the task is small enough for a single agent session.
 
 ## Worker Workflow
-1. Read \`.opengraft/memory.md\` and the task description carefully. Also read \`CLAUDE.md\` if it exists.
+1. Read \`.opengraft/memory.md\` and the task description carefully.
 2. Explore the codebase to understand context before writing any code:
    - list_files to find relevant files and understand project structure
    - search with output_mode="files_with_matches" to locate where things are defined
@@ -154,13 +154,12 @@ fix code → see it PASS. If you skip the "see it fail" step, you don't know if 
 
 ## First Steps (every session)
 1. Read \`.opengraft/memory.md\` — contains project knowledge, pitfalls, conventions
-2. Read \`CLAUDE.md\` if it exists — contains project-specific instructions
-3. If this is a new/unfamiliar project, explore before acting:
+2. If this is a new/unfamiliar project, explore before acting:
    - \`list_files("*")\` to understand top-level structure
    - Read package.json, README, or equivalent to understand the tech stack
    - \`list_files("src/**/*.ts")\` (or equivalent) to understand code organization
    - Identify test patterns, build commands, and project conventions
-4. Only then: analyze the goal, decompose into tasks if needed, and execute
+3. Only then: analyze the goal, decompose into tasks if needed, and execute
 
 ## Orchestration Philosophy
 - **Always create tasks** — don't use "wait for previous task" as an excuse to not create one. Task descriptions can be updated later. Parallel by default. Most tasks have independent scopes.

@@ -334,3 +334,8 @@ Replaced WebAuthn/Passkey auth with local secret-based auth:
 - auth.json backward compat: legacy `credentials` field ignored if present
 - `hasJwtSecret()` checks existence WITHOUT auto-creating (unlike `getSigningKey()` which auto-creates)
 - Biome flags functions starting with `use` as React hooks — renamed `useJti` to `consumeJti`
+
+
+## Setup Hook as .example
+
+Project init now creates `setup_worktree.sh.example` instead of `setup_worktree.sh`. Agent must review, customize, and rename. This forces understanding of the hook before using it. `worktree-manager.ts` still checks for `setup_worktree.sh` (the renamed file). Tests that need worktree creation must activate the hook (rename .example → .sh) in their setup.
