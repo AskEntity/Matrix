@@ -432,3 +432,10 @@ When yield or done appear alongside other tools in the same assistant turn:
 - Order within the turn does not matter — detection is based on presence, not position.
 
 Implementation: in provider-shared.ts, yield/done are detected before Promise.all. When other tools are present, synthetic ToolExecResults are returned instead of calling executeTool for yield/done. Only yield-alone triggers the loop-level pendingYieldToolCall pause.
+
+
+## Concurrent Background Bash Output File Collision (March 2025)
+
+**Bug**: `ulid().slice(0, 8)` for execId/bgId only captures timestamp chars (ULID first 10 chars = timestamp). Same-millisecond calls in Promise.all get identical 8-char prefix → shared output file paths → output corruption.
+
+**Fix**: Use full `ulid()` (26 chars) for execId and bgId. Full ULID includes 80 bits of randomness that monotonically increments within the same millisecond, guaranteeing uniqueness.
