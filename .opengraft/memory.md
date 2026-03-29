@@ -399,3 +399,17 @@ Restart H violated this: checked JSONL had background_complete but never resumed
 ## Anthropic `caller` Field on tool_use
 
 `caller: {type: "direct"} | {type: "server_tool", tool_id: "..."}` — official API field on tool_use blocks. Our `eventsToAnthropicMessages` hardcodes `caller: {type: "direct"}` on JSONL reconstruction. Mock API includes `caller: {type: "direct"}` on all tool_use blocks (matching real API). Prefix validation does NOT strip caller — if live/resume diverge on this field, it's a real bug we want to catch. Only `cache_control` is stripped (legitimately added differently by our caching logic).
+
+
+## Mock Instruction DSL v2: Assert + Variable Capture (March 2025)
+
+Turns can now have `assert` arrays that validate tool_results from the previous turn:
+- `result: N` — which tool_result (0-indexed)
+- `contains` / `notContains` — string content checks
+- `isError` — check the is_error flag
+- `matches` — regex match
+- `capture: {varName: "regex:(group)"}` — extract values for use in later blocks via `$varName`
+
+Key insight: mock cannot observe crashes/restarts — it only sees tool results, just like a real AI. Assert failure = tool returned unexpected result = system bug. Tests simultaneously validate API contract + tool implementation + lifecycle correctness.
+
+Pitfall: Use `split().join()` not `replaceAll()` for variable substitution — `$` in replacement strings has special meaning. Also use `${"$"}` in template literals for literal `$`.

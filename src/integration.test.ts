@@ -225,7 +225,7 @@ describe("Integration: full stack with mock API", () => {
 	test("Scenario 1: normal multi-turn with real tool execution", async () => {
 		ctx = await setupTestContext();
 
-		// Instruction: turn 1 runs bash, turn 2 calls done()
+		// Instruction: turn 1 runs bash, turn 2 asserts output then calls done()
 		const instruction = JSON.stringify({
 			turns: [
 				{
@@ -239,6 +239,7 @@ describe("Integration: full stack with mock API", () => {
 					],
 				},
 				{
+					assert: [{ result: 0, contains: "hello_world", isError: false }],
 					blocks: [
 						{ type: "text", text: "All done!" },
 						{
@@ -310,6 +311,10 @@ describe("Integration: full stack with mock API", () => {
 					],
 				},
 				{
+					assert: [
+						{ result: 0, contains: "tool_one_output", isError: false },
+						{ result: 1, contains: "file_content_here", isError: false },
+					],
 					blocks: [
 						{ type: "text", text: "Got both results." },
 						{
@@ -328,28 +333,9 @@ describe("Integration: full stack with mock API", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("passed");
 
-		// Verify request 2 has both tool_results
+		// Asserts in the DSL already validated both tool results.
+		// If we got here without MockValidationError, both tools executed correctly.
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
-		const lastUserMsg = getLastUserMessage(ctx, 1);
-		const toolResults = getToolResults(lastUserMsg);
-
-		// Should have 2 tool_results (bash + read_file)
-		expect(toolResults.length).toBe(2);
-
-		// Check bash output
-		const bashResult = toolResults.find(
-			(r) =>
-				typeof r.content === "string" && r.content.includes("tool_one_output"),
-		);
-		expect(bashResult).toBeDefined();
-
-		// Check read_file output
-		const readResult = toolResults.find(
-			(r) =>
-				typeof r.content === "string" &&
-				r.content.includes("file_content_here"),
-		);
-		expect(readResult).toBeDefined();
 	}, 20000);
 
 	test("Scenario 3: explicit yield + wake with message", async () => {
