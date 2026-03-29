@@ -2458,3 +2458,1198 @@ describe("Integration: parent-child lifecycle", () => {
 		expect(childNode?.status).toBe("failed");
 	}, 45000);
 });
+
+// ── Background process lifecycle tests ──
+
+describe("Integration: background process lifecycle", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("BG1: foreground timeout triggers auto-background", async () => {
+		ctx = await setupTestContext();
+
+		// bash with foreground_timeout=500 and a command that takes longer
+		// → should be moved to background automatically
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: {
+								command: "sleep 2 && echo timeout_done",
+								foreground_timeout: 500,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "Background ID:",
+							isError: false,
+						},
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "moved to background",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "foreground timeout triggered background",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+
+	test("BG2: background await", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: run_in_background with echo → returns bg ID immediately
+		// Turn 2: await with captured bg ID
+		// Turn 3: assert await result confirms completion
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: {
+								command: "echo bg_await_output",
+								run_in_background: true,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "Background ID:",
+							isError: false,
+							capture: {
+								bgId: "regex:Background ID: (bg-\\S+)",
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__background",
+							input: { action: "await", id: "$bgId" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "completed",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "bg await worked" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+
+	test("BG3: background list + status", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: start two bg processes (sleep to keep them running long enough to list)
+		// Turn 2: list → assert both commands appear
+		// Turn 3: status on first → assert command info
+		// Note: $vars can't be used in assert `contains` — only in block inputs.
+		// So we check for command substrings (which are unique per bg process).
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: {
+								command: "sleep 5 && echo bg_list_a",
+								run_in_background: true,
+							},
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: {
+								command: "sleep 5 && echo bg_list_b",
+								run_in_background: true,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "Background ID:",
+							capture: {
+								bgId1: "regex:Background ID: (bg-\\S+)",
+							},
+						},
+						{
+							block: 1,
+							type: "tool_result",
+							contains: "Background ID:",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__background",
+							input: { action: "list" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							// Both commands should appear in list output
+							contains: "bg_list_a",
+							isError: false,
+						},
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "bg_list_b",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__background",
+							input: { action: "status", id: "$bgId1" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "sleep 5",
+							isError: false,
+						},
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "bg_list_a",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "bg list + status ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+
+	test("BG4: background kill", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: start bg sleep 30
+		// Turn 2: kill it with captured bg ID
+		// Turn 3: assert kill confirmation
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: {
+								command: "sleep 30",
+								run_in_background: true,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "Background ID:",
+							capture: {
+								bgId: "regex:Background ID: (bg-\\S+)",
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__background",
+							input: { action: "kill", id: "$bgId" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "killed",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "bg kill ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+
+	test("BG5: bg completes during foreground tool execution", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: start bg (fast: sleep 0.5) + foreground (slow: sleep 2)
+		// bg_complete arrives while foreground is running → delivered as queue message
+		// Turn 2: should have foreground tool_result + bg_complete text block
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: {
+								command: "sleep 0.5 && echo BG_DONE_FIVE",
+								run_in_background: true,
+							},
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 2 && echo FG_DONE_FIVE" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "Background ID:",
+							isError: false,
+						},
+						{
+							block: 1,
+							type: "tool_result",
+							contains: "FG_DONE_FIVE",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "bg complete during fg tool",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Verify bg_complete event was written to JSONL
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = readSessionEvents(ctx, rootNodeId);
+		const bgCompleteEvents = events.filter(
+			(e) =>
+				e.type === "message" &&
+				"body" in e &&
+				e.body &&
+				typeof e.body === "object" &&
+				"source" in e.body &&
+				e.body.source === "background_complete",
+		);
+		expect(bgCompleteEvents.length).toBeGreaterThanOrEqual(1);
+	}, 20000);
+
+	test("BG6: multiple bg processes complete during yield", async () => {
+		ctx = await setupTestContext();
+
+		// Start 2 bg processes (short sleeps), then yield.
+		// bg_complete messages wake yield and deliver notifications.
+		// Use sequential yield-wake cycles per memory.md guidance.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: {
+								command: "sleep 0.3 && echo BG_SIX_A",
+								run_in_background: true,
+							},
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: {
+								command: "sleep 0.6 && echo BG_SIX_B",
+								run_in_background: true,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "Background ID:",
+						},
+						{
+							block: 1,
+							type: "tool_result",
+							contains: "Background ID:",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Yielding to wait for bg completions." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// First yield wake: should have at least one bg_complete
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "background_complete",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Got first bg_complete, yielding again." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// Second yield wake: second bg_complete
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "background_complete",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "multiple bg completions received via yield",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Verify both bg_complete events in JSONL
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = readSessionEvents(ctx, rootNodeId);
+		const bgCompleteEvents = events.filter(
+			(e) =>
+				e.type === "message" &&
+				"body" in e &&
+				e.body &&
+				typeof e.body === "object" &&
+				"source" in e.body &&
+				e.body.source === "background_complete",
+		);
+		expect(bgCompleteEvents.length).toBeGreaterThanOrEqual(2);
+	}, 25000);
+
+	test("BG7: REST move-to-background during foreground execution", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: bash sleep 10 (long foreground, high timeout so it doesn't auto-background)
+		// Test code: while bash is running, call REST to move it to background
+		// Turn 2: agent sees tool_result with "moved to background" + bg ID → done
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: {
+								command: "sleep 3 && echo REST_BG_DONE",
+								foreground_timeout: 60000,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "moved to background",
+							isError: false,
+						},
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "Background ID:",
+							isError: false,
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Moved via REST. Waiting for completion." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// bg_complete should arrive via yield
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "background_complete",
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "REST_BG_DONE",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "REST move-to-background worked",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for bash to start (API call made, tool executing)
+		const start = Date.now();
+		while (ctx.mockAPI.getRequestCount() < 1 && Date.now() - start < 5000) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBe(1);
+		await new Promise((r) => setTimeout(r, 200));
+
+		// Find the foreground execution ID from the session
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId!;
+		const rootNode = tracker.get(rootNodeId);
+		const session = rootNode?.session;
+		expect(session).toBeDefined();
+
+		// The foreground execution map has entries like `${sessionId}:${execId}`
+		const fgMap = session!.foregroundExecutions;
+		expect(fgMap.size).toBeGreaterThanOrEqual(1);
+
+		// Get the first (and only) foreground execution key
+		const fgKey = [...fgMap.keys()][0]!;
+		// fgKey format: `${sessionId}:${execId}` — extract execId
+		const execId = fgKey.split(":").slice(1).join(":");
+
+		// Call REST endpoint to move to background
+		const moveResp = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/background/move`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					sessionId: rootNodeId,
+					execId,
+				}),
+			},
+		);
+		expect(moveResp.status).toBe(200);
+		const moveBody = (await moveResp.json()) as { ok: boolean };
+		expect(moveBody.ok).toBe(true);
+
+		// Agent should now complete: tool_result with "moved to background",
+		// then yield, then bg_complete arrives, then done
+		const status = await waitForDone(ctx, 20000);
+		expect(status).toBe("passed");
+	}, 30000);
+});
+
+// ── Tree operation tests ──
+
+describe("Integration: tree operations", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("TREE1: create_task → update_task → close_task chain", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: {
+								title: "Tree Test Task",
+								description: "A task for tree testing",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "Tree Test Task",
+							capture: {
+								taskId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__update_task",
+							input: {
+								taskId: "$taskId",
+								title: "Updated Tree Task",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "Updated Tree Task",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__close_task",
+							input: { taskId: "$taskId" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "tree CRUD chain complete",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Verify task was closed
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		const childId = rootNode?.children?.[0];
+		expect(childId).toBeDefined();
+		const childNode = tracker.get(childId!);
+		expect(childNode?.title).toBe("Updated Tree Task");
+		expect(childNode?.status).toBe("closed");
+	}, 25000);
+
+	test("TREE2: create_task + reorder_tasks", async () => {
+		ctx = await setupTestContext();
+
+		// First get the root node ID from get_tree, then create 3 tasks, then reorder
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					// Get tree to capture root node ID
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__get_tree",
+							input: {},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								rootId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: { title: "Task Alpha", description: "First" },
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: { title: "Task Beta", description: "Second" },
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: { title: "Task Gamma", description: "Third" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								id1: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+						{
+							block: 1,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								id2: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+						{
+							block: 2,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								id3: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__reorder_tasks",
+							input: {
+								nodeId: "$rootId",
+								children: ["$id3", "$id1", "$id2"],
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "reorder ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Verify reorder: children should be [id3, id1, id2]
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		const children = rootNode?.children ?? [];
+		expect(children.length).toBe(3);
+
+		// Third task (Gamma) should now be first
+		const firstChild = tracker.get(children[0]!);
+		expect(firstChild?.title).toBe("Task Gamma");
+	}, 25000);
+
+	test("TREE3: get_tree reflects changes", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: {
+								title: "Visible Task 42",
+								description: "Should appear in tree",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__get_tree",
+							input: { format: "flat" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "Visible Task 42",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "tree reflects task" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+});
+
+// ── File operation tests ──
+
+describe("Integration: file operations", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("FILE1: write_file → read_file chain", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__write_file",
+							input: {
+								path: "test-write.txt",
+								content: "WRITTEN_CONTENT_XYZ",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__read_file",
+							input: { path: "test-write.txt" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "WRITTEN_CONTENT_XYZ",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "write+read ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+
+	test("FILE2: read_file → edit_file → read_file", async () => {
+		ctx = await setupTestContext();
+
+		// Pre-write a file with known content
+		await Bun.write(
+			join(ctx.projectDir, "editable.txt"),
+			"line1: ORIGINAL_VALUE\nline2: keep this\n",
+		);
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__read_file",
+							input: { path: "editable.txt" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "ORIGINAL_VALUE",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__edit_file",
+							input: {
+								path: "editable.txt",
+								old_string: "ORIGINAL_VALUE",
+								new_string: "REPLACED_VALUE",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__read_file",
+							input: { path: "editable.txt" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "REPLACED_VALUE",
+							notContains: "ORIGINAL_VALUE",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "edit ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+
+	test("FILE3: search → read_file workflow", async () => {
+		ctx = await setupTestContext();
+
+		// Pre-write multiple files with searchable content
+		await Bun.write(
+			join(ctx.projectDir, "search-a.txt"),
+			"FINDME_PATTERN in file A\n",
+		);
+		await Bun.write(
+			join(ctx.projectDir, "search-b.txt"),
+			"FINDME_PATTERN in file B\n",
+		);
+		await Bun.write(
+			join(ctx.projectDir, "search-c.txt"),
+			"nothing special here\n",
+		);
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__search",
+							input: {
+								pattern: "FINDME_PATTERN",
+								path: ".",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "search-a.txt",
+						},
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "search-b.txt",
+						},
+						{
+							block: 0,
+							type: "tool_result",
+							notContains: "search-c.txt",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "search ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+
+	test("FILE4: list_files with glob", async () => {
+		ctx = await setupTestContext();
+
+		// Pre-write files in nested dirs
+		const { mkdirSync, writeFileSync } = await import("node:fs");
+		mkdirSync(join(ctx.projectDir, "subdir"), { recursive: true });
+		writeFileSync(join(ctx.projectDir, "subdir", "alpha.ts"), "export {};\n");
+		writeFileSync(join(ctx.projectDir, "subdir", "beta.ts"), "export {};\n");
+		writeFileSync(join(ctx.projectDir, "subdir", "gamma.json"), "{}\n");
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__list_files",
+							input: { pattern: "subdir/*.ts" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "alpha.ts",
+						},
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "beta.ts",
+						},
+						{
+							block: 0,
+							type: "tool_result",
+							notContains: "gamma.json",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "list_files ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+});

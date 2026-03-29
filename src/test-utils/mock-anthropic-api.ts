@@ -871,6 +871,16 @@ export class ValidatingMockAPI {
 			return result;
 		};
 
+		const substituteArr = (arr: unknown[]): unknown[] => {
+			return arr.map((item) => {
+				if (typeof item === "string") return substituteStr(item);
+				if (Array.isArray(item)) return substituteArr(item);
+				if (item && typeof item === "object")
+					return substituteObj(item as Record<string, unknown>);
+				return item;
+			});
+		};
+
 		const substituteObj = (
 			obj: Record<string, unknown>,
 		): Record<string, unknown> => {
@@ -878,7 +888,9 @@ export class ValidatingMockAPI {
 			for (const [key, val] of Object.entries(obj)) {
 				if (typeof val === "string") {
 					result[key] = substituteStr(val);
-				} else if (val && typeof val === "object" && !Array.isArray(val)) {
+				} else if (Array.isArray(val)) {
+					result[key] = substituteArr(val);
+				} else if (val && typeof val === "object") {
 					result[key] = substituteObj(val as Record<string, unknown>);
 				} else {
 					result[key] = val;

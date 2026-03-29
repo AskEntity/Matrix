@@ -460,3 +460,11 @@ Implementation: in provider-shared.ts, yield/done are detected before Promise.al
 **Key gotcha**: `create_task` returns `JSON.stringify(node)`, not a human-readable string. Capture regex must match JSON format: `"id":\\s*"([A-Z0-9]+)"` not `ID: ([A-Z0-9]+)`.
 
 **Yield multi-message timing**: `queue.wait()` resolves on first message, `drain()` runs immediately. Second message may not be enqueued yet. Tests should use sequential yield-wake cycles (yield → msg1 → wake → yield again → msg2 → wake) rather than assuming both messages arrive in one drain.
+
+
+## Mock Variable Substitution in Arrays (March 2025)
+
+`substituteObj` in mock-anthropic-api.ts now handles array values — previously `Array.isArray(val)` skipped substitution. Added `substituteArr` helper for recursive array substitution. Needed for tools like `reorder_tasks` that take array inputs with captured `$var` references.
+
+Also: `$var` substitution only applies to instruction `blocks` (tool inputs + text), NOT to `assert` rules (`contains`, `notContains`). Use static strings in asserts — check for command substrings or other known content instead of captured variables.
+
