@@ -1430,4 +1430,140 @@ describe("Integration: same-turn tool conflicts", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("passed");
 	}, 20000);
+
+	test("Scenario: concurrent background bash commands get unique output files", async () => {
+		ctx = await setupTestContext();
+
+		// Two bash commands backgrounded in same turn (Promise.all).
+		// Bug: they share the same output file path → output corruption.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo OUTPUT_A", run_in_background: true },
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo OUTPUT_B", run_in_background: true },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "Background ID:",
+							isError: false,
+						},
+						{
+							block: 1,
+							type: "tool_result",
+							contains: "Background ID:",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "bg commands done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Verify: the two background bash results have DIFFERENT output file paths
+		const req1 = ctx.mockAPI.getRequestHistory()[1];
+		expect(req1).toBeDefined();
+		const messages = req1?.messages ?? [];
+		const lastMsg = messages[messages.length - 1];
+		expect(lastMsg?.role).toBe("user");
+		const toolResults = lastMsg ? getToolResults(lastMsg) : [];
+		expect(toolResults.length).toBe(2);
+
+		// Extract output file paths from the tool results
+		const paths0 = extractOutputPaths(
+			typeof toolResults[0]?.content === "string" ? toolResults[0].content : "",
+		);
+		const paths1 = extractOutputPaths(
+			typeof toolResults[1]?.content === "string" ? toolResults[1].content : "",
+		);
+
+		// Both should have paths
+		expect(paths0.stdout).toBeTruthy();
+		expect(paths0.stderr).toBeTruthy();
+		expect(paths1.stdout).toBeTruthy();
+		expect(paths1.stderr).toBeTruthy();
+
+		// Paths must be DIFFERENT between the two commands
+		expect(paths0.stdout).not.toBe(paths1.stdout);
+		expect(paths0.stderr).not.toBe(paths1.stderr);
+
+		// Also verify: bg IDs are different
+		const bgId0 = extractBgId(
+			typeof toolResults[0]?.content === "string" ? toolResults[0].content : "",
+		);
+		const bgId1 = extractBgId(
+			typeof toolResults[1]?.content === "string" ? toolResults[1].content : "",
+		);
+		expect(bgId0).toBeTruthy();
+		expect(bgId1).toBeTruthy();
+		expect(bgId0).not.toBe(bgId1);
+
+		// Wait a bit for bg processes to complete and check JSONL for bg_complete events
+		await new Promise((r) => setTimeout(r, 500));
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = readSessionEvents(ctx, rootNodeId);
+
+		// Find background_complete message events
+		const bgCompleteEvents = events.filter(
+			(e): e is Extract<typeof e, { type: "message" }> =>
+				e.type === "message" && e.body?.source === "background_complete",
+		);
+
+		// Both bg processes should have completed
+		expect(bgCompleteEvents.length).toBeGreaterThanOrEqual(2);
+
+		// Verify outputs are correct and not mixed
+		const bgOutputs = bgCompleteEvents.map((e) => {
+			const body = e.body as { stdout?: string };
+			return body.stdout ?? "";
+		});
+		const hasOutputA = bgOutputs.some((o: string) => o.includes("OUTPUT_A"));
+		const hasOutputB = bgOutputs.some((o: string) => o.includes("OUTPUT_B"));
+		expect(hasOutputA).toBe(true);
+		expect(hasOutputB).toBe(true);
+	}, 20000);
 });
+
+// ── Helpers for concurrent background test ──
+
+/** Extract stdout and stderr file paths from a background bash tool result. */
+function extractOutputPaths(content: string): {
+	stdout: string | null;
+	stderr: string | null;
+} {
+	const match = content.match(/Output files: ([^,]+), (\S+)/);
+	return {
+		stdout: match?.[1] ?? null,
+		stderr: match?.[2] ?? null,
+	};
+}
+
+/** Extract background ID from a background bash tool result. */
+function extractBgId(content: string): string | null {
+	const match = content.match(/Background ID: (bg-\S+)/);
+	return match?.[1] ?? null;
+}

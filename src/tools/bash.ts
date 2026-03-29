@@ -371,7 +371,7 @@ export async function executeBashWithTimeout(
 	}
 
 	// All commands use file-based output redirection
-	const execId = ulid().slice(0, 8);
+	const execId = ulid();
 	ensureBgTmpDir();
 	const stdoutPath = join(BG_TMP_DIR, `exec-${execId}.stdout`);
 	const stderrPath = join(BG_TMP_DIR, `exec-${execId}.stderr`);
@@ -471,7 +471,7 @@ export async function executeBashWithTimeout(
 
 	// Immediate background: foregroundTimeout === 0
 	if (isImmediateBackground) {
-		const bgId = `bg-${ulid().slice(0, 8)}`;
+		const bgId = `bg-${ulid()}`;
 		if (!bgMap) {
 			// No session background map — can't track background processes
 			proc.kill();
@@ -604,7 +604,7 @@ export async function executeBashWithTimeout(
 		};
 	}
 
-	const bgId = `bg-${ulid().slice(0, 8)}`;
+	const bgId = `bg-${ulid()}`;
 	if (!bgMap) {
 		// No session background map — kill and return
 		proc.kill();
