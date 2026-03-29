@@ -55,40 +55,38 @@ function base64ToUint8Array(b64: string): Uint8Array<ArrayBuffer> {
 }
 
 export function LoginPage({ onAuthenticated }: LoginPageProps) {
-	const [step, setStep] = useState<"generating" | "show-key" | "paste">(
-		"generating",
-	);
-	const [publicKey, setPublicKey] = useState("");
+	const [command, setCommand] = useState("");
 	const [privateKey, setPrivateKey] = useState<CryptoKey | null>(null);
-	const [ciphertextInput, setCiphertextInput] = useState("");
+	const [pasteInput, setPasteInput] = useState("");
 	const [status, setStatus] = useState("");
 	const [isError, setIsError] = useState(false);
 	const [copied, setCopied] = useState(false);
 	const [loading, setLoading] = useState(false);
+	const [ready, setReady] = useState(false);
 	const inputRef = useRef<HTMLInputElement>(null);
 
-	// Generate keypair on mount
+	// Generate keypair on mount and build the full command
 	useEffect(() => {
 		generateKeypair()
 			.then(({ keyPair, publicKeyBase64 }) => {
-				setPublicKey(publicKeyBase64);
+				setCommand(`og auth ${publicKeyBase64}`);
 				setPrivateKey(keyPair.privateKey);
-				setStep("show-key");
+				setReady(true);
 			})
 			.catch(() => {
-				setStatus("Failed to generate keypair. Is Web Crypto available?");
+				setStatus("Failed to initialize. Is this a modern browser?");
 				setIsError(true);
 			});
 	}, []);
 
-	const handleCopyKey = useCallback(async () => {
+	const handleCopy = useCallback(async () => {
 		try {
-			await navigator.clipboard.writeText(publicKey);
+			await navigator.clipboard.writeText(command);
 			setCopied(true);
 			setTimeout(() => setCopied(false), 2000);
 		} catch {
-			// Fallback: select text for manual copy
-			const el = document.querySelector(".og-login-key-display");
+			// Fallback: select the command text
+			const el = document.querySelector(".og-login-command-text");
 			if (el) {
 				const range = document.createRange();
 				range.selectNodeContents(el);
@@ -97,20 +95,12 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 				sel?.addRange(range);
 			}
 		}
-	}, [publicKey]);
+	}, [command]);
 
-	const handleProceedToPaste = useCallback(() => {
-		setStep("paste");
-		setStatus("");
-		setIsError(false);
-		// Focus the input after transition
-		setTimeout(() => inputRef.current?.focus(), 100);
-	}, []);
-
-	const handleDecrypt = useCallback(async () => {
-		const trimmed = ciphertextInput.trim();
+	const handleLogin = useCallback(async () => {
+		const trimmed = pasteInput.trim();
 		if (!trimmed || !privateKey) {
-			setStatus("Please paste the encrypted token");
+			setStatus("Paste the output from the command above");
 			setIsError(true);
 			return;
 		}
@@ -122,24 +112,22 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 		try {
 			const jwt = await decryptWithPrivateKey(privateKey, trimmed);
 			setToken(jwt);
-			setStatus("Authenticated!");
-			setIsError(false);
 			onAuthenticated();
 		} catch {
-			setStatus("Decryption failed. Make sure you copied the full output.");
+			setStatus("Invalid token. Make sure you copied the full output.");
 			setIsError(true);
 		} finally {
 			setLoading(false);
 		}
-	}, [ciphertextInput, privateKey, onAuthenticated]);
+	}, [pasteInput, privateKey, onAuthenticated]);
 
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
 			if (e.key === "Enter" && !loading) {
-				handleDecrypt();
+				handleLogin();
 			}
 		},
-		[handleDecrypt, loading],
+		[handleLogin, loading],
 	);
 
 	return (
@@ -148,75 +136,43 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 				<div className="og-login-icon">🔐</div>
 				<h1 className="og-login-title">OpenGraft</h1>
 
-				{step === "generating" && (
-					<p className="og-login-subtitle">Generating keypair…</p>
-				)}
-
-				{step === "show-key" && (
+				{!ready ? (
+					<p className="og-login-subtitle">Initializing…</p>
+				) : (
 					<>
 						<p className="og-login-subtitle">
-							Copy this key, then run in your terminal:
+							Run this command in your terminal:
 						</p>
-						<div className="og-login-command">
-							<code>og auth &lt;public_key&gt;</code>
-						</div>
-						<div className="og-login-key-wrapper">
-							<div className="og-login-key-display">{publicKey}</div>
+						<div className="og-login-command-block">
+							<code className="og-login-command-text">{command}</code>
 							<button
 								type="button"
 								className="og-login-btn og-login-btn-copy"
-								onClick={handleCopyKey}
+								onClick={handleCopy}
 							>
-								{copied ? "Copied!" : "Copy Key"}
+								{copied ? "✓ Copied" : "Copy"}
 							</button>
 						</div>
-						<button
-							type="button"
-							className="og-login-btn"
-							onClick={handleProceedToPaste}
-						>
-							Next: Paste Encrypted Token →
-						</button>
-					</>
-				)}
 
-				{step === "paste" && (
-					<>
-						<p className="og-login-subtitle">
-							Paste the encrypted output from <code>og auth</code> below:
-						</p>
+						<p className="og-login-subtitle">Then paste the output here:</p>
 						<input
 							ref={inputRef}
 							type="password"
 							className="og-login-input"
-							placeholder="Paste encrypted token here"
-							value={ciphertextInput}
-							onChange={(e) => setCiphertextInput(e.target.value)}
+							placeholder="Paste output here"
+							value={pasteInput}
+							onChange={(e) => setPasteInput(e.target.value)}
 							onKeyDown={handleKeyDown}
 							disabled={loading}
 						/>
-						<div className="og-login-actions">
-							<button
-								type="button"
-								className="og-login-btn og-login-btn-ghost"
-								onClick={() => {
-									setStep("show-key");
-									setCiphertextInput("");
-									setStatus("");
-									setIsError(false);
-								}}
-							>
-								← Back
-							</button>
-							<button
-								type="button"
-								className="og-login-btn"
-								onClick={handleDecrypt}
-								disabled={loading || !ciphertextInput.trim()}
-							>
-								{loading ? "Decrypting..." : "Login"}
-							</button>
-						</div>
+						<button
+							type="button"
+							className="og-login-btn"
+							onClick={handleLogin}
+							disabled={loading || !pasteInput.trim()}
+						>
+							{loading ? "Verifying…" : "Login"}
+						</button>
 					</>
 				)}
 
