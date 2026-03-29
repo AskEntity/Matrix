@@ -119,7 +119,6 @@ async function waitForDone(
 ): Promise<string> {
 	const tracker = await ctx.app.getTracker(ctx.projectId);
 	const rootNodeId = tracker.rootNodeId;
-	if (!rootNodeId) throw new Error("No root node");
 
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
@@ -138,7 +137,6 @@ async function waitForDone(
 async function waitForIdle(ctx: TestContext, timeoutMs = 10000): Promise<void> {
 	const tracker = await ctx.app.getTracker(ctx.projectId);
 	const rootNodeId = tracker.rootNodeId;
-	if (!rootNodeId) throw new Error("No root node");
 
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
@@ -164,17 +162,22 @@ async function startAgent(ctx: TestContext, prompt: string): Promise<Response> {
 }
 
 /**
- * Send a message to a running agent via HTTP.
+ * Send a message to the root agent via the unified task message endpoint.
  */
 async function sendMessage(
 	ctx: TestContext,
 	message: string,
 ): Promise<Response> {
-	return ctx.app.app.request(`/projects/${ctx.projectId}/message`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ message }),
-	});
+	const tracker = await ctx.app.getTracker(ctx.projectId);
+	const rootNodeId = tracker.rootNodeId;
+	return ctx.app.app.request(
+		`/projects/${ctx.projectId}/tasks/${rootNodeId}/message`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ content: message }),
+		},
+	);
 }
 
 /**
@@ -191,9 +194,7 @@ function readSessionEvents(ctx: TestContext, sessionId: string) {
  */
 async function getRootNodeId(ctx: TestContext): Promise<string> {
 	const tracker = await ctx.app.getTracker(ctx.projectId);
-	const id = tracker.rootNodeId;
-	if (!id) throw new Error("No root node ID");
-	return id;
+	return tracker.rootNodeId;
 }
 
 /**
@@ -921,7 +922,6 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		// the transition: passed → in_progress → passed. Poll for in_progress first.
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-		if (!rootNodeId) throw new Error("No root node");
 
 		// Wait for status to become in_progress (agent started)
 		const start = Date.now();
@@ -1117,7 +1117,6 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		// Wait for status transition: passed → in_progress → passed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-		if (!rootNodeId) throw new Error("No root node");
 		const start = Date.now();
 		while (Date.now() - start < 5000) {
 			const node = tracker.get(rootNodeId);
@@ -1588,7 +1587,6 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		// Wait for status transition
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-		if (!rootNodeId) throw new Error("No root node");
 		const start2 = Date.now();
 		while (Date.now() - start2 < 5000) {
 			const node = tracker.get(rootNodeId);
@@ -2515,7 +2513,7 @@ describe("Integration: parent-child lifecycle", () => {
 
 		// Verify the child task was created and completed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode?.children?.length).toBeGreaterThanOrEqual(1);
 
 		const childId = rootNode!.children![0]!;
@@ -2632,7 +2630,7 @@ describe("Integration: parent-child lifecycle", () => {
 
 		// Verify child is in failed state
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		const childId = rootNode!.children![0]!;
 		const childNode = tracker.get(childId);
 		expect(childNode?.status).toBe("failed");
@@ -2666,7 +2664,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 		expect(status).toBe("passed");
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("passed");
 	});
 
@@ -2725,7 +2723,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 		// Check status — should be in_progress (not passed, not failed)
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("in_progress");
 	});
 
@@ -2752,7 +2750,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 		// Status should still be in_progress
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("in_progress");
 	});
 
@@ -2828,7 +2826,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 		// Both root and child should be in_progress (not failed)
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("in_progress");
 
 		if (rootNode?.children && rootNode.children.length > 0) {
@@ -2982,7 +2980,7 @@ describe("Integration: yield bypass on restart", () => {
 
 		// Agent should still be in_progress (not passed — end_turn is no longer implicit done)
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("in_progress");
 
 		// Send message to wake from implicit yield
@@ -3649,7 +3647,7 @@ describe("Integration: background process lifecycle", () => {
 
 		// Find the foreground execution ID from the session
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNodeId = tracker.rootNodeId!;
+		const rootNodeId = tracker.rootNodeId;
 		const rootNode = tracker.get(rootNodeId);
 		const session = rootNode?.session;
 		expect(session).toBeDefined();
@@ -3782,7 +3780,7 @@ describe("Integration: tree operations", () => {
 
 		// Verify task was closed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		const childId = rootNode?.children?.[0];
 		expect(childId).toBeDefined();
 		const childNode = tracker.get(childId!);
@@ -3900,7 +3898,7 @@ describe("Integration: tree operations", () => {
 
 		// Verify reorder: children should be [id3, id1, id2]
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		const children = rootNode?.children ?? [];
 		expect(children.length).toBe(3);
 
@@ -4580,7 +4578,7 @@ describe("Integration: fork prefix consistency", () => {
 
 		// Verify JSONL has fork_marker
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const childNodeId = tracker.get(tracker.rootNodeId!)!.children![0]!;
+		const childNodeId = tracker.get(tracker.rootNodeId)!.children![0]!;
 		expect(
 			readSessionEvents(ctx, childNodeId).some((e) => e.type === "fork_marker"),
 		).toBe(true);
@@ -4695,7 +4693,7 @@ describe("Integration: fork prefix consistency", () => {
 
 		// Get child's JSONL events
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		const childNodeId = rootNode!.children![0]!;
 		const childEvents = readSessionEvents(ctx, childNodeId);
 
@@ -4921,7 +4919,7 @@ describe("Integration: fork prefix consistency", () => {
 
 		// Find child B's node
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		// Children: A and B in order
 		expect(rootNode!.children!.length).toBe(2);
 		const childBId = rootNode!.children![1]!;
@@ -5137,7 +5135,7 @@ describe("Integration: message near done() race condition", () => {
 
 		// Verify child is passed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
+		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode?.children?.length).toBeGreaterThanOrEqual(1);
 		const childId = rootNode!.children![0]!;
 		const childNode = tracker.get(childId);

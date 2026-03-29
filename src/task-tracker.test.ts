@@ -24,14 +24,15 @@ describe("TaskTracker", () => {
 		expect(task.title).toBe("Chat App");
 		expect(task.status).toBe("pending");
 		expect(task.parentId).toBeNull();
-		expect(tracker.getTopLevel()).toHaveLength(1);
-		expect(tracker.getTopLevel()[0]?.id).toBe(task.id);
+		// Root node + the new task = 2 top-level nodes
+		expect(tracker.getTopLevel()).toHaveLength(2);
 	});
 
 	test("multiple top-level tasks allowed", () => {
 		tracker.addTask("App1", "desc1");
 		tracker.addTask("App2", "desc2");
-		expect(tracker.getTopLevel()).toHaveLength(2);
+		// Root node + 2 tasks = 3 top-level nodes
+		expect(tracker.getTopLevel()).toHaveLength(3);
 	});
 
 	test("addChild creates child under parent", () => {
@@ -74,7 +75,7 @@ describe("TaskTracker", () => {
 
 		expect(tracker.byStatus("passed")).toHaveLength(1);
 		expect(tracker.byStatus("in_progress")).toHaveLength(1);
-		expect(tracker.byStatus("pending")).toHaveLength(1); // parent
+		expect(tracker.byStatus("pending")).toHaveLength(2); // parent + root node
 	});
 
 	test("remove deletes node and descendants", () => {
@@ -87,7 +88,7 @@ describe("TaskTracker", () => {
 		expect(tracker.get(c1.id)).toBeUndefined();
 		expect(tracker.get(c1a.id)).toBeUndefined();
 		expect(tracker.getChildren(parent.id)).toHaveLength(0);
-		expect(tracker.allNodes()).toHaveLength(1); // only parent
+		expect(tracker.allNodes()).toHaveLength(2); // parent + root node
 	});
 
 	test("remove top-level task works", () => {
@@ -96,7 +97,7 @@ describe("TaskTracker", () => {
 
 		tracker.remove(task.id);
 
-		expect(tracker.allNodes()).toHaveLength(0);
+		expect(tracker.allNodes()).toHaveLength(1); // root node remains
 	});
 
 	test("persists and reloads", async () => {
@@ -108,8 +109,10 @@ describe("TaskTracker", () => {
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
 
-		expect(tracker2.getTopLevel()).toHaveLength(1);
-		expect(tracker2.getTopLevel()[0]?.status).toBe("in_progress");
+		// Root node + the saved "App" node are top-level
+		expect(tracker2.getTopLevel()).toHaveLength(2);
+		const appNode = tracker2.getTopLevel().find((n) => n.title === "App");
+		expect(appNode?.status).toBe("in_progress");
 		expect(tracker2.getChildren(parent.id)).toHaveLength(1);
 	});
 
@@ -118,17 +121,21 @@ describe("TaskTracker", () => {
 		tracker.addChild(parent.id, "A", "a");
 		tracker.addChild(parent.id, "B", "b");
 
-		expect(tracker.allNodes()).toHaveLength(3);
+		expect(tracker.allNodes()).toHaveLength(4); // root + parent + 2 children
 	});
 
 	test("get() supports short prefix matching (8+ chars)", () => {
+		// Root node and new tasks share ULID timestamp prefix.
+		// Use full ID for exact match, and verify ambiguous short prefix returns undefined.
 		const task = tracker.addTask("Prefix test", "Test prefix matching");
+		// Full ID always works
+		expect(tracker.get(task.id)).toBe(task);
+		// Short prefix (8 chars) is ambiguous with the root node (same ms timestamp)
+		// so it correctly returns undefined
 		const shortId = task.id.slice(0, 8);
-		expect(tracker.get(shortId)).toBe(task);
+		expect(tracker.get(shortId)).toBeUndefined(); // ambiguous — both root and task match
 		// Too short (7 chars) should not match
 		expect(tracker.get(task.id.slice(0, 7))).toBeUndefined();
-		// Full ID still works
-		expect(tracker.get(task.id)).toBe(task);
 	});
 
 	test("updateCost accumulates cost on a task node", () => {
@@ -275,58 +282,76 @@ describe("TaskTracker", () => {
 		).toBeUndefined();
 	});
 
-	test("ensureRootNode creates root node", () => {
-		expect(tracker.rootNodeId).toBeNull();
-		const root = tracker.ensureRootNode("Orchestrator", "Initial prompt");
+	test("root node auto-created on load (fresh project)", () => {
+		// Root node is created automatically when tracker loads with no tree.json
+		const rootId = tracker.rootNodeId;
+		expect(rootId).toBeTruthy();
+		const root = tracker.get(rootId)!;
 		expect(root.title).toBe("Orchestrator");
 		expect(root.parentId).toBeNull();
 		expect(root.status).toBe("pending");
-		expect(tracker.rootNodeId).toBe(root.id);
-	});
-
-	test("ensureRootNode returns existing root node on second call", () => {
-		const root1 = tracker.ensureRootNode("Orchestrator", "prompt 1");
-		const root2 = tracker.ensureRootNode("Orchestrator", "prompt 2");
-		expect(root1.id).toBe(root2.id);
-	});
-
-	test("ensureRootNode re-parents existing top-level nodes", () => {
-		const orphan1 = tracker.addTask("Task A", "desc a");
-		const orphan2 = tracker.addTask("Task B", "desc b");
-		expect(orphan1.parentId).toBeNull();
-		expect(orphan2.parentId).toBeNull();
-
-		const root = tracker.ensureRootNode("Orchestrator", "prompt");
-		expect(orphan1.parentId).toBe(root.id);
-		expect(orphan2.parentId).toBe(root.id);
-		expect(root.children).toContain(orphan1.id);
-		expect(root.children).toContain(orphan2.id);
-		expect(tracker.getChildren(root.id)).toHaveLength(2);
-		expect(tracker.getTopLevel()).toHaveLength(1); // only root
 	});
 
 	test("rootNodeId persists across save/load", async () => {
-		const root = tracker.ensureRootNode("Orchestrator", "prompt");
+		const rootId = tracker.rootNodeId;
+		tracker.addChild(rootId, "Child", "child desc");
 		await tracker.save();
 
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
-		expect(tracker2.rootNodeId).toBe(root.id);
-		expect(tracker2.get(root.id)?.title).toBe("Orchestrator");
+		expect(tracker2.rootNodeId).toBe(rootId);
+		expect(tracker2.get(rootId)?.title).toBe("Orchestrator");
+		expect(tracker2.getChildren(rootId)).toHaveLength(1);
 	});
 
-	test("ensureRootNode restores after load when rootNodeId is set", async () => {
-		const root = tracker.ensureRootNode("Orchestrator", "prompt");
-		tracker.addChild(root.id, "Child", "child desc");
-		await tracker.save();
-
-		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
-		await tracker2.load();
-
-		// Calling ensureRootNode again should return the same root
-		const root2 = tracker2.ensureRootNode("Orchestrator", "new prompt");
-		expect(root2.id).toBe(root.id);
-		expect(tracker2.getChildren(root2.id)).toHaveLength(1);
+	test("load adopts orphan nodes under auto-created root (backward compat)", async () => {
+		// Simulate an old tree.json without rootNodeId but with top-level nodes
+		const { writeFile } = await import("node:fs/promises");
+		const treePath = join(tempDir, "orphan-tree.json");
+		await writeFile(
+			treePath,
+			JSON.stringify({
+				nodes: [
+					{
+						id: "orphan1",
+						title: "Task A",
+						description: "desc a",
+						status: "pending",
+						branch: null,
+						parentId: null,
+						children: [],
+						worktreePath: null,
+						message: null,
+						failCount: 0,
+						createdAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(),
+					},
+					{
+						id: "orphan2",
+						title: "Task B",
+						description: "desc b",
+						status: "pending",
+						branch: null,
+						parentId: null,
+						children: [],
+						worktreePath: null,
+						message: null,
+						failCount: 0,
+						createdAt: new Date().toISOString(),
+						updatedAt: new Date().toISOString(),
+					},
+				],
+			}),
+		);
+		const t2 = new TaskTracker(treePath);
+		await t2.load();
+		const rootId = t2.rootNodeId;
+		expect(rootId).toBeTruthy();
+		const orphan1 = t2.get("orphan1")!;
+		const orphan2 = t2.get("orphan2")!;
+		expect(orphan1.parentId).toBe(rootId);
+		expect(orphan2.parentId).toBe(rootId);
+		expect(t2.getChildren(rootId)).toHaveLength(2);
 	});
 
 	test("reorderChildren reorders children of a parent", () => {

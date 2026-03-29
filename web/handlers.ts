@@ -58,11 +58,11 @@ interface ActionHandlerDeps {
 	start: (opts: { prompt: string }) => Promise<void>;
 	stop: () => Promise<void>;
 	compact: () => Promise<void>;
-	sendMessage: (
+	sendMessageToTask: (
+		taskId: string,
 		msg: string,
 		images?: { base64: string; mediaType: string }[],
 	) => Promise<void>;
-	sendMessageToTask: (taskId: string, msg: string) => Promise<void>;
 	deleteTask: (taskId: string) => Promise<void>;
 	clearTaskSession: (taskId: string) => Promise<void>;
 	initProject: (path: string) => Promise<{ id: string }>;
@@ -104,7 +104,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		start,
 		stop,
 		compact,
-		sendMessage,
 		sendMessageToTask,
 		deleteTask,
 		clearTaskSession,
@@ -186,25 +185,16 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		}
 
 		try {
-			if (targetNodeId) {
-				// Sending to a specific child task
-				await sendMessageToTask(targetNodeId, message.trim());
+			// Determine target: explicit child target, or root node
+			const nodeId = targetNodeId ?? rootNodeId;
+			if (nodeId) {
+				// Unified path: all messages go through the task message endpoint.
+				// For root nodes, the endpoint delegates to handleInjectMessage
+				// which handles auto-launch, cold-start headers, and resume.
+				await sendMessageToTask(nodeId, message.trim(), images);
 			} else {
-				// Unified path: always try sendMessage first (handles active and no-session).
-				// Falls back to start() only if sendMessage returns 404 (no project).
-				try {
-					await sendMessage(message.trim(), images);
-				} catch (msgErr) {
-					// sendMessage failed — likely no session exists yet. Start a new one.
-					if (
-						(msgErr as Error).message?.includes("not found") ||
-						(msgErr as Error).message?.includes("No active session")
-					) {
-						await start({ prompt: message.trim() });
-					} else {
-						throw msgErr;
-					}
-				}
+				// No root node yet — need to start the orchestrator first
+				await start({ prompt: message.trim() });
 			}
 		} catch (err) {
 			addLog({

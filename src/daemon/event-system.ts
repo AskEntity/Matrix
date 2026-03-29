@@ -113,10 +113,9 @@ export function emitEvent(ctx: DaemonContext, projectId: string, event: Event) {
 
 	// Persist to JSONL (skips ephemeral events like text_delta, usage, etc.)
 	if (isPersistedByEmitEvent(event)) {
-		const rootNodeId = ctx.trackers.get(projectId)?.rootNodeId ?? undefined;
 		const taskId =
 			"taskId" in event ? (event.taskId as string | undefined) : undefined;
-		const sessionId = taskId || rootNodeId;
+		const sessionId = taskId || ctx.trackers.get(projectId)?.rootNodeId;
 		if (sessionId) {
 			const eventStore = getEventStore(ctx, projectId);
 			eventStore.append(sessionId, event);

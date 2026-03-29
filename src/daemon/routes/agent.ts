@@ -1,6 +1,5 @@
 import type { Hono } from "hono";
 import { DEFAULT_MODEL } from "../../config.ts";
-import type { QueueImage } from "../../message-queue.ts";
 import { persistMessage } from "../../persistent-queue.ts";
 import { cancelAwait, moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
@@ -18,7 +17,6 @@ import {
 	getProjectProvider,
 	getTracker,
 	pruneSessionFiles,
-	readProjectMemory,
 	resolveProjectConfig,
 } from "../helpers.ts";
 
@@ -52,7 +50,9 @@ export function registerAgentRoutes(
 		return c.json({ status: "running", projectId: c.req.param("id") });
 	});
 
-	// Start agent by project path (auto-creates project if needed)
+	// Start agent by project path (auto-creates project if needed).
+	// Thin wrapper: ensures project exists, then delegates to handleInjectMessage
+	// which is the single code path for delivering user messages to the root agent.
 	app.post("/agents/start", async (c) => {
 		if (!ctx.startupReady) {
 			return c.json({ error: "Server starting up, please wait..." }, 503);
@@ -72,60 +72,16 @@ export function registerAgentRoutes(
 
 		const project = await ctx.pm.ensureProject(body.path);
 
-		if (ctx.restartingProjects.has(project.id)) {
-			return c.json({ error: "Agent restarting, please wait" }, 409);
-		}
-
-		// Agent already running — enqueue the prompt as a user message via session
-		const tracker = await getTracker(ctx, project.id);
-		const rootNodeId = tracker.rootNodeId;
-		if (rootNodeId) {
-			const rootQueue = tracker.get(rootNodeId)?.session?.queue;
-			if (rootQueue) {
-				try {
-					rootQueue.enqueue({
-						source: "user",
-						content: body.prompt,
-					});
-				} catch {
-					return c.json({ error: "Queue closed" }, 409);
-				}
-				return c.json({ status: "running", projectId: project.id });
-			}
-		}
-
-		await getTracker(ctx, project.id);
-		const { prompt: _prompt, ...launchOpts } = body;
-		await launchAgent(ctx, project, launchOpts, orchestratorSystemPrompt);
-
-		// Enqueue the user message — provider is waiting for queue drain.
-		// Only include header (memory.md + working dir) on true cold start.
-		// Resume agents already have context from their JSONL session.
-		const startTracker = await getTracker(ctx, project.id);
-		const startRootId = startTracker.rootNodeId;
-		if (startRootId) {
-			const startQueue = startTracker.get(startRootId)?.session?.queue;
-			if (startQueue) {
-				const startEventStore = getEventStore(ctx, project.id);
-				const isResume = startEventStore.has(startRootId);
-				const startHeader = isResume
-					? undefined
-					: (() => {
-							const startMemory = readProjectMemory(project.path);
-							return startMemory
-								? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${startMemory}`
-								: `Working directory: ${project.path}`;
-						})();
-				try {
-					startQueue.enqueue({
-						source: "user",
-						content: body.prompt,
-						...(startHeader ? { header: startHeader } : {}),
-					});
-				} catch {
-					// Queue may have closed
-				}
-			}
+		// Delegate to the single message delivery path
+		const result = await handleInjectMessage(
+			ctx,
+			project.id,
+			body.prompt,
+			undefined,
+			orchestratorSystemPrompt,
+		);
+		if (!result.ok) {
+			return c.json({ error: result.error }, result.status as 404);
 		}
 		return c.json({ status: "running", projectId: project.id });
 	});
@@ -260,32 +216,7 @@ export function registerAgentRoutes(
 		}
 	});
 
-	// Inject a message into a running agent
-	app.post("/projects/:id/message", async (c) => {
-		const project = ctx.pm.get(c.req.param("id"));
-		if (!project) {
-			return c.json({ error: "Project not found" }, 404);
-		}
-		const body = await c.req.json<{
-			message: string;
-			images?: QueueImage[];
-		}>();
-		if (!body.message) {
-			return c.json({ error: "message is required" }, 400);
-		}
 
-		const result = await handleInjectMessage(
-			ctx,
-			project.id,
-			body.message,
-			body.images,
-			orchestratorSystemPrompt,
-		);
-		if (!result.ok) {
-			return c.json({ error: result.error }, result.status as 404);
-		}
-		return c.json({ ok: true });
-	});
 
 	// Respond to a pending clarification request
 	app.post("/projects/:id/clarify", async (c) => {

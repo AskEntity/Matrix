@@ -230,7 +230,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	// Register all route groups
 	registerProjectRoutes(app, ctx);
-	registerTaskRoutes(app, ctx);
+	registerTaskRoutes(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
 	registerConfigRoutes(app, ctx);
 	registerAgentRoutes(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
 	registerSSERoute(app, ctx);

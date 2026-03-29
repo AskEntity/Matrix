@@ -11,11 +11,11 @@ import { ulid } from "./ulid.ts";
  */
 export class TaskTracker {
 	private nodes: Map<string, TaskNode> = new Map();
-	private _rootNodeId: string | null = null;
+	private _rootNodeId!: string;
 
 	constructor(private readonly treePath: string) {}
 
-	/** Load task tree from disk. */
+	/** Load task tree from disk. Creates root node if missing (backward compat with old trees). */
 	async load(): Promise<void> {
 		if (existsSync(this.treePath)) {
 			const raw = await readFile(this.treePath, "utf-8");
@@ -23,7 +23,6 @@ export class TaskTracker {
 				rootNodeId?: string | null;
 				nodes: (TaskNode & { draft?: boolean })[];
 			};
-			this._rootNodeId = data.rootNodeId ?? null;
 			for (const node of data.nodes) {
 				// Backward compat: old nodes may lack failCount
 				if (node.failCount === undefined) node.failCount = 0;
@@ -34,6 +33,15 @@ export class TaskTracker {
 				}
 				this.nodes.set(node.id, node);
 			}
+			if (data.rootNodeId && this.nodes.has(data.rootNodeId)) {
+				this._rootNodeId = data.rootNodeId;
+			} else {
+				// Backward compat: old tree without root node — create one
+				this.initRootNode();
+			}
+		} else {
+			// Fresh project — create root node
+			this.initRootNode();
 		}
 	}
 
@@ -50,34 +58,22 @@ export class TaskTracker {
 		await writeFile(this.treePath, JSON.stringify(data, null, "\t"), "utf-8");
 	}
 
-	/** Get the root node ID (the orchestrator's node). */
-	get rootNodeId(): string | null {
+	/** Root node ID. Always present after load(). */
+	get rootNodeId(): string {
 		return this._rootNodeId;
 	}
 
-	/**
-	 * Ensure a root node exists for the orchestrator.
-	 * If one already exists, returns it. Otherwise creates a new one.
-	 * The root node represents the orchestrator itself — all tasks are children of it.
-	 * Any existing top-level orphan nodes are re-parented under the root node.
-	 */
-	ensureRootNode(title: string, description: string): TaskNode {
-		if (this._rootNodeId) {
-			const existing = this.nodes.get(this._rootNodeId);
-			if (existing) return existing;
-		}
-		// Collect existing top-level nodes before creating root
+	/** Create root node and adopt any orphan top-level nodes. */
+	private initRootNode(): void {
 		const orphans = Array.from(this.nodes.values()).filter(
 			(n) => n.parentId === null,
 		);
-		const node = this.createNode(title, description, null);
+		const node = this.createNode("Orchestrator", "", null);
 		this._rootNodeId = node.id;
-		// Re-parent orphan top-level nodes under the new root
 		for (const orphan of orphans) {
 			orphan.parentId = node.id;
 			node.children.push(orphan.id);
 		}
-		return node;
 	}
 
 	/** Create a top-level task (direct child of the project). */
