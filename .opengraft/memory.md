@@ -345,22 +345,30 @@ Login: browser generates RSA-OAEP 2048 keypair → user runs `og auth <public_ke
 Project init creates `setup_worktree.sh.example` (not `.sh`). Agent must review, customize, rename. Init does NOT auto-commit — root agent is forced to configure and commit. Tests activate hook by renaming .example → .sh in setup.
 
 
-## Lifecycle Refactor: exitReason + No Fallback (March 2026)
+## Lifecycle Refactor (March 2026)
 
-**Core change**: Only `done()` tool produces status changes and task_complete. All other exits = interrupted = status stays in_progress.
+### exitReason
+`AgentResult.exitReason: ExitReason` — "done_passed" | "done_failed" | "interrupted". `success: boolean` kept for backward compat, derived from exitReason.
 
-**Deleted**:
-- `runChildAgentInBackground` fallback task_complete block (was ~40 lines)
-- `launchAgent` implicit pass: "exited without done = treat as success"
-- `stopAgent` marking children as failed
+**Detection**: done() detected by checking `doneToolUse` presence + `doneResult.isError === false`. `doneExitReason` flag tracks across loop iterations.
+
+### No Fallback
+Only `done()` tool produces status changes and task_complete. All other exits = interrupted = status stays in_progress.
+
+**Deleted**: `runChildAgentInBackground` fallback task_complete, `launchAgent` implicit pass, `stopAgent` marking children failed.
 
 **New behavior**:
-- `stopAgent`: children stay in_progress (queue closed, session cleaned up, but no status change)
-- `runChildAgentInBackground` error catch: emit error event, status stays in_progress
-- `launchAgent` root error: same — no status change
-- `autoResumeProjects`: evaluates each agent independently by JSONL state. Yielding agents get provider loop bypass (zero API call). Interrupted agents get normal resume. Children resumed independently via `runChildAgentInBackground`.
+- `stopAgent`: children stay in_progress (queue closed, session cleaned, no status change)
+- Error catch paths: emit error event, status stays in_progress
+- `autoResumeProjects`: each in_progress node evaluated independently by JSONL state. Yielding → bypass (zero API call). Interrupted → normal resume. Children resumed via `runChildAgentInBackground`.
+- `failCount`: only incremented on done("failed"), not interrupted.
 
-**autoResume per-agent design**: Instead of "check root, mark children failed, resume root", now each in_progress node with a JSONL session is evaluated independently. Root vs child determines launch path (launchAgent vs runChildAgentInBackground). hasPendingYield determines yielding vs interrupted.
+### end_turn = implicit yield
+Always enters implicit yield. `!queue` case returns `exitReason: "interrupted"` instead of breaking.
 
-**failCount**: Only incremented on done("failed"), not on interrupted exits.
+### resumeFromYield bypass
+Already works as-is — `pendingYieldToolCall` at TOP of while(true), before any API call. Zero API calls wasted on yield resume.
+
+### AbortSignal passthrough
+Now passed to Anthropic SDK `stream()` and OpenAI `fetch()` — stop during AI generation aborts immediately.
 

@@ -22,16 +22,24 @@ import type { AgentResult, Project, TaskNode } from "./types.ts";
 function createInstantProvider(): AgentProvider {
 	return {
 		name: "mock",
-		execute: async () => ({ success: true, output: "" }),
+		execute: async () => ({
+			success: true,
+			exitReason: "interrupted" as const,
+			output: "",
+		}),
 		// biome-ignore lint/correctness/useYield: mock provider never streams
 		stream: async function* () {
-			return { success: true, output: "" };
+			return { success: true, exitReason: "interrupted" as const, output: "" };
 		},
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
 			// biome-ignore lint/correctness/useYield: mock session never streams
 			async function* events(): AsyncGenerator<Event, AgentResult> {
-				return { success: true, output: "" };
+				return {
+					success: true,
+					exitReason: "interrupted" as const,
+					output: "",
+				};
 			}
 			return {
 				sessionId: "mock-session",
@@ -50,10 +58,14 @@ function createInstantProvider(): AgentProvider {
 function createLongRunningProvider(): AgentProvider {
 	return {
 		name: "mock-long",
-		execute: async () => ({ success: true, output: "" }),
+		execute: async () => ({
+			success: true,
+			exitReason: "interrupted" as const,
+			output: "",
+		}),
 		// biome-ignore lint/correctness/useYield: mock
 		stream: async function* () {
-			return { success: true, output: "" };
+			return { success: true, exitReason: "interrupted" as const, output: "" };
 		},
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
@@ -67,7 +79,11 @@ function createLongRunningProvider(): AgentProvider {
 				} catch {
 					// Queue closed — exit cleanly
 				}
-				return { success: true, output: "" };
+				return {
+					success: true,
+					exitReason: "interrupted" as const,
+					output: "",
+				};
 			}
 			return {
 				sessionId: "mock-long-session",
@@ -93,10 +109,14 @@ function createRecordingProvider(): {
 	const receivedMessages: Array<{ source: string; content?: string }> = [];
 	const provider: AgentProvider = {
 		name: "mock-recording",
-		execute: async () => ({ success: true, output: "" }),
+		execute: async () => ({
+			success: true,
+			exitReason: "interrupted" as const,
+			output: "",
+		}),
 		// biome-ignore lint/correctness/useYield: mock
 		stream: async function* () {
-			return { success: true, output: "" };
+			return { success: true, exitReason: "interrupted" as const, output: "" };
 		},
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
@@ -121,7 +141,11 @@ function createRecordingProvider(): {
 						break; // Queue closed
 					}
 				}
-				return { success: true, output: "" };
+				return {
+					success: true,
+					exitReason: "interrupted" as const,
+					output: "",
+				};
 			}
 			return {
 				sessionId: "mock-recording-session",
@@ -1891,7 +1915,11 @@ describe("lifecycle: child completion notification paths", () => {
 		// 4. Blocks on queue.wait() which rejects immediately
 		const doneYieldProvider: AgentProvider = {
 			name: "mock-done-yield",
-			execute: async () => ({ success: true, output: "" }),
+			execute: async () => ({
+				success: true,
+				exitReason: "interrupted" as const,
+				output: "",
+			}),
 			stream: async function* (req) {
 				const queue = req.queue ?? new MessageQueue();
 
@@ -1917,7 +1945,11 @@ describe("lifecycle: child completion notification paths", () => {
 					// Queue closed — exit cleanly
 				}
 
-				return { success: true, output: "done" } as AgentResult;
+				return {
+					success: true,
+					exitReason: "interrupted" as const,
+					output: "done",
+				} as AgentResult;
 			},
 			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
@@ -1977,7 +2009,11 @@ describe("lifecycle: child completion notification paths", () => {
 		// Provider that simulates done()=yield WITHOUT closeQueue()
 		const deadlockProvider: AgentProvider = {
 			name: "mock-deadlock",
-			execute: async () => ({ success: true, output: "" }),
+			execute: async () => ({
+				success: true,
+				exitReason: "interrupted" as const,
+				output: "",
+			}),
 			stream: async function* (req) {
 				const queue = req.queue ?? new MessageQueue();
 				yield {
@@ -1996,7 +2032,11 @@ describe("lifecycle: child completion notification paths", () => {
 				} catch {
 					// If somehow closed, exit
 				}
-				return { success: true, output: "done" } as AgentResult;
+				return {
+					success: true,
+					exitReason: "interrupted" as const,
+					output: "done",
+				} as AgentResult;
 			},
 			startSession(req) {
 				const queue = req.queue ?? new MessageQueue();
@@ -2157,10 +2197,14 @@ function createCapturingProvider(): {
 	const queueMessages: QueueMessage[][] = [];
 	const provider: AgentProvider = {
 		name: "mock-capturing",
-		execute: async () => ({ success: true, output: "" }),
+		execute: async () => ({
+			success: true,
+			exitReason: "interrupted" as const,
+			output: "",
+		}),
 		// biome-ignore lint/correctness/useYield: mock
 		stream: async function* () {
-			return { success: true, output: "" };
+			return { success: true, exitReason: "interrupted" as const, output: "" };
 		},
 		startSession(req) {
 			sessionRequests.push(req);
@@ -2179,7 +2223,11 @@ function createCapturingProvider(): {
 				} catch {
 					// Queue closed
 				}
-				return { success: true, output: "" };
+				return {
+					success: true,
+					exitReason: "interrupted" as const,
+					output: "",
+				};
 			}
 			return {
 				sessionId: req.resumeSessionId ?? "mock-capturing-session",
@@ -2206,17 +2254,25 @@ function createInstantCapturingProvider(): {
 	const sessionRequests: AgentRequest[] = [];
 	const provider: AgentProvider = {
 		name: "mock-instant-capturing",
-		execute: async () => ({ success: true, output: "" }),
+		execute: async () => ({
+			success: true,
+			exitReason: "interrupted" as const,
+			output: "",
+		}),
 		// biome-ignore lint/correctness/useYield: mock
 		stream: async function* () {
-			return { success: true, output: "" };
+			return { success: true, exitReason: "interrupted" as const, output: "" };
 		},
 		startSession(req) {
 			sessionRequests.push(req);
 			const queue = req.queue ?? new MessageQueue();
 			// biome-ignore lint/correctness/useYield: mock session exits immediately
 			async function* events(): AsyncGenerator<Event, AgentResult> {
-				return { success: true, output: "" };
+				return {
+					success: true,
+					exitReason: "interrupted" as const,
+					output: "",
+				};
 			}
 			return {
 				sessionId: req.resumeSessionId ?? "mock-instant-session",

@@ -447,10 +447,13 @@ function createAnthropicAdapter(
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {
 				try {
+					const requestOpts = params.signal
+						? { signal: params.signal }
+						: undefined;
 					const stream = useOAuth
 						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
-							(client.beta.messages as any).stream(createParams)
-						: client.messages.stream(createParams);
+							(client.beta.messages as any).stream(createParams, requestOpts)
+						: client.messages.stream(createParams, requestOpts);
 
 					// Stream text deltas to UI (throttled to ~12 yields/sec)
 					let textBuffer = "";
@@ -778,6 +781,7 @@ function createAnthropicAdapter(
 		buildResult(params): AgentResult {
 			return {
 				success: params.success,
+				exitReason: params.exitReason,
 				output: params.output,
 				costUsd: params.costUsd,
 				turns: params.turns,
@@ -842,7 +846,12 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			execQueue.close();
 		};
 		const gen = this.runLoop(request, sessionId, execQueue);
-		let lastResult: AgentResult = { success: false, output: "", sessionId };
+		let lastResult: AgentResult = {
+			success: false,
+			exitReason: "interrupted",
+			output: "",
+			sessionId,
+		};
 		let result = await gen.next();
 		while (!result.done) {
 			result = await gen.next();
