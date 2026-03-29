@@ -439,3 +439,9 @@ Implementation: in provider-shared.ts, yield/done are detected before Promise.al
 **Bug**: `ulid().slice(0, 8)` for execId/bgId only captures timestamp chars (ULID first 10 chars = timestamp). Same-millisecond calls in Promise.all get identical 8-char prefix → shared output file paths → output corruption.
 
 **Fix**: Use full `ulid()` (26 chars) for execId and bgId. Full ULID includes 80 bits of randomness that monotonically increments within the same millisecond, guaranteeing uniqueness.
+
+## Restart Test Gotchas (March 2025)
+
+- **Concurrent bash + crash**: When two bash commands run in Promise.all and we crash before resolution, NEITHER tool_result gets written to JSONL — both become orphans with isError:true. Don't assume the "fast" command's result was persisted.
+- **End_turn implicit yield + timestamp prefix mismatch**: Live path sends queue messages as timestamped strings `[HH:MM:SS] content`, but JSONL resume reconstructs them as `[{type:"text", text:"content"}]` (array form, no timestamp). This causes prefix validation failure. Known limitation — disable prefix validation for tests involving consumed messages before crash during implicit yield.
+- **Double restart is safe**: autoResumeProjects + orphan cleanup are idempotent. Running twice (crash → restart → crash → restart) produces correct results — orphan tool_results are only written if not already present.
