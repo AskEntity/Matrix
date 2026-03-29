@@ -482,7 +482,7 @@ export function findOrphanedBackgroundProcesses(
 		if (!completedIds.has(bgId)) {
 			orphans.push({
 				type: "message",
-				id: "",
+				id: ulid(),
 				taskId,
 				body: {
 					source: "background_complete",

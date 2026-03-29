@@ -1585,18 +1585,18 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
 	}, 30000);
 
-	test("Restart M: bg orphan cleanup — synthetic background_complete written to JSONL", async () => {
+	test("Restart M: bg orphan cleanup — full lifecycle with synthetic background_complete", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Scenario: bg process started (run_in_background) → foreground bash → crash.
 		// On restart, findOrphanedBackgroundProcesses writes synthetic background_complete
-		// to JSONL for the bg process that never completed.
+		// to JSONL. The synthetic event must have a proper ULID id so that it follows the
+		// two-phase message lifecycle (deferred until messages_consumed). With id="" the
+		// converter materializes it as an immediate user message, causing consecutive user
+		// messages (orphan tool_result + bg_complete both user role) → API 400.
 		//
-		// NOTE: Full lifecycle (crash → resume → done) is blocked by a known bug:
-		// synthetic bg_complete has id="" which walkEventsToMessages materializes as an
-		// immediate user message, causing consecutive user messages (orphan tool_result +
-		// bg_complete both user role) → API 400. bg_complete should have a proper ID.
-		// This test verifies the JSONL cleanup; the resume bug needs a separate fix.
+		// Full lifecycle: crash → restart → resume → done.
 		const instruction = JSON.stringify({
 			turns: [
 				{
@@ -1616,6 +1616,19 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							type: "tool_use",
 							name: "mcp__opengraft__bash",
 							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Resumed after restart." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "bg orphan handled on restart",
+							},
 						},
 					],
 				},
@@ -1676,6 +1689,14 @@ describe("Integration: daemon restart with prefix consistency", () => {
 			(bgCompleteEvents[0] as { body: { stderr: string } }).body.stderr,
 		).toContain("daemon restart");
 
+		// Verify the synthetic bg_complete has a proper ULID id (not empty string)
+		const bgCompleteEvent = bgCompleteEvents[0]!;
+		expect(bgCompleteEvent.type).toBe("message");
+		if (bgCompleteEvent.type === "message") {
+			expect(bgCompleteEvent.id).toBeTruthy();
+			expect(bgCompleteEvent.id.length).toBe(26); // ULID is 26 chars
+		}
+
 		// Verify the bg_complete's commandId matches the bg process that was started
 		const bgToolResult = preEvents.find(
 			(e) => e.type === "tool_result" && e.backgroundId,
@@ -1689,6 +1710,18 @@ describe("Integration: daemon restart with prefix consistency", () => {
 			bgCompleteEvents[0] as { body: { commandId: string } }
 		).body.commandId;
 		expect(bgCompleteCommandId).toBe(bgId);
+
+		// Send message to wake agent and trigger resume
+		const msgResp = await sendMessage(ctx, "RESUME_AFTER_BG_ORPHAN");
+		expect(msgResp.status).toBe(200);
+
+		// Full lifecycle: agent resumes, processes bg_complete + message, calls done
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Verify the API was called after restart (prefix validation catches consecutive user msgs)
+		const postRestartRequests = ctx.mockAPI.getRequestCount();
+		expect(postRestartRequests).toBeGreaterThan(2);
 	}, 30000);
 });
 
