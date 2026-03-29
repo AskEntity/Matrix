@@ -421,3 +421,16 @@ Most impactful: fix #1+#2+#3 (core type backbone)
 **Fork double header bug**: Every forked child gets memory.md twice — once inherited from parent session (~25KB), once from send_message cold start header (~29KB). ~13K tokens wasted per fork. Root cause: cold start detection checks `node.session != null` instead of `eventStore.has(nodeId)`.
 
 **Token breakdown** (orchestrator session): tool_result 67%, tool_call 16%, consumed_message 9%, assistant_text 3%. get_tree was 56KB/call (fixed with lightweight default). Total active session ~254K tokens.
+
+
+## Token Usage Analysis (March 2026)
+
+tool_result is 64-87% of ALL tokens across every session. #1 cost driver.
+
+**Token/char ratio**: ~0.37 (1 token ≈ 2.7 chars, not 4).
+
+**Biggest optimization opportunity**: tool_result stays full size forever in context. Search returning 15KB where agent uses 2 lines = 14.8KB burned every subsequent API call. Cannot truncate in JSONL (breaks cache). Must be addressed at compaction time or via smarter search result formatting.
+
+**Fork double header**: confirmed ~13K tokens wasted per fork. Fix: check eventStore.has(nodeId) for cold start detection, not just node.session.
+
+**Audit scripts**: src/_token_audit.ts and src/_cache_audit.ts for future analysis.
