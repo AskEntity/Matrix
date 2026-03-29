@@ -19,6 +19,8 @@ function makeNode(overrides: Partial<TaskNode> & { id: string }): TaskNode {
 		parentId: null,
 		children: [],
 		worktreePath: null,
+		costUsd: 0,
+		editedBy: "agent",
 		createdAt: new Date().toISOString(),
 		updatedAt: new Date().toISOString(),
 		...overrides,

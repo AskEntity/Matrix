@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskTracker } from "./task-tracker.ts";
@@ -139,7 +139,7 @@ describe("TaskTracker", () => {
 
 	test("updateCost accumulates cost on a task node", () => {
 		const task = tracker.addTask("Costly task", "desc");
-		expect(task.costUsd).toBeUndefined();
+		expect(task.costUsd).toBe(0);
 
 		tracker.updateCost(task.id, 0.0123);
 		expect(tracker.get(task.id)?.costUsd).toBeCloseTo(0.0123);
@@ -161,6 +161,42 @@ describe("TaskTracker", () => {
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
 		expect(tracker2.get(task.id)?.costUsd).toBeCloseTo(0.0456);
+	});
+
+	test("costUsd and editedBy have defaults on creation", () => {
+		const task = tracker.addTask("Defaults", "desc");
+		expect(task.costUsd).toBe(0);
+		expect(task.editedBy).toBe("agent");
+
+		const taskUser = tracker.addTask("User task", "desc", {
+			editedBy: "user",
+		});
+		expect(taskUser.editedBy).toBe("user");
+		expect(taskUser.costUsd).toBe(0);
+	});
+
+	test("costUsd and editedBy backfilled on load from old tree.json", async () => {
+		// Simulate old tree.json without costUsd and editedBy
+		const task = tracker.addTask("Old task", "desc");
+		await tracker.save();
+
+		// Manually strip costUsd and editedBy from saved file
+		const raw = await readFile(join(tempDir, "tree.json"), "utf-8");
+		const data = JSON.parse(raw);
+		for (const node of data.nodes) {
+			delete node.costUsd;
+			delete node.editedBy;
+		}
+		await writeFile(
+			join(tempDir, "tree.json"),
+			JSON.stringify(data, null, "\t"),
+		);
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+		const loaded = tracker2.get(task.id);
+		expect(loaded?.costUsd).toBe(0);
+		expect(loaded?.editedBy).toBe("agent");
 	});
 
 	test("get() returns undefined for ambiguous prefix", () => {

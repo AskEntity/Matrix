@@ -24,6 +24,9 @@ export class TaskTracker {
 				nodes: TaskNode[];
 			};
 			for (const node of data.nodes) {
+				// Backfill defaults for fields that became required
+				node.costUsd ??= 0;
+				node.editedBy ??= "agent";
 				this.nodes.set(node.id, node);
 			}
 			this._rootNodeId = data.rootNodeId;
@@ -274,7 +277,7 @@ export class TaskTracker {
 	updateCost(nodeId: string, costUsd: number): void {
 		const node = this.get(nodeId);
 		if (!node) return;
-		node.costUsd = (node.costUsd ?? 0) + costUsd;
+		node.costUsd += costUsd;
 		node.updatedAt = new Date().toISOString();
 	}
 
@@ -316,8 +319,9 @@ export class TaskTracker {
 			parentId,
 			children: [],
 			worktreePath: null,
+			costUsd: 0,
+			editedBy: opts?.editedBy ?? "agent",
 			...(opts?.budgetUsd !== undefined ? { budgetUsd: opts.budgetUsd } : {}),
-			...(opts?.editedBy ? { editedBy: opts.editedBy } : {}),
 			createdAt: now,
 			updatedAt: now,
 		};

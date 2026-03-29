@@ -436,3 +436,11 @@ The following backward compat code has been removed — old JSONL and tree.json 
 - The continue endpoint (`/tasks/:nodeId/continue`) for passed tasks with no worktree creates a worktree and launches the agent (status → in_progress), not just reset to pending. Tests needed updating accordingly.
 - `failCount` backward compat patch in task-tracker.ts `load()` was removed — old tree.json files with failCount will have it ignored (harmless extra field in JSON).
 - `orchestration_started.prompt` removed from Event type. CLI now shows model name instead. Old JSONL files with prompt field will have it ignored by the event converter.
+
+## Phase 2F: TaskNode costUsd/editedBy Required
+
+- `costUsd: number` (was optional) — default 0. `createNode` sets it, `load()` backfills via `??= 0`.
+- `editedBy: "user" | "agent"` (was optional) — default "agent". `createNode` sets from opts, `load()` backfills via `??= "agent"`.
+- CLI inline types kept `costUsd?: number` because they represent API response shape (older daemons may omit).
+- Test helpers (makeNode) must include both fields for TaskNode literal to compile.
+- Session-as-Map deferred — too many references (~117 across ~12 files).
