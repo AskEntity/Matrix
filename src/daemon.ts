@@ -8,6 +8,7 @@ import type { AgentSession } from "./agent-provider.ts";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
 import {
 	launchAgent,
+	runChildAgentInBackground,
 	stopAgent,
 	writeOrphanedToolResults,
 } from "./daemon/agent-lifecycle.ts";
@@ -237,122 +238,113 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	// Static file serving for the web UI (fallback for non-Bun environments)
 	app.use("/web/*", serveStatic({ root: "./" }));
 
-	/** Auto-resume orchestrations that were running before daemon restart. */
+	/** Auto-resume agents that were running before daemon restart.
+	 *
+	 * Each agent is evaluated independently by its JSONL state:
+	 * - Yielding (hasPendingYield) → launch with provider loop bypass (zero API call,
+	 *   goes straight to queue.wait). Agent only wakes when a message arrives.
+	 * - Interrupted (has orphan non-yield tool_call) → write orphan tool_result, normal resume.
+	 * - Done (status passed/failed/closed) → skip, already finished.
+	 *
+	 * Root and children are resumed independently — no more "mark children failed, resume root".
+	 */
 	async function autoResumeProjects(): Promise<void> {
 		const projects = ctx.pm.list();
 		for (const project of projects) {
 			const tracker = await getTracker(ctx, project.id);
-			const rootNode = tracker.rootNodeId
-				? tracker.get(tracker.rootNodeId)
-				: null;
-			if (rootNode && rootNode.status === "in_progress") {
-				// Always write synthetic tool_results for orphaned tool_calls (except yield).
-				// Daemon restart kills bg processes but their tool_call events persist in JSONL.
-				// Without cleanup, UI shows permanently pending bg process cards.
-				// Note: yield orphans are intentionally skipped by findOrphanedToolCalls —
-				// they're handled by the provider loop's loop-level pause mechanism.
-				const eventStore = getEventStore(ctx, project.id);
-				for (const node of tracker.allNodes()) {
-					await writeOrphanedToolResults(eventStore, node.id);
+			const eventStore = getEventStore(ctx, project.id);
 
-					// Write synthetic background_complete for bg processes killed by restart.
-					// Frontend uses these to remove stale entries from the background processes UI.
-					// EXCEPT for yielding agents — writing events after a yield tool_call (before
-					// its tool_result) breaks the converter. For yielding agents, bg_complete
-					// events are delivered via queue at resume time instead.
-					const nodeEvents = eventStore.has(node.id)
-						? eventStore.readActive(node.id)
-						: [];
-					if (!hasPendingYield(nodeEvents)) {
-						const bgOrphans = findOrphanedBackgroundProcesses(
-							nodeEvents,
-							node.id,
-						);
-						if (bgOrphans.length > 0) {
-							await eventStore.appendBatch(node.id, bgOrphans);
-						}
-					}
-				}
+			// Collect all in_progress nodes that have JSONL sessions
+			const inProgressNodes = tracker
+				.allNodes()
+				.filter((n) => n.status === "in_progress" && eventStore.has(n.id));
 
-				// Check if any children were actively running — if not, the root was
-				// just idle-yielding and doesn't need auto-resume (saves money)
-				const hasActiveChildren = tracker
-					.allNodes()
-					.some(
-						(n) => n.id !== tracker.rootNodeId && n.status === "in_progress",
-					);
-				if (!hasActiveChildren) {
-					console.log(
-						`Skipping auto-resume for ${project.name} — no active children`,
-					);
-					continue;
-				}
+			if (inProgressNodes.length === 0) continue;
 
-				// Reset orphaned in_progress tasks — their agent sessions died with the daemon
-				// Skip the root node — it will be re-activated by launchAgent
-				let orphanCount = 0;
-				for (const node of tracker.allNodes()) {
-					if (node.status === "in_progress" && node.id !== tracker.rootNodeId) {
-						tracker.updateStatus(node.id, "failed");
-						orphanCount++;
-					}
-				}
-				if (orphanCount > 0) await tracker.save();
+			// Phase 1: Write orphan tool_results and bg_complete for ALL nodes.
+			// This must happen before any agent is launched.
+			for (const node of tracker.allNodes()) {
+				await writeOrphanedToolResults(eventStore, node.id);
 
-				// Extract recent error events from JSONL so the agent knows what went wrong
-				const rootEvents = tracker.rootNodeId
-					? eventStore.read(tracker.rootNodeId)
+				// Write synthetic background_complete for bg processes killed by restart.
+				// EXCEPT for yielding agents — writing events between yield tool_call
+				// and its tool_result breaks the converter → API 400.
+				const nodeEvents = eventStore.has(node.id)
+					? eventStore.readActive(node.id)
 					: [];
-				// Only show errors that occurred after the last successful resume.
-				// Find the last resume message — errors before it were already shown.
-				const lastResumeIdx = rootEvents.findLastIndex(
-					(e) =>
-						(e.type === "message" && (e as { isResume?: boolean }).isResume) ||
-						e.type === "orchestration_started",
-				);
-				const recentEvents =
-					lastResumeIdx >= 0 ? rootEvents.slice(lastResumeIdx + 1) : rootEvents;
-				const errorMessages = recentEvents
-					.filter(
-						(e): e is Extract<typeof e, { type: "error" }> =>
-							e.type === "error",
-					)
-					.slice(-5)
-					.map((e) => e.message);
-
-				console.log(
-					`Auto-resuming orchestration for ${project.name} (${project.id.slice(0, 8)})`,
-				);
-				const errorSection =
-					errorMessages.length > 0
-						? `\n\nPrevious session encountered these errors:\n${errorMessages.map((m) => `- ${m}`).join("\n")}`
-						: "";
-				const resumeContent = `Continue where you left off. The daemon restarted (${GIT_HASH}).${orphanCount > 0 ? ` Note: ${orphanCount} in_progress task(s) were reset to failed.` : ""}${errorSection}\n\nCheck the task tree and proceed.`;
-
-				// Persist resume message with fresh context header
-				const resumeMemory = readProjectMemory(project.path);
-				const resumeHeader = resumeMemory
-					? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${resumeMemory}`
-					: `Working directory: ${project.path}`;
-				if (tracker.rootNodeId) {
-					await persistMessage(
-						ctx.config.dataDir,
-						project.id,
-						tracker.rootNodeId,
-						{
-							source: "user",
-							content: resumeContent,
-							header: resumeHeader,
-						},
+				if (!hasPendingYield(nodeEvents)) {
+					const bgOrphans = findOrphanedBackgroundProcesses(
+						nodeEvents,
+						node.id,
 					);
+					if (bgOrphans.length > 0) {
+						await eventStore.appendBatch(node.id, bgOrphans);
+					}
 				}
+			}
 
-				await launchAgent(
-					ctx,
-					project,
-					{ resume: true },
-					ORCHESTRATOR_SYSTEM_PROMPT,
-				);
+			// Phase 2: Classify each in_progress node and resume accordingly.
+			const rootNodeId = tracker.rootNodeId;
+			for (const node of inProgressNodes) {
+				const nodeEvents = eventStore.readActive(node.id);
+				const isYielding = hasPendingYield(nodeEvents);
+				const isRoot = node.id === rootNodeId;
+
+				if (isRoot) {
+					if (isYielding) {
+						// Yielding root: launch with provider loop bypass.
+						// Provider loop detects pendingYieldToolCall from JSONL and
+						// goes straight to queue.wait() — zero API call.
+						// No resume message needed — agent will wake when a message arrives
+						// (user message, child task_complete, cross-project, etc.)
+						console.log(
+							`Auto-resuming ${project.name} root (yielding — bypass to queue.wait)`,
+						);
+						await launchAgent(
+							ctx,
+							project,
+							{ resume: true },
+							ORCHESTRATOR_SYSTEM_PROMPT,
+						);
+					} else {
+						// Interrupted root: normal resume with context message.
+						console.log(
+							`Auto-resuming ${project.name} root (interrupted — normal resume)`,
+						);
+						const resumeMemory = readProjectMemory(project.path);
+						const resumeHeader = resumeMemory
+							? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${resumeMemory}`
+							: `Working directory: ${project.path}`;
+						await persistMessage(ctx.config.dataDir, project.id, rootNodeId, {
+							source: "user",
+							content: `Continue where you left off. The daemon restarted (${GIT_HASH}).\n\nCheck the task tree and proceed.`,
+							header: resumeHeader,
+						});
+						await launchAgent(
+							ctx,
+							project,
+							{ resume: true },
+							ORCHESTRATOR_SYSTEM_PROMPT,
+						);
+					}
+				} else {
+					// Child agent: resume via runChildAgentInBackground.
+					// It handles its own orphan cleanup, event loading, and resume detection.
+					// Yielding children: provider loop detects pendingYieldToolCall from JSONL.
+					if (node.worktreePath) {
+						console.log(
+							`Auto-resuming ${project.name} child ${node.id.slice(0, 8)} (${isYielding ? "yielding" : "interrupted"})`,
+						);
+						runChildAgentInBackground(ctx, project, tracker, node.id).catch(
+							(e) => {
+								console.error(
+									`[autoResume] Failed to resume child ${node.id}:`,
+									e,
+								);
+							},
+						);
+					}
+				}
 			}
 		}
 	}
