@@ -24,9 +24,9 @@ It runs every time a sub task starts — installs deps, sets up env.
 If it's wrong, EVERY sub task fails on startup and wastes money.
 
 DO THIS FIRST:
-1. Review \`.opengraft/hooks/setup_worktree.sh.example\`
-2. Customize it for this project (deps, env vars, build steps)
-3. Rename to \`setup_worktree.sh\` and make executable (\`chmod +x\`)
+1. Review \`.opengraft/hooks/setup_worktree.sh.example\` — understand what each section does
+2. Customize it for this project (dependencies, env vars, build steps, any project-specific setup)
+3. Save as \`setup_worktree.sh\` and make executable (\`chmod +x\`)
 4. TEST IT: create a test task, verify it can run the project's test suite
 5. Only after this passes, begin actual work
 `;
@@ -43,9 +43,9 @@ It runs every time a sub task starts — installs deps, sets up env.
 If it's wrong, EVERY sub task fails on startup and wastes money.
 
 DO THIS FIRST:
-1. Review \`.opengraft/hooks/setup_worktree.sh.example\`
-2. Customize it for this project (deps, env vars, build steps)
-3. Rename to \`setup_worktree.sh\` and make executable (\`chmod +x\`)
+1. Review \`.opengraft/hooks/setup_worktree.sh.example\` — understand what each section does
+2. Customize it for this project (dependencies, env vars, build steps, any project-specific setup)
+3. Save as \`setup_worktree.sh\` and make executable (\`chmod +x\`)
 4. TEST IT: create a test task, verify it can run the project's test suite
 5. Only after this passes, begin actual work
 `;
