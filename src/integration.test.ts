@@ -3807,4 +3807,123 @@ describe("Integration: file operations", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("passed");
 	}, 20000);
+
+	test("Transient API error: outer retry recovers after rate limit", async () => {
+		ctx = await setupTestContext();
+
+		// 2-turn conversation: bash → done
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Let me check." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo hello_retry" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "hello_retry",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "All done!" },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "survived rate limit" },
+						},
+					],
+				},
+			],
+		});
+
+		// Inject a rate limit error on the 2nd API call (the turn after bash).
+		// The mock throws TransientAPIError (not Anthropic SDK class) so the inner
+		// retry doesn't recognize it → throws immediately → outer retry catches it,
+		// waits 100ms (test override), and retries.
+		ctx.mockAPI.injectError({
+			onRequest: 2,
+			error: "rate_limit",
+			count: 1,
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Should have 3+ requests: 1 success, 1 failure, 1 retry success (+ maybe done turn)
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(3);
+
+		// Verify JSONL has an error event from the outer retry
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = readSessionEvents(ctx, rootNodeId);
+		const errorEvents = events.filter((e) => e.type === "error");
+		expect(errorEvents.length).toBeGreaterThanOrEqual(1);
+		const errorMsg = (errorEvents[0] as { message: string }).message;
+		expect(errorMsg).toContain("outer retry");
+		expect(errorMsg).toContain("Rate limit");
+	}, 20000);
+
+	test("Transient API error: agent dies after max outer retries exhausted", async () => {
+		ctx = await setupTestContext();
+
+		// Simple instruction
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Let me check." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo test" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Done!" },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "ok" },
+						},
+					],
+				},
+			],
+		});
+
+		// Inject persistent rate limit on the 2nd API call (count=10 to exceed
+		// both inner retries and outer retries). With TransientAPIError, inner retry
+		// fails immediately, and outer retry tries MAX_OUTER_RETRIES (3) times.
+		// So we need count >= 4 (1 original + 3 outer retries).
+		ctx.mockAPI.injectError({
+			onRequest: 2,
+			error: "rate_limit",
+			count: 10,
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Agent should fail — rate limit is persistent
+		const status = await waitForDone(ctx, 20000);
+		expect(status).toBe("failed");
+
+		// Should have multiple error events from outer retries
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = readSessionEvents(ctx, rootNodeId);
+		const errorEvents = events.filter((e) => e.type === "error");
+		// At least 3 outer retry errors before giving up
+		expect(errorEvents.length).toBeGreaterThanOrEqual(3);
+	}, 30000);
 });

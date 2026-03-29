@@ -344,6 +344,7 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 function createAnthropicAdapter(
 	client: Anthropic,
 	useOAuth: boolean,
+	opts?: { outerRetryDelayMs?: (attempt: number, error: unknown) => number },
 ): ProviderAdapter {
 	return {
 		getContextWindow(model: string): number {
@@ -772,6 +773,8 @@ function createAnthropicAdapter(
 			);
 		},
 
+		getOuterRetryDelayMs: opts?.outerRetryDelayMs,
+
 		buildResult(params): AgentResult {
 			return {
 				success: params.success,
@@ -798,6 +801,8 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	private client: Anthropic;
 	private model: string;
 	private useOAuth: boolean;
+	/** Override outer retry delay for testing. Production uses default (30s+ exponential). */
+	outerRetryDelayMs?: (attempt: number, error: unknown) => number;
 
 	constructor(model?: string, opts?: { apiKey?: string; oauthToken?: string }) {
 		const apiKey = opts?.apiKey ?? process.env.ANTHROPIC_API_KEY;
@@ -902,7 +907,9 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		sessionId: string,
 		queue?: MessageQueue,
 	): AsyncGenerator<Event, AgentResult> {
-		const adapter = createAnthropicAdapter(this.client, this.useOAuth);
+		const adapter = createAnthropicAdapter(this.client, this.useOAuth, {
+			outerRetryDelayMs: this.outerRetryDelayMs,
+		});
 		// Override the default model in the request
 		const effectiveRequest = {
 			...request,

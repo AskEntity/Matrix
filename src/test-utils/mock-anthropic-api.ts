@@ -658,6 +658,54 @@ function abbreviateContent(_key: string, value: unknown): unknown {
 	return value;
 }
 
+// ── Error injection types ──
+
+export type InjectedErrorType =
+	| "rate_limit"
+	| "overloaded"
+	| "internal_server_error"
+	| "connection_error";
+
+export interface ErrorInjection {
+	/** Which API call number to fail on (1-based). */
+	onRequest: number;
+	/** Type of error to simulate. */
+	error: InjectedErrorType;
+	/** How many consecutive calls to fail before allowing success. Default: 1. */
+	count?: number;
+}
+
+/**
+ * Transient API error for testing. NOT an Anthropic SDK error class, so it
+ * bypasses the inner retry's `instanceof` checks and throws immediately.
+ * The outer retry in runProviderLoop detects it via the `status` property.
+ */
+export class TransientAPIError extends Error {
+	readonly status: number;
+	constructor(status: number, message: string) {
+		super(message);
+		this.name = "TransientAPIError";
+		this.status = status;
+	}
+}
+
+function makeInjectedError(errorType: InjectedErrorType): Error {
+	// Use TransientAPIError (not Anthropic SDK classes) so the inner retry in
+	// callAPI does NOT recognize these as transient → throws immediately.
+	// The outer retry in runProviderLoop catches them via status code check.
+	// This avoids 30s of inner retry delays in tests.
+	switch (errorType) {
+		case "rate_limit":
+			return new TransientAPIError(429, "Rate limit exceeded");
+		case "overloaded":
+			return new TransientAPIError(529, "Overloaded");
+		case "internal_server_error":
+			return new TransientAPIError(500, "Internal server error");
+		case "connection_error":
+			return new TransientAPIError(0, "Connection error: ECONNREFUSED");
+	}
+}
+
 // ── ValidatingMockAPI class ──
 
 export class ValidatingMockAPI {
@@ -671,6 +719,11 @@ export class ValidatingMockAPI {
 	private prefixValidationEnabled = false;
 	/** Variables captured from tool results via assert capture rules. */
 	private capturedVars: Map<string, string> = new Map();
+	/** Error injections — keyed by request number (1-based), value = remaining fail count. */
+	private errorInjections: Map<
+		number,
+		{ error: InjectedErrorType; remaining: number }
+	> = new Map();
 
 	/**
 	 * Derive a stable conversation key from the messages array.
@@ -927,6 +980,44 @@ export class ValidatingMockAPI {
 	}
 
 	/**
+	 * Inject a transient error on a specific API request.
+	 * When request N arrives, throw the specified error instead of returning a response.
+	 * After `count` failures, clear the injection and let subsequent calls succeed.
+	 *
+	 * Note: this counts ALL requests to the mock (including retries from callAPI's
+	 * internal retry loop). To fail the Nth "logical" API call after all internal
+	 * retries have been exhausted, set count >= the internal retry count (5).
+	 */
+	injectError(injection: ErrorInjection): void {
+		this.errorInjections.set(injection.onRequest, {
+			error: injection.error,
+			remaining: injection.count ?? 1,
+		});
+	}
+
+	/**
+	 * Check and apply error injection for the current request number.
+	 * Returns the error to throw, or null if no injection applies.
+	 * Decrements remaining count and removes injection when exhausted.
+	 */
+	private checkErrorInjection(): Error | null {
+		// Request count is already incremented in createStream before this check
+		const reqNum = this.requestHistory.length;
+		const injection = this.errorInjections.get(reqNum);
+		if (!injection || injection.remaining <= 0) return null;
+
+		injection.remaining--;
+		if (injection.remaining <= 0) {
+			this.errorInjections.delete(reqNum);
+		} else {
+			// Shift the injection to the next request number so consecutive failures work
+			this.errorInjections.delete(reqNum);
+			this.errorInjections.set(reqNum + 1, injection);
+		}
+		return makeInjectedError(injection.error);
+	}
+
+	/**
 	 * Creates a stream handler that replaces `client.messages.stream`.
 	 * Validates the request, dequeues from turn queue or parses new instruction,
 	 * and returns a streaming mock response.
@@ -949,6 +1040,10 @@ export class ValidatingMockAPI {
 			model,
 			timestamp: Date.now(),
 		});
+
+		// Check error injection — throws before any validation/response
+		const injectedError = this.checkErrorInjection();
+		if (injectedError) throw injectedError;
 
 		// Validate request structure
 		validateRequest(messages);
@@ -1102,6 +1197,7 @@ export class ValidatingMockAPI {
 		this.conversationQueues.clear();
 		this.prefixValidationEnabled = false;
 		this.capturedVars.clear();
+		this.errorInjections.clear();
 		toolUseCounter = 0;
 	}
 }
@@ -1136,6 +1232,9 @@ export function createMockedProviderWithMock(
 			countTokens: async () => ({ input_tokens: 100 }),
 		},
 	};
+
+	// Fast outer retry delay for tests (100ms instead of 30s+)
+	provider.outerRetryDelayMs = () => 100;
 
 	return provider;
 }
