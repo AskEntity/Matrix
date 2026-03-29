@@ -949,13 +949,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			sessionId,
 			events: eventStream(),
 			queue,
-			async sendMessage(text: string): Promise<void> {
-				try {
-					queue.enqueue({ source: "user", id: ulid(), content: text });
-				} catch {
-					// Queue may be closed
-				}
-			},
 			stop() {
 				queue.close();
 				abortController.abort();

@@ -299,9 +299,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			return;
 		}
 		const passed = childNodes.filter((n) => n.status === "passed").length;
-		const failed = childNodes.filter(
-			(n) => n.status === "failed" || n.status === "stuck",
-		).length;
+		const failed = childNodes.filter((n) => n.status === "failed").length;
 		if (failed > 0) document.title = `${base} [!${failed}]`;
 		else if (passed === total) document.title = `${base} [✓]`;
 		else document.title = `${base} [${passed}/${total}]`;

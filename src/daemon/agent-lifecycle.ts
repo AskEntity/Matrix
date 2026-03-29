@@ -716,18 +716,6 @@ export async function runChildAgentInBackground(
 		// If done() was NOT called, the agent was interrupted (stop, reset, error,
 		// queue close, daemon restart). Status stays in_progress — agent is resumable.
 		// No fallback task_complete — the parent is not notified of interruptions.
-		const currentNode = tracker.get(nodeId);
-		const doneWasCalled =
-			currentNode?.status === "passed" || currentNode?.status === "failed";
-		// TODO: Once sibling task adds exitReason to AgentResult, use
-		// agentResult.exitReason instead of status check for doneWasCalled detection.
-
-		if (doneWasCalled && currentNode?.status === "failed") {
-			node.failCount = (node.failCount ?? 0) + 1;
-		} else if (doneWasCalled) {
-			node.failCount = 0;
-		}
-		// If !doneWasCalled: status stays in_progress, no failCount change.
 		await tracker.save();
 
 		broadcastTreeUpdate(ctx, project.id, tracker);

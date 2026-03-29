@@ -43,9 +43,7 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 	const done = childNodes.filter(
 		(n) => n.status === "passed" || n.status === "closed",
 	).length;
-	const failed = childNodes.filter(
-		(n) => n.status === "failed" || n.status === "stuck",
-	).length;
+	const failed = childNodes.filter((n) => n.status === "failed").length;
 	const inProgress = childNodes.filter(
 		(n) => n.status === "in_progress",
 	).length;

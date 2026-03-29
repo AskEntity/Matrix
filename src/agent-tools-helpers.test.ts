@@ -19,8 +19,6 @@ function makeNode(overrides: Partial<TaskNode> & { id: string }): TaskNode {
 		parentId: null,
 		children: [],
 		worktreePath: null,
-		message: null,
-		failCount: 0,
 		createdAt: new Date().toISOString(),
 		updatedAt: new Date().toISOString(),
 		...overrides,

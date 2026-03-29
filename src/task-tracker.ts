@@ -24,8 +24,6 @@ export class TaskTracker {
 				nodes: (TaskNode & { draft?: boolean })[];
 			};
 			for (const node of data.nodes) {
-				// Backward compat: old nodes may lack failCount
-				if (node.failCount === undefined) node.failCount = 0;
 				// Migration: convert old draft boolean to status="draft"
 				if (node.draft) {
 					node.status = "draft";
@@ -128,14 +126,6 @@ export class TaskTracker {
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
 		node.branch = branch;
 		node.worktreePath = worktreePath;
-		node.updatedAt = new Date().toISOString();
-	}
-
-	/** Set a message on a task (e.g. instructions when continuing a failed task). */
-	setMessage(nodeId: string, message: string): void {
-		const node = this.nodes.get(nodeId);
-		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		node.message = message;
 		node.updatedAt = new Date().toISOString();
 	}
 
@@ -343,8 +333,6 @@ export class TaskTracker {
 			parentId,
 			children: [],
 			worktreePath: null,
-			message: null,
-			failCount: 0,
 			...(opts?.budgetUsd !== undefined ? { budgetUsd: opts.budgetUsd } : {}),
 			...(opts?.editedBy ? { editedBy: opts.editedBy } : {}),
 			createdAt: now,

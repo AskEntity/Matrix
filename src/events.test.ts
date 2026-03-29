@@ -2060,7 +2060,8 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 			{
 				type: "orchestration_started",
 				resume: false,
-				prompt: "hello",
+				model: "test-model",
+				provider: "test-provider",
 				taskId: "test",
 				ts: 1,
 			} as Event,
@@ -2076,7 +2077,8 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 			{
 				type: "orchestration_started",
 				resume: true,
-				prompt: "resume",
+				model: "test-model",
+				provider: "test-provider",
 				taskId: "test",
 				ts: 5,
 			} as Event,
@@ -2091,7 +2093,8 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 			{
 				type: "orchestration_started",
 				resume: false,
-				prompt: "hello",
+				model: "test-model",
+				provider: "test-provider",
 				taskId: "test",
 				ts: 1,
 			} as Event,
@@ -2107,7 +2110,8 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 			{
 				type: "orchestration_started",
 				resume: true,
-				prompt: "resume",
+				model: "test-model",
+				provider: "test-provider",
 				taskId: "test",
 				ts: 5,
 			} as Event,
