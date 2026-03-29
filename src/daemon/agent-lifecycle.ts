@@ -158,8 +158,12 @@ async function createAgentContext(
 					getEventStore(ctx, project.id).clear(sessionId),
 				hasEventStore: (sessionId) =>
 					getEventStore(ctx, project.id).has(sessionId),
-				copySessionFrom: (sourceId, targetId) =>
-					getEventStore(ctx, project.id).copySessionFrom(sourceId, targetId),
+				copySessionFrom: (sourceId, targetId, opts) =>
+					getEventStore(ctx, project.id).copySessionFrom(
+						sourceId,
+						targetId,
+						opts,
+					),
 				dataDir: ctx.config.dataDir,
 				getClarifyTimeoutMs: () => ctx.globalConfig?.clarifyTimeoutMs,
 				getDefaultBudgetUsd: () => ctx.globalConfig?.budgetUsd,

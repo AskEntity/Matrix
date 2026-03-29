@@ -697,6 +697,10 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			const result = await eventStore.copySessionFrom(
 				body.sourceTaskId,
 				nodeId,
+				{
+					targetTitle: node.title,
+					targetDescription: node.description,
+				},
 			);
 			const sourceNode = tracker.get(body.sourceTaskId);
 			return c.json({

@@ -162,6 +162,10 @@ export type Event =
 			type: "fork_marker";
 			/** Task ID of the source session whose context was copied. */
 			sourceTaskId: string;
+			/** Title of the target task (the new agent's task). */
+			targetTitle?: string;
+			/** Description of the target task. */
+			targetDescription?: string;
 			taskId: string;
 			ts: number;
 	  };

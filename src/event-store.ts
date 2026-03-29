@@ -173,6 +173,7 @@ export class EventStore {
 	async copySessionFrom(
 		sourceId: string,
 		targetId: string,
+		opts?: { targetTitle?: string; targetDescription?: string },
 	): Promise<{ eventCount: number }> {
 		const sourcePath = this.path(sourceId);
 		const targetPath = this.path(targetId);
@@ -204,6 +205,10 @@ export class EventStore {
 		const forkMarker: Event = {
 			type: "fork_marker",
 			sourceTaskId: sourceId,
+			...(opts?.targetTitle && { targetTitle: opts.targetTitle }),
+			...(opts?.targetDescription && {
+				targetDescription: opts.targetDescription,
+			}),
 			taskId: targetId,
 			ts: Date.now(),
 		};
