@@ -71,7 +71,31 @@ Daemon (Hono: HTTP + SSE on :7433)
 - **`task.session`** = sole source of truth for running agents. `session != null` = agent running.
 - **Single event path**: `emitEvent()` handles SSE broadcast + JSONL persistence.
 - **Two-phase message lifecycle**: Phase 1: `message` event persisted → frontend defers. Phase 2: `messages_consumed` → frontend materializes into activity log.
-- **Session JSONL = most valuable asset**: Contains complete agent thought process. Never auto-delete. Migration should backup, not delete.
+- **Session JSONL = most valuable asset**: Contains complete agent thought process. Never auto-delete.
+
+## ⚠️ JSONL Content Fidelity (CRITICAL)
+
+**JSONL event content = exact content sent to API. Zero transformation.**
+
+- No `.slice()`, no truncation, no preview formatting on any persisted event content
+- UI truncation happens ONLY in `stripEventForUI` (SSE layer) and frontend rendering
+- Header (memory.md) ONLY on true cold start (`!eventStore.has(sessionId)`) — resume agents already have context from JSONL
+- Violation = prompt cache miss on every resume = wasted money
+
+## Tool Result Three-Part Invariant (CRITICAL)
+
+Every code path that produces a tool_result must do ALL three:
+1. **JSONL**: `emit(tool_result_event)` — for resume/replay
+2. **SSE**: `yield tool_result_event` — for frontend
+3. **messages[]**: `adapter.buildToolResultsMessage()` + push — for next API call
+
+Missing any one causes: (1) orphan on resume, (2) missing UI feedback, (3) API 400 unpaired tool_use.
+
+## Yield JSONL Invariant (CRITICAL)
+
+**For yielding agents, NOTHING should be written to JSONL after the yield tool_call except by the provider loop itself.** External events (bg_complete, orphan fixes) must go to the queue, not JSONL. Writing events between yield tool_call and its tool_result breaks the event converter → API 400.
+
+`hasPendingYield()` in events.ts detects this state. Used by autoResumeProjects, launchAgent, and runChildAgentInBackground to route events to queue instead of JSONL.
 
 ## Tool Architecture
 
@@ -88,29 +112,36 @@ All tools are `ToolDefinition[]` under `mcp__opengraft__*` namespace. ONE execut
 - `header?: string` on `user` and `task_message` — context prepended for AI, stripped before UI delivery.
 - Messages with `id: ""` = provider prompts (filtered by frontend).
 - `send_message` tool: direction determined by comparing taskId to currentNode.parentId.
-- `migrateQueueMessage()` handles backward compat from old source names (child_report, parent_update, child_complete).
+- `migrateQueueMessage()` handles backward compat from old source names.
 
 ## Agent Lifecycle
 
 - `done()` → update status + deliver `task_complete` to parent + close queue (child) or block (root).
-- `yield()` = loop-level pause (not JS await). See "Yield as Loop-Level Pause" section.
+- `yield()` = loop-level pause (not JS await). Provider loop intercepts yield tool_use BEFORE executeTool, sets `pendingYieldToolCall`, continues to top of while(true). `handleImplicitYield` waits for queue messages. On resume, `buildYieldPendingSection` provides live ## Pending data.
 - `stopAgent()` cascades: closes child queues, sets children to `failed`.
-- done() directly enqueues task_complete to parent (stateless). runChildAgentInBackground only handles fallback.
+- On JSONL resume: detects pending yield from last tool_call (no matching tool_result) → enters yield-wait directly. `findOrphanedToolCalls` skips yield — handled by the loop.
 
-## Yield as Loop-Level Pause
+## Same-Turn Tool Conflict Rules
 
-yield() is a loop-level pause, not a JS await. Provider loop in provider-shared.ts intercepts yield tool_use BEFORE executeTool, sets `pendingYieldToolCall`, and continues to top of while(true). There, `handleImplicitYield` waits for queue messages. On resume, `buildYieldPendingSection` callback (from orchestrator-tools.ts) provides live tracker data for ## Pending section.
+- **yield + other tools** → other tools execute normally, yield returns success (no-op).
+- **done + other tools** → other tools execute normally, done returns error.
+- **yield/done alone** → existing behavior.
 
-**On JSONL resume**: detects pending yield from last tool_call event (no matching tool_result) → skips initial queue drain, enters yield-wait directly. `findOrphanedToolCalls` skips yield tool_calls — they're handled by the loop.
+## Daemon Restart & Recovery
 
-**Key benefit**: yield state is serializable/recoverable across daemon restart. No synthetic orphan results needed.
+Restart recovery handles several edge cases through a unified approach:
 
-## Daemon Restart Behavior
+**Orphan cleanup** (`findOrphanedToolCalls` → `writeOrphanedToolResults`): Runs at stopAgent and autoResumeProjects. Writes synthetic tool_results to JSONL for interrupted tool calls. Yield tool_calls excluded (handled by loop-level pause). Single detection path — never add provider-specific orphan detection (caused duplicate tool_result bugs).
 
-- **Orphan cleanup always runs**: `writeOrphanedToolResults` moved before `hasActiveChildren` check in `autoResumeProjects`. Cleans up non-yield orphans (bg processes, etc.) regardless of whether agent auto-resumes.
-- **Root idle (no active children)**: orphan cleanup runs, then skip auto-resume (saves money).
-- **Root with active children**: mark children failed, orphan cleanup, resume root.
-- **Yield on restart**: yield tool_call detected from JSONL → enters loop-level pause without API call. Agent only wakes when message arrives.
+**Unconsumed message recovery** (`findUnconsumedMessages`): Messages persisted to JSONL as `message` events but lacking `messages_consumed` are re-enqueued on resume. Deduplicates against persistent queue messages via `unconsumedIds` Set.
+
+**Orphan background processes** (`findOrphanedBackgroundProcesses`): Generates synthetic `background_complete` events for interrupted bg processes. Routes to queue (not JSONL) if agent has pending yield.
+
+**Consecutive user message prevention**: When JSONL ends with user-role message (orphan tool_result), queue drain merges into existing message instead of creating a new user message.
+
+**autoResumeProjects flow**: Orphan cleanup always runs → root idle (no active children) skips auto-resume → root with active children marks children failed, resumes root.
+
+**Queue message format**: No wrappers. Each queue message is its own text block. Live path and resume path produce identical structures (no cache misses).
 
 ## Event System
 
@@ -118,23 +149,15 @@ yield() is a loop-level pause, not a JS await. Provider loop in provider-shared.
 
 **Persisted**: Everything else. `isPersistedByEmitEvent()` in events.ts — exhaustive switch, compile-time enforced.
 
-**Provider events** (assistant_text, tool_call, tool_result, compact_marker) persisted via emit callback = emitEvent.
-
 **Event converters**: `walkEventsToMessages()` + `EventConverterCallbacks`. Two-phase: events with `id` deferred until `messages_consumed`. `TOOL_NAME_ALIASES` for backward compat with old JSONL.
-
-**Side effect discipline**: When extending an event to new emitters, audit ALL consumers for assumptions about who emits it.
 
 ## Frontend
 
 - `IncomingEvent` type = `UIEvent | SSEOnlyEvent`. Single `as IncomingEvent` cast at SSE boundary.
 - `processEvent` / `processEventBatch` — unified for live + batch. Skips `tree_updated` from JSONL.
-- `tool_pair` UIOnlyEvent combines tool_call + tool_result. `resolve_tool` / `remove_tool` UpdateOps.
-- `applyUpdate(entries, op)` pure function for all log mutations.
-- `Card.tsx` — base card component. `ToolCard` extends it.
-- All major components wrapped with `React.memo`.
+- `tool_pair` UIOnlyEvent combines tool_call + tool_result. `applyUpdate(entries, op)` pure function.
 - `SLASH_COMMANDS` in SlashCommandMenu.tsx: `/compact`, `/stop`, `/clear`, `/settings`.
-- localStorage keys: `og-` prefix (e.g., `og-jwt`, `og-theme`, `og-locale`).
-- CSS file is `web/style.css` (not `styles.css`).
+- localStorage keys: `og-` prefix. CSS file is `web/style.css` (not `styles.css`).
 
 ## Known Pitfalls
 
@@ -150,6 +173,7 @@ yield() is a loop-level pause, not a JS await. Provider loop in provider-shared.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
 - **CSS attribute selectors break with i18n**: Use class-based selectors instead.
 - **Worktree setup hook**: `.opengraft/hooks/setup_worktree.sh` required. Missing = fail.
+- **Concurrent ULID**: Use full `ulid()` (26 chars) for execId/bgId — sliced ULIDs collide within same millisecond.
 
 ## Auth
 
@@ -165,43 +189,31 @@ Two tools: `bash` (execute) + `background` (manage: list/status/kill/await). `fo
 
 ## Fork Task Context
 
-`fork_task_context` MCP tool + `POST /tasks/:nodeId/fork` REST. Copies post-compact events from source session to target (which must have no existing session). Appends `fork_marker` event — generates visible `<fork_marker>` XML so forked agents know their identity boundary. Fork is almost always cheaper than cold start due to prompt cache hit.
+`fork_task_context` MCP tool + `POST /tasks/:nodeId/fork` REST. Copies post-compact events from source session to target (which must have no existing session). Appends `fork_marker` event. Fork is almost always cheaper than cold start due to prompt cache hit.
 
-## Ownership Framing
+## Ownership & Communication
 
-System prompt uses ownership language: agents "own" tasks. "sub task" for downward, "the task above" for upward. No "parent/child" agent language. `send_message` is unified — direction determined by taskId comparison. `clarify` always goes to user (UI).
+System prompt uses ownership language: agents "own" tasks. "sub task" for downward, "the task above" for upward. `send_message` is unified — direction determined by taskId comparison. `clarify` always goes to user (UI).
 
-## XML Attribute Naming Convention
+XML tags use `from_task` (ID) + `task_name` (title): `task_complete`, `user_message_forwarded`, `task_message`.
 
-All XML tags use consistent attribute naming:
-- `from_task` = task ID (unique identifier)
-- `task_name` = human-readable title
-- Tags: `task_complete`, `user_message_forwarded`, `task_message`
+## send_message Header Gating
+
+- Header included only on cold start (`node.session == null`). Running agents skip header to save tokens.
+- Cold-start header uses `buildTaskPrompt()` from task-utils.ts (includes memory, siblings, budget).
+- `formatBodyForAI` embeds header into content. Use `formatQueueMessagesWithHeaders` to extract headers to message level.
 
 ## Tree Change Notifications
 
-`source: "tree_change"` QueueMessage with `action`, `nodeId`, `title`. `notifyTreeChange()` walks parent chain, quiet-enqueues to each running ancestor. Also notifies the modified node itself for "updated" actions. UI sidebar updates via `tree_updated` ephemeral event.
-
-## Lazy-Load Activity Log
-
-`EventStore.readFromLastCompactMarker()` for initial load. `readBefore()` for pagination. `GET /events?after=compact` for post-compact only. Frontend "Load earlier history" button re-fetches full events.
-
-## Cross-Project Communication
-
-`send_message_to_project` auto-launches target agent if not running via `injectMessageToProject`.
-
-## Orphan Tool Call Defense
-
-Single path: `findOrphanedToolCalls()` (events.ts) → `writeOrphanedToolResults()` at stopAgent and autoResumeProjects → JSONL fixed before resume. Yield tool_calls excluded — handled by loop-level pause. Provider-specific converter fixOrphans was removed (caused duplicate tool_result bugs).
+`source: "tree_change"` QueueMessage with `action`, `nodeId`, `title`. `notifyTreeChange()` walks parent chain, quiet-enqueues to each running ancestor. Also notifies the modified node itself for "updated" actions.
 
 ## Anthropic Cache TTL
 
 System prompt + tools: `ttl: "1h"`. Messages: orchestrator `1h`, child agents `5m` (default).
 
-## send_message Header Gating
+## Anthropic `caller` Field
 
-- `send_message` in orchestrator-tools.ts only includes header on cold start (`node.session == null`). Running agents skip header to save tokens.
-- Cold-start header uses `buildTaskPrompt()` from task-utils.ts (includes memory, siblings, budget).
+`caller: {type: "direct"}` on tool_use blocks — official API field. Our JSONL reconstruction hardcodes it. Prefix validation does NOT strip caller (unlike `cache_control`).
 
 ## User Preferences
 
@@ -217,254 +229,42 @@ Key competitors: Claude Code Agent Teams, OpenClaw, Cursor 2.0, OpenAI Codex App
 
 **OpenGraft unique features** (no competitor has ALL): recursive task tree (infinite nesting), cross-project communication, real-time MessageQueue, compaction + fork context combo.
 
-**Positioning**: "Scoped connectivity" — between global agent (OpenClaw) and per-project worker (Composio/Stoneforge). Each project is scoped (task tree, memory, git) but projects aren't isolated (cross-project messaging = expert consultation).
-
-**Closest competitor**: Stoneforge (Director → Workers, dispatch daemon, git worktree isolation). But uses external CLI agents, can't do compaction/fork/API control.
-
-**Biggest threat**: Claude Code Agent Teams — if Anthropic makes it recursive + real-time.
+**Positioning**: "Scoped connectivity" — each project is scoped (task tree, memory, git) but not isolated (cross-project messaging = expert consultation).
 
 ## og-docs
 
-VitePress docs at og-docs project. Build with npm (not bun — hangs due to vuejs/vitepress#2943). Deploy: `npm install && npx vitepress build docs && npx wrangler pages deploy docs/.vitepress/dist --project-name=og-docs`. CF Pages custom domain: `docs.opengraft.com`. Pending user deployment.
-
-## Yield Resume & Header Fixes
-
-- **Header only on cold start**: `prepareAgentMessage` (which adds memory.md + working dir header) should only be called when there is NO existing JSONL session. Resume agents already have context from their session. Fixed in `handleInjectMessage` (agent-lifecycle.ts), POST `/orchestrate/agent` and POST `/restart` (routes/agent.ts).
-- **Yield tool_result content**: The yield tool_result event emitted to JSONL must have FULL content (no `.slice(0, 500)`). On resume, event converter reads JSONL to rebuild API messages — truncation causes prompt cache misses.
-- **Yield resume message structure**: Queue messages arriving during yield go as additional text blocks in the same user message (via `cancellationQueueMsgs`/`cancellationFormatted`), not in a separate user message. Headers stripped via `formatQueueMessagesWithHeaders` to prevent memory.md duplication.
-- **Consumer loop yield vs emit**: The `yield` at the bottom of the tool execution loop (for SSE consumer) is NOT persisted to JSONL — `buildToolResultEvents` via `emit()` handles JSONL with full content. The `.slice(0, 500)` was removed from the yield too per principle: backend = full fidelity, frontend = display optimization.
-- **`formatBodyForAI` embeds header**: For `user` and `task_message` with header, `formatBodyForAI` returns `header + content`. So `formatQueueMessage` → `formatBodyForAI` includes the header. Use `formatQueueMessagesWithHeaders` to extract headers to message level and pass headerless copies to `formatQueueMessage`.
-
-
-
-## ⚠️ JSONL Content Fidelity (CRITICAL)
-
-**JSONL event content = exact content sent to API. Zero transformation.**
-
-- No `.slice()`, no truncation, no preview formatting on any persisted event content
-- UI truncation happens ONLY in `stripEventForUI` (SSE layer) and frontend rendering
-- Header (memory.md) ONLY on true cold start (`!eventStore.has(sessionId)`) — resume agents already have context from JSONL
-- Violation = prompt cache miss on every resume = wasted money
-
-This applies to: `tool_result.content`, `tool_call.input`, `message.body`, `assistant_text.text` — anything in JSONL that gets reconstructed into API messages via `walkEventsToMessages`.
-
-
-## Tool Result Three-Part Invariant (CRITICAL)
-
-Every code path that produces a tool_result must do ALL three:
-1. **JSONL**: `emit(tool_result_event)` — for resume/replay
-2. **SSE**: `yield tool_result_event` — for frontend
-3. **messages[]**: `adapter.buildToolResultsMessage()` + push — for next API call
-
-Missing any one causes a different bug class: (1) orphan on resume, (2) missing UI feedback, (3) API 400 unpaired tool_use.
-
-**Compact during yield** hit this twice: first fix added step 1+2, second fix added step 3. The end-of-turn implicit yield compactOnly path doesn't need this — no `pendingYieldToolCall` exists there.
-
-
-## Single Orphan Detection Path
-
-Orphan tool_call detection is ONE path — `findOrphanedToolCalls()` in events.ts:
-- Skips `mcp__opengraft__yield` (loop-level pause, not an orphan)
-- Called by `writeOrphanedToolResults()` at stopAgent/autoResume → writes synthetic tool_results to JSONL
-- Converter reads clean JSONL — no orphan fixing needed (removed `fixOrphans` from `EventConverterCallbacks`)
-- **Never add provider-specific orphan detection** — it caused duplicate tool_result bugs and was deleted
-
+VitePress docs at og-docs project. Build with npm (not bun — hangs due to vuejs/vitepress#2943). Deploy: `npm install && npx vitepress build docs && npx wrangler pages deploy docs/.vitepress/dist --project-name=og-docs`.
 
 ## Integration Test Framework
 
 **Mock API** (`src/test-utils/mock-anthropic-api.ts`):
 - `ValidatingMockAPI`: instruction-driven mock that validates every request
-- Instruction JSON embedded in user messages: `{"blocks": [...]}` (single turn) or `{"turns": [...]}` (multi-turn)
-- Parser handles JSON embedded in formatQueueMessage wrappers (timestamps, "[Messages received while you were working:]")
+- Per-conversation turn queues keyed by first user message content (200 chars). Parent+child agents share mock instance without interference.
 - Validates: turn interleaving, tool_use/tool_result pairing, no empty content, no duplicates
-- `createMockedProviderWithMock(mockAPI)`: wires mock into real AnthropicCompatibleProvider
+- **Prefix validation**: API messages must be strictly monotonically increasing across calls. Strips `cache_control` only.
+
+**Mock Instruction DSL**:
+- `{"blocks": [...]}` (single turn) or `{"turns": [...]}` (multi-turn)
+- `assert` arrays validate previous turn results: `block: N`, `type`, `contains`, `notContains`, `isError`, `matches`
+- `capture: {varName: "regex:(group)"}` extracts values for `$varName` in later blocks
+- `{length: N}` validates total block count
+- Variable substitution uses `split().join()` not `replaceAll()` (`$` in replacement is special)
+- Substitution applies to `blocks` only, NOT `assert` rules
 
 **Integration tests** (`src/integration.test.ts`):
-- 7 scenarios: multi-turn tools, multiple tools, yield+wake, implicit yield, JSONL verification, message injection, validation
-- Each test: real app + mock provider + temp git project + temp dataDir
-- Inject provider via `ctx.config.agentProvider` (DaemonConfig field)
-- Root agents (depth 0) dont close queue on done() — they enter idle-yield. Detect completion via node status polling, not activeSessions.
-- `waitForDone()`: polls root node status. `waitForIdle()`: polls queue.idle.
+- Real app + mock provider + temp git project + temp dataDir
+- Root agents don't close queue on done() — detect completion via node status polling (`waitForDone`)
+- `recreateApp()` creates new app from same `dataDir` + same mock (survives restarts)
 
-**Mutation testing results** (4/4 caught):
-- Duplicate messages.push → CAUGHT (consecutive same-role validation)
-- Remove messages.push → CAUGHT (missing tool_result validation)
-- Remove emit callback → CAUGHT (JSONL tool_result count check)
-- Remove yield messages.push → CAUGHT (unpaired tool_use validation)
-- NOT tested: compactOnly yield path (needs compact-during-yield scenario)
+**Restart test scenarios**: crash during yield, during bash, during implicit yield, after done(), prefix self-test, concurrent bash, background processes.
 
-## Queue Message Format Unification (March 2025)
+## ⚠️ TDD for Lifetime/Restart Bugs
 
-**Before**: Two separate label systems (`[Messages received while you were idle:]` / `[Messages received while you were working:]`) applied differently in live vs resume paths, causing cache misses on every daemon restart.
+Lifetime issues (daemon restart, message loss, orphan cleanup) MUST use TDD. Write failing test FIRST, confirm it catches the bug, then fix. The integration framework makes crash/restart scenarios cheap.
 
-**After**: No wrappers. Each queue message is its own text block with just the formatted content (timestamp + XML or raw text). Live path (`buildToolResultsMessage`, `buildImplicitYieldMessage`) and resume path (`onConsumedMessages`, `onToolResults`) now produce identical message structures.
+**Every restart test MUST complete the full lifecycle**: crash → restart → resume → done(). Never stop at "JSONL has correct events".
 
-Key changes:
-- `ConsumedMessages.isWorkingContext` field removed — the callback's `isWorkingContext` is still used for structural decisions (append vs new message) but no longer for label text
-- `isAnthropicWorkingContext` / `isOpenAIWorkingContext` extracted as standalone functions (needed because object literal methods can't reference `this` or `callbacks` variable)
-- Both providers' `buildToolResultsMessage` unified: `yieldQueueTextBlocks` + `cancellationTextBlocks` merged into single `queueTextBlocks` / `allQueueTexts`
-- `buildImplicitYieldMessage` splits formatted string into individual text blocks per queue message
-- Event converter's interleaved `messages_consumed` no longer wraps with `[Messages received while you were working:]`
-- Single-message idle context → string content (cache-friendly); multi-message → array of text blocks
-
-
-## Restart Integration Tests & Resume Path Fix
-
-**Bug found**: When resuming from a crash during tool execution (e.g., bash interrupted), the last reconstructed message from JSONL is a user message (tool_result). The initial queue drain in `runProviderLoop` was pushing a SECOND user message, violating Anthropic API strict role alternation.
-
-**Fix** (provider-shared.ts): When the last reconstructed message is already a user message (from tool_result), combine the queue drain content into it as additional text blocks instead of creating a new user message.
-
-**Prefix validation** in `ValidatingMockAPI`: Validates that API messages are strictly monotonically increasing across calls. Each request's messages must be a prefix extension of the previous request. Normalizes content comparison by stripping `cache_control` annotations and converting string content to array form.
-
-**Crash test scenarios** (integration.test.ts):
-- Restart A: crash during explicit yield → agent resumes in yield, wakes on message
-- Restart B: crash during bash sleep → orphan tool_result written, agent resumes
-- Restart C: crash during implicit yield (end_turn) → same as yield restart
-- Restart D: crash after done() → root was "passed", agent relaunches on message
-- Restart E: prefix validation self-test
-
-**Key pattern**: `recreateApp()` creates new app+provider from same `dataDir` + same `mockAPI` instance (survives across restarts). autoResumeProjects skips root-only agents (no active children). User message triggers handleInjectMessage → launchAgent(resume: true).
-
-
-## Unconsumed Messages on Restart (March 2025)
-
-**Bug**: Messages sent while a tool is executing (e.g., bash sleep) go into the live queue AND get persisted to JSONL as `message` events. If daemon crashes before the provider loop drains the queue (emitting `messages_consumed`), the message is lost — it exists in JSONL but the event converter skips it (deferred message with id, no consumption event).
-
-**Fix**: `findUnconsumedMessages()` in events.ts scans for `message` events with IDs that have no corresponding `messages_consumed`. On resume, these are re-enqueued to the agent queue in both `launchAgent` (root) and `runChildAgentInBackground` (child). The provider loop picks them up normally via queue drain, emits `messages_consumed`, and on next resume the converter materializes them correctly.
-
-**Root cause**: Two-phase message lifecycle (message → messages_consumed) assumes the provider loop always completes consumption. Daemon crash breaks this assumption. The fix recovers from the broken state by detecting and re-enqueuing unconsumed messages.
-
-
-
-## TDD for Lifetime/Restart Bugs (CRITICAL)
-
-Lifetime issues (daemon restart, message loss, orphan cleanup, queue drain timing) MUST use TDD:
-1. Write failing test FIRST — reproduce the exact bug scenario
-2. Confirm test fails — verify it catches the real issue
-3. Find root cause — understand WHY before fixing
-4. Fix and verify test passes
-5. Run full suite for regression
-
-**Never guess-fix lifetime bugs.** The integration test framework (`ValidatingMockAPI` + `recreateApp()` + prefix validation) makes it cheap to write crash/restart scenarios. Use it.
-
-
-## Unconsumed Messages on Restart (March 2025)
-
-**Bug**: Messages sent while a tool is executing (e.g., bash sleep) go into the live queue AND get persisted to JSONL as `message` events. If daemon crashes before the provider loop drains the queue (emitting `messages_consumed`), the message is lost — it exists in JSONL but the event converter skips it (deferred message with id, no consumption event).
-
-**Fix**: `findUnconsumedMessages()` in events.ts scans for `message` events with IDs that have no corresponding `messages_consumed`. On resume, these are re-enqueued to the agent queue in both `launchAgent` (root) and `runChildAgentInBackground` (child). The provider loop picks them up normally via queue drain, emits `messages_consumed`, and on next resume the converter materializes them correctly.
-
-## Consecutive User Messages on Resume
-
-**Bug**: After crash during tool execution, JSONL has orphan tool_result (user role) as last event. Resume reconstructs messages ending with user message. Provider loop then pushes queue messages as another user message → consecutive user messages → API 400.
-
-**Fix**: In provider-shared.ts, when pushing initial queue messages, check if last reconstructed message is already user role. If so, merge into existing message as additional text blocks instead of pushing a new user message.
-
-
-## Message Deduplication on Restart (March 2025)
-
-**Bug**: `handleInjectMessage` writes the same message to BOTH JSONL (`emitEvent`) and persistent queue (`deliverMessage→persistMessage`). When `launchAgent` resumes, `findUnconsumedMessages()` finds it in JSONL and `loadPersistedMessages()` finds it on disk — message delivered twice.
-
-**Fix**: Track unconsumed message IDs in a `Set<string>`. When loading persistent messages, skip any with matching IDs. Applied in both `launchAgent` (root) and `runChildAgentInBackground→runChildCore` (child) via `unconsumedIds` param on `RunChildCoreParams`.
-
-
-## Orphan Background Process Cleanup on Restart (March 2025)
-
-**Bug**: After daemon restart, UI shows stale background processes (e.g., `⚙ Background bg-XXXX sleep 30`) that will never complete. Frontend rebuilds state from JSONL — sees `tool_result` with `backgroundId` but no `background_complete` message → adds to active processes map permanently.
-
-**Fix**: `findOrphanedBackgroundProcesses()` in events.ts scans for `tool_result` events with `backgroundId` that have no matching `background_complete` message event. Generates synthetic `background_complete` events with `exitCode: null` and `stderr: "Background process interrupted by daemon restart"`. Called in three places: `autoResumeProjects` (daemon.ts), `launchAgent` (root), and `runChildAgentInBackground` (child).
-
-
-## Restart Test Discipline (CRITICAL)
-
-**Every restart test MUST complete the full lifecycle**: crash → restart → agent resume → done(). NEVER stop at "JSONL has correct events" — that only validates writing, not that the system can recover and continue.
-
-Pattern:
-1. Start agent → reach specific state
-2. Crash (shutdown)  
-3. Restart (recreateApp)
-4. autoResumeProjects
-5. Send message to wake agent (if needed)
-6. **waitForDone()** — agent must successfully resume and complete
-7. Prefix validation confirms API messages are consistent
-
-Restart H violated this: checked JSONL had background_complete but never resumed the agent. The synthetic event broke yield resume (API 400) and the test missed it.
-
-## Yield JSONL Invariant (CRITICAL)
-
-**For yielding agents, NOTHING should be written to JSONL after the yield tool_call except by the provider loop itself.** External events (bg_complete, orphan fixes) must go to the queue, not JSONL. Writing events between yield tool_call and its tool_result breaks the event converter → API 400.
-
-`hasPendingYield()` in events.ts detects this state. Used by autoResumeProjects (daemon.ts), launchAgent, and runChildAgentInBackground to route bg_complete events to queue instead of JSONL.
-
-## Anthropic `caller` Field on tool_use
-
-`caller: {type: "direct"} | {type: "server_tool", tool_id: "..."}` — official API field on tool_use blocks. Our `eventsToAnthropicMessages` hardcodes `caller: {type: "direct"}` on JSONL reconstruction. Mock API includes `caller: {type: "direct"}` on all tool_use blocks (matching real API). Prefix validation does NOT strip caller — if live/resume diverge on this field, it's a real bug we want to catch. Only `cache_control` is stripped (legitimately added differently by our caching logic).
-
-
-## Mock Instruction DSL v2: Assert + Variable Capture (March 2025)
-
-Turns can now have `assert` arrays that validate tool_results from the previous turn:
-- `result: N` — which tool_result (0-indexed)
-- `contains` / `notContains` — string content checks
-- `isError` — check the is_error flag
-- `matches` — regex match
-- `capture: {varName: "regex:(group)"}` — extract values for use in later blocks via `$varName`
-
-Key insight: mock cannot observe crashes/restarts — it only sees tool results, just like a real AI. Assert failure = tool returned unexpected result = system bug. Tests simultaneously validate API contract + tool implementation + lifecycle correctness.
-
-Pitfall: Use `split().join()` not `replaceAll()` for variable substitution — `$` in replacement strings has special meaning. Also use `${"$"}` in template literals for literal `$`.
-
-
-## Mock Assert DSL v2.1: Block Index (March 2025)
-
-`result: N` replaced with `block: N` + optional `type: "tool_result" | "text"`. `block` indexes into the full content array of the last user message (all blocks, not just tool_results). `type` validates the block type if specified. `isError` only valid on tool_result blocks — throws if used on text.
-
-This enables asserting on text blocks (e.g., injected queue messages) alongside tool_results, validating content order simultaneously.
- Also supports `{length: N}` to validate total block count (no block/type/contains — just count). Critical for timing tests verifying a message has NOT arrived yet.
-
-
-## Same-Turn Tool Conflict Rules (March 2025)
-
-When yield or done appear alongside other tools in the same assistant turn:
-- **yield + other tools** → other tools execute normally, yield returns success (no-op). Rationale: other tools will produce results immediately, no need to wait for queue messages.
-- **done + other tools** → other tools execute normally, done returns error "Cannot call done() alongside other tools". Rationale: agent must see other tools' results before finishing.
-- **yield/done alone** → existing behavior (yield waits, done completes).
-- Order within the turn does not matter — detection is based on presence, not position.
-
-Implementation: in provider-shared.ts, yield/done are detected before Promise.all. When other tools are present, synthetic ToolExecResults are returned instead of calling executeTool for yield/done. Only yield-alone triggers the loop-level pendingYieldToolCall pause.
-
-
-## Concurrent Background Bash Output File Collision (March 2025)
-
-**Bug**: `ulid().slice(0, 8)` for execId/bgId only captures timestamp chars (ULID first 10 chars = timestamp). Same-millisecond calls in Promise.all get identical 8-char prefix → shared output file paths → output corruption.
-
-**Fix**: Use full `ulid()` (26 chars) for execId and bgId. Full ULID includes 80 bits of randomness that monotonically increments within the same millisecond, guaranteeing uniqueness.
-
-## Restart Test Gotchas (March 2025)
-
-- **Concurrent bash + crash**: When two bash commands run in Promise.all and we crash before resolution, NEITHER tool_result gets written to JSONL — both become orphans with isError:true. Don't assume the "fast" command's result was persisted.
-- **End_turn implicit yield + timestamp prefix mismatch**: Live path sends queue messages as timestamped strings `[HH:MM:SS] content`, but JSONL resume reconstructs them as `[{type:"text", text:"content"}]` (array form, no timestamp). This causes prefix validation failure. Known limitation — disable prefix validation for tests involving consumed messages before crash during implicit yield.
-- **Double restart is safe**: autoResumeProjects + orphan cleanup are idempotent. Running twice (crash → restart → crash → restart) produces correct results — orphan tool_results are only written if not already present.
-
-
-## Per-Conversation Turn Queues in Mock API (March 2025)
-
-**Problem**: Parent and child agents share the same `ValidatingMockAPI` instance (via `agentProvider`). With a single turn queue, multi-turn instructions from parent and child would interfere — one agent consumes the other's turns.
-
-**Fix**: `conversationQueues: Map<string, SingleTurnInstruction[]>` keyed by conversation ID derived from the first user message content. Each conversation gets its own queue. Prefix validation is also per-conversation — only compares against previous requests from the same conversation.
-
-**Conversation key**: First user message text (first 200 chars). Stable across API calls because the first message never changes within a conversation.
-
-**Parent-child test flow**: Parent instruction is a multi-turn script. Child instruction JSON is embedded in `send_message` content → arrives as `task_message` XML → mock's `tryParseInstruction` finds embedded JSON via brace-counting. Each agent parses and queues turns independently under its own conversation key.
-
-**Key gotcha**: `create_task` returns `JSON.stringify(node)`, not a human-readable string. Capture regex must match JSON format: `"id":\\s*"([A-Z0-9]+)"` not `ID: ([A-Z0-9]+)`.
-
-**Yield multi-message timing**: `queue.wait()` resolves on first message, `drain()` runs immediately. Second message may not be enqueued yet. Tests should use sequential yield-wake cycles (yield → msg1 → wake → yield again → msg2 → wake) rather than assuming both messages arrive in one drain.
-
-
-## Mock Variable Substitution in Arrays (March 2025)
-
-`substituteObj` in mock-anthropic-api.ts now handles array values — previously `Array.isArray(val)` skipped substitution. Added `substituteArr` helper for recursive array substitution. Needed for tools like `reorder_tasks` that take array inputs with captured `$var` references.
-
-Also: `$var` substitution only applies to instruction `blocks` (tool inputs + text), NOT to `assert` rules (`contains`, `notContains`). Use static strings in asserts — check for command substrings or other known content instead of captured variables.
-
+**Gotchas**:
+- Concurrent bash + crash: NEITHER tool_result gets persisted — both become orphans.
+- End_turn implicit yield + timestamp mismatch: Live vs resume format differs. Disable prefix validation for these tests.
+- Double restart is safe: orphan cleanup is idempotent.
