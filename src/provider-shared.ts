@@ -59,6 +59,48 @@ export interface ToolExecResult {
 	pending?: PendingState;
 }
 
+// ── Transient error detection (provider-agnostic) ──
+
+/** Maximum number of outer retries when callAPI fails after exhausting its own retries. */
+const MAX_OUTER_RETRIES = 3;
+
+/** Default outer retry delay: exponential backoff starting at 30s. */
+function defaultOuterRetryDelay(attempt: number): number {
+	return Math.min(30000 * 2 ** attempt, 120000);
+}
+
+/**
+ * Detect transient API errors that the outer retry should catch.
+ * Provider-agnostic — checks error properties rather than SDK-specific class types.
+ * The inner retry (in each provider's callAPI) handles SDK-specific errors.
+ * The outer retry catches anything that slips through.
+ */
+export function isTransientAPIError(e: unknown): boolean {
+	if (!(e instanceof Error)) return false;
+	const status = (e as { status?: number }).status;
+	// Rate limit, overloaded, server errors (Anthropic SDK errors have .status)
+	if (
+		status === 429 ||
+		status === 529 ||
+		status === 500 ||
+		status === 502 ||
+		status === 503
+	)
+		return true;
+	// Check error message for transient patterns (OpenAI errors encode status in message)
+	const msg = e.message.toLowerCase();
+	if (msg.includes("rate limit") || msg.includes("overloaded")) return true;
+	// Connection errors
+	if (
+		msg.includes("econnrefused") ||
+		msg.includes("econnreset") ||
+		msg.includes("fetch failed") ||
+		msg.includes("failed to get api response")
+	)
+		return true;
+	return false;
+}
+
 /**
  * Execute a single tool via its handler.
  * ALL tools (built-in + orchestrator + external MCP) go through this single path.
@@ -653,6 +695,13 @@ export interface ProviderAdapter {
 	): number;
 
 	/**
+	 * Get the delay (in ms) before the outer retry of a failed API call.
+	 * Called when callAPI throws after exhausting its own internal retries.
+	 * Optional — defaults to exponential backoff (30s, 60s, 120s).
+	 */
+	getOuterRetryDelayMs?(attempt: number, error: unknown): number;
+
+	/**
 	 * Build the final AgentResult. Optional — default returns base fields.
 	 * Override to include provider-specific fields (e.g. Anthropic cache tokens).
 	 */
@@ -1152,35 +1201,61 @@ export async function* runProviderLoop(
 
 		turns++;
 
-		// ── Call provider API ──
-		const apiGen = adapter.callAPI({
-			model,
-			messages,
-			tools: allTools,
-			systemPrompt: request.systemPrompt ?? "",
-			maxTokens: DEFAULT_MAX_TOKENS,
-			signal: request.signal,
-			isCompacting: compactionPending,
-			isOrchestrator: request.isOrchestrator,
-		});
-
+		// ── Call provider API (with outer retry for transient errors) ──
+		// The adapter's callAPI has its own internal retry loop (e.g., 5 attempts).
+		// This outer retry catches errors that propagate after internal retries are
+		// exhausted, giving the agent a longer recovery window for persistent transient
+		// errors (rate limits during high load, prolonged outages).
 		let response: unknown;
-		let apiStep = await apiGen.next();
-		while (!apiStep.done) {
-			// Forward text_delta events from streaming — emit for broadcast
-			const streamEvent = apiStep.value;
-			if (streamEvent.type === "text_delta" && emit) {
-				emit({
-					type: "text_delta",
-					content: streamEvent.content,
-					taskId: "",
-					ts: Date.now(),
+		for (let outerAttempt = 0; ; outerAttempt++) {
+			try {
+				const apiGen = adapter.callAPI({
+					model,
+					messages,
+					tools: allTools,
+					systemPrompt: request.systemPrompt ?? "",
+					maxTokens: DEFAULT_MAX_TOKENS,
+					signal: request.signal,
+					isCompacting: compactionPending,
+					isOrchestrator: request.isOrchestrator,
 				});
+
+				let apiStep = await apiGen.next();
+				while (!apiStep.done) {
+					// Forward text_delta events from streaming — emit for broadcast
+					const streamEvent = apiStep.value;
+					if (streamEvent.type === "text_delta" && emit) {
+						emit({
+							type: "text_delta",
+							content: streamEvent.content,
+							taskId: "",
+							ts: Date.now(),
+						});
+					}
+					yield streamEvent;
+					apiStep = await apiGen.next();
+				}
+				response = apiStep.value;
+				break; // Success — exit retry loop
+			} catch (e) {
+				if (!isTransientAPIError(e) || outerAttempt >= MAX_OUTER_RETRIES) {
+					throw e; // Non-transient or retries exhausted — let it propagate
+				}
+				const delay = adapter.getOuterRetryDelayMs
+					? adapter.getOuterRetryDelayMs(outerAttempt, e)
+					: defaultOuterRetryDelay(outerAttempt);
+				const errMsg = e instanceof Error ? e.message : String(e);
+				const retryEvt: Event = {
+					type: "error",
+					taskId: "",
+					message: `API call failed (outer retry ${outerAttempt + 1}/${MAX_OUTER_RETRIES}, waiting ${Math.round(delay / 1000)}s): ${errMsg}`,
+					ts: Date.now(),
+				};
+				emit?.(retryEvt);
+				yield retryEvt;
+				await new Promise((r) => setTimeout(r, delay));
 			}
-			yield streamEvent;
-			apiStep = await apiGen.next();
 		}
-		response = apiStep.value;
 
 		// ── Process response ──
 		const usage = adapter.getTokenUsage(response);

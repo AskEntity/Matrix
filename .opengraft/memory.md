@@ -300,3 +300,22 @@ Two indicators of test quality — applies to ALL code, not just OpenGraft:
 ## Synthetic Event IDs
 
 All synthetic events written to JSONL must have proper ULID ids (never `id: ""`). Falsy id causes the event converter to materialize the event as an immediate user message instead of following the two-phase lifecycle. This applies to `findOrphanedBackgroundProcesses` and any future code that generates synthetic message events.
+
+
+## Outer API Retry (provider-shared.ts)
+
+The provider loop now has an outer retry around `adapter.callAPI()`. When callAPI throws after exhausting its internal retry loop (5 attempts), the outer retry catches transient errors and retries up to 3 times with exponential backoff (30s, 60s, 120s by default).
+
+- `isTransientAPIError()` — provider-agnostic detection via error `.status` property and message patterns. Works for both Anthropic SDK errors and OpenAI plain errors.
+- `getOuterRetryDelayMs` — optional adapter method to override retry delay (used in tests for 100ms instead of 30s).
+- Error events are emitted during outer retry so the user sees what is happening.
+
+## Mock API Error Injection
+
+`ValidatingMockAPI.injectError()` — injects transient errors on specific API request numbers:
+```typescript
+mockAPI.injectError({ onRequest: 2, error: "rate_limit", count: 1 });
+```
+Uses `TransientAPIError` (NOT Anthropic SDK classes) so the inner retry in callAPI does NOT recognize them as transient → throws immediately → outer retry catches them. This avoids 30s of inner retry delays in tests.
+
+Available error types: `rate_limit`, `overloaded`, `internal_server_error`, `connection_error`.
