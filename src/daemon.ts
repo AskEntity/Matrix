@@ -32,7 +32,6 @@ import { registerConfigRoutes } from "./daemon/routes/config.ts";
 import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
-import { runEventMigrations } from "./event-store.ts";
 import { findOrphanedBackgroundProcesses, hasPendingYield } from "./events.ts";
 import { persistMessage } from "./persistent-queue.ts";
 import { ProjectManager } from "./project-manager.ts";
@@ -390,7 +389,6 @@ if (import.meta.main) {
 	const {
 		app,
 		pm,
-		dataDir,
 		autoResumeProjects,
 		shutdown,
 		markReady,
@@ -440,13 +438,6 @@ if (import.meta.main) {
 	};
 	process.on("SIGTERM", handleShutdown);
 	process.on("SIGINT", handleShutdown);
-
-	// Run event migrations on JSONL files (transforms old formats at startup)
-	const sessionsDir = join(dataDir, "sessions");
-	const migrated = runEventMigrations(sessionsDir);
-	if (migrated > 0) {
-		console.log(`Migrated ${migrated} JSONL event file(s) to current format`);
-	}
 
 	// Auto-resume any orchestrations that were running before daemon restart
 	await autoResumeProjects();

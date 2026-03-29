@@ -4,12 +4,10 @@ import {
 	readdirSync,
 	readFileSync,
 	unlinkSync,
-	writeFileSync,
 } from "node:fs";
 import { appendFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Event } from "./events.ts";
-import { migrateQueueMessage } from "./message-queue.ts";
 import { ulid } from "./ulid.ts";
 
 /**
@@ -81,37 +79,13 @@ export class EventStore {
 		const events: Event[] = [];
 		for (const line of text.trim().split("\n")) {
 			if (!line) continue;
-			let event: Event;
 			try {
-				event = JSON.parse(line) as Event;
+				events.push(JSON.parse(line) as Event);
 			} catch {
 				console.warn(
 					`[EventStore] Skipping malformed JSONL line in session ${sessionId}`,
 				);
-				continue;
 			}
-			const raw = event as Record<string, unknown>;
-			// Backward compat: old JSONL files may not have taskId
-			if (!("taskId" in event) || event.taskId === undefined) {
-				raw.taskId = sessionId;
-			}
-			// Backward compat: old JSONL may be missing fields that are now required
-			if (event.type === "orchestration_started") {
-				if (!raw.provider) raw.provider = "unknown";
-				if (!raw.model) raw.model = "unknown";
-			}
-			if (event.type === "budget_exceeded") {
-				if (raw.costUsd === undefined) raw.costUsd = 0;
-				if (raw.budgetUsd === undefined) raw.budgetUsd = 0;
-			}
-			if (event.type === "clarification_requested") {
-				if (!raw.title) raw.title = (raw.question as string) ?? "";
-			}
-			// Backward compat: migrate old QueueMessage source names in message events
-			if (event.type === "message" && raw.body) {
-				raw.body = migrateQueueMessage(raw.body);
-			}
-			events.push(event);
 		}
 		return events;
 	}
@@ -371,48 +345,4 @@ export class EventStore {
 		all.sort((a, b) => a.ts - b.ts);
 		return all;
 	}
-}
-
-/**
- * Run event migrations on all JSONL files.
- * Migrations are idempotent — safe to re-run.
- *
- * Active migrations:
- * - Remove `tree_updated` events: old code versions persisted these ephemeral events.
- *   They cause UI state corruption when loaded from REST (stale/empty nodes arrays).
- */
-export function runEventMigrations(sessionsDir: string): number {
-	if (!existsSync(sessionsDir)) return 0;
-
-	let migrated = 0;
-	const files = readdirSync(sessionsDir).filter((f) =>
-		f.endsWith(".events.jsonl"),
-	);
-
-	for (const file of files) {
-		const filePath = join(sessionsDir, file);
-		const content = readFileSync(filePath, "utf-8");
-
-		// Check if file contains tree_updated events (fast check before parsing lines)
-		if (!content.includes('"tree_updated"')) continue;
-
-		const lines = content.split("\n");
-		const filtered = lines.filter((line) => {
-			if (!line.trim()) return true; // keep empty lines
-			if (!line.includes('"tree_updated"')) return true; // fast path
-			try {
-				const parsed = JSON.parse(line);
-				return parsed.type !== "tree_updated";
-			} catch {
-				return true; // keep unparseable lines
-			}
-		});
-
-		if (filtered.length < lines.length) {
-			writeFileSync(filePath, filtered.join("\n"));
-			migrated++;
-		}
-	}
-
-	return migrated;
 }

@@ -1,13 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { EventStore, runEventMigrations } from "./event-store.ts";
+import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 
 const TEST_DIR = join(import.meta.dir, "..", ".test-event-store");
@@ -737,84 +731,5 @@ describe("EventStore", () => {
 		const marker = targetEvents[3] as Extract<Event, { type: "fork_marker" }>;
 		expect(marker.targetTitle).toBeUndefined();
 		expect(marker.targetDescription).toBeUndefined();
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Migration tests
-// ---------------------------------------------------------------------------
-
-describe("runEventMigrations", () => {
-	test("returns 0 for nonexistent path", () => {
-		expect(runEventMigrations("/nonexistent/path")).toBe(0);
-	});
-
-	test("strips tree_updated events from JSONL files", () => {
-		const dir = join(TEST_DIR, "migration-test");
-		mkdirSync(dir, { recursive: true });
-		const filePath = join(dir, "test-session.events.jsonl");
-
-		// Write a JSONL file with mixed events including tree_updated
-		const lines = [
-			JSON.stringify({ type: "assistant_text", text: "hello", ts: 1 }),
-			JSON.stringify({ type: "tree_updated", nodes: [], ts: 2 }),
-			JSON.stringify({ type: "tool_call", name: "bash", ts: 3 }),
-			JSON.stringify({
-				type: "tree_updated",
-				nodes: [{ id: "abc" }],
-				ts: 4,
-			}),
-			JSON.stringify({ type: "tool_result", name: "bash", ts: 5 }),
-		];
-		writeFileSync(filePath, lines.join("\n"));
-
-		const migrated = runEventMigrations(dir);
-		expect(migrated).toBe(1);
-
-		// Verify tree_updated lines are removed
-		const content = readFileSync(filePath, "utf-8");
-		const remaining = content
-			.split("\n")
-			.filter((l) => l.trim())
-			.map((l) => JSON.parse(l));
-		expect(remaining).toHaveLength(3);
-		expect(remaining.every((e) => e.type !== "tree_updated")).toBe(true);
-		expect(remaining[0]?.type).toBe("assistant_text");
-		expect(remaining[1]?.type).toBe("tool_call");
-		expect(remaining[2]?.type).toBe("tool_result");
-	});
-
-	test("skips files without tree_updated events", () => {
-		const dir = join(TEST_DIR, "migration-clean");
-		mkdirSync(dir, { recursive: true });
-		const filePath = join(dir, "clean.events.jsonl");
-
-		const lines = [
-			JSON.stringify({ type: "assistant_text", text: "hello", ts: 1 }),
-			JSON.stringify({ type: "tool_call", name: "bash", ts: 2 }),
-		];
-		writeFileSync(filePath, lines.join("\n"));
-
-		const migrated = runEventMigrations(dir);
-		expect(migrated).toBe(0);
-
-		// Content unchanged
-		const content = readFileSync(filePath, "utf-8");
-		expect(content).toBe(lines.join("\n"));
-	});
-
-	test("is idempotent — running twice returns 0 on second run", () => {
-		const dir = join(TEST_DIR, "migration-idempotent");
-		mkdirSync(dir, { recursive: true });
-		const filePath = join(dir, "session.events.jsonl");
-
-		const lines = [
-			JSON.stringify({ type: "assistant_text", text: "hello", ts: 1 }),
-			JSON.stringify({ type: "tree_updated", nodes: [], ts: 2 }),
-		];
-		writeFileSync(filePath, lines.join("\n"));
-
-		expect(runEventMigrations(dir)).toBe(1);
-		expect(runEventMigrations(dir)).toBe(0); // no more tree_updated to remove
 	});
 });

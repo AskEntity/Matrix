@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	MessageQueue,
-	migrateQueueMessage,
-	type QueueMessage,
-} from "./message-queue.ts";
+import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 
 describe("MessageQueue", () => {
 	test("enqueue + drain: messages accumulate and drain returns them all", () => {
@@ -526,52 +522,5 @@ describe("MessageQueue", () => {
 			// biome-ignore lint/suspicious/noExplicitAny: testing runtime validation
 			q.enqueue({ source: "user", content: "no id at all" } as any),
 		).toThrow("QueueMessage must have a non-empty id");
-	});
-});
-
-describe("migrateQueueMessage", () => {
-	test("adds id to legacy messages without one", () => {
-		const result = migrateQueueMessage({
-			source: "child_complete",
-			taskId: "t1",
-			title: "test",
-			success: true,
-			output: "done",
-		});
-		expect(result.source).toBe("task_complete");
-		expect(result.id).toBeTruthy();
-		expect(typeof result.id).toBe("string");
-	});
-
-	test("preserves existing id on legacy messages", () => {
-		const result = migrateQueueMessage({
-			source: "child_complete",
-			id: "existing-id",
-			taskId: "t1",
-			title: "test",
-			success: true,
-			output: "done",
-		});
-		expect(result.source).toBe("task_complete");
-		expect(result.id).toBe("existing-id");
-	});
-
-	test("adds id to current-format messages without one", () => {
-		const result = migrateQueueMessage({
-			source: "user",
-			content: "hello",
-		});
-		expect(result.source).toBe("user");
-		expect(result.id).toBeTruthy();
-		expect(typeof result.id).toBe("string");
-	});
-
-	test("preserves existing id on current-format messages", () => {
-		const result = migrateQueueMessage({
-			source: "user",
-			id: "my-id",
-			content: "hello",
-		});
-		expect(result.id).toBe("my-id");
 	});
 });

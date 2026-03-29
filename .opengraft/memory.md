@@ -417,3 +417,15 @@ Most impactful: fix #1+#2+#3 (core type backbone)
 ## Worktree Path Format (updated March 2026)
 
 WorktreeManager now uses full taskId (not taskId.slice(0,8)) for both directory names (`.worktrees/${taskId}-${slug}`) and branch names (`og/${taskId}/${slug}`). This eliminates collision risk with concurrent ULIDs that share the same 8-char prefix within the same millisecond.
+
+## Backward Compat Code Deleted (Phase 1B)
+
+The following backward compat code has been removed — old JSONL and tree.json formats are no longer supported:
+- `migrateQueueMessage()` — old source names (child_complete, child_report, parent_update) no longer migrated
+- EventStore `read()` patches — no more auto-filling taskId, orchestration_started fields, clarification title, etc.
+- `runEventMigrations()` — no longer strips tree_updated events from JSONL at startup
+- `isStaleEphemeralEvent` / `FILTERED_EVENT_TYPES` — REST responses no longer filter stale ephemeral events
+- `normalizeEventForUI` wrapper — replaced by direct `stripEventForUI()` calls
+- Standalone `fork_marker` case in event-converter.ts — legacy JSONL path removed
+- `initRootNode()` orphan adoption — `TaskTracker.load()` requires `rootNodeId: string` in tree.json
+- Draft boolean migration and failCount undefined checks — old tree.json format not supported

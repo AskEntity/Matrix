@@ -15,33 +15,21 @@ export class TaskTracker {
 
 	constructor(private readonly treePath: string) {}
 
-	/** Load task tree from disk. Creates root node if missing (backward compat with old trees). */
+	/** Load task tree from disk. Creates root node for fresh projects. */
 	async load(): Promise<void> {
 		if (existsSync(this.treePath)) {
 			const raw = await readFile(this.treePath, "utf-8");
 			const data = JSON.parse(raw) as {
-				rootNodeId?: string | null;
-				nodes: (TaskNode & { draft?: boolean })[];
+				rootNodeId: string;
+				nodes: TaskNode[];
 			};
 			for (const node of data.nodes) {
-				// Backward compat: old nodes may lack failCount
-				if (node.failCount === undefined) node.failCount = 0;
-				// Migration: convert old draft boolean to status="draft"
-				if (node.draft) {
-					node.status = "draft";
-					delete node.draft;
-				}
 				this.nodes.set(node.id, node);
 			}
-			if (data.rootNodeId && this.nodes.has(data.rootNodeId)) {
-				this._rootNodeId = data.rootNodeId;
-			} else {
-				// Backward compat: old tree without root node — create one
-				this.initRootNode();
-			}
+			this._rootNodeId = data.rootNodeId;
 		} else {
 			// Fresh project — create root node
-			this.initRootNode();
+			this.createRootNode();
 		}
 	}
 
@@ -63,17 +51,10 @@ export class TaskTracker {
 		return this._rootNodeId;
 	}
 
-	/** Create root node and adopt any orphan top-level nodes. */
-	private initRootNode(): void {
-		const orphans = Array.from(this.nodes.values()).filter(
-			(n) => n.parentId === null,
-		);
+	/** Create root node for a fresh project. */
+	private createRootNode(): void {
 		const node = this.createNode("Orchestrator", "", null);
 		this._rootNodeId = node.id;
-		for (const orphan of orphans) {
-			orphan.parentId = node.id;
-			node.children.push(orphan.id);
-		}
 	}
 
 	/** Create a top-level task (direct child of the project). */
