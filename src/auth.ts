@@ -1,62 +1,50 @@
 /**
- * WebAuthn/Passkey authentication for remote access.
+ * Local secret-based authentication.
  *
- * Credentials stored in ~/.opengraft/auth.json.
- * JWT tokens issued after WebAuthn verification (stateless, survives daemon restarts).
+ * CLI is trust anchor — if you can read ~/.opengraft/auth.json, you're authenticated.
+ * JWT tokens issued via `og sign` (CLI) and exchanged for session tokens via POST /auth/exchange.
  * HMAC-SHA256 signing key auto-generated and persisted in auth.json.
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type {
-	AuthenticatorTransportFuture,
-	Base64URLString,
-} from "@simplewebauthn/server";
+import { ulid } from "./ulid.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-interface StoredCredential {
-	credentialID: Base64URLString;
-	publicKey: string; // base64url-encoded
-	counter: number;
-	transports?: AuthenticatorTransportFuture[];
-	createdAt: string;
-}
-
 interface AuthData {
-	credentials: StoredCredential[];
 	/** HMAC-SHA256 key for JWT signing, base64-encoded. Auto-generated on first use. */
 	jwtSecret?: string;
-	/** @deprecated — old session entries, kept for backward compat parsing only. */
-	sessions?: unknown[];
 }
 
 interface JWTPayload {
-	/** Credential ID that authenticated */
+	/** Subject — "cli" for CLI auto-auth, "login" for login tokens, "session" for web sessions */
 	sub: string;
 	/** Issued-at (seconds since epoch) */
 	iat: number;
 	/** Expiry (seconds since epoch) */
 	exp: number;
+	/** JWT ID — unique token ID for one-time login tokens */
+	jti?: string;
 }
 
-/** In-memory challenge store (short-lived, not persisted). */
-const challenges = new Map<string, { challenge: string; expiresAt: number }>();
-
-// ── Credential Storage ─────────────────────────────────────────────────────
+// ── Auth Data Storage ──────────────────────────────────────────────────────
 
 let authDataCache: AuthData | null = null;
 
 async function readAuthData(path: string): Promise<AuthData> {
 	if (authDataCache) return authDataCache;
 	try {
-		const data = JSON.parse(await readFile(path, "utf-8")) as Partial<AuthData>;
+		const raw = JSON.parse(await readFile(path, "utf-8")) as Record<
+			string,
+			unknown
+		>;
+		// Only keep jwtSecret — ignore legacy fields like credentials
 		authDataCache = {
-			credentials: data.credentials ?? [],
-			jwtSecret: data.jwtSecret,
+			jwtSecret: typeof raw.jwtSecret === "string" ? raw.jwtSecret : undefined,
 		};
 	} catch {
-		authDataCache = { credentials: [] };
+		authDataCache = {};
 	}
 	return authDataCache;
 }
@@ -64,88 +52,28 @@ async function readAuthData(path: string): Promise<AuthData> {
 async function writeAuthData(path: string, data: AuthData): Promise<void> {
 	authDataCache = data;
 	await mkdir(dirname(path), { recursive: true });
-	// Don't persist deprecated sessions field
-	const { sessions: _, ...clean } = data as AuthData & {
-		sessions?: unknown[];
-	};
-	await writeFile(path, JSON.stringify(clean, null, "\t"), "utf-8");
+	await writeFile(path, JSON.stringify(data, null, "\t"), "utf-8");
 }
 
-export async function getCredentials(
-	authPath: string,
-): Promise<StoredCredential[]> {
-	const data = await readAuthData(authPath);
-	return data.credentials;
-}
-
-export async function addCredential(
-	authPath: string,
-	credential: StoredCredential,
-): Promise<void> {
-	const data = await readAuthData(authPath);
-	data.credentials.push(credential);
-	await writeAuthData(authPath, data);
-}
-
-export async function updateCredentialCounter(
-	authPath: string,
-	credentialID: Base64URLString,
-	newCounter: number,
-): Promise<void> {
-	const data = await readAuthData(authPath);
-	const cred = data.credentials.find((c) => c.credentialID === credentialID);
-	if (cred) {
-		cred.counter = newCounter;
-		await writeAuthData(authPath, data);
-	}
-}
-
-export async function removeCredential(
-	authPath: string,
-	credentialID: Base64URLString,
-): Promise<boolean> {
-	const data = await readAuthData(authPath);
-	const before = data.credentials.length;
-	data.credentials = data.credentials.filter(
-		(c) => c.credentialID !== credentialID,
-	);
-	if (data.credentials.length === before) return false;
-	await writeAuthData(authPath, data);
-	return true;
-}
-
-export async function hasCredentials(authPath: string): Promise<boolean> {
-	const creds = await getCredentials(authPath);
-	return creds.length > 0;
-}
-
-// ── Challenge Management ───────────────────────────────────────────────────
-
-const CHALLENGE_TTL = 5 * 60 * 1000; // 5 minutes
-
-export function storeChallenge(key: string, challenge: string): void {
-	// Clean expired challenges
-	const now = Date.now();
-	for (const [k, v] of challenges) {
-		if (v.expiresAt < now) challenges.delete(k);
-	}
-	challenges.set(key, { challenge, expiresAt: now + CHALLENGE_TTL });
-}
-
-export function getAndRemoveChallenge(key: string): string | null {
-	const entry = challenges.get(key);
-	if (!entry) return null;
-	challenges.delete(key);
-	if (entry.expiresAt < Date.now()) return null;
-	return entry.challenge;
+/** Reset the in-memory auth data cache (for testing). */
+export function resetAuthDataCache(): void {
+	authDataCache = null;
 }
 
 // ── JWT Management ─────────────────────────────────────────────────────────
 
-const JWT_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const LOGIN_TTL_SECONDS = 5 * 60; // 5 minutes
+const CLI_TTL_SECONDS = 5 * 60; // 5 minutes
+
+/** Check whether auth.json has a jwtSecret (i.e., auth is initialized). */
+export async function hasJwtSecret(authPath: string): Promise<boolean> {
+	const data = await readAuthData(authPath);
+	return typeof data.jwtSecret === "string" && data.jwtSecret.length > 0;
+}
 
 /** Get or create the HMAC-SHA256 signing key. Persisted in auth.json. */
-async function getSigningKey(authPath: string): Promise<CryptoKey> {
+export async function getSigningKey(authPath: string): Promise<CryptoKey> {
 	const data = await readAuthData(authPath);
 
 	if (data.jwtSecret) {
@@ -172,21 +100,17 @@ async function getSigningKey(authPath: string): Promise<CryptoKey> {
 	return key;
 }
 
-/** Sign a JWT token for the given credential ID. */
-export async function signJWT(
+/**
+ * Sign a JWT token with the given claims.
+ * Used internally by the specific token generation functions.
+ */
+async function signJWTRaw(
 	authPath: string,
-	credentialID: string,
+	payload: JWTPayload,
 ): Promise<string> {
 	const key = await getSigningKey(authPath);
-	const now = Math.floor(Date.now() / 1000);
 
 	const header = { alg: "HS256", typ: "JWT" };
-	const payload: JWTPayload = {
-		sub: credentialID,
-		iat: now,
-		exp: now + JWT_TTL_SECONDS,
-	};
-
 	const headerB64 = toBase64Url(JSON.stringify(header));
 	const payloadB64 = toBase64Url(JSON.stringify(payload));
 	const signingInput = `${headerB64}.${payloadB64}`;
@@ -199,6 +123,60 @@ export async function signJWT(
 
 	const signatureB64 = uint8ArrayToBase64Url(new Uint8Array(signature));
 	return `${signingInput}.${signatureB64}`;
+}
+
+/**
+ * Sign a short-lived CLI auto-auth token (5min TTL).
+ * CLI attaches this to every HTTP request.
+ */
+export async function signCLIToken(authPath: string): Promise<string> {
+	const now = Math.floor(Date.now() / 1000);
+	return signJWTRaw(authPath, {
+		sub: "cli",
+		iat: now,
+		exp: now + CLI_TTL_SECONDS,
+	});
+}
+
+/**
+ * Sign a short-lived login token (5min TTL) with unique jti.
+ * Used by `og sign` — user pastes into web UI to exchange for session token.
+ */
+export async function signLoginToken(
+	authPath: string,
+	ttlSeconds?: number,
+): Promise<string> {
+	const now = Math.floor(Date.now() / 1000);
+	return signJWTRaw(authPath, {
+		sub: "login",
+		iat: now,
+		exp: now + (ttlSeconds ?? LOGIN_TTL_SECONDS),
+		jti: ulid(),
+	});
+}
+
+/**
+ * Sign a long-lived session token (30d TTL).
+ * Issued by the daemon after login token exchange.
+ */
+export async function signSessionToken(authPath: string): Promise<string> {
+	const now = Math.floor(Date.now() / 1000);
+	return signJWTRaw(authPath, {
+		sub: "session",
+		iat: now,
+		exp: now + SESSION_TTL_SECONDS,
+	});
+}
+
+/**
+ * Legacy signJWT for backward compatibility — generates a session token.
+ * @deprecated Use signSessionToken, signLoginToken, or signCLIToken instead.
+ */
+export async function signJWT(
+	authPath: string,
+	_credentialID: string,
+): Promise<string> {
+	return signSessionToken(authPath);
 }
 
 /** Verify a JWT token. Returns the payload if valid, null otherwise. */
@@ -255,6 +233,60 @@ export async function verifyJWT(
 	if (payload.exp <= now) return null;
 
 	return payload;
+}
+
+// ── JTI replay prevention ─────────────────────────────────────────────────
+
+/** In-memory set of used login token jtis. Entries auto-expire after 5 minutes. */
+const usedJtis = new Map<string, number>(); // jti → expiry timestamp (ms)
+
+const JTI_CLEANUP_INTERVAL = 60_000; // Clean expired entries every 60s
+let jtiCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+function ensureJtiCleanup(): void {
+	if (jtiCleanupTimer) return;
+	jtiCleanupTimer = setInterval(() => {
+		const now = Date.now();
+		for (const [jti, expiresAt] of usedJtis) {
+			if (expiresAt < now) usedJtis.delete(jti);
+		}
+		// Stop timer if no entries
+		if (usedJtis.size === 0 && jtiCleanupTimer) {
+			clearInterval(jtiCleanupTimer);
+			jtiCleanupTimer = null;
+		}
+	}, JTI_CLEANUP_INTERVAL);
+	// Don't keep the process alive just for cleanup
+	if (typeof jtiCleanupTimer === "object" && "unref" in jtiCleanupTimer) {
+		jtiCleanupTimer.unref();
+	}
+}
+
+/** Check if a jti has been used. If not, mark it as used (one-time). Returns true if unused (fresh). */
+export function consumeJti(jti: string): boolean {
+	// Clean expired entries inline (cheap)
+	const now = Date.now();
+	if (usedJtis.has(jti)) {
+		const expiresAt = usedJtis.get(jti);
+		if (expiresAt && expiresAt < now) {
+			usedJtis.delete(jti);
+		} else {
+			return false; // Already used
+		}
+	}
+	// Mark as used (expires after 5 minutes)
+	usedJtis.set(jti, now + 5 * 60 * 1000);
+	ensureJtiCleanup();
+	return true;
+}
+
+/** Clear used JTI tracking (for testing). */
+export function clearUsedJtis(): void {
+	usedJtis.clear();
+	if (jtiCleanupTimer) {
+		clearInterval(jtiCleanupTimer);
+		jtiCleanupTimer = null;
+	}
 }
 
 // ── Base64/Base64URL helpers ───────────────────────────────────────────────

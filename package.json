@@ -22,8 +22,6 @@
 	"dependencies": {
 		"@anthropic-ai/sdk": "^0.78.0",
 		"@modelcontextprotocol/sdk": "^1.27.1",
-		"@simplewebauthn/browser": "^13.3.0",
-		"@simplewebauthn/server": "^13.3.0",
 		"hono": "^4.12.5",
 		"pinyin-pro": "^3.28.0",
 		"react": "^19.2.4",

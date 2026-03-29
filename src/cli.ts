@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { hasJwtSecret, signCLIToken, signLoginToken } from "./auth.ts";
 import type { AuthGroup, OpenGraftConfig } from "./config.ts";
 import {
 	loadGlobalConfig,
@@ -17,13 +19,34 @@ const _pkg = JSON.parse(
 const VERSION = _pkg.version;
 
 const DAEMON_URL = process.env.OG_DAEMON_URL ?? "http://localhost:7433";
+const AUTH_JSON_PATH = join(homedir(), ".opengraft", "auth.json");
+
+/**
+ * Generate a short-lived CLI JWT for auto-auth.
+ * Returns null if auth.json has no jwtSecret (auth not initialized).
+ */
+async function getCLIToken(): Promise<string | null> {
+	try {
+		if (!(await hasJwtSecret(AUTH_JSON_PATH))) return null;
+		return await signCLIToken(AUTH_JSON_PATH);
+	} catch {
+		return null;
+	}
+}
 
 async function api(path: string, options?: RequestInit): Promise<Response> {
+	const token = await getCLIToken();
+	const headers: Record<string, string> = {
+		"Content-Type": "application/json",
+	};
+	if (token) {
+		headers.Authorization = `Bearer ${token}`;
+	}
 	return fetch(`${DAEMON_URL}${path}`, {
 		...options,
 		headers: {
-			"Content-Type": "application/json",
-			...options?.headers,
+			...headers,
+			...(options?.headers as Record<string, string> | undefined),
 		},
 	});
 }
@@ -576,13 +599,14 @@ async function watchProject(projectId: string): Promise<void> {
 
 		abortController = new AbortController();
 		try {
-			const res = await fetch(
-				`${DAEMON_URL}/events?projectId=${encodeURIComponent(projectId)}`,
-				{
-					signal: abortController.signal,
-					headers: { Accept: "text/event-stream" },
-				},
-			);
+			const token = await getCLIToken();
+			const sseUrl = token
+				? `${DAEMON_URL}/events?projectId=${encodeURIComponent(projectId)}&token=${encodeURIComponent(token)}`
+				: `${DAEMON_URL}/events?projectId=${encodeURIComponent(projectId)}`;
+			const res = await fetch(sseUrl, {
+				signal: abortController.signal,
+				headers: { Accept: "text/event-stream" },
+			});
 
 			if (!res.ok || !res.body) {
 				throw new Error(`SSE connection failed: ${res.status}`);
@@ -1156,6 +1180,52 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 	}
 }
 
+async function handleSign(args: string[]): Promise<void> {
+	// Parse --ttl flag
+	let ttlStr: string | undefined;
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--ttl" && i + 1 < args.length) {
+			ttlStr = args[++i] as string;
+		}
+	}
+
+	// Parse TTL string (e.g., "5m", "1h", "7d", "30d")
+	let ttlSeconds: number | undefined;
+	if (ttlStr) {
+		const match = ttlStr.match(/^(\d+)(s|m|h|d)$/);
+		if (!match) {
+			console.error(
+				'Invalid TTL format. Use: <number><unit> where unit is s/m/h/d (e.g., "5m", "7d")',
+			);
+			process.exit(1);
+		}
+		const [, numStr, unit] = match as [string, string, string];
+		const num = Number.parseInt(numStr, 10);
+		const multiplier =
+			unit === "s" ? 1 : unit === "m" ? 60 : unit === "h" ? 3600 : 86400;
+		ttlSeconds = num * multiplier;
+	}
+
+	try {
+		if (!(await hasJwtSecret(AUTH_JSON_PATH))) {
+			// Initialize auth.json with a new secret
+			const { getSigningKey } = await import("./auth.ts");
+			await getSigningKey(AUTH_JSON_PATH);
+		}
+		const token = await signLoginToken(AUTH_JSON_PATH, ttlSeconds);
+		console.log(token);
+	} catch (err) {
+		console.error(
+			`Error: ${err instanceof Error ? err.message : "Failed to generate token"}`,
+		);
+		console.error(
+			`Make sure ${AUTH_JSON_PATH} exists and is readable, or run any og command to auto-create it.`,
+		);
+		process.exit(1);
+	}
+}
+
 async function handleHealth(): Promise<void> {
 	try {
 		const res = await api("/health");
@@ -1493,6 +1563,9 @@ switch (command) {
 	case "health":
 		await handleHealth();
 		break;
+	case "sign":
+		await handleSign(args);
+		break;
 	case "cost":
 		await handleCost(args);
 		break;
@@ -1563,6 +1636,11 @@ switch (command) {
 		);
 		console.log("    config auth list         List auth groups");
 		console.log("    config auth remove <name>  Remove auth group");
+		console.log("");
+		console.log("  Auth");
+		console.log(
+			"    sign [--ttl <duration>]  Generate login token for web UI (default 5min)",
+		);
 		console.log("");
 		console.log("  Other");
 		console.log("    health                   Check daemon health");

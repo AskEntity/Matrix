@@ -1,155 +1,95 @@
-import type { PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/browser";
-import {
-	browserSupportsWebAuthn,
-	startAuthentication,
-} from "@simplewebauthn/browser";
 import { useCallback, useState } from "react";
 import { setToken } from "../auth.ts";
 
 interface LoginPageProps {
 	onAuthenticated: () => void;
-	hasCredentials: boolean;
-	enforced: boolean;
 }
 
-export function LoginPage({
-	onAuthenticated,
-	hasCredentials,
-	enforced,
-}: LoginPageProps) {
+export function LoginPage({ onAuthenticated }: LoginPageProps) {
+	const [tokenInput, setTokenInput] = useState("");
 	const [status, setStatus] = useState("");
 	const [isError, setIsError] = useState(false);
 	const [loading, setLoading] = useState(false);
 
 	const handleLogin = useCallback(async () => {
-		if (!browserSupportsWebAuthn()) {
-			setStatus("Your browser does not support WebAuthn/Passkeys");
+		const trimmed = tokenInput.trim();
+		if (!trimmed) {
+			setStatus("Please paste a login token");
 			setIsError(true);
 			return;
 		}
 
 		setLoading(true);
-		setStatus("Starting authentication...");
+		setStatus("");
 		setIsError(false);
 
 		try {
-			// Get authentication options
-			const optRes = await fetch("/auth/login/options", { method: "POST" });
-			if (!optRes.ok) {
-				const err = await optRes
-					.json()
-					.catch(() => ({ error: "Failed to get options" }));
-				throw new Error(
-					(err as { error?: string }).error ?? "Failed to get options",
-				);
-			}
-			const options =
-				(await optRes.json()) as PublicKeyCredentialRequestOptionsJSON;
-
-			// Start WebAuthn authentication
-			const credential = await startAuthentication({ optionsJSON: options });
-
-			// Verify with server
-			const verifyRes = await fetch("/auth/login/verify", {
+			const res = await fetch("/auth/exchange", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(credential),
+				body: JSON.stringify({ token: trimmed }),
 			});
-			if (!verifyRes.ok) {
-				const err = await verifyRes
+
+			if (!res.ok) {
+				const err = (await res
 					.json()
-					.catch(() => ({ error: "Verification failed" }));
-				throw new Error(
-					(err as { error?: string }).error ?? "Verification failed",
-				);
+					.catch(() => ({ error: "Login failed" }))) as {
+					error?: string;
+				};
+				throw new Error(err.error ?? "Login failed");
 			}
 
-			const result = (await verifyRes.json()) as {
-				verified: boolean;
-				token?: string;
-			};
-			if (result.verified && result.token) {
+			const result = (await res.json()) as { token?: string };
+			if (result.token) {
 				setToken(result.token);
 				setStatus("Authenticated!");
 				setIsError(false);
 				onAuthenticated();
 			} else {
-				throw new Error("Verification failed");
+				throw new Error("No session token received");
 			}
 		} catch (err) {
-			setStatus(err instanceof Error ? err.message : "Authentication failed");
+			setStatus(err instanceof Error ? err.message : "Login failed");
 			setIsError(true);
 		} finally {
 			setLoading(false);
 		}
-	}, [onAuthenticated]);
+	}, [tokenInput, onAuthenticated]);
 
-	const handleRegister = useCallback(async () => {
-		setLoading(true);
-		setStatus("");
-		try {
-			const { startRegistration } = await import("@simplewebauthn/browser");
-			const optsRes = await fetch("/auth/register/options", {
-				method: "POST",
-			});
-			if (!optsRes.ok) throw new Error("Failed to get options");
-			const opts = await optsRes.json();
-			const result = await startRegistration({ optionsJSON: opts });
-			const verifyRes = await fetch("/auth/register/verify", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(result),
-			});
-			if (!verifyRes.ok) throw new Error("Verification failed");
-			setStatus("Passkey registered! You can now sign in.");
-			setIsError(false);
-		} catch (e) {
-			setStatus(e instanceof Error ? e.message : "Registration failed");
-			setIsError(true);
-		} finally {
-			setLoading(false);
-		}
-	}, []);
+	const handleKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			if (e.key === "Enter" && !loading) {
+				handleLogin();
+			}
+		},
+		[handleLogin, loading],
+	);
 
 	return (
 		<div className="og-login-page">
 			<div className="og-login-card">
 				<div className="og-login-icon">🔐</div>
 				<h1 className="og-login-title">OpenGraft</h1>
-				{hasCredentials ? (
-					<>
-						<p className="og-login-subtitle">
-							Authenticate with your passkey to continue
-						</p>
-						<button
-							type="button"
-							className="og-login-btn"
-							onClick={handleLogin}
-							disabled={loading}
-						>
-							{loading ? "Authenticating..." : "Sign in with Passkey"}
-						</button>
-					</>
-				) : !enforced ? (
-					<>
-						<p className="og-login-subtitle">
-							No passkeys registered. Register one to secure access.
-						</p>
-						<button
-							type="button"
-							className="og-login-btn"
-							onClick={handleRegister}
-							disabled={loading}
-						>
-							{loading ? "Registering..." : "Register Passkey"}
-						</button>
-					</>
-				) : (
-					<p className="og-login-subtitle">
-						No passkeys registered. Disable enforcement to register a new
-						passkey, or use the admin port.
-					</p>
-				)}
+				<p className="og-login-subtitle">
+					Run <code>og sign</code> in your terminal, then paste the token below.
+				</p>
+				<input
+					type="password"
+					className="og-login-input"
+					placeholder="Paste login token here"
+					value={tokenInput}
+					onChange={(e) => setTokenInput(e.target.value)}
+					onKeyDown={handleKeyDown}
+					disabled={loading}
+				/>
+				<button
+					type="button"
+					className="og-login-btn"
+					onClick={handleLogin}
+					disabled={loading || !tokenInput.trim()}
+				>
+					{loading ? "Verifying..." : "Login"}
+				</button>
 				{status && (
 					<div
 						className={`og-login-status ${isError ? "og-login-status-error" : "og-login-status-ok"}`}
