@@ -319,3 +319,18 @@ mockAPI.injectError({ onRequest: 2, error: "rate_limit", count: 1 });
 Uses `TransientAPIError` (NOT Anthropic SDK classes) so the inner retry in callAPI does NOT recognize them as transient → throws immediately → outer retry catches them. This avoids 30s of inner retry delays in tests.
 
 Available error types: `rate_limit`, `overloaded`, `internal_server_error`, `connection_error`.
+
+
+## Auth Simplification (March 2026)
+
+Replaced WebAuthn/Passkey auth with local secret-based auth:
+- CLI is trust anchor — `~/.opengraft/auth.json` has `jwtSecret` (HMAC-SHA256)
+- CLI auto-auth: every HTTP request gets short-lived JWT (5min TTL) via `signCLIToken()`
+- `og sign` → generates login token (5min, with jti) → user pastes into web UI
+- Web UI: POST /auth/exchange with login token → gets session token (30d)
+- JTI replay prevention: in-memory Set with 5min TTL, auto-cleanup
+- Rate limiting on /auth/exchange: 5 failures/min/IP
+- Removed `@simplewebauthn/server` and `@simplewebauthn/browser` dependencies
+- auth.json backward compat: legacy `credentials` field ignored if present
+- `hasJwtSecret()` checks existence WITHOUT auto-creating (unlike `getSigningKey()` which auto-creates)
+- Biome flags functions starting with `use` as React hooks — renamed `useJti` to `consumeJti`

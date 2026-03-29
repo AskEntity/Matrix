@@ -84,10 +84,6 @@ function AppInner() {
 	const [authState, setAuthState] = useState<
 		"loading" | "authenticated" | "login"
 	>("loading");
-	const [authInfo, setAuthInfo] = useState<{
-		enforced: boolean;
-		hasCredentials: boolean;
-	}>({ enforced: false, hasCredentials: false });
 
 	const handleLogout = useCallback(async () => {
 		try {
@@ -102,23 +98,13 @@ function AppInner() {
 	useEffect(() => {
 		authFetch("/auth/status")
 			.then((r) => r.json())
-			.then(
-				(data: {
-					enforced?: boolean;
-					hasCredentials?: boolean;
-					authenticated?: boolean;
-				}) => {
-					setAuthInfo({
-						enforced: data.enforced ?? false,
-						hasCredentials: data.hasCredentials ?? false,
-					});
-					if (data.authenticated) {
-						setAuthState("authenticated");
-					} else {
-						setAuthState("login");
-					}
-				},
-			)
+			.then((data: { enabled?: boolean; authenticated?: boolean }) => {
+				if (data.authenticated) {
+					setAuthState("authenticated");
+				} else {
+					setAuthState("login");
+				}
+			})
 			.catch(() => {
 				// If auth endpoint fails, assume no auth needed (backward compatible)
 				setAuthState("authenticated");
@@ -137,13 +123,7 @@ function AppInner() {
 	}
 
 	if (authState === "login") {
-		return (
-			<LoginPage
-				hasCredentials={authInfo.hasCredentials}
-				enforced={authInfo.enforced}
-				onAuthenticated={() => setAuthState("authenticated")}
-			/>
-		);
+		return <LoginPage onAuthenticated={() => setAuthState("authenticated")} />;
 	}
 
 	return <AuthenticatedApp onLogout={handleLogout} />;

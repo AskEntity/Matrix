@@ -3489,6 +3489,36 @@ button.og-tool-card-header:hover {
 	line-height: 1.4;
 }
 
+.og-login-input {
+	width: 100%;
+	padding: 0.6rem 0.8rem;
+	border: 1px solid var(--og-border);
+	border-radius: 6px;
+	background: var(--og-bg);
+	color: var(--og-text);
+	font-size: 0.875rem;
+	font-family: var(--og-mono, monospace);
+	margin-bottom: 0.75rem;
+	box-sizing: border-box;
+}
+
+.og-login-input:focus {
+	outline: none;
+	border-color: var(--og-accent);
+}
+
+.og-login-input::placeholder {
+	color: var(--og-text-dim);
+}
+
+.og-login-subtitle code {
+	background: var(--og-bg);
+	padding: 0.15rem 0.4rem;
+	border-radius: 4px;
+	font-size: 0.85rem;
+	font-family: var(--og-mono, monospace);
+}
+
 .og-login-btn {
 	display: inline-block;
 	padding: 0.75rem 1.5rem;
