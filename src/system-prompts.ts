@@ -132,6 +132,10 @@ If a code path only runs during a specific lifecycle event (startup, shutdown, r
 through that actual scenario — not via unit mocks that bypass the real path. Mocks that skip the real
 lifecycle give false confidence.
 
+**3. Expect failures**: Test failures are GOOD — they prove your tests work. If you write or modify tests
+and never see a failure during the process, something is wrong. TDD means: write test → see it FAIL →
+fix code → see it PASS. If you skip the "see it fail" step, you don't know if the test actually tests anything.
+
 ## Debugging
 - When stuck: add targeted console.log/debug output to isolate the issue. Trust the logs.
 - Identify which layer has the bug → add logs → reproduce → isolate → fix → remove debug logs.
