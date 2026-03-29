@@ -348,17 +348,67 @@ export function createOrchestratorTools(
 					.describe(
 						"Include closed tasks in the result. Default false — closed tasks are hidden to reduce noise.",
 					),
+				include_details: z
+					.boolean()
+					.optional()
+					.describe(
+						"Include full details (description, branch, worktreePath, color, costUsd, etc.) for each node. Default false — returns only id, title, status, children, parentId.",
+					),
 			},
-			async ({ include_closed }) => {
+			async ({ include_closed, include_details }) => {
 				let nodes = tracker.allNodes();
 				if (!include_closed) {
 					nodes = nodes.filter((n) => n.status !== "closed");
 				}
+				const result = include_details
+					? nodes.map(
+							({ session: _session, message: _message, ...rest }) => rest,
+						)
+					: nodes.map((n) => ({
+							id: n.id,
+							title: n.title,
+							status: n.status,
+							children: n.children,
+							parentId: n.parentId,
+						}));
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: JSON.stringify({ nodes }, null, 2),
+							text: JSON.stringify({ nodes: result }, null, 2),
+						},
+					],
+				};
+			},
+		),
+
+		tool(
+			"get_task",
+			"Get a single task's full details including description. Use when you need to read a specific task's description or other detailed fields.",
+			{
+				taskId: z
+					.string()
+					.describe("Task node ID (or unique prefix, min 8 chars)"),
+			},
+			async ({ taskId }) => {
+				const node = tracker.get(taskId);
+				if (!node) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Task not found: ${taskId}`,
+							},
+						],
+						isError: true,
+					};
+				}
+				const { session: _session, message: _message, ...rest } = node;
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify(rest, null, 2),
 						},
 					],
 				};
