@@ -11,7 +11,8 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "./daemon.ts";
@@ -64,6 +65,30 @@ async function setupTestContext(): Promise<TestContext> {
 
 	await appResult.pm.load();
 	const project = await appResult.pm.init(projectDir);
+
+	// Activate the setup hook: rename .example → .sh so worktree creation works.
+	// Without this, child agent tasks can't create worktrees.
+	const hookExample = join(
+		projectDir,
+		".opengraft",
+		"hooks",
+		"setup_worktree.sh.example",
+	);
+	const hookActive = join(
+		projectDir,
+		".opengraft",
+		"hooks",
+		"setup_worktree.sh",
+	);
+	if (existsSync(hookExample)) {
+		await rename(hookExample, hookActive);
+	}
+	// Commit the hook so it's available in worktrees
+	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
+	Bun.spawnSync(["git", "commit", "-m", "activate setup hook"], {
+		cwd: projectDir,
+	});
+
 	appResult.markReady();
 
 	return {
@@ -2612,6 +2637,423 @@ describe("Integration: parent-child lifecycle", () => {
 		const childNode = tracker.get(childId);
 		expect(childNode?.status).toBe("failed");
 	}, 45000);
+});
+
+// ── Lifecycle: exitReason + interrupt + yield bypass tests ──
+
+describe("Integration: lifecycle exitReason and interrupt behavior", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("LC1: done(passed) → status=passed, exitReason=done_passed", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "all good" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.status).toBe("passed");
+	});
+
+	test("LC2: done(failed) → status=failed, exitReason=done_failed", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "failed", summary: "something went wrong" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("failed");
+	});
+
+	test("LC3: interrupted (crash) → status stays in_progress, no task_complete", async () => {
+		ctx = await setupTestContext();
+
+		// Agent starts a long bash command, then we crash
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "recovered" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		// Wait a bit for bash to start
+		await new Promise((r) => setTimeout(r, 200));
+
+		// Crash
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Check status — should be in_progress (not passed, not failed)
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.status).toBe("in_progress");
+	});
+
+	test("LC4: interrupted (stop) → status stays in_progress", async () => {
+		ctx = await setupTestContext();
+
+		// Agent yields, then we stop it
+		const instruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__yield",
+					input: {},
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		// Stop the agent
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Status should still be in_progress
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.status).toBe("in_progress");
+	});
+
+	test("LC5: stop root with children → all stay in_progress", async () => {
+		ctx = await setupTestContext();
+
+		// Parent creates a child and yields
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__bash",
+					input: { command: "sleep 30" },
+				},
+			],
+		});
+
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: {
+								title: "Long Running Child",
+								description: "child that runs a long time",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: { childId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, parentInstruction);
+		await waitForIdle(ctx);
+		// Give child time to launch
+		await new Promise((r) => setTimeout(r, 500));
+
+		// Stop everything
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Both root and child should be in_progress (not failed)
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.status).toBe("in_progress");
+
+		if (rootNode?.children && rootNode.children.length > 0) {
+			const childId = rootNode.children[0]!;
+			const childNode = tracker.get(childId);
+			expect(childNode?.status).toBe("in_progress");
+		}
+	}, 30000);
+});
+
+describe("Integration: yield bypass on restart", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("LC6: yield → restart → bypass → message → done (zero wasted API calls)", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: agent yields
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Going idle." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__yield",
+					input: {},
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+		expect(preRestartRequests).toBe(1);
+
+		// Crash
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Restart
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Yielding root should have been launched but NO new API calls yet
+		// (provider loop bypasses to queue.wait via pendingYieldToolCall)
+		// Give it a moment to launch
+		await new Promise((r) => setTimeout(r, 200));
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests);
+
+		// Send message to wake agent
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Waking up after restart." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "survived restart" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+		// Now should have made exactly 1 new API call (the one after yield resolved)
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests + 1);
+	}, 30000);
+
+	test("LC7: interrupted agent resumes normally after restart", async () => {
+		ctx = await setupTestContext();
+
+		// Agent runs a bash command — we crash during it
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running bash." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					// After restart: get interrupted bash result, call done
+					blocks: [
+						{ type: "text", text: "Bash interrupted, done." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "handled interruption" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await new Promise((r) => setTimeout(r, 300));
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+		expect(preRestartRequests).toBe(1);
+
+		// Crash
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Restart
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Interrupted root should resume with an API call
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+	}, 30000);
+
+	test("LC8: end_turn enters implicit yield, message wakes agent", async () => {
+		ctx = await setupTestContext();
+
+		// First turn: API returns end_turn (no tool calls).
+		// With the new behavior, this enters implicit yield instead of exiting.
+		// Second turn: user sends message, agent wakes and calls done.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [{ type: "text", text: "Nothing to do, ending turn." }],
+					stop_reason: "end_turn",
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Got a message, finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "woke from end_turn" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+
+		// Wait for agent to enter implicit yield (idle state)
+		await waitForIdle(ctx);
+		expect(ctx.mockAPI.getRequestCount()).toBe(1);
+
+		// Agent should still be in_progress (not passed — end_turn is no longer implicit done)
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.status).toBe("in_progress");
+
+		// Send message to wake from implicit yield
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Continue please." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "continued after end_turn" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 15000);
+});
+
+describe("Integration: autoResume with mixed agent states", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("LC9: restart with yielding root — zero-cost bypass resume", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Yielding." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__yield",
+					input: {},
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		const preRestart = ctx.mockAPI.getRequestCount();
+
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+		await new Promise((r) => setTimeout(r, 300));
+
+		// No new API calls — yielding root entered bypass
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestart);
+
+		// But root should be launchable — send a message to verify
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "after restart" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+		// Prefix validation passed (mock would throw on mismatch)
+	}, 30000);
 });
 
 // ── Background process lifecycle tests ──

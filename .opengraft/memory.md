@@ -372,3 +372,8 @@ Already works as-is — `pendingYieldToolCall` at TOP of while(true), before any
 ### AbortSignal passthrough
 Now passed to Anthropic SDK `stream()` and OpenAI `fetch()` — stop during AI generation aborts immediately.
 
+
+## Integration Test: setup_worktree.sh in setupTestContext
+
+Parent-child integration tests were silently broken because setupTestContext didn't activate the setup_worktree.sh hook. ensureChildAgentRunning → WorktreeManager.create() → runHook() threw 'Missing setup_worktree.sh' but the error was swallowed by the .catch() in deliverMessage. Fix: rename .example → .sh after pm.init() and commit it.
+
