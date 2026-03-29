@@ -468,3 +468,39 @@ Implementation: in provider-shared.ts, yield/done are detected before Promise.al
 
 Also: `$var` substitution only applies to instruction `blocks` (tool inputs + text), NOT to `assert` rules (`contains`, `notContains`). Use static strings in asserts — check for command substrings or other known content instead of captured variables.
 
+
+
+## Mutation Testing Results (March 2025)
+
+15 mutations tested across provider-shared.ts, tools/bash.ts, events.ts, daemon/agent-lifecycle.ts, daemon.ts.
+
+**Caught (11/15)**:
+- M3: Skip emitting tool_result events → 5 tests fail
+- M4: Skip queue drain on resume → 41 tests fail
+- M5: Duplicate messages.push → 25 tests fail
+- M6: Remove unconsumed message recovery → 2 tests fail (Restart F, J)
+- M7: Remove dedup logic (unconsumedIds) → 1 test fails (Restart G)
+- M8: Revert ulid() to ulid().slice(0,8) → 3 tests fail
+- M9: Skip bg_complete notification → 4 tests fail
+- M10: Disable foreground timeout → 2 tests fail (BG1, BG6)
+- M11: Remove hasPendingYield check → 1 test fails (Restart H)
+- M14: Swap unconsumed/persistent order → 2 tests fail (Restart F, G)
+- M15: Skip orphan tool_result writing (all 3 paths) → 5 tests fail
+
+**Gaps found & fixed (3/15)**:
+- M1: Yield no-op when yield+other tools → fixed by adding `contains: "yield() ignored"` assert
+- M2: Done error when done+other tools → fixed by adding `getRequestCount() >= 2` check
+- M12: findOrphanedBackgroundProcesses returning empty → fixed by adding Restart M test
+
+**Not caught but acceptable (1/15)**:
+- M13: Child unconsumed message recovery → mirrors root path (M6), symmetric code, low risk
+- M15 (launchAgent only): redundant with autoResumeProjects path — defense in depth
+
+## Bug Found: Synthetic bg_complete id="" Causes Consecutive User Messages
+
+When `findOrphanedBackgroundProcesses` writes synthetic `background_complete` to JSONL with `id: ""`, `walkEventsToMessages` materializes it as an immediate user message. If preceded by an orphan `tool_result` (also user role), this creates consecutive user messages → API 400 on resume.
+
+**Root cause**: `id: ""` events are not deferred by the event converter. They become immediate user messages.
+
+**Fix needed**: Synthetic bg_complete events should have a proper ID (like `ulid()`) so they get deferred and materialized at `messages_consumed`, consistent with other message events. This is an architectural issue — bg_complete should follow the same two-phase lifecycle as other messages.
+

@@ -1584,6 +1584,112 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
 	}, 30000);
+
+	test("Restart M: bg orphan cleanup — synthetic background_complete written to JSONL", async () => {
+		ctx = await setupTestContext();
+
+		// Scenario: bg process started (run_in_background) → foreground bash → crash.
+		// On restart, findOrphanedBackgroundProcesses writes synthetic background_complete
+		// to JSONL for the bg process that never completed.
+		//
+		// NOTE: Full lifecycle (crash → resume → done) is blocked by a known bug:
+		// synthetic bg_complete has id="" which walkEventsToMessages materializes as an
+		// immediate user message, causing consecutive user messages (orphan tool_result +
+		// bg_complete both user role) → API 400. bg_complete should have a proper ID.
+		// This test verifies the JSONL cleanup; the resume bug needs a separate fix.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Starting bg." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 60", run_in_background: true },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Foreground bash." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for foreground bash to start (API call 2)
+		const start = Date.now();
+		while (ctx.mockAPI.getRequestCount() < 2 && Date.now() - start < 5000) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBe(2);
+		await new Promise((r) => setTimeout(r, 200));
+
+		const rootNodeId = await getRootNodeId(ctx);
+
+		// Verify bg started (tool_result with backgroundId in JSONL)
+		const preEvents = readSessionEvents(ctx, rootNodeId);
+		expect(
+			preEvents.some((e) => e.type === "tool_result" && e.backgroundId),
+		).toBe(true);
+
+		// No bg_complete before crash
+		expect(
+			preEvents.filter(
+				(e) =>
+					e.type === "message" &&
+					e.body &&
+					typeof e.body === "object" &&
+					"source" in e.body &&
+					(e.body as { source: string }).source === "background_complete",
+			).length,
+		).toBe(0);
+
+		// === CRASH ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// After autoResumeProjects, JSONL should have synthetic background_complete
+		const postEvents = readSessionEvents(ctx, rootNodeId);
+		const bgCompleteEvents = postEvents.filter(
+			(e) =>
+				e.type === "message" &&
+				e.body &&
+				typeof e.body === "object" &&
+				"source" in e.body &&
+				(e.body as { source: string }).source === "background_complete",
+		);
+		expect(bgCompleteEvents.length).toBe(1);
+		expect(
+			(bgCompleteEvents[0] as { body: { stderr: string } }).body.stderr,
+		).toContain("daemon restart");
+
+		// Verify the bg_complete's commandId matches the bg process that was started
+		const bgToolResult = preEvents.find(
+			(e) => e.type === "tool_result" && e.backgroundId,
+		);
+		const bgId =
+			bgToolResult?.type === "tool_result"
+				? (bgToolResult.backgroundId ?? "")
+				: "";
+		expect(bgId).toBeTruthy();
+		const bgCompleteCommandId = (
+			bgCompleteEvents[0] as { body: { commandId: string } }
+		).body.commandId;
+		expect(bgCompleteCommandId).toBe(bgId);
+	}, 30000);
 });
 
 // ── Same-turn tool conflict tests ──
@@ -1627,7 +1733,12 @@ describe("Integration: same-turn tool conflicts", () => {
 							contains: "yield_bash_test",
 							isError: false,
 						},
-						{ block: 1, type: "tool_result", isError: false },
+						{
+							block: 1,
+							type: "tool_result",
+							isError: false,
+							contains: "yield() ignored",
+						},
 					],
 					blocks: [
 						{ type: "text", text: "Both tools handled." },
@@ -1675,7 +1786,12 @@ describe("Integration: same-turn tool conflicts", () => {
 				{
 					assert: [
 						{ length: 2 },
-						{ block: 0, type: "tool_result", isError: false },
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "yield() ignored",
+						},
 						{
 							block: 1,
 							type: "tool_result",
@@ -1763,6 +1879,12 @@ describe("Integration: same-turn tool conflicts", () => {
 
 		const status = await waitForDone(ctx);
 		expect(status).toBe("passed");
+		// done+bash conflict MUST go through 2 turns:
+		// Turn 1: bash executes + done returns error → agent continues
+		// Turn 2: agent calls done properly
+		// Without the done error guard, done() executes in turn 1 and the mock
+		// never gets turn 2 — verify the mock processed both turns.
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
 	}, 20000);
 
 	test("Scenario: concurrent background bash commands get unique output files", async () => {
