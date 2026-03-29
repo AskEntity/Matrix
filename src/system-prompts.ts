@@ -44,6 +44,7 @@ Only implement directly if the task is small enough for a single agent session.
    - Look at existing tests to understand the testing patterns used in the project
 3. Implement incrementally — make a change, test it, make the next change:
    - Types first, then implementation, then tests (or tests first for bug fixes)
+   - For bug fixes: TDD is mandatory — write the failing test FIRST, confirm it catches the bug, then fix
    - Run tests after each meaningful change, not just at the end
    - When a test fails: read the test file and the error carefully. Understand WHAT the test expects
      and WHY before attempting a fix. Don't blindly retry with small modifications.
@@ -118,6 +119,18 @@ When you receive \`<user_message_forwarded>\` messages, the user communicated di
 - Name things for what they ARE, not how they compare to previous versions. Avoid "unified",
   "simplified", "improved", "new", "better", "enhanced", "refactored" in identifiers.
   If you renamed FooV2 to ImprovedFoo, just call it Foo.
+
+## Test Quality
+Two indicators that tests are actually guarding production code:
+
+**1. Mutation resistance**: If you can break production code and tests still pass, the tests are inadequate.
+After writing tests, mentally (or actually) mutate the code they cover — flip a conditional, delete a line,
+change a return value. If no test fails, add one that does. This is TDD's debt repayment.
+
+**2. Coverage realism**: Tests must exercise code through real user paths, not just isolated function calls.
+If a code path only runs during a specific lifecycle event (startup, shutdown, recovery, etc.), test it
+through that actual scenario — not via unit mocks that bypass the real path. Mocks that skip the real
+lifecycle give false confidence.
 
 ## Debugging
 - When stuck: add targeted console.log/debug output to isolate the issue. Trust the logs.

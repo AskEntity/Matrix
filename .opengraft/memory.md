@@ -268,3 +268,23 @@ Lifetime issues (daemon restart, message loss, orphan cleanup) MUST use TDD. Wri
 - Concurrent bash + crash: NEITHER tool_result gets persisted — both become orphans.
 - End_turn implicit yield + timestamp mismatch: Live vs resume format differs. Disable prefix validation for these tests.
 - Double restart is safe: orphan cleanup is idempotent.
+
+## Test Quality Principles
+
+Two indicators of test quality — applies to ALL code, not just OpenGraft:
+
+**Mutation resistance**: After writing tests, mentally mutate the code they cover — flip a conditional, delete a line, change a return value, swap an argument. If no test fails, the test suite has a gap. Add a test that catches the mutation. This is especially important for:
+- Conditional branches (if you flip `===` to `!==`, does a test fail?)
+- Error handling paths (if you remove a catch/fallback, does a test fail?)
+- Edge cases in loops (off-by-one, empty arrays, single elements)
+- Return values (if you return `null` instead of the real value, does a test fail?)
+
+**Coverage realism**: Tests must exercise code through the same paths real users trigger, not through test-only shortcuts. Specific anti-patterns:
+- Testing a "restart recovery" function by calling it directly instead of actually crashing and restarting
+- Mocking away the database layer and then claiming "persistence is tested"
+- Testing an event handler by calling the handler function directly instead of emitting the event
+- Testing middleware by calling it as a function instead of making an HTTP request through the stack
+
+**OpenGraft-specific application**: For lifetime/restart bugs, use the integration test framework (`src/integration.test.ts`, `src/test-utils/mock-anthropic-api.ts`). The `recreateApp()` helper simulates real daemon restarts. Every restart test must complete the full lifecycle: crash → restart → resume → done(). Unit tests that call recovery functions directly give false confidence.
+
+**System prompt boundary**: The system prompt is used by ALL projects, not just OpenGraft. Test quality principles in the system prompt must be general software engineering advice. OpenGraft-specific details (mock DSL, JSONL, EventStore, specific file paths) belong in memory.md only.
