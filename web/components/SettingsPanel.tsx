@@ -961,6 +961,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 	onClose,
 	onRestart,
 	onDeleteProject,
+	onClearAllSessions,
 }: {
 	projectId: string;
 	layers: ThreeLayerConfig;
@@ -971,6 +972,7 @@ export const SettingsPanel = memo(function SettingsPanel({
 	onClose: () => void;
 	onRestart: () => void;
 	onDeleteProject?: () => void;
+	onClearAllSessions?: () => void;
 }) {
 	const { t } = useLocale();
 	const [activeTab, setActiveTab] = useState<ActiveTab>("global");
@@ -1150,21 +1152,39 @@ export const SettingsPanel = memo(function SettingsPanel({
 				/>
 			)}
 
-			{onDeleteProject && (
+			{(onClearAllSessions || onDeleteProject) && (
 				<div className="og-settings-danger-zone">
 					<div className="og-settings-section-title">
 						{t("settings.dangerZone")}
 					</div>
-					<p className="og-settings-danger-description">
-						{t("settings.removeProjectDescription")}
-					</p>
-					<button
-						type="button"
-						className="og-btn og-btn-danger"
-						onClick={onDeleteProject}
-					>
-						<IconTrash size={12} /> {t("settings.removeProject")}
-					</button>
+					{onClearAllSessions && (
+						<>
+							<p className="og-settings-danger-description">
+								{t("settings.clearAllSessionsDescription")}
+							</p>
+							<button
+								type="button"
+								className="og-btn og-btn-danger"
+								onClick={onClearAllSessions}
+							>
+								<IconTrash size={12} /> {t("settings.clearAllSessions")}
+							</button>
+						</>
+					)}
+					{onDeleteProject && (
+						<>
+							<p className="og-settings-danger-description">
+								{t("settings.removeProjectDescription")}
+							</p>
+							<button
+								type="button"
+								className="og-btn og-btn-danger"
+								onClick={onDeleteProject}
+							>
+								<IconTrash size={12} /> {t("settings.removeProject")}
+							</button>
+						</>
+					)}
 				</div>
 			)}
 		</div>

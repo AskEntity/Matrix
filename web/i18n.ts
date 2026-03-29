@@ -69,7 +69,6 @@ const en: Translations = {
 	"orch.cacheRead": "Cache Read",
 	"orch.output": "Output",
 	"orch.pause": "Pause",
-	"orch.clearSessions": "Clear Sessions",
 
 	// Status
 	"status.draft": "Draft",
@@ -185,6 +184,9 @@ const en: Translations = {
 	"settings.mcpServerEnv": "Env vars (KEY=VALUE, one per line)",
 	"settings.inherited": "inherited",
 	"settings.dangerZone": "Danger Zone",
+	"settings.clearAllSessions": "Clear All Sessions",
+	"settings.clearAllSessionsDescription":
+		"Delete all session JSONL files for this project. All agents will start fresh.",
 	"settings.removeProject": "Remove Project",
 	"settings.removeProjectDescription":
 		"Remove this project from OpenGraft. This does not delete any files on disk.",
@@ -214,7 +216,9 @@ const en: Translations = {
 
 	// Confirmations
 	"confirm.clearSessions":
-		"Clear session history? The orchestrator will start fresh next time.",
+		"Clear ALL session history for every task? This cannot be undone.",
+	"confirm.clearRootSession":
+		"Clear the orchestrator session? It will start fresh next time.",
 	"confirm.clearTaskSession":
 		'Clear session for "{title}"? The task will start fresh next time.',
 	"confirm.deleteTask": 'Delete task "{title}"?',
@@ -349,7 +353,6 @@ const zh: Translations = {
 	"orch.cacheRead": "缓存读取",
 	"orch.output": "输出",
 	"orch.pause": "暂停",
-	"orch.clearSessions": "清除会话",
 
 	// Status
 	"status.draft": "草稿",
@@ -463,6 +466,9 @@ const zh: Translations = {
 	"settings.mcpServerEnv": "环境变量（每行 KEY=VALUE）",
 	"settings.inherited": "继承",
 	"settings.dangerZone": "危险操作",
+	"settings.clearAllSessions": "清除所有会话",
+	"settings.clearAllSessionsDescription":
+		"删除此项目的所有会话 JSONL 文件。所有代理将重新开始。",
 	"settings.removeProject": "移除项目",
 	"settings.removeProjectDescription":
 		"从 OpenGraft 中移除此项目。这不会删除磁盘上的任何文件。",
@@ -491,7 +497,8 @@ const zh: Translations = {
 	"target.sendToOrch": "改为发送给编排器",
 
 	// Confirmations
-	"confirm.clearSessions": "清除会话历史？编排器下次将重新开始。",
+	"confirm.clearSessions": "清除所有任务的会话历史？此操作不可撤销。",
+	"confirm.clearRootSession": "清除编排器会话？编排器下次将重新开始。",
 	"confirm.clearTaskSession": '清除 "{title}" 的会话？任务下次将重新开始。',
 	"confirm.deleteTask": '删除任务 "{title}"？',
 	"confirm.removeProject": '移除项目 "{name}"？',
