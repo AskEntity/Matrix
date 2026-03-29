@@ -1,5 +1,3 @@
-import { ulid } from "./ulid.ts";
-
 /** Image attachment for user messages. */
 export interface QueueImage {
 	base64: string;
@@ -70,58 +68,6 @@ export type QueueMessage =
 			stderr?: string;
 	  }
 	| { source: "compact"; id: string };
-
-/**
- * Migrate a QueueMessage from old source names to current ones.
- * Handles JSONL and persistent queue backward compatibility:
- * - child_complete → task_complete
- * - child_report (forwarded) → user_message_forwarded
- * - child_report → task_message (fromTaskId/fromTitle, summary→title)
- * - parent_update → task_message (fromTaskId/fromTitle from optional fields)
- */
-// biome-ignore lint/suspicious/noExplicitAny: migration handles arbitrary legacy shapes
-export function migrateQueueMessage(raw: any): QueueMessage {
-	if (!raw || typeof raw !== "object" || !raw.source) return raw;
-	// Ensure migrated messages always have an id
-	const id: string = raw.id || ulid();
-	switch (raw.source) {
-		case "child_complete":
-			return { ...raw, id, source: "task_complete" };
-		case "child_report":
-			if (raw.forwarded) {
-				return {
-					source: "user_message_forwarded",
-					id,
-					fromTaskId: raw.taskId ?? "",
-					fromTitle: raw.title ?? "",
-					content: raw.content ?? "",
-				};
-			}
-			return {
-				source: "task_message",
-				id,
-				fromTaskId: raw.taskId ?? "",
-				fromTitle: raw.title ?? "",
-				content: raw.content ?? "",
-				...(raw.summary ? { title: raw.summary } : {}),
-				...(raw.requestReply ? { requestReply: true } : {}),
-			};
-		case "parent_update":
-			return {
-				source: "task_message",
-				id,
-				fromTaskId: raw.taskId ?? "",
-				fromTitle: raw.title ?? "",
-				content: raw.content ?? "",
-				...(raw.requestReply ? { requestReply: true } : {}),
-				...(raw.header ? { header: raw.header } : {}),
-			};
-		default:
-			// For current-format messages, ensure id exists
-			if (!raw.id) raw.id = ulid();
-			return raw;
-	}
-}
 
 /**
  * A simple async message queue for inter-agent communication.
