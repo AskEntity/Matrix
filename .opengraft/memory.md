@@ -420,3 +420,4 @@ Pitfall: Use `split().join()` not `replaceAll()` for variable substitution — `
 `result: N` replaced with `block: N` + optional `type: "tool_result" | "text"`. `block` indexes into the full content array of the last user message (all blocks, not just tool_results). `type` validates the block type if specified. `isError` only valid on tool_result blocks — throws if used on text.
 
 This enables asserting on text blocks (e.g., injected queue messages) alongside tool_results, validating content order simultaneously.
+ Also supports `{length: N}` to validate total block count (no block/type/contains — just count). Critical for timing tests verifying a message has NOT arrived yet.
