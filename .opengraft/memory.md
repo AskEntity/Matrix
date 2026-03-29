@@ -413,3 +413,10 @@ Turns can now have `assert` arrays that validate tool_results from the previous 
 Key insight: mock cannot observe crashes/restarts — it only sees tool results, just like a real AI. Assert failure = tool returned unexpected result = system bug. Tests simultaneously validate API contract + tool implementation + lifecycle correctness.
 
 Pitfall: Use `split().join()` not `replaceAll()` for variable substitution — `$` in replacement strings has special meaning. Also use `${"$"}` in template literals for literal `$`.
+
+
+## Mock Assert DSL v2.1: Block Index (March 2025)
+
+`result: N` replaced with `block: N` + optional `type: "tool_result" | "text"`. `block` indexes into the full content array of the last user message (all blocks, not just tool_results). `type` validates the block type if specified. `isError` only valid on tool_result blocks — throws if used on text.
+
+This enables asserting on text blocks (e.g., injected queue messages) alongside tool_results, validating content order simultaneously.
