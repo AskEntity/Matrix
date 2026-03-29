@@ -412,3 +412,12 @@ ONE message endpoint: `POST /projects/:id/tasks/:nodeId/message` with `{ content
 17-26: phantom agent_event type, non-ULID clarification ID, provider-shared.ts 800 lines mixing concerns, handleImplicitYield as generator, pendingClarifications as mutable map, stale comments, dual image extractors
 
 Most impactful: fix #1+#2+#3 (core type backbone)
+
+
+## Token Usage Investigation (March 2026)
+
+**Anthropic changes**: Sonnet 4.6 released, 1M context window GA at standard pricing ($3/$15 per Mtok). No long-context premium. Our DEFAULT_MODEL "claude-sonnet-4-6" is correct.
+
+**Fork double header bug**: Every forked child gets memory.md twice — once inherited from parent session (~25KB), once from send_message cold start header (~29KB). ~13K tokens wasted per fork. Root cause: cold start detection checks `node.session != null` instead of `eventStore.has(nodeId)`.
+
+**Token breakdown** (orchestrator session): tool_result 67%, tool_call 16%, consumed_message 9%, assistant_text 3%. get_tree was 56KB/call (fixed with lightweight default). Total active session ~254K tokens.
