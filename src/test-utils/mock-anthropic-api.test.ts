@@ -459,4 +459,573 @@ describe("ValidatingMockAPI", () => {
 			});
 		});
 	});
+
+	/** Helper: build messages with tool_use → tool_result flow for assert testing. */
+	function messagesWithToolResults(
+		instruction: string,
+		toolResults: Array<{
+			id: string;
+			content: string;
+			is_error?: boolean;
+		}>,
+	) {
+		return {
+			messages: [
+				{ role: "user" as const, content: instruction },
+				{
+					role: "assistant" as const,
+					content: toolResults.map((tr) => ({
+						type: "tool_use" as const,
+						id: tr.id,
+						name: "bash",
+						input: {},
+						caller: { type: "direct" as const },
+					})),
+				},
+				{
+					role: "user" as const,
+					content: toolResults.map((tr) => ({
+						type: "tool_result" as const,
+						tool_use_id: tr.id,
+						content: tr.content,
+						is_error: tr.is_error ?? false,
+					})),
+				},
+			],
+		};
+	}
+
+	// ── Assert DSL ──
+
+	describe("assert DSL", () => {
+		test("assert contains passes when content matches", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "echo hi" } },
+						],
+					},
+					{
+						assert: [{ result: 0, contains: "hello_world" }],
+						blocks: [{ type: "text", text: "Found it" }],
+					},
+				],
+			});
+
+			// First call: get turn 0
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			// Second call with tool_result containing expected text
+			const stream = mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "output: hello_world done" },
+				]),
+			);
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({ type: "text", text: "Found it" });
+		});
+
+		test("assert contains fails when content doesn't match", () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "echo hi" } },
+						],
+					},
+					{
+						assert: [{ result: 0, contains: "expected_output" }],
+						blocks: [{ type: "text", text: "Done" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			expect(() =>
+				mock.createStream(
+					messagesWithToolResults(instruction, [
+						{ id: "tc_1", content: "wrong output" },
+					]),
+				),
+			).toThrow('does not contain "expected_output"');
+		});
+
+		test("assert notContains passes when content doesn't contain", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [{ result: 0, notContains: "error" }],
+						blocks: [{ type: "text", text: "Good" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			const stream = mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "success: all ok" },
+				]),
+			);
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({ type: "text", text: "Good" });
+		});
+
+		test("assert notContains fails when content contains forbidden string", () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [{ result: 0, notContains: "error" }],
+						blocks: [{ type: "text", text: "Done" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			expect(() =>
+				mock.createStream(
+					messagesWithToolResults(instruction, [
+						{ id: "tc_1", content: "fatal error occurred" },
+					]),
+				),
+			).toThrow('contains "error" but should not');
+		});
+
+		test("assert isError checks the is_error flag", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "fail" } },
+						],
+					},
+					{
+						assert: [{ result: 0, isError: true }],
+						blocks: [{ type: "text", text: "Error confirmed" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			const stream = mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "command failed", is_error: true },
+				]),
+			);
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({
+				type: "text",
+				text: "Error confirmed",
+			});
+		});
+
+		test("assert isError fails on mismatch", () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "ok" } },
+						],
+					},
+					{
+						assert: [{ result: 0, isError: true }],
+						blocks: [{ type: "text", text: "Done" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			expect(() =>
+				mock.createStream(
+					messagesWithToolResults(instruction, [
+						{ id: "tc_1", content: "ok", is_error: false },
+					]),
+				),
+			).toThrow("isError=false, expected true");
+		});
+
+		test("assert matches uses regex", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "ver" } },
+						],
+					},
+					{
+						assert: [{ result: 0, matches: "v\\d+\\.\\d+\\.\\d+" }],
+						blocks: [{ type: "text", text: "Version found" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			const stream = mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "version: v1.2.3" },
+				]),
+			);
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({
+				type: "text",
+				text: "Version found",
+			});
+		});
+
+		test("assert on missing result index throws", () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [{ result: 5, contains: "anything" }],
+						blocks: [{ type: "text", text: "Done" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			expect(() =>
+				mock.createStream(
+					messagesWithToolResults(instruction, [
+						{ id: "tc_1", content: "only one result" },
+					]),
+				),
+			).toThrow("no tool_result at index 5");
+		});
+
+		test("assert on multiple tool results checks each independently", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{
+								type: "tool_use",
+								name: "bash",
+								input: { command: "echo hello" },
+							},
+							{
+								type: "tool_use",
+								name: "bash",
+								input: { command: "echo world" },
+							},
+						],
+					},
+					{
+						assert: [
+							{ result: 0, contains: "hello" },
+							{ result: 1, contains: "world" },
+						],
+						blocks: [{ type: "text", text: "Both matched" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			const stream = mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "output: hello" },
+					{ id: "tc_2", content: "output: world" },
+				]),
+			);
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({
+				type: "text",
+				text: "Both matched",
+			});
+		});
+
+		test("turns without assert work unchanged (backward compat)", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "echo" } },
+						],
+					},
+					{
+						// No assert array — should work exactly as before
+						blocks: [{ type: "text", text: "No asserts here" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			const stream = mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "anything" },
+				]),
+			);
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({
+				type: "text",
+				text: "No asserts here",
+			});
+		});
+	});
+
+	// ── Variable capture + substitution ──
+
+	describe("variable capture and substitution", () => {
+		test("capture extracts value and substitutes in later blocks", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{
+								type: "tool_use",
+								name: "create_task",
+								input: { title: "test" },
+							},
+						],
+					},
+					{
+						assert: [
+							{
+								result: 0,
+								capture: { taskId: "regex:Task (\\S+) created" },
+							},
+						],
+						blocks: [
+							{
+								type: "tool_use",
+								name: "send_message",
+								input: { taskId: "$taskId", message: "hello" },
+							},
+						],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			const stream = mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "Task ABC123 created successfully" },
+				]),
+			);
+			const msg = await stream.finalMessage();
+			// The tool_use should have the substituted taskId
+			const toolUse = msg.content.find((b) => b.type === "tool_use") as {
+				type: "tool_use";
+				input: Record<string, unknown>;
+			};
+			expect(toolUse.input.taskId).toBe("ABC123");
+		});
+
+		test("capture failure throws when regex doesn't match", () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [
+							{
+								result: 0,
+								capture: { id: "regex:ID: (\\d+)" },
+							},
+						],
+						blocks: [{ type: "text", text: "Done" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			expect(() =>
+				mock.createStream(
+					messagesWithToolResults(instruction, [
+						{ id: "tc_1", content: "no id here" },
+					]),
+				),
+			).toThrow("did not capture group 1");
+		});
+
+		test("getCapturedVars returns captured values", () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [
+							{
+								result: 0,
+								capture: { myVar: "regex:value=(\\w+)" },
+							},
+						],
+						blocks: [{ type: "text", text: "Done" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "the value=foobar here" },
+				]),
+			);
+
+			expect(mock.getCapturedVars().get("myVar")).toBe("foobar");
+		});
+
+		test("variable substitution in text blocks", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [
+							{
+								result: 0,
+								capture: { name: "regex:name=(\\w+)" },
+							},
+						],
+						blocks: [
+							{
+								type: "text",
+								text: "Hello $name, welcome!",
+							},
+						],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			const stream = mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "name=World" },
+				]),
+			);
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({
+				type: "text",
+				text: "Hello World, welcome!",
+			});
+		});
+
+		test("variables persist across turns", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "get_id" } },
+						],
+					},
+					{
+						assert: [
+							{
+								result: 0,
+								capture: { id: "regex:id=(\\w+)" },
+							},
+						],
+						blocks: [
+							{
+								type: "tool_use",
+								name: "bash",
+								input: { command: "use $id" },
+							},
+						],
+					},
+					{
+						// Third turn: variable should still be available
+						blocks: [
+							{
+								type: "text",
+								text: "Used $id",
+							},
+						],
+					},
+				],
+			});
+
+			// Turn 0
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			// Turn 1: capture id from tool_result
+			const stream1 = mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "id=XYZ789" },
+				]),
+			);
+			const msg1 = await stream1.finalMessage();
+			const toolUse = msg1.content.find((b) => b.type === "tool_use") as {
+				input: Record<string, unknown>;
+			};
+			expect(toolUse.input.command).toBe("use XYZ789");
+
+			// Turn 2: variable persists
+			const stream2 = mock.createStream(
+				messagesWithToolResults(instruction, [{ id: "tc_2", content: "ok" }]),
+			);
+			const msg2 = await stream2.finalMessage();
+			expect(msg2.content[0]).toMatchObject({
+				type: "text",
+				text: "Used XYZ789",
+			});
+		});
+
+		test("reset clears captured variables", () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [
+							{
+								result: 0,
+								capture: { x: "regex:(\\w+)" },
+							},
+						],
+						blocks: [{ type: "text", text: "ok" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "hello" },
+				]),
+			);
+			expect(mock.getCapturedVars().size).toBe(1);
+
+			mock.reset();
+			expect(mock.getCapturedVars().size).toBe(0);
+		});
+	});
 });

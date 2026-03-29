@@ -46,9 +46,28 @@ interface ToolUseBlock {
 
 type InstructionBlock = TextBlock | ToolUseBlock;
 
+// ── Assert DSL types ──
+
+interface AssertRule {
+	/** Index of the tool_result to check (0-based, matches tool_use order in previous turn). */
+	result: number;
+	/** Content must contain this string. */
+	contains?: string;
+	/** Content must NOT contain this string. */
+	notContains?: string;
+	/** Check the isError flag on the tool_result. */
+	isError?: boolean;
+	/** Content must match this regex. */
+	matches?: string;
+	/** Capture named values from content via regex groups. Key = var name, value = "regex:(group)". */
+	capture?: Record<string, string>;
+}
+
 interface SingleTurnInstruction {
 	blocks: InstructionBlock[];
 	stop_reason?: "end_turn" | "tool_use";
+	/** Assert rules to validate tool_results from the previous turn before returning this turn's response. */
+	assert?: AssertRule[];
 }
 
 interface MultiTurnInstruction {
@@ -627,6 +646,196 @@ export class ValidatingMockAPI {
 	private turnQueue: SingleTurnInstruction[] = [];
 	/** When enabled, validates messages are strictly monotonically increasing across API calls. */
 	private prefixValidationEnabled = false;
+	/** Variables captured from tool results via assert capture rules. */
+	private capturedVars: Map<string, string> = new Map();
+
+	/**
+	 * Extract tool_result blocks from the last user message in the request.
+	 * Returns them in order (matching the tool_use order from the previous assistant turn).
+	 */
+	private extractToolResults(
+		messages: MessageParam[],
+	): Array<{ content: string; isError: boolean; tool_use_id: string }> {
+		const lastUser = [...messages].reverse().find((m) => m.role === "user");
+		if (!lastUser || !Array.isArray(lastUser.content)) return [];
+
+		const results: Array<{
+			content: string;
+			isError: boolean;
+			tool_use_id: string;
+		}> = [];
+		for (const block of lastUser.content) {
+			if (
+				block &&
+				typeof block === "object" &&
+				"type" in block &&
+				block.type === "tool_result"
+			) {
+				const tr = block as {
+					tool_use_id: string;
+					content?: string | unknown[];
+					is_error?: boolean;
+				};
+				// Normalize content to string
+				let contentStr = "";
+				if (typeof tr.content === "string") {
+					contentStr = tr.content;
+				} else if (Array.isArray(tr.content)) {
+					contentStr = tr.content
+						.map((c) =>
+							c && typeof c === "object" && "text" in c
+								? (c as { text: string }).text
+								: "",
+						)
+						.join("");
+				}
+				results.push({
+					content: contentStr,
+					isError: tr.is_error ?? false,
+					tool_use_id: tr.tool_use_id,
+				});
+			}
+		}
+		return results;
+	}
+
+	/**
+	 * Validate assert rules against tool_results from the current request.
+	 * Runs captures and stores them in capturedVars.
+	 * Throws MockValidationError on assert failure.
+	 */
+	private validateAsserts(
+		asserts: AssertRule[],
+		messages: MessageParam[],
+	): void {
+		const toolResults = this.extractToolResults(messages);
+
+		for (const rule of asserts) {
+			const tr = toolResults[rule.result];
+			if (!tr) {
+				throw new MockValidationError(
+					`Assert failed: no tool_result at index ${rule.result} ` +
+						`(only ${toolResults.length} tool_results found)`,
+				);
+			}
+
+			if (rule.contains !== undefined) {
+				if (!tr.content.includes(rule.contains)) {
+					throw new MockValidationError(
+						`Assert failed: tool_result[${rule.result}] does not contain "${rule.contains}".\n` +
+							`Content: ${tr.content.slice(0, 300)}`,
+					);
+				}
+			}
+
+			if (rule.notContains !== undefined) {
+				if (tr.content.includes(rule.notContains)) {
+					throw new MockValidationError(
+						`Assert failed: tool_result[${rule.result}] contains "${rule.notContains}" but should not.\n` +
+							`Content: ${tr.content.slice(0, 300)}`,
+					);
+				}
+			}
+
+			if (rule.isError !== undefined) {
+				if (tr.isError !== rule.isError) {
+					throw new MockValidationError(
+						`Assert failed: tool_result[${rule.result}] isError=${tr.isError}, expected ${rule.isError}.\n` +
+							`Content: ${tr.content.slice(0, 300)}`,
+					);
+				}
+			}
+
+			if (rule.matches !== undefined) {
+				const regex = new RegExp(rule.matches);
+				if (!regex.test(tr.content)) {
+					throw new MockValidationError(
+						`Assert failed: tool_result[${rule.result}] does not match /${rule.matches}/.\n` +
+							`Content: ${tr.content.slice(0, 300)}`,
+					);
+				}
+			}
+
+			if (rule.capture) {
+				for (const [varName, pattern] of Object.entries(rule.capture)) {
+					// Pattern format: "regex:(group pattern)"
+					const regexStr = pattern.startsWith("regex:")
+						? pattern.slice(6)
+						: pattern;
+					const regex = new RegExp(regexStr);
+					const match = regex.exec(tr.content);
+					if (!match?.[1]) {
+						throw new MockValidationError(
+							`Assert capture failed: tool_result[${rule.result}] ` +
+								`regex /${regexStr}/ did not capture group 1 for var "${varName}".\n` +
+								`Content: ${tr.content.slice(0, 300)}`,
+						);
+					}
+					this.capturedVars.set(varName, match[1]);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Substitute $varName references in blocks with captured values.
+	 * Returns a new blocks array with substitutions applied (does not mutate originals).
+	 */
+	private substituteVars(blocks: InstructionBlock[]): InstructionBlock[] {
+		if (this.capturedVars.size === 0) return blocks;
+
+		const substituteStr = (s: string): string => {
+			let result = s;
+			for (const [name, value] of this.capturedVars) {
+				// Use split+join to avoid $ special chars in replacement strings
+				const token = `${"$"}${name}`;
+				result = result.split(token).join(value);
+			}
+			return result;
+		};
+
+		const substituteObj = (
+			obj: Record<string, unknown>,
+		): Record<string, unknown> => {
+			const result: Record<string, unknown> = {};
+			for (const [key, val] of Object.entries(obj)) {
+				if (typeof val === "string") {
+					result[key] = substituteStr(val);
+				} else if (val && typeof val === "object" && !Array.isArray(val)) {
+					result[key] = substituteObj(val as Record<string, unknown>);
+				} else {
+					result[key] = val;
+				}
+			}
+			return result;
+		};
+
+		return blocks.map((block) => {
+			if (block.type === "text") {
+				return { ...block, text: substituteStr(block.text) };
+			}
+			return { ...block, input: substituteObj(block.input) };
+		});
+	}
+
+	/**
+	 * Process a turn: validate asserts, substitute vars, build response.
+	 */
+	private processTurn(
+		turn: SingleTurnInstruction,
+		messages: MessageParam[],
+	): { content: ContentBlock[]; stopReason: "end_turn" | "tool_use" } {
+		// Validate asserts against tool_results in current request
+		if (turn.assert && turn.assert.length > 0) {
+			this.validateAsserts(turn.assert, messages);
+		}
+
+		// Substitute captured variables in blocks
+		const resolvedBlocks = this.substituteVars(turn.blocks);
+		const resolvedTurn = { ...turn, blocks: resolvedBlocks };
+
+		return buildResponseContent(resolvedTurn);
+	}
 
 	/**
 	 * Creates a stream handler that replaces `client.messages.stream`.
@@ -671,7 +880,7 @@ export class ValidatingMockAPI {
 		// 1. Try to dequeue from the turn queue (from a previous multi-turn instruction)
 		if (this.turnQueue.length > 0) {
 			const turn = this.turnQueue.shift() as SingleTurnInstruction;
-			const { content, stopReason } = buildResponseContent(turn);
+			const { content, stopReason } = this.processTurn(turn, messages);
 			return createMockAnthropicStream(content, stopReason, modelName);
 		}
 
@@ -683,12 +892,12 @@ export class ValidatingMockAPI {
 				const [first, ...rest] = instruction.turns;
 				this.turnQueue.push(...rest);
 				if (first) {
-					const { content, stopReason } = buildResponseContent(first);
+					const { content, stopReason } = this.processTurn(first, messages);
 					return createMockAnthropicStream(content, stopReason, modelName);
 				}
 			} else {
 				// Single turn
-				const { content, stopReason } = buildResponseContent(instruction);
+				const { content, stopReason } = this.processTurn(instruction, messages);
 				return createMockAnthropicStream(content, stopReason, modelName);
 			}
 		}
@@ -777,11 +986,17 @@ export class ValidatingMockAPI {
 		}
 	}
 
+	/** Get the current captured variables (from assert capture rules). */
+	getCapturedVars(): ReadonlyMap<string, string> {
+		return this.capturedVars;
+	}
+
 	/** Reset state between tests. */
 	reset(): void {
 		this.requestHistory = [];
 		this.turnQueue = [];
 		this.prefixValidationEnabled = false;
+		this.capturedVars.clear();
 		toolUseCounter = 0;
 	}
 }
