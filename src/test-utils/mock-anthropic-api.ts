@@ -26,6 +26,17 @@
  * Turn[0] is returned on the API call that contains the instruction.
  * Turn[1] is returned on the NEXT API call (e.g., containing tool_results).
  * If the queue is empty and no new instruction is found → default "Acknowledged." + end_turn.
+ *
+ * ### Assert DSL
+ * Turns can have `assert` arrays that validate content blocks from the previous turn's user message:
+ * ```json
+ * {"assert": [
+ *   {"block": 0, "type": "tool_result", "contains": "hello"},
+ *   {"block": 1, "type": "text", "contains": "injected_msg"}
+ * ]}
+ * ```
+ * `block` indexes into the full content array (all blocks, not just tool_results).
+ * `type` optionally validates the block type. `isError` only valid for tool_result blocks.
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
@@ -48,20 +59,29 @@ type InstructionBlock = TextBlock | ToolUseBlock;
 
 // ── Assert DSL types ──
 
-interface AssertRule {
-	/** Index of the tool_result to check (0-based, matches tool_use order in previous turn). */
-	result: number;
+interface BlockAssertRule {
+	/** Index into the user message's content array (all blocks, not just tool_results). */
+	block: number;
+	/** Expected block type. If specified, validates the block has this type. */
+	type?: "tool_result" | "text";
 	/** Content must contain this string. */
 	contains?: string;
 	/** Content must NOT contain this string. */
 	notContains?: string;
-	/** Check the isError flag on the tool_result. */
+	/** Check the isError flag on the tool_result block. Only valid when type is "tool_result". */
 	isError?: boolean;
 	/** Content must match this regex. */
 	matches?: string;
 	/** Capture named values from content via regex groups. Key = var name, value = "regex:(group)". */
 	capture?: Record<string, string>;
 }
+
+interface LengthAssertRule {
+	/** Validates the user message has exactly this many content blocks. */
+	length: number;
+}
+
+type AssertRule = BlockAssertRule | LengthAssertRule;
 
 interface SingleTurnInstruction {
 	blocks: InstructionBlock[];
@@ -650,27 +670,35 @@ export class ValidatingMockAPI {
 	private capturedVars: Map<string, string> = new Map();
 
 	/**
-	 * Extract tool_result blocks from the last user message in the request.
-	 * Returns them in order (matching the tool_use order from the previous assistant turn).
+	 * Extract all content blocks from the last user message in the request.
+	 * Returns them in order with their type and normalized text content.
 	 */
-	private extractToolResults(
-		messages: MessageParam[],
-	): Array<{ content: string; isError: boolean; tool_use_id: string }> {
+	private extractContentBlocks(messages: MessageParam[]): Array<{
+		type: string;
+		content: string;
+		isError: boolean;
+		tool_use_id?: string;
+	}> {
 		const lastUser = [...messages].reverse().find((m) => m.role === "user");
-		if (!lastUser || !Array.isArray(lastUser.content)) return [];
+		if (!lastUser) return [];
 
-		const results: Array<{
+		// Handle string content
+		if (typeof lastUser.content === "string") {
+			return [{ type: "text", content: lastUser.content, isError: false }];
+		}
+
+		if (!Array.isArray(lastUser.content)) return [];
+
+		const blocks: Array<{
+			type: string;
 			content: string;
 			isError: boolean;
-			tool_use_id: string;
+			tool_use_id?: string;
 		}> = [];
 		for (const block of lastUser.content) {
-			if (
-				block &&
-				typeof block === "object" &&
-				"type" in block &&
-				block.type === "tool_result"
-			) {
+			if (!block || typeof block !== "object" || !("type" in block)) continue;
+
+			if (block.type === "tool_result") {
 				const tr = block as {
 					tool_use_id: string;
 					content?: string | unknown[];
@@ -689,18 +717,29 @@ export class ValidatingMockAPI {
 						)
 						.join("");
 				}
-				results.push({
+				blocks.push({
+					type: "tool_result",
 					content: contentStr,
 					isError: tr.is_error ?? false,
 					tool_use_id: tr.tool_use_id,
 				});
+			} else if (block.type === "text") {
+				const tb = block as { text: string };
+				blocks.push({
+					type: "text",
+					content: tb.text ?? "",
+					isError: false,
+				});
 			}
 		}
-		return results;
+		return blocks;
 	}
 
 	/**
-	 * Validate assert rules against tool_results from the current request.
+	 * Validate assert rules against content blocks from the current request.
+	 * Supports two rule types:
+	 * - LengthAssertRule: validates total number of content blocks
+	 * - BlockAssertRule: indexes into the full content block array
 	 * Runs captures and stores them in capturedVars.
 	 * Throws MockValidationError on assert failure.
 	 */
@@ -708,50 +747,72 @@ export class ValidatingMockAPI {
 		asserts: AssertRule[],
 		messages: MessageParam[],
 	): void {
-		const toolResults = this.extractToolResults(messages);
+		const contentBlocks = this.extractContentBlocks(messages);
 
 		for (const rule of asserts) {
-			const tr = toolResults[rule.result];
-			if (!tr) {
+			// Length assert: validate total block count
+			if ("length" in rule) {
+				if (contentBlocks.length !== rule.length) {
+					throw new MockValidationError(
+						`Assert failed: expected ${rule.length} content blocks, found ${contentBlocks.length}`,
+					);
+				}
+				continue;
+			}
+
+			const block = contentBlocks[rule.block];
+			if (!block) {
 				throw new MockValidationError(
-					`Assert failed: no tool_result at index ${rule.result} ` +
-						`(only ${toolResults.length} tool_results found)`,
+					`Assert failed: no content block at index ${rule.block} ` +
+						`(only ${contentBlocks.length} blocks found)`,
+				);
+			}
+
+			// Validate type if specified
+			if (rule.type !== undefined && block.type !== rule.type) {
+				throw new MockValidationError(
+					`Assert failed: block[${rule.block}] has type "${block.type}", expected "${rule.type}"`,
 				);
 			}
 
 			if (rule.contains !== undefined) {
-				if (!tr.content.includes(rule.contains)) {
+				if (!block.content.includes(rule.contains)) {
 					throw new MockValidationError(
-						`Assert failed: tool_result[${rule.result}] does not contain "${rule.contains}".\n` +
-							`Content: ${tr.content.slice(0, 300)}`,
+						`Assert failed: block[${rule.block}] does not contain "${rule.contains}".\n` +
+							`Content: ${block.content.slice(0, 300)}`,
 					);
 				}
 			}
 
 			if (rule.notContains !== undefined) {
-				if (tr.content.includes(rule.notContains)) {
+				if (block.content.includes(rule.notContains)) {
 					throw new MockValidationError(
-						`Assert failed: tool_result[${rule.result}] contains "${rule.notContains}" but should not.\n` +
-							`Content: ${tr.content.slice(0, 300)}`,
+						`Assert failed: block[${rule.block}] contains "${rule.notContains}" but should not.\n` +
+							`Content: ${block.content.slice(0, 300)}`,
 					);
 				}
 			}
 
 			if (rule.isError !== undefined) {
-				if (tr.isError !== rule.isError) {
+				if (block.type !== "tool_result") {
 					throw new MockValidationError(
-						`Assert failed: tool_result[${rule.result}] isError=${tr.isError}, expected ${rule.isError}.\n` +
-							`Content: ${tr.content.slice(0, 300)}`,
+						`Assert failed: block[${rule.block}] isError check is only valid for tool_result blocks, got "${block.type}"`,
+					);
+				}
+				if (block.isError !== rule.isError) {
+					throw new MockValidationError(
+						`Assert failed: block[${rule.block}] isError=${block.isError}, expected ${rule.isError}.\n` +
+							`Content: ${block.content.slice(0, 300)}`,
 					);
 				}
 			}
 
 			if (rule.matches !== undefined) {
 				const regex = new RegExp(rule.matches);
-				if (!regex.test(tr.content)) {
+				if (!regex.test(block.content)) {
 					throw new MockValidationError(
-						`Assert failed: tool_result[${rule.result}] does not match /${rule.matches}/.\n` +
-							`Content: ${tr.content.slice(0, 300)}`,
+						`Assert failed: block[${rule.block}] does not match /${rule.matches}/.\n` +
+							`Content: ${block.content.slice(0, 300)}`,
 					);
 				}
 			}
@@ -763,12 +824,12 @@ export class ValidatingMockAPI {
 						? pattern.slice(6)
 						: pattern;
 					const regex = new RegExp(regexStr);
-					const match = regex.exec(tr.content);
+					const match = regex.exec(block.content);
 					if (!match?.[1]) {
 						throw new MockValidationError(
-							`Assert capture failed: tool_result[${rule.result}] ` +
+							`Assert capture failed: block[${rule.block}] ` +
 								`regex /${regexStr}/ did not capture group 1 for var "${varName}".\n` +
-								`Content: ${tr.content.slice(0, 300)}`,
+								`Content: ${block.content.slice(0, 300)}`,
 						);
 					}
 					this.capturedVars.set(varName, match[1]);
