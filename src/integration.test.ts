@@ -941,14 +941,15 @@ describe("Integration: daemon restart with prefix consistency", () => {
 			],
 		});
 
-		// Third call: INVALID — changes message at index 0
+		// Third call: INVALID — changes assistant message at index 1
+		// (same first user message = same conversation, so prefix validation triggers)
 		expect(() =>
 			mockAPI.createStream({
 				messages: [
-					{ role: "user", content: "CHANGED" },
+					{ role: "user", content: "hello" },
 					{
 						role: "assistant",
-						content: [{ type: "text", text: "hi" }],
+						content: [{ type: "text", text: "CHANGED" }],
 					},
 					{ role: "user", content: "bye" },
 				],
@@ -1900,3 +1901,560 @@ function extractBgId(content: string): string | null {
 	const match = content.match(/Background ID: (bg-\S+)/);
 	return match?.[1] ?? null;
 }
+
+// ── Yield wakeup assertion tests ──
+
+describe("Integration: yield wakeup assertions", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("Scenario: explicit yield → user message → assert yield resume structure", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: agent yields
+		// Turn 2 (after wake): assert structure — block 0 is yield tool_result with ## Pending,
+		// block 1 is text with the user message
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Waiting for input." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+							isError: false,
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "WAKE_MESSAGE_CONTENT",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Woke up." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "yield resume structure verified",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		await waitForIdle(ctx);
+
+		// Send message to wake agent
+		const msgResp = await sendMessage(ctx, "WAKE_MESSAGE_CONTENT");
+		expect(msgResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// If we got here, the assert DSL validated that:
+		// - block 0 = tool_result containing "## Pending"
+		// - block 1 = text containing "WAKE_MESSAGE_CONTENT"
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
+	}, 20000);
+
+	test("Scenario: implicit yield (end_turn) → message inject → assert text block", async () => {
+		ctx = await setupTestContext();
+
+		// Agent returns text-only → implicit yield (end_turn)
+		// When message arrives, it becomes a new user message (not tool_result, since no tool was used)
+		const instruction = JSON.stringify({
+			blocks: [{ type: "text", text: "Nothing to do right now." }],
+			stop_reason: "end_turn",
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		await waitForIdle(ctx);
+
+		// The wake message is turn 2 — agent receives it as a user message (text blocks)
+		// After the default response from mock, the third turn will need instruction
+		// But since mock has no queued turns and no instruction found, it returns "Acknowledged."
+		// which enters implicit yield again. Let's set up: wake with a message that contains
+		// a new instruction for the next turn.
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "All done." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: {
+						status: "passed",
+						summary: "implicit yield wake verified",
+					},
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Verify: the second API call should contain the user message as a text block
+		// For implicit yield, the message goes through buildImplicitYieldMessage
+		// which creates a user message with text blocks (one per queue message)
+		const req2 = ctx.mockAPI.getRequestHistory()[1];
+		expect(req2).toBeDefined();
+		const lastMsg = req2!.messages[req2!.messages.length - 1];
+		expect(lastMsg?.role).toBe("user");
+
+		// The content should be text blocks (not tool_result, since no tool was involved)
+		if (Array.isArray(lastMsg!.content)) {
+			const textBlocks = (
+				lastMsg!.content as Array<{ type: string; text?: string }>
+			).filter((b) => b.type === "text");
+			expect(textBlocks.length).toBeGreaterThanOrEqual(1);
+			// At least one text block should contain our instruction
+			const allText = textBlocks.map((b) => b.text ?? "").join(" ");
+			expect(allText).toContain(wakeInstruction);
+		} else {
+			// String content — should contain our instruction
+			expect(lastMsg!.content as string).toContain(wakeInstruction);
+		}
+
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
+	}, 20000);
+
+	test("Scenario: yield → two messages → assert both present in order", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: agent yields
+		// Turn 2 (after wake): assert both messages are present as text blocks
+		// Turn 3+ (fallback): if only one message arrived in the yield resume,
+		//   the second arrives during/after the next API call
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Yielding now." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// After first yield wake: at minimum block 0 is yield tool_result,
+					// block 1+ has at least one message. We check for FIRST_MSG here.
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+							isError: false,
+						},
+						{ block: 1, type: "text", contains: "FIRST_MSG_ALPHA" },
+					],
+					blocks: [
+						{ type: "text", text: "Got first message, yielding for second." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// Second yield wake: should have the second message
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+						},
+						{ block: 1, type: "text", contains: "SECOND_MSG_BETA" },
+					],
+					blocks: [
+						{ type: "text", text: "Got both messages." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "multiple yield messages verified",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		await waitForIdle(ctx);
+
+		// Send first message to wake from yield
+		const msg1Resp = await sendMessage(ctx, "FIRST_MSG_ALPHA");
+		expect(msg1Resp.status).toBe(200);
+
+		// Wait for agent to re-enter yield after processing first message
+		await waitForIdle(ctx);
+
+		// Send second message to wake from second yield
+		const msg2Resp = await sendMessage(ctx, "SECOND_MSG_BETA");
+		expect(msg2Resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// The assert DSL validated messages in order across two yield cycles
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(3);
+	}, 20000);
+
+	test("Scenario: yield → message with task_message format → assert XML content", async () => {
+		ctx = await setupTestContext();
+
+		// This test verifies that yield resume correctly formats different message types.
+		// We send a regular user message (which arrives as source: "user")
+		// and check that it's in the yield resume content.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Yielding." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+							isError: false,
+						},
+						{
+							block: 1,
+							type: "text",
+							// User messages are not wrapped in XML — they're raw content
+							contains: "PLAIN_USER_MESSAGE",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "message format verified",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		await waitForIdle(ctx);
+
+		const msgResp = await sendMessage(ctx, "PLAIN_USER_MESSAGE");
+		expect(msgResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 20000);
+});
+
+// ── Parent-child lifecycle tests ──
+
+describe("Integration: parent-child lifecycle", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("Scenario: parent creates child → child does work → parent receives task_complete", async () => {
+		ctx = await setupTestContext();
+
+		// Child instruction: bash echo + done
+		const childInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Child working." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo CHILD_OUTPUT_123" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "CHILD_OUTPUT_123",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "child completed work" },
+						},
+					],
+				},
+			],
+		});
+
+		// Parent instruction: create_task → capture $childId → send_message → yield → done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Creating child task." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: {
+								title: "Test Child Task",
+								description: "A child task for testing",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							// create_task returns JSON.stringify(node) — capture the "id" field
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Sending message to child." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start work",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Waiting for child." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// After yield: should have yield tool_result + task_complete from child
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+							isError: false,
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "task_complete",
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "passed",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Child completed. Finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "parent-child lifecycle complete",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for parent to complete (child should complete first, parent wakes from yield)
+		const status = await waitForDone(ctx, 30000);
+		expect(status).toBe("passed");
+
+		// Verify the child task was created and completed
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.children?.length).toBeGreaterThanOrEqual(1);
+
+		const childId = rootNode!.children![0]!;
+		const childNode = tracker.get(childId);
+		expect(childNode?.status).toBe("passed");
+		expect(childNode?.title).toBe("Test Child Task");
+
+		// Verify child JSONL has events
+		const childEvents = readSessionEvents(ctx, childId);
+		const childToolCalls = childEvents.filter((e) => e.type === "tool_call");
+		expect(childToolCalls.length).toBeGreaterThanOrEqual(1);
+	}, 45000);
+
+	test("Scenario: child fails → parent receives failed task_complete", async () => {
+		ctx = await setupTestContext();
+
+		// Child instruction: calls done("failed")
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "failed", summary: "child encountered an error" },
+				},
+			],
+		});
+
+		// Parent: create → send_message → yield → assert failed task_complete → done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: {
+								title: "Failing Child",
+								description: "A child task that will fail",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// Yield wake: should have task_complete with status="failed"
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "task_complete",
+						},
+						{
+							block: 1,
+							type: "text",
+							contains: "failed",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Child failed as expected." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "handled child failure",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx, 30000);
+		expect(status).toBe("passed");
+
+		// Verify child is in failed state
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		const childId = rootNode!.children![0]!;
+		const childNode = tracker.get(childId);
+		expect(childNode?.status).toBe("failed");
+	}, 45000);
+});
