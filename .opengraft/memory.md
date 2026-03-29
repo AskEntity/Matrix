@@ -436,3 +436,13 @@ The following backward compat code has been removed — old JSONL and tree.json 
 - The continue endpoint (`/tasks/:nodeId/continue`) for passed tasks with no worktree creates a worktree and launches the agent (status → in_progress), not just reset to pending. Tests needed updating accordingly.
 - `failCount` backward compat patch in task-tracker.ts `load()` was removed — old tree.json files with failCount will have it ignored (harmless extra field in JSON).
 - `orchestration_started.prompt` removed from Event type. CLI now shows model name instead. Old JSONL files with prompt field will have it ignored by the event converter.
+
+
+## Phase 2D: ToolResult Unification
+
+- `InternalToolResult` (shared-types.ts) deleted. `ToolExecResult` (provider-shared.ts) deleted.
+- Single type: `ToolResult` in shared-types.ts. `content: string`, `isError: boolean` (both required), all optional fields explicitly typed, NO index signature.
+- Re-exported from provider-shared.ts for consumers that imported ToolExecResult.
+- `executeTool()` simplified: casts handler result to `Record<string, unknown>` and extracts known fields into `ToolResult`. No more field-by-field spread copy.
+- `BuiltinToolResult` in definitions.ts is now a local interface (not imported). Keeps MCP Array content format + index signature for CallToolResult compatibility. Only used by built-in tool handlers.
+- `mcpImages` field moved from ToolExecResult into ToolResult (was missing from InternalToolResult).

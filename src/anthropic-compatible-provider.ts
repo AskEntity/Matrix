@@ -26,7 +26,7 @@ import {
 	type ProviderTokenUsage,
 	type ProviderToolUse,
 	runProviderLoop,
-	type ToolExecResult,
+	type ToolResult,
 } from "./provider-shared.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
@@ -620,7 +620,7 @@ function createAnthropicAdapter(
 			const toolResults: ToolResultBlockParam[] = [];
 			for (let i = 0; i < params.toolUses.length; i++) {
 				const toolUse = params.toolUses[i] as ProviderToolUse;
-				const exec = params.execResults[i] as ToolExecResult;
+				const exec = params.execResults[i] as ToolResult;
 
 				if (exec.isImage && exec.imageData && exec.mediaType) {
 					toolResults.push({
