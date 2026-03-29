@@ -299,12 +299,22 @@ export function walkEventsToMessages(
 					(typeof events)[number],
 					{ type: "fork_marker" }
 				>;
+				const targetAttr = forkEvent.targetTitle
+					? ` target_task="${forkEvent.taskId}" task_name="${forkEvent.targetTitle}"`
+					: "";
+				const taskDescBlock = forkEvent.targetDescription
+					? `\n\nYour task: ${forkEvent.targetDescription}\n`
+					: "";
 				messages.push(
 					callbacks.onUserMessage(
-						`<fork_marker source_task="${forkEvent.sourceTaskId}">\n` +
-							`Everything above is inherited context from another agent's session. ` +
-							`Your identity, task, and working directory are defined by the message that follows this marker. ` +
-							`The inherited context is background knowledge — use it, but follow YOUR task description.\n` +
+						`<fork_marker source_task="${forkEvent.sourceTaskId}"${targetAttr}>\n` +
+							`=== IDENTITY CHANGE ===\n` +
+							`YOU ARE NOT THE AGENT ABOVE. ` +
+							`If you see this fork_marker, it means you are NOT the agent whose conversation appears above. ` +
+							`That was a different agent — its context was copied here as background knowledge for you.\n\n` +
+							`You are a NEW agent for task: "${forkEvent.targetTitle ?? forkEvent.taskId}"` +
+							`${taskDescBlock}\n` +
+							`The inherited context is background knowledge. Follow YOUR task description above.\n` +
 							`</fork_marker>`,
 					),
 				);

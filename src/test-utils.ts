@@ -75,7 +75,7 @@ export function mockOrchestratorDeps(opts: {
 		broadcastTree: () => {},
 		clearEventStore: () => {},
 		hasEventStore: () => false,
-		copySessionFrom: async () => ({ eventCount: 0 }),
+		copySessionFrom: async (_s, _t, _opts) => ({ eventCount: 0 }),
 		dataDir: opts.dataDir ?? "/tmp/og-test-mock",
 		getClarifyTimeoutMs: () => undefined,
 		getDefaultBudgetUsd: () => undefined,

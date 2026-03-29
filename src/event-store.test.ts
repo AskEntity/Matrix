@@ -683,6 +683,47 @@ describe("EventStore", () => {
 		expect(targetEvents).toHaveLength(1); // just fork_marker
 		expect(targetEvents[0]?.type).toBe("fork_marker");
 	});
+
+	test("copySessionFrom stores targetTitle and targetDescription in fork_marker", async () => {
+		await store.append("source", {
+			type: "assistant_text",
+			content: "hello",
+			taskId: "source",
+			ts: 1000,
+		});
+
+		const result = await store.copySessionFrom("source", "target", {
+			targetTitle: "Auth simplification",
+			targetDescription: "Simplify the auth flow by removing legacy endpoints",
+		});
+		expect(result.eventCount).toBe(1);
+
+		const targetEvents = store.read("target");
+		expect(targetEvents).toHaveLength(2); // 1 event + fork_marker
+		const marker = targetEvents[1] as Extract<Event, { type: "fork_marker" }>;
+		expect(marker.type).toBe("fork_marker");
+		expect(marker.sourceTaskId).toBe("source");
+		expect(marker.targetTitle).toBe("Auth simplification");
+		expect(marker.targetDescription).toBe(
+			"Simplify the auth flow by removing legacy endpoints",
+		);
+	});
+
+	test("copySessionFrom omits targetTitle/targetDescription when not provided", async () => {
+		await store.append("source", {
+			type: "assistant_text",
+			content: "hello",
+			taskId: "source",
+			ts: 1000,
+		});
+
+		await store.copySessionFrom("source", "target");
+
+		const targetEvents = store.read("target");
+		const marker = targetEvents[1] as Extract<Event, { type: "fork_marker" }>;
+		expect(marker.targetTitle).toBeUndefined();
+		expect(marker.targetDescription).toBeUndefined();
+	});
 });
 
 // ---------------------------------------------------------------------------

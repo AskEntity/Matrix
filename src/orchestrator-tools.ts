@@ -73,6 +73,7 @@ export interface OrchestratorToolsDeps {
 	copySessionFrom: (
 		sourceId: string,
 		targetId: string,
+		opts?: { targetTitle?: string; targetDescription?: string },
 	) => Promise<{ eventCount: number }>;
 	/** Data directory for persisted messages. Undefined if not configured. */
 	dataDir?: string;
@@ -1515,6 +1516,10 @@ export function createOrchestratorTools(
 					const result = await deps.copySessionFrom(
 						args.sourceTaskId,
 						args.targetTaskId,
+						{
+							targetTitle: targetNode.title,
+							targetDescription: targetNode.description,
+						},
 					);
 					const sourceNode = tracker.get(args.sourceTaskId);
 					const sourceTitle = sourceNode?.title ?? args.sourceTaskId;
