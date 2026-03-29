@@ -11,6 +11,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { renameSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -3925,5 +3926,852 @@ describe("Integration: file operations", () => {
 		const errorEvents = events.filter((e) => e.type === "error");
 		// At least 3 outer retry errors before giving up
 		expect(errorEvents.length).toBeGreaterThanOrEqual(3);
+	}, 30000);
+});
+
+// ── Fork prefix consistency tests ──
+
+/**
+ * Normalize message content for deep comparison.
+ * Strips cache_control, normalizes string content to array form.
+ * Mirrors the mock API's normalizeContent + deepEqualMessage logic.
+ */
+function normalizeMessageContent(content: unknown): unknown {
+	if (typeof content === "string") {
+		return [{ type: "text", text: content }];
+	}
+	if (Array.isArray(content)) {
+		return content.map((block) => {
+			if (block && typeof block === "object") {
+				const { cache_control: _, ...rest } = block as Record<string, unknown>;
+				return rest;
+			}
+			return block;
+		});
+	}
+	return content;
+}
+
+function messagesDeepEqual(
+	a: { role: string; content: unknown } | undefined,
+	b: { role: string; content: unknown } | undefined,
+): boolean {
+	if (a === b) return true;
+	if (!a || !b) return false;
+	if (a.role !== b.role) return false;
+	const aNorm = normalizeMessageContent(a.content);
+	const bNorm = normalizeMessageContent(b.content);
+	return JSON.stringify(aNorm) === JSON.stringify(bNorm);
+}
+
+describe("Integration: fork prefix consistency", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("Forked child's messages have parent's complete turns as prefix", async () => {
+		ctx = await setupTestContext();
+
+		// pm.init creates .opengraft/ with setup_worktree.sh.example — activate + commit
+		const hooksDir = join(ctx.projectDir, ".opengraft", "hooks");
+		renameSync(
+			join(hooksDir, "setup_worktree.sh.example"),
+			join(hooksDir, "setup_worktree.sh"),
+		);
+		Bun.spawnSync(["git", "add", ".opengraft"], { cwd: ctx.projectDir });
+		Bun.spawnSync(["git", "commit", "-m", "add opengraft"], {
+			cwd: ctx.projectDir,
+		});
+
+		// Child instruction: simple done
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "I am the forked child agent." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "forked child done" },
+				},
+			],
+		});
+
+		// Parent instruction:
+		// Turn 1: bash echo (creates real tool call + tool result)
+		// Turn 2: bash echo again (another complete turn for prefix depth)
+		// Turn 3: create_task (capture childId)
+		// Turn 4: fork_task_context
+		// Turn 5: send_message (triggers child)
+		// Turn 6: yield (wait for child)
+		// Turn 7: done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					// Turn 1: bash to create a complete tool call/result cycle
+					blocks: [
+						{ type: "text", text: "Let me do some work first." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo PARENT_WORK_1" },
+						},
+					],
+				},
+				{
+					// Turn 2: another bash for more prefix depth
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "PARENT_WORK_1",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "More work." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo PARENT_WORK_2" },
+						},
+					],
+				},
+				{
+					// Turn 3: create child task
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "PARENT_WORK_2",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Now creating child and forking." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: {
+								title: "Forked Child",
+								description: "Testing fork prefix",
+							},
+						},
+					],
+				},
+				{
+					// Turn 4: fork_task_context (capture both childId and rootId from create_task result)
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+								rootId: 'regex:"parentId":\\s*"([^"]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__fork_task_context",
+							input: {
+								sourceTaskId: "$rootId",
+								targetTaskId: "$childId",
+							},
+						},
+					],
+				},
+				{
+					// Turn 5: send_message to child
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "You are the PARENT",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start forked work",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					// Turn 6: yield to wait for child
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Waiting for child." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// Turn 7: done after child completes
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "All done." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "fork prefix test done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx, 30000);
+
+		expect(status).toBe("passed");
+
+		// Analyze the request history from the shared mock API.
+		const history = ctx.mockAPI.getRequestHistory();
+
+		// Separate parent vs child requests by checking for fork_marker in messages.
+		const childRequests = history.filter((req) => {
+			const msgTexts = req.messages
+				.filter((m) => m.role === "user")
+				.flatMap((m) => {
+					if (typeof m.content === "string") return [m.content];
+					if (Array.isArray(m.content)) {
+						return (m.content as Array<{ type: string; text?: string }>)
+							.filter((b) => b.type === "text")
+							.map((b) => b.text ?? "");
+					}
+					return [];
+				});
+			return msgTexts.some((t) => t.includes("fork_marker"));
+		});
+
+		const parentRequests = history.filter((req) => {
+			const msgTexts = req.messages
+				.filter((m) => m.role === "user")
+				.flatMap((m) => {
+					if (typeof m.content === "string") return [m.content];
+					if (Array.isArray(m.content)) {
+						return (m.content as Array<{ type: string; text?: string }>)
+							.filter((b) => b.type === "text")
+							.map((b) => b.text ?? "");
+					}
+					return [];
+				});
+			return !msgTexts.some((t) => t.includes("fork_marker"));
+		});
+
+		// Parent should have at least 3 requests (turns 1-3 before fork)
+		expect(parentRequests.length).toBeGreaterThanOrEqual(3);
+		// Child should have at least 1 request
+		expect(childRequests.length).toBeGreaterThanOrEqual(1);
+
+		// KEY CHECK: find the parent request that returned fork_task_context tool_use.
+		// Its messages represent the conversation state BEFORE fork execution.
+		// These messages should be an exact prefix of the child's first API call messages.
+		const forkRequestIdx = parentRequests.findIndex((req) => {
+			const lastAssistant = [...req.messages]
+				.reverse()
+				.find((m) => m.role === "assistant");
+			if (!lastAssistant || !Array.isArray(lastAssistant.content)) return false;
+			return (lastAssistant.content as Array<{ name?: string }>).some(
+				(b) => b.name === "mcp__opengraft__fork_task_context",
+			);
+		});
+		expect(forkRequestIdx).toBeGreaterThanOrEqual(0);
+
+		const preForkParentMessages = parentRequests[forkRequestIdx]!.messages;
+		const childFirstMessages = childRequests[0]!.messages;
+
+		// Verify prefix: child's messages should match parent's COMPLETE turns.
+		// Fork copies events mid-turn (tool_calls written, tool_results not yet).
+		// So the prefix match covers all complete turns before the fork turn.
+		// The fork turn itself diverges: parent has real tool_results, child has
+		// fork_marker + synthetic orphan tool_results.
+		let prefixMatchCount = 0;
+		const maxCheck = Math.min(
+			preForkParentMessages.length,
+			childFirstMessages.length,
+		);
+		for (let i = 0; i < maxCheck; i++) {
+			const parentMsg = preForkParentMessages[i] as {
+				role: string;
+				content: unknown;
+			};
+			const childMsg = childFirstMessages[i] as {
+				role: string;
+				content: unknown;
+			};
+			if (messagesDeepEqual(parentMsg, childMsg)) {
+				prefixMatchCount++;
+			} else {
+				break;
+			}
+		}
+
+		// After fix: copySessionFrom flushes pending writes and writes synthetic
+		// tool_results for orphaned tool_calls before fork_marker. This means the
+		// child's messages now include the fork turn with proper tool_use/tool_result
+		// pairing. The prefix should cover everything up to the fork_marker.
+		//
+		// Parent's pre-fork request has 9 messages (turns 1-3 complete + turn 4
+		// assistant with fork tool_use). The child should match all of these except
+		// where content diverges (parent has real fork result, child has synthetic).
+		//
+		// Pre-fork parent messages include the fork tool_use assistant msg.
+		// Child has the same assistant msg + synthetic tool_result.
+		// The divergence point is where parent has real fork tool_result vs child
+		// has synthetic fork tool_result content.
+		// After fix: prefix covers everything except the fork tool_result content.
+		// Parent has "You are the PARENT..." while child has "You are the CHILD...
+		// executed by the parent...". This is the unix fork() return value:
+		// same call, different result tells you who you are.
+		expect(prefixMatchCount).toBe(preForkParentMessages.length - 1);
+
+		// At the divergence point: child has child-side fork result
+		const divergeMsg = childFirstMessages[prefixMatchCount] as {
+			role: string;
+			content: unknown;
+		};
+		expect(divergeMsg.role).toBe("user");
+		const divergeBlocks = Array.isArray(divergeMsg.content)
+			? (divergeMsg.content as Array<{ type: string; content?: string }>)
+			: [];
+		const forkResult = divergeBlocks.find((b) => b.type === "tool_result");
+		expect(forkResult).toBeDefined();
+		expect(forkResult?.content).toContain("You are the CHILD");
+
+		// After the synthetic fork result: fork_marker user message
+		const forkMarkerMsg = childFirstMessages[prefixMatchCount + 1] as {
+			role: string;
+			content: unknown;
+		};
+		expect(forkMarkerMsg).toBeDefined();
+		// fork_marker becomes a user message. But it might be merged with the
+		// previous user message by the event converter. Check both positions.
+		const allChildTexts = childFirstMessages.flatMap((m) => {
+			if (m.role !== "user") return [];
+			if (typeof m.content === "string") return [m.content];
+			if (Array.isArray(m.content)) {
+				return (m.content as Array<{ type: string; text?: string }>)
+					.filter((b) => b.type === "text")
+					.map((b) => b.text ?? "");
+			}
+			return [];
+		});
+		expect(allChildTexts.some((t) => t.includes("fork_marker"))).toBe(true);
+
+		// Verify the child's JSONL has the fork_marker event
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		const childNodeId = rootNode!.children![0]!;
+		const childEvents = readSessionEvents(ctx, childNodeId);
+		const hasForkMarker = childEvents.some((e) => e.type === "fork_marker");
+		expect(hasForkMarker).toBe(true);
+
+		// Count forked events (events before fork_marker that came from parent)
+		const forkMarkerEvtIdx = childEvents.findIndex(
+			(e) => e.type === "fork_marker",
+		);
+		expect(forkMarkerEvtIdx).toBeGreaterThan(0);
+	}, 45000);
+
+	test("Fork writes synthetic tool_results before fork_marker for orphaned tool_calls", async () => {
+		ctx = await setupTestContext();
+
+		// Setup: commit .opengraft so worktrees work
+		const hooksDir2 = join(ctx.projectDir, ".opengraft", "hooks");
+		renameSync(
+			join(hooksDir2, "setup_worktree.sh.example"),
+			join(hooksDir2, "setup_worktree.sh"),
+		);
+		Bun.spawnSync(["git", "add", ".opengraft"], { cwd: ctx.projectDir });
+		Bun.spawnSync(["git", "commit", "-m", "add opengraft"], {
+			cwd: ctx.projectDir,
+		});
+
+		// Child: just done
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "child done" },
+				},
+			],
+		});
+
+		// Parent: bash → create_task → fork (solo turn) → send_message → yield → done
+		// Fork is in its own turn. copySessionFrom should write a synthetic
+		// tool_result for fork's own tool_call before the fork_marker.
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					// Turn 1: bash — complete turn
+					blocks: [
+						{ type: "text", text: "Working." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo WORK" },
+						},
+					],
+				},
+				{
+					// Turn 2: create_task — solo, capture IDs
+					assert: [{ block: 0, type: "tool_result", contains: "WORK" }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: { title: "Fork Target", description: "test" },
+						},
+					],
+				},
+				{
+					// Turn 3: fork (solo turn)
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+								rootId: 'regex:"parentId":\\s*"([^"]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__fork_task_context",
+							input: { sourceTaskId: "$rootId", targetTaskId: "$childId" },
+						},
+					],
+				},
+				{
+					// Turn 4: send_message
+					assert: [
+						{ block: 0, type: "tool_result", contains: "You are the PARENT" },
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Go",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+		const status = await waitForDone(ctx, 30000);
+		expect(status).toBe("passed");
+
+		// Get child's JSONL events
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		const childNodeId = rootNode!.children![0]!;
+		const childEvents = readSessionEvents(ctx, childNodeId);
+
+		const forkIdx = childEvents.findIndex((e) => e.type === "fork_marker");
+		expect(forkIdx).toBeGreaterThan(0);
+
+		// KEY CHECK: All tool_calls before fork_marker should have matching
+		// tool_results also before fork_marker. copySessionFrom should write
+		// synthetic results for the in-progress turn's orphaned tool_calls.
+		const eventsBeforeFork = childEvents.slice(0, forkIdx);
+		const toolCallIds = new Set<string>();
+		const toolResultIds = new Set<string>();
+		for (const e of eventsBeforeFork) {
+			if (e.type === "tool_call") toolCallIds.add(e.toolCallId);
+			if (e.type === "tool_result") toolResultIds.add(e.toolCallId);
+		}
+
+		// Every tool_call before fork_marker must have a tool_result before fork_marker
+		for (const id of toolCallIds) {
+			expect(toolResultIds.has(id)).toBe(true);
+		}
+
+		// The fork tool_result should tell the child who it is
+		const forkResults = eventsBeforeFork.filter(
+			(e) =>
+				e.type === "tool_result" && e.content.includes("You are the CHILD"),
+		);
+		expect(forkResults.length).toBe(1);
+		expect(
+			forkResults[0]!.type === "tool_result" && forkResults[0]!.isError,
+		).toBe(false);
+
+		// findOrphanedToolCalls should find NOTHING in the child's events
+		const { findOrphanedToolCalls } = await import("./events.ts");
+		const orphans = findOrphanedToolCalls(childEvents, childNodeId);
+		expect(orphans.length).toBe(0);
+
+		// Fork's own tool_call should be in the child's events (copySessionFrom
+		// should flush pending writes before reading). And it should have a
+		// synthetic tool_result before fork_marker.
+		const forkToolCall = eventsBeforeFork.find(
+			(e) =>
+				e.type === "tool_call" &&
+				e.tool === "mcp__opengraft__fork_task_context",
+		);
+		expect(forkToolCall).toBeDefined();
+		if (forkToolCall && forkToolCall.type === "tool_call") {
+			const forkToolResult = eventsBeforeFork.find(
+				(e) =>
+					e.type === "tool_result" && e.toolCallId === forkToolCall.toolCallId,
+			);
+			expect(forkToolResult).toBeDefined();
+			if (forkToolResult && forkToolResult.type === "tool_result") {
+				expect(forkToolResult.isError).toBe(false);
+				expect(forkToolResult.content).toContain("You are the CHILD");
+			}
+		}
+	}, 45000);
+
+	test("Fork from closed agent injects synthetic tool_call + tool_result", async () => {
+		ctx = await setupTestContext();
+
+		const hooksDir3 = join(ctx.projectDir, ".opengraft", "hooks");
+		renameSync(
+			join(hooksDir3, "setup_worktree.sh.example"),
+			join(hooksDir3, "setup_worktree.sh"),
+		);
+		Bun.spawnSync(["git", "add", ".opengraft"], { cwd: ctx.projectDir });
+		Bun.spawnSync(["git", "commit", "-m", "add opengraft"], {
+			cwd: ctx.projectDir,
+		});
+
+		// Scenario: parent creates child A → A does work and completes →
+		// parent creates child B → forks A's context to B → B launches
+		//
+		// A's JSONL has NO fork tool_call. B should get synthetic call + result.
+		const childAInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo CHILD_A_WORK" },
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", contains: "CHILD_A_WORK" }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "A done" },
+						},
+					],
+				},
+			],
+		});
+
+		const childBInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "child B done" },
+				},
+			],
+		});
+
+		// Parent: create A → send to A (cold start) → yield for A → create B →
+		// fork A to B → send to B → yield for B → done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					// Turn 1: create child A
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: { title: "Child A", description: "source agent" },
+						},
+					],
+				},
+				{
+					// Turn 2: send_message to A (cold start, no fork)
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: { childAId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__send_message",
+							input: {
+								taskId: "$childAId",
+								title: "Do work",
+								message: childAInstruction,
+							},
+						},
+					],
+				},
+				{
+					// Turn 3: yield waiting for A
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// Turn 4: A completed, create child B
+					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: { title: "Child B", description: "forked from A" },
+						},
+					],
+				},
+				{
+					// Turn 5: fork A's context to B
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: { childBId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__fork_task_context",
+							input: { sourceTaskId: "$childAId", targetTaskId: "$childBId" },
+						},
+					],
+				},
+				{
+					// Turn 6: send_message to B
+					assert: [
+						{ block: 0, type: "tool_result", contains: "You are the PARENT" },
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__send_message",
+							input: {
+								taskId: "$childBId",
+								title: "Continue from A",
+								message: childBInstruction,
+							},
+						},
+					],
+				},
+				{
+					// Turn 7: yield for B
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// Turn 8: done
+					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "all done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+		const status = await waitForDone(ctx, 30000);
+		expect(status).toBe("passed");
+
+		// Find child B's node
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		// Children: A and B in order
+		expect(rootNode!.children!.length).toBe(2);
+		const childBId = rootNode!.children![1]!;
+		const childBNode = tracker.get(childBId);
+		expect(childBNode?.title).toBe("Child B");
+
+		// Read child B's JSONL
+		const childBEvents = readSessionEvents(ctx, childBId);
+		const forkIdx = childBEvents.findIndex((e) => e.type === "fork_marker");
+		expect(forkIdx).toBeGreaterThan(0);
+
+		const eventsBeforeFork = childBEvents.slice(0, forkIdx);
+
+		// Case 2 check: synthetic fork tool_call should be injected
+		// (A's JSONL has no fork tool_call — A was cold-started, not forked)
+		const syntheticForkCall = eventsBeforeFork.find(
+			(e) =>
+				e.type === "tool_call" &&
+				e.tool === "mcp__opengraft__fork_task_context",
+		);
+		expect(syntheticForkCall).toBeDefined();
+
+		// Synthetic fork tool_result should be paired with it
+		if (syntheticForkCall && syntheticForkCall.type === "tool_call") {
+			const syntheticForkResult = eventsBeforeFork.find(
+				(e) =>
+					e.type === "tool_result" &&
+					e.toolCallId === syntheticForkCall.toolCallId,
+			);
+			expect(syntheticForkResult).toBeDefined();
+			if (syntheticForkResult && syntheticForkResult.type === "tool_result") {
+				expect(syntheticForkResult.isError).toBe(false);
+				expect(syntheticForkResult.content).toContain("You are the CHILD");
+			}
+		}
+
+		// No orphans in child B's events
+		const { findOrphanedToolCalls } = await import("./events.ts");
+		const orphans = findOrphanedToolCalls(childBEvents, childBId);
+		expect(orphans.length).toBe(0);
+	}, 45000);
+
+	test("Fork + other tools in same turn: fork returns error", async () => {
+		ctx = await setupTestContext();
+
+		const hooksDir3 = join(ctx.projectDir, ".opengraft", "hooks");
+		renameSync(
+			join(hooksDir3, "setup_worktree.sh.example"),
+			join(hooksDir3, "setup_worktree.sh"),
+		);
+		Bun.spawnSync(["git", "add", ".opengraft"], { cwd: ctx.projectDir });
+		Bun.spawnSync(["git", "commit", "-m", "add opengraft"], {
+			cwd: ctx.projectDir,
+		});
+
+		// Parent: create_task → (bash + fork in SAME turn) → assert fork errored → done
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: { title: "Target", description: "test" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+								rootId: 'regex:"parentId":\\s*"([^"]+)"',
+							},
+						},
+					],
+					// Same turn: bash + fork → fork should error
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo HI" },
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__fork_task_context",
+							input: { sourceTaskId: "$rootId", targetTaskId: "$childId" },
+						},
+					],
+				},
+				{
+					// bash result OK, fork result is error
+					assert: [
+						{ block: 0, type: "tool_result", contains: "HI", isError: false },
+						{
+							block: 1,
+							type: "tool_result",
+							isError: true,
+							contains: "must be the only tool",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "fork rejected as expected" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		const status = await waitForDone(ctx, 15000);
+		expect(status).toBe("passed");
 	}, 30000);
 });

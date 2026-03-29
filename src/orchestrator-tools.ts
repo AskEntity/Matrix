@@ -1439,9 +1439,12 @@ export function createOrchestratorTools(
 		tool(
 			"fork_task_context",
 			"Copy another agent's conversation context into a target task's session. " +
+				"Like unix fork(): the parent receives 'Forked context from...' while the child receives " +
+				"'This tool was executed by the parent agent...' — the tool_result content tells each agent who they are. " +
 				"The target task starts with the source's full conversation history but has its own identity. " +
 				"Use this to give a new task the knowledge of a previous agent (files read, patterns discovered, etc.) " +
-				"without cold-starting. After forking, use send_message to start the target agent.",
+				"without cold-starting. After forking, use send_message to start the target agent. " +
+				"IMPORTANT: fork_task_context must be the ONLY tool call in the turn — it cannot be called alongside other tools.",
 			{
 				sourceTaskId: z
 					.string()
@@ -1521,13 +1524,11 @@ export function createOrchestratorTools(
 							targetDescription: targetNode.description,
 						},
 					);
-					const sourceNode = tracker.get(args.sourceTaskId);
-					const sourceTitle = sourceNode?.title ?? args.sourceTaskId;
 					return {
 						content: [
 							{
 								type: "text" as const,
-								text: `Forked context from "${sourceTitle}" (${args.sourceTaskId}) → "${targetNode.title}" (${args.targetTaskId}). Copied ${result.eventCount} events. Use send_message to start the target agent.`,
+								text: `fork_task_context completed. You are the PARENT. Forked ${args.sourceTaskId} → "${targetNode.title}" (${args.targetTaskId}). Copied ${result.eventCount} events. Use send_message to start the child agent.`,
 							},
 						],
 					};
