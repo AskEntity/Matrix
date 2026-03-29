@@ -343,3 +343,10 @@ Login: browser generates RSA-OAEP 2048 keypair → user runs `og auth <public_ke
 ## Setup Hook as .example
 
 Project init creates `setup_worktree.sh.example` (not `.sh`). Agent must review, customize, rename. Init does NOT auto-commit — root agent is forced to configure and commit. Tests activate hook by renaming .example → .sh in setup.
+
+
+## Multi-layer Fork Identity Issue
+
+When fork chains happen (A → fork → B → fork → C), agent C sees TWO fork_markers. Initial confusion: C identifies with B (the first fork_marker) instead of itself (the last fork_marker). After user correction, C adjusted correctly.
+
+**System prompt needs**: "If you see multiple fork_markers, your identity is defined by the LAST one. Everything between fork_markers is an intermediate agent's context — not yours."
