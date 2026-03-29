@@ -927,6 +927,121 @@ describe("ValidatingMockAPI", () => {
 			).toThrow("isError check is only valid for tool_result blocks");
 		});
 
+		test("assert length validates total block count", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [{ length: 1 }],
+						blocks: [{ type: "text", text: "Only one block" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			const stream = mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "result" },
+				]),
+			);
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({
+				type: "text",
+				text: "Only one block",
+			});
+		});
+
+		test("assert length fails when count mismatches", () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [{ length: 2 }],
+						blocks: [{ type: "text", text: "Done" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			expect(() =>
+				mock.createStream(
+					messagesWithToolResults(instruction, [
+						{ id: "tc_1", content: "only one" },
+					]),
+				),
+			).toThrow("expected 2 content blocks, found 1");
+		});
+
+		test("assert length combined with block asserts", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [
+							{ length: 2 },
+							{ block: 0, type: "tool_result", contains: "done" },
+							{ block: 1, type: "text", contains: "injected" },
+						],
+						blocks: [{ type: "text", text: "All verified" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			const stream = mock.createStream({
+				messages: [
+					{ role: "user" as const, content: instruction },
+					{
+						role: "assistant" as const,
+						content: [
+							{
+								type: "tool_use" as const,
+								id: "tc_1",
+								name: "bash",
+								input: {},
+								caller: { type: "direct" as const },
+							},
+						],
+					},
+					{
+						role: "user" as const,
+						content: [
+							{
+								type: "tool_result" as const,
+								tool_use_id: "tc_1",
+								content: "done",
+								is_error: false,
+							},
+							{
+								type: "text" as const,
+								text: "injected message",
+							},
+						],
+					},
+				],
+			});
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({
+				type: "text",
+				text: "All verified",
+			});
+		});
+
 		test("turns without assert work unchanged (backward compat)", async () => {
 			const instruction = JSON.stringify({
 				turns: [

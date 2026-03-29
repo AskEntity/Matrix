@@ -59,7 +59,7 @@ type InstructionBlock = TextBlock | ToolUseBlock;
 
 // ── Assert DSL types ──
 
-interface AssertRule {
+interface BlockAssertRule {
 	/** Index into the user message's content array (all blocks, not just tool_results). */
 	block: number;
 	/** Expected block type. If specified, validates the block has this type. */
@@ -75,6 +75,13 @@ interface AssertRule {
 	/** Capture named values from content via regex groups. Key = var name, value = "regex:(group)". */
 	capture?: Record<string, string>;
 }
+
+interface LengthAssertRule {
+	/** Validates the user message has exactly this many content blocks. */
+	length: number;
+}
+
+type AssertRule = BlockAssertRule | LengthAssertRule;
 
 interface SingleTurnInstruction {
 	blocks: InstructionBlock[];
@@ -730,7 +737,9 @@ export class ValidatingMockAPI {
 
 	/**
 	 * Validate assert rules against content blocks from the current request.
-	 * Indexes into the full content block array (tool_result + text blocks).
+	 * Supports two rule types:
+	 * - LengthAssertRule: validates total number of content blocks
+	 * - BlockAssertRule: indexes into the full content block array
 	 * Runs captures and stores them in capturedVars.
 	 * Throws MockValidationError on assert failure.
 	 */
@@ -741,6 +750,16 @@ export class ValidatingMockAPI {
 		const contentBlocks = this.extractContentBlocks(messages);
 
 		for (const rule of asserts) {
+			// Length assert: validate total block count
+			if ("length" in rule) {
+				if (contentBlocks.length !== rule.length) {
+					throw new MockValidationError(
+						`Assert failed: expected ${rule.length} content blocks, found ${contentBlocks.length}`,
+					);
+				}
+				continue;
+			}
+
 			const block = contentBlocks[rule.block];
 			if (!block) {
 				throw new MockValidationError(
