@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
@@ -2775,6 +2775,22 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		});
 		const project = (await res.json()) as Project;
 		projectId = project.id;
+
+		// Activate the .example hook so worktree creation works in tests
+		const hookDir = join(tempDir, "cont-proj", ".opengraft", "hooks");
+		const examplePath = join(hookDir, "setup_worktree.sh.example");
+		const hookPath = join(hookDir, "setup_worktree.sh");
+		await rename(examplePath, hookPath);
+		await chmod(hookPath, 0o755);
+		const projPath = join(tempDir, "cont-proj");
+		const gitExec = (args: string[]) =>
+			Bun.spawn(["git", ...args], {
+				cwd: projPath,
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+		await gitExec(["add", "-A"]).exited;
+		await gitExec(["commit", "-m", "activate setup hook"]).exited;
 	});
 
 	afterEach(async () => {

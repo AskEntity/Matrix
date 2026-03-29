@@ -338,12 +338,8 @@ Replaced WebAuthn/Passkey auth with local secret-based auth:
 
 ## Auth v2: Challenge-Response with Browser Keypair
 
-Replaced single-paste login (og sign → paste JWT → POST /auth/exchange) with double-paste challenge-response:
-1. Browser generates RSA-OAEP 2048 keypair, shows base64 public key (~392 chars)
-2. User runs `og auth <public_key>` in terminal → CLI encrypts session JWT with public key → outputs base64 ciphertext (~344 chars)
-3. User pastes ciphertext into browser → browser decrypts with private key → gets JWT → authenticated
+Login: browser generates RSA-OAEP 2048 keypair → user runs `og auth <public_key>` → CLI encrypts JWT → user pastes ciphertext back → browser decrypts → authenticated. JWT never in plaintext outside browser.
 
-Removed: `signLoginToken`, `signJWT` (legacy), JTI replay prevention, rate limiter, POST /auth/exchange endpoint.
-Added: `encryptWithPublicKey()` in auth.ts, `base64ToUint8Array` now exported.
-CLI command changed: `og sign` → `og auth <public_key>`.
-Security: JWT never travels in plaintext outside the browser. Each login uses a fresh keypair.
+## Setup Hook as .example
+
+Project init creates `setup_worktree.sh.example` (not `.sh`). Agent must review, customize, rename. Init does NOT auto-commit — root agent is forced to configure and commit. Tests activate hook by renaming .example → .sh in setup.

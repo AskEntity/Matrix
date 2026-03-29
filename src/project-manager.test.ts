@@ -48,7 +48,7 @@ describe("ProjectManager", () => {
 			expect(memory).toContain("scratch pad");
 		});
 
-		test("new project memory includes first-launch bootstrap", async () => {
+		test("new project memory includes critical first-launch bootstrap", async () => {
 			const projectPath = join(tempDir, "bootstrap");
 			await pm.init(projectPath);
 
@@ -56,21 +56,30 @@ describe("ProjectManager", () => {
 				join(projectPath, ".opengraft", "memory.md"),
 				"utf-8",
 			);
-			expect(memory).toContain("setup_worktree.sh");
+			expect(memory).toContain("CRITICAL: First Launch Setup");
+			expect(memory).toContain("setup_worktree.sh.example");
+			expect(memory).toContain("DO THIS FIRST");
 		});
 
-		test("creates setup hook with template content", async () => {
+		test("creates setup hook as .example template", async () => {
 			const projectPath = join(tempDir, "hook-test");
 			await pm.init(projectPath);
 
-			const hookPath = join(
+			const examplePath = join(
+				projectPath,
+				".opengraft",
+				"hooks",
+				"setup_worktree.sh.example",
+			);
+			const finalPath = join(
 				projectPath,
 				".opengraft",
 				"hooks",
 				"setup_worktree.sh",
 			);
-			expect(existsSync(hookPath)).toBe(true);
-			const content = await readFile(hookPath, "utf-8");
+			expect(existsSync(examplePath)).toBe(true);
+			expect(existsSync(finalPath)).toBe(false);
+			const content = await readFile(examplePath, "utf-8");
 			expect(content).toContain("#!/bin/bash");
 		});
 	});
@@ -105,6 +114,7 @@ describe("ProjectManager", () => {
 			);
 			expect(memory).toContain("Converted existing project");
 			expect(memory).toContain("Check existing documentation");
+			expect(memory).not.toContain("CLAUDE.md");
 		});
 
 		test("creates setup hook with bun install when bun.lockb exists", async () => {
@@ -118,7 +128,7 @@ describe("ProjectManager", () => {
 				projectPath,
 				".opengraft",
 				"hooks",
-				"setup_worktree.sh",
+				"setup_worktree.sh.example",
 			);
 			const content = await readFile(hookPath, "utf-8");
 			expect(content).toContain("bun install --frozen-lockfile");
@@ -135,10 +145,33 @@ describe("ProjectManager", () => {
 				projectPath,
 				".opengraft",
 				"hooks",
-				"setup_worktree.sh",
+				"setup_worktree.sh.example",
 			);
 			const content = await readFile(hookPath, "utf-8");
 			expect(content).toContain("npm ci");
+		});
+
+		test("does not create .example when setup_worktree.sh already exists", async () => {
+			const projectPath = join(tempDir, "has-hook");
+			const hookDir = join(projectPath, ".opengraft", "hooks");
+			await mkdir(hookDir, { recursive: true });
+			await writeFile(
+				join(hookDir, "setup_worktree.sh"),
+				"#!/bin/bash\nexit 0\n",
+				"utf-8",
+			);
+
+			await pm.init(projectPath);
+
+			expect(existsSync(join(hookDir, "setup_worktree.sh.example"))).toBe(
+				false,
+			);
+			// Original hook preserved
+			const content = await readFile(
+				join(hookDir, "setup_worktree.sh"),
+				"utf-8",
+			);
+			expect(content).toBe("#!/bin/bash\nexit 0\n");
 		});
 
 		test("does not overwrite existing .opengraft/memory.md", async () => {
