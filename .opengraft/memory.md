@@ -412,3 +412,16 @@ ONE message endpoint: `POST /projects/:id/tasks/:nodeId/message` with `{ content
 17-26: phantom agent_event type, non-ULID clarification ID, provider-shared.ts 800 lines mixing concerns, handleImplicitYield as generator, pendingClarifications as mutable map, stale comments, dual image extractors
 
 Most impactful: fix #1+#2+#3 (core type backbone)
+
+
+## Backward Compat Code Deleted (Phase 1B)
+
+The following backward compat code has been removed — old JSONL and tree.json formats are no longer supported:
+- `migrateQueueMessage()` — old source names (child_complete, child_report, parent_update) no longer migrated
+- EventStore `read()` patches — no more auto-filling taskId, orchestration_started fields, clarification title, etc.
+- `runEventMigrations()` — no longer strips tree_updated events from JSONL at startup
+- `isStaleEphemeralEvent` / `FILTERED_EVENT_TYPES` — REST responses no longer filter stale ephemeral events
+- `normalizeEventForUI` wrapper — replaced by direct `stripEventForUI()` calls
+- Standalone `fork_marker` case in event-converter.ts — legacy JSONL path removed
+- `initRootNode()` orphan adoption — `TaskTracker.load()` requires `rootNodeId: string` in tree.json
+- Draft boolean migration and failCount undefined checks — old tree.json format not supported
