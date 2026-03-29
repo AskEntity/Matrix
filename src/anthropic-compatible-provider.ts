@@ -780,7 +780,6 @@ function createAnthropicAdapter(
 
 		buildResult(params): AgentResult {
 			return {
-				success: params.success,
 				exitReason: params.exitReason,
 				output: params.output,
 				costUsd: params.costUsd,
@@ -847,9 +846,10 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 		};
 		const gen = this.runLoop(request, sessionId, execQueue);
 		let lastResult: AgentResult = {
-			success: false,
 			exitReason: "interrupted",
 			output: "",
+			costUsd: 0,
+			turns: 0,
 			sessionId,
 		};
 		let result = await gen.next();

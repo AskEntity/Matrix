@@ -706,7 +706,6 @@ export interface ProviderAdapter {
 	 * Override to include provider-specific fields (e.g. Anthropic cache tokens).
 	 */
 	buildResult?(params: {
-		success: boolean;
 		exitReason: ExitReason;
 		output: string;
 		costUsd: number;
@@ -721,7 +720,6 @@ export interface ProviderAdapter {
 
 /** Default buildResult — used when adapter doesn't override. */
 function defaultBuildResult(params: {
-	success: boolean;
 	exitReason: ExitReason;
 	output: string;
 	costUsd: number;
@@ -733,7 +731,6 @@ function defaultBuildResult(params: {
 	totalCacheReadTokens: number;
 }): AgentResult {
 	return {
-		success: params.success,
 		exitReason: params.exitReason,
 		output: params.output,
 		costUsd: params.costUsd,
@@ -938,7 +935,6 @@ export async function* runProviderLoop(
 				const exitReason = doneExitReason ?? "interrupted";
 				const buildResult = adapter.buildResult ?? defaultBuildResult;
 				return buildResult({
-					success: exitReason !== "done_failed",
 					exitReason,
 					output: lastText,
 					costUsd: cost,
@@ -1351,7 +1347,6 @@ export async function* runProviderLoop(
 				const noQExitReason = doneExitReason ?? "interrupted";
 				const noQBuildResult = adapter.buildResult ?? defaultBuildResult;
 				return noQBuildResult({
-					success: noQExitReason !== "done_failed",
 					exitReason: noQExitReason,
 					output: lastText,
 					costUsd: noQCost,
@@ -1394,7 +1389,6 @@ export async function* runProviderLoop(
 				const exitReason = doneExitReason ?? "interrupted";
 				const buildResult = adapter.buildResult ?? defaultBuildResult;
 				return buildResult({
-					success: exitReason !== "done_failed",
 					exitReason,
 					output: lastText,
 					costUsd: cost,
@@ -1599,7 +1593,6 @@ export async function* runProviderLoop(
 			const exitReason = doneExitReason ?? "interrupted";
 			const buildResult2 = adapter.buildResult ?? defaultBuildResult;
 			return buildResult2({
-				success: exitReason !== "done_failed",
 				exitReason,
 				output: lastText,
 				costUsd: cost,
@@ -1652,7 +1645,6 @@ export async function* runProviderLoop(
 	const finalExitReason = doneExitReason ?? "interrupted";
 	const buildResultFinal = adapter.buildResult ?? defaultBuildResult;
 	return buildResultFinal({
-		success: finalExitReason !== "done_failed",
 		exitReason: finalExitReason,
 		output: lastText,
 		costUsd: finalCost,

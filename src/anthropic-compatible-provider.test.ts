@@ -2221,7 +2221,7 @@ describe("Event deterministic verification", () => {
 			queue: queueWithPrompt("Say hello", testDir),
 		});
 
-		expect(result.success).toBe(true);
+		expect(result.exitReason).not.toBe("done_failed");
 
 		// In production, the user message event is already in JSONL (written at send time).
 		// Simulate that by prepending it for reconstruction.
@@ -2329,7 +2329,7 @@ describe("Event deterministic verification", () => {
 		})();
 
 		const agentResult = await consumePromise;
-		expect(agentResult.success).toBe(true);
+		expect(agentResult.exitReason).not.toBe("done_failed");
 
 		const types = emittedEvents.map((e) => e.type);
 		expect(types).toContain("assistant_text");
@@ -2458,7 +2458,7 @@ describe("Event deterministic verification", () => {
 		})();
 
 		const agentResult = await consumePromise;
-		expect(agentResult.success).toBe(true);
+		expect(agentResult.exitReason).not.toBe("done_failed");
 
 		const events = emittedEvents;
 
@@ -2550,7 +2550,7 @@ describe("Event deterministic verification", () => {
 		})();
 
 		const agentResult = await consumePromise;
-		expect(agentResult.success).toBe(true);
+		expect(agentResult.exitReason).not.toBe("done_failed");
 		expect(idleCount).toBe(2);
 
 		// Provider emits messages_consumed but not message events for user messages
@@ -2694,7 +2694,7 @@ describe("Event deterministic verification", () => {
 		})();
 
 		const agentResult = await consumePromise;
-		expect(agentResult.success).toBe(true);
+		expect(agentResult.exitReason).not.toBe("done_failed");
 
 		const events = emittedEvents;
 		const toolCalls = events.filter((e) => e.type === "tool_call");
@@ -2980,7 +2980,7 @@ describe("Event deterministic verification", () => {
 		})();
 
 		const agentResult = await consumePromise;
-		expect(agentResult.success).toBe(true);
+		expect(agentResult.exitReason).not.toBe("done_failed");
 
 		const events = emittedEvents;
 

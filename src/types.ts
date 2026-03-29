@@ -64,17 +64,15 @@ export type ExitReason = "done_passed" | "done_failed" | "interrupted";
 
 /** Result returned by an agent after executing a task step. */
 export interface AgentResult {
-	/** @deprecated Use exitReason instead. Kept for backward compat. */
-	success: boolean;
 	/** Why the provider loop exited. */
 	exitReason: ExitReason;
 	output: string;
 	/** Cost in USD for this execution. */
-	costUsd?: number;
+	costUsd: number;
 	/** Number of agentic turns (tool-use round trips). */
-	turns?: number;
+	turns: number;
 	/** Session ID for resuming this conversation later. */
-	sessionId?: string;
+	sessionId: string;
 	// Token breakdown (AnthropicCompatibleProvider only; undefined for ClaudeAgentSdkProvider)
 	/** Non-cached input tokens consumed. */
 	inputTokens?: number;

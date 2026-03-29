@@ -690,7 +690,7 @@ export async function runChildAgentInBackground(
 		// --- Post-completion logic (unified for both MCP and daemon paths) ---
 
 		// Cost reporting
-		if (agentResult.costUsd) {
+		if (agentResult.costUsd > 0) {
 			tracker.updateCost(nodeId, agentResult.costUsd);
 		}
 
@@ -945,7 +945,7 @@ export async function launchAgent(
 				(sum, n) => sum + (n.costUsd ?? 0),
 				0,
 			);
-			const totalCostUsd = (finalResult.costUsd ?? 0) + childCostUsd;
+			const totalCostUsd = finalResult.costUsd + childCostUsd;
 			emitEvent(ctx, project.id, {
 				type: "orchestration_completed",
 				taskId: rootNodeId,
