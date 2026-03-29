@@ -61,9 +61,19 @@ export interface TaskNode {
 	session?: TaskSession;
 }
 
+/**
+ * Why the provider loop exited.
+ * - `done_passed` / `done_failed` — agent explicitly called done(). Agent's decision.
+ * - `interrupted` — everything else (stop, reset, error, queue close, restart).
+ */
+export type ExitReason = "done_passed" | "done_failed" | "interrupted";
+
 /** Result returned by an agent after executing a task step. */
 export interface AgentResult {
+	/** @deprecated Use exitReason instead. Kept for backward compat. */
 	success: boolean;
+	/** Why the provider loop exited. */
+	exitReason: ExitReason;
 	output: string;
 	/** Cost in USD for this execution. */
 	costUsd?: number;

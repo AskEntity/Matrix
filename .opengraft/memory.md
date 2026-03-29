@@ -343,3 +343,17 @@ Login: browser generates RSA-OAEP 2048 keypair → user runs `og auth <public_ke
 ## Setup Hook as .example
 
 Project init creates `setup_worktree.sh.example` (not `.sh`). Agent must review, customize, rename. Init does NOT auto-commit — root agent is forced to configure and commit. Tests activate hook by renaming .example → .sh in setup.
+
+
+## ExitReason in Provider Loop (March 2026)
+
+`AgentResult.exitReason: ExitReason` — "done_passed" | "done_failed" | "interrupted". `success: boolean` kept for backward compat, derived from exitReason (`success = exitReason !== "done_failed"`).
+
+**Detection**: done() detected by checking `doneToolUse` presence + `doneResult.isError === false` (not just tool_use presence — done tool can return isError:true when conflicting with other tools or when handler fails). `doneExitReason` flag tracks this across loop iterations.
+
+**end_turn**: Always enters implicit yield now. `!queue` case returns with `exitReason: "interrupted"` instead of breaking to implicit success.
+
+**resumeFromYield bypass**: Already works as-is — `pendingYieldToolCall` check is at TOP of while(true), before any API call. When `isResume` + last tool_call is yield with no result → `pendingYieldToolCall` set → first loop iteration goes straight to `handleImplicitYield` → `queue.wait()`. Zero API calls wasted.
+
+**AbortSignal**: Now passed through to Anthropic SDK `stream()` and OpenAI `fetch()` — stop during AI generation aborts immediately instead of waiting for full response.
+
