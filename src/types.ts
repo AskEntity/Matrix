@@ -38,12 +38,12 @@ export interface TaskNode {
 	children: string[];
 	/** Absolute path to the git worktree for this task. */
 	worktreePath: string | null;
-	/** Accumulated cost in USD for this task's agent execution. */
-	costUsd?: number;
+	/** Accumulated cost in USD for this task's agent execution. Default 0. */
+	costUsd: number;
 	/** Maximum cost in USD this task is allowed to spend. */
 	budgetUsd?: number;
-	/** Who last modified this node: 'user' (REST/CLI) or 'agent' (MCP tools). */
-	editedBy?: "user" | "agent";
+	/** Who last modified this node: 'user' (REST/CLI) or 'agent' (MCP tools). Default "agent". */
+	editedBy: "user" | "agent";
 	/** Optional color label for visual categorization. */
 	color?: string;
 	createdAt: string;

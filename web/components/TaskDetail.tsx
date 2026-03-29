@@ -281,11 +281,11 @@ export const TaskDetail = memo(function TaskDetail({
 						</div>
 					</div>
 				)}
-				{(node.costUsd != null && node.costUsd > 0) || node.budgetUsd ? (
+				{node.costUsd > 0 || node.budgetUsd ? (
 					<div className="og-detail-field">
 						<div className="og-detail-label">{t("detail.cost")}</div>
 						<div className="og-detail-value mono">
-							${(node.costUsd ?? 0).toFixed(4)}
+							${node.costUsd.toFixed(4)}
 							{node.budgetUsd
 								? ` / ${node.budgetUsd.toFixed(2)} ${t("detail.budget")}`
 								: ""}

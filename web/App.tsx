@@ -257,7 +257,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		return map;
 	}, [nodes]);
 	const totalCost = useMemo(() => {
-		const sum = nodes.reduce((acc, n) => acc + (n.costUsd ?? 0), 0);
+		const sum = nodes.reduce((acc, n) => acc + n.costUsd, 0);
 		return sum > 0 ? sum : null;
 	}, [nodes]);
 

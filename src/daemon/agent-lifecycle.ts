@@ -696,11 +696,7 @@ export async function runChildAgentInBackground(
 
 		// Budget exceeded check
 		const updatedNode = tracker.get(nodeId);
-		if (
-			updatedNode?.budgetUsd &&
-			updatedNode.costUsd &&
-			updatedNode.costUsd > updatedNode.budgetUsd
-		) {
+		if (updatedNode?.budgetUsd && updatedNode.costUsd > updatedNode.budgetUsd) {
 			emitEvent(ctx, project.id, {
 				type: "budget_exceeded",
 				taskId: nodeId,
@@ -939,12 +935,9 @@ export async function launchAgent(
 			// Sum child costs from the tree (source of truth)
 			const allNodes = tracker.allNodes();
 			const childNodes = allNodes.filter(
-				(n) => n.id !== rootNodeId && n.costUsd,
+				(n) => n.id !== rootNodeId && n.costUsd > 0,
 			);
-			const childCostUsd = childNodes.reduce(
-				(sum, n) => sum + (n.costUsd ?? 0),
-				0,
-			);
+			const childCostUsd = childNodes.reduce((sum, n) => sum + n.costUsd, 0);
 			const totalCostUsd = (finalResult.costUsd ?? 0) + childCostUsd;
 			emitEvent(ctx, project.id, {
 				type: "orchestration_completed",

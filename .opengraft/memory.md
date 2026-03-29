@@ -446,3 +446,11 @@ The following backward compat code has been removed — old JSONL and tree.json 
 - `executeTool()` simplified: casts handler result to `Record<string, unknown>` and extracts known fields into `ToolResult`. No more field-by-field spread copy.
 - `BuiltinToolResult` in definitions.ts is now a local interface (not imported). Keeps MCP Array content format + index signature for CallToolResult compatibility. Only used by built-in tool handlers.
 - `mcpImages` field moved from ToolExecResult into ToolResult (was missing from InternalToolResult).
+
+## Phase 2F: TaskNode costUsd/editedBy Required
+
+- `costUsd: number` (was optional) — default 0. `createNode` sets it, `load()` backfills via `??= 0`.
+- `editedBy: "user" | "agent"` (was optional) — default "agent". `createNode` sets from opts, `load()` backfills via `??= "agent"`.
+- CLI inline types kept `costUsd?: number` because they represent API response shape (older daemons may omit).
+- Test helpers (makeNode) must include both fields for TaskNode literal to compile.
+- Session-as-Map deferred — too many references (~117 across ~12 files).

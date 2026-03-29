@@ -136,7 +136,7 @@ async function handleStatus(args: string[]): Promise<void> {
 	}
 
 	// Show cost summary if any tasks have cost data
-	const withCost = body.nodes.filter((n) => n.costUsd && n.costUsd > 0);
+	const withCost = body.nodes.filter((n) => (n.costUsd ?? 0) > 0);
 	const total = withCost.reduce((acc, n) => acc + (n.costUsd ?? 0), 0);
 	if (total > 0) {
 		console.log("");
