@@ -436,3 +436,11 @@ The following backward compat code has been removed — old JSONL and tree.json 
 - The continue endpoint (`/tasks/:nodeId/continue`) for passed tasks with no worktree creates a worktree and launches the agent (status → in_progress), not just reset to pending. Tests needed updating accordingly.
 - `failCount` backward compat patch in task-tracker.ts `load()` was removed — old tree.json files with failCount will have it ignored (harmless extra field in JSON).
 - `orchestration_started.prompt` removed from Event type. CLI now shows model name instead. Old JSONL files with prompt field will have it ignored by the event converter.
+
+
+## AgentResult Cleanup (Phase 2E)
+
+- `success: boolean` removed from AgentResult — use `exitReason` instead
+- `costUsd`, `turns`, `sessionId` are now required fields (no more optional chaining)
+- Mock providers in tests must provide all required fields: `{ exitReason, output, costUsd: 0, turns: 0, sessionId: "mock" }`
+- Old `expect(x.success).toBe(true)` mapped to `exitReason !== "done_failed"`, NOT to `exitReason === "done_passed"`. Mocks returning "interrupted" had `success: true` because success meant "not failed". Use `.not.toBe("done_failed")` for tests that just want to confirm no failure.
