@@ -349,3 +349,8 @@ Project init creates `setup_worktree.sh.example` (not `.sh`). Agent must review,
 
 done() detected by checking `doneToolUse` presence + `doneResult.isError === false`. `doneExitReason` flag tracks across loop iterations. `success: boolean` kept for backward compat, derived from exitReason.
 
+
+
+## Message Event Body Must Include ID (dedup invariant)
+
+The `/tasks/:nodeId/message` REST endpoint writes a message to both JSONL (as event) and persistent queue (via deliverMessage). On resume, `findUnconsumedMessages` recovers messages from JSONL and `loadPersistedMessages` loads from disk. Dedup relies on `msg.id` being present in the JSONL event body — without it, `childUnconsumedIds` stays empty and the persistent queue copy is not filtered, causing duplication. **Rule: event body and deliverMessage payload must be the same object (or at minimum share the same `id` field).**

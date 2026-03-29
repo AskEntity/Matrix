@@ -5033,3 +5033,183 @@ describe("Integration: fork prefix consistency", () => {
 		expect(status).toBe("passed");
 	}, 30000);
 });
+
+// ── Race condition: message near done() ──
+
+describe("Integration: message near done() race condition", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	/**
+	 * Bug: message sent to a passed child task via REST gets duplicated on resume.
+	 *
+	 * The /tasks/:nodeId/message endpoint writes the message to JSONL (event body
+	 * WITHOUT id) and to persistent queue (WITH id). On resume, findUnconsumedMessages
+	 * recovers it from JSONL, but the dedup against persistent queue fails because
+	 * the JSONL body has no id. Result: message appears twice.
+	 */
+	test("Message to passed child → resume → no duplication", async () => {
+		ctx = await setupTestContext();
+
+		// Child instruction (first run): just call done immediately
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "initial work done" },
+				},
+			],
+		});
+
+		// Parent: create_task → send_message → yield → done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: {
+								title: "Race Test Child",
+								description: "Child for message race test",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// After yield: task_complete from child
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "parent done after child passed",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		// Start parent
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx, 30000);
+		expect(status).toBe("passed");
+
+		// Verify child is passed
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.children?.length).toBeGreaterThanOrEqual(1);
+		const childId = rootNode!.children![0]!;
+		const childNode = tracker.get(childId);
+		expect(childNode?.status).toBe("passed");
+
+		// The message sent to the passed child will contain a JSON instruction
+		// for the mock API: the resumed child should call done after seeing it.
+		const resumeInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: {
+						status: "passed",
+						summary: "resumed and saw messages",
+					},
+				},
+			],
+		});
+
+		// === KEY STEP: send message to the passed child via REST ===
+		// deliverMessage will: fail queue enqueue (closed) → persist to disk → auto-launch child
+		// The child resumes: loads unconsumed from JSONL + persisted from disk
+		// BUG: message appears twice because JSONL body lacks 'id' for dedup
+		const msgResp = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${childId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					content: `UNIQUE_MSG_AFTER_DONE_XYZ ${resumeInstruction}`,
+				}),
+			},
+		);
+		expect(msgResp.status).toBe(200);
+
+		// Wait for the auto-launched child to complete (done again)
+		const startTime = Date.now();
+		while (Date.now() - startTime < 15000) {
+			const updated = tracker.get(childId);
+			// After message endpoint: status goes to in_progress, then back to passed on done()
+			if (updated?.status === "passed" && updated.session == null) {
+				break;
+			}
+			await new Promise((r) => setTimeout(r, 50));
+		}
+
+		// Verify the child's resumed API request.
+		// The child agent's first user message starts with memory.md (header).
+		// Find its API call and check the unique message appears exactly once.
+		const history = ctx.mockAPI.getRequestHistory();
+		const childResumedReq = history.find((req) => {
+			const firstUser = req.messages.find((m) => m.role === "user");
+			if (!firstUser) return false;
+			const firstText = getTextContent(firstUser);
+			// Child agent requests start with memory.md header
+			return (
+				firstText.includes("memory.md") &&
+				req.messages
+					.filter((m) => m.role === "user")
+					.some((m) => getTextContent(m).includes("UNIQUE_MSG_AFTER_DONE_XYZ"))
+			);
+		});
+		expect(childResumedReq).toBeDefined();
+
+		// Count occurrences of the unique message across all user messages — MUST be exactly 1
+		const allUserText = childResumedReq!.messages
+			.filter((m) => m.role === "user")
+			.map((m) => getTextContent(m))
+			.join("|||");
+		const occurrences =
+			allUserText.split("UNIQUE_MSG_AFTER_DONE_XYZ").length - 1;
+		expect(occurrences).toBe(1);
+	}, 45000);
+});

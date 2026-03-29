@@ -581,22 +581,26 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 
 		// Phase 1 of two-phase lifecycle: write + broadcast message at send time.
 		// Frontend derives pending state from message events without matching messages_consumed.
+		// CRITICAL: body must include `id: msgId` so findUnconsumedMessages can track it
+		// for dedup against the persistent queue copy. Without it, the message gets
+		// loaded from BOTH JSONL (unconsumed) and persistent queue on resume → duplication.
+		const msg: QueueMessage = {
+			source: "user",
+			id: msgId,
+			content: body.content,
+		};
 		const userMsgEvent: Event = {
 			type: "message",
 			id: msgId,
 			taskId: nodeId,
-			body: { source: "user", content: body.content },
+			body: msg,
 			ts: Date.now(),
 		};
 		emitEvent(ctx, project.id, userMsgEvent);
 
-		// Unified delivery: enqueue (if running) or persist + launch (if not)
-		// Include msgId so provider can write messages_consumed referencing it
-		await deliverMessage(ctx, project, nodeId, {
-			source: "user",
-			id: msgId,
-			content: body.content,
-		});
+		// Unified delivery: enqueue (if running) or persist + launch (if not).
+		// Uses same msg object as event body — both must have id for dedup.
+		await deliverMessage(ctx, project, nodeId, msg);
 
 		// Notify parent chain that user sent a message to this task (REST-only)
 		await notifyParentChain(
