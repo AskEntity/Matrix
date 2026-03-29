@@ -3,6 +3,7 @@ import { DEFAULT_MODEL } from "../../config.ts";
 import { persistMessage } from "../../persistent-queue.ts";
 import { cancelAwait, moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
+import { ulid } from "../../ulid.ts";
 import {
 	handleClarifyResponse,
 	handleInjectMessage,
@@ -171,7 +172,7 @@ export function registerAgentRoutes(
 		if (!rootQueue) {
 			return c.json({ error: "No active agent for this project" }, 404);
 		}
-		rootQueue.enqueue({ source: "compact" });
+		rootQueue.enqueue({ source: "compact", id: ulid() });
 		return c.json({ compacting: true });
 	});
 
@@ -198,6 +199,7 @@ export function registerAgentRoutes(
 			if (restartRootId) {
 				await persistMessage(ctx.config.dataDir, project.id, restartRootId, {
 					source: "user",
+					id: ulid(),
 					content:
 						"Orchestrator restarted to pick up new config. Continue where you left off.",
 				});
@@ -215,8 +217,6 @@ export function registerAgentRoutes(
 			ctx.restartingProjects.delete(project.id);
 		}
 	});
-
-
 
 	// Respond to a pending clarification request
 	app.post("/projects/:id/clarify", async (c) => {

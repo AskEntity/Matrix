@@ -62,12 +62,14 @@ async function notifyParentChain(
 		const notification: QueueMessage = wasResumed
 			? {
 					source: "task_message",
+					id: ulid(),
 					fromTaskId: taskId,
 					fromTitle: taskTitle,
 					content,
 				}
 			: {
 					source: "user_message_forwarded",
+					id: ulid(),
 					fromTaskId: taskId,
 					fromTitle: taskTitle,
 					content,
@@ -110,6 +112,7 @@ function notifyTreeChange(
 
 	const msg: QueueMessage = {
 		source: "tree_change",
+		id: ulid(),
 		action,
 		nodeId,
 		...(title ? { title } : {}),
@@ -323,6 +326,7 @@ export function registerTaskRoutes(
 					try {
 						parentQueue.enqueue({
 							source: "task_message",
+							id: ulid(),
 							fromTaskId: nodeId,
 							fromTitle: node.title,
 							content: `User continued child task "${node.title}" (${nodeId}).`,
@@ -357,6 +361,7 @@ export function registerTaskRoutes(
 			const parentNode = node.parentId ? tracker.get(node.parentId) : undefined;
 			await persistMessage(ctx.config.dataDir, project.id, nodeId, {
 				source: "task_message",
+				id: ulid(),
 				fromTaskId: parentNode?.id ?? "",
 				fromTitle: parentNode?.title ?? "User",
 				content,
@@ -400,6 +405,7 @@ export function registerTaskRoutes(
 					: undefined;
 				await persistMessage(ctx.config.dataDir, project.id, nodeId, {
 					source: "task_message",
+					id: ulid(),
 					fromTaskId: parentNode2?.id ?? "",
 					fromTitle: parentNode2?.title ?? "User",
 					content,
@@ -599,10 +605,7 @@ export function registerTaskRoutes(
 				orchestratorSystemPrompt,
 			);
 			if (!result.ok) {
-				return c.json(
-					{ error: result.error },
-					(result.status as 404) ?? 500,
-				);
+				return c.json({ error: result.error }, (result.status as 404) ?? 500);
 			}
 			return c.json({ ok: true, taskId: nodeId });
 		}

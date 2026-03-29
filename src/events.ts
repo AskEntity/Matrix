@@ -241,8 +241,7 @@ export function queueMessageToEvent(
 	msg: QueueMessage,
 	taskId: string,
 ): MessageEvent {
-	const id = msg.source === "user" && msg.id ? msg.id : ulid();
-	return { type: "message", id, taskId, body: msg, ts: Date.now() };
+	return { type: "message", id: msg.id, taskId, body: msg, ts: Date.now() };
 }
 
 /**
@@ -484,12 +483,14 @@ export function findOrphanedBackgroundProcesses(
 	const orphans: Event[] = [];
 	for (const [bgId, info] of bgProcesses) {
 		if (!completedIds.has(bgId)) {
+			const msgId = ulid();
 			orphans.push({
 				type: "message",
-				id: ulid(),
+				id: msgId,
 				taskId,
 				body: {
 					source: "background_complete",
+					id: msgId,
 					commandId: bgId,
 					command: info.command,
 					exitCode: null,

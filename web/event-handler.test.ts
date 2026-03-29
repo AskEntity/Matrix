@@ -54,6 +54,7 @@ describe("event-handler queueEntry handling", () => {
 				id: "msg-1",
 				body: {
 					source: "task_message",
+					id: "test-id",
 					fromTaskId: "child-1",
 					fromTitle: "My Child Task",
 					content: "Progress update: 50% done",
@@ -95,6 +96,7 @@ describe("event-handler queueEntry handling", () => {
 				id: "msg-2",
 				body: {
 					source: "task_message",
+					id: "test-id",
 					fromTaskId: "p1",
 					fromTitle: "Orchestrator",
 					content: "Please also fix bug #42",
@@ -133,6 +135,7 @@ describe("event-handler queueEntry handling", () => {
 				id: "msg-3",
 				body: {
 					source: "user",
+					id: "test-id",
 					content: "Hello world",
 				},
 				taskId: "task-1",
@@ -173,6 +176,7 @@ describe("event-handler queueEntry handling", () => {
 				id: "msg-4",
 				body: {
 					source: "task_message",
+					id: "test-id",
 					fromTaskId: "child-1",
 					fromTitle: "Worker",
 					content: "Phase 1 done",
@@ -206,7 +210,7 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "message",
 				id: "msg-5",
-				body: { source: "user", content: "Please check this" },
+				body: { source: "user", id: "test-id", content: "Please check this" },
 				taskId: "task-1",
 				ts: 1000,
 			},
@@ -235,6 +239,7 @@ describe("event-handler queueEntry handling", () => {
 				id: "msg-6",
 				body: {
 					source: "task_message",
+					id: "test-id",
 					fromTaskId: "child-1",
 					fromTitle: "New Task",
 					content: "Report content",
@@ -286,6 +291,7 @@ describe("event-handler queueEntry handling", () => {
 			id: "msg-7",
 			body: {
 				source: "task_message",
+				id: "test-id",
 				fromTaskId: "child-1",
 				fromTitle: "Worker Task",
 				content: "I'm done with phase 1",
@@ -348,7 +354,7 @@ describe("event-handler queueEntry handling", () => {
 		handleEvent({
 			type: "message",
 			id: "msg-8",
-			body: { source: "user", content: "Build a feature" },
+			body: { source: "user", id: "test-id", content: "Build a feature" },
 			taskId: "task-1",
 			ts: 1000,
 		} satisfies IncomingEvent);
@@ -394,6 +400,7 @@ describe("event-handler queueEntry handling", () => {
 				id: "msg-9",
 				body: {
 					source: "clarify_response",
+					id: "test-id",
 					answer: "Yes, go ahead with approach A",
 				},
 				taskId: "task-1",
@@ -456,7 +463,7 @@ describe("event-handler JSONL-driven pending state", () => {
 		handleEvent({
 			type: "message",
 			id: "msg-race",
-			body: { source: "user", content: "Hello world" },
+			body: { source: "user", id: "test-id", content: "Hello world" },
 			taskId: "",
 			ts: 1000,
 		} satisfies IncomingEvent);

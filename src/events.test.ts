@@ -12,6 +12,7 @@ describe("queueMessageToEvent", () => {
 	test("converts user message — body is the QueueMessage directly", () => {
 		const msg = {
 			source: "user" as const,
+			id: "test-id",
 			content: "hello",
 			images: [{ base64: "abc", mediaType: "image/png" }],
 		};
@@ -36,6 +37,7 @@ describe("queueMessageToEvent", () => {
 	test("converts task_complete — body is the QueueMessage directly", () => {
 		const msg = {
 			source: "task_complete" as const,
+			id: "test-id",
 			taskId: "t1",
 			title: "Auth",
 			success: true as const,
@@ -48,7 +50,7 @@ describe("queueMessageToEvent", () => {
 	});
 
 	test("converts compact — body is the QueueMessage directly", () => {
-		const msg = { source: "compact" as const };
+		const msg = { source: "compact" as const, id: "test-id" };
 		const event = queueMessageToEvent(msg, "test");
 		expect(event.type).toBe("message");
 		expect(event.body).toBe(msg);
@@ -57,6 +59,7 @@ describe("queueMessageToEvent", () => {
 	test("converts tree_change — body is the QueueMessage directly", () => {
 		const msg = {
 			source: "tree_change" as const,
+			id: "test-id",
 			action: "created" as const,
 			nodeId: "node-1",
 			title: "My Task",
@@ -69,6 +72,7 @@ describe("queueMessageToEvent", () => {
 	test("converts task_message — body is the QueueMessage directly", () => {
 		const msg = {
 			source: "task_message" as const,
+			id: "test-id",
 			fromTaskId: "p1",
 			fromTitle: "Orchestrator",
 			content: "update",
@@ -83,6 +87,7 @@ describe("queueMessageToEvent", () => {
 	test("converts user message with header — body is the QueueMessage directly", () => {
 		const msg = {
 			source: "user" as const,
+			id: "test-id",
 			content: "Build a feature",
 			header: "Working directory: /tmp\n\n## Memory\nSome memory",
 		};
@@ -96,7 +101,7 @@ describe("formatEventForAI", () => {
 		const event: Event = {
 			type: "message",
 			id: "test",
-			body: { source: "user", content: "Hello world" },
+			body: { source: "user", id: "test-id", content: "Hello world" },
 			taskId: "test",
 			ts: 1000,
 		};
@@ -109,6 +114,7 @@ describe("formatEventForAI", () => {
 			id: "test",
 			body: {
 				source: "task_complete",
+				id: "test-id",
 				taskId: "t1",
 				title: "Auth",
 				success: true,
@@ -128,6 +134,7 @@ describe("formatEventForAI", () => {
 			id: "test",
 			body: {
 				source: "task_message",
+				id: "test-id",
 				fromTaskId: "p1",
 				fromTitle: "Orchestrator",
 				content: "What status?",
@@ -145,7 +152,7 @@ describe("formatEventForAI", () => {
 		const event: Event = {
 			type: "message",
 			id: "test",
-			body: { source: "clarify_response", answer: "Yes" },
+			body: { source: "clarify_response", id: "test-id", answer: "Yes" },
 			taskId: "test",
 			ts: 1000,
 		};
@@ -158,7 +165,7 @@ describe("formatEventForAI", () => {
 		const event: Event = {
 			type: "message",
 			id: "test",
-			body: { source: "compact" },
+			body: { source: "compact", id: "test-id" },
 			taskId: "test",
 			ts: 1000,
 		};
@@ -171,6 +178,7 @@ describe("formatEventForAI", () => {
 			id: "test",
 			body: {
 				source: "user_message_forwarded",
+				id: "test-id",
 				fromTaskId: "t1",
 				fromTitle: "Worker",
 				content: "User sent a message to child task 'Worker' (t1): fix the bug",
@@ -189,6 +197,7 @@ describe("formatEventForAI", () => {
 			id: "test",
 			body: {
 				source: "task_message",
+				id: "test-id",
 				fromTaskId: "t1",
 				fromTitle: "Worker",
 				content: "Progress: 50%",
@@ -213,7 +222,7 @@ describe("eventsToAnthropicMessages", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Hello world" },
+				body: { source: "user", id: "test-id", content: "Hello world" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -476,7 +485,7 @@ describe("eventsToAnthropicMessages", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Please check this" },
+				body: { source: "user", id: "test-id", content: "Please check this" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -494,7 +503,7 @@ describe("eventsToAnthropicMessages", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "hello" },
+				body: { source: "user", id: "test-id", content: "hello" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -525,6 +534,7 @@ describe("eventsToAnthropicMessages", () => {
 				id: "",
 				body: {
 					source: "user",
+					id: "test-id",
 					content: "Working directory: /tmp\n\nBuild a feature",
 				},
 				taskId: "test",
@@ -712,7 +722,7 @@ describe("eventsToAnthropicMessages", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Continue the task" },
+				body: { source: "user", id: "test-id", content: "Continue the task" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -733,7 +743,7 @@ describe("eventsToOpenAIMessages", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Hello world" },
+				body: { source: "user", id: "test-id", content: "Hello world" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -999,7 +1009,7 @@ describe("eventsToOpenAIMessages", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "hello" },
+				body: { source: "user", id: "test-id", content: "hello" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -1030,6 +1040,7 @@ describe("eventsToOpenAIMessages", () => {
 				id: "",
 				body: {
 					source: "user",
+					id: "test-id",
 					content: "Working directory: /tmp\n\nBuild a feature",
 				},
 				taskId: "test",
@@ -1100,7 +1111,7 @@ describe("eventsToOpenAIMessages", () => {
 
 				id: "",
 
-				body: { source: "user", content: "Continue the task" },
+				body: { source: "user", id: "test-id", content: "Continue the task" },
 
 				taskId: "test",
 				ts: 1000,
@@ -1313,7 +1324,7 @@ describe("eventsToAnthropicMessages — converter bug fixes", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Hello" },
+				body: { source: "user", id: "test-id", content: "Hello" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -1556,7 +1567,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Hello" },
+				body: { source: "user", id: "test-id", content: "Hello" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -1572,7 +1583,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				id: "msg-1",
 
-				body: { source: "user", content: "Please also check X" },
+				body: { source: "user", id: "test-id", content: "Please also check X" },
 
 				taskId: "test",
 				ts: 2000,
@@ -1612,7 +1623,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Do a task" },
+				body: { source: "user", id: "test-id", content: "Do a task" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -1630,7 +1641,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				id: "msg-1",
 
-				body: { source: "user", content: "Also do Y" },
+				body: { source: "user", id: "test-id", content: "Also do Y" },
 
 				taskId: "test",
 				ts: 1500,
@@ -1677,7 +1688,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				id: "msg-1",
 
-				body: { source: "user", content: "First" },
+				body: { source: "user", id: "test-id", content: "First" },
 
 				taskId: "test",
 				ts: 1000,
@@ -1687,7 +1698,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				id: "msg-2",
 
-				body: { source: "user", content: "Second" },
+				body: { source: "user", id: "test-id", content: "Second" },
 
 				taskId: "test",
 				ts: 1500,
@@ -1722,7 +1733,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start" },
+				body: { source: "user", id: "test-id", content: "Start" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -1740,6 +1751,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 				id: "msg-1",
 				body: {
 					source: "user",
+					id: "test-id",
 					content: "Look at this",
 					images: [{ base64: "abc123", mediaType: "image/png" }],
 				},
@@ -1789,7 +1801,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Hello" },
+				body: { source: "user", id: "test-id", content: "Hello" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -1804,7 +1816,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				id: "msg-1",
 
-				body: { source: "user", content: "Please also check X" },
+				body: { source: "user", id: "test-id", content: "Please also check X" },
 
 				taskId: "test",
 				ts: 2000,
@@ -1844,7 +1856,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Do a task" },
+				body: { source: "user", id: "test-id", content: "Do a task" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -1862,7 +1874,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				id: "msg-1",
 
-				body: { source: "user", content: "Also do Y" },
+				body: { source: "user", id: "test-id", content: "Also do Y" },
 
 				taskId: "test",
 				ts: 1500,
@@ -1915,7 +1927,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Do a task" },
+				body: { source: "user", id: "test-id", content: "Do a task" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -1933,7 +1945,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				id: "msg-1",
 
-				body: { source: "user", content: "Also do Y" },
+				body: { source: "user", id: "test-id", content: "Also do Y" },
 
 				taskId: "test",
 				ts: 1500,
@@ -1977,7 +1989,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Do a task" },
+				body: { source: "user", id: "test-id", content: "Do a task" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -1995,7 +2007,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				id: "msg-1",
 
-				body: { source: "user", content: "Also do Y" },
+				body: { source: "user", id: "test-id", content: "Also do Y" },
 
 				taskId: "test",
 				ts: 1500,
@@ -2028,7 +2040,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Direct message" },
+				body: { source: "user", id: "test-id", content: "Direct message" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2055,7 +2067,7 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "hello" },
+				body: { source: "user", id: "test-id", content: "hello" },
 				taskId: "test",
 				ts: 2,
 			} as Event,
@@ -2086,7 +2098,7 @@ describe("converter resilience — lifecycle events in JSONL", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "hello" },
+				body: { source: "user", id: "test-id", content: "hello" },
 				taskId: "test",
 				ts: 2,
 			} as Event,
@@ -2111,7 +2123,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start" },
+				body: { source: "user", id: "test-id", content: "Start" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2134,6 +2146,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				id: "msg-child",
 				body: {
 					source: "task_complete",
+					id: "test-id",
 					taskId: "t1",
 					title: "Auth module",
 					success: true,
@@ -2183,7 +2196,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start" },
+				body: { source: "user", id: "test-id", content: "Start" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2198,6 +2211,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				id: "msg-parent",
 				body: {
 					source: "task_message",
+					id: "test-id",
 					fromTaskId: "p1",
 					fromTitle: "Orchestrator",
 					content: "New instructions here",
@@ -2230,7 +2244,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start" },
+				body: { source: "user", id: "test-id", content: "Start" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2253,6 +2267,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				id: "msg-child",
 				body: {
 					source: "task_complete",
+					id: "test-id",
 					taskId: "t1",
 					title: "Auth module",
 					success: true,
@@ -2295,7 +2310,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start" },
+				body: { source: "user", id: "test-id", content: "Start" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2318,6 +2333,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				id: "msg-report",
 				body: {
 					source: "task_message",
+					id: "test-id",
 					fromTaskId: "t2",
 					fromTitle: "Build",
 					content: "50% done",
@@ -2363,7 +2379,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start" },
+				body: { source: "user", id: "test-id", content: "Start" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2386,6 +2402,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				id: "msg-report",
 				body: {
 					source: "task_message",
+					id: "test-id",
 					fromTaskId: "t2",
 					fromTitle: "Build",
 					content: "50% done",
@@ -2427,7 +2444,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start" },
+				body: { source: "user", id: "test-id", content: "Start" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2442,6 +2459,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				id: "msg-img",
 				body: {
 					source: "user",
+					id: "test-id",
 					content: "Look at this",
 					images: [{ base64: "abc123", mediaType: "image/png" }],
 				},
@@ -2471,7 +2489,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start" },
+				body: { source: "user", id: "test-id", content: "Start" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2489,6 +2507,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				id: "msg-complete",
 				body: {
 					source: "task_complete",
+					id: "test-id",
 					taskId: "t1",
 					title: "Fix bug",
 					success: true,
@@ -2500,7 +2519,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-user",
-				body: { source: "user", content: "Also do this" },
+				body: { source: "user", id: "test-id", content: "Also do this" },
 				taskId: "test",
 				ts: 1004,
 			},
@@ -2539,7 +2558,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start" },
+				body: { source: "user", id: "test-id", content: "Start" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2557,6 +2576,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				id: "msg-complete",
 				body: {
 					source: "task_complete",
+					id: "test-id",
 					taskId: "t1",
 					title: "Fix bug",
 					success: true,
@@ -2568,7 +2588,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "msg-user",
-				body: { source: "user", content: "Also do this" },
+				body: { source: "user", id: "test-id", content: "Also do this" },
 				taskId: "test",
 				ts: 1004,
 			},
@@ -2606,7 +2626,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start" },
+				body: { source: "user", id: "test-id", content: "Start" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2625,6 +2645,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				id: "msg-child-done",
 				body: {
 					source: "task_complete",
+					id: "test-id",
 					taskId: "t1",
 					title: "Build UI",
 					success: true,
@@ -2638,6 +2659,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				id: "msg-parent",
 				body: {
 					source: "task_message",
+					id: "test-id",
 					fromTaskId: "p1",
 					fromTitle: "Orchestrator",
 					content: "Keep going",
@@ -2690,7 +2712,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start" },
+				body: { source: "user", id: "test-id", content: "Start" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2721,6 +2743,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				id: "msg-report",
 				body: {
 					source: "task_message",
+					id: "test-id",
 					fromTaskId: "t2",
 					fromTitle: "Worker",
 					content: "Progress: 75%",
@@ -2773,12 +2796,15 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 	describe("message/user_message without id and without content", () => {
 		test("Anthropic: message with body and source uses formatEventForAI fallback", () => {
 			// message with source + body (non-user queue message) — formatEventForAI generates content from body
+			// Two-phase lifecycle: message event deferred, then materialized by messages_consumed
 			const events: Event[] = [
 				{
 					type: "message",
 					source: "task_message",
+					id: "test-id",
 					body: {
 						source: "task_message",
+						id: "test-id",
 						fromTaskId: "p1",
 						fromTitle: "Orchestrator",
 						content: "Do this next",
@@ -2786,6 +2812,12 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
+				{
+					type: "messages_consumed",
+					messageIds: ["test-id"],
+					taskId: "test",
+					ts: 1001,
+				},
 			];
 			const messages = eventsToAnthropicMessages(events);
 			expect(messages).toHaveLength(1);
@@ -2802,6 +2834,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					type: "message",
 					body: {
 						source: "task_message",
+						id: "test-id",
 						fromTaskId: "p1",
 						fromTitle: "Orchestrator",
 						content: "Do this next",
@@ -2836,6 +2869,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					id: "",
 					body: {
 						source: "tree_change",
+						id: "test-id",
 						action: "created",
 						nodeId: "node-1",
 						title: "My Task",
@@ -2860,6 +2894,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 					id: "",
 					body: {
 						source: "tree_change",
+						id: "test-id",
 						action: "updated",
 						nodeId: "node-2",
 					},
@@ -2896,7 +2931,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 				{
 					type: "message",
 					id: "",
-					body: { source: "user", content: "Hello" },
+					body: { source: "user", id: "test-id", content: "Hello" },
 					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
@@ -2926,7 +2961,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 				{
 					type: "message",
 					id: "",
-					body: { source: "user", content: "Hello" },
+					body: { source: "user", id: "test-id", content: "Hello" },
 					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
@@ -2955,7 +2990,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 				{
 					type: "message",
 					id: "",
-					body: { source: "user", content: "Run it" },
+					body: { source: "user", id: "test-id", content: "Run it" },
 					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
@@ -3004,7 +3039,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 				{
 					type: "message",
 					id: "",
-					body: { source: "user", content: "Run it" },
+					body: { source: "user", id: "test-id", content: "Run it" },
 					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,
@@ -3046,7 +3081,7 @@ describe("defensive guards — prevent content: Field required 400 errors", () =
 				{
 					type: "message",
 					id: "",
-					body: { source: "user", content: "Hello" },
+					body: { source: "user", id: "test-id", content: "Hello" },
 					taskId: "test",
 					ts: 1000,
 				} as unknown as Event,

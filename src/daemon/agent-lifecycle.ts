@@ -396,9 +396,7 @@ export async function stopAgent(
 		const rootQueue = rootNode?.session?.queue;
 		if (rootQueue) {
 			if (rootNode?.session) {
-				cleanupSessionBackgroundProcesses(
-					rootNode.session.backgroundProcesses,
-				);
+				cleanupSessionBackgroundProcesses(rootNode.session.backgroundProcesses);
 				rootNode.session = undefined;
 			}
 			rootQueue.close();
@@ -784,7 +782,8 @@ export async function launchAgent(
 
 	// Root node always exists (created at tracker load time)
 	const rootNodeId = tracker.rootNodeId;
-	const rootNode = tracker.get(rootNodeId)!;
+	const rootNode = tracker.get(rootNodeId);
+	if (!rootNode) return; // Should never happen — root always exists
 	tracker.updateStatus(rootNodeId, "in_progress");
 	tracker.save().catch((e) => {
 		console.warn("[agent-lifecycle] Failed to save tracker on agent start:", e);
@@ -1161,7 +1160,7 @@ export async function handleClarifyResponse(
 	const targetQueue = tracker.get(taskId)?.session?.queue;
 	if (targetQueue) {
 		try {
-			targetQueue.enqueue({ source: "clarify_response", answer });
+			targetQueue.enqueue({ source: "clarify_response", id: ulid(), answer });
 		} catch {
 			return { ok: false, error: "Queue closed", status: 409 };
 		}
@@ -1187,6 +1186,7 @@ export async function handleClarifyResponse(
 
 	await persistMessage(ctx.config.dataDir, projectId, taskId, {
 		source: "clarify_response",
+		id: ulid(),
 		answer,
 	});
 	removePendingClarification(ctx, projectId, taskId, clarificationId);

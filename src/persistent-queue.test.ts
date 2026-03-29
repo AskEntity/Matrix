@@ -22,9 +22,14 @@ describe("persistent-queue", () => {
 	});
 
 	test("persistMessage creates file and appends messages", async () => {
-		const msg1: QueueMessage = { source: "user", content: "hello" };
+		const msg1: QueueMessage = {
+			source: "user",
+			id: "test-id",
+			content: "hello",
+		};
 		const msg2: QueueMessage = {
 			source: "task_message",
+			id: "test-id",
 			fromTaskId: "p1",
 			fromTitle: "Orchestrator",
 			content: "update",
@@ -53,7 +58,11 @@ describe("persistent-queue", () => {
 	});
 
 	test("clearPersistedMessages deletes the file", async () => {
-		const msg: QueueMessage = { source: "user", content: "hello" };
+		const msg: QueueMessage = {
+			source: "user",
+			id: "test-id",
+			content: "hello",
+		};
 		await persistMessage(TEST_DATA_DIR, "proj-1", "task-1", msg);
 
 		const filePath = join(TEST_DATA_DIR, "messages", "proj-1", "task-1.json");
@@ -71,14 +80,17 @@ describe("persistent-queue", () => {
 	test("different projects and tasks are stored separately", async () => {
 		await persistMessage(TEST_DATA_DIR, "proj-1", "task-1", {
 			source: "user",
+			id: "test-id",
 			content: "p1t1",
 		});
 		await persistMessage(TEST_DATA_DIR, "proj-1", "task-2", {
 			source: "user",
+			id: "test-id",
 			content: "p1t2",
 		});
 		await persistMessage(TEST_DATA_DIR, "proj-2", "task-1", {
 			source: "user",
+			id: "test-id",
 			content: "p2t1",
 		});
 
@@ -96,23 +108,26 @@ describe("persistent-queue", () => {
 
 	test("persists various message types correctly", async () => {
 		const messages: QueueMessage[] = [
-			{ source: "user", content: "hello" },
+			{ source: "user", id: "test-id", content: "hello" },
 			{
 				source: "task_complete",
+				id: "test-id",
 				taskId: "c1",
 				title: "Auth",
 				success: true,
 				output: "done",
 			},
-			{ source: "clarify_response", answer: "yes" },
+			{ source: "clarify_response", id: "test-id", answer: "yes" },
 			{
 				source: "cross_project",
+				id: "test-id",
 				fromProjectId: "other",
 				fromProjectName: "Other",
 				content: "hi",
 			},
 			{
 				source: "background_complete",
+				id: "test-id",
 				commandId: "bg1",
 				command: "ls",
 				exitCode: 0,
@@ -120,6 +135,7 @@ describe("persistent-queue", () => {
 			},
 			{
 				source: "tree_change",
+				id: "test-id",
 				action: "created",
 				nodeId: "node-1",
 				title: "New Task",

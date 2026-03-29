@@ -24,6 +24,7 @@ import {
 	slugify,
 } from "./task-utils.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
+import { ulid } from "./ulid.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 
 /**
@@ -206,6 +207,7 @@ export function createOrchestratorTools(
 						{ length: pendingClarifications },
 						() => ({
 							source: "clarify_response" as const,
+							id: ulid(),
 							answer: timeoutMsg,
 						}),
 					);
@@ -709,6 +711,7 @@ export function createOrchestratorTools(
 								targetNode.session.queue.enqueue(
 									{
 										source: "tree_change",
+										id: ulid(),
 										action: "updated",
 										nodeId: args.taskId,
 										title: targetNode.title,
@@ -844,6 +847,7 @@ export function createOrchestratorTools(
 					try {
 						parentQueue.enqueue({
 							source: "task_message",
+							id: ulid(),
 							fromTaskId: currentTaskId ?? "unknown",
 							fromTitle: taskTitle,
 							title: args.title,
@@ -909,11 +913,13 @@ export function createOrchestratorTools(
 						tracker.assignWorktree(node.id, wt.branch, wt.path);
 					}
 
-					// Only include full header on cold start (agent not yet running).
-					// Running agents already have context — avoid wasting tokens.
-					const isRunning = node.session != null;
+					// Only include full header on cold start (no prior context).
+					// Running agents already have context from their session.
+					// Agents with JSONL (e.g. after fork) already have context from events.
+					const hasPriorContext =
+						node.session != null || deps.hasEventStore(node.id);
 					let header: string | undefined;
-					if (!isRunning) {
+					if (!hasPriorContext) {
 						// Read project memory from the node's worktree (or repo root)
 						let memory = "";
 						try {
@@ -932,6 +938,7 @@ export function createOrchestratorTools(
 					// via queue drain of persisted messages (exactly-once delivery).
 					const queueMessage: QueueMessage = {
 						source: "task_message",
+						id: ulid(),
 						fromTaskId: currentTaskId ?? "unknown",
 						fromTitle: currentNode?.title ?? "unknown",
 						content: args.message,
@@ -954,8 +961,8 @@ export function createOrchestratorTools(
 						content: [
 							{
 								type: "text" as const,
-								text: isRunning
-									? `Message sent to running task "${node.title}" (${args.taskId})`
+								text: hasPriorContext
+									? `Message sent to task "${node.title}" (${args.taskId})`
 									: `Started task "${node.title}" (${args.taskId}) on branch ${node.branch}`,
 							},
 						],
@@ -1406,6 +1413,7 @@ export function createOrchestratorTools(
 					try {
 						targetQueue.enqueue({
 							source: "cross_project",
+							id: ulid(),
 							fromProjectId,
 							fromProjectName,
 							content: args.message,
@@ -1632,6 +1640,7 @@ export function createOrchestratorTools(
 					if (node?.parentId) {
 						const completionMsg: QueueMessage = {
 							source: "task_complete",
+							id: ulid(),
 							taskId: currentTaskId,
 							title: node.title ?? "unknown",
 							success: args.status === "passed",

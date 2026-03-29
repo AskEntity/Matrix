@@ -1,5 +1,6 @@
 import type React from "react";
 import type { QueueMessage } from "../src/message-queue.ts";
+import { ulid } from "../src/ulid.ts";
 import {
 	createLogEntry,
 	getLogTaskId,
@@ -173,6 +174,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					id: "",
 					body: {
 						source: "user",
+						id: qe.id,
 						content: qe.content,
 						...(qe.images?.length ? { images: qe.images } : {}),
 					},
@@ -322,6 +324,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			id: "",
 			body: {
 				source: "user",
+				id: ulid(),
 				content: msg.content,
 				...(msg.images?.length ? { images: msg.images } : {}),
 			},
@@ -730,6 +733,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							id: umId ?? "",
 							body: {
 								source: "user",
+								id: umId ?? ulid(),
 								content: umContent,
 								...(umImages?.length ? { images: umImages } : {}),
 							},

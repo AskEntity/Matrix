@@ -702,7 +702,7 @@ describe("lifecycle: queue state transitions", () => {
 
 		expect(resolved).toBe(false);
 
-		queue.enqueue({ source: "user", content: "wake" });
+		queue.enqueue({ source: "user", id: "test-id", content: "wake" });
 		const msg = await waitPromise;
 		expect(resolved).toBe(true);
 		expect(msg.source).toBe("user");
@@ -726,9 +726,9 @@ describe("lifecycle: queue state transitions", () => {
 		const queue = new MessageQueue();
 		queue.close();
 
-		expect(() => queue.enqueue({ source: "user", content: "test" })).toThrow(
-			"Queue closed",
-		);
+		expect(() =>
+			queue.enqueue({ source: "user", id: "test-id", content: "test" }),
+		).toThrow("Queue closed");
 	});
 
 	test("quiet enqueue on closed queue throws", () => {
@@ -737,7 +737,12 @@ describe("lifecycle: queue state transitions", () => {
 
 		expect(() =>
 			queue.enqueue(
-				{ source: "tree_change", action: "created", nodeId: "n1" },
+				{
+					source: "tree_change",
+					id: "test-id",
+					action: "created",
+					nodeId: "n1",
+				},
 				{ quiet: true },
 			),
 		).toThrow("Queue closed");
@@ -757,8 +762,8 @@ describe("lifecycle: queue state transitions", () => {
 
 	test("drain returns empty array after close", () => {
 		const queue = new MessageQueue();
-		queue.enqueue({ source: "user", content: "a" });
-		queue.enqueue({ source: "user", content: "b" });
+		queue.enqueue({ source: "user", id: "test-id", content: "a" });
+		queue.enqueue({ source: "user", id: "test-id", content: "b" });
 
 		const msgs = queue.drain();
 		expect(msgs).toHaveLength(2);
@@ -782,7 +787,7 @@ describe("lifecycle: queue state transitions", () => {
 
 		// quiet enqueue should NOT resolve the waiter
 		queue.enqueue(
-			{ source: "tree_change", action: "created", nodeId: "n1" },
+			{ source: "tree_change", id: "test-id", action: "created", nodeId: "n1" },
 			{ quiet: true },
 		);
 
@@ -790,7 +795,7 @@ describe("lifecycle: queue state transitions", () => {
 		expect(woken).toBe(false);
 
 		// But a regular enqueue SHOULD resolve
-		queue.enqueue({ source: "user", content: "loud" });
+		queue.enqueue({ source: "user", id: "test-id", content: "loud" });
 
 		const msg = await waitPromise;
 		expect(woken).toBe(true);
@@ -1239,7 +1244,7 @@ describe("lifecycle: waitForMessage timeout", () => {
 
 	test("returns message if one is already pending", async () => {
 		const queue = new MessageQueue();
-		queue.enqueue({ source: "user", content: "immediate" });
+		queue.enqueue({ source: "user", id: "test-id", content: "immediate" });
 		const result = await queue.waitForMessage(1000);
 		expect(result).not.toBe("timeout");
 		expect((result as { content: string }).content).toBe("immediate");
@@ -1249,7 +1254,11 @@ describe("lifecycle: waitForMessage timeout", () => {
 	test("returns message if one arrives before timeout", async () => {
 		const queue = new MessageQueue();
 		setTimeout(() => {
-			queue.enqueue({ source: "user", content: "before timeout" });
+			queue.enqueue({
+				source: "user",
+				id: "test-id",
+				content: "before timeout",
+			});
 		}, 10);
 		const result = await queue.waitForMessage(500);
 		expect(result).not.toBe("timeout");
@@ -1382,7 +1391,7 @@ describe("lifecycle: stop agent cascading", () => {
 
 		// Child queue should have been closed by stopAgent cascade
 		expect(() =>
-			childQueue.enqueue({ source: "user", content: "test" }),
+			childQueue.enqueue({ source: "user", id: "test-id", content: "test" }),
 		).toThrow("Queue closed");
 
 		// Child status should stay in_progress (interrupted, not failed)
@@ -1600,21 +1609,33 @@ describe("lifecycle: edge cases and error handling", () => {
 		attachMockSession(nodeB, q2);
 		attachMockSession(nodeC, q3);
 
-		q1.enqueue({ source: "user", content: "to a" });
-		q2.enqueue({ source: "user", content: "to b" });
-		q3.enqueue({ source: "user", content: "to c" });
+		q1.enqueue({ source: "user", id: "test-id", content: "to a" });
+		q2.enqueue({ source: "user", id: "test-id", content: "to b" });
+		q3.enqueue({ source: "user", id: "test-id", content: "to c" });
 
-		expect(q1.drain()[0]).toEqual({ source: "user", content: "to a" });
-		expect(q2.drain()[0]).toEqual({ source: "user", content: "to b" });
-		expect(q3.drain()[0]).toEqual({ source: "user", content: "to c" });
+		expect(q1.drain()[0]).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "to a",
+		});
+		expect(q2.drain()[0]).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "to b",
+		});
+		expect(q3.drain()[0]).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "to c",
+		});
 
 		// Closing one doesn't affect others
 		nodeA.session = undefined;
 		q1.close();
-		expect(() => q1.enqueue({ source: "user", content: "fail" })).toThrow(
-			"Queue closed",
-		);
-		q2.enqueue({ source: "user", content: "still works" });
+		expect(() =>
+			q1.enqueue({ source: "user", id: "test-id", content: "fail" }),
+		).toThrow("Queue closed");
+		q2.enqueue({ source: "user", id: "test-id", content: "still works" });
 		expect(q2.drain()).toHaveLength(1);
 
 		nodeB.session = undefined;
@@ -1640,16 +1661,16 @@ describe("lifecycle: edge cases and error handling", () => {
 		const queue = new MessageQueue();
 		expect(queue.pending).toBe(0);
 
-		queue.enqueue({ source: "user", content: "a" });
+		queue.enqueue({ source: "user", id: "test-id", content: "a" });
 		expect(queue.pending).toBe(1);
 
-		queue.enqueue({ source: "user", content: "b" });
+		queue.enqueue({ source: "user", id: "test-id", content: "b" });
 		expect(queue.pending).toBe(2);
 
 		queue.drain();
 		expect(queue.pending).toBe(0);
 
-		queue.enqueue({ source: "user", content: "c" });
+		queue.enqueue({ source: "user", id: "test-id", content: "c" });
 		expect(queue.pending).toBe(1);
 
 		queue.close();
@@ -1671,9 +1692,9 @@ describe("lifecycle: session-clear-before-close ordering invariant", () => {
 		// After clearing session, node should have no session
 		expect(node.session).toBeUndefined();
 		// After close, enqueue should throw
-		expect(() => queue.enqueue({ source: "user", content: "test" })).toThrow(
-			"Queue closed",
-		);
+		expect(() =>
+			queue.enqueue({ source: "user", id: "test-id", content: "test" }),
+		).toThrow("Queue closed");
 	});
 
 	test("wrong order (close then clear) leaves closed queue visible briefly", () => {
@@ -1688,7 +1709,7 @@ describe("lifecycle: session-clear-before-close ordering invariant", () => {
 		const retrieved = node.session?.queue;
 		expect(retrieved).toBe(queue); // Still in session!
 		expect(() =>
-			retrieved?.enqueue({ source: "user", content: "test" }),
+			retrieved?.enqueue({ source: "user", id: "test-id", content: "test" }),
 		).toThrow("Queue closed"); // But it's broken
 
 		node.session = undefined;
@@ -1751,7 +1772,7 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 
 		// Queue should be closed
 		expect(() =>
-			taskQueue.enqueue({ source: "user", content: "test" }),
+			taskQueue.enqueue({ source: "user", id: "test-id", content: "test" }),
 		).toThrow("Queue closed");
 	});
 
@@ -1785,10 +1806,10 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 
 		// Both should be closed
 		expect(() =>
-			parentQueue.enqueue({ source: "user", content: "test" }),
+			parentQueue.enqueue({ source: "user", id: "test-id", content: "test" }),
 		).toThrow("Queue closed");
 		expect(() =>
-			childQueue.enqueue({ source: "user", content: "test" }),
+			childQueue.enqueue({ source: "user", id: "test-id", content: "test" }),
 		).toThrow("Queue closed");
 	});
 
@@ -1851,7 +1872,7 @@ describe("lifecycle: child completion notification paths", () => {
 
 		// -- First run --
 		const firstQueue = new MessageQueue();
-		firstQueue.enqueue({ source: "user", content: "do work" });
+		firstQueue.enqueue({ source: "user", id: "test-id", content: "do work" });
 		const result1 = await runChildCore({
 			provider: createInstantProvider(),
 			tracker,
@@ -1866,6 +1887,7 @@ describe("lifecycle: child completion notification paths", () => {
 		// Simulate runChildAgentInBackground's post-completion: send task_complete
 		parentQueue.enqueue({
 			source: "task_complete" as const,
+			id: "test-id",
 			taskId: childNode.id,
 			title: childNode.title,
 			success: true,
@@ -1886,7 +1908,11 @@ describe("lifecycle: child completion notification paths", () => {
 		// -- Second run --
 		tracker.updateStatus(childNode.id, "in_progress");
 		const secondQueue = new MessageQueue();
-		secondQueue.enqueue({ source: "user", content: "try again" });
+		secondQueue.enqueue({
+			source: "user",
+			id: "test-id",
+			content: "try again",
+		});
 		const result2 = await runChildCore({
 			provider: createInstantProvider(),
 			tracker,
@@ -1901,6 +1927,7 @@ describe("lifecycle: child completion notification paths", () => {
 		// Simulate task_complete again
 		parentQueue.enqueue({
 			source: "task_complete" as const,
+			id: "test-id",
 			taskId: childNode.id,
 			title: childNode.title,
 			success: true,
@@ -2000,7 +2027,7 @@ describe("lifecycle: child completion notification paths", () => {
 		};
 
 		const doneQueue = new MessageQueue();
-		doneQueue.enqueue({ source: "user", content: "test" });
+		doneQueue.enqueue({ source: "user", id: "test-id", content: "test" });
 		const corePromise = runChildCore({
 			provider: doneYieldProvider,
 			tracker,
@@ -2083,7 +2110,7 @@ describe("lifecycle: child completion notification paths", () => {
 		};
 
 		const deadlockQueue = new MessageQueue();
-		deadlockQueue.enqueue({ source: "user", content: "test" });
+		deadlockQueue.enqueue({ source: "user", id: "test-id", content: "test" });
 		const corePromise = runChildCore({
 			provider: deadlockProvider,
 			tracker,
@@ -2135,9 +2162,9 @@ describe("lifecycle: child completion notification paths", () => {
 		expect(tracker.get(child.id)?.session).toBeUndefined();
 
 		// Verify old queue is closed
-		expect(() => oldQueue.enqueue({ source: "user", content: "test" })).toThrow(
-			"Queue closed",
-		);
+		expect(() =>
+			oldQueue.enqueue({ source: "user", id: "test-id", content: "test" }),
+		).toThrow("Queue closed");
 
 		// After reset, re-start creates a fresh session (via auto-launch)
 		// Send a message to trigger auto-launch
@@ -2374,7 +2401,12 @@ describe("lifecycle edge cases — session continuity", () => {
 		expect(clearRes.status).toBe(200);
 
 		// Send a new message (should trigger fresh launch, not resume)
-		const msgRes = await sendRootMessage(app, getTracker, project.id, "new fresh task");
+		const msgRes = await sendRootMessage(
+			app,
+			getTracker,
+			project.id,
+			"new fresh task",
+		);
 		expect(msgRes.status).toBe(200);
 		await delay(200);
 
@@ -2453,7 +2485,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		await eventStore.append(sessionId, {
 			type: "message",
 			id: "",
-			body: { source: "user", content: "hello" },
+			body: { source: "user", id: "test-id", content: "hello" },
 			ts: Date.now(),
 		} as Event);
 		// Verify it was saved
@@ -2538,7 +2570,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		await eventStore2.append(sessionId, {
 			type: "message",
 			id: "",
-			body: { source: "user", content: "initial work" },
+			body: { source: "user", id: "test-id", content: "initial work" },
 			ts: Date.now(),
 		} as Event);
 
@@ -2794,7 +2826,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		await eventStore2.append(sessionId, {
 			type: "message",
 			id: "",
-			body: { source: "user", content: "do work" },
+			body: { source: "user", id: "test-id", content: "do work" },
 			ts: Date.now(),
 		} as Event);
 

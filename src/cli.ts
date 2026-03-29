@@ -842,7 +842,9 @@ async function handleSend(args: string[]): Promise<void> {
 	const tasks = (await tasksRes.json()) as { rootNodeId?: string | null };
 	const rootNodeId = tasks.rootNodeId;
 	if (!rootNodeId) {
-		console.error("Error: no root node found. Start an agent first with: og run <prompt>");
+		console.error(
+			"Error: no root node found. Start an agent first with: og run <prompt>",
+		);
 		process.exit(1);
 	}
 
