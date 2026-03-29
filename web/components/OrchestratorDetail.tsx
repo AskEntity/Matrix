@@ -4,7 +4,6 @@ import { useLocale } from "../i18n.ts";
 import { IconHexagon, IconPause, IconTrash } from "./icons.tsx";
 
 export const OrchestratorDetail = memo(function OrchestratorDetail({
-	running,
 	isRootActive,
 	nodes,
 	rootNodeId,
@@ -16,10 +15,9 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 	outputTokens,
 	provider,
 	model,
-	onClearSessions,
+	onClearSession,
 	onStop,
 }: {
-	running: boolean;
 	isRootActive: boolean;
 	nodes: TaskNode[];
 	rootNodeId?: string | null;
@@ -31,7 +29,7 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 	outputTokens?: number | null;
 	provider?: string | null;
 	model?: string | null;
-	onClearSessions?: () => void;
+	onClearSession?: () => void;
 	onStop?: () => void;
 }) {
 	const { t } = useLocale();
@@ -190,14 +188,14 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 						{t("orch.pause")}
 					</button>
 				)}
-				{!running && onClearSessions && (
+				{!isRootActive && onClearSession && (
 					<button
 						type="button"
 						className="og-btn og-btn-sm og-btn-ghost"
-						onClick={onClearSessions}
+						onClick={onClearSession}
 					>
 						<IconTrash size={12} />
-						{t("orch.clearSessions")}
+						{t("detail.clearSession")}
 					</button>
 				)}
 			</div>

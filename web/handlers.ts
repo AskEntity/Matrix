@@ -352,6 +352,27 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		}
 	}
 
+	async function handleClearRootSession() {
+		if (!rootNodeId) return;
+		if (!confirm(t("confirm.clearRootSession"))) return;
+		try {
+			await clearTaskSession(rootNodeId);
+			setLastTurns(null);
+			setLastInputTokens(null);
+			setLastCacheCreationTokens(null);
+			setLastCacheReadTokens(null);
+			setLastOutputTokens(null);
+			setLogs([]);
+		} catch (err) {
+			addLog({
+				type: "error",
+				message: (err as Error).message,
+				taskId: "",
+				ts: Date.now(),
+			});
+		}
+	}
+
 	async function handleAddProject(e: React.FormEvent) {
 		e.preventDefault();
 		const path = newProjectPath.trim();
@@ -454,6 +475,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		handleStop,
 		handleClarifySubmit,
 		handleClearSessions,
+		handleClearRootSession,
 		handleDeleteTask,
 		handlePauseTask,
 		handleClearTaskSession,

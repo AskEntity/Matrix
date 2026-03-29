@@ -247,7 +247,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		updateFromWS,
 	} = useTasks(projectId, setRootNodeId);
 	const {
-		running,
 		activeAgents,
 		setActiveAgents,
 		provider: agentProvider,
@@ -599,6 +598,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		handleStop,
 		handleClarifySubmit,
 		handleClearSessions,
+		handleClearRootSession,
 		handleDeleteTask,
 		handlePauseTask,
 		handleClearTaskSession,
@@ -833,6 +833,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					updateLocal={updateLocal}
 					onClose={() => setShowSettings(false)}
 					onDeleteProject={handleDeleteProject}
+					onClearAllSessions={handleClearSessions}
 					onRestart={async () => {
 						try {
 							await authFetch("/restart-daemon", { method: "POST" });
@@ -970,7 +971,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						{!detailCollapsed &&
 							(isOrchestratorNode ? (
 								<OrchestratorDetail
-									running={running}
 									isRootActive={
 										rootNodeId ? activeAgents.has(rootNodeId) : false
 									}
@@ -984,7 +984,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									outputTokens={lastOutputTokens}
 									provider={agentProvider}
 									model={agentModel}
-									onClearSessions={handleClearSessions}
+									onClearSession={handleClearRootSession}
 									onStop={handleStop}
 								/>
 							) : selectedNode ? (

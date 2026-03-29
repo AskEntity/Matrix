@@ -3345,6 +3345,10 @@ button.og-tool-card-header:hover {
 	line-height: 1.4;
 }
 
+.og-settings-danger-zone .og-btn + .og-settings-danger-description {
+	margin-top: 16px;
+}
+
 /* Sidebar settings button: hidden on desktop, shown on mobile */
 .og-sidebar-settings-btn {
 	display: none;
