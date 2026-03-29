@@ -1,21 +1,33 @@
 import { describe, expect, test } from "bun:test";
-import { MessageQueue, type QueueMessage } from "./message-queue.ts";
+import {
+	MessageQueue,
+	migrateQueueMessage,
+	type QueueMessage,
+} from "./message-queue.ts";
 
 describe("MessageQueue", () => {
 	test("enqueue + drain: messages accumulate and drain returns them all", () => {
 		const q = new MessageQueue();
-		q.enqueue({ source: "user", content: "hello" });
-		q.enqueue({ source: "user", content: "world" });
+		q.enqueue({ source: "user", id: "test-id", content: "hello" });
+		q.enqueue({ source: "user", id: "test-id", content: "world" });
 
 		const msgs = q.drain();
 		expect(msgs).toHaveLength(2);
-		expect(msgs[0]).toEqual({ source: "user", content: "hello" });
-		expect(msgs[1]).toEqual({ source: "user", content: "world" });
+		expect(msgs[0]).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "hello",
+		});
+		expect(msgs[1]).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "world",
+		});
 	});
 
 	test("drain returns empty array after draining", () => {
 		const q = new MessageQueue();
-		q.enqueue({ source: "user", content: "hello" });
+		q.enqueue({ source: "user", id: "test-id", content: "hello" });
 		q.drain();
 
 		const msgs = q.drain();
@@ -29,10 +41,14 @@ describe("MessageQueue", () => {
 
 	test("wait() resolves immediately if messages pending", async () => {
 		const q = new MessageQueue();
-		q.enqueue({ source: "user", content: "already here" });
+		q.enqueue({ source: "user", id: "test-id", content: "already here" });
 
 		const msg = await q.wait();
-		expect(msg).toEqual({ source: "user", content: "already here" });
+		expect(msg).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "already here",
+		});
 	});
 
 	test("wait() blocks until enqueue() is called", async () => {
@@ -50,24 +66,36 @@ describe("MessageQueue", () => {
 		expect(resolved).toBe(false);
 
 		// Now enqueue — should resolve the waiter
-		q.enqueue({ source: "clarify_response", answer: "yes" });
+		q.enqueue({ source: "clarify_response", id: "test-id", answer: "yes" });
 		const msg = await promise;
-		expect(msg).toEqual({ source: "clarify_response", answer: "yes" });
+		expect(msg).toEqual({
+			source: "clarify_response",
+			id: "test-id",
+			answer: "yes",
+		});
 	});
 
 	test("multiple enqueues before wait — wait returns first, drain gets rest", async () => {
 		const q = new MessageQueue();
-		q.enqueue({ source: "user", content: "first" });
-		q.enqueue({ source: "user", content: "second" });
-		q.enqueue({ source: "user", content: "third" });
+		q.enqueue({ source: "user", id: "test-id", content: "first" });
+		q.enqueue({ source: "user", id: "test-id", content: "second" });
+		q.enqueue({ source: "user", id: "test-id", content: "third" });
 
 		const first = await q.wait();
-		expect(first).toEqual({ source: "user", content: "first" });
+		expect(first).toEqual({ source: "user", id: "test-id", content: "first" });
 
 		const rest = q.drain();
 		expect(rest).toHaveLength(2);
-		expect(rest[0]).toEqual({ source: "user", content: "second" });
-		expect(rest[1]).toEqual({ source: "user", content: "third" });
+		expect(rest[0]).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "second",
+		});
+		expect(rest[1]).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "third",
+		});
 	});
 
 	test("close() rejects pending wait()", async () => {
@@ -83,9 +111,9 @@ describe("MessageQueue", () => {
 		const q = new MessageQueue();
 		q.close();
 
-		expect(() => q.enqueue({ source: "user", content: "nope" })).toThrow(
-			"Queue closed",
-		);
+		expect(() =>
+			q.enqueue({ source: "user", id: "test-id", content: "nope" }),
+		).toThrow("Queue closed");
 	});
 
 	test("wait() after close() rejects immediately", async () => {
@@ -99,10 +127,10 @@ describe("MessageQueue", () => {
 		const q = new MessageQueue();
 		expect(q.pending).toBe(0);
 
-		q.enqueue({ source: "user", content: "a" });
+		q.enqueue({ source: "user", id: "test-id", content: "a" });
 		expect(q.pending).toBe(1);
 
-		q.enqueue({ source: "user", content: "b" });
+		q.enqueue({ source: "user", id: "test-id", content: "b" });
 		expect(q.pending).toBe(2);
 
 		q.drain();
@@ -111,8 +139,8 @@ describe("MessageQueue", () => {
 
 	test("pending decreases when wait() consumes a message", async () => {
 		const q = new MessageQueue();
-		q.enqueue({ source: "user", content: "a" });
-		q.enqueue({ source: "user", content: "b" });
+		q.enqueue({ source: "user", id: "test-id", content: "a" });
+		q.enqueue({ source: "user", id: "test-id", content: "b" });
 		expect(q.pending).toBe(2);
 
 		await q.wait();
@@ -124,16 +152,20 @@ describe("MessageQueue", () => {
 		const promise = q.wait();
 
 		// Enqueue while someone is waiting — message goes directly to waiter
-		q.enqueue({ source: "user", content: "direct" });
+		q.enqueue({ source: "user", id: "test-id", content: "direct" });
 		expect(q.pending).toBe(0);
 
 		const msg = await promise;
-		expect(msg).toEqual({ source: "user", content: "direct" });
+		expect(msg).toEqual({ source: "user", id: "test-id", content: "direct" });
 	});
 
 	test("different message types: user", () => {
 		const q = new MessageQueue();
-		const msg: QueueMessage = { source: "user", content: "hello" };
+		const msg: QueueMessage = {
+			source: "user",
+			id: "test-id",
+			content: "hello",
+		};
 		q.enqueue(msg);
 		expect(q.drain()).toEqual([msg]);
 	});
@@ -142,6 +174,7 @@ describe("MessageQueue", () => {
 		const q = new MessageQueue();
 		const msg: QueueMessage = {
 			source: "task_complete",
+			id: "test-id",
 			taskId: "task-123",
 			title: "Auth module",
 			success: true,
@@ -155,6 +188,7 @@ describe("MessageQueue", () => {
 		const q = new MessageQueue();
 		const msg: QueueMessage = {
 			source: "task_message",
+			id: "test-id",
 			fromTaskId: "p1",
 			fromTitle: "Orchestrator",
 			content: "Priority changed",
@@ -167,6 +201,7 @@ describe("MessageQueue", () => {
 		const q = new MessageQueue();
 		const msg: QueueMessage = {
 			source: "task_message",
+			id: "test-id",
 			fromTaskId: "p1",
 			fromTitle: "Orchestrator",
 			content: "What is the status?",
@@ -184,6 +219,7 @@ describe("MessageQueue", () => {
 		const q = new MessageQueue();
 		const msg: QueueMessage = {
 			source: "task_message",
+			id: "test-id",
 			fromTaskId: "task-1",
 			fromTitle: "Auth",
 			content: "Need help",
@@ -201,6 +237,7 @@ describe("MessageQueue", () => {
 		const q = new MessageQueue();
 		const msg: QueueMessage = {
 			source: "clarify_response",
+			id: "test-id",
 			answer: "Use PostgreSQL",
 		};
 		q.enqueue(msg);
@@ -209,9 +246,10 @@ describe("MessageQueue", () => {
 
 	test("mixed message types flow through correctly", async () => {
 		const q = new MessageQueue();
-		q.enqueue({ source: "user", content: "start" });
+		q.enqueue({ source: "user", id: "test-id", content: "start" });
 		q.enqueue({
 			source: "task_complete",
+			id: "test-id",
 			taskId: "t1",
 			title: "DB",
 			success: true,
@@ -219,11 +257,12 @@ describe("MessageQueue", () => {
 		});
 		q.enqueue({
 			source: "task_message",
+			id: "test-id",
 			fromTaskId: "p1",
 			fromTitle: "Orchestrator",
 			content: "hurry up",
 		});
-		q.enqueue({ source: "clarify_response", answer: "42" });
+		q.enqueue({ source: "clarify_response", id: "test-id", answer: "42" });
 
 		const first = await q.wait();
 		expect(first.source).toBe("user");
@@ -237,9 +276,9 @@ describe("MessageQueue", () => {
 
 	test("waitForMessage() with no timeout behaves like wait()", async () => {
 		const q = new MessageQueue();
-		q.enqueue({ source: "user", content: "hello" });
+		q.enqueue({ source: "user", id: "test-id", content: "hello" });
 		const result = await q.waitForMessage(undefined);
-		expect(result).toEqual({ source: "user", content: "hello" });
+		expect(result).toEqual({ source: "user", id: "test-id", content: "hello" });
 	});
 
 	test("waitForMessage() returns message before timeout fires", async () => {
@@ -247,10 +286,13 @@ describe("MessageQueue", () => {
 		const promise = q.waitForMessage(200);
 
 		// Deliver message quickly
-		setTimeout(() => q.enqueue({ source: "user", content: "fast" }), 10);
+		setTimeout(
+			() => q.enqueue({ source: "user", id: "test-id", content: "fast" }),
+			10,
+		);
 
 		const result = await promise;
-		expect(result).toEqual({ source: "user", content: "fast" });
+		expect(result).toEqual({ source: "user", id: "test-id", content: "fast" });
 	});
 
 	test("waitForMessage() returns 'timeout' sentinel when no message arrives", async () => {
@@ -261,10 +303,15 @@ describe("MessageQueue", () => {
 
 	test("waitForMessage() resolves immediately if messages already pending", async () => {
 		const q = new MessageQueue();
-		q.enqueue({ source: "clarify_response", answer: "already here" });
+		q.enqueue({
+			source: "clarify_response",
+			id: "test-id",
+			answer: "already here",
+		});
 		const result = await q.waitForMessage(20);
 		expect(result).toEqual({
 			source: "clarify_response",
+			id: "test-id",
 			answer: "already here",
 		});
 	});
@@ -295,6 +342,7 @@ describe("MessageQueue", () => {
 		q.enqueue(
 			{
 				source: "tree_change",
+				id: "test-id",
 				action: "created",
 				nodeId: "n1",
 				title: "Task A",
@@ -309,9 +357,9 @@ describe("MessageQueue", () => {
 		expect(q.pending).toBe(1);
 
 		// A normal enqueue DOES wake the waiter
-		q.enqueue({ source: "user", content: "hello" });
+		q.enqueue({ source: "user", id: "test-id", content: "hello" });
 		const msg = await promise;
-		expect(msg).toEqual({ source: "user", content: "hello" });
+		expect(msg).toEqual({ source: "user", id: "test-id", content: "hello" });
 	});
 
 	test("quiet enqueue message is included in drain()", () => {
@@ -319,18 +367,23 @@ describe("MessageQueue", () => {
 		q.enqueue(
 			{
 				source: "tree_change",
+				id: "test-id",
 				action: "created",
 				nodeId: "n1",
 				title: "Task A",
 			},
 			{ quiet: true },
 		);
-		q.enqueue({ source: "user", content: "normal msg" });
+		q.enqueue({ source: "user", id: "test-id", content: "normal msg" });
 
 		const msgs = q.drain();
 		expect(msgs).toHaveLength(2);
 		expect(msgs[0]?.source).toBe("tree_change");
-		expect(msgs[1]).toEqual({ source: "user", content: "normal msg" });
+		expect(msgs[1]).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "normal msg",
+		});
 	});
 
 	test("quiet enqueue message is picked up by wait() when already pending", async () => {
@@ -338,6 +391,7 @@ describe("MessageQueue", () => {
 		q.enqueue(
 			{
 				source: "tree_change",
+				id: "test-id",
 				action: "updated",
 				nodeId: "n2",
 			},
@@ -356,6 +410,7 @@ describe("MessageQueue", () => {
 			q.enqueue(
 				{
 					source: "tree_change",
+					id: "test-id",
 					action: "created",
 					nodeId: "n1",
 				},
@@ -368,12 +423,22 @@ describe("MessageQueue", () => {
 		const q = new MessageQueue();
 		expect(q.pending).toBe(0);
 		q.enqueue(
-			{ source: "tree_change", action: "created", nodeId: "n1" },
+			{
+				source: "tree_change",
+				id: "test-id-1",
+				action: "created",
+				nodeId: "n1",
+			},
 			{ quiet: true },
 		);
 		expect(q.pending).toBe(1);
 		q.enqueue(
-			{ source: "tree_change", action: "updated", nodeId: "n2" },
+			{
+				source: "tree_change",
+				id: "test-id-2",
+				action: "updated",
+				nodeId: "n2",
+			},
 			{ quiet: true },
 		);
 		expect(q.pending).toBe(2);
@@ -384,12 +449,20 @@ describe("MessageQueue", () => {
 		const received: QueueMessage[] = [];
 		q.onEnqueue = (msg) => received.push(msg);
 
-		q.enqueue({ source: "user", content: "hello" });
-		q.enqueue({ source: "user", content: "world" });
+		q.enqueue({ source: "user", id: "test-id", content: "hello" });
+		q.enqueue({ source: "user", id: "test-id", content: "world" });
 
 		expect(received).toHaveLength(2);
-		expect(received[0]).toEqual({ source: "user", content: "hello" });
-		expect(received[1]).toEqual({ source: "user", content: "world" });
+		expect(received[0]).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "hello",
+		});
+		expect(received[1]).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "world",
+		});
 	});
 
 	test("onEnqueue fires when message goes directly to waiter", async () => {
@@ -401,18 +474,23 @@ describe("MessageQueue", () => {
 		const promise = q.wait();
 
 		// Enqueue while waiter exists — message bypasses array
-		q.enqueue({ source: "user", content: "direct to waiter" });
+		q.enqueue({ source: "user", id: "test-id", content: "direct to waiter" });
 
 		// onEnqueue should still have fired
 		expect(received).toHaveLength(1);
 		expect(received[0]).toEqual({
 			source: "user",
+			id: "test-id",
 			content: "direct to waiter",
 		});
 
 		// Waiter should resolve with the message
 		const msg = await promise;
-		expect(msg).toEqual({ source: "user", content: "direct to waiter" });
+		expect(msg).toEqual({
+			source: "user",
+			id: "test-id",
+			content: "direct to waiter",
+		});
 	});
 
 	test("onEnqueue does not fire for quiet enqueue", () => {
@@ -421,13 +499,79 @@ describe("MessageQueue", () => {
 		q.onEnqueue = (msg) => received.push(msg);
 
 		q.enqueue(
-			{ source: "tree_change", action: "created", nodeId: "n1" },
+			{
+				source: "tree_change",
+				id: "test-id-quiet",
+				action: "created",
+				nodeId: "n1",
+			},
 			{ quiet: true },
 		);
 		expect(received).toHaveLength(0);
 
 		// But normal enqueue does fire it
-		q.enqueue({ source: "user", content: "loud" });
+		q.enqueue({ source: "user", id: "test-id", content: "loud" });
 		expect(received).toHaveLength(1);
+	});
+
+	test("enqueue rejects messages without id", () => {
+		const q = new MessageQueue();
+		// Runtime validation: empty id should throw
+		expect(() =>
+			// biome-ignore lint/suspicious/noExplicitAny: testing runtime validation
+			q.enqueue({ source: "user", id: "", content: "no id" } as any),
+		).toThrow("QueueMessage must have a non-empty id");
+		// Missing id entirely should throw
+		expect(() =>
+			// biome-ignore lint/suspicious/noExplicitAny: testing runtime validation
+			q.enqueue({ source: "user", content: "no id at all" } as any),
+		).toThrow("QueueMessage must have a non-empty id");
+	});
+});
+
+describe("migrateQueueMessage", () => {
+	test("adds id to legacy messages without one", () => {
+		const result = migrateQueueMessage({
+			source: "child_complete",
+			taskId: "t1",
+			title: "test",
+			success: true,
+			output: "done",
+		});
+		expect(result.source).toBe("task_complete");
+		expect(result.id).toBeTruthy();
+		expect(typeof result.id).toBe("string");
+	});
+
+	test("preserves existing id on legacy messages", () => {
+		const result = migrateQueueMessage({
+			source: "child_complete",
+			id: "existing-id",
+			taskId: "t1",
+			title: "test",
+			success: true,
+			output: "done",
+		});
+		expect(result.source).toBe("task_complete");
+		expect(result.id).toBe("existing-id");
+	});
+
+	test("adds id to current-format messages without one", () => {
+		const result = migrateQueueMessage({
+			source: "user",
+			content: "hello",
+		});
+		expect(result.source).toBe("user");
+		expect(result.id).toBeTruthy();
+		expect(typeof result.id).toBe("string");
+	});
+
+	test("preserves existing id on current-format messages", () => {
+		const result = migrateQueueMessage({
+			source: "user",
+			id: "my-id",
+			content: "hello",
+		});
+		expect(result.id).toBe("my-id");
 	});
 });

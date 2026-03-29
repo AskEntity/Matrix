@@ -354,3 +354,14 @@ done() detected by checking `doneToolUse` presence + `doneResult.isError === fal
 ## Message Event Body Must Include ID (dedup invariant)
 
 The `/tasks/:nodeId/message` REST endpoint writes a message to both JSONL (as event) and persistent queue (via deliverMessage). On resume, `findUnconsumedMessages` recovers messages from JSONL and `loadPersistedMessages` loads from disk. Dedup relies on `msg.id` being present in the JSONL event body — without it, `childUnconsumedIds` stays empty and the persistent queue copy is not filtered, causing duplication. **Rule: event body and deliverMessage payload must be the same object (or at minimum share the same `id` field).**
+
+
+## QueueMessage Required ID
+
+All QueueMessage variants now require `id: string`. This is enforced at both compile-time (TypeScript) and runtime (MessageQueue.enqueue throws if id is falsy).
+
+Key consequences:
+- `queueMessageToEvent` uses `msg.id` directly (no more `ulid()` fallback)
+- `recordQueueEvents` in provider-shared.ts: user messages with id skip emit (already in JSONL from send time). This means provider-emitted event lists do NOT include user `message` events — they only contain `messages_consumed` referencing those ids.
+- `migrateQueueMessage` adds `id: ulid()` to legacy messages that lack one.
+- Tests that verify event reconstruction must prepend user message events (simulating what JSONL already has from send time) before calling `eventsToAnthropicMessages`/`eventsToOpenAIMessages`.

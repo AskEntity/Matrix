@@ -24,7 +24,12 @@ import {
 function queueWithPrompt(content: string, cwd?: string): MessageQueue {
 	const q = new MessageQueue();
 	const header = cwd ? `Working directory: ${cwd}` : undefined;
-	q.enqueue({ source: "user", content, ...(header ? { header } : {}) });
+	q.enqueue({
+		source: "user",
+		id: "test-prompt",
+		content,
+		...(header ? { header } : {}),
+	});
 	return q;
 }
 
@@ -1056,9 +1061,17 @@ describe("Event deterministic verification (OpenAI)", () => {
 					]),
 				);
 
-				// Verify reconstruction
-				const reconstructed = eventsToOpenAIMessages(persistable);
-				expect(reconstructed.length).toBeGreaterThanOrEqual(1);
+				// Verify reconstruction — prepend user message event (in production, already in JSONL)
+				const userMsgEvent: Event = {
+					type: "message",
+					id: "test-prompt",
+					taskId: "",
+					body: { source: "user", id: "test-prompt", content: "Say hello" },
+					ts: Date.now(),
+				};
+				const allEvents = [userMsgEvent, ...persistable];
+				const reconstructed = eventsToOpenAIMessages(allEvents);
+				expect(reconstructed.length).toBeGreaterThanOrEqual(2);
 				// First message should contain the content from queue drain
 				const firstMsg = reconstructed[0] as {
 					role: string;
@@ -1158,21 +1171,27 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const agentResult = await consumePromise;
 				expect(agentResult.success).toBe(true);
 
-				const events = emittedEvents;
-				const types = events.map((e) => e.type);
-				expect(types).toContain("message");
+				const types = emittedEvents.map((e) => e.type);
 				expect(types).toContain("assistant_text");
 				expect(types).toContain("tool_call");
 				expect(types).toContain("tool_result");
 
 				// Verify tool_call details
-				const toolCall = events.find((e) => e.type === "tool_call");
+				const toolCall = emittedEvents.find((e) => e.type === "tool_call");
 				if (toolCall?.type === "tool_call") {
 					expect(toolCall.tool).toBe("mcp__opengraft__done");
 					expect(toolCall.toolCallId).toBe("call_done");
 				}
 
-				// Verify reconstruction
+				// Verify reconstruction — prepend user message event
+				const userMsgEvent: Event = {
+					type: "message",
+					id: "test-prompt",
+					taskId: "",
+					body: { source: "user", id: "test-prompt", content: "Do the task" },
+					ts: Date.now(),
+				};
+				const events = [userMsgEvent, ...emittedEvents];
 				const reconstructed = eventsToOpenAIMessages(events);
 				expect(reconstructed.length).toBeGreaterThanOrEqual(4);
 				// First: user, second: assistant with tool_calls, third: tool result, fourth: assistant
@@ -1237,6 +1256,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 							if (idleCount === 1) {
 								queue.enqueue({
 									source: "user",
+									id: "test-id",
 									content: "New instruction for you",
 								});
 							} else {
@@ -1252,24 +1272,35 @@ describe("Event deterministic verification (OpenAI)", () => {
 				expect(agentResult.success).toBe(true);
 				expect(idleCount).toBe(2);
 
-				const events = emittedEvents;
-				const types = events.map((e) => e.type);
-
-				// Must have message events (from queue)
-				expect(types).toContain("message");
-				const queueMsgEvent = events.find(
-					(e) =>
-						e.type === "message" &&
-						e.body.source === "user" &&
-						e.body.content.includes("New instruction"),
-				);
-				if (
-					queueMsgEvent?.type === "message" &&
-					queueMsgEvent.body.source === "user"
-				) {
-					expect(queueMsgEvent.body.content).toContain(
-						"New instruction for you",
-					);
+				// Provider emits messages_consumed but not message events for user messages
+				// Prepend user message events for reconstruction
+				const userMsg1: Event = {
+					type: "message",
+					id: "test-prompt",
+					taskId: "",
+					body: { source: "user", id: "test-prompt", content: "Start working" },
+					ts: Date.now(),
+				};
+				const userMsg2: Event = {
+					type: "message",
+					id: "test-id",
+					taskId: "",
+					body: {
+						source: "user",
+						id: "test-id",
+						content: "New instruction for you",
+					},
+					ts: Date.now(),
+				};
+				const events = [userMsg1, ...emittedEvents];
+				// Insert second user message before its consumption
+				const consumedIndices = events.reduce<number[]>((acc, e, i) => {
+					if (e.type === "messages_consumed") acc.push(i);
+					return acc;
+				}, []);
+				const secondIdx = consumedIndices[1];
+				if (secondIdx !== undefined) {
+					events.splice(secondIdx, 0, userMsg2);
 				}
 
 				// Verify reconstruction — queue message should become user message
@@ -1486,8 +1517,20 @@ describe("Event deterministic verification (OpenAI)", () => {
 				expect(toolCalls.length).toBe(3);
 				expect(toolResults.length).toBe(3);
 
-				// Verify reconstruction
-				const reconstructed = eventsToOpenAIMessages(events);
+				// Verify reconstruction — prepend user message event
+				const userMsgEvent: Event = {
+					type: "message",
+					id: "test-prompt",
+					taskId: "",
+					body: {
+						source: "user",
+						id: "test-prompt",
+						content: "Run three tools",
+					},
+					ts: Date.now(),
+				};
+				const allEvents = [userMsgEvent, ...events];
+				const reconstructed = eventsToOpenAIMessages(allEvents);
 				// user, assistant(with 3 tool_calls), 3 tool results, assistant
 				expect(reconstructed.length).toBeGreaterThanOrEqual(6);
 

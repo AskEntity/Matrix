@@ -1072,7 +1072,7 @@ export async function handleOrchestrate(
 				type: "message",
 				id: orchMsgId,
 				taskId: orchRootNodeId,
-				body: { source: "user", content: prompt },
+				body: { source: "user", id: orchMsgId, content: prompt },
 				ts: Date.now(),
 			};
 			emitEvent(ctx, projectId, orchUserMsg);
@@ -1246,7 +1246,7 @@ export async function handleClarifyResponse(
 	const targetQueue = tracker.get(taskId)?.session?.queue;
 	if (targetQueue) {
 		try {
-			targetQueue.enqueue({ source: "clarify_response", answer });
+			targetQueue.enqueue({ source: "clarify_response", id: ulid(), answer });
 		} catch {
 			return { ok: false, error: "Queue closed", status: 409 };
 		}
@@ -1272,6 +1272,7 @@ export async function handleClarifyResponse(
 
 	await persistMessage(ctx.config.dataDir, projectId, taskId, {
 		source: "clarify_response",
+		id: ulid(),
 		answer,
 	});
 	removePendingClarification(ctx, projectId, taskId, clarificationId);

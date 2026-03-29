@@ -46,7 +46,12 @@ import { zodShapeToJsonSchema } from "./zod-schema.ts";
 function queueWithPrompt(content: string, cwd?: string): MessageQueue {
 	const q = new MessageQueue();
 	const header = cwd ? `Working directory: ${cwd}` : undefined;
-	q.enqueue({ source: "user", content, ...(header ? { header } : {}) });
+	q.enqueue({
+		source: "user",
+		id: "test-prompt",
+		content,
+		...(header ? { header } : {}),
+	});
 	return q;
 }
 
@@ -1862,6 +1867,7 @@ describe("done tool", () => {
 		setTimeout(() => {
 			queue.enqueue({
 				source: "task_message",
+				id: "test-id",
 				fromTaskId: "p1",
 				fromTitle: "Orchestrator",
 				content: "Resume with new instructions",
@@ -2218,12 +2224,20 @@ describe("Event deterministic verification", () => {
 
 		expect(result.success).toBe(true);
 
-		// Read directly from emitted events
-		const events = emittedEvents;
-		expect(events.length).toBeGreaterThanOrEqual(2);
+		// In production, the user message event is already in JSONL (written at send time).
+		// Simulate that by prepending it for reconstruction.
+		const userMsgEvent: Event = {
+			type: "message",
+			id: "test-prompt",
+			taskId: "",
+			body: { source: "user", id: "test-prompt", content: "Say hello" },
+			ts: Date.now(),
+		};
+		const events = [userMsgEvent, ...emittedEvents];
+		expect(emittedEvents.length).toBeGreaterThanOrEqual(2);
 
 		// Should have: messages_consumed (from queue drain), assistant_text
-		const types = events.map((e) => e.type);
+		const types = emittedEvents.map((e) => e.type);
 		expect(types).toContain("messages_consumed");
 		expect(types).toContain("assistant_text");
 
@@ -2318,28 +2332,34 @@ describe("Event deterministic verification", () => {
 		const agentResult = await consumePromise;
 		expect(agentResult.success).toBe(true);
 
-		const events = emittedEvents;
-		const types = events.map((e) => e.type);
-		expect(types).toContain("message");
+		const types = emittedEvents.map((e) => e.type);
 		expect(types).toContain("assistant_text");
 		expect(types).toContain("tool_call");
 		expect(types).toContain("tool_result");
 
 		// Verify tool_call details
-		const toolCall = events.find((e) => e.type === "tool_call");
+		const toolCall = emittedEvents.find((e) => e.type === "tool_call");
 		if (toolCall?.type === "tool_call") {
 			expect(toolCall.tool).toBe("mcp__opengraft__done");
 			expect(toolCall.toolCallId).toBe("tu_1");
 		}
 
 		// Verify tool_result details
-		const toolResult = events.find((e) => e.type === "tool_result");
+		const toolResult = emittedEvents.find((e) => e.type === "tool_result");
 		if (toolResult?.type === "tool_result") {
 			expect(toolResult.toolCallId).toBe("tu_1");
 			expect(toolResult.content).toContain("Task marked as passed");
 		}
 
-		// Verify reconstruction
+		// Verify reconstruction — prepend user message event (in production, already in JSONL)
+		const userMsgEvent: Event = {
+			type: "message",
+			id: "test-prompt",
+			taskId: "",
+			body: { source: "user", id: "test-prompt", content: "Do the task" },
+			ts: Date.now(),
+		};
+		const events = [userMsgEvent, ...emittedEvents];
 		const reconstructed = eventsToAnthropicMessages(events);
 		// Should have: user, assistant+tool_use, tool_result, assistant(end_turn text)
 		expect(reconstructed.length).toBeGreaterThanOrEqual(4);
@@ -2517,6 +2537,7 @@ describe("Event deterministic verification", () => {
 						// First idle: inject a message
 						queue.enqueue({
 							source: "user",
+							id: "test-id",
 							content: "Here is a new instruction",
 						});
 					} else {
@@ -2533,21 +2554,36 @@ describe("Event deterministic verification", () => {
 		expect(agentResult.success).toBe(true);
 		expect(idleCount).toBe(2);
 
-		const events = emittedEvents;
-		const types = events.map((e) => e.type);
-
-		// Must have message events (from queue)
-		expect(types).toContain("message");
-		// New unified format: content is in body, not top-level
-		const queueMsgEvent = events.find(
-			(e) =>
-				e.type === "message" &&
-				((e as { content?: string }).content?.includes("new instruction") ||
-					(e as { body?: { content?: string } }).body?.content?.includes(
-						"new instruction",
-					)),
-		);
-		expect(queueMsgEvent).toBeDefined();
+		// Provider emits messages_consumed but not message events for user messages
+		// (those are written at send time in production). Prepend them for reconstruction.
+		const userMsg1: Event = {
+			type: "message",
+			id: "test-prompt",
+			taskId: "",
+			body: { source: "user", id: "test-prompt", content: "Start working" },
+			ts: Date.now(),
+		};
+		const userMsg2: Event = {
+			type: "message",
+			id: "test-id",
+			taskId: "",
+			body: {
+				source: "user",
+				id: "test-id",
+				content: "Here is a new instruction",
+			},
+			ts: Date.now(),
+		};
+		const events = [userMsg1, ...emittedEvents];
+		// Insert second user message before its consumption (find the second messages_consumed)
+		const consumedIndices = events.reduce<number[]>((acc, e, i) => {
+			if (e.type === "messages_consumed") acc.push(i);
+			return acc;
+		}, []);
+		const secondConsumedIdx = consumedIndices[1];
+		if (secondConsumedIdx !== undefined) {
+			events.splice(secondConsumedIdx, 0, userMsg2);
+		}
 
 		// Verify reconstruction
 		const reconstructed = eventsToAnthropicMessages(events);
@@ -2679,8 +2715,16 @@ describe("Event deterministic verification", () => {
 			}
 		}
 
-		// Verify reconstruction batching
-		const reconstructed = eventsToAnthropicMessages(events);
+		// Verify reconstruction — prepend user message event (in production, already in JSONL)
+		const userMsgEvent: Event = {
+			type: "message",
+			id: "test-prompt",
+			taskId: "",
+			body: { source: "user", id: "test-prompt", content: "Run three tools" },
+			ts: Date.now(),
+		};
+		const allEvents = [userMsgEvent, ...events];
+		const reconstructed = eventsToAnthropicMessages(allEvents);
 		// user, assistant(text + 3 tool_uses), user(3 tool_results), assistant(end_turn)
 		expect(reconstructed.length).toBe(4);
 
@@ -2718,7 +2762,11 @@ describe("Event deterministic verification", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Old message before compaction" },
+				body: {
+					source: "user",
+					id: "test-id",
+					content: "Old message before compaction",
+				},
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2792,7 +2840,7 @@ describe("Event deterministic verification", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "Start working" },
+				body: { source: "user", id: "test-id", content: "Start working" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2901,6 +2949,7 @@ describe("Event deterministic verification", () => {
 							// During tool execution, enqueue a message to simulate cancellation point
 							queue.enqueue({
 								source: "user",
+								id: "test-id",
 								content: "Urgent update during tool execution",
 							});
 							return {
