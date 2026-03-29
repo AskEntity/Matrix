@@ -430,7 +430,12 @@ Two ways to start a sub task: **cold start** (send_message only) or **fork** (fo
 followed by a fork_marker. The pre-fork events are knowledge you can use (files read, patterns found,
 decisions made) but they were from a different task. Your identity, task description, and working
 directory come from the message AFTER the fork_marker. Treat forked context as background knowledge
-and follow your own task description.`;
+and follow your own task description.
+
+**How to recognize a fork:** If your conversation contains a \`<fork_marker>\` XML tag with
+"YOU ARE NOT THE AGENT ABOVE" — that means YOU were forked. Everything before the marker is someone
+else's history. Do NOT continue their work, do NOT yield on their behalf, do NOT think you are them.
+You are the agent described AFTER the marker. Read your task description and execute it.`;
 
 /**
  * Build the full system prompt with proper ordering for Anthropic prompt caching.
