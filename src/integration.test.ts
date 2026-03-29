@@ -239,7 +239,7 @@ describe("Integration: full stack with mock API", () => {
 					],
 				},
 				{
-					assert: [{ result: 0, contains: "hello_world", isError: false }],
+					assert: [{ block: 0, type: "tool_result", contains: "hello_world", isError: false }],
 					blocks: [
 						{ type: "text", text: "All done!" },
 						{
@@ -312,8 +312,8 @@ describe("Integration: full stack with mock API", () => {
 				},
 				{
 					assert: [
-						{ result: 0, contains: "tool_one_output", isError: false },
-						{ result: 1, contains: "file_content_here", isError: false },
+						{ block: 0, type: "tool_result", contains: "tool_one_output", isError: false },
+						{ block: 1, type: "tool_result", contains: "file_content_here", isError: false },
 					],
 					blocks: [
 						{ type: "text", text: "Got both results." },
