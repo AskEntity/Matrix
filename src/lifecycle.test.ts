@@ -1332,10 +1332,11 @@ describe("lifecycle: stop agent cascading", () => {
 			childQueue.enqueue({ source: "user", content: "test" }),
 		).toThrow("Queue closed");
 
-		// Child status should be failed (cascade effect)
+		// Child status should stay in_progress (interrupted, not failed)
+		// stopAgent no longer marks children as failed — they are resumable on restart
 		const updatedTracker = await getTracker(project.id);
 		const childNode = updatedTracker.get(childTask.id);
-		expect(childNode?.status).toBe("failed");
+		expect(childNode?.status).toBe("in_progress");
 	});
 });
 

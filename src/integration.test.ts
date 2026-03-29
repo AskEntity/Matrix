@@ -3915,12 +3915,16 @@ describe("Integration: file operations", () => {
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
 
-		// Agent should fail — rate limit is persistent
-		const status = await waitForDone(ctx, 20000);
-		expect(status).toBe("failed");
+		// Agent should stay in_progress — errors are "interrupted", not "failed".
+		// Wait for the error events to appear, then check status.
+		await new Promise((r) => setTimeout(r, 5000));
+		const rootNodeId = await getRootNodeId(ctx);
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(rootNodeId);
+		// Root stays in_progress (interrupted, resumable) — not failed
+		expect(rootNode?.status).toBe("in_progress");
 
 		// Should have multiple error events from outer retries
-		const rootNodeId = await getRootNodeId(ctx);
 		const events = readSessionEvents(ctx, rootNodeId);
 		const errorEvents = events.filter((e) => e.type === "error");
 		// At least 3 outer retry errors before giving up

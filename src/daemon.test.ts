@@ -2450,7 +2450,7 @@ describe("POST /projects/:id/stop", () => {
 		expect(res.status).toBe(404);
 	});
 
-	test("stopping agent cascades to child agent queues and marks them failed", async () => {
+	test("stopping agent cascades to child agent queues — children stay in_progress", async () => {
 		// Create a long-running provider so the agent stays alive
 		const longRunningProvider: AgentProvider = {
 			name: "mock",
@@ -2562,11 +2562,12 @@ describe("POST /projects/:id/stop", () => {
 		}
 		expect(closedAfterStop).toBe(true);
 
-		// Verify: child task status is now "failed"
+		// Verify: child task status stays in_progress (interrupted, not failed)
+		// stopAgent no longer marks children as failed — they are resumable on restart
 		const tasksRes = await localApp.request(`/projects/${project.id}/tasks`);
 		const { nodes } = (await tasksRes.json()) as { nodes: TaskNode[] };
 		const updatedChild = nodes.find((n) => n.id === child.id);
-		expect(updatedChild?.status).toBe("failed");
+		expect(updatedChild?.status).toBe("in_progress");
 
 		// Clean up
 		await rm(localDataDir, { recursive: true });

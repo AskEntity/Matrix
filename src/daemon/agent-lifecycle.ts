@@ -19,7 +19,7 @@ import {
 } from "../persistent-queue.ts";
 import { buildSystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
-import { findParentQueue, slugify } from "../task-utils.ts";
+import { slugify } from "../task-utils.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
 import {
 	cleanupSessionBackgroundProcesses,
@@ -421,7 +421,8 @@ export async function stopAgent(
 					cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
 					node.session = undefined;
 				}
-				tracker.updateStatus(node.id, "failed");
+				// Children stay in_progress — they were interrupted, not failed.
+				// autoResume will detect them from JSONL state on next restart.
 			}
 		}
 		await tracker.save();
@@ -715,67 +716,29 @@ export async function runChildAgentInBackground(
 			});
 		}
 
-		// done() tool updates status directly in the tracker.
-		// Only update status here if done() wasn't called (agent exited without calling done()).
+		// done() tool updates status directly in the tracker and delivers
+		// task_complete to the parent queue. That is the ONLY path for task_complete.
+		// If done() was NOT called, the agent was interrupted (stop, reset, error,
+		// queue close, daemon restart). Status stays in_progress — agent is resumable.
+		// No fallback task_complete — the parent is not notified of interruptions.
 		const currentNode = tracker.get(nodeId);
 		const doneWasCalled =
 			currentNode?.status === "passed" || currentNode?.status === "failed";
-		const success = doneWasCalled
-			? currentNode?.status === "passed"
-			: agentResult.success;
+		// TODO: Once sibling task adds exitReason to AgentResult, use
+		// agentResult.exitReason instead of status check for doneWasCalled detection.
 
-		if (!doneWasCalled) {
-			let newStatus: "passed" | "failed" | "stuck";
-			if (agentResult.success) {
-				newStatus = "passed";
-				node.failCount = 0;
-			} else {
-				node.failCount = (node.failCount ?? 0) + 1;
-				newStatus = node.failCount >= 3 ? "stuck" : "failed";
-			}
-			tracker.updateStatus(nodeId, newStatus);
+		if (doneWasCalled && currentNode?.status === "failed") {
+			node.failCount = (node.failCount ?? 0) + 1;
+		} else if (doneWasCalled) {
+			node.failCount = 0;
 		}
+		// If !doneWasCalled: status stays in_progress, no failCount change.
 		await tracker.save();
-
-		// Fallback task_complete delivery: only when done() was NOT called.
-		// When done() was called, it already delivered task_complete directly to the parent queue.
-		// This handles agents that exit without calling done() (daemon restart, error, budget exceeded).
-		if (!doneWasCalled) {
-			const completionOutput = (agentResult.output ?? "").slice(0, 2000);
-			const completionResult = findParentQueue(tracker, nodeId);
-			const completionNotification = {
-				source: "task_complete" as const,
-				taskId: nodeId,
-				title: node.title,
-				success: success ?? true,
-				output: completionOutput,
-			};
-			if (completionResult?.queue) {
-				try {
-					completionResult.queue.enqueue(completionNotification);
-				} catch {
-					// Queue may be closed if parent already finished
-				}
-			}
-			// Always persist to immediate parent for its eventual resumption
-			if (
-				node.parentId &&
-				(!completionResult?.queue ||
-					completionResult.targetId !== node.parentId)
-			) {
-				await persistMessage(
-					ctx.config.dataDir,
-					project.id,
-					node.parentId,
-					completionNotification,
-				);
-			}
-		}
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} catch (e) {
-		tracker.updateStatus(nodeId, "stuck");
-		await tracker.save();
+		// Error = interrupted. Status stays in_progress — agent is resumable.
+		// No task_complete to parent. Just emit error event so UI knows what happened.
 		const errorMsg = e instanceof Error ? e.message : String(e);
 		emitEvent(ctx, project.id, {
 			type: "error",
@@ -783,35 +746,7 @@ export async function runChildAgentInBackground(
 			message: `Child agent error: ${errorMsg}`,
 			ts: Date.now(),
 		});
-
-		// Enqueue task_complete (failure) to parent's queue (bubbles up through non-running intermediates)
-		const errorResult = findParentQueue(tracker, nodeId);
-		const errorNotification = {
-			source: "task_complete" as const,
-			taskId: nodeId,
-			title: node.title,
-			success: false,
-			output: `Error: ${errorMsg}`,
-		};
-		if (errorResult?.queue) {
-			try {
-				errorResult.queue.enqueue(errorNotification);
-			} catch {
-				// Queue may be closed
-			}
-		}
-		// Always persist to immediate parent for its eventual resumption
-		if (
-			node.parentId &&
-			(!errorResult?.queue || errorResult.targetId !== node.parentId)
-		) {
-			await persistMessage(
-				ctx.config.dataDir,
-				project.id,
-				node.parentId,
-				errorNotification,
-			);
-		}
+		await tracker.save();
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} finally {
@@ -1010,20 +945,12 @@ export async function launchAgent(
 		try {
 			const finalResult = await consumeAgentEvents(session.events);
 
-			// done() tool now updates status directly in the tracker.
-			// If agent exited without calling done(), check current status.
-			const rootAfterRun = tracker.get(rootNodeId);
-			const wasStopped = ctx.activeSessions.get(project.id) !== session;
-			if (
-				!wasStopped &&
-				(!rootAfterRun || rootAfterRun.status === "in_progress")
-			) {
-				// Agent exited on its own without calling done() — treat as success
-				tracker.updateStatus(rootNodeId, "passed");
-			}
-			// If stopped externally (user Stop), leave status as-is (in_progress = will auto-resume)
+			// done() tool updates status directly in the tracker and delivers
+			// task_complete to the parent. That is the ONLY path for status change.
+			// If done() was NOT called, agent was interrupted — status stays in_progress.
+			// No implicit pass fallback.
 			const currentRoot = tracker.get(rootNodeId);
-			const didPass = currentRoot?.status === "passed" || finalResult.success;
+			const didPass = currentRoot?.status === "passed";
 
 			// Sum child costs from the tree (source of truth)
 			const allNodes = tracker.allNodes();
@@ -1038,7 +965,7 @@ export async function launchAgent(
 			emitEvent(ctx, project.id, {
 				type: "orchestration_completed",
 				taskId: rootNodeId,
-				success: didPass ?? true,
+				success: didPass,
 				costUsd: totalCostUsd,
 				turns: finalResult.turns,
 				inputTokens: finalResult.inputTokens,
@@ -1056,7 +983,8 @@ export async function launchAgent(
 		} catch (e) {
 			caughtError = true;
 			const message = e instanceof Error ? e.message : "Unknown error";
-			tracker.updateStatus(rootNodeId, "failed");
+			// Error = interrupted. Status stays in_progress — agent is resumable.
+			// No status change, no task_complete. Just emit error so UI knows.
 			emitEvent(ctx, project.id, {
 				type: "error",
 				taskId: rootNodeId,
