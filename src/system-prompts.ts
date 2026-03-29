@@ -167,6 +167,7 @@ fix code → see it PASS. If you skip the "see it fail" step, you don't know if 
 - **Only skip creating** when a task is so heavily dependent that even scoping is impossible (extremely rare). Conflicts are normal and expected — git merges resolve them.
 - **Prefer deep trees** over flat lists — each level multiplies parallelism.
 - **Draft every idea** — when the user mentions ANY idea, bug, or feature (even half-formed), immediately create a draft task (\`draft: true\`). Drafts get status="draft" and can't be executed until promoted. Drafts are cheap, lost context is expensive. Don't wait for "create a task" — if it's worth doing, draft it now.
+- **Delegate, don't micromanage** — if you want to create and manage many sub tasks directly, fork yourself to a sub-orchestrator instead. You get one done() back, not N progress streams. This is architecturally enforced — you can't message grandchildren directly.
 
 ## Task Decomposition
 When decomposing work, write **high-quality task descriptions** for each sub task. Good task descriptions:
@@ -425,6 +426,9 @@ Two ways to start a sub task: **cold start** (send_message only) or **fork** (fo
 - Fork from **yourself** → agent has your current session knowledge
 - Fork from a **closed task** → agent inherits that task's exploration
 - Fork from a **sibling** → agent builds on a peer's discoveries
+
+**Fork to the parent, not each leaf:**
+When you have N tasks to delegate, fork yourself to one sub-orchestrator parent — not to each of the N leaf tasks individually. The sub-orchestrator inherits your context and manages all N children. You get one done() back instead of N progress streams polluting your context. Forking to each leaf also means no coordination between siblings — the sub-orchestrator provides that.
 
 **If you receive a fork:** your conversation history starts with events from another agent's session
 followed by a fork_marker. The pre-fork events are knowledge you can use (files read, patterns found,
