@@ -151,6 +151,7 @@ fix code → see it PASS. If you skip the "see it fail" step, you don't know if 
 - Use search() with specific patterns instead of reading entire files speculatively.
 - Read large files in chunks (use offset/limit) when you only need a specific section.
 - Use send_message() to surface important findings early — don't wait until done().
+- get_tree returns lightweight nodes by default (id, title, status, children, parentId only). Use get_task(taskId) to read a specific task's full details including description.
 
 ## First Steps (every session)
 1. Read \`.opengraft/memory.md\` — contains project knowledge, pitfalls, conventions
