@@ -301,7 +301,6 @@ export function registerTaskRoutes(
 		}
 		if (
 			node.status !== "failed" &&
-			node.status !== "stuck" &&
 			node.status !== "passed" &&
 			node.status !== "closed"
 		) {
@@ -313,10 +312,6 @@ export function registerTaskRoutes(
 		const body = await c.req
 			.json<{ message?: string; model?: string }>()
 			.catch(() => ({ message: undefined, model: undefined }));
-		if (body.message) {
-			tracker.setMessage(nodeId, body.message);
-		}
-
 		/** Notify parent agent (waking) that a child was continued by the user. */
 		const notifyParentOfContinue = () => {
 			if (node.parentId) {

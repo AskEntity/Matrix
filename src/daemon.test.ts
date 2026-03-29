@@ -63,7 +63,7 @@ function createMockProvider(
 				sessionId: "mock-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},
@@ -191,10 +191,8 @@ describe("daemon stats", () => {
 			draft: 0,
 			pending: 0,
 			in_progress: 0,
-			testing: 0,
 			passed: 0,
 			failed: 0,
-			stuck: 0,
 			closed: 0,
 		});
 
@@ -297,7 +295,6 @@ describe("daemon stats", () => {
 		expect(stats.taskCounts.in_progress).toBe(1); // Root
 		expect(stats.taskCounts.passed).toBe(1); // Child1
 		expect(stats.taskCounts.failed).toBe(0);
-		expect(stats.taskCounts.stuck).toBe(0);
 
 		await rm(tempDir, { recursive: true });
 		await rm(dataDir, { recursive: true });
@@ -797,7 +794,6 @@ describe("daemon tasks API", () => {
 		expect(contRes.status).toBe(200);
 		const continued = (await contRes.json()) as TaskNode;
 		expect(continued.status).toBe("pending");
-		expect(continued.message).toBe("Try a different approach");
 	});
 
 	test("POST /tasks/:nodeId/continue rejects non-failed task", async () => {
@@ -856,7 +852,7 @@ describe("daemon tasks API", () => {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -1858,7 +1854,7 @@ describe("POST /projects/:id/clarify", () => {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -1954,7 +1950,7 @@ describe("POST /projects/:id/clarify", () => {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -2083,7 +2079,7 @@ describe("POST /projects/:id/clarify", () => {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -2215,7 +2211,7 @@ describe("daemon orchestrate/agent API", () => {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -2564,7 +2560,7 @@ describe("POST /projects/:id/stop", () => {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -3001,18 +2997,18 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.status).toBe("pending");
 	});
 
-	test("resets stuck task without worktree to pending", async () => {
+	test("resets failed task without worktree to pending", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Stuck task", description: "Do stuff" }),
+			body: JSON.stringify({ title: "Failed task", description: "Do stuff" }),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
 		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "stuck" }),
+			body: JSON.stringify({ status: "failed" }),
 		});
 
 		const res = await app.request(
@@ -3024,7 +3020,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.status).toBe("pending");
 	});
 
-	test("stores message when provided for task without worktree", async () => {
+	test("continues task with message for task without worktree", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -3049,7 +3045,6 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as TaskNode;
 		expect(body.status).toBe("pending");
-		expect(body.message).toBe("Try a different approach");
 	});
 
 	test("sets status to in_progress for failed task with worktree", async () => {
@@ -3193,7 +3188,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		await new Promise((r) => setTimeout(r, 150));
 	});
 
-	test("stores message when continuing passed task", async () => {
+	test("continues passed task with message — launches agent", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -3217,7 +3212,8 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as TaskNode;
-		expect(body.message).toBe("Add tests for edge cases");
+		// Task gets a worktree created and agent launched → in_progress
+		expect(body.status).toBe("in_progress");
 	});
 
 	test("passes emit callback to stream for child agent event emission", async () => {
@@ -3253,7 +3249,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -3746,7 +3742,7 @@ describe("POST /projects/:id/restart", () => {
 					sessionId: `session-${sessionCount}`,
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -3836,7 +3832,7 @@ describe("POST /projects/:id/restart", () => {
 					sessionId: `session-${sessionCount}`,
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -3915,7 +3911,7 @@ describe("POST /projects/:id/restart", () => {
 					sessionId: `session-${sessionCount}`,
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -4020,7 +4016,7 @@ describe("POST /projects/:id/restart", () => {
 					sessionId: `session-${currentNum}`,
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -4118,7 +4114,7 @@ describe("POST /projects/:id/restart", () => {
 					sessionId: currentSessionId,
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -4234,7 +4230,7 @@ describe("lifecycle edge cases", () => {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -4312,7 +4308,7 @@ describe("lifecycle edge cases", () => {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						stopCalled = true;
 						queue.close();
@@ -4387,7 +4383,7 @@ describe("lifecycle edge cases", () => {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						stopCalled = true;
 						queue.close();

@@ -45,7 +45,7 @@ function createInstantProvider(): AgentProvider {
 				sessionId: "mock-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},
@@ -89,7 +89,7 @@ function createLongRunningProvider(): AgentProvider {
 				sessionId: "mock-long-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},
@@ -151,7 +151,7 @@ function createRecordingProvider(): {
 				sessionId: "mock-recording-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},
@@ -2015,7 +2015,7 @@ describe("lifecycle: child completion notification paths", () => {
 					sessionId: "mock",
 					events: this.stream(req),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => queue.close(),
 				};
 			},
@@ -2103,7 +2103,7 @@ describe("lifecycle: child completion notification paths", () => {
 					sessionId: "mock",
 					events: this.stream(req),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => queue.close(),
 				};
 			},
@@ -2292,7 +2292,7 @@ function createCapturingProvider(): {
 				sessionId: req.resumeSessionId ?? "mock-capturing-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},
@@ -2337,7 +2337,7 @@ function createInstantCapturingProvider(): {
 				sessionId: req.resumeSessionId ?? "mock-instant-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},

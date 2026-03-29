@@ -363,9 +363,7 @@ export function createOrchestratorTools(
 					nodes = nodes.filter((n) => n.status !== "closed");
 				}
 				const result = include_details
-					? nodes.map(
-							({ session: _session, message: _message, ...rest }) => rest,
-						)
+					? nodes.map(({ session: _session, ...rest }) => rest)
 					: nodes.map((n) => ({
 							id: n.id,
 							title: n.title,
@@ -405,7 +403,7 @@ export function createOrchestratorTools(
 						isError: true,
 					};
 				}
-				const { session: _session, message: _message, ...rest } = node;
+				const { session: _session, ...rest } = node;
 				return {
 					content: [
 						{
@@ -522,7 +520,6 @@ export function createOrchestratorTools(
 						"draft",
 						"pending",
 						"in_progress",
-						"testing",
 						"passed",
 						"failed",
 						"closed",

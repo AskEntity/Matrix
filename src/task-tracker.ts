@@ -112,14 +112,6 @@ export class TaskTracker {
 		node.updatedAt = new Date().toISOString();
 	}
 
-	/** Set a message on a task (e.g. instructions when continuing a failed task). */
-	setMessage(nodeId: string, message: string): void {
-		const node = this.nodes.get(nodeId);
-		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		node.message = message;
-		node.updatedAt = new Date().toISOString();
-	}
-
 	/** Update the title of a task node. */
 	updateTitle(
 		nodeId: string,
@@ -324,8 +316,6 @@ export class TaskTracker {
 			parentId,
 			children: [],
 			worktreePath: null,
-			message: null,
-			failCount: 0,
 			...(opts?.budgetUsd !== undefined ? { budgetUsd: opts.budgetUsd } : {}),
 			...(opts?.editedBy ? { editedBy: opts.editedBy } : {}),
 			createdAt: now,

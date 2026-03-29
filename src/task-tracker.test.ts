@@ -242,6 +242,7 @@ describe("TaskTracker", () => {
 		expect(tracker2.get(task.id)?.status).toBe("draft");
 	});
 
+
 	test("root node auto-created on load (fresh project)", () => {
 		// Root node is created automatically when tracker loads with no tree.json
 		const rootId = tracker.rootNodeId;
@@ -263,6 +264,7 @@ describe("TaskTracker", () => {
 		expect(tracker2.get(rootId)?.title).toBe("Orchestrator");
 		expect(tracker2.getChildren(rootId)).toHaveLength(1);
 	});
+
 
 	test("reorderChildren reorders children of a parent", () => {
 		const parent = tracker.addTask("App", "desc");

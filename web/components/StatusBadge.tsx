@@ -6,10 +6,8 @@ export function statusDotClass(status: TaskStatus): string {
 		draft: "status-dot-draft",
 		pending: "status-dot-pending",
 		in_progress: "status-dot-in_progress",
-		testing: "status-dot-testing",
 		passed: "status-dot-passed",
 		failed: "status-dot-failed",
-		stuck: "status-dot-stuck",
 		closed: "status-dot-closed",
 	};
 	return map[status];
