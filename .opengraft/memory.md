@@ -116,16 +116,22 @@ All tools are `ToolDefinition[]` under `mcp__opengraft__*` namespace. ONE execut
 
 ## Agent Lifecycle
 
-- `done()` → update status + deliver `task_complete` to parent + close queue (child) or block (root).
-- `yield()` = loop-level pause (not JS await). Provider loop intercepts yield tool_use BEFORE executeTool, sets `pendingYieldToolCall`, continues to top of while(true). `handleImplicitYield` waits for queue messages. On resume, `buildYieldPendingSection` provides live ## Pending data.
-- `stopAgent()` cascades: closes child queues, sets children to `failed`.
-- On JSONL resume: detects pending yield from last tool_call (no matching tool_result) → enters yield-wait directly. `findOrphanedToolCalls` skips yield — handled by the loop.
+**exitReason**: `AgentResult.exitReason: ExitReason` — `"done_passed"` | `"done_failed"` | `"interrupted"`. Only `done()` produces the first two; everything else (stop, reset, error, queue close, restart) = interrupted.
+
+- `done()` → update status + deliver `task_complete` to parent + close queue (child) or block (root). **Only path for task_complete.**
+- `yield()` = loop-level pause (not JS await). Provider loop intercepts yield tool_use BEFORE executeTool, sets `pendingYieldToolCall`, continues to top of while(true). `handleImplicitYield` waits for queue messages.
+- `end_turn` (no tool calls) = implicit yield, never implicit done. Always enters queue.wait().
+- `stopAgent()` cascades: closes child queues. **Children stay in_progress** (not failed). Agent resumable.
+- AbortSignal passed to Anthropic/OpenAI SDK stream — stop during AI generation aborts immediately.
+- On JSONL resume: `pendingYieldToolCall` detected → bypass straight to queue.wait() (zero API call). Interrupted agents get orphan tool_result → normal resume.
+- `autoResumeProjects`: each in_progress node evaluated independently by JSONL state. Yielding → bypass. Interrupted → resume. Children resumed independently.
 
 ## Same-Turn Tool Conflict Rules
 
 - **yield + other tools** → other tools execute normally, yield returns success (no-op).
 - **done + other tools** → other tools execute normally, done returns error.
-- **yield/done alone** → existing behavior.
+- **fork + other tools** → fork returns error. Fork must be sole tool in turn.
+- **yield/done/fork alone** → normal behavior.
 
 ## Daemon Restart & Recovery
 
@@ -139,7 +145,7 @@ Restart recovery handles several edge cases through a unified approach:
 
 **Consecutive user message prevention**: When JSONL ends with user-role message (orphan tool_result), queue drain merges into existing message instead of creating a new user message.
 
-**autoResumeProjects flow**: Orphan cleanup always runs → root idle (no active children) skips auto-resume → root with active children marks children failed, resumes root.
+**autoResumeProjects flow**: Phase 1: orphan cleanup for all nodes. Phase 2: each in_progress node classified independently — yielding → bypass resume, interrupted → normal resume. Root and children resume independently.
 
 **Queue message format**: No wrappers. Each queue message is its own text block. Live path and resume path produce identical structures (no cache misses).
 
@@ -177,7 +183,13 @@ Restart recovery handles several edge cases through a unified approach:
 
 ## Auth
 
-WebAuthn/Passkey + JWT (HMAC-SHA256). Token in localStorage (`og-jwt`), `authFetch()` adds Bearer header. SSE auth via query param. 30-day TTL.
+Challenge-response with browser keypair (RSA-OAEP 2048). Browser generates keypair → user runs `og auth <public_key>` → CLI encrypts JWT → user pastes ciphertext → browser decrypts → authenticated. JWT never in plaintext outside browser.
+
+- CLI auto-auth: every HTTP request gets short-lived JWT (5min TTL) via `signCLIToken()`
+- Web UI: session token in localStorage (`og-jwt`), `authFetch()` adds Bearer header. SSE auth via query param. 30-day TTL.
+- `~/.opengraft/auth.json` has `jwtSecret` (HMAC-SHA256, auto-generated)
+- `hasJwtSecret()` checks existence WITHOUT auto-creating (unlike `getSigningKey()`)
+- Biome flags functions starting with `use` as React hooks — renamed `useJti` to `consumeJti`
 
 ## Compaction
 
@@ -189,7 +201,15 @@ Two tools: `bash` (execute) + `background` (manage: list/status/kill/await). `fo
 
 ## Fork Task Context
 
-`fork_task_context` MCP tool + `POST /tasks/:nodeId/fork` REST. Copies post-compact events from source session to target (which must have no existing session). Appends `fork_marker` event. Fork is almost always cheaper than cold start due to prompt cache hit.
+Unix fork() semantics. `fork_task_context` MCP tool + `POST /tasks/:nodeId/fork` REST.
+- Copies post-compact events from source to target (no existing session required)
+- Case 1 (fork self): real fork tool_call in events → writes child-side tool_result ("You are the CHILD")
+- Case 2 (fork other): injects synthetic tool_call + tool_result pair
+- Parent gets: "You are the PARENT." Child gets: "You are the CHILD." — like unix fork() return values
+- `fork_marker` is silent structural event — identity info is in the fork tool_result
+- fork_marker content merged into tool_result user message via interleavedText in event converter
+- Multi-layer forks (A→B→C): system prompt tells agent to look at LAST fork_marker for identity
+- Mock API: `getConversationKey` detects forked agents via "You are the CHILD", uses post-fork message as key
 
 ## Ownership & Communication
 
@@ -321,80 +341,11 @@ Uses `TransientAPIError` (NOT Anthropic SDK classes) so the inner retry in callA
 Available error types: `rate_limit`, `overloaded`, `internal_server_error`, `connection_error`.
 
 
-## Auth Simplification (March 2026)
-
-Replaced WebAuthn/Passkey auth with local secret-based auth:
-- CLI is trust anchor — `~/.opengraft/auth.json` has `jwtSecret` (HMAC-SHA256)
-- CLI auto-auth: every HTTP request gets short-lived JWT (5min TTL) via `signCLIToken()`
-- `og sign` → generates login token (5min, with jti) → user pastes into web UI
-- Web UI: POST /auth/exchange with login token → gets session token (30d)
-- JTI replay prevention: in-memory Set with 5min TTL, auto-cleanup
-- Rate limiting on /auth/exchange: 5 failures/min/IP
-- Removed `@simplewebauthn/server` and `@simplewebauthn/browser` dependencies
-- auth.json backward compat: legacy `credentials` field ignored if present
-- `hasJwtSecret()` checks existence WITHOUT auto-creating (unlike `getSigningKey()` which auto-creates)
-- Biome flags functions starting with `use` as React hooks — renamed `useJti` to `consumeJti`
-
-
-## Auth v2: Challenge-Response with Browser Keypair
-
-Login: browser generates RSA-OAEP 2048 keypair → user runs `og auth <public_key>` → CLI encrypts JWT → user pastes ciphertext back → browser decrypts → authenticated. JWT never in plaintext outside browser.
-
 ## Setup Hook as .example
 
-Project init creates `setup_worktree.sh.example` (not `.sh`). Agent must review, customize, rename. Init does NOT auto-commit — root agent is forced to configure and commit. Tests activate hook by renaming .example → .sh in setup.
+Project init creates `setup_worktree.sh.example` (not `.sh`). Agent must review, customize, and create `setup_worktree.sh`. Init does NOT auto-commit — root agent is forced to configure and commit. Tests activate hook by creating .sh from .example in setupTestContext.
 
+## exitReason Detection Details
 
-## Multi-layer Fork Identity Issue
-
-When fork chains happen (A → fork → B → fork → C), agent C sees TWO fork_markers. Initial confusion: C identifies with B (the first fork_marker) instead of itself (the last fork_marker). After user correction, C adjusted correctly.
-
-**System prompt needs**: "If you see multiple fork_markers, your identity is defined by the LAST one. Everything between fork_markers is an intermediate agent's context — not yours."
-
-## Lifecycle Refactor (March 2026)
-
-### exitReason
-`AgentResult.exitReason: ExitReason` — "done_passed" | "done_failed" | "interrupted". `success: boolean` kept for backward compat, derived from exitReason.
-
-**Detection**: done() detected by checking `doneToolUse` presence + `doneResult.isError === false`. `doneExitReason` flag tracks across loop iterations.
-
-### No Fallback
-Only `done()` tool produces status changes and task_complete. All other exits = interrupted = status stays in_progress.
-
-**Deleted**: `runChildAgentInBackground` fallback task_complete, `launchAgent` implicit pass, `stopAgent` marking children failed.
-
-**New behavior**:
-- `stopAgent`: children stay in_progress (queue closed, session cleaned, no status change)
-- Error catch paths: emit error event, status stays in_progress
-- `autoResumeProjects`: each in_progress node evaluated independently by JSONL state. Yielding → bypass (zero API call). Interrupted → normal resume. Children resumed via `runChildAgentInBackground`.
-- `failCount`: only incremented on done("failed"), not interrupted.
-
-### end_turn = implicit yield
-Always enters implicit yield. `!queue` case returns `exitReason: "interrupted"` instead of breaking.
-
-### resumeFromYield bypass
-Already works as-is — `pendingYieldToolCall` at TOP of while(true), before any API call. Zero API calls wasted on yield resume.
-
-### AbortSignal passthrough
-Now passed to Anthropic SDK `stream()` and OpenAI `fetch()` — stop during AI generation aborts immediately.
-
-## Integration Test: setup_worktree.sh in setupTestContext
-
-Parent-child integration tests were silently broken because setupTestContext didn't activate the setup_worktree.sh hook. ensureChildAgentRunning → WorktreeManager.create() → runHook() threw 'Missing setup_worktree.sh' but the error was swallowed by the .catch() in deliverMessage. Fix: rename .example → .sh after pm.init() and commit it.
-
-
-## Fork Semantics (unix fork() style)
-
-**copySessionFrom** in event-store.ts implements unix fork() semantics:
-- Flushes source session pending writes before reading (prevents race)
-- Case 1 (fork self): fork tool_call already in copied events → writes child-side tool_result
-- Case 2 (fork other): injects synthetic tool_call + tool_result pair
-- Parent gets: "You are the PARENT. Forked X → Y."
-- Child gets: "You are the CHILD (forked from X)." + task info
-- fork_marker is now a silent structural event — event converter skips it (like compact_marker), identity info is in the fork tool_result
-- fork_marker content is merged into tool_result user message via interleavedText in event converter
-
-**Same-turn conflict**: fork_task_context + other tools in same turn → fork returns error (like done). Fork must be sole tool in turn.
-
-**Mock API fork support**: `getConversationKey` detects forked agents via "You are the CHILD" in tool_results, uses post-fork user message as conversation key. This separates parent and child turn queues.
+done() detected by checking `doneToolUse` presence + `doneResult.isError === false`. `doneExitReason` flag tracks across loop iterations. `success: boolean` kept for backward compat, derived from exitReason.
 
