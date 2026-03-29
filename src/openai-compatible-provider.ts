@@ -248,6 +248,7 @@ async function callOpenAIAPI(
 	tools: OpenAITool[],
 	model: string,
 	maxTokens: number,
+	signal?: AbortSignal,
 ): Promise<OpenAIChatResponse> {
 	const body: Record<string, unknown> = {
 		model,
@@ -267,6 +268,7 @@ async function callOpenAIAPI(
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify(body),
+			...(signal ? { signal } : {}),
 		});
 
 		if (response.ok) {
@@ -569,6 +571,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 				tools,
 				params.model,
 				params.maxTokens,
+				params.signal,
 			);
 
 			return data;

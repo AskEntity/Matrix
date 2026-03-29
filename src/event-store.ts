@@ -226,8 +226,17 @@ export class EventStore {
 			else if (e.type === "tool_result") toolResultIds.add(e.toolCallId);
 		}
 
+		const titleInfo = opts?.targetTitle
+			? `\nYour task: "${opts.targetTitle}"`
+			: "";
+		const descInfo = opts?.targetDescription
+			? `\nTask description: ${opts.targetDescription}`
+			: "";
 		const childForkResult =
-			"fork_task_context completed. You are the CHILD. See the fork_marker below for your task identity and instructions.";
+			`fork_task_context completed. You are the CHILD (forked from ${sourceId}).` +
+			`${titleInfo}${descInfo}\n` +
+			`The conversation above is inherited context from the source agent. ` +
+			`You are a new agent — follow your own task description.`;
 
 		// Check if fork's own tool_call is among the orphans
 		let hasForkToolCall = false;

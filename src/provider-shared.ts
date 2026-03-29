@@ -25,7 +25,7 @@ import type {
 } from "./shared-types.ts";
 import { formatQueueMessage } from "./task-utils.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
-import type { AgentResult } from "./types.ts";
+import type { AgentResult, ExitReason } from "./types.ts";
 
 // ── Constants ──
 
@@ -707,6 +707,7 @@ export interface ProviderAdapter {
 	 */
 	buildResult?(params: {
 		success: boolean;
+		exitReason: ExitReason;
 		output: string;
 		costUsd: number;
 		turns: number;
@@ -721,6 +722,7 @@ export interface ProviderAdapter {
 /** Default buildResult — used when adapter doesn't override. */
 function defaultBuildResult(params: {
 	success: boolean;
+	exitReason: ExitReason;
 	output: string;
 	costUsd: number;
 	turns: number;
@@ -732,6 +734,7 @@ function defaultBuildResult(params: {
 }): AgentResult {
 	return {
 		success: params.success,
+		exitReason: params.exitReason,
 		output: params.output,
 		costUsd: params.costUsd,
 		turns: params.turns,
@@ -894,6 +897,10 @@ export async function* runProviderLoop(
 	let manualCompactRequested = false;
 	let compactionPending = false;
 	let preCompactTokenCount = 0;
+	// Track whether done() was called during tool execution.
+	// Set when doneToolUse is detected in the current turn's tool batch.
+	// Used to determine exitReason on loop exit.
+	let doneExitReason: ExitReason | null = null;
 	{
 		const evt: Event = {
 			type: "status",
@@ -920,7 +927,7 @@ export async function* runProviderLoop(
 			const yieldResult = yieldStep.value;
 
 			if (yieldResult === null) {
-				// Queue closed — exit
+				// Queue closed — exit (stop/reset during yield = interrupted)
 				const cost = adapter.computeCost(
 					model,
 					totalInputTokens,
@@ -928,9 +935,11 @@ export async function* runProviderLoop(
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
 				);
+				const exitReason = doneExitReason ?? "interrupted";
 				const buildResult = adapter.buildResult ?? defaultBuildResult;
 				return buildResult({
-					success: true,
+					success: exitReason !== "done_failed",
+					exitReason,
 					output: lastText,
 					costUsd: cost,
 					turns,
@@ -1327,18 +1336,32 @@ export async function* runProviderLoop(
 		}
 
 		// ── Handle end_turn (no tool use) — enter implicit yield ──
+		// end_turn ALWAYS means implicit yield, never implicit done.
 		const stopReason = adapter.getStopReason(response);
 		if (stopReason === "end_turn" || toolUses.length === 0) {
 			if (!queue) {
-				const noQEvt: Event = {
-					type: "status",
-					message: "Agent ended turn (no queue for yield)",
-					taskId: "",
-					ts: Date.now(),
-				};
-				emit?.(noQEvt);
-				yield noQEvt;
-				break;
+				// No queue = can't yield. Return as interrupted (not success).
+				const noQCost = adapter.computeCost(
+					model,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				);
+				const noQExitReason = doneExitReason ?? "interrupted";
+				const noQBuildResult = adapter.buildResult ?? defaultBuildResult;
+				return noQBuildResult({
+					success: noQExitReason !== "done_failed",
+					exitReason: noQExitReason,
+					output: lastText,
+					costUsd: noQCost,
+					turns,
+					sessionId,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				});
 			}
 
 			const idleStatusEvt: Event = {
@@ -1360,7 +1383,7 @@ export async function* runProviderLoop(
 			const yieldResult = yieldStep.value;
 
 			if (yieldResult === null) {
-				// Queue closed — normal exit path. Use direct return (Bun async generator hang workaround).
+				// Queue closed during implicit yield (stop/reset = interrupted).
 				const cost = adapter.computeCost(
 					model,
 					totalInputTokens,
@@ -1368,9 +1391,11 @@ export async function* runProviderLoop(
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
 				);
+				const exitReason = doneExitReason ?? "interrupted";
 				const buildResult = adapter.buildResult ?? defaultBuildResult;
 				return buildResult({
-					success: true,
+					success: exitReason !== "done_failed",
+					exitReason,
 					output: lastText,
 					costUsd: cost,
 					turns,
@@ -1547,7 +1572,21 @@ export async function* runProviderLoop(
 			}
 		}
 
-		// If queue was closed during tool execution (done() was called),
+		// Detect done() was successfully executed (not errored or conflicting with other tools).
+		// done() handler already updated tracker status + delivered task_complete.
+		// We just need to record the exit reason for the loop's return value.
+		// Only set doneExitReason if the tool execution succeeded (isError = false).
+		if (doneToolUse && !hasOtherTools) {
+			const doneIndex = toolUses.indexOf(doneToolUse);
+			const doneResult = execResults[doneIndex] as ToolExecResult | undefined;
+			if (doneResult && !doneResult.isError) {
+				const doneInput = doneToolUse.input as { status?: string } | undefined;
+				doneExitReason =
+					doneInput?.status === "passed" ? "done_passed" : "done_failed";
+			}
+		}
+
+		// If queue was closed during tool execution (done() was called for child agents),
 		// exit after recording events but before sending results to the API.
 		if (queue?.isClosed) {
 			const cost = adapter.computeCost(
@@ -1557,9 +1596,11 @@ export async function* runProviderLoop(
 				totalCacheCreationTokens,
 				totalCacheReadTokens,
 			);
+			const exitReason = doneExitReason ?? "interrupted";
 			const buildResult2 = adapter.buildResult ?? defaultBuildResult;
 			return buildResult2({
-				success: true,
+				success: exitReason !== "done_failed",
+				exitReason,
 				output: lastText,
 				costUsd: cost,
 				turns,
@@ -1607,9 +1648,12 @@ export async function* runProviderLoop(
 		totalCacheReadTokens,
 	);
 
+	// Loop exited via break (abort signal). This is an interrupted exit unless done() was called earlier.
+	const finalExitReason = doneExitReason ?? "interrupted";
 	const buildResultFinal = adapter.buildResult ?? defaultBuildResult;
 	return buildResultFinal({
-		success: true,
+		success: finalExitReason !== "done_failed",
+		exitReason: finalExitReason,
 		output: lastText,
 		costUsd: finalCost,
 		turns,

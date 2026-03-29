@@ -729,12 +729,47 @@ export class ValidatingMockAPI {
 	 * Derive a stable conversation key from the messages array.
 	 * Uses the first user message's text content as the key — this is unique per conversation
 	 * and stable across API calls (the first message never changes).
+	 *
+	 * For forked agents: the message history starts with the source agent's messages,
+	 * so the first user message is the same as the parent's. To distinguish them,
+	 * we detect the fork tool_result ("You are the CHILD") and use the first user
+	 * message AFTER that fork point as the key.
 	 */
 	private getConversationKey(messages: MessageParam[]): string {
+		// Find the fork point: a user message containing "You are the CHILD" tool_result
+		let forkMsgIdx = -1;
+		for (let i = 0; i < messages.length; i++) {
+			const msg = messages[i];
+			if (!msg || msg.role !== "user" || !Array.isArray(msg.content)) continue;
+			const hasForkResult = (
+				msg.content as Array<{ type: string; content?: string }>
+			).some(
+				(b) =>
+					b.type === "tool_result" && b.content?.includes("You are the CHILD"),
+			);
+			if (hasForkResult) {
+				forkMsgIdx = i;
+				break;
+			}
+		}
+
+		// For forked agents: use the first user message after fork point
+		if (forkMsgIdx >= 0) {
+			for (let i = forkMsgIdx + 1; i < messages.length; i++) {
+				const msg = messages[i];
+				if (msg?.role === "user") {
+					const texts = extractUserTextBlocks(msg);
+					return `fork:${texts.join("|").slice(0, 200)}`;
+				}
+			}
+			// No user message after fork — use the fork result itself as key
+			return `fork:${forkMsgIdx}`;
+		}
+
+		// Normal (non-forked) agent: use first user message
 		const firstUser = messages.find((m) => m.role === "user");
 		if (!firstUser) return "default";
 		const texts = extractUserTextBlocks(firstUser);
-		// Use first 200 chars of combined text as fingerprint (enough to be unique)
 		return texts.join("|").slice(0, 200);
 	}
 

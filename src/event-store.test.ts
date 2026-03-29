@@ -579,12 +579,18 @@ describe("EventStore", () => {
 		expect(result.eventCount).toBe(2);
 
 		const targetEvents = store.read("target");
-		// 2 copied events + 1 fork_marker
-		expect(targetEvents).toHaveLength(3);
+		// 2 copied events + synthetic tool_call + synthetic tool_result + fork_marker
+		expect(targetEvents).toHaveLength(5);
 		expect(targetEvents[0]?.type).toBe("message");
 		expect(targetEvents[1]?.type).toBe("assistant_text");
-		expect(targetEvents[2]?.type).toBe("fork_marker");
-		const marker = targetEvents[2] as Extract<Event, { type: "fork_marker" }>;
+		// Synthetic fork turn (Case 2: source has no fork tool_call)
+		expect(targetEvents[2]?.type).toBe("tool_call");
+		expect(targetEvents[3]?.type).toBe("tool_result");
+		if (targetEvents[3]?.type === "tool_result") {
+			expect(targetEvents[3].content).toContain("You are the CHILD");
+		}
+		expect(targetEvents[4]?.type).toBe("fork_marker");
+		const marker = targetEvents[4] as Extract<Event, { type: "fork_marker" }>;
 		expect(marker.sourceTaskId).toBe("source");
 		expect(marker.taskId).toBe("target");
 	});
@@ -625,10 +631,13 @@ describe("EventStore", () => {
 		expect(result.eventCount).toBe(2);
 
 		const targetEvents = store.read("target");
-		expect(targetEvents).toHaveLength(3); // 2 events + fork_marker
+		// 2 events + synthetic tool_call + synthetic tool_result + fork_marker
+		expect(targetEvents).toHaveLength(5);
 		expect(targetEvents[0]?.type).toBe("compacted_resume");
 		expect(targetEvents[1]?.type).toBe("assistant_text");
-		expect(targetEvents[2]?.type).toBe("fork_marker");
+		expect(targetEvents[2]?.type).toBe("tool_call");
+		expect(targetEvents[3]?.type).toBe("tool_result");
+		expect(targetEvents[4]?.type).toBe("fork_marker");
 	});
 
 	test("copySessionFrom errors if source has no events", async () => {
@@ -680,8 +689,11 @@ describe("EventStore", () => {
 		expect(result.eventCount).toBe(0);
 
 		const targetEvents = store.read("target");
-		expect(targetEvents).toHaveLength(1); // just fork_marker
-		expect(targetEvents[0]?.type).toBe("fork_marker");
+		// Empty active context: synthetic tool_call + tool_result + fork_marker
+		expect(targetEvents).toHaveLength(3);
+		expect(targetEvents[0]?.type).toBe("tool_call");
+		expect(targetEvents[1]?.type).toBe("tool_result");
+		expect(targetEvents[2]?.type).toBe("fork_marker");
 	});
 
 	test("copySessionFrom stores targetTitle and targetDescription in fork_marker", async () => {
@@ -699,8 +711,9 @@ describe("EventStore", () => {
 		expect(result.eventCount).toBe(1);
 
 		const targetEvents = store.read("target");
-		expect(targetEvents).toHaveLength(2); // 1 event + fork_marker
-		const marker = targetEvents[1] as Extract<Event, { type: "fork_marker" }>;
+		// 1 event + synthetic tool_call + tool_result + fork_marker
+		expect(targetEvents).toHaveLength(4);
+		const marker = targetEvents[3] as Extract<Event, { type: "fork_marker" }>;
 		expect(marker.type).toBe("fork_marker");
 		expect(marker.sourceTaskId).toBe("source");
 		expect(marker.targetTitle).toBe("Auth simplification");
@@ -720,7 +733,8 @@ describe("EventStore", () => {
 		await store.copySessionFrom("source", "target");
 
 		const targetEvents = store.read("target");
-		const marker = targetEvents[1] as Extract<Event, { type: "fork_marker" }>;
+		// 1 event + synthetic tool_call + tool_result + fork_marker
+		const marker = targetEvents[3] as Extract<Event, { type: "fork_marker" }>;
 		expect(marker.targetTitle).toBeUndefined();
 		expect(marker.targetDescription).toBeUndefined();
 	});

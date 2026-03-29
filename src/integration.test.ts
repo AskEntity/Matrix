@@ -11,8 +11,8 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { renameSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "./daemon.ts";
@@ -65,6 +65,30 @@ async function setupTestContext(): Promise<TestContext> {
 
 	await appResult.pm.load();
 	const project = await appResult.pm.init(projectDir);
+
+	// Activate the setup hook: rename .example → .sh so worktree creation works.
+	// Without this, child agent tasks can't create worktrees.
+	const hookExample = join(
+		projectDir,
+		".opengraft",
+		"hooks",
+		"setup_worktree.sh.example",
+	);
+	const hookActive = join(
+		projectDir,
+		".opengraft",
+		"hooks",
+		"setup_worktree.sh",
+	);
+	if (existsSync(hookExample)) {
+		await rename(hookExample, hookActive);
+	}
+	// Commit the hook so it's available in worktrees
+	Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
+	Bun.spawnSync(["git", "commit", "-m", "activate setup hook"], {
+		cwd: projectDir,
+	});
+
 	appResult.markReady();
 
 	return {
@@ -2615,6 +2639,423 @@ describe("Integration: parent-child lifecycle", () => {
 	}, 45000);
 });
 
+// ── Lifecycle: exitReason + interrupt + yield bypass tests ──
+
+describe("Integration: lifecycle exitReason and interrupt behavior", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("LC1: done(passed) → status=passed, exitReason=done_passed", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "all good" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.status).toBe("passed");
+	});
+
+	test("LC2: done(failed) → status=failed, exitReason=done_failed", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "failed", summary: "something went wrong" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("failed");
+	});
+
+	test("LC3: interrupted (crash) → status stays in_progress, no task_complete", async () => {
+		ctx = await setupTestContext();
+
+		// Agent starts a long bash command, then we crash
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "recovered" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		// Wait a bit for bash to start
+		await new Promise((r) => setTimeout(r, 200));
+
+		// Crash
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Check status — should be in_progress (not passed, not failed)
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.status).toBe("in_progress");
+	});
+
+	test("LC4: interrupted (stop) → status stays in_progress", async () => {
+		ctx = await setupTestContext();
+
+		// Agent yields, then we stop it
+		const instruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__yield",
+					input: {},
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		// Stop the agent
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Status should still be in_progress
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.status).toBe("in_progress");
+	});
+
+	test("LC5: stop root with children → all stay in_progress", async () => {
+		ctx = await setupTestContext();
+
+		// Parent creates a child and yields
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__bash",
+					input: { command: "sleep 30" },
+				},
+			],
+		});
+
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: {
+								title: "Long Running Child",
+								description: "child that runs a long time",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: { childId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__yield",
+							input: {},
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, parentInstruction);
+		await waitForIdle(ctx);
+		// Give child time to launch
+		await new Promise((r) => setTimeout(r, 500));
+
+		// Stop everything
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Both root and child should be in_progress (not failed)
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.status).toBe("in_progress");
+
+		if (rootNode?.children && rootNode.children.length > 0) {
+			const childId = rootNode.children[0]!;
+			const childNode = tracker.get(childId);
+			expect(childNode?.status).toBe("in_progress");
+		}
+	}, 30000);
+});
+
+describe("Integration: yield bypass on restart", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("LC6: yield → restart → bypass → message → done (zero wasted API calls)", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: agent yields
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Going idle." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__yield",
+					input: {},
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+		expect(preRestartRequests).toBe(1);
+
+		// Crash
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Restart
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Yielding root should have been launched but NO new API calls yet
+		// (provider loop bypasses to queue.wait via pendingYieldToolCall)
+		// Give it a moment to launch
+		await new Promise((r) => setTimeout(r, 200));
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests);
+
+		// Send message to wake agent
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Waking up after restart." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "survived restart" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+		// Now should have made exactly 1 new API call (the one after yield resolved)
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests + 1);
+	}, 30000);
+
+	test("LC7: interrupted agent resumes normally after restart", async () => {
+		ctx = await setupTestContext();
+
+		// Agent runs a bash command — we crash during it
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running bash." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					// After restart: get interrupted bash result, call done
+					blocks: [
+						{ type: "text", text: "Bash interrupted, done." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "handled interruption" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await new Promise((r) => setTimeout(r, 300));
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+		expect(preRestartRequests).toBe(1);
+
+		// Crash
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Restart
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Interrupted root should resume with an API call
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+	}, 30000);
+
+	test("LC8: end_turn enters implicit yield, message wakes agent", async () => {
+		ctx = await setupTestContext();
+
+		// First turn: API returns end_turn (no tool calls).
+		// With the new behavior, this enters implicit yield instead of exiting.
+		// Second turn: user sends message, agent wakes and calls done.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [{ type: "text", text: "Nothing to do, ending turn." }],
+					stop_reason: "end_turn",
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Got a message, finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "woke from end_turn" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+
+		// Wait for agent to enter implicit yield (idle state)
+		await waitForIdle(ctx);
+		expect(ctx.mockAPI.getRequestCount()).toBe(1);
+
+		// Agent should still be in_progress (not passed — end_turn is no longer implicit done)
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId!);
+		expect(rootNode?.status).toBe("in_progress");
+
+		// Send message to wake from implicit yield
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Continue please." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "continued after end_turn" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 15000);
+});
+
+describe("Integration: autoResume with mixed agent states", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("LC9: restart with yielding root — zero-cost bypass resume", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Yielding." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__yield",
+					input: {},
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		const preRestart = ctx.mockAPI.getRequestCount();
+
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+		await new Promise((r) => setTimeout(r, 300));
+
+		// No new API calls — yielding root entered bypass
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestart);
+
+		// But root should be launchable — send a message to verify
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "after restart" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+		// Prefix validation passed (mock would throw on mismatch)
+	}, 30000);
+});
+
 // ── Background process lifecycle tests ──
 
 describe("Integration: background process lifecycle", () => {
@@ -3916,12 +4357,16 @@ describe("Integration: file operations", () => {
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
 
-		// Agent should fail — rate limit is persistent
-		const status = await waitForDone(ctx, 20000);
-		expect(status).toBe("failed");
+		// Agent should stay in_progress — errors are "interrupted", not "failed".
+		// Wait for the error events to appear, then check status.
+		await new Promise((r) => setTimeout(r, 5000));
+		const rootNodeId = await getRootNodeId(ctx);
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(rootNodeId);
+		// Root stays in_progress (interrupted, resumable) — not failed
+		expect(rootNode?.status).toBe("in_progress");
 
 		// Should have multiple error events from outer retries
-		const rootNodeId = await getRootNodeId(ctx);
 		const events = readSessionEvents(ctx, rootNodeId);
 		const errorEvents = events.filter((e) => e.type === "error");
 		// At least 3 outer retry errors before giving up
@@ -3974,21 +4419,10 @@ describe("Integration: fork prefix consistency", () => {
 	test("Forked child's messages have parent's complete turns as prefix", async () => {
 		ctx = await setupTestContext();
 
-		// pm.init creates .opengraft/ with setup_worktree.sh.example — activate + commit
-		const hooksDir = join(ctx.projectDir, ".opengraft", "hooks");
-		renameSync(
-			join(hooksDir, "setup_worktree.sh.example"),
-			join(hooksDir, "setup_worktree.sh"),
-		);
-		Bun.spawnSync(["git", "add", ".opengraft"], { cwd: ctx.projectDir });
-		Bun.spawnSync(["git", "commit", "-m", "add opengraft"], {
-			cwd: ctx.projectDir,
-		});
-
 		// Child instruction: simple done
 		const childInstruction = JSON.stringify({
 			blocks: [
-				{ type: "text", text: "I am the forked child agent." },
+				{ type: "text", text: "I am the forked child." },
 				{
 					type: "tool_use",
 					name: "mcp__opengraft__done",
@@ -3997,20 +4431,12 @@ describe("Integration: fork prefix consistency", () => {
 			],
 		});
 
-		// Parent instruction:
-		// Turn 1: bash echo (creates real tool call + tool result)
-		// Turn 2: bash echo again (another complete turn for prefix depth)
-		// Turn 3: create_task (capture childId)
-		// Turn 4: fork_task_context
-		// Turn 5: send_message (triggers child)
-		// Turn 6: yield (wait for child)
-		// Turn 7: done
+		// Parent: bash × 2 → create → fork → send → yield → done
 		const parentInstruction = JSON.stringify({
 			turns: [
 				{
-					// Turn 1: bash to create a complete tool call/result cycle
 					blocks: [
-						{ type: "text", text: "Let me do some work first." },
+						{ type: "text", text: "Work 1." },
 						{
 							type: "tool_use",
 							name: "mcp__opengraft__bash",
@@ -4019,16 +4445,11 @@ describe("Integration: fork prefix consistency", () => {
 					],
 				},
 				{
-					// Turn 2: another bash for more prefix depth
 					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							contains: "PARENT_WORK_1",
-						},
+						{ block: 0, type: "tool_result", contains: "PARENT_WORK_1" },
 					],
 					blocks: [
-						{ type: "text", text: "More work." },
+						{ type: "text", text: "Work 2." },
 						{
 							type: "tool_use",
 							name: "mcp__opengraft__bash",
@@ -4037,16 +4458,10 @@ describe("Integration: fork prefix consistency", () => {
 					],
 				},
 				{
-					// Turn 3: create child task
 					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							contains: "PARENT_WORK_2",
-						},
+						{ block: 0, type: "tool_result", contains: "PARENT_WORK_2" },
 					],
 					blocks: [
-						{ type: "text", text: "Now creating child and forking." },
 						{
 							type: "tool_use",
 							name: "mcp__opengraft__create_task",
@@ -4058,7 +4473,6 @@ describe("Integration: fork prefix consistency", () => {
 					],
 				},
 				{
-					// Turn 4: fork_task_context (capture both childId and rootId from create_task result)
 					assert: [
 						{
 							block: 0,
@@ -4074,21 +4488,13 @@ describe("Integration: fork prefix consistency", () => {
 						{
 							type: "tool_use",
 							name: "mcp__opengraft__fork_task_context",
-							input: {
-								sourceTaskId: "$rootId",
-								targetTaskId: "$childId",
-							},
+							input: { sourceTaskId: "$rootId", targetTaskId: "$childId" },
 						},
 					],
 				},
 				{
-					// Turn 5: send_message to child
 					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							contains: "You are the PARENT",
-						},
+						{ block: 0, type: "tool_result", contains: "You are the PARENT" },
 					],
 					blocks: [
 						{
@@ -4096,41 +4502,21 @@ describe("Integration: fork prefix consistency", () => {
 							name: "mcp__opengraft__send_message",
 							input: {
 								taskId: "$childId",
-								title: "Start forked work",
+								title: "Start",
 								message: childInstruction,
 							},
 						},
 					],
 				},
 				{
-					// Turn 6: yield to wait for child
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							isError: false,
-						},
-					],
+					assert: [{ block: 0, type: "tool_result", isError: false }],
 					blocks: [
-						{ type: "text", text: "Waiting for child." },
-						{
-							type: "tool_use",
-							name: "mcp__opengraft__yield",
-							input: {},
-						},
+						{ type: "tool_use", name: "mcp__opengraft__yield", input: {} },
 					],
 				},
 				{
-					// Turn 7: done after child completes
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							contains: "## Pending",
-						},
-					],
+					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
 					blocks: [
-						{ type: "text", text: "All done." },
 						{
 							type: "tool_use",
 							name: "mcp__opengraft__done",
@@ -4143,173 +4529,65 @@ describe("Integration: fork prefix consistency", () => {
 
 		const resp = await startAgent(ctx, parentInstruction);
 		expect(resp.status).toBe(200);
-
 		const status = await waitForDone(ctx, 30000);
-
 		expect(status).toBe("passed");
 
-		// Analyze the request history from the shared mock API.
 		const history = ctx.mockAPI.getRequestHistory();
+		const hasChildForkResult = (req: (typeof history)[0]) =>
+			req.messages.some((m) => {
+				if (m.role !== "user" || !Array.isArray(m.content)) return false;
+				return (m.content as Array<{ type: string; content?: string }>).some(
+					(b) =>
+						b.type === "tool_result" &&
+						b.content?.includes("You are the CHILD"),
+				);
+			});
+		const childRequests = history.filter(hasChildForkResult);
+		const parentRequests = history.filter((r) => !hasChildForkResult(r));
 
-		// Separate parent vs child requests by checking for fork_marker in messages.
-		const childRequests = history.filter((req) => {
-			const msgTexts = req.messages
-				.filter((m) => m.role === "user")
-				.flatMap((m) => {
-					if (typeof m.content === "string") return [m.content];
-					if (Array.isArray(m.content)) {
-						return (m.content as Array<{ type: string; text?: string }>)
-							.filter((b) => b.type === "text")
-							.map((b) => b.text ?? "");
-					}
-					return [];
-				});
-			return msgTexts.some((t) => t.includes("fork_marker"));
-		});
-
-		const parentRequests = history.filter((req) => {
-			const msgTexts = req.messages
-				.filter((m) => m.role === "user")
-				.flatMap((m) => {
-					if (typeof m.content === "string") return [m.content];
-					if (Array.isArray(m.content)) {
-						return (m.content as Array<{ type: string; text?: string }>)
-							.filter((b) => b.type === "text")
-							.map((b) => b.text ?? "");
-					}
-					return [];
-				});
-			return !msgTexts.some((t) => t.includes("fork_marker"));
-		});
-
-		// Parent should have at least 3 requests (turns 1-3 before fork)
 		expect(parentRequests.length).toBeGreaterThanOrEqual(3);
-		// Child should have at least 1 request
 		expect(childRequests.length).toBeGreaterThanOrEqual(1);
 
-		// KEY CHECK: find the parent request that returned fork_task_context tool_use.
-		// Its messages represent the conversation state BEFORE fork execution.
-		// These messages should be an exact prefix of the child's first API call messages.
+		// Find parent request that returned fork_task_context tool_use
 		const forkRequestIdx = parentRequests.findIndex((req) => {
-			const lastAssistant = [...req.messages]
+			const last = [...req.messages]
 				.reverse()
 				.find((m) => m.role === "assistant");
-			if (!lastAssistant || !Array.isArray(lastAssistant.content)) return false;
-			return (lastAssistant.content as Array<{ name?: string }>).some(
+			if (!last || !Array.isArray(last.content)) return false;
+			return (last.content as Array<{ name?: string }>).some(
 				(b) => b.name === "mcp__opengraft__fork_task_context",
 			);
 		});
 		expect(forkRequestIdx).toBeGreaterThanOrEqual(0);
 
-		const preForkParentMessages = parentRequests[forkRequestIdx]!.messages;
-		const childFirstMessages = childRequests[0]!.messages;
+		const preForkMsgs = parentRequests[forkRequestIdx]!.messages;
+		const childFirstMsgs = childRequests[0]!.messages;
 
-		// Verify prefix: child's messages should match parent's COMPLETE turns.
-		// Fork copies events mid-turn (tool_calls written, tool_results not yet).
-		// So the prefix match covers all complete turns before the fork turn.
-		// The fork turn itself diverges: parent has real tool_results, child has
-		// fork_marker + synthetic orphan tool_results.
+		// Prefix match: everything except the fork tool_result diverges
 		let prefixMatchCount = 0;
-		const maxCheck = Math.min(
-			preForkParentMessages.length,
-			childFirstMessages.length,
-		);
-		for (let i = 0; i < maxCheck; i++) {
-			const parentMsg = preForkParentMessages[i] as {
-				role: string;
-				content: unknown;
-			};
-			const childMsg = childFirstMessages[i] as {
-				role: string;
-				content: unknown;
-			};
-			if (messagesDeepEqual(parentMsg, childMsg)) {
-				prefixMatchCount++;
-			} else {
-				break;
-			}
+		for (
+			let i = 0;
+			i < Math.min(preForkMsgs.length, childFirstMsgs.length);
+			i++
+		) {
+			const p = preForkMsgs[i] as { role: string; content: unknown };
+			const c = childFirstMsgs[i] as { role: string; content: unknown };
+			if (messagesDeepEqual(p, c)) prefixMatchCount++;
+			else break;
 		}
+		// Parent: "You are the PARENT", Child: "You are the CHILD" — fork() return value
+		expect(prefixMatchCount).toBe(preForkMsgs.length - 1);
 
-		// After fix: copySessionFrom flushes pending writes and writes synthetic
-		// tool_results for orphaned tool_calls before fork_marker. This means the
-		// child's messages now include the fork turn with proper tool_use/tool_result
-		// pairing. The prefix should cover everything up to the fork_marker.
-		//
-		// Parent's pre-fork request has 9 messages (turns 1-3 complete + turn 4
-		// assistant with fork tool_use). The child should match all of these except
-		// where content diverges (parent has real fork result, child has synthetic).
-		//
-		// Pre-fork parent messages include the fork tool_use assistant msg.
-		// Child has the same assistant msg + synthetic tool_result.
-		// The divergence point is where parent has real fork tool_result vs child
-		// has synthetic fork tool_result content.
-		// After fix: prefix covers everything except the fork tool_result content.
-		// Parent has "You are the PARENT..." while child has "You are the CHILD...
-		// executed by the parent...". This is the unix fork() return value:
-		// same call, different result tells you who you are.
-		expect(prefixMatchCount).toBe(preForkParentMessages.length - 1);
-
-		// At the divergence point: child has child-side fork result
-		const divergeMsg = childFirstMessages[prefixMatchCount] as {
-			role: string;
-			content: unknown;
-		};
-		expect(divergeMsg.role).toBe("user");
-		const divergeBlocks = Array.isArray(divergeMsg.content)
-			? (divergeMsg.content as Array<{ type: string; content?: string }>)
-			: [];
-		const forkResult = divergeBlocks.find((b) => b.type === "tool_result");
-		expect(forkResult).toBeDefined();
-		expect(forkResult?.content).toContain("You are the CHILD");
-
-		// After the synthetic fork result: fork_marker user message
-		const forkMarkerMsg = childFirstMessages[prefixMatchCount + 1] as {
-			role: string;
-			content: unknown;
-		};
-		expect(forkMarkerMsg).toBeDefined();
-		// fork_marker becomes a user message. But it might be merged with the
-		// previous user message by the event converter. Check both positions.
-		const allChildTexts = childFirstMessages.flatMap((m) => {
-			if (m.role !== "user") return [];
-			if (typeof m.content === "string") return [m.content];
-			if (Array.isArray(m.content)) {
-				return (m.content as Array<{ type: string; text?: string }>)
-					.filter((b) => b.type === "text")
-					.map((b) => b.text ?? "");
-			}
-			return [];
-		});
-		expect(allChildTexts.some((t) => t.includes("fork_marker"))).toBe(true);
-
-		// Verify the child's JSONL has the fork_marker event
+		// Verify JSONL has fork_marker
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId!);
-		const childNodeId = rootNode!.children![0]!;
-		const childEvents = readSessionEvents(ctx, childNodeId);
-		const hasForkMarker = childEvents.some((e) => e.type === "fork_marker");
-		expect(hasForkMarker).toBe(true);
-
-		// Count forked events (events before fork_marker that came from parent)
-		const forkMarkerEvtIdx = childEvents.findIndex(
-			(e) => e.type === "fork_marker",
-		);
-		expect(forkMarkerEvtIdx).toBeGreaterThan(0);
+		const childNodeId = tracker.get(tracker.rootNodeId!)!.children![0]!;
+		expect(
+			readSessionEvents(ctx, childNodeId).some((e) => e.type === "fork_marker"),
+		).toBe(true);
 	}, 45000);
 
 	test("Fork writes synthetic tool_results before fork_marker for orphaned tool_calls", async () => {
 		ctx = await setupTestContext();
-
-		// Setup: commit .opengraft so worktrees work
-		const hooksDir2 = join(ctx.projectDir, ".opengraft", "hooks");
-		renameSync(
-			join(hooksDir2, "setup_worktree.sh.example"),
-			join(hooksDir2, "setup_worktree.sh"),
-		);
-		Bun.spawnSync(["git", "add", ".opengraft"], { cwd: ctx.projectDir });
-		Bun.spawnSync(["git", "commit", "-m", "add opengraft"], {
-			cwd: ctx.projectDir,
-		});
 
 		// Child: just done
 		const childInstruction = JSON.stringify({
@@ -4479,16 +4757,6 @@ describe("Integration: fork prefix consistency", () => {
 
 	test("Fork from closed agent injects synthetic tool_call + tool_result", async () => {
 		ctx = await setupTestContext();
-
-		const hooksDir3 = join(ctx.projectDir, ".opengraft", "hooks");
-		renameSync(
-			join(hooksDir3, "setup_worktree.sh.example"),
-			join(hooksDir3, "setup_worktree.sh"),
-		);
-		Bun.spawnSync(["git", "add", ".opengraft"], { cwd: ctx.projectDir });
-		Bun.spawnSync(["git", "commit", "-m", "add opengraft"], {
-			cwd: ctx.projectDir,
-		});
 
 		// Scenario: parent creates child A → A does work and completes →
 		// parent creates child B → forks A's context to B → B launches
@@ -4698,16 +4966,6 @@ describe("Integration: fork prefix consistency", () => {
 
 	test("Fork + other tools in same turn: fork returns error", async () => {
 		ctx = await setupTestContext();
-
-		const hooksDir3 = join(ctx.projectDir, ".opengraft", "hooks");
-		renameSync(
-			join(hooksDir3, "setup_worktree.sh.example"),
-			join(hooksDir3, "setup_worktree.sh"),
-		);
-		Bun.spawnSync(["git", "add", ".opengraft"], { cwd: ctx.projectDir });
-		Bun.spawnSync(["git", "commit", "-m", "add opengraft"], {
-			cwd: ctx.projectDir,
-		});
 
 		// Parent: create_task → (bash + fork in SAME turn) → assert fork errored → done
 		const instruction = JSON.stringify({

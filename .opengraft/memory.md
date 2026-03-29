@@ -350,3 +350,51 @@ Project init creates `setup_worktree.sh.example` (not `.sh`). Agent must review,
 When fork chains happen (A → fork → B → fork → C), agent C sees TWO fork_markers. Initial confusion: C identifies with B (the first fork_marker) instead of itself (the last fork_marker). After user correction, C adjusted correctly.
 
 **System prompt needs**: "If you see multiple fork_markers, your identity is defined by the LAST one. Everything between fork_markers is an intermediate agent's context — not yours."
+
+## Lifecycle Refactor (March 2026)
+
+### exitReason
+`AgentResult.exitReason: ExitReason` — "done_passed" | "done_failed" | "interrupted". `success: boolean` kept for backward compat, derived from exitReason.
+
+**Detection**: done() detected by checking `doneToolUse` presence + `doneResult.isError === false`. `doneExitReason` flag tracks across loop iterations.
+
+### No Fallback
+Only `done()` tool produces status changes and task_complete. All other exits = interrupted = status stays in_progress.
+
+**Deleted**: `runChildAgentInBackground` fallback task_complete, `launchAgent` implicit pass, `stopAgent` marking children failed.
+
+**New behavior**:
+- `stopAgent`: children stay in_progress (queue closed, session cleaned, no status change)
+- Error catch paths: emit error event, status stays in_progress
+- `autoResumeProjects`: each in_progress node evaluated independently by JSONL state. Yielding → bypass (zero API call). Interrupted → normal resume. Children resumed via `runChildAgentInBackground`.
+- `failCount`: only incremented on done("failed"), not interrupted.
+
+### end_turn = implicit yield
+Always enters implicit yield. `!queue` case returns `exitReason: "interrupted"` instead of breaking.
+
+### resumeFromYield bypass
+Already works as-is — `pendingYieldToolCall` at TOP of while(true), before any API call. Zero API calls wasted on yield resume.
+
+### AbortSignal passthrough
+Now passed to Anthropic SDK `stream()` and OpenAI `fetch()` — stop during AI generation aborts immediately.
+
+## Integration Test: setup_worktree.sh in setupTestContext
+
+Parent-child integration tests were silently broken because setupTestContext didn't activate the setup_worktree.sh hook. ensureChildAgentRunning → WorktreeManager.create() → runHook() threw 'Missing setup_worktree.sh' but the error was swallowed by the .catch() in deliverMessage. Fix: rename .example → .sh after pm.init() and commit it.
+
+
+## Fork Semantics (unix fork() style)
+
+**copySessionFrom** in event-store.ts implements unix fork() semantics:
+- Flushes source session pending writes before reading (prevents race)
+- Case 1 (fork self): fork tool_call already in copied events → writes child-side tool_result
+- Case 2 (fork other): injects synthetic tool_call + tool_result pair
+- Parent gets: "You are the PARENT. Forked X → Y."
+- Child gets: "You are the CHILD (forked from X)." + task info
+- fork_marker is now a silent structural event — event converter skips it (like compact_marker), identity info is in the fork tool_result
+- fork_marker content is merged into tool_result user message via interleavedText in event converter
+
+**Same-turn conflict**: fork_task_context + other tools in same turn → fork returns error (like done). Fork must be sole tool in turn.
+
+**Mock API fork support**: `getConversationKey` detects forked agents via "You are the CHILD" in tool_results, uses post-fork user message as conversation key. This separates parent and child turn queues.
+
