@@ -288,3 +288,11 @@ Two indicators of test quality — applies to ALL code, not just OpenGraft:
 **OpenGraft-specific application**: For lifetime/restart bugs, use the integration test framework (`src/integration.test.ts`, `src/test-utils/mock-anthropic-api.ts`). The `recreateApp()` helper simulates real daemon restarts. Every restart test must complete the full lifecycle: crash → restart → resume → done(). Unit tests that call recovery functions directly give false confidence.
 
 **System prompt boundary**: The system prompt is used by ALL projects, not just OpenGraft. Test quality principles in the system prompt must be general software engineering advice. OpenGraft-specific details (mock DSL, JSONL, EventStore, specific file paths) belong in memory.md only.
+
+## Mutation Testing Results (March 2025)
+
+15 mutations tested. 11 caught, 3 gaps fixed, 1 production bug found.
+
+**Gaps fixed**: M1 (yield no-op content assert), M2 (done+bash request count), M12 (Restart M for bg orphan cleanup).
+
+**Production bug found**: Synthetic bg_complete with `id: ""` → converter materializes as immediate user message → consecutive user messages → API 400 on resume. Fix needed: bg_complete should have proper ULID and follow two-phase message lifecycle.
