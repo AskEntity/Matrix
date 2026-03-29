@@ -10,6 +10,7 @@ import { appendFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Event } from "./events.ts";
 import { migrateQueueMessage } from "./message-queue.ts";
+import { ulid } from "./ulid.ts";
 
 /**
  * JSONL-based event store for Event persistence.
@@ -164,11 +165,30 @@ export class EventStore {
 		};
 	}
 
+	/** Flush pending writes for a specific session */
+	async flushSession(sessionId: string): Promise<void> {
+		const pending = this.writeQueues.get(sessionId);
+		if (pending) await pending;
+	}
+
 	/**
 	 * Copy events from a source session to a target session, then append a fork_marker.
 	 * Only copies events after the last compact_marker (active context) from the source.
 	 * Target must NOT already have a session file — call has() first to check.
-	 * Returns the number of events copied (excluding the fork_marker).
+	 *
+	 * Like unix fork(): the child "wakes up" from a fork_task_context call.
+	 *
+	 * - Case 1 (source is the calling agent — fork's own tool_call is in the events):
+	 *   Write a child-side tool_result for the existing fork tool_call.
+	 *
+	 * - Case 2 (source is a different/closed agent — no fork tool_call):
+	 *   Inject a synthetic tool_call + tool_result pair so the child always sees
+	 *   "fork_task_context completed. You are the CHILD."
+	 *
+	 * Any OTHER orphaned tool_calls (non-fork tools without results) also get
+	 * synthetic tool_results so the message structure is clean.
+	 *
+	 * Returns the number of source events copied (excluding synthetics and fork_marker).
 	 */
 	async copySessionFrom(
 		sourceId: string,
@@ -187,6 +207,9 @@ export class EventStore {
 			);
 		}
 
+		// Flush pending writes so we get all events including the current turn's tool_calls
+		await this.flushSession(sourceId);
+
 		// Read source events, find last compact_marker to only copy active context
 		const allEvents = this.read(sourceId);
 		const lastMarker = allEvents.findLastIndex(
@@ -195,13 +218,92 @@ export class EventStore {
 		const activeEvents =
 			lastMarker === -1 ? allEvents : allEvents.slice(lastMarker + 1);
 
-		// Write active events to target
-		if (activeEvents.length > 0) {
-			const lines = `${activeEvents.map((e) => JSON.stringify(e)).join("\n")}\n`;
-			await appendFile(targetPath, lines);
+		// Detect orphaned tool_calls (tool_call without matching tool_result)
+		const toolCallIds = new Map<string, string>(); // id → tool name
+		const toolResultIds = new Set<string>();
+		for (const e of activeEvents) {
+			if (e.type === "tool_call") toolCallIds.set(e.toolCallId, e.tool);
+			else if (e.type === "tool_result") toolResultIds.add(e.toolCallId);
 		}
 
-		// Append fork_marker
+		const titleInfo = opts?.targetTitle
+			? `\nYour task: "${opts.targetTitle}"`
+			: "";
+		const descInfo = opts?.targetDescription
+			? `\nTask description: ${opts.targetDescription}`
+			: "";
+		const childForkResult =
+			`fork_task_context completed. You are the CHILD (forked from ${sourceId}).` +
+			`${titleInfo}${descInfo}\n` +
+			`The conversation above is inherited context from the source agent. ` +
+			`You are a new agent — follow your own task description.`;
+
+		// Check if fork's own tool_call is among the orphans
+		let hasForkToolCall = false;
+		const syntheticEvents: Event[] = [];
+		const now = Date.now();
+
+		for (const [id, tool] of toolCallIds) {
+			if (toolResultIds.has(id)) continue;
+
+			if (tool === "mcp__opengraft__fork_task_context") {
+				// Case 1: fork's own tool_call is in the events — write child-side result
+				hasForkToolCall = true;
+				syntheticEvents.push({
+					type: "tool_result" as const,
+					tool,
+					toolCallId: id,
+					content: childForkResult,
+					isError: false,
+					taskId: targetId,
+					ts: now,
+				});
+			} else {
+				// Other orphaned tool — parent executed it, result not available to child
+				syntheticEvents.push({
+					type: "tool_result" as const,
+					tool,
+					toolCallId: id,
+					content:
+						"This tool was executed by the source agent. Results are not available in this forked context.",
+					isError: false,
+					taskId: targetId,
+					ts: now,
+				});
+			}
+		}
+
+		// Case 2: no fork tool_call in events — inject synthetic call + result
+		if (!hasForkToolCall) {
+			const syntheticCallId = `toolu_fork_${ulid()}`;
+			syntheticEvents.push({
+				type: "tool_call" as const,
+				tool: "mcp__opengraft__fork_task_context",
+				toolCallId: syntheticCallId,
+				input: { sourceTaskId: sourceId, targetTaskId: targetId },
+				taskId: targetId,
+				ts: now,
+			});
+			syntheticEvents.push({
+				type: "tool_result" as const,
+				tool: "mcp__opengraft__fork_task_context",
+				toolCallId: syntheticCallId,
+				content: childForkResult,
+				isError: false,
+				taskId: targetId,
+				ts: now,
+			});
+		}
+
+		// Write: active events → synthetic events → fork_marker
+		const allLines: string[] = [];
+		for (const e of activeEvents) {
+			allLines.push(JSON.stringify(e));
+		}
+		for (const e of syntheticEvents) {
+			allLines.push(JSON.stringify(e));
+		}
+
 		const forkMarker: Event = {
 			type: "fork_marker",
 			sourceTaskId: sourceId,
@@ -212,7 +314,9 @@ export class EventStore {
 			taskId: targetId,
 			ts: Date.now(),
 		};
-		await appendFile(targetPath, `${JSON.stringify(forkMarker)}\n`);
+		allLines.push(JSON.stringify(forkMarker));
+
+		await appendFile(targetPath, `${allLines.join("\n")}\n`);
 
 		return { eventCount: activeEvents.length };
 	}

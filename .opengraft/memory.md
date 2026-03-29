@@ -381,3 +381,20 @@ Now passed to Anthropic SDK `stream()` and OpenAI `fetch()` — stop during AI g
 ## Integration Test: setup_worktree.sh in setupTestContext
 
 Parent-child integration tests were silently broken because setupTestContext didn't activate the setup_worktree.sh hook. ensureChildAgentRunning → WorktreeManager.create() → runHook() threw 'Missing setup_worktree.sh' but the error was swallowed by the .catch() in deliverMessage. Fix: rename .example → .sh after pm.init() and commit it.
+
+
+## Fork Semantics (unix fork() style)
+
+**copySessionFrom** in event-store.ts implements unix fork() semantics:
+- Flushes source session pending writes before reading (prevents race)
+- Case 1 (fork self): fork tool_call already in copied events → writes child-side tool_result
+- Case 2 (fork other): injects synthetic tool_call + tool_result pair
+- Parent gets: "You are the PARENT. Forked X → Y."
+- Child gets: "You are the CHILD (forked from X)." + task info
+- fork_marker is now a silent structural event — event converter skips it (like compact_marker), identity info is in the fork tool_result
+- fork_marker content is merged into tool_result user message via interleavedText in event converter
+
+**Same-turn conflict**: fork_task_context + other tools in same turn → fork returns error (like done). Fork must be sole tool in turn.
+
+**Mock API fork support**: `getConversationKey` detects forked agents via "You are the CHILD" in tool_results, uses post-fork user message as conversation key. This separates parent and child turn queues.
+

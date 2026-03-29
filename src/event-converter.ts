@@ -271,6 +271,24 @@ export function walkEventsToMessages(
 							queueImages.push(...consumed.images);
 						}
 						i++;
+					} else if (current.type === "fork_marker") {
+						// fork_marker between tool_results — inline identity text
+						const forkEvt = current as Extract<Event, { type: "fork_marker" }>;
+						const targetAttr = forkEvt.targetTitle
+							? ` task="${forkEvt.targetTitle}"`
+							: "";
+						const descBlock = forkEvt.targetDescription
+							? `\nTask description: ${forkEvt.targetDescription}`
+							: "";
+						interleavedText.push({
+							type: "text",
+							text:
+								`<fork_marker source="${forkEvt.sourceTaskId}"${targetAttr}>\n` +
+								`YOU ARE NOT THE AGENT ABOVE. The conversation above is inherited context ` +
+								`from a different agent. You are a new agent.${descBlock}\n` +
+								`</fork_marker>`,
+						});
+						i++;
 					} else if (isQueueEvent(current) || current.type === "message") {
 						// Queue events with IDs — skip, materialized by messages_consumed
 						i++;
@@ -294,33 +312,12 @@ export function walkEventsToMessages(
 				i++;
 				break;
 
-			case "fork_marker": {
-				const forkEvent = events[i] as Extract<
-					(typeof events)[number],
-					{ type: "fork_marker" }
-				>;
-				const targetAttr = forkEvent.targetTitle
-					? ` target_task="${forkEvent.taskId}" task_name="${forkEvent.targetTitle}"`
-					: "";
-				const taskDescBlock = forkEvent.targetDescription
-					? `\n\nYour task: ${forkEvent.targetDescription}\n`
-					: "";
-				messages.push(
-					callbacks.onUserMessage(
-						`<fork_marker source_task="${forkEvent.sourceTaskId}"${targetAttr}>\n` +
-							`=== IDENTITY CHANGE ===\n` +
-							`YOU ARE NOT THE AGENT ABOVE. ` +
-							`If you see this fork_marker, it means you are NOT the agent whose conversation appears above. ` +
-							`That was a different agent — its context was copied here as background knowledge for you.\n\n` +
-							`You are a NEW agent for task: "${forkEvent.targetTitle ?? forkEvent.taskId}"` +
-							`${taskDescBlock}\n` +
-							`The inherited context is background knowledge. Follow YOUR task description above.\n` +
-							`</fork_marker>`,
-					),
-				);
+			case "fork_marker":
+				// Normally consumed inside tool_result loop (merged with fork tool_result).
+				// If encountered standalone (legacy JSONL without synthetic fork events),
+				// skip it — identity info should come from the fork tool_result.
 				i++;
 				break;
-			}
 
 			default:
 				// Skip lifecycle/broadcast events

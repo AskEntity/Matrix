@@ -1435,7 +1435,7 @@ export async function* runProviderLoop(
 			continue;
 		}
 
-		// ── Check for yield/done conflicts with other tools in same turn ──
+		// ── Check for yield/done/fork conflicts with other tools in same turn ──
 		const yieldToolUse = toolUses.find(
 			(tu) => tu.name === "mcp__opengraft__yield",
 		);
@@ -1445,7 +1445,8 @@ export async function* runProviderLoop(
 		const otherToolUses = toolUses.filter(
 			(tu) =>
 				tu.name !== "mcp__opengraft__yield" &&
-				tu.name !== "mcp__opengraft__done",
+				tu.name !== "mcp__opengraft__done" &&
+				tu.name !== "mcp__opengraft__fork_task_context",
 		);
 		const hasOtherTools = otherToolUses.length > 0;
 
@@ -1475,6 +1476,18 @@ export async function* runProviderLoop(
 					return {
 						content:
 							"Cannot call done() alongside other tools — you must process their results first before finishing.",
+						isError: true,
+					} satisfies ToolExecResult;
+				}
+				// fork + other tools: fork returns error (fork must be sole tool
+				// to ensure clean event state — like unix fork(), no race conditions)
+				if (
+					toolUse.name === "mcp__opengraft__fork_task_context" &&
+					hasOtherTools
+				) {
+					return {
+						content:
+							"Cannot call fork_task_context alongside other tools — fork must be the only tool in the turn to ensure clean event state.",
 						isError: true,
 					} satisfies ToolExecResult;
 				}
