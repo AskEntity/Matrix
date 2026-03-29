@@ -833,9 +833,24 @@ async function handleSend(args: string[]): Promise<void> {
 	const projectId = await resolveCurrentProject();
 	if (!projectId) return;
 
-	const res = await api(`/projects/${projectId}/message`, {
+	// Resolve root node ID from task tree
+	const tasksRes = await api(`/projects/${projectId}/tasks`);
+	if (!tasksRes.ok) {
+		console.error("Error: could not fetch task tree");
+		process.exit(1);
+	}
+	const tasks = (await tasksRes.json()) as { rootNodeId?: string | null };
+	const rootNodeId = tasks.rootNodeId;
+	if (!rootNodeId) {
+		console.error(
+			"Error: no root node found. Start an agent first with: og run <prompt>",
+		);
+		process.exit(1);
+	}
+
+	const res = await api(`/projects/${projectId}/tasks/${rootNodeId}/message`, {
 		method: "POST",
-		body: JSON.stringify({ message }),
+		body: JSON.stringify({ content: message }),
 	});
 
 	if (!res.ok) {

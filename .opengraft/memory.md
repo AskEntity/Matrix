@@ -365,3 +365,29 @@ Key consequences:
 - `recordQueueEvents` in provider-shared.ts: user messages with id skip emit (already in JSONL from send time). This means provider-emitted event lists do NOT include user `message` events — they only contain `messages_consumed` referencing those ids.
 - `migrateQueueMessage` adds `id: ulid()` to legacy messages that lack one.
 - Tests that verify event reconstruction must prepend user message events (simulating what JSONL already has from send time) before calling `eventsToAnthropicMessages`/`eventsToOpenAIMessages`.
+
+
+## Unified Message Endpoint
+
+ONE message endpoint: `POST /projects/:id/tasks/:nodeId/message` with `{ content: string, images?: QueueImage[] }`.
+
+- **Root messages**: nodeId = rootNodeId → delegates to `handleInjectMessage` (auto-launch, cold-start header, resume detection)
+- **Child messages**: direct delivery with two-phase lifecycle + parent chain notification
+- **`POST /projects/:id/message`**: DELETED. All callers use the task endpoint.
+- **`/agents/start`** and **`/orchestrate/agent`**: thin wrappers that delegate to `handleInjectMessage` for message delivery. No duplicate enqueue logic.
+- **CLI `og send`**: resolves rootNodeId from task tree, sends via task endpoint
+- **Frontend**: `sendMessageToTask(taskId, content, images?)` is the single function. `sendMessage` removed.
+- Field name: `content` (accepts `message` as alias for backward compat)
+
+## rootNodeId: string (never null)
+
+`TaskTracker.rootNodeId` is `string`, not `string | null`. Root node created at `load()` time:
+- Fresh project (no tree.json) → creates "Orchestrator" root node
+- Old tree.json without rootNodeId → creates root + adopts orphan top-level nodes
+- `ensureRootNode()` removed — replaced by `initRootNode()` (private, called from `load()`)
+- `launchAgent` no longer creates root — it already exists
+- `handleInjectMessage` no longer has "no rootNodeId" branch — rootNodeId always valid
+
+## send_message Header Cold-Start Fix
+
+`orchestrator-tools.ts` send_message handler: cold-start detection changed from `node.session != null` to `node.session != null || deps.hasEventStore(node.id)`. Prevents double-header on fork + send_message (forked agent already has context from JSONL events).

@@ -226,6 +226,25 @@ async function sendTaskMessage(
 	});
 }
 
+/** Send a message to the root agent via the unified task message endpoint. */
+async function sendRootMessage(
+	appInstance: ReturnType<typeof createApp>["app"],
+	getTracker: ReturnType<typeof createApp>["getTracker"],
+	projectId: string,
+	content: string,
+): Promise<Response> {
+	const tracker = await getTracker(projectId);
+	const rootNodeId = tracker.rootNodeId;
+	return appInstance.request(
+		`/projects/${projectId}/tasks/${rootNodeId}/message`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ content }),
+		},
+	);
+}
+
 /** Small delay helper. */
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -1087,9 +1106,9 @@ describe("lifecycle: orchestrator message routing", () => {
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	test("POST /projects/:id/message to running orchestrator enqueues user message", async () => {
+	test("POST /tasks/:nodeId/message to running orchestrator enqueues user message", async () => {
 		const { provider, receivedMessages } = createRecordingProvider();
-		const { app, pm, markReady } = createApp({
+		const { app, pm, getTracker, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
 		});
@@ -1097,6 +1116,8 @@ describe("lifecycle: orchestrator message routing", () => {
 		markReady();
 
 		const project = await createProject(app, projectDir);
+		const tracker = await getTracker(project.id);
+		const rootNodeId = tracker.rootNodeId;
 
 		// Start the orchestrator
 		const startRes = await app.request(
@@ -1110,12 +1131,15 @@ describe("lifecycle: orchestrator message routing", () => {
 		expect(startRes.status).toBe(200);
 		await delay(100);
 
-		// Send a follow-up message
-		const msgRes = await app.request(`/projects/${project.id}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "follow up" }),
-		});
+		// Send a follow-up message via unified task endpoint
+		const msgRes = await app.request(
+			`/projects/${project.id}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: "follow up" }),
+			},
+		);
 		expect(msgRes.status).toBe(200);
 
 		await delay(100);
@@ -1128,8 +1152,8 @@ describe("lifecycle: orchestrator message routing", () => {
 		await delay(100);
 	});
 
-	test("POST /projects/:id/message with no session persists and auto-resumes", async () => {
-		const { app, pm, markReady } = createApp({
+	test("POST /tasks/:nodeId/message with no session persists and auto-resumes", async () => {
+		const { app, pm, getTracker, markReady } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
 		});
@@ -1137,8 +1161,10 @@ describe("lifecycle: orchestrator message routing", () => {
 		markReady();
 
 		const project = await createProject(app, projectDir);
+		const tracker = await getTracker(project.id);
+		const rootNodeId = tracker.rootNodeId;
 
-		// Start and quickly stop to create a root node
+		// Start and quickly stop to create a session
 		await app.request(`/projects/${project.id}/orchestrate/agent`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -1147,12 +1173,15 @@ describe("lifecycle: orchestrator message routing", () => {
 		await delay(200);
 
 		// Now agent should have completed (instant provider)
-		// Send message — should trigger auto-resume
-		const msgRes = await app.request(`/projects/${project.id}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "new instruction" }),
-		});
+		// Send message via unified task endpoint — should trigger auto-resume
+		const msgRes = await app.request(
+			`/projects/${project.id}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: "new instruction" }),
+			},
+		);
 		expect(msgRes.status).toBe(200);
 
 		await delay(200);
@@ -1831,7 +1860,8 @@ describe("lifecycle: child completion notification paths", () => {
 
 		const trackerPath = join(dataDir, "test-reset-tracker.json");
 		const tracker = new TaskTracker(trackerPath);
-		const parentNode = tracker.ensureRootNode("Parent", "");
+		await tracker.load();
+		const parentNode = tracker.get(tracker.rootNodeId)!;
 		const childNode = tracker.addChild(parentNode.id, "Child", "");
 		tracker.updateStatus(parentNode.id, "in_progress");
 		tracker.updateStatus(childNode.id, "in_progress");
@@ -1925,7 +1955,8 @@ describe("lifecycle: child completion notification paths", () => {
 
 		const trackerPath = join(dataDir, "test-donefix-tracker.json");
 		const tracker = new TaskTracker(trackerPath);
-		const parentNode = tracker.ensureRootNode("Parent", "");
+		await tracker.load();
+		const parentNode = tracker.get(tracker.rootNodeId)!;
 		tracker.updateStatus(parentNode.id, "in_progress");
 		const childNode = tracker.addChild(parentNode.id, "Child", "");
 		const childId = childNode.id;
@@ -2027,7 +2058,8 @@ describe("lifecycle: child completion notification paths", () => {
 
 		const trackerPath = join(dataDir, "test-deadlock-tracker.json");
 		const tracker = new TaskTracker(trackerPath);
-		const parentNode = tracker.ensureRootNode("Parent", "");
+		await tracker.load();
+		const parentNode = tracker.get(tracker.rootNodeId)!;
 		tracker.updateStatus(parentNode.id, "in_progress");
 		const childNode = tracker.addChild(parentNode.id, "Child", "");
 		const childId = childNode.id;
@@ -2339,7 +2371,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		// 4. Verify: orchestration_started has resume: false and includes the prompt
 		const { provider, sessionRequests, queueMessages } =
 			createCapturingProvider();
-		const { app, pm, markReady } = createApp({
+		const { app, pm, getTracker, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
 		});
@@ -2369,11 +2401,12 @@ describe("lifecycle edge cases — session continuity", () => {
 		expect(clearRes.status).toBe(200);
 
 		// Send a new message (should trigger fresh launch, not resume)
-		const msgRes = await app.request(`/projects/${project.id}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "new fresh task" }),
-		});
+		const msgRes = await sendRootMessage(
+			app,
+			getTracker,
+			project.id,
+			"new fresh task",
+		);
 		expect(msgRes.status).toBe(200);
 		await delay(200);
 
@@ -2422,7 +2455,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		//    points to a fresh session OR sessionStore has no data for it)
 		const { provider, sessionRequests, queueMessages } =
 			createCapturingProvider();
-		const { app, pm, markReady } = createApp({
+		const { app, pm, getTracker, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
 		});
@@ -2469,11 +2502,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		expect(freshStore.has(sessionId)).toBe(false);
 
 		// Send new message — should start fresh
-		await app.request(`/projects/${project.id}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "new task" }),
-		});
+		await sendRootMessage(app, getTracker, project.id, "new task");
 		await delay(200);
 
 		// Verify the new session request gets the raw prompt (fresh start)
@@ -2515,7 +2544,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		// 2. Send message
 		// 3. Verify: orchestration_started has resume: true
 		const { provider, sessionRequests } = createCapturingProvider();
-		const { app, pm, markReady } = createApp({
+		const { app, pm, getTracker, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
 		});
@@ -2550,11 +2579,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		await delay(100);
 
 		// Send a new message — should trigger resume (not fresh)
-		await app.request(`/projects/${project.id}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "continue please" }),
-		});
+		await sendRootMessage(app, getTracker, project.id, "continue please");
 		await delay(200);
 
 		// Should have 2 session requests: initial + resume
@@ -2591,7 +2616,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		// 3. Send 3 messages rapidly
 		// 4. Verify: Only one agent launch, all messages delivered via queue
 		const { provider, sessionRequests } = createCapturingProvider();
-		const { app, pm, markReady } = createApp({
+		const { app, pm, getTracker, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
 		});
@@ -2600,7 +2625,7 @@ describe("lifecycle edge cases — session continuity", () => {
 
 		const project = await createProject(app, projectDir);
 
-		// Launch and stop to establish rootNodeId
+		// Launch and stop to establish session
 		await app.request(`/projects/${project.id}/orchestrate/agent`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -2614,21 +2639,9 @@ describe("lifecycle edge cases — session continuity", () => {
 
 		// Send 3 messages rapidly (no agent running)
 		const [r1, r2, r3] = await Promise.all([
-			app.request(`/projects/${project.id}/message`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ message: "msg-1" }),
-			}),
-			app.request(`/projects/${project.id}/message`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ message: "msg-2" }),
-			}),
-			app.request(`/projects/${project.id}/message`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ message: "msg-3" }),
-			}),
+			sendRootMessage(app, getTracker, project.id, "msg-1"),
+			sendRootMessage(app, getTracker, project.id, "msg-2"),
+			sendRootMessage(app, getTracker, project.id, "msg-3"),
 		]);
 
 		expect(r1.status).toBe(200);
@@ -2663,19 +2676,22 @@ describe("lifecycle edge cases — session continuity", () => {
 		await pm.load();
 		markReady();
 
-		const res = await app.request("/projects/nonexistent-id/message", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "hello" }),
-		});
+		const res = await app.request(
+			"/projects/nonexistent-id/tasks/some-task/message",
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: "hello" }),
+			},
+		);
 		expect(res.status).toBe(404);
 		const body = (await res.json()) as { error: string };
 		expect(body.error).toBe("Project not found");
 	});
 
-	test("send message creates root node if none exists", async () => {
-		// Fresh project with no tasks — sending a message should create
-		// the root node and launch agent as fresh (not resume)
+	test("send message to root auto-launches agent on fresh project", async () => {
+		// Fresh project — root node exists from tracker.load(), sending a message
+		// should launch agent as fresh (not resume)
 		const { provider, sessionRequests, queueMessages } =
 			createCapturingProvider();
 		const { app, pm, markReady, getTracker } = createApp({
@@ -2687,22 +2703,19 @@ describe("lifecycle edge cases — session continuity", () => {
 
 		const project = await createProject(app, projectDir);
 
-		// Verify no root node yet
+		// Root node exists from tracker.load()
 		const tracker = await getTracker(project.id);
-		expect(tracker.rootNodeId).toBeNull();
+		expect(tracker.rootNodeId).toBeTruthy();
 
-		// Send message — should create root and launch fresh
-		const res = await app.request(`/projects/${project.id}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "first message ever" }),
-		});
+		// Send message via unified task endpoint — should launch fresh
+		const res = await sendRootMessage(
+			app,
+			getTracker,
+			project.id,
+			"first message ever",
+		);
 		expect(res.status).toBe(200);
 		await delay(200);
-
-		// Root node should now exist
-		const updatedTracker = await getTracker(project.id);
-		expect(updatedTracker.rootNodeId).not.toBeNull();
 
 		// Should have exactly one session launch
 		expect(sessionRequests.length).toBe(1);
@@ -2772,7 +2785,7 @@ describe("lifecycle edge cases — session continuity", () => {
 
 	test("stop preserves events; resume adds new events", async () => {
 		const { provider, sessionRequests } = createCapturingProvider();
-		const { app, pm, markReady } = createApp({
+		const { app, pm, getTracker, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
 		});
@@ -2818,11 +2831,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		} as Event);
 
 		// Send message to resume
-		await app.request(`/projects/${project.id}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "resume now" }),
-		});
+		await sendRootMessage(app, getTracker, project.id, "resume now");
 		await delay(200);
 
 		// New events should be added (orchestration_started for resume, etc.)
@@ -2864,7 +2873,7 @@ describe("lifecycle: header only on cold start", () => {
 
 	test("cold start message includes header with memory.md", async () => {
 		const { provider, queueMessages } = createCapturingProvider();
-		const { app, pm, markReady } = createApp({
+		const { app, pm, getTracker, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
 		});
@@ -2873,11 +2882,7 @@ describe("lifecycle: header only on cold start", () => {
 		const project = await createProject(app, projectDir);
 
 		// Send message to fresh project (no JSONL exists) — cold start
-		await app.request(`/projects/${project.id}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "hello world" }),
-		});
+		await sendRootMessage(app, getTracker, project.id, "hello world");
 		await delay(200);
 
 		// Find the user message in queue
@@ -2897,7 +2902,7 @@ describe("lifecycle: header only on cold start", () => {
 
 	test("resume message has NO header (agent has context from JSONL)", async () => {
 		const { provider, queueMessages } = createCapturingProvider();
-		const { app, pm, markReady } = createApp({
+		const { app, pm, getTracker, markReady } = createApp({
 			dataDir,
 			agentProvider: provider,
 		});
@@ -2906,11 +2911,7 @@ describe("lifecycle: header only on cold start", () => {
 		const project = await createProject(app, projectDir);
 
 		// First: launch agent (cold start) to create JSONL
-		await app.request(`/projects/${project.id}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "initial task" }),
-		});
+		await sendRootMessage(app, getTracker, project.id, "initial task");
 		await delay(200);
 
 		// Stop agent — JSONL is preserved on disk
@@ -2918,11 +2919,7 @@ describe("lifecycle: header only on cold start", () => {
 		await delay(100);
 
 		// Second: send new message — should resume (JSONL exists)
-		await app.request(`/projects/${project.id}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "resume task" }),
-		});
+		await sendRootMessage(app, getTracker, project.id, "resume task");
 		await delay(200);
 
 		// Find the resume message in the second session's queue

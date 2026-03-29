@@ -426,23 +426,6 @@ export function useAgent(projectId: string) {
 		[projectId],
 	);
 
-	const sendMessage = useCallback(
-		async (
-			message: string,
-			images?: { base64: string; mediaType: string }[],
-		) => {
-			const body: Record<string, unknown> = { message };
-			if (images?.length) body.images = images;
-			const res = await authFetch(`/projects/${projectId}/message`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(body),
-			});
-			if (!res.ok) throw new Error((await res.json()).error);
-		},
-		[projectId],
-	);
-
 	const compact = useCallback(async () => {
 		const res = await authFetch(`/projects/${projectId}/compact`, {
 			method: "POST",
@@ -451,13 +434,19 @@ export function useAgent(projectId: string) {
 	}, [projectId]);
 
 	const sendMessageToTask = useCallback(
-		async (taskId: string, content: string) => {
+		async (
+			taskId: string,
+			content: string,
+			images?: { base64: string; mediaType: string }[],
+		) => {
+			const body: Record<string, unknown> = { content };
+			if (images?.length) body.images = images;
 			const res = await authFetch(
 				`/projects/${projectId}/tasks/${taskId}/message`,
 				{
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ content }),
+					body: JSON.stringify(body),
 				},
 			);
 			if (!res.ok) throw new Error((await res.json()).error);
@@ -507,7 +496,6 @@ export function useAgent(projectId: string) {
 		continueTask,
 		deleteTask,
 		clearTaskSession,
-		sendMessage,
 		sendMessageToTask,
 		reorderTasks,
 		reparentTask,

@@ -293,7 +293,7 @@ describe("daemon stats", () => {
 		const statsRes = await app.request("/stats");
 		const stats = (await statsRes.json()) as StatsResponse;
 		expect(stats.projectCount).toBe(1);
-		expect(stats.taskCounts.pending).toBe(1); // Child2
+		expect(stats.taskCounts.pending).toBe(2); // Child2 + auto-created Orchestrator root
 		expect(stats.taskCounts.in_progress).toBe(1); // Root
 		expect(stats.taskCounts.passed).toBe(1); // Child1
 		expect(stats.taskCounts.failed).toBe(0);
@@ -445,7 +445,7 @@ describe("daemon tasks API", () => {
 		await rm(dataDir, { recursive: true });
 	});
 
-	test("POST /tasks creates root task", async () => {
+	test("POST /tasks creates task under root by default", async () => {
 		const res = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -455,7 +455,8 @@ describe("daemon tasks API", () => {
 		const node = (await res.json()) as TaskNode;
 		expect(node.title).toBe("Chat App");
 		expect(node.status).toBe("pending");
-		expect(node.parentId).toBeNull();
+		// Tasks default to being children of the auto-created root node
+		expect(node.parentId).toBeTruthy();
 	});
 
 	test("POST /tasks creates task with budgetUsd", async () => {
@@ -523,28 +524,28 @@ describe("daemon tasks API", () => {
 			nodes: TaskNode[];
 			rootNodeId?: string | null;
 		};
-		expect(body.nodes).toHaveLength(1);
-		expect(body.nodes[0]?.title).toBe("App");
+		// Root node + the newly created "App" task
+		expect(body.nodes).toHaveLength(2);
+		expect(body.nodes.some((n) => n.title === "App")).toBe(true);
 	});
 
-	test("GET /tasks returns rootNodeId when root node exists", async () => {
-		// Create a task first so the tracker exists, then add a root node directly
+	test("GET /tasks returns rootNodeId", async () => {
+		// Root node exists from tracker.load()
 		await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ title: "Child", description: "" }),
 		});
 
-		// GET /tasks should return nodes (rootNodeId may be null if no agent started)
+		// GET /tasks should return nodes with rootNodeId always set
 		const res = await app.request(`/projects/${projectId}/tasks`);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as {
 			nodes: TaskNode[];
-			rootNodeId?: string | null;
+			rootNodeId: string;
 		};
 		expect(body.nodes.length).toBeGreaterThan(0);
-		// rootNodeId field should exist in the response (even if null)
-		expect("rootNodeId" in body).toBe(true);
+		expect(body.rootNodeId).toBeTruthy();
 	});
 
 	test("PATCH /tasks/:nodeId updates status and branch", async () => {
@@ -721,7 +722,7 @@ describe("daemon tasks API", () => {
 		const body = (await getRes.json()) as {
 			nodes: TaskNode[];
 		};
-		expect(body.nodes).toHaveLength(0);
+		expect(body.nodes).toHaveLength(1); // auto-created root node remains
 	});
 
 	test("DELETE /tasks/:nodeId closes running agent queues", async () => {
@@ -1679,10 +1680,11 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 });
 
-describe("POST /projects/:id/message", () => {
+describe("POST /projects/:id/tasks/:nodeId/message (root node)", () => {
 	let tempDir: string;
 	let dataDir: string;
 	let app: ReturnType<typeof createApp>["app"];
+	let getTracker: ReturnType<typeof createApp>["getTracker"];
 	let projectId: string;
 
 	beforeEach(async () => {
@@ -1690,6 +1692,7 @@ describe("POST /projects/:id/message", () => {
 		dataDir = await mkdtemp(join(tmpdir(), "og-projmsgd-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
+		getTracker = result.getTracker;
 		await result.pm.load();
 
 		const projRes = await app.request("/projects", {
@@ -1707,34 +1710,46 @@ describe("POST /projects/:id/message", () => {
 	});
 
 	test("returns 404 for unknown project", async () => {
-		const res = await app.request("/projects/nonexistent/message", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "hello" }),
-		});
+		const res = await app.request(
+			"/projects/nonexistent/tasks/some-task/message",
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: "hello" }),
+			},
+		);
 		expect(res.status).toBe(404);
 		const body = (await res.json()) as { error: string };
 		expect(body.error).toBe("Project not found");
 	});
 
-	test("returns 400 when message is missing", async () => {
-		const res = await app.request(`/projects/${projectId}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({}),
-		});
+	test("returns 400 when content is missing", async () => {
+		const tracker = await getTracker(projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			},
+		);
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as { error: string };
-		expect(body.error).toBe("message is required");
+		expect(body.error).toBe("content is required");
 	});
 
 	test("auto-launches agent when no active session", async () => {
-		const res = await app.request(`/projects/${projectId}/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ message: "hello" }),
-		});
-		// POST /message now auto-launches the agent when no session exists
+		const tracker = await getTracker(projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ content: "hello" }),
+			},
+		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as { ok: boolean };
 		expect(body.ok).toBe(true);

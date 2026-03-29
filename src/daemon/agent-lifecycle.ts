@@ -392,21 +392,17 @@ export async function stopAgent(
 	if (tracker) {
 		const rootNodeId = tracker.rootNodeId;
 		// Close root session
-		if (rootNodeId) {
-			const rootNode = tracker.get(rootNodeId);
-			const rootQueue = rootNode?.session?.queue;
-			if (rootQueue) {
-				if (rootNode?.session) {
-					cleanupSessionBackgroundProcesses(
-						rootNode.session.backgroundProcesses,
-					);
-					rootNode.session = undefined;
-				}
-				rootQueue.close();
-			} else if (rootNode?.session) {
+		const rootNode = tracker.get(rootNodeId);
+		const rootQueue = rootNode?.session?.queue;
+		if (rootQueue) {
+			if (rootNode?.session) {
 				cleanupSessionBackgroundProcesses(rootNode.session.backgroundProcesses);
 				rootNode.session = undefined;
 			}
+			rootQueue.close();
+		} else if (rootNode?.session) {
+			cleanupSessionBackgroundProcesses(rootNode.session.backgroundProcesses);
+			rootNode.session = undefined;
 		}
 		for (const node of tracker.allNodes()) {
 			if (node.status === "in_progress" && node.id !== rootNodeId) {
@@ -447,10 +443,9 @@ export async function stopAgent(
 		}
 	}
 
-	const rootNodeId = tracker?.rootNodeId ?? "";
 	emitEvent(ctx, projectId, {
 		type: "agent_stopped",
-		taskId: rootNodeId,
+		taskId: tracker?.rootNodeId ?? "",
 		ts: Date.now(),
 	});
 }
@@ -785,9 +780,10 @@ export async function launchAgent(
 	const tracker = ctx.trackers.get(project.id);
 	if (!tracker) return;
 
-	// Ensure root node exists for the orchestrator
-	const rootNode = tracker.ensureRootNode("Orchestrator", "");
-	const rootNodeId = rootNode.id;
+	// Root node always exists (created at tracker load time)
+	const rootNodeId = tracker.rootNodeId;
+	const rootNode = tracker.get(rootNodeId);
+	if (!rootNode) return; // Should never happen — root always exists
 	tracker.updateStatus(rootNodeId, "in_progress");
 	tracker.save().catch((e) => {
 		console.warn("[agent-lifecycle] Failed to save tracker on agent start:", e);
@@ -1038,7 +1034,7 @@ export async function handleOrchestrate(
 	ctx: DaemonContext,
 	projectId: string,
 	prompt: string,
-	opts: { resume?: boolean; model?: string; childModel?: string },
+	_opts: { resume?: boolean; model?: string; childModel?: string },
 	orchestratorSystemPrompt: string,
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
 	if (!ctx.startupReady) {
@@ -1060,71 +1056,26 @@ export async function handleOrchestrate(
 		};
 	}
 
-	// Agent already running — enqueue the prompt as a user message instead of error
-	const orchTracker = await getTracker(ctx, projectId);
-	const orchRootNodeId = orchTracker.rootNodeId;
-	if (orchRootNodeId) {
-		const rootQueue = orchTracker.get(orchRootNodeId)?.session?.queue;
-		if (rootQueue) {
-			const orchMsgId = ulid();
-			// Write + broadcast message at send time (Phase 1)
-			const orchUserMsg: Event = {
-				type: "message",
-				id: orchMsgId,
-				taskId: orchRootNodeId,
-				body: { source: "user", id: orchMsgId, content: prompt },
-				ts: Date.now(),
-			};
-			emitEvent(ctx, projectId, orchUserMsg);
-			try {
-				rootQueue.enqueue({
-					source: "user",
-					id: orchMsgId,
-					content: prompt,
-				});
-			} catch {
-				return { ok: false, error: "Queue closed", status: 409 };
-			}
-			return { ok: true };
-		}
-	}
-	await getTracker(ctx, projectId);
-
-	// Launch agent first (creates rootNodeId), then enqueue message
-	await launchAgent(ctx, project, { ...opts }, orchestratorSystemPrompt);
-
-	// Now enqueue the user message with header — provider is waiting for queue drain
-	const orchRootId2 = orchTracker.rootNodeId;
-	if (orchRootId2) {
-		const { msg, event } = prepareAgentMessage(
-			project.path,
-			orchRootId2,
-			prompt,
-		);
-		emitEvent(ctx, projectId, event);
-
-		const orchRootQueue = orchTracker.get(orchRootId2)?.session?.queue;
-		if (orchRootQueue) {
-			try {
-				orchRootQueue.enqueue(msg);
-			} catch {
-				// Queue may have closed
-			}
-		}
-	}
-
-	return { ok: true };
+	// Root node always exists — delegate to handleInjectMessage which handles
+	// auto-launch, cold-start headers, resume detection, and message delivery.
+	return handleInjectMessage(
+		ctx,
+		projectId,
+		prompt,
+		undefined,
+		orchestratorSystemPrompt,
+	);
 }
 
 /**
- * Inject a user message into a running or stopped agent.
- * Thin wrapper around deliverMessage that adds REST-specific concerns:
- * - Project validation
- * - First-run launch (no rootNodeId yet)
- * - Auto-resume orchestrator when not running
- * - Pending message broadcast for UI feedback
+ * Inject a user message into the root agent (running or stopped).
+ * Single code path for all root message delivery:
+ * - Emits JSONL event (two-phase lifecycle)
+ * - Delivers to queue (if running) or persists to disk
+ * - Auto-launches/resumes agent when not running
+ * - Handles cold-start header (memory.md) vs resume
  *
- * Used by POST /message and WS inject_message.
+ * Used by POST /tasks/:nodeId/message (root branch) and cross-project messaging.
  */
 export async function handleInjectMessage(
 	ctx: DaemonContext,
@@ -1140,42 +1091,6 @@ export async function handleInjectMessage(
 
 	const tracker = await getTracker(ctx, projectId);
 	const rootNodeId = tracker.rootNodeId;
-
-	if (!rootNodeId) {
-		// No session at all — launch a brand new agent with this message as the prompt
-		if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
-			// Launch first to create rootNodeId, then enqueue message
-			await launchAgent(ctx, project, {}, orchestratorSystemPrompt);
-
-			const freshRootNodeId = tracker.rootNodeId;
-			if (freshRootNodeId) {
-				const { msg, event } = prepareAgentMessage(
-					project.path,
-					freshRootNodeId,
-					message,
-					images,
-				);
-				emitEvent(ctx, projectId, event);
-
-				// Enqueue directly to the running agent's queue — it's waiting for first message
-				const rootQueue = tracker.get(freshRootNodeId)?.session?.queue;
-				if (rootQueue) {
-					try {
-						rootQueue.enqueue(msg);
-					} catch {
-						// Queue may have closed already
-					}
-				}
-			}
-			return { ok: true };
-		}
-		return {
-			ok: false,
-			error: "No active session for this project",
-			status: 404,
-		};
-	}
-
 	const eventStore = getEventStore(ctx, projectId);
 
 	// Check resume BEFORE writing message (the event we're about to write
@@ -1219,8 +1134,7 @@ export async function handleInjectMessage(
 		return { ok: true };
 	}
 
-	// Message was persisted (agent not running) — auto-resume if possible.
-	// The message is already persisted to disk and will be delivered via queue drain.
+	// Message was persisted (agent not running) — auto-launch/resume.
 	if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
 		await launchAgent(
 			ctx,

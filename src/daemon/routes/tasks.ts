@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { Hono } from "hono";
 import type { Event } from "../../events.ts";
-import type { QueueMessage } from "../../message-queue.ts";
+import type { QueueImage, QueueMessage } from "../../message-queue.ts";
 import {
 	clearPersistedMessages,
 	persistMessage,
@@ -12,6 +12,7 @@ import { ulid } from "../../ulid.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
 	deliverMessage,
+	handleInjectMessage,
 	runChildAgentInBackground,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
@@ -150,7 +151,11 @@ function notifyTreeChange(
 	}
 }
 
-export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
+export function registerTaskRoutes(
+	app: Hono,
+	ctx: DaemonContext,
+	orchestratorSystemPrompt: string,
+) {
 	// Task tree
 	app.get("/projects/:id/tasks", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));
@@ -566,19 +571,46 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		return c.json({ events, hasOlderEvents: false });
 	});
 
-	// Inject a message into a specific running child agent's queue
+	// Unified message endpoint — handles both root and child nodes.
+	// Root nodes delegate to handleInjectMessage (auto-launch, cold-start header, resume detection).
+	// Child nodes use direct delivery with two-phase lifecycle.
 	app.post("/projects/:id/tasks/:nodeId/message", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
 		const nodeId = c.req.param("nodeId");
-		const body = await c.req.json<{ content: string }>();
-		if (!body.content) {
+		const body = await c.req.json<{
+			content?: string;
+			message?: string;
+			images?: QueueImage[];
+		}>();
+		// Accept both "content" and "message" field names
+		const content = body.content ?? body.message;
+		if (!content) {
 			return c.json({ error: "content is required" }, 400);
 		}
 
 		const tracker = await getTracker(ctx, project.id);
+		const isRoot = nodeId === tracker.rootNodeId;
+
+		if (isRoot || !tracker.rootNodeId) {
+			// Root node — delegate to handleInjectMessage which handles
+			// auto-launch, cold-start header, resume detection, and images.
+			const result = await handleInjectMessage(
+				ctx,
+				project.id,
+				content,
+				body.images,
+				orchestratorSystemPrompt,
+			);
+			if (!result.ok) {
+				return c.json({ error: result.error }, (result.status as 404) ?? 500);
+			}
+			return c.json({ ok: true, taskId: nodeId });
+		}
+
+		// Child node — direct delivery with two-phase lifecycle
 		const node = tracker.get(nodeId);
 		const taskTitle = node?.title ?? nodeId;
 		const statusBeforeDelivery = node?.status;
@@ -593,7 +625,8 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 		const msg: QueueMessage = {
 			source: "user",
 			id: msgId,
-			content: body.content,
+			content,
+			...(body.images?.length ? { images: body.images } : {}),
 		};
 		const userMsgEvent: Event = {
 			type: "message",
@@ -614,7 +647,7 @@ export function registerTaskRoutes(app: Hono, ctx: DaemonContext) {
 			project.id,
 			nodeId,
 			taskTitle,
-			body.content,
+			content,
 			statusBeforeDelivery,
 		);
 

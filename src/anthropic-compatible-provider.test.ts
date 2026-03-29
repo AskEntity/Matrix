@@ -1714,6 +1714,7 @@ describe("done tool", () => {
 	beforeAll(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "og-done-tool-"));
 		tracker = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker.load();
 	});
 
 	afterAll(async () => {
@@ -1784,8 +1785,7 @@ describe("done tool", () => {
 		});
 
 		// Create a parent task and a child task
-		const parentId =
-			tracker.rootNodeId ?? tracker.ensureRootNode("Root", "").id;
+		const parentId = tracker.rootNodeId;
 		const child = tracker.addChild(parentId, "Child Task", "desc");
 		const childQueue = new MessageQueue();
 		attachMockSession(child, childQueue);
@@ -1809,8 +1809,7 @@ describe("done tool", () => {
 			projectPath: tempDir,
 		});
 
-		const parentId =
-			tracker.rootNodeId ?? tracker.ensureRootNode("Root", "").id;
+		const parentId = tracker.rootNodeId;
 		const child = tracker.addChild(parentId, "Child Task", "desc");
 		const grandchild = tracker.addChild(child.id, "Grandchild Task", "desc");
 		const grandchildQueue = new MessageQueue();
