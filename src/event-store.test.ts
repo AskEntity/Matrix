@@ -38,7 +38,7 @@ describe("EventStore", () => {
 		const event: Event = {
 			type: "message",
 			id: "",
-			body: { source: "user", content: "hello" },
+			body: { source: "user", id: "test-id", content: "hello" },
 			taskId: "test",
 			ts: 1000,
 		};
@@ -51,7 +51,7 @@ describe("EventStore", () => {
 		const e1: Event = {
 			type: "message",
 			id: "",
-			body: { source: "user", content: "hello" },
+			body: { source: "user", id: "test-id", content: "hello" },
 			taskId: "test",
 			ts: 1000,
 		};
@@ -71,7 +71,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "hello" },
+				body: { source: "user", id: "test-id", content: "hello" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -102,7 +102,7 @@ describe("EventStore", () => {
 		await store.append("s1", {
 			type: "message",
 			id: "",
-			body: { source: "user", content: "hello" },
+			body: { source: "user", id: "test-id", content: "hello" },
 			taskId: "test",
 			ts: 1000,
 		});
@@ -122,7 +122,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "hello" },
+				body: { source: "user", id: "test-id", content: "hello" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -137,7 +137,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "old msg" },
+				body: { source: "user", id: "test-id", content: "old msg" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -191,7 +191,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "very old" },
+				body: { source: "user", id: "test-id", content: "very old" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -205,7 +205,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "somewhat old" },
+				body: { source: "user", id: "test-id", content: "somewhat old" },
 				taskId: "test",
 				ts: 2001,
 			},
@@ -247,7 +247,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "hello" },
+				body: { source: "user", id: "test-id", content: "hello" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -264,7 +264,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "old msg" },
+				body: { source: "user", id: "test-id", content: "old msg" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -314,7 +314,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "very old" },
+				body: { source: "user", id: "test-id", content: "very old" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -328,7 +328,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "mid" },
+				body: { source: "user", id: "test-id", content: "mid" },
 				taskId: "test",
 				ts: 2001,
 			},
@@ -403,7 +403,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "first" },
+				body: { source: "user", id: "test-id", content: "first" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -435,7 +435,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "first" },
+				body: { source: "user", id: "test-id", content: "first" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -535,14 +535,14 @@ describe("EventStore", () => {
 		const e1: Event = {
 			type: "message",
 			id: "",
-			body: { source: "user", content: "session 1" },
+			body: { source: "user", id: "test-id", content: "session 1" },
 			taskId: "test",
 			ts: 1000,
 		};
 		const e2: Event = {
 			type: "message",
 			id: "",
-			body: { source: "user", content: "session 2" },
+			body: { source: "user", id: "test-id", content: "session 2" },
 			taskId: "test",
 			ts: 2000,
 		};
@@ -562,7 +562,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "hello" },
+				body: { source: "user", id: "test-id", content: "hello" },
 				taskId: "source",
 				ts: 1000,
 			},
@@ -600,7 +600,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "old msg" },
+				body: { source: "user", id: "test-id", content: "old msg" },
 				taskId: "source",
 				ts: 1000,
 			},
@@ -671,7 +671,7 @@ describe("EventStore", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "old" },
+				body: { source: "user", id: "test-id", content: "old" },
 				taskId: "source",
 				ts: 1000,
 			},

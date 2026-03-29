@@ -1,26 +1,30 @@
+import { ulid } from "./ulid.ts";
+
 /** Image attachment for user messages. */
 export interface QueueImage {
 	base64: string;
 	mediaType: string;
 }
 
-/** Message types that can flow through the queue. */
+/** Message types that can flow through the queue. Every message MUST have a ULID id for dedup. */
 export type QueueMessage =
 	| {
 			source: "user";
-			id?: string;
+			id: string;
 			content: string;
 			images?: QueueImage[];
 			header?: string;
 	  }
 	| {
 			source: "tree_change";
+			id: string;
 			action: "created" | "updated" | "deleted" | "reordered";
 			nodeId: string;
 			title?: string;
 	  }
 	| {
 			source: "task_complete";
+			id: string;
 			taskId: string;
 			title: string;
 			success: boolean;
@@ -28,6 +32,7 @@ export type QueueMessage =
 	  }
 	| {
 			source: "task_message";
+			id: string;
 			fromTaskId: string;
 			fromTitle: string;
 			content: string;
@@ -37,21 +42,24 @@ export type QueueMessage =
 			/** Only on cold-start downward messages. */
 			header?: string;
 	  }
-	| { source: "clarify_response"; answer: string }
+	| { source: "clarify_response"; id: string; answer: string }
 	| {
 			source: "user_message_forwarded";
+			id: string;
 			fromTaskId: string;
 			fromTitle: string;
 			content: string;
 	  }
 	| {
 			source: "cross_project";
+			id: string;
 			fromProjectId: string;
 			fromProjectName: string;
 			content: string;
 	  }
 	| {
 			source: "background_complete";
+			id: string;
 			commandId: string;
 			command: string;
 			exitCode: number | null;
@@ -61,7 +69,7 @@ export type QueueMessage =
 			/** Included when output is small (< 50KB). Undefined for large output — use read_file. */
 			stderr?: string;
 	  }
-	| { source: "compact" };
+	| { source: "compact"; id: string };
 
 /**
  * Migrate a QueueMessage from old source names to current ones.
@@ -74,13 +82,16 @@ export type QueueMessage =
 // biome-ignore lint/suspicious/noExplicitAny: migration handles arbitrary legacy shapes
 export function migrateQueueMessage(raw: any): QueueMessage {
 	if (!raw || typeof raw !== "object" || !raw.source) return raw;
+	// Ensure migrated messages always have an id
+	const id: string = raw.id || ulid();
 	switch (raw.source) {
 		case "child_complete":
-			return { ...raw, source: "task_complete" };
+			return { ...raw, id, source: "task_complete" };
 		case "child_report":
 			if (raw.forwarded) {
 				return {
 					source: "user_message_forwarded",
+					id,
 					fromTaskId: raw.taskId ?? "",
 					fromTitle: raw.title ?? "",
 					content: raw.content ?? "",
@@ -88,6 +99,7 @@ export function migrateQueueMessage(raw: any): QueueMessage {
 			}
 			return {
 				source: "task_message",
+				id,
 				fromTaskId: raw.taskId ?? "",
 				fromTitle: raw.title ?? "",
 				content: raw.content ?? "",
@@ -97,6 +109,7 @@ export function migrateQueueMessage(raw: any): QueueMessage {
 		case "parent_update":
 			return {
 				source: "task_message",
+				id,
 				fromTaskId: raw.taskId ?? "",
 				fromTitle: raw.title ?? "",
 				content: raw.content ?? "",
@@ -104,6 +117,8 @@ export function migrateQueueMessage(raw: any): QueueMessage {
 				...(raw.header ? { header: raw.header } : {}),
 			};
 		default:
+			// For current-format messages, ensure id exists
+			if (!raw.id) raw.id = ulid();
 			return raw;
 	}
 }
@@ -139,6 +154,11 @@ export class MessageQueue {
 	enqueue(msg: QueueMessage, options?: { quiet?: boolean }): void {
 		if (this.closed) {
 			throw new Error("Queue closed");
+		}
+		if (!msg.id) {
+			throw new Error(
+				`QueueMessage must have a non-empty id (source: ${msg.source})`,
+			);
 		}
 
 		if (options?.quiet) {

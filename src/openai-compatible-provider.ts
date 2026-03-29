@@ -951,7 +951,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			queue,
 			async sendMessage(text: string): Promise<void> {
 				try {
-					queue.enqueue({ source: "user", content: text });
+					queue.enqueue({ source: "user", id: ulid(), content: text });
 				} catch {
 					// Queue may be closed
 				}

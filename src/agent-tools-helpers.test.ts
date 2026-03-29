@@ -313,6 +313,7 @@ describe("formatQueueMessage", () => {
 	test("task_message without requestReply", () => {
 		const msg: QueueMessage = {
 			source: "task_message",
+			id: "test-id",
 			fromTaskId: "p1",
 			fromTitle: "Orchestrator",
 			content: "Priority changed",
@@ -327,6 +328,7 @@ describe("formatQueueMessage", () => {
 	test("task_message with requestReply=true uses XML attribute", () => {
 		const msg: QueueMessage = {
 			source: "task_message",
+			id: "test-id",
 			fromTaskId: "p1",
 			fromTitle: "Orchestrator",
 			content: "What is the status?",
@@ -341,6 +343,7 @@ describe("formatQueueMessage", () => {
 	test("task_message with requestReply=false does not have attribute", () => {
 		const msg: QueueMessage = {
 			source: "task_message",
+			id: "test-id",
 			fromTaskId: "p1",
 			fromTitle: "Orchestrator",
 			content: "FYI update",
@@ -355,6 +358,7 @@ describe("formatQueueMessage", () => {
 	test("task_message from sub task without requestReply", () => {
 		const msg: QueueMessage = {
 			source: "task_message",
+			id: "test-id",
 			fromTaskId: "task-1",
 			fromTitle: "Auth Module",
 			content: "50% done",
@@ -369,6 +373,7 @@ describe("formatQueueMessage", () => {
 	test("task_message from sub task with requestReply=true uses XML attribute", () => {
 		const msg: QueueMessage = {
 			source: "task_message",
+			id: "test-id",
 			fromTaskId: "task-2",
 			fromTitle: "DB Module",
 			content: "Need clarification on schema",
@@ -383,6 +388,7 @@ describe("formatQueueMessage", () => {
 	test("task_message from sub task with requestReply=false does not have attribute", () => {
 		const msg: QueueMessage = {
 			source: "task_message",
+			id: "test-id",
 			fromTaskId: "task-3",
 			fromTitle: "UI",
 			content: "All good",
@@ -397,6 +403,7 @@ describe("formatQueueMessage", () => {
 	test("formats cross_project message as XML", () => {
 		const result = formatQueueMessage({
 			source: "cross_project",
+			id: "test-id",
 			fromProjectId: "proj-123",
 			fromProjectName: "MyProject",
 			content: "Hello from another project",

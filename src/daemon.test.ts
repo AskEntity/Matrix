@@ -759,7 +759,7 @@ describe("daemon tasks API", () => {
 		// Queue should be closed
 		let closedAfterDelete = false;
 		try {
-			childQueue.enqueue({ source: "compact" });
+			childQueue.enqueue({ source: "compact", id: "test-id" });
 		} catch {
 			closedAfterDelete = true;
 		}
@@ -1161,7 +1161,7 @@ describe("GET /projects/:id/events", () => {
 		await eventStore.append("session1", {
 			type: "message",
 			id: "",
-			body: { source: "user", content: "hello" },
+			body: { source: "user", id: "test-id", content: "hello" },
 			taskId: "session1",
 			ts: 1000,
 		});
@@ -1184,7 +1184,7 @@ describe("GET /projects/:id/events", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "old" },
+				body: { source: "user", id: "test-id", content: "old" },
 				taskId: "session1",
 				ts: 1000,
 			},
@@ -1231,7 +1231,7 @@ describe("GET /projects/:id/events", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "old" },
+				body: { source: "user", id: "test-id", content: "old" },
 				taskId: "session1",
 				ts: 1000,
 			},
@@ -1295,7 +1295,7 @@ describe("GET /projects/:id/events/older", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "old" },
+				body: { source: "user", id: "test-id", content: "old" },
 				taskId: "session1",
 				ts: 1000,
 			},
@@ -1441,7 +1441,7 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "old" },
+				body: { source: "user", id: "test-id", content: "old" },
 				taskId: taskId,
 				ts: 1000,
 			},
@@ -1480,7 +1480,7 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", content: "old" },
+				body: { source: "user", id: "test-id", content: "old" },
 				taskId: taskId,
 				ts: 1000,
 			},
@@ -2618,7 +2618,7 @@ describe("POST /projects/:id/stop", () => {
 		// Verify queue is open
 		let queueClosed = false;
 		try {
-			childQueue.enqueue({ source: "compact" });
+			childQueue.enqueue({ source: "compact", id: "test-id" });
 			childQueue.drain(); // clear it
 		} catch {
 			queueClosed = true;
@@ -2636,7 +2636,7 @@ describe("POST /projects/:id/stop", () => {
 		// Verify: child queue is now closed
 		let closedAfterStop = false;
 		try {
-			childQueue.enqueue({ source: "compact" });
+			childQueue.enqueue({ source: "compact", id: "test-id" });
 		} catch {
 			closedAfterStop = true;
 		}

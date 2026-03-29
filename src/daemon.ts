@@ -42,6 +42,7 @@ import type {
 	StatsResponse,
 	VersionResponse,
 } from "./types.ts";
+import { ulid } from "./ulid.ts";
 
 // Re-export DaemonConfig so tests can import from daemon.ts
 export type { DaemonConfig } from "./daemon/context.ts";
@@ -317,6 +318,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							: `Working directory: ${project.path}`;
 						await persistMessage(ctx.config.dataDir, project.id, rootNodeId, {
 							source: "user",
+							id: ulid(),
 							content: `Continue where you left off. The daemon restarted (${GIT_HASH}).\n\nCheck the task tree and proceed.`,
 							header: resumeHeader,
 						});
