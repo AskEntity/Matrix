@@ -68,7 +68,7 @@ const en: Translations = {
 	"orch.cacheWrite": "Cache Write",
 	"orch.cacheRead": "Cache Read",
 	"orch.output": "Output",
-	"orch.pause": "Pause",
+	"orch.pause": "Interrupt",
 
 	// Status
 	"status.draft": "Draft",
@@ -352,7 +352,7 @@ const zh: Translations = {
 	"orch.cacheWrite": "缓存写入",
 	"orch.cacheRead": "缓存读取",
 	"orch.output": "输出",
-	"orch.pause": "暂停",
+	"orch.pause": "中断",
 
 	// Status
 	"status.draft": "草稿",
