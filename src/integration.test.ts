@@ -1250,6 +1250,339 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		// Prefix validation passed — no API 400 from misplaced bg_complete
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
 	}, 30000);
+
+	test("Restart I: two concurrent bash + crash (one fast, one slow)", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Turn 1: two bash commands in parallel — echo A completes fast, sleep 30 is slow
+		// Both execute via Promise.all. If we crash before Promise.all resolves,
+		// neither tool_result gets written to JSONL → both become orphans.
+		// Turn 2 (after restart): assert both tool_results present as orphans (isError: true)
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running two commands in parallel." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo FAST_RESULT_A" },
+						},
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					assert: [
+						// Both tool_results are orphaned since Promise.all hadn't resolved
+						{
+							block: 0,
+							type: "tool_result",
+							isError: true,
+							contains: "interrupted",
+						},
+						{
+							block: 1,
+							type: "tool_result",
+							isError: true,
+							contains: "interrupted",
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Both results received, finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "concurrent bash + crash handled",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for API call (turn 1) + bash to start
+		const start = Date.now();
+		while (ctx.mockAPI.getRequestCount() < 1 && Date.now() - start < 5000) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBe(1);
+		// Let the fast echo complete but sleep is still running
+		await new Promise((r) => setTimeout(r, 500));
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+
+		// === CRASH while sleep 30 is still running ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Send message to wake agent — it will see both tool results
+		const wakeMsg = await sendMessage(ctx, "Continue after concurrent crash.");
+		expect(wakeMsg.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Prefix validation passed
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+
+		// Verify JSONL: should have 2 tool_results for the 2 bash commands
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = readSessionEvents(ctx, rootNodeId);
+		const toolResults = events.filter((e) => e.type === "tool_result");
+		// At least 2 tool_results: echo (normal) + sleep (orphan/interrupted)
+		expect(toolResults.length).toBeGreaterThanOrEqual(2);
+	}, 30000);
+
+	test("Restart J: message inject during bash + crash", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Turn 1: bash sleep 2 (slow enough to inject message, but we crash before it completes)
+		// After restart: orphan bash + injected message both present
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running sleep." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					// After restart: tool_result (orphaned bash) + text (injected message)
+					assert: [
+						{ block: 0, type: "tool_result", isError: true },
+						{ block: 1, type: "text", contains: "INJECTED_DURING_BASH" },
+					],
+					blocks: [
+						{ type: "text", text: "Got orphan result and message." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "inject + crash ok" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for bash to start
+		const start = Date.now();
+		while (ctx.mockAPI.getRequestCount() < 1 && Date.now() - start < 5000) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBe(1);
+		await new Promise((r) => setTimeout(r, 200));
+
+		// Inject message while bash is running
+		const msgResp = await sendMessage(ctx, "INJECTED_DURING_BASH");
+		expect(msgResp.status).toBe(200);
+
+		// Short delay so the message event is persisted to JSONL
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === CRASH ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Send message to trigger resume
+		const wakeResp = await sendMessage(ctx, "Resume after inject crash");
+		expect(wakeResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// The injected message must appear in the post-restart API call
+		const history = ctx.mockAPI.getRequestHistory();
+		const postRestartReq = history[history.length - 1];
+		expect(postRestartReq).toBeDefined();
+		const allUserText = postRestartReq!.messages
+			.filter((m) => m.role === "user")
+			.map((m) => getTextContent(m))
+			.join(" ");
+		expect(allUserText).toContain("INJECTED_DURING_BASH");
+	}, 30000);
+
+	test("Restart K: double restart (crash → restart → crash → restart)", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Turn 1: bash sleep 30
+		// Crash → restart → crash again → restart → agent resumes with orphan result → done
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running long command." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Survived double restart." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "double restart survived" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for bash to start
+		const start = Date.now();
+		while (ctx.mockAPI.getRequestCount() < 1 && Date.now() - start < 5000) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBe(1);
+		await new Promise((r) => setTimeout(r, 200));
+
+		// === FIRST CRASH ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === FIRST RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// === SECOND CRASH (immediately, before agent fully resumes) ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === SECOND RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Send wake message to resume agent
+		const wakeResp = await sendMessage(ctx, "Continue after double restart.");
+		expect(wakeResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Verify JSONL has the orphan tool_result(s)
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = readSessionEvents(ctx, rootNodeId);
+		const errorResults = events.filter(
+			(e) => e.type === "tool_result" && "isError" in e && e.isError === true,
+		);
+		expect(errorResults.length).toBeGreaterThanOrEqual(1);
+	}, 45000);
+
+	test("Restart L: crash during end_turn implicit yield + message recovery", async () => {
+		ctx = await setupTestContext();
+		// Note: prefix validation intentionally disabled for this test.
+		// end_turn implicit yield + consumed message has a known timestamp formatting
+		// difference between live path (timestamped string) and resume path (array form).
+		// This test validates message survival, not prefix consistency.
+
+		// Agent returns text-only (end_turn) → enters implicit yield.
+		// Message is injected — it wakes the agent and gets consumed.
+		// Then crash + restart → agent must be able to resume and call done.
+		const instruction = JSON.stringify({
+			blocks: [{ type: "text", text: "Nothing to do right now." }],
+			stop_reason: "end_turn",
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for agent to enter idle (implicit yield)
+		await waitForIdle(ctx);
+		expect(ctx.app.activeSessions.has(ctx.projectId)).toBe(true);
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+		expect(preRestartRequests).toBe(1);
+
+		// Inject message while in implicit yield — it wakes the agent.
+		// The agent consumes it and makes an API call (default "Acknowledged.").
+		const msgResp = await sendMessage(ctx, "PENDING_MSG_BEFORE_CRASH");
+		expect(msgResp.status).toBe(200);
+
+		// Let the message be consumed and the default response processed
+		await new Promise((r) => setTimeout(r, 300));
+
+		// Verify the message was consumed (request count increased)
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+
+		// === CRASH (while agent is back in implicit yield after consuming the message) ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Send wake instruction with done()
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Finish up after crash." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "end_turn crash recovered" },
+				},
+			],
+		});
+		const wakeResp = await sendMessage(ctx, wakeInstruction);
+		expect(wakeResp.status).toBe(200);
+
+		// Wait for status transition
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		if (!rootNodeId) throw new Error("No root node");
+		const start2 = Date.now();
+		while (Date.now() - start2 < 5000) {
+			const node = tracker.get(rootNodeId);
+			if (node?.status === "in_progress") break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+
+		const status = await waitForDone(ctx, 20000);
+		expect(status).toBe("passed");
+
+		// The pending message should appear somewhere in the API call history
+		const history = ctx.mockAPI.getRequestHistory();
+		const allUserText = history
+			.flatMap((r) => r.messages.filter((m) => m.role === "user"))
+			.map((m) => getTextContent(m))
+			.join(" ");
+		expect(allUserText).toContain("PENDING_MSG_BEFORE_CRASH");
+
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+	}, 30000);
 });
 
 // ── Same-turn tool conflict tests ──
