@@ -445,3 +445,18 @@ Implementation: in provider-shared.ts, yield/done are detected before Promise.al
 - **Concurrent bash + crash**: When two bash commands run in Promise.all and we crash before resolution, NEITHER tool_result gets written to JSONL — both become orphans with isError:true. Don't assume the "fast" command's result was persisted.
 - **End_turn implicit yield + timestamp prefix mismatch**: Live path sends queue messages as timestamped strings `[HH:MM:SS] content`, but JSONL resume reconstructs them as `[{type:"text", text:"content"}]` (array form, no timestamp). This causes prefix validation failure. Known limitation — disable prefix validation for tests involving consumed messages before crash during implicit yield.
 - **Double restart is safe**: autoResumeProjects + orphan cleanup are idempotent. Running twice (crash → restart → crash → restart) produces correct results — orphan tool_results are only written if not already present.
+
+
+## Per-Conversation Turn Queues in Mock API (March 2025)
+
+**Problem**: Parent and child agents share the same `ValidatingMockAPI` instance (via `agentProvider`). With a single turn queue, multi-turn instructions from parent and child would interfere — one agent consumes the other's turns.
+
+**Fix**: `conversationQueues: Map<string, SingleTurnInstruction[]>` keyed by conversation ID derived from the first user message content. Each conversation gets its own queue. Prefix validation is also per-conversation — only compares against previous requests from the same conversation.
+
+**Conversation key**: First user message text (first 200 chars). Stable across API calls because the first message never changes within a conversation.
+
+**Parent-child test flow**: Parent instruction is a multi-turn script. Child instruction JSON is embedded in `send_message` content → arrives as `task_message` XML → mock's `tryParseInstruction` finds embedded JSON via brace-counting. Each agent parses and queues turns independently under its own conversation key.
+
+**Key gotcha**: `create_task` returns `JSON.stringify(node)`, not a human-readable string. Capture regex must match JSON format: `"id":\\s*"([A-Z0-9]+)"` not `ID: ([A-Z0-9]+)`.
+
+**Yield multi-message timing**: `queue.wait()` resolves on first message, `drain()` runs immediately. Second message may not be enqueued yet. Tests should use sequential yield-wake cycles (yield → msg1 → wake → yield again → msg2 → wake) rather than assuming both messages arrive in one drain.

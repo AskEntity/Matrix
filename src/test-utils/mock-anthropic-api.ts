@@ -662,12 +662,28 @@ function abbreviateContent(_key: string, value: unknown): unknown {
 
 export class ValidatingMockAPI {
 	private requestHistory: RequestRecord[] = [];
-	/** Queued turns from multi-turn instructions. Consumed one per API call. */
-	private turnQueue: SingleTurnInstruction[] = [];
+	/**
+	 * Per-conversation turn queues. Keyed by conversation ID (derived from first user message).
+	 * When parent and child agents share the same mock, their turns don't interfere.
+	 */
+	private conversationQueues: Map<string, SingleTurnInstruction[]> = new Map();
 	/** When enabled, validates messages are strictly monotonically increasing across API calls. */
 	private prefixValidationEnabled = false;
 	/** Variables captured from tool results via assert capture rules. */
 	private capturedVars: Map<string, string> = new Map();
+
+	/**
+	 * Derive a stable conversation key from the messages array.
+	 * Uses the first user message's text content as the key — this is unique per conversation
+	 * and stable across API calls (the first message never changes).
+	 */
+	private getConversationKey(messages: MessageParam[]): string {
+		const firstUser = messages.find((m) => m.role === "user");
+		if (!firstUser) return "default";
+		const texts = extractUserTextBlocks(firstUser);
+		// Use first 200 chars of combined text as fingerprint (enough to be unique)
+		return texts.join("|").slice(0, 200);
+	}
 
 	/**
 	 * Extract all content blocks from the last user message in the request.
@@ -938,9 +954,15 @@ export class ValidatingMockAPI {
 			return createMockAnthropicStream(content, stopReason, modelName);
 		}
 
-		// 1. Try to dequeue from the turn queue (from a previous multi-turn instruction)
-		if (this.turnQueue.length > 0) {
-			const turn = this.turnQueue.shift() as SingleTurnInstruction;
+		// Identify conversation for per-conversation turn queuing.
+		// This allows parent and child agents to have independent turn queues.
+		const convKey = this.getConversationKey(messages);
+
+		// 1. Try to dequeue from this conversation's turn queue
+		const convQueue = this.conversationQueues.get(convKey);
+		if (convQueue && convQueue.length > 0) {
+			const turn = convQueue.shift() as SingleTurnInstruction;
+			if (convQueue.length === 0) this.conversationQueues.delete(convKey);
 			const { content, stopReason } = this.processTurn(turn, messages);
 			return createMockAnthropicStream(content, stopReason, modelName);
 		}
@@ -949,9 +971,11 @@ export class ValidatingMockAPI {
 		const instruction = extractInstruction(messages);
 		if (instruction) {
 			if (isMultiTurn(instruction)) {
-				// Multi-turn: return first turn now, queue the rest
+				// Multi-turn: return first turn now, queue the rest under this conversation
 				const [first, ...rest] = instruction.turns;
-				this.turnQueue.push(...rest);
+				if (rest.length > 0) {
+					this.conversationQueues.set(convKey, rest);
+				}
 				if (first) {
 					const { content, stopReason } = this.processTurn(first, messages);
 					return createMockAnthropicStream(content, stopReason, modelName);
@@ -983,9 +1007,13 @@ export class ValidatingMockAPI {
 		return this.requestHistory.length;
 	}
 
-	/** How many turns are still queued (not yet consumed). */
+	/** How many turns are still queued across all conversations. */
 	getPendingTurnCount(): number {
-		return this.turnQueue.length;
+		let total = 0;
+		for (const q of this.conversationQueues.values()) {
+			total += q.length;
+		}
+		return total;
 	}
 
 	/**
@@ -1001,27 +1029,31 @@ export class ValidatingMockAPI {
 	}
 
 	/**
-	 * Validate that current messages are a prefix extension of the previous request's messages.
-	 * The previous request's messages must appear as an exact prefix of the current messages.
+	 * Validate that current messages are a prefix extension of the previous request
+	 * from the SAME conversation. Each conversation (identified by first user message)
+	 * has independent prefix validation — parent and child don't interfere.
 	 *
 	 * Compaction is a valid reset point — after compaction, prefix restarts from scratch.
 	 */
 	private validatePrefix(messages: MessageParam[]): void {
 		if (this.requestHistory.length < 2) return;
 
-		// Find previous non-compaction request to compare against
+		// Current request might be a compaction — skip prefix check for compactions
+		if (isCompactionRequest(messages)) return;
+
+		const convKey = this.getConversationKey(messages);
+
+		// Find previous non-compaction request from the SAME conversation
 		let prevMessages: MessageParam[] | null = null;
 		for (let i = this.requestHistory.length - 2; i >= 0; i--) {
 			const prev = this.requestHistory[i];
-			if (prev && !isCompactionRequest(prev.messages)) {
+			if (!prev || isCompactionRequest(prev.messages)) continue;
+			if (this.getConversationKey(prev.messages) === convKey) {
 				prevMessages = prev.messages;
 				break;
 			}
 		}
 		if (!prevMessages) return;
-
-		// Current request might be a compaction — skip prefix check for compactions
-		if (isCompactionRequest(messages)) return;
 
 		// The previous messages must be a prefix of the current messages.
 		// Current messages length must be >= previous messages length.
@@ -1055,7 +1087,7 @@ export class ValidatingMockAPI {
 	/** Reset state between tests. */
 	reset(): void {
 		this.requestHistory = [];
-		this.turnQueue = [];
+		this.conversationQueues.clear();
 		this.prefixValidationEnabled = false;
 		this.capturedVars.clear();
 		toolUseCounter = 0;
