@@ -23,8 +23,6 @@ interface JWTPayload {
 	iat: number;
 	/** Expiry (seconds since epoch) */
 	exp: number;
-	/** JWT ID — legacy field, kept for backward compat with existing tokens */
-	jti?: string;
 }
 
 // ── Auth Data Storage ──────────────────────────────────────────────────────

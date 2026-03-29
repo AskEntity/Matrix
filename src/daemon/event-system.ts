@@ -1,5 +1,6 @@
 import { type Event, isPersistedByEmitEvent } from "../events.ts";
 import type { TaskTracker } from "../task-tracker.ts";
+import { ulid } from "../ulid.ts";
 import type {
 	DaemonContext,
 	PendingClarification,
@@ -173,7 +174,7 @@ function addPendingClarification(
 ): PendingClarification {
 	const clarifications = getPendingClarifications(ctx, projectId);
 	const entry: PendingClarification = {
-		id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+		id: ulid(),
 		taskId,
 		question,
 		...(title ? { title } : {}),

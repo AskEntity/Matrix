@@ -61,7 +61,7 @@ describe("WorktreeManager", () => {
 		const taskId = "abcdef12-3456-7890-abcd-ef1234567890";
 		const info = await mgr.create(taskId, "setup");
 
-		expect(info.branch).toBe("og/abcdef12/setup");
+		expect(info.branch).toBe("og/abcdef12-3456-7890-abcd-ef1234567890/setup");
 		expect(existsSync(info.path)).toBe(true);
 		expect(existsSync(join(info.path, "README.md"))).toBe(true);
 	});
@@ -118,7 +118,9 @@ describe("WorktreeManager", () => {
 
 		// Branch should be gone
 		const branches = await exec(["git", "branch"], repoDir);
-		expect(branches).not.toContain("og/bbbbbbbb/cleanup");
+		expect(branches).not.toContain(
+			"og/bbbbbbbb-1111-2222-3333-444444444444/cleanup",
+		);
 	});
 
 	test("list returns managed worktrees", async () => {
@@ -130,8 +132,8 @@ describe("WorktreeManager", () => {
 		const list = await mgr.list();
 		expect(list).toHaveLength(2);
 		expect(list.map((w) => w.branch).sort()).toEqual([
-			"og/aaaaaaaa/alpha",
-			"og/cccccccc/beta",
+			"og/aaaaaaaa-1111-2222-3333-444444444444/alpha",
+			"og/cccccccc-1111-2222-3333-444444444444/beta",
 		]);
 	});
 
@@ -212,7 +214,7 @@ describe("WorktreeManager", () => {
 		);
 
 		// Worktree should be cleaned up
-		const wtPath = join(wtRoot, `${taskId.slice(0, 8)}-no-hook`);
+		const wtPath = join(wtRoot, `${taskId}-no-hook`);
 		expect(existsSync(wtPath)).toBe(false);
 	});
 
@@ -229,11 +231,13 @@ describe("WorktreeManager", () => {
 		);
 
 		// Worktree should be cleaned up
-		const wtPath = join(wtRoot, `${taskId.slice(0, 8)}-bad-hook`);
+		const wtPath = join(wtRoot, `${taskId}-bad-hook`);
 		expect(existsSync(wtPath)).toBe(false);
 
 		// Branch should be cleaned up
 		const branches = await exec(["git", "branch"], repoDir);
-		expect(branches).not.toContain("og/55667788/bad-hook");
+		expect(branches).not.toContain(
+			"og/55667788-1111-2222-3333-444444444444/bad-hook",
+		);
 	});
 });
