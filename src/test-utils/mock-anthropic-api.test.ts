@@ -507,7 +507,9 @@ describe("ValidatingMockAPI", () => {
 						],
 					},
 					{
-						assert: [{ result: 0, contains: "hello_world" }],
+						assert: [
+							{ block: 0, type: "tool_result", contains: "hello_world" },
+						],
 						blocks: [{ type: "text", text: "Found it" }],
 					},
 				],
@@ -535,7 +537,9 @@ describe("ValidatingMockAPI", () => {
 						],
 					},
 					{
-						assert: [{ result: 0, contains: "expected_output" }],
+						assert: [
+							{ block: 0, type: "tool_result", contains: "expected_output" },
+						],
 						blocks: [{ type: "text", text: "Done" }],
 					},
 				],
@@ -561,7 +565,7 @@ describe("ValidatingMockAPI", () => {
 						],
 					},
 					{
-						assert: [{ result: 0, notContains: "error" }],
+						assert: [{ block: 0, type: "tool_result", notContains: "error" }],
 						blocks: [{ type: "text", text: "Good" }],
 					},
 				],
@@ -587,7 +591,7 @@ describe("ValidatingMockAPI", () => {
 						],
 					},
 					{
-						assert: [{ result: 0, notContains: "error" }],
+						assert: [{ block: 0, type: "tool_result", notContains: "error" }],
 						blocks: [{ type: "text", text: "Done" }],
 					},
 				],
@@ -613,7 +617,7 @@ describe("ValidatingMockAPI", () => {
 						],
 					},
 					{
-						assert: [{ result: 0, isError: true }],
+						assert: [{ block: 0, type: "tool_result", isError: true }],
 						blocks: [{ type: "text", text: "Error confirmed" }],
 					},
 				],
@@ -642,7 +646,7 @@ describe("ValidatingMockAPI", () => {
 						],
 					},
 					{
-						assert: [{ result: 0, isError: true }],
+						assert: [{ block: 0, type: "tool_result", isError: true }],
 						blocks: [{ type: "text", text: "Done" }],
 					},
 				],
@@ -668,7 +672,9 @@ describe("ValidatingMockAPI", () => {
 						],
 					},
 					{
-						assert: [{ result: 0, matches: "v\\d+\\.\\d+\\.\\d+" }],
+						assert: [
+							{ block: 0, type: "tool_result", matches: "v\\d+\\.\\d+\\.\\d+" },
+						],
 						blocks: [{ type: "text", text: "Version found" }],
 					},
 				],
@@ -688,7 +694,7 @@ describe("ValidatingMockAPI", () => {
 			});
 		});
 
-		test("assert on missing result index throws", () => {
+		test("assert on missing block index throws", () => {
 			const instruction = JSON.stringify({
 				turns: [
 					{
@@ -697,7 +703,7 @@ describe("ValidatingMockAPI", () => {
 						],
 					},
 					{
-						assert: [{ result: 5, contains: "anything" }],
+						assert: [{ block: 5, contains: "anything" }],
 						blocks: [{ type: "text", text: "Done" }],
 					},
 				],
@@ -711,7 +717,7 @@ describe("ValidatingMockAPI", () => {
 						{ id: "tc_1", content: "only one result" },
 					]),
 				),
-			).toThrow("no tool_result at index 5");
+			).toThrow("no content block at index 5");
 		});
 
 		test("assert on multiple tool results checks each independently", async () => {
@@ -733,8 +739,8 @@ describe("ValidatingMockAPI", () => {
 					},
 					{
 						assert: [
-							{ result: 0, contains: "hello" },
-							{ result: 1, contains: "world" },
+							{ block: 0, type: "tool_result", contains: "hello" },
+							{ block: 1, type: "tool_result", contains: "world" },
 						],
 						blocks: [{ type: "text", text: "Both matched" }],
 					},
@@ -754,6 +760,171 @@ describe("ValidatingMockAPI", () => {
 				type: "text",
 				text: "Both matched",
 			});
+		});
+
+		test("assert type validation catches wrong block type", () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [{ block: 0, type: "text", contains: "hello" }],
+						blocks: [{ type: "text", text: "Done" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			expect(() =>
+				mock.createStream(
+					messagesWithToolResults(instruction, [
+						{ id: "tc_1", content: "hello world" },
+					]),
+				),
+			).toThrow('has type "tool_result", expected "text"');
+		});
+
+		test("assert on text block alongside tool_results", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "echo hi" } },
+						],
+					},
+					{
+						assert: [
+							{ block: 0, type: "tool_result", contains: "output" },
+							{ block: 1, type: "text", contains: "injected" },
+						],
+						blocks: [{ type: "text", text: "Both checked" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			// Build a user message with tool_result + text block
+			const stream = mock.createStream({
+				messages: [
+					{ role: "user" as const, content: instruction },
+					{
+						role: "assistant" as const,
+						content: [
+							{
+								type: "tool_use" as const,
+								id: "tc_1",
+								name: "bash",
+								input: {},
+								caller: { type: "direct" as const },
+							},
+						],
+					},
+					{
+						role: "user" as const,
+						content: [
+							{
+								type: "tool_result" as const,
+								tool_use_id: "tc_1",
+								content: "output: success",
+								is_error: false,
+							},
+							{
+								type: "text" as const,
+								text: "injected message from queue",
+							},
+						],
+					},
+				],
+			});
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({
+				type: "text",
+				text: "Both checked",
+			});
+		});
+
+		test("assert without type skips type check", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [{ block: 0, contains: "hello" }],
+						blocks: [{ type: "text", text: "Matched" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			const stream = mock.createStream(
+				messagesWithToolResults(instruction, [
+					{ id: "tc_1", content: "hello world" },
+				]),
+			);
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({ type: "text", text: "Matched" });
+		});
+
+		test("isError on non-tool_result block throws", () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [
+							{ type: "tool_use", name: "bash", input: { command: "test" } },
+						],
+					},
+					{
+						assert: [{ block: 1, type: "text", isError: true }],
+						blocks: [{ type: "text", text: "Done" }],
+					},
+				],
+			});
+
+			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+
+			expect(() =>
+				mock.createStream({
+					messages: [
+						{ role: "user" as const, content: instruction },
+						{
+							role: "assistant" as const,
+							content: [
+								{
+									type: "tool_use" as const,
+									id: "tc_1",
+									name: "bash",
+									input: {},
+									caller: { type: "direct" as const },
+								},
+							],
+						},
+						{
+							role: "user" as const,
+							content: [
+								{
+									type: "tool_result" as const,
+									tool_use_id: "tc_1",
+									content: "ok",
+									is_error: false,
+								},
+								{
+									type: "text" as const,
+									text: "some text",
+								},
+							],
+						},
+					],
+				}),
+			).toThrow("isError check is only valid for tool_result blocks");
 		});
 
 		test("turns without assert work unchanged (backward compat)", async () => {
@@ -804,7 +975,8 @@ describe("ValidatingMockAPI", () => {
 					{
 						assert: [
 							{
-								result: 0,
+								block: 0,
+								type: "tool_result",
 								capture: { taskId: "regex:Task (\\S+) created" },
 							},
 						],
@@ -846,7 +1018,8 @@ describe("ValidatingMockAPI", () => {
 					{
 						assert: [
 							{
-								result: 0,
+								block: 0,
+								type: "tool_result",
 								capture: { id: "regex:ID: (\\d+)" },
 							},
 						],
@@ -877,7 +1050,8 @@ describe("ValidatingMockAPI", () => {
 					{
 						assert: [
 							{
-								result: 0,
+								block: 0,
+								type: "tool_result",
 								capture: { myVar: "regex:value=(\\w+)" },
 							},
 						],
@@ -907,7 +1081,8 @@ describe("ValidatingMockAPI", () => {
 					{
 						assert: [
 							{
-								result: 0,
+								block: 0,
+								type: "tool_result",
 								capture: { name: "regex:name=(\\w+)" },
 							},
 						],
@@ -946,7 +1121,8 @@ describe("ValidatingMockAPI", () => {
 					{
 						assert: [
 							{
-								result: 0,
+								block: 0,
+								type: "tool_result",
 								capture: { id: "regex:id=(\\w+)" },
 							},
 						],
@@ -1007,7 +1183,8 @@ describe("ValidatingMockAPI", () => {
 					{
 						assert: [
 							{
-								result: 0,
+								block: 0,
+								type: "tool_result",
 								capture: { x: "regex:(\\w+)" },
 							},
 						],
