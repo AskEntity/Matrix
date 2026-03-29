@@ -58,7 +58,7 @@ export class WorktreeManager {
 		await this.ensureWorktreeConfigEnabled();
 
 		const branch = this.branchName(taskId, slug);
-		const wtPath = resolve(this.worktreeRoot, `${taskId.slice(0, 8)}-${slug}`);
+		const wtPath = resolve(this.worktreeRoot, `${taskId}-${slug}`);
 
 		// Determine the base: explicit branch, or current HEAD
 		const base = baseBranch ?? "HEAD";
@@ -96,7 +96,7 @@ export class WorktreeManager {
 	/** Remove a worktree and its associated branch. */
 	async remove(taskId: string, slug: string): Promise<void> {
 		const branch = this.branchName(taskId, slug);
-		const wtPath = resolve(this.worktreeRoot, `${taskId.slice(0, 8)}-${slug}`);
+		const wtPath = resolve(this.worktreeRoot, `${taskId}-${slug}`);
 
 		// Remove worktree
 		if (existsSync(wtPath)) {
@@ -198,6 +198,6 @@ export class WorktreeManager {
 	}
 
 	private branchName(taskId: string, slug: string): string {
-		return `og/${taskId.slice(0, 8)}/${slug}`;
+		return `og/${taskId}/${slug}`;
 	}
 }

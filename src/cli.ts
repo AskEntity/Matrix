@@ -479,8 +479,7 @@ async function handleLogs(args: string[]): Promise<void> {
 
 		switch (type) {
 			case "orchestration_started": {
-				const prompt = String(event.prompt ?? "").slice(0, 200);
-				line = `🚀 Orchestration started: ${prompt}`;
+				line = `🚀 Orchestration started (model: ${event.model})`;
 				break;
 			}
 			case "task_created": {
