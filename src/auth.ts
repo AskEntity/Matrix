@@ -2,13 +2,12 @@
  * Local secret-based authentication.
  *
  * CLI is trust anchor — if you can read ~/.opengraft/auth.json, you're authenticated.
- * JWT tokens issued via `og sign` (CLI) and exchanged for session tokens via POST /auth/exchange.
+ * Challenge-response: browser generates RSA-OAEP keypair, CLI encrypts session JWT with public key.
  * HMAC-SHA256 signing key auto-generated and persisted in auth.json.
  */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { ulid } from "./ulid.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -18,13 +17,13 @@ interface AuthData {
 }
 
 interface JWTPayload {
-	/** Subject — "cli" for CLI auto-auth, "login" for login tokens, "session" for web sessions */
+	/** Subject — "cli" for CLI auto-auth, "session" for web sessions */
 	sub: string;
 	/** Issued-at (seconds since epoch) */
 	iat: number;
 	/** Expiry (seconds since epoch) */
 	exp: number;
-	/** JWT ID — unique token ID for one-time login tokens */
+	/** JWT ID — legacy field, kept for backward compat with existing tokens */
 	jti?: string;
 }
 
@@ -63,7 +62,6 @@ export function resetAuthDataCache(): void {
 // ── JWT Management ─────────────────────────────────────────────────────────
 
 const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
-const LOGIN_TTL_SECONDS = 5 * 60; // 5 minutes
 const CLI_TTL_SECONDS = 5 * 60; // 5 minutes
 
 /** Check whether auth.json has a jwtSecret (i.e., auth is initialized). */
@@ -139,23 +137,6 @@ export async function signCLIToken(authPath: string): Promise<string> {
 }
 
 /**
- * Sign a short-lived login token (5min TTL) with unique jti.
- * Used by `og sign` — user pastes into web UI to exchange for session token.
- */
-export async function signLoginToken(
-	authPath: string,
-	ttlSeconds?: number,
-): Promise<string> {
-	const now = Math.floor(Date.now() / 1000);
-	return signJWTRaw(authPath, {
-		sub: "login",
-		iat: now,
-		exp: now + (ttlSeconds ?? LOGIN_TTL_SECONDS),
-		jti: ulid(),
-	});
-}
-
-/**
  * Sign a long-lived session token (30d TTL).
  * Issued by the daemon after login token exchange.
  */
@@ -166,17 +147,6 @@ export async function signSessionToken(authPath: string): Promise<string> {
 		iat: now,
 		exp: now + SESSION_TTL_SECONDS,
 	});
-}
-
-/**
- * Legacy signJWT for backward compatibility — generates a session token.
- * @deprecated Use signSessionToken, signLoginToken, or signCLIToken instead.
- */
-export async function signJWT(
-	authPath: string,
-	_credentialID: string,
-): Promise<string> {
-	return signSessionToken(authPath);
 }
 
 /** Verify a JWT token. Returns the payload if valid, null otherwise. */
@@ -235,60 +205,6 @@ export async function verifyJWT(
 	return payload;
 }
 
-// ── JTI replay prevention ─────────────────────────────────────────────────
-
-/** In-memory set of used login token jtis. Entries auto-expire after 5 minutes. */
-const usedJtis = new Map<string, number>(); // jti → expiry timestamp (ms)
-
-const JTI_CLEANUP_INTERVAL = 60_000; // Clean expired entries every 60s
-let jtiCleanupTimer: ReturnType<typeof setInterval> | null = null;
-
-function ensureJtiCleanup(): void {
-	if (jtiCleanupTimer) return;
-	jtiCleanupTimer = setInterval(() => {
-		const now = Date.now();
-		for (const [jti, expiresAt] of usedJtis) {
-			if (expiresAt < now) usedJtis.delete(jti);
-		}
-		// Stop timer if no entries
-		if (usedJtis.size === 0 && jtiCleanupTimer) {
-			clearInterval(jtiCleanupTimer);
-			jtiCleanupTimer = null;
-		}
-	}, JTI_CLEANUP_INTERVAL);
-	// Don't keep the process alive just for cleanup
-	if (typeof jtiCleanupTimer === "object" && "unref" in jtiCleanupTimer) {
-		jtiCleanupTimer.unref();
-	}
-}
-
-/** Check if a jti has been used. If not, mark it as used (one-time). Returns true if unused (fresh). */
-export function consumeJti(jti: string): boolean {
-	// Clean expired entries inline (cheap)
-	const now = Date.now();
-	if (usedJtis.has(jti)) {
-		const expiresAt = usedJtis.get(jti);
-		if (expiresAt && expiresAt < now) {
-			usedJtis.delete(jti);
-		} else {
-			return false; // Already used
-		}
-	}
-	// Mark as used (expires after 5 minutes)
-	usedJtis.set(jti, now + 5 * 60 * 1000);
-	ensureJtiCleanup();
-	return true;
-}
-
-/** Clear used JTI tracking (for testing). */
-export function clearUsedJtis(): void {
-	usedJtis.clear();
-	if (jtiCleanupTimer) {
-		clearInterval(jtiCleanupTimer);
-		jtiCleanupTimer = null;
-	}
-}
-
 // ── Base64/Base64URL helpers ───────────────────────────────────────────────
 
 function toBase64Url(str: string): string {
@@ -331,7 +247,7 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
 	return btoa(binary);
 }
 
-function base64ToUint8Array(b64: string): Uint8Array<ArrayBuffer> {
+export function base64ToUint8Array(b64: string): Uint8Array<ArrayBuffer> {
 	const binary = atob(b64);
 	const buf = new ArrayBuffer(binary.length);
 	const bytes = new Uint8Array(buf);
@@ -339,4 +255,30 @@ function base64ToUint8Array(b64: string): Uint8Array<ArrayBuffer> {
 		bytes[i] = binary.charCodeAt(i);
 	}
 	return bytes;
+}
+
+// ── RSA-OAEP encryption for challenge-response auth ────────────────────────
+
+/**
+ * Import a base64-encoded RSA-OAEP public key (spki format) and encrypt data with it.
+ * Used by CLI `og auth <public_key>` to encrypt a session JWT for the browser.
+ */
+export async function encryptWithPublicKey(
+	publicKeyBase64: string,
+	plaintext: string,
+): Promise<string> {
+	const keyData = base64ToUint8Array(publicKeyBase64);
+	const publicKey = await crypto.subtle.importKey(
+		"spki",
+		keyData,
+		{ name: "RSA-OAEP", hash: "SHA-256" },
+		false,
+		["encrypt"],
+	);
+	const encrypted = await crypto.subtle.encrypt(
+		{ name: "RSA-OAEP" },
+		publicKey,
+		new TextEncoder().encode(plaintext),
+	);
+	return uint8ArrayToBase64(new Uint8Array(encrypted));
 }

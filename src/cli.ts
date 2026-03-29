@@ -3,7 +3,12 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { hasJwtSecret, signCLIToken, signLoginToken } from "./auth.ts";
+import {
+	encryptWithPublicKey,
+	hasJwtSecret,
+	signCLIToken,
+	signSessionToken,
+} from "./auth.ts";
 import type { AuthGroup, OpenGraftConfig } from "./config.ts";
 import {
 	loadGlobalConfig,
@@ -1180,31 +1185,14 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 	}
 }
 
-async function handleSign(args: string[]): Promise<void> {
-	// Parse --ttl flag
-	let ttlStr: string | undefined;
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
-		if (arg === "--ttl" && i + 1 < args.length) {
-			ttlStr = args[++i] as string;
-		}
-	}
-
-	// Parse TTL string (e.g., "5m", "1h", "7d", "30d")
-	let ttlSeconds: number | undefined;
-	if (ttlStr) {
-		const match = ttlStr.match(/^(\d+)(s|m|h|d)$/);
-		if (!match) {
-			console.error(
-				'Invalid TTL format. Use: <number><unit> where unit is s/m/h/d (e.g., "5m", "7d")',
-			);
-			process.exit(1);
-		}
-		const [, numStr, unit] = match as [string, string, string];
-		const num = Number.parseInt(numStr, 10);
-		const multiplier =
-			unit === "s" ? 1 : unit === "m" ? 60 : unit === "h" ? 3600 : 86400;
-		ttlSeconds = num * multiplier;
+async function handleAuth(args: string[]): Promise<void> {
+	const publicKeyBase64 = args[0];
+	if (!publicKeyBase64) {
+		console.error("Usage: og auth <public_key>");
+		console.error(
+			"\nCopy the public key from the OpenGraft web UI login page.",
+		);
+		process.exit(1);
 	}
 
 	try {
@@ -1213,15 +1201,14 @@ async function handleSign(args: string[]): Promise<void> {
 			const { getSigningKey } = await import("./auth.ts");
 			await getSigningKey(AUTH_JSON_PATH);
 		}
-		const token = await signLoginToken(AUTH_JSON_PATH, ttlSeconds);
-		console.log(token);
+		const sessionToken = await signSessionToken(AUTH_JSON_PATH);
+		const encrypted = await encryptWithPublicKey(publicKeyBase64, sessionToken);
+		console.log(encrypted);
 	} catch (err) {
 		console.error(
-			`Error: ${err instanceof Error ? err.message : "Failed to generate token"}`,
+			`Error: ${err instanceof Error ? err.message : "Failed to encrypt token"}`,
 		);
-		console.error(
-			`Make sure ${AUTH_JSON_PATH} exists and is readable, or run any og command to auto-create it.`,
-		);
+		console.error("Make sure you copied the full public key from the web UI.");
 		process.exit(1);
 	}
 }
@@ -1563,8 +1550,8 @@ switch (command) {
 	case "health":
 		await handleHealth();
 		break;
-	case "sign":
-		await handleSign(args);
+	case "auth":
+		await handleAuth(args);
 		break;
 	case "cost":
 		await handleCost(args);
@@ -1639,7 +1626,7 @@ switch (command) {
 		console.log("");
 		console.log("  Auth");
 		console.log(
-			"    sign [--ttl <duration>]  Generate login token for web UI (default 5min)",
+			"    auth <public_key>        Encrypt session token with browser public key",
 		);
 		console.log("");
 		console.log("  Other");
