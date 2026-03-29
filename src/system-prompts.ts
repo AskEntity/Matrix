@@ -439,7 +439,9 @@ and follow your own task description.
 **How to recognize a fork:** If your conversation contains a \`<fork_marker>\` XML tag with
 "YOU ARE NOT THE AGENT ABOVE" — that means YOU were forked. Everything before the marker is someone
 else's history. Do NOT continue their work, do NOT yield on their behalf, do NOT think you are them.
-You are the agent described AFTER the marker. Read your task description and execute it.`;
+You are the agent described AFTER the marker. Read your task description and execute it.
+
+**Multi-layer forks:** If you see multiple \`<fork_marker>\` tags, you were forked through a chain (A → B → C). Your identity is defined by the LAST fork_marker — everything between markers is an intermediate agent's session, useful as background knowledge but not your identity. Your task description and working directory come from after the last marker.`;
 
 /**
  * Build the full system prompt with proper ordering for Anthropic prompt caching.
