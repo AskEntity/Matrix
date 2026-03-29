@@ -334,3 +334,16 @@ Replaced WebAuthn/Passkey auth with local secret-based auth:
 - auth.json backward compat: legacy `credentials` field ignored if present
 - `hasJwtSecret()` checks existence WITHOUT auto-creating (unlike `getSigningKey()` which auto-creates)
 - Biome flags functions starting with `use` as React hooks — renamed `useJti` to `consumeJti`
+
+
+## Auth v2: Challenge-Response with Browser Keypair
+
+Replaced single-paste login (og sign → paste JWT → POST /auth/exchange) with double-paste challenge-response:
+1. Browser generates RSA-OAEP 2048 keypair, shows base64 public key (~392 chars)
+2. User runs `og auth <public_key>` in terminal → CLI encrypts session JWT with public key → outputs base64 ciphertext (~344 chars)
+3. User pastes ciphertext into browser → browser decrypts with private key → gets JWT → authenticated
+
+Removed: `signLoginToken`, `signJWT` (legacy), JTI replay prevention, rate limiter, POST /auth/exchange endpoint.
+Added: `encryptWithPublicKey()` in auth.ts, `base64ToUint8Array` now exported.
+CLI command changed: `og sign` → `og auth <public_key>`.
+Security: JWT never travels in plaintext outside the browser. Each login uses a fresh keypair.

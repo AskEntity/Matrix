@@ -3564,6 +3564,56 @@ button.og-tool-card-header:hover {
 	color: var(--og-error);
 }
 
+.og-login-command {
+	background: var(--og-bg);
+	padding: 0.5rem 0.75rem;
+	border-radius: 6px;
+	font-family: var(--og-mono, monospace);
+	font-size: 0.85rem;
+	margin-bottom: 1rem;
+	color: var(--og-text);
+}
+
+.og-login-key-wrapper {
+	margin-bottom: 1.25rem;
+}
+
+.og-login-key-display {
+	background: var(--og-bg);
+	border: 1px solid var(--og-border);
+	border-radius: 6px;
+	padding: 0.6rem 0.8rem;
+	font-family: var(--og-mono, monospace);
+	font-size: 0.7rem;
+	line-height: 1.5;
+	word-break: break-all;
+	text-align: left;
+	color: var(--og-text);
+	max-height: 6rem;
+	overflow-y: auto;
+	margin-bottom: 0.5rem;
+}
+
+.og-login-btn-copy {
+	font-size: 0.85rem;
+	padding: 0.5rem 1rem;
+	width: 100%;
+}
+
+.og-login-actions {
+	display: flex;
+	gap: 0.75rem;
+	justify-content: center;
+}
+
+.og-login-actions .og-login-btn {
+	flex: 1;
+}
+
+.og-login-actions .og-login-btn-ghost {
+	margin-top: 0;
+}
+
 /* =========================================================
    Mobile Layout (< 768px) — chat-like: activity log + input
    ========================================================= */
