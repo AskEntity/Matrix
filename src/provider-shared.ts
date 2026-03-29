@@ -20,8 +20,8 @@ import { type Event, queueMessageToEvent } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import type {
 	EventImageData,
-	InternalToolResult,
 	PendingState,
+	ToolResult,
 } from "./shared-types.ts";
 import { formatQueueMessage } from "./task-utils.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
@@ -31,33 +31,9 @@ import type { AgentResult, ExitReason } from "./types.ts";
 
 const DEFAULT_MAX_TOKENS = 16384;
 
-// ── Tool execution result type ──
-
-/**
- * Unified result type from executing a tool (built-in or MCP).
- * Used by both providers' tool execution paths.
- */
-export interface ToolExecResult {
-	content: string;
-	isError: boolean;
-	cwd?: string;
-	/** Background process ID — set when bash moves a command to background. */
-	backgroundId?: string;
-	/** Background command — set when bash moves a command to background. */
-	backgroundCommand?: string;
-	isImage?: boolean;
-	imageData?: string;
-	mediaType?: string;
-	mcpImages?: Array<EventImageData & { data?: string }>;
-	/** User message IDs consumed (already persisted at send time). */
-	consumedMessageIds?: string[];
-	/** Raw queue messages from yield/done that need to flow through emit for SSE broadcast + persistence. */
-	consumedQueueMessages?: QueueMessage[];
-	/** Formatted text of all consumed queue messages for display. */
-	formattedQueueMessages?: string;
-	/** Structured pending state after yield/done. */
-	pending?: PendingState;
-}
+// ToolResult: unified tool execution result type. Canonical definition in shared-types.ts.
+// Re-exported here for consumers that imported ToolExecResult from provider-shared.
+export type { ToolResult } from "./shared-types.ts";
 
 // ── Transient error detection (provider-agnostic) ──
 
@@ -104,7 +80,7 @@ export function isTransientAPIError(e: unknown): boolean {
 /**
  * Execute a single tool via its handler.
  * ALL tools (built-in + orchestrator + external MCP) go through this single path.
- * Returns a unified ToolExecResult.
+ * Returns a unified ToolResult.
  */
 export async function executeTool(
 	toolName: string,
@@ -112,7 +88,7 @@ export async function executeTool(
 	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
 	mcpHandlers: Map<string, ToolDefinition<any>>,
 	toolCallId?: string,
-): Promise<ToolExecResult> {
+): Promise<ToolResult> {
 	const mcpHandler = mcpHandlers.get(toolName);
 	if (!mcpHandler) {
 		return {
@@ -156,32 +132,30 @@ export async function executeTool(
 			}
 		}
 		// Extract non-standard properties from handler results.
-		// InternalToolResult has typed fields — no `as any` needed.
-		const r = mcpResult as InternalToolResult;
+		// Handlers return CallToolResult (MCP type with index signature).
+		// We cast to Record to extract known fields into a clean ToolResult.
+		const r = mcpResult as Record<string, unknown>;
 
-		return {
+		const result: ToolResult = {
 			content: textParts.join("\n"),
 			isError: mcpResult.isError ?? false,
-			isImage: r.isImage ?? mcpImages.length > 0,
-			...(r.cwd ? { cwd: r.cwd } : {}),
-			...(r.backgroundId ? { backgroundId: r.backgroundId } : {}),
-			...(r.backgroundCommand
-				? { backgroundCommand: r.backgroundCommand }
-				: {}),
-			...(r.imageData ? { imageData: r.imageData } : {}),
-			...(r.mediaType ? { mediaType: r.mediaType } : {}),
-			mcpImages,
-			...(r.consumedMessageIds?.length
-				? { consumedMessageIds: r.consumedMessageIds }
-				: {}),
-			...(r.consumedQueueMessages?.length
-				? { consumedQueueMessages: r.consumedQueueMessages }
-				: {}),
-			...(r.pending ? { pending: r.pending } : {}),
-			...(r.formattedQueueMessages
-				? { formattedQueueMessages: r.formattedQueueMessages }
-				: {}),
 		};
+		if (r.isImage || mcpImages.length > 0) result.isImage = true;
+		if (r.cwd) result.cwd = r.cwd as string;
+		if (r.backgroundId) result.backgroundId = r.backgroundId as string;
+		if (r.backgroundCommand)
+			result.backgroundCommand = r.backgroundCommand as string;
+		if (r.imageData) result.imageData = r.imageData as string;
+		if (r.mediaType) result.mediaType = r.mediaType as string;
+		if (mcpImages.length > 0) result.mcpImages = mcpImages;
+		const consumedIds = r.consumedMessageIds as string[] | undefined;
+		if (consumedIds?.length) result.consumedMessageIds = consumedIds;
+		const consumedMsgs = r.consumedQueueMessages as QueueMessage[] | undefined;
+		if (consumedMsgs?.length) result.consumedQueueMessages = consumedMsgs;
+		if (r.pending) result.pending = r.pending as PendingState;
+		if (r.formattedQueueMessages)
+			result.formattedQueueMessages = r.formattedQueueMessages as string;
+		return result;
 	} catch (e) {
 		return {
 			content: `Tool error (${toolName}): ${e instanceof Error ? e.message : String(e)}`,
@@ -404,7 +378,7 @@ function recordQueueEvents(
  * When `_formattedQueueMessages` is set, mcpImages are user queue images
  * — they go alongside the queue text, not in the tool_result.
  */
-function collectToolResultImages(exec: ToolExecResult): EventImageData[] {
+function collectToolResultImages(exec: ToolResult): EventImageData[] {
 	const images: EventImageData[] = [];
 	if (!exec.formattedQueueMessages && exec.mcpImages?.length) {
 		for (const img of exec.mcpImages) {
@@ -426,7 +400,7 @@ function collectToolResultImages(exec: ToolExecResult): EventImageData[] {
  */
 function buildToolResultEvents(
 	toolIds: Array<{ id: string; name: string }>,
-	execResults: ToolExecResult[],
+	execResults: ToolResult[],
 	cancellationQueueMsgs: QueueMessage[],
 	taskId = "",
 ): Event[] {
@@ -449,7 +423,7 @@ function buildToolResultEvents(
 
 	for (let idx = 0; idx < toolIds.length; idx++) {
 		const toolId = toolIds[idx] as { id: string; name: string };
-		const exec = execResults[idx] as ToolExecResult;
+		const exec = execResults[idx] as ToolResult;
 
 		// Record pure tool output — queue text is NOT embedded.
 		// The converter reconstructs queue messages from messagesConsumed + message events.
@@ -674,7 +648,7 @@ export interface ProviderAdapter {
 	 */
 	buildToolResultsMessage(params: {
 		toolUses: ProviderToolUse[];
-		execResults: ToolExecResult[];
+		execResults: ToolResult[];
 		cancellationQueueMsgs: QueueMessage[];
 		cancellationFormatted: string;
 	}): unknown[];
@@ -1469,7 +1443,7 @@ export async function* runProviderLoop(
 						content:
 							"yield() ignored — other tools in the same turn produced results. Process them first.",
 						isError: false,
-					} satisfies ToolExecResult;
+					} satisfies ToolResult;
 				}
 				// done + other tools: done returns error
 				if (toolUse.name === "mcp__opengraft__done" && hasOtherTools) {
@@ -1477,7 +1451,7 @@ export async function* runProviderLoop(
 						content:
 							"Cannot call done() alongside other tools — you must process their results first before finishing.",
 						isError: true,
-					} satisfies ToolExecResult;
+					} satisfies ToolResult;
 				}
 				// fork + other tools: fork returns error (fork must be sole tool
 				// to ensure clean event state — like unix fork(), no race conditions)
@@ -1489,7 +1463,7 @@ export async function* runProviderLoop(
 						content:
 							"Cannot call fork_task_context alongside other tools — fork must be the only tool in the turn to ensure clean event state.",
 						isError: true,
-					} satisfies ToolExecResult;
+					} satisfies ToolResult;
 				}
 				return executeTool(
 					toolUse.name,
@@ -1515,7 +1489,7 @@ export async function* runProviderLoop(
 		// Yield tool_result events for consumer loop
 		for (let i = 0; i < toolUses.length; i++) {
 			const toolUse = toolUses[i] as ProviderToolUse;
-			const exec = execResults[i] as ToolExecResult;
+			const exec = execResults[i] as ToolResult;
 			const images = collectToolResultImages(exec);
 			yield {
 				type: "tool_result" as const,
@@ -1578,7 +1552,7 @@ export async function* runProviderLoop(
 		// Only set doneExitReason if the tool execution succeeded (isError = false).
 		if (doneToolUse && !hasOtherTools) {
 			const doneIndex = toolUses.indexOf(doneToolUse);
-			const doneResult = execResults[doneIndex] as ToolExecResult | undefined;
+			const doneResult = execResults[doneIndex] as ToolResult | undefined;
 			if (doneResult && !doneResult.isError) {
 				const doneInput = doneToolUse.input as { status?: string } | undefined;
 				doneExitReason =
