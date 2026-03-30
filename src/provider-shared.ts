@@ -500,22 +500,10 @@ export async function* runProviderLoop(
 		const rest = queue.drain();
 		const allMsgs = [firstMsg, ...rest];
 
-		// Build user content from the queue message(s)
-		// Header (working dir + memory) goes first, then content
-		const parts: string[] = [];
-		for (const msg of allMsgs) {
-			if (
-				msg.source === "user" ||
-				(msg.source === "task_message" && msg.header)
-			) {
-				const m = msg as { header?: string; content: string };
-				if (m.header) parts.push(m.header);
-				parts.push(m.content);
-			} else {
-				parts.push(formatQueueMessage(msg));
-			}
-		}
-		const firstUserContent = parts.join("\n\n");
+		// Build user content from the queue message(s).
+		// All messages go through formatQueueMessage for consistent formatting
+		// (includes [HH:MM:SS] prefix) between live path and JSONL reconstruction.
+		const firstUserContent = allMsgs.map(formatQueueMessage).join("\n\n");
 
 		// On resume from a crash during tool execution, the last reconstructed message
 		// may be a user message (tool_result). Appending another user message would

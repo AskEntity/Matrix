@@ -11,7 +11,7 @@ import {
 	type ToolResultData,
 	walkEventsToMessages,
 } from "./event-converter.ts";
-import { type Event, formatPendingSection } from "./events.ts";
+import type { Event } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 import {
 	extractQueueImageParts,
@@ -395,18 +395,9 @@ export function eventsToOpenAIMessages(events: Event[]): unknown[] {
 					}
 				}
 
-				if (result.pending) {
-					const pendingText = formatPendingSection(result.pending);
-					const lastToolMsg = msgs[msgs.length - 1] as
-						| { role: string; content: string }
-						| undefined;
-					if (
-						lastToolMsg?.role === "tool" &&
-						typeof lastToolMsg.content === "string"
-					) {
-						lastToolMsg.content += pendingText;
-					}
-				}
+				// NOTE: result.pending is metadata only — the pending section text is already
+				// embedded in the tool_result content string. Don't append it again here
+				// or it will duplicate what's in content, causing prefix mismatch on resume.
 			}
 
 			// Append interleaved messages_consumed to last tool result

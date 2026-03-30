@@ -165,7 +165,45 @@ function validateRequest(messages: MessageParam[]): void {
 		}
 	}
 
-	// 4. tool_use/tool_result pairing
+	// 4. Every user text block must have exactly one [HH:MM:SS] timestamp prefix.
+	// This enforces consistency between the live path and JSONL reconstruction path.
+	const timestampPrefix = /^\[\d{2}:\d{2}:\d{2}\] /;
+	const timestampAnywhere = /\[\d{2}:\d{2}:\d{2}\]/g;
+	for (let i = 0; i < messages.length; i++) {
+		const msg = messages[i];
+		if (!msg || msg.role !== "user") continue;
+		const content = msg.content;
+		if (!Array.isArray(content)) continue;
+		for (const block of content) {
+			if (
+				!block ||
+				typeof block !== "object" ||
+				!("type" in block) ||
+				block.type !== "text" ||
+				!("text" in block)
+			)
+				continue;
+			const text = block.text as string;
+			if (!text.trim()) continue;
+
+			// Must start with [HH:MM:SS]
+			if (!timestampPrefix.test(text)) {
+				console.error(`TIMESTAMP VALIDATION: msg[${i}] missing prefix: "${text.slice(0, 120)}"`);
+				throw new MockValidationError(
+					`User text block at message index ${i} missing [HH:MM:SS] timestamp prefix: "${text.slice(0, 120)}"`,
+				);
+			}
+			// Must have exactly one timestamp
+			const matches = text.match(timestampAnywhere);
+			if (matches && matches.length > 1) {
+				throw new MockValidationError(
+					`User text block at message index ${i} has ${matches.length} timestamps (expected 1): "${text.slice(0, 120)}"`,
+				);
+			}
+		}
+	}
+
+	// 5. tool_use/tool_result pairing
 	for (let i = 0; i < messages.length; i++) {
 		const msg = messages[i];
 		if (!msg || msg.role !== "assistant") continue;
