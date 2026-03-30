@@ -26,6 +26,10 @@ const en: Translations = {
 	"project.remove": "Remove project",
 	"project.addProject": "Add project",
 	"project.settings": "Project settings",
+	"project.pathMissing": "Project directory not found",
+	"project.newPathPlaceholder": "New project path…",
+	"project.relocate": "Relocate",
+	"project.relocating": "Relocating…",
 
 	// Theme
 	"theme.selector": "Theme",
@@ -307,6 +311,10 @@ const zh: Translations = {
 	"project.remove": "移除项目",
 	"project.addProject": "添加项目",
 	"project.settings": "项目设置",
+	"project.pathMissing": "项目目录未找到",
+	"project.newPathPlaceholder": "新项目路径…",
+	"project.relocate": "迁移",
+	"project.relocating": "迁移中…",
 
 	// Theme
 	"theme.selector": "主题",

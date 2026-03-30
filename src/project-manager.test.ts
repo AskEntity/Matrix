@@ -315,4 +315,104 @@ describe("ProjectManager", () => {
 		expect(list).toHaveLength(1);
 		expect(list[0]?.name).toBe("persistent");
 	});
+
+	describe("checkPathExists", () => {
+		test("returns true when project path exists", async () => {
+			const project = await pm.init(join(tempDir, "exists"));
+			expect(pm.checkPathExists(project.id)).toBe(true);
+		});
+
+		test("returns false when project path is missing", async () => {
+			const project = await pm.init(join(tempDir, "will-vanish"));
+			// Remove the project directory
+			await rm(project.path, { recursive: true });
+			expect(pm.checkPathExists(project.id)).toBe(false);
+		});
+
+		test("returns false for unknown project id", () => {
+			expect(pm.checkPathExists("nonexistent")).toBe(false);
+		});
+	});
+
+	describe("updateProject", () => {
+		test("updates project path to a valid opengraft directory", async () => {
+			const project = await pm.init(join(tempDir, "original"));
+			// Create a new directory with .opengraft/
+			const newPath = join(tempDir, "relocated");
+			await mkdir(join(newPath, ".opengraft"), { recursive: true });
+
+			const updated = await pm.updateProject(project.id, { path: newPath });
+			expect(updated.path).toBe(newPath);
+			expect(pm.get(project.id)?.path).toBe(newPath);
+		});
+
+		test("updates project name", async () => {
+			const project = await pm.init(join(tempDir, "old-name"));
+			const updated = await pm.updateProject(project.id, {
+				name: "new-name",
+			});
+			expect(updated.name).toBe("new-name");
+		});
+
+		test("updates both path and name", async () => {
+			const project = await pm.init(join(tempDir, "both"));
+			const newPath = join(tempDir, "both-new");
+			await mkdir(join(newPath, ".opengraft"), { recursive: true });
+
+			const updated = await pm.updateProject(project.id, {
+				path: newPath,
+				name: "renamed",
+			});
+			expect(updated.path).toBe(newPath);
+			expect(updated.name).toBe("renamed");
+		});
+
+		test("rejects nonexistent path", async () => {
+			const project = await pm.init(join(tempDir, "reject-path"));
+			expect(
+				pm.updateProject(project.id, {
+					path: join(tempDir, "does-not-exist"),
+				}),
+			).rejects.toThrow("Path does not exist");
+		});
+
+		test("rejects path without .opengraft/ directory", async () => {
+			const project = await pm.init(join(tempDir, "reject-og"));
+			const badPath = join(tempDir, "no-opengraft");
+			await mkdir(badPath, { recursive: true });
+
+			expect(pm.updateProject(project.id, { path: badPath })).rejects.toThrow(
+				"missing .opengraft/ directory",
+			);
+		});
+
+		test("rejects path already used by another project", async () => {
+			const projectA = await pm.init(join(tempDir, "proj-a"));
+			await pm.init(join(tempDir, "proj-b"));
+
+			expect(
+				pm.updateProject(projectA.id, {
+					path: join(tempDir, "proj-b"),
+				}),
+			).rejects.toThrow("already used by project");
+		});
+
+		test("rejects unknown project id", async () => {
+			expect(pm.updateProject("nonexistent", { name: "foo" })).rejects.toThrow(
+				"Project not found",
+			);
+		});
+
+		test("persists updated path across reload", async () => {
+			const project = await pm.init(join(tempDir, "persist-update"));
+			const newPath = join(tempDir, "persist-new");
+			await mkdir(join(newPath, ".opengraft"), { recursive: true });
+
+			await pm.updateProject(project.id, { path: newPath });
+
+			const pm2 = new ProjectManager(dataDir);
+			await pm2.load();
+			expect(pm2.get(project.id)?.path).toBe(newPath);
+		});
+	});
 });

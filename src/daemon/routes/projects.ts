@@ -21,7 +21,11 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 	});
 
 	app.get("/projects", (c) => {
-		return c.json(ctx.pm.list());
+		const projects = ctx.pm.list().map((p) => ({
+			...p,
+			pathExists: ctx.pm.checkPathExists(p.id),
+		}));
+		return c.json(projects);
 	});
 
 	app.get("/projects/:id", (c) => {
@@ -29,7 +33,31 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		return c.json(project);
+		return c.json({
+			...project,
+			pathExists: ctx.pm.checkPathExists(project.id),
+		});
+	});
+
+	app.patch("/projects/:id", async (c) => {
+		const projectId = c.req.param("id");
+		const body = await c.req.json<{ path?: string; name?: string }>();
+
+		if (!body.path && !body.name) {
+			return c.json({ error: "At least one of path or name is required" }, 400);
+		}
+
+		try {
+			const updated = await ctx.pm.updateProject(projectId, body);
+			return c.json({
+				...updated,
+				pathExists: ctx.pm.checkPathExists(updated.id),
+			});
+		} catch (e) {
+			const message = e instanceof Error ? e.message : "Unknown error";
+			const status = message.includes("not found") ? 404 : 400;
+			return c.json({ error: message }, status);
+		}
 	});
 
 	app.delete("/projects/:id", async (c) => {

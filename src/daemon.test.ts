@@ -420,6 +420,132 @@ describe("daemon projects API", () => {
 		const getRes = await app.request(`/projects/${created.id}`);
 		expect(getRes.status).toBe(404);
 	});
+
+	test("GET /projects includes pathExists field", async () => {
+		await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "path-check") }),
+		});
+
+		const res = await app.request("/projects");
+		const list = (await res.json()) as (Project & { pathExists: boolean })[];
+		expect(list).toHaveLength(1);
+		expect(list[0]?.pathExists).toBe(true);
+	});
+
+	test("GET /projects shows pathExists=false for moved project", async () => {
+		const projectPath = join(tempDir, "will-move");
+		const createRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: projectPath }),
+		});
+		const created = (await createRes.json()) as Project;
+
+		// Rename the directory to simulate a move
+		await rename(projectPath, join(tempDir, "moved-away"));
+
+		const res = await app.request("/projects");
+		const list = (await res.json()) as (Project & { pathExists: boolean })[];
+		const proj = list.find((p) => p.id === created.id);
+		expect(proj?.pathExists).toBe(false);
+	});
+
+	test("GET /projects/:id includes pathExists field", async () => {
+		const createRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "single-check") }),
+		});
+		const created = (await createRes.json()) as Project;
+
+		const res = await app.request(`/projects/${created.id}`);
+		const project = (await res.json()) as Project & { pathExists: boolean };
+		expect(project.pathExists).toBe(true);
+	});
+
+	test("PATCH /projects/:id updates path", async () => {
+		const createRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "to-relocate") }),
+		});
+		const created = (await createRes.json()) as Project;
+
+		// Simulate move: rename old dir, new dir has .opengraft/
+		const newPath = join(tempDir, "relocated");
+		await rename(created.path, newPath);
+
+		const res = await app.request(`/projects/${created.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: newPath }),
+		});
+		expect(res.status).toBe(200);
+		const updated = (await res.json()) as Project & { pathExists: boolean };
+		expect(updated.path).toBe(newPath);
+		expect(updated.pathExists).toBe(true);
+	});
+
+	test("PATCH /projects/:id updates name", async () => {
+		const createRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "rename-me") }),
+		});
+		const created = (await createRes.json()) as Project;
+
+		const res = await app.request(`/projects/${created.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "better-name" }),
+		});
+		expect(res.status).toBe(200);
+		const updated = (await res.json()) as Project;
+		expect(updated.name).toBe("better-name");
+	});
+
+	test("PATCH /projects/:id rejects empty body", async () => {
+		const createRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "empty-patch") }),
+		});
+		const created = (await createRes.json()) as Project;
+
+		const res = await app.request(`/projects/${created.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({}),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	test("PATCH /projects/:id rejects nonexistent path", async () => {
+		const createRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: join(tempDir, "bad-relocate") }),
+		});
+		const created = (await createRes.json()) as Project;
+
+		const res = await app.request(`/projects/${created.id}`, {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: "/nonexistent/path" }),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	test("PATCH /projects/:id returns 404 for unknown project", async () => {
+		const res = await app.request("/projects/nonexistent", {
+			method: "PATCH",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "foo" }),
+		});
+		expect(res.status).toBe(404);
+	});
 });
 
 describe("daemon tasks API", () => {

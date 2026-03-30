@@ -85,6 +85,7 @@ async function handleList(): Promise<void> {
 		id: string;
 		name: string;
 		path: string;
+		pathExists?: boolean;
 	}[];
 
 	if (projects.length === 0) {
@@ -93,8 +94,35 @@ async function handleList(): Promise<void> {
 	}
 
 	for (const p of projects) {
-		console.log(`${p.id.slice(0, 8)}  ${p.name}  ${p.path}`);
+		const warning = p.pathExists === false ? " ⚠ (path not found)" : "";
+		console.log(`${p.id.slice(0, 8)}  ${p.name}  ${p.path}${warning}`);
 	}
+}
+
+async function handleRelocate(args: string[]): Promise<void> {
+	const target = args[0];
+	const newPath = args[1];
+	if (!target || !newPath) {
+		console.error("Usage: og relocate <project-id-or-name> <new-path>");
+		process.exit(1);
+	}
+
+	const projectId = await resolveProject(target);
+	if (!projectId) return;
+
+	const res = await api(`/projects/${projectId}`, {
+		method: "PATCH",
+		body: JSON.stringify({ path: newPath }),
+	});
+
+	if (!res.ok) {
+		const err = (await res.json()) as { error?: string };
+		console.error(`Error: ${err.error ?? "Failed to relocate"}`);
+		process.exit(1);
+	}
+
+	const updated = (await res.json()) as { name: string; path: string };
+	console.log(`Relocated "${updated.name}" → ${updated.path}`);
 }
 
 async function handleStatus(args: string[]): Promise<void> {
@@ -1569,6 +1597,9 @@ switch (command) {
 	case "cost":
 		await handleCost(args);
 		break;
+	case "relocate":
+		await handleRelocate(args);
+		break;
 	case "config":
 	case "cfg":
 		await handleConfig(args);
@@ -1586,6 +1617,9 @@ switch (command) {
 		console.log("  Project");
 		console.log("    init [path]              Initialize a project");
 		console.log("    list                     List all projects");
+		console.log(
+			"    relocate <id> <path>     Update project path (after directory move)",
+		);
 		console.log("");
 		console.log("  Agent");
 		console.log(
