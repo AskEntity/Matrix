@@ -535,3 +535,13 @@ The persistent disk queue (persistent-queue.ts) was removed. JSONL + findUnconsu
 
 Resume messages from autoResumeProjects must be written to JSONL (via deliverMessage). Otherwise messages_consumed references an ID that doesn't exist in the JSONL event index → empty interleaved text on reconstruction → prefix mismatch.
 
+
+
+## Stress Test Findings (March 2026)
+
+**Known bug: manual compaction during yield creates consecutive user messages.**
+When `/compact` is sent while agent is in explicit yield, the `compactOnly` path emits yield tool_result (user message) then `continue`s back to the main loop which injects SUMMARIZATION_INSTRUCTION as another user message → consecutive user messages → API 400. Same bug exists in implicit yield (end_turn) path when compact arrives with a real message.
+
+**Mock `isCompactionRequest` fix**: Replaced `<summary>` check with `Context compression required` to avoid false positive on post-compaction content (compacted context includes `<summary>` tags from checkpoint).
+
+**Integration test pre-existing flakiness**: `Fork from closed agent` and `BG5: bg completes during foreground tool execution` are flaky — timing-dependent race conditions in test setup.
