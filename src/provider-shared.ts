@@ -37,6 +37,7 @@ import {
 	isTransientAPIError,
 	MAX_OUTER_RETRIES,
 } from "./tool-execution.ts";
+import { TOOL_DONE, TOOL_FORK_TASK_CONTEXT, TOOL_YIELD } from "./tool-names.ts";
 import type { AgentResult, ExitReason } from "./types.ts";
 
 // ── Re-exports for backward compatibility ──
@@ -476,7 +477,7 @@ export async function* runProviderLoop(
 			.find((e) => e.type === "tool_call");
 		if (
 			lastToolCall?.type === "tool_call" &&
-			lastToolCall.tool === "mcp__opengraft__yield"
+			lastToolCall.tool === TOOL_YIELD
 		) {
 			const hasResult = activeEvents.some(
 				(e) =>
@@ -1108,17 +1109,13 @@ export async function* runProviderLoop(
 		}
 
 		// ── Check for yield/done/fork conflicts with other tools in same turn ──
-		const yieldToolUse = toolUses.find(
-			(tu) => tu.name === "mcp__opengraft__yield",
-		);
-		const doneToolUse = toolUses.find(
-			(tu) => tu.name === "mcp__opengraft__done",
-		);
+		const yieldToolUse = toolUses.find((tu) => tu.name === TOOL_YIELD);
+		const doneToolUse = toolUses.find((tu) => tu.name === TOOL_DONE);
 		const otherToolUses = toolUses.filter(
 			(tu) =>
-				tu.name !== "mcp__opengraft__yield" &&
-				tu.name !== "mcp__opengraft__done" &&
-				tu.name !== "mcp__opengraft__fork_task_context",
+				tu.name !== TOOL_YIELD &&
+				tu.name !== TOOL_DONE &&
+				tu.name !== TOOL_FORK_TASK_CONTEXT,
 		);
 		const hasOtherTools = otherToolUses.length > 0;
 
@@ -1136,7 +1133,7 @@ export async function* runProviderLoop(
 		const execResults = await Promise.all(
 			toolUses.map(async (toolUse) => {
 				// yield + other tools: yield becomes no-op success
-				if (toolUse.name === "mcp__opengraft__yield" && hasOtherTools) {
+				if (toolUse.name === TOOL_YIELD && hasOtherTools) {
 					return {
 						content:
 							"yield() ignored — other tools in the same turn produced results. Process them first.",
@@ -1144,7 +1141,7 @@ export async function* runProviderLoop(
 					} satisfies ToolResult;
 				}
 				// done + other tools: done returns error
-				if (toolUse.name === "mcp__opengraft__done" && hasOtherTools) {
+				if (toolUse.name === TOOL_DONE && hasOtherTools) {
 					return {
 						content:
 							"Cannot call done() alongside other tools — you must process their results first before finishing.",
@@ -1153,10 +1150,7 @@ export async function* runProviderLoop(
 				}
 				// fork + other tools: fork returns error (fork must be sole tool
 				// to ensure clean event state — like unix fork(), no race conditions)
-				if (
-					toolUse.name === "mcp__opengraft__fork_task_context" &&
-					hasOtherTools
-				) {
+				if (toolUse.name === TOOL_FORK_TASK_CONTEXT && hasOtherTools) {
 					return {
 						content:
 							"Cannot call fork_task_context alongside other tools — fork must be the only tool in the turn to ensure clean event state.",

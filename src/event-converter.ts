@@ -6,6 +6,11 @@
  */
 import { type Event, formatEventForAI, isQueueEvent } from "./events.ts";
 import type { EventImageData, PendingState } from "./shared-types.ts";
+import {
+	TOOL_REPORT_TO_PARENT,
+	TOOL_SEND_MESSAGE,
+	TOOL_SEND_MESSAGE_TO_CHILD,
+} from "./tool-names.ts";
 
 export type { EventImageData } from "./shared-types.ts";
 
@@ -88,8 +93,8 @@ export interface EventConverterCallbacks {
  * current tool definitions. This mapping prevents API errors on resume.
  */
 const TOOL_NAME_ALIASES: Record<string, string> = {
-	mcp__opengraft__send_message_to_child: "mcp__opengraft__send_message",
-	mcp__opengraft__report_to_parent: "mcp__opengraft__send_message",
+	[TOOL_SEND_MESSAGE_TO_CHILD]: TOOL_SEND_MESSAGE,
+	[TOOL_REPORT_TO_PARENT]: TOOL_SEND_MESSAGE,
 };
 
 /** Resolve a tool name, mapping old aliases to current names. */

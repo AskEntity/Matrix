@@ -18,6 +18,7 @@ import { buildSystemPrompt, type SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
+import { MCP_SERVER_NAME, TOOL_DONE } from "../tool-names.ts";
 import {
 	cleanupSessionBackgroundProcesses,
 	createBuiltinTools,
@@ -238,7 +239,7 @@ async function createAgentContext(
 	);
 
 	const mcpToolDefs: Record<string, ToolDefinition[]> = {
-		opengraft: [...builtinTools, ...toolDefs],
+		[MCP_SERVER_NAME]: [...builtinTools, ...toolDefs],
 		...mcpManager.getToolDefs(),
 	};
 
@@ -283,8 +284,6 @@ export interface RunChildCoreParams {
 	queue?: MessageQueue;
 	/** Full AgentRequest to pass to provider.stream(). Queue will be set on the request. */
 	sessionRequest: AgentRequest;
-
-
 }
 
 /**
@@ -299,12 +298,7 @@ export interface RunChildCoreParams {
 export async function runChildCore(
 	params: RunChildCoreParams,
 ): Promise<AgentResult> {
-	const {
-		provider,
-		tracker,
-		taskId,
-		sessionRequest,
-	} = params;
+	const { provider, tracker, taskId, sessionRequest } = params;
 
 	// Use pre-created queue or create a new one
 	const childQueue = params.queue ?? new MessageQueue();
@@ -325,7 +319,7 @@ export async function runChildCore(
 			if (
 				event.type === "tool_result" &&
 				"tool" in event &&
-				event.tool === "mcp__opengraft__done"
+				event.tool === TOOL_DONE
 			) {
 				const nodeStatus = tracker.get(taskId)?.status;
 				if (nodeStatus === "passed" || nodeStatus === "failed") {

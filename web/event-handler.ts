@@ -1,5 +1,6 @@
 import type React from "react";
 import type { QueueMessage } from "../src/message-queue.ts";
+import { TOOL_YIELD } from "../src/tool-names.ts";
 import { ulid } from "../src/ulid.ts";
 import {
 	createLogEntry,
@@ -403,7 +404,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				const trTool = msg.tool || toolCallToolNames.get(msg.toolCallId) || "";
 
 				// Yield tool_result: remove the tool_call entry entirely
-				if (trTool === "mcp__opengraft__yield") {
+				if (trTool === TOOL_YIELD) {
 					return {
 						entries: [],
 						updates: [{ type: "remove_tool", toolCallId: msg.toolCallId }],

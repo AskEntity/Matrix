@@ -11,6 +11,7 @@ import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
 import { loadGlobalConfig, resolveAuthGroup } from "./config.ts";
 import type { Event } from "./events.ts";
 import { buildSystemPrompt } from "./system-prompts.ts";
+import { stripMcpPrefix } from "./tool-names.ts";
 
 // Read auth from config (supports OAuth)
 const globalConfig = await loadGlobalConfig();
@@ -136,9 +137,7 @@ try {
 				} else if (block.type === "tool_use") {
 					const inputLen = JSON.stringify(block.input).length;
 					chars += inputLen;
-					parts.push(
-						`tool_use:${block.name.replace("mcp__opengraft__", "")}(${inputLen})`,
-					);
+					parts.push(`tool_use:${stripMcpPrefix(block.name)}(${inputLen})`);
 				} else if (block.type === "tool_result") {
 					const c =
 						typeof block.content === "string"

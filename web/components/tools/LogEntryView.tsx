@@ -1,4 +1,10 @@
 import { memo, useCallback, useState } from "react";
+import {
+	isOpengraftTool,
+	TOOL_BASH,
+	TOOL_DONE,
+	TOOL_YIELD,
+} from "../../../src/tool-names.ts";
 import { authFetch } from "../../auth.ts";
 import {
 	formatTime,
@@ -138,9 +144,9 @@ export const LogEntryView = memo(function LogEntryView({
 		const toolName = getToolName(entry);
 		const toolArgs = entry.input;
 		const argsStr = formatArgs(toolArgs, bashBgExcludeKeys(toolName, toolArgs));
-		const isOpengraft = toolName.startsWith("mcp__opengraft__");
-		const isDone = toolName === "mcp__opengraft__done";
-		const isYield = toolName === "mcp__opengraft__yield";
+		const isOpengraft = isOpengraftTool(toolName);
+		const isDone = toolName === TOOL_DONE;
+		const isYield = toolName === TOOL_YIELD;
 
 		// done() tool_call — styled card with pass/fail status
 		if (isDone) {
@@ -206,7 +212,7 @@ export const LogEntryView = memo(function LogEntryView({
 					collapsible={!!argsStr}
 					statusSlot={
 						<>
-							{toolName === "mcp__opengraft__bash" && projectId && (
+							{toolName === TOOL_BASH && projectId && (
 								<button
 									type="button"
 									className="og-bash-background-btn"
@@ -240,14 +246,14 @@ export const LogEntryView = memo(function LogEntryView({
 	if (entry.type === "tool_result") {
 		const toolName = getToolName(entry);
 		// Suppress standalone done() tool_result — the tool_call card shows everything
-		if (toolName === "mcp__opengraft__done") return null;
+		if (toolName === TOOL_DONE) return null;
 		const content = entry.content;
 		const isErr = entry.isError;
 		const isOk = !isErr;
 		const mcpFormatted = isOk
 			? formatMcpToolResult(toolName, content, t)
 			: null;
-		const isOpengraft = toolName.startsWith("mcp__opengraft__");
+		const isOpengraft = isOpengraftTool(toolName);
 		const statusClass = isErr ? "og-tool-card-err" : "og-tool-card-ok";
 		const hasImages = entry.images && entry.images.length > 0;
 		const hasBody = (content && !isTitleOnlyCard(toolName)) || hasImages;
@@ -264,7 +270,7 @@ export const LogEntryView = memo(function LogEntryView({
 					collapsible={!!hasBody}
 					defaultExpanded={!!hasBody}
 					statusSlot={
-						toolName !== "mcp__opengraft__done" ? (
+						toolName !== TOOL_DONE ? (
 							<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
 								{isErr ? "✗" : "✓"}
 							</span>

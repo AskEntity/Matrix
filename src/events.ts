@@ -1,5 +1,6 @@
 import type { QueueMessage } from "./message-queue.ts";
 import type { EventImageData, PendingState } from "./shared-types.ts";
+import { TOOL_YIELD } from "./tool-names.ts";
 import { ulid } from "./ulid.ts";
 
 export type { EventImageData, PendingState } from "./shared-types.ts";
@@ -396,7 +397,7 @@ export function findOrphanedToolCalls(
 			// Skip yield tool_calls — they're handled by the provider loop's
 			// loop-level pause mechanism. The yield result is generated at resume time
 			// when messages arrive, not as a synthetic orphan fix.
-			if (tool === "mcp__opengraft__yield") {
+			if (tool === TOOL_YIELD) {
 				continue;
 			}
 			console.warn(
@@ -460,10 +461,7 @@ export function hasPendingYield(events: Event[]): boolean {
 	const lastToolCall = [...events]
 		.reverse()
 		.find((e) => e.type === "tool_call");
-	if (
-		lastToolCall?.type === "tool_call" &&
-		lastToolCall.tool === "mcp__opengraft__yield"
-	) {
+	if (lastToolCall?.type === "tool_call" && lastToolCall.tool === TOOL_YIELD) {
 		const hasResult = events.some(
 			(e) =>
 				e.type === "tool_result" && e.toolCallId === lastToolCall.toolCallId,

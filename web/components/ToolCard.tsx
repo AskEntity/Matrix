@@ -1,5 +1,10 @@
 import { memo, useState } from "react";
 import {
+	isOpengraftTool,
+	stripMcpPrefix,
+	TOOL_DONE,
+} from "../../src/tool-names.ts";
+import {
 	formatTime,
 	getLogTaskId,
 	type LogEntry,
@@ -31,14 +36,14 @@ export const ToolCard = memo(function ToolCard({
 
 	const toolName = entry.tool;
 	const toolArgs = entry.input;
-	const isDone = toolName === "mcp__opengraft__done";
+	const isDone = toolName === TOOL_DONE;
 	const argsExclude = bashBgExcludeKeys(toolName, toolArgs);
 	const argsStr = formatArgs(toolArgs, argsExclude);
 	const resultContent = entry.resultContent;
 	const isErr = entry.isError;
 	const isOk = !isErr;
 
-	const isOpengraft = toolName.startsWith("mcp__opengraft__");
+	const isOpengraft = isOpengraftTool(toolName);
 	const titleOnly = isTitleOnlyCard(toolName, toolArgs);
 	const totalContent = argsStr + (resultContent ?? "");
 	const [defaultExpanded] = useState(() =>
@@ -78,7 +83,7 @@ export const ToolCard = memo(function ToolCard({
 	}
 
 	// Try structured MCP rendering (only for tools with custom card bodies)
-	const shortName = toolName.replace("mcp__opengraft__", "");
+	const shortName = stripMcpPrefix(toolName);
 	const mcpBody =
 		isOpengraft && !titleOnly && MCP_CARD_BODY_TOOLS.has(shortName) ? (
 			<McpToolCardBody
@@ -114,7 +119,7 @@ export const ToolCard = memo(function ToolCard({
 				collapsible={!titleOnly}
 				defaultExpanded={defaultExpanded}
 				statusSlot={
-					!titleOnly && toolName !== "mcp__opengraft__done" ? (
+					!titleOnly && toolName !== TOOL_DONE ? (
 						<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
 							{isErr ? "✗" : "✓"}
 						</span>
