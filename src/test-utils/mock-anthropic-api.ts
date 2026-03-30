@@ -456,10 +456,12 @@ function isCompactionRequest(messages: MessageParam[]): boolean {
 	if (!lastUser) return false;
 	const texts = extractUserTextBlocks(lastUser);
 	const combined = texts.join(" ");
+	// Match the actual SUMMARIZATION_INSTRUCTION signature — NOT just "<summary>" which
+	// also appears in compacted content (checkpoint includes <summary>...</summary> tags).
 	return (
+		combined.includes("Context compression required") ||
 		combined.includes("Create a structured checkpoint") ||
-		combined.includes("summarize the conversation") ||
-		combined.includes("<summary>")
+		combined.includes("summarize the conversation")
 	);
 }
 
@@ -749,8 +751,6 @@ export class ValidatingMockAPI {
 		}
 		return `session:${sessionId}`;
 	}
-
-
 
 	/**
 	 * Extract all content blocks from the last user message in the request.
@@ -1253,17 +1253,13 @@ export class ValidatingMockAPI {
 	 *
 	 * Returns the number of matching prefix messages, or throws MockValidationError on mismatch.
 	 */
-	validateForkPrefix(
-		sourceSessionId: string,
-		childSessionId: string,
-	): number {
+	validateForkPrefix(sourceSessionId: string, childSessionId: string): number {
 		const sourceKey = `session:${sourceSessionId}`;
 		const childKey = `session:${childSessionId}`;
 
 		// Find the source's last request before the child's first request
 		const childFirstIdx = this.requestHistory.findIndex(
-			(r) =>
-				this.getConversationKey(r.messages, r.sessionId) === childKey,
+			(r) => this.getConversationKey(r.messages, r.sessionId) === childKey,
 		);
 		if (childFirstIdx === -1) {
 			throw new MockValidationError(

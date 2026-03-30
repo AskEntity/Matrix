@@ -537,34 +537,18 @@ Resume messages from autoResumeProjects must be written to JSONL (via deliverMes
 
 
 
-## MCP Tool Name Constants (March 2026)
+## Architecture Fix Centralization (March 2026)
 
-`src/tool-names.ts` — single source for all MCP tool name strings:
-- `MCP_SERVER_NAME = "opengraft"` — key in mcpToolDefs
-- `MCP_PREFIX = "mcp__opengraft__"` — wire prefix
-- `TOOL_*` constants for each tool (TOOL_YIELD, TOOL_DONE, etc.)
-- `mcpToolName(base)`, `stripMcpPrefix(full)`, `isOpengraftTool(name)` helpers
-- Test files keep literal strings (they document the wire contract)
-- The generic `mcp__${serverName}__${def.name}` construction in provider-shared.ts stays generic (handles all MCP servers, not just opengraft)
+- `src/tool-names.ts` — MCP tool name constants (TOOL_YIELD, TOOL_DONE, etc.) + helpers (mcpToolName, stripMcpPrefix, isOpengraftTool). Test files keep literal strings.
+- `src/queue-message-factory.ts` — factories for all 8 QueueMessage variants. Enforce `id: ulid(), ts: Date.now()` invariant.
+- `web/api.ts` — centralized API URL builder. Changing API prefix = one-place change.
+- `src/event-display.ts` — platform-agnostic event rendering. New platforms (CLI, Telegram) use this directly.
 
-## QueueMessage Factories (March 2026)
+## Stress Test Findings (March 2026)
 
-`src/queue-message-factory.ts` — factories for all QueueMessage variants:
-- `createUserMessage(content, opts?)`, `createTaskComplete(...)`, etc.
-- All enforce `id: ulid(), ts: Date.now()` invariant
-- `createUserMessage` accepts optional `id`/`ts` overrides for cases where caller needs pre-determined values
+**Known bug: manual compaction during yield creates consecutive user messages.**
+`/compact` during explicit yield → yield tool_result (user msg) → SUMMARIZATION_INSTRUCTION (another user msg) → API 400.
 
-## Frontend API URL Builder (March 2026)
+**Mock `isCompactionRequest` fix**: Changed from `<summary>` to `Context compression required` (avoids false positive on post-compaction checkpoint content).
 
-`web/api.ts` — centralized URL construction for all frontend → backend calls:
-- `api.tasks(projectId)`, `api.task(projectId, nodeId)`, etc.
-- Changing API prefix is a one-place change
-- SSE endpoint (`/events?projectId=...`) is top-level, not under `/projects/`
-
-## Event Display Layer (March 2026)
-
-`src/event-display.ts` — platform-agnostic event rendering:
-- `EventDisplay` union type: ToolCallDisplay, ToolResultDisplay, MessageDisplay, AssistantTextDisplay
-- `eventToDisplay(event, nodeMap?)` — converts raw Event to structured display
-- React components in `web/components/tools/utils.ts` re-export shared functions
-- New platforms (CLI, Telegram) should use `src/event-display.ts` directly
+**Flaky tests**: `Fork from closed agent` and `BG5` — timing-dependent race conditions.
