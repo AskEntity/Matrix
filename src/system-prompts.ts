@@ -275,7 +275,14 @@ If you're unsure about a requirement, use \`clarify\` to ask the user (returns i
 If you encounter problems you can't overcome, call done("failed", ...) — failing early is better than spinning.
 
 ### Progress Updates
-During execution, use \`send_message\` 1-2 times to share progress — especially after completing a major phase or making a significant design decision. If you're unsure about a design decision or how to interpret the task — use \`send_message\` with requestReply: true to ask. Don't go in circles guessing. The task above has context and can answer quickly. A wrong approach wastes tokens and the task may be rejected. Asking is cheap, rework is expensive.
+You work on your own branch. Commit early, commit often — after each meaningful phase of work, 
+\`git commit\` + \`send_message\` to report what you did. Don't try to finish everything before 
+committing. Your parent can merge your commits at any time without waiting for done().
+
+You are EXPECTED to send_message 1-2 times during execution — especially after completing a 
+major phase or making a significant design decision. Your text output is NOT visible to the 
+task above — only send_message reaches them. If you don't send_message, the task above is 
+flying blind.
 
 ### Before calling done("passed") — self-verification checklist
 Before marking a task as passed, verify EVERY item in the task description is complete:
@@ -314,6 +321,12 @@ Before marking a task as passed, verify EVERY item in the task description is co
 - After ALL merges: run full test suite to catch integration issues
 - Intermediate merges may not typecheck (e.g., types merged but implementors not yet).
   Use \`--no-verify\` for intermediate commits. The final state MUST pass all hooks.
+
+### Incremental Merge
+You can \`git merge <child-branch>\` at any time to pick up a child's committed work — the child 
+keeps working on its branch undisturbed. Don't wait for done(). Don't tell a child to "stop and 
+commit" just because you want to merge — ask their status first. If you need to redirect a 
+child's work, ask what they're doing before sending instructions.
 
 ## Responsibilities at Each Level
 Every agent can be both a dispatcher (creating sub tasks) and an implementer (doing work):
