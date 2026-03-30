@@ -607,25 +607,27 @@ describe("Integration: full stack with mock API", () => {
 
 		// Direct mock call with bad messages
 		expect(() =>
-			ctx.mockAPI.createStream({
-				messages: [
-					{ role: "user", content: "hi" },
-					{
-						role: "assistant",
-						content: [
-							{
-								type: "tool_use",
-								id: "tc_1",
-								name: "bash",
-								input: {},
-							},
-						],
-					},
-					// Missing tool_result for tc_1
-					{ role: "user", content: "no results here" },
-				],
-				metadata: { sessionId: "s7" },
-			}),
+			ctx.mockAPI.createStream(
+				{
+					messages: [
+						{ role: "user", content: "hi" },
+						{
+							role: "assistant",
+							content: [
+								{
+									type: "tool_use",
+									id: "tc_1",
+									name: "bash",
+									input: {},
+								},
+							],
+						},
+						// Missing tool_result for tc_1
+						{ role: "user", content: "no results here" },
+					],
+				},
+				"s7",
+			),
 		).toThrow(MockValidationError);
 	}, 10000);
 });
@@ -951,38 +953,44 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		mockAPI.enablePrefixValidation();
 
 		// First call: establishes prefix
-		mockAPI.createStream({
-			messages: [{ role: "user", content: "hello" }],
-			metadata: { sessionId: "restart-e" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [{ role: "user", content: "hello" }],
+			},
+			"restart-e",
+		);
 
 		// Second call: valid extension (prefix match + new messages)
-		mockAPI.createStream({
-			messages: [
-				{ role: "user", content: "hello" },
-				{
-					role: "assistant",
-					content: [{ type: "text", text: "hi" }],
-				},
-				{ role: "user", content: "bye" },
-			],
-			metadata: { sessionId: "restart-e" },
-		});
-
-		// Third call: INVALID — changes assistant message at index 1
-		// (same first user message = same conversation, so prefix validation triggers)
-		expect(() =>
-			mockAPI.createStream({
+		mockAPI.createStream(
+			{
 				messages: [
 					{ role: "user", content: "hello" },
 					{
 						role: "assistant",
-						content: [{ type: "text", text: "CHANGED" }],
+						content: [{ type: "text", text: "hi" }],
 					},
 					{ role: "user", content: "bye" },
 				],
-				metadata: { sessionId: "restart-e" },
-			}),
+			},
+			"restart-e",
+		);
+
+		// Third call: INVALID — changes assistant message at index 1
+		// (same first user message = same conversation, so prefix validation triggers)
+		expect(() =>
+			mockAPI.createStream(
+				{
+					messages: [
+						{ role: "user", content: "hello" },
+						{
+							role: "assistant",
+							content: [{ type: "text", text: "CHANGED" }],
+						},
+						{ role: "user", content: "bye" },
+					],
+				},
+				"restart-e",
+			),
 		).toThrow(MockValidationError);
 	}, 10000);
 
@@ -1004,43 +1012,49 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		];
 
 		// First call: establishes system + messages
-		mockAPI.createStream({
-			messages: [{ role: "user", content: "hello" }],
-			system: systemBlocks,
-			metadata: { sessionId: "sys-prompt" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [{ role: "user", content: "hello" }],
+				system: systemBlocks,
+			},
+			"sys-prompt",
+		);
 
 		// Second call: same system, extended messages — OK
-		mockAPI.createStream({
-			messages: [
-				{ role: "user", content: "hello" },
-				{ role: "assistant", content: [{ type: "text", text: "hi" }] },
-				{ role: "user", content: "next" },
-			],
-			system: systemBlocks,
-			metadata: { sessionId: "sys-prompt" },
-		});
-
-		// Third call: CHANGED system prompt — must throw
-		expect(() =>
-			mockAPI.createStream({
+		mockAPI.createStream(
+			{
 				messages: [
 					{ role: "user", content: "hello" },
 					{ role: "assistant", content: [{ type: "text", text: "hi" }] },
 					{ role: "user", content: "next" },
-					{ role: "assistant", content: [{ type: "text", text: "ok" }] },
-					{ role: "user", content: "more" },
 				],
-				system: [
-					{ type: "text", text: "You are helpful." },
-					{
-						type: "text",
-						text: "Today is 2026-03-31.", // Date changed!
-						cache_control: { type: "ephemeral", ttl: "1h" },
-					},
-				],
-				metadata: { sessionId: "sys-prompt" },
-			}),
+				system: systemBlocks,
+			},
+			"sys-prompt",
+		);
+
+		// Third call: CHANGED system prompt — must throw
+		expect(() =>
+			mockAPI.createStream(
+				{
+					messages: [
+						{ role: "user", content: "hello" },
+						{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+						{ role: "user", content: "next" },
+						{ role: "assistant", content: [{ type: "text", text: "ok" }] },
+						{ role: "user", content: "more" },
+					],
+					system: [
+						{ type: "text", text: "You are helpful." },
+						{
+							type: "text",
+							text: "Today is 2026-03-31.", // Date changed!
+							cache_control: { type: "ephemeral", ttl: "1h" },
+						},
+					],
+				},
+				"sys-prompt",
+			),
 		).toThrow(MockValidationError);
 	}, 10000);
 
@@ -1058,39 +1072,45 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		];
 
 		// First call
-		mockAPI.createStream({
-			messages: [{ role: "user", content: "hello" }],
-			tools,
-			metadata: { sessionId: "tools-change" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [{ role: "user", content: "hello" }],
+				tools,
+			},
+			"tools-change",
+		);
 
 		// Second call: same tools — OK
-		mockAPI.createStream({
-			messages: [
-				{ role: "user", content: "hello" },
-				{ role: "assistant", content: [{ type: "text", text: "hi" }] },
-				{ role: "user", content: "next" },
-			],
-			tools,
-			metadata: { sessionId: "tools-change" },
-		});
-
-		// Third call: tools changed (added a tool) — must throw
-		expect(() =>
-			mockAPI.createStream({
+		mockAPI.createStream(
+			{
 				messages: [
 					{ role: "user", content: "hello" },
 					{ role: "assistant", content: [{ type: "text", text: "hi" }] },
 					{ role: "user", content: "next" },
-					{ role: "assistant", content: [{ type: "text", text: "ok" }] },
-					{ role: "user", content: "more" },
 				],
-				tools: [
-					...tools,
-					{ name: "write", description: "Write file", input_schema: {} },
-				],
-				metadata: { sessionId: "tools-change" },
-			}),
+				tools,
+			},
+			"tools-change",
+		);
+
+		// Third call: tools changed (added a tool) — must throw
+		expect(() =>
+			mockAPI.createStream(
+				{
+					messages: [
+						{ role: "user", content: "hello" },
+						{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+						{ role: "user", content: "next" },
+						{ role: "assistant", content: [{ type: "text", text: "ok" }] },
+						{ role: "user", content: "more" },
+					],
+					tools: [
+						...tools,
+						{ name: "write", description: "Write file", input_schema: {} },
+					],
+				},
+				"tools-change",
+			),
 		).toThrow(MockValidationError);
 	}, 10000);
 
@@ -1103,40 +1123,48 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const system = [{ type: "text", text: "shared system prompt" }];
 
 		// Parent conversation
-		mockAPI.createStream({
-			messages: [{ role: "user", content: "parent msg" }],
-			system,
-			metadata: { sessionId: "parent-session" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [{ role: "user", content: "parent msg" }],
+				system,
+			},
+			"parent-session",
+		);
 
 		// Child conversation (different sessionId)
-		mockAPI.createStream({
-			messages: [{ role: "user", content: "child msg" }],
-			system,
-			metadata: { sessionId: "child-session" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [{ role: "user", content: "child msg" }],
+				system,
+			},
+			"child-session",
+		);
 
 		// Parent turn 2: same system — should NOT throw
-		mockAPI.createStream({
-			messages: [
-				{ role: "user", content: "parent msg" },
-				{ role: "assistant", content: [{ type: "text", text: "hi" }] },
-				{ role: "user", content: "next" },
-			],
-			system,
-			metadata: { sessionId: "parent-session" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [
+					{ role: "user", content: "parent msg" },
+					{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+					{ role: "user", content: "next" },
+				],
+				system,
+			},
+			"parent-session",
+		);
 
 		// Child turn 2: same system — should NOT throw
-		mockAPI.createStream({
-			messages: [
-				{ role: "user", content: "child msg" },
-				{ role: "assistant", content: [{ type: "text", text: "hi" }] },
-				{ role: "user", content: "next" },
-			],
-			system,
-			metadata: { sessionId: "child-session" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [
+					{ role: "user", content: "child msg" },
+					{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+					{ role: "user", content: "next" },
+				],
+				system,
+			},
+			"child-session",
+		);
 	}, 10000);
 
 	test("Prefix validation: fork parent and child share system+tools", async () => {
@@ -1166,131 +1194,139 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		];
 
 		// Parent turn 1
-		mockAPI.createStream({
-			messages: [{ role: "user", content: "parent start" }],
-			system,
-			tools,
-			metadata: { sessionId: "fork-parent" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [{ role: "user", content: "parent start" }],
+				system,
+				tools,
+			},
+			"fork-parent",
+		);
 
 		// Parent turn 2 (extended prefix)
-		mockAPI.createStream({
-			messages: [
-				{ role: "user", content: "parent start" },
-				{
-					role: "assistant",
-					content: [
-						{ type: "text", text: "working" },
-						{
-							type: "tool_use",
-							id: "t1",
-							name: "mcp__opengraft__fork_task_context",
-							input: {},
-						},
-					],
-				},
-				{
-					role: "user",
-					content: [
-						{
-							type: "tool_result",
-							tool_use_id: "t1",
-							content: "You are the PARENT",
-						},
-					],
-				},
-			],
-			system,
-			tools,
-			metadata: { sessionId: "fork-parent" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [
+					{ role: "user", content: "parent start" },
+					{
+						role: "assistant",
+						content: [
+							{ type: "text", text: "working" },
+							{
+								type: "tool_use",
+								id: "t1",
+								name: "mcp__opengraft__fork_task_context",
+								input: {},
+							},
+						],
+					},
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "t1",
+								content: "You are the PARENT",
+							},
+						],
+					},
+				],
+				system,
+				tools,
+			},
+			"fork-parent",
+		);
 
 		// Child turn 1 — shares parent's prefix up to fork point, then diverges.
 		// Key: system + tools must match parent's.
 		// First user message is different (child gets fork result) → different conversation key.
-		mockAPI.createStream({
-			messages: [
-				{ role: "user", content: "parent start" }, // inherited prefix
-				{
-					role: "assistant",
-					content: [
-						{ type: "text", text: "working" },
-						{
-							type: "tool_use",
-							id: "t1",
-							name: "mcp__opengraft__fork_task_context",
-							input: {},
-						},
-					],
-				},
-				{
-					role: "user",
-					content: [
-						{
-							type: "tool_result",
-							tool_use_id: "t1",
-							content: "You are the CHILD",
-						},
-					],
-				},
-			],
-			system, // same system — should pass
-			tools, // same tools — should pass
-			metadata: { sessionId: "fork-child" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [
+					{ role: "user", content: "parent start" }, // inherited prefix
+					{
+						role: "assistant",
+						content: [
+							{ type: "text", text: "working" },
+							{
+								type: "tool_use",
+								id: "t1",
+								name: "mcp__opengraft__fork_task_context",
+								input: {},
+							},
+						],
+					},
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "t1",
+								content: "You are the CHILD",
+							},
+						],
+					},
+				],
+				system, // same system — should pass
+				tools, // same tools — should pass
+			},
+			"fork-child",
+		);
 
 		// Child turn 2 — same system/tools, extended messages — should pass
-		mockAPI.createStream({
-			messages: [
-				{ role: "user", content: "parent start" },
-				{
-					role: "assistant",
-					content: [
-						{ type: "text", text: "working" },
-						{
-							type: "tool_use",
-							id: "t1",
-							name: "mcp__opengraft__fork_task_context",
-							input: {},
-						},
-					],
-				},
-				{
-					role: "user",
-					content: [
-						{
-							type: "tool_result",
-							tool_use_id: "t1",
-							content: "You are the CHILD",
-						},
-					],
-				},
-				{
-					role: "assistant",
-					content: [
-						{
-							type: "tool_use",
-							id: "t2",
-							name: "mcp__opengraft__done",
-							input: { status: "passed", summary: "done" },
-						},
-					],
-				},
-				{
-					role: "user",
-					content: [
-						{
-							type: "tool_result",
-							tool_use_id: "t2",
-							content: "passed",
-						},
-					],
-				},
-			],
-			system, // same — pass
-			tools, // same — pass
-			metadata: { sessionId: "fork-child" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [
+					{ role: "user", content: "parent start" },
+					{
+						role: "assistant",
+						content: [
+							{ type: "text", text: "working" },
+							{
+								type: "tool_use",
+								id: "t1",
+								name: "mcp__opengraft__fork_task_context",
+								input: {},
+							},
+						],
+					},
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "t1",
+								content: "You are the CHILD",
+							},
+						],
+					},
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "tool_use",
+								id: "t2",
+								name: "mcp__opengraft__done",
+								input: { status: "passed", summary: "done" },
+							},
+						],
+					},
+					{
+						role: "user",
+						content: [
+							{
+								type: "tool_result",
+								tool_use_id: "t2",
+								content: "passed",
+							},
+						],
+					},
+				],
+				system, // same — pass
+				tools, // same — pass
+			},
+			"fork-child",
+		);
 
 		// Now: mutation — if child had a DIFFERENT system prompt, it should throw.
 		// This is the exact bug we fixed: fork child used to get buildSystemPrompt(false)
@@ -1309,35 +1345,41 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		mockAPI.enablePrefixValidation();
 
 		// Parent
-		mockAPI.createStream({
-			messages: [{ role: "user", content: "parent msg v2" }],
-			system,
-			tools,
-			metadata: { sessionId: "fork-parent-v2" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [{ role: "user", content: "parent msg v2" }],
+				system,
+				tools,
+			},
+			"fork-parent-v2",
+		);
 
 		// Child with WRONG system — same first user message prefix as parent
 		// but since child has different content at fork point, it's a different
 		// conversation key. So we need to check within the SAME conversation.
 		// Simulate: child makes 2 calls, second one has wrong system.
-		mockAPI.createStream({
-			messages: [{ role: "user", content: "child v2 start" }],
-			system,
-			tools,
-			metadata: { sessionId: "fork-child-v2" },
-		});
+		mockAPI.createStream(
+			{
+				messages: [{ role: "user", content: "child v2 start" }],
+				system,
+				tools,
+			},
+			"fork-child-v2",
+		);
 
 		expect(() =>
-			mockAPI.createStream({
-				messages: [
-					{ role: "user", content: "child v2 start" },
-					{ role: "assistant", content: [{ type: "text", text: "ok" }] },
-					{ role: "user", content: "next" },
-				],
-				system: wrongSystem, // changed system — MUST throw
-				tools,
-				metadata: { sessionId: "fork-child-v2" },
-			}),
+			mockAPI.createStream(
+				{
+					messages: [
+						{ role: "user", content: "child v2 start" },
+						{ role: "assistant", content: [{ type: "text", text: "ok" }] },
+						{ role: "user", content: "next" },
+					],
+					system: wrongSystem, // changed system — MUST throw
+					tools,
+				},
+				"fork-child-v2",
+			),
 		).toThrow(MockValidationError);
 	}, 10000);
 
