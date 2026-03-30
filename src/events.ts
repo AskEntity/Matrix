@@ -259,7 +259,7 @@ export function queueMessageToEvent(
 	msg: QueueMessage,
 	taskId: string,
 ): MessageEvent {
-	return { type: "message", id: msg.id, taskId, body: msg, ts: Date.now() };
+	return { type: "message", id: msg.id, taskId, body: msg, ts: msg.ts };
 }
 
 /**
@@ -310,14 +310,30 @@ function formatBodyForAI(body: QueueMessage): string {
 }
 
 /**
+ * Format a timestamp as [HH:MM:SS] for AI message display.
+ */
+export function formatTimestamp(ts: number): string {
+	return new Date(ts).toLocaleTimeString("en-GB", {
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		hour12: false,
+	});
+}
+
+/**
  * Format a concrete Event for inclusion in provider messages.
  * `message` events use body.source to determine formatting.
+ * All messages get [HH:MM:SS] timestamp prefix for consistency between
+ * live path and JSONL reconstruction path.
  */
 export function formatEventForAI(event: Event): string {
 	if (event.type === "message") {
 		// Defensive: body should always be present but guard against corrupt data
 		if (!event.body) return "";
-		return formatBodyForAI(event.body);
+		const text = formatBodyForAI(event.body);
+		if (!text) return "";
+		return `[${formatTimestamp(event.ts)}] ${text}`;
 	}
 	return "";
 }
@@ -502,6 +518,7 @@ export function findOrphanedBackgroundProcesses(
 	for (const [bgId, info] of bgProcesses) {
 		if (!completedIds.has(bgId)) {
 			const msgId = ulid();
+			const ts = Date.now();
 			orphans.push({
 				type: "message",
 				id: msgId,
@@ -509,6 +526,7 @@ export function findOrphanedBackgroundProcesses(
 				body: {
 					source: "background_complete",
 					id: msgId,
+					ts,
 					commandId: bgId,
 					command: info.command,
 					exitCode: null,
@@ -516,7 +534,7 @@ export function findOrphanedBackgroundProcesses(
 					stdout: "",
 					stderr: "Background process interrupted by daemon restart",
 				},
-				ts: Date.now(),
+				ts,
 			});
 		}
 	}

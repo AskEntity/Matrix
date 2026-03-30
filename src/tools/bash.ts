@@ -516,6 +516,7 @@ export async function executeBashWithTimeout(
 						queue.enqueue({
 							source: "background_complete",
 							id: ulid(),
+							ts: Date.now(),
 							commandId: bgId,
 							command,
 							exitCode,
@@ -649,6 +650,7 @@ export async function executeBashWithTimeout(
 					queue.enqueue({
 						source: "background_complete",
 						id: ulid(),
+						ts: Date.now(),
 						commandId: bgId,
 						command,
 						exitCode,

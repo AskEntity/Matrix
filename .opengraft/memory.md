@@ -463,3 +463,21 @@ Records `tools`, `systemStable`, `systemVariable` for the session segment.
 3. Second-to-last user message → `1h` (orchestrator) or `5m` (leaf worker)
 
 **Migration**: Old JSONL without session_config gets one synthesized at agent launch. Written to JSONL end (appended), found by `findSessionConfig` which searches backwards.
+
+
+## QueueMessage.ts Field + Timestamp Consistency (March 2026)
+
+**Root cause found**: live path and JSONL reconstruction path formatted consumed messages differently — live path added `[HH:MM:SS]` timestamps via `formatQueueMessage`, reconstruction path via `formatEventForAI` did not. This caused prefix mismatches (cache misses) on every resume with consumed messages.
+
+**Fix architecture**:
+- `QueueMessage` now has required `ts: number` field — set at creation time with `Date.now()`
+- `formatEventForAI` adds `[HH:MM:SS]` prefix to all message events (using `event.ts`)
+- `queueMessageToEvent` uses `msg.ts` (not `Date.now()`) — same timestamp source as JSONL
+- `formatQueueMessage` is now just `formatEventForAI(queueMessageToEvent(msg))` — single path
+- Initial drain in provider-shared.ts uses `formatQueueMessage` for all messages (no special-casing user vs other sources)
+- `formatTimestamp` exported from events.ts for shared use
+
+**Also fixed**: `onToolResults` in both Anthropic and OpenAI providers was adding a duplicate pending text block from `result.pending`. The pending section was already embedded in the tool_result content string — the separate text block was a reconstruction-only artifact that broke prefix consistency.
+
+**Key invariant**: `QueueMessage.ts` = `Event.ts` = timestamp used in `[HH:MM:SS]`. All three are the same value, set once at message creation. Never use `Date.now()` at format time.
+

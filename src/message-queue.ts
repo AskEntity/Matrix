@@ -4,11 +4,12 @@ export interface QueueImage {
 	mediaType: string;
 }
 
-/** Message types that can flow through the queue. Every message MUST have a ULID id for dedup. */
+/** Message types that can flow through the queue. Every message MUST have a ULID id for dedup and a ts for timestamps. */
 export type QueueMessage =
 	| {
 			source: "user";
 			id: string;
+			ts: number;
 			content: string;
 			images?: QueueImage[];
 			header?: string;
@@ -16,6 +17,7 @@ export type QueueMessage =
 	| {
 			source: "tree_change";
 			id: string;
+			ts: number;
 			action: "created" | "updated" | "deleted" | "reordered";
 			nodeId: string;
 			title?: string;
@@ -23,6 +25,7 @@ export type QueueMessage =
 	| {
 			source: "task_complete";
 			id: string;
+			ts: number;
 			taskId: string;
 			title: string;
 			success: boolean;
@@ -31,6 +34,7 @@ export type QueueMessage =
 	| {
 			source: "task_message";
 			id: string;
+			ts: number;
 			fromTaskId: string;
 			fromTitle: string;
 			content: string;
@@ -40,10 +44,11 @@ export type QueueMessage =
 			/** Only on cold-start downward messages. */
 			header?: string;
 	  }
-	| { source: "clarify_response"; id: string; answer: string }
+	| { source: "clarify_response"; id: string; ts: number; answer: string }
 	| {
 			source: "user_message_forwarded";
 			id: string;
+			ts: number;
 			fromTaskId: string;
 			fromTitle: string;
 			content: string;
@@ -51,6 +56,7 @@ export type QueueMessage =
 	| {
 			source: "cross_project";
 			id: string;
+			ts: number;
 			fromProjectId: string;
 			fromProjectName: string;
 			content: string;
@@ -58,6 +64,7 @@ export type QueueMessage =
 	| {
 			source: "background_complete";
 			id: string;
+			ts: number;
 			commandId: string;
 			command: string;
 			exitCode: number | null;
@@ -67,7 +74,7 @@ export type QueueMessage =
 			/** Included when output is small (< 50KB). Undefined for large output — use read_file. */
 			stderr?: string;
 	  }
-	| { source: "compact"; id: string };
+	| { source: "compact"; id: string; ts: number };
 
 /**
  * A simple async message queue for inter-agent communication.

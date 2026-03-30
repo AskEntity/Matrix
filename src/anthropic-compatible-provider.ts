@@ -18,7 +18,7 @@ import {
 	type ToolResultData,
 	walkEventsToMessages,
 } from "./event-converter.ts";
-import { type Event, formatPendingSection } from "./events.ts";
+import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import {
 	extractQueueImages,
@@ -250,12 +250,9 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 					});
 				}
 
-				if (result.pending) {
-					resultBlocks.push({
-						type: "text",
-						text: formatPendingSection(result.pending),
-					});
-				}
+				// NOTE: result.pending is metadata only — the pending section text is already
+				// embedded in the tool_result content string. Don't add a separate text block
+				// here or it will duplicate what's in content, causing prefix mismatch on resume.
 			}
 
 			// Add interleaved messages_consumed text blocks

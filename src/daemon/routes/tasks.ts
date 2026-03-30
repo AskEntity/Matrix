@@ -63,6 +63,7 @@ async function notifyParentChain(
 			? {
 					source: "task_message",
 					id: ulid(),
+					ts: Date.now(),
 					fromTaskId: taskId,
 					fromTitle: taskTitle,
 					content,
@@ -70,6 +71,7 @@ async function notifyParentChain(
 			: {
 					source: "user_message_forwarded",
 					id: ulid(),
+					ts: Date.now(),
 					fromTaskId: taskId,
 					fromTitle: taskTitle,
 					content,
@@ -113,6 +115,7 @@ function notifyTreeChange(
 	const msg: QueueMessage = {
 		source: "tree_change",
 		id: ulid(),
+		ts: Date.now(),
 		action,
 		nodeId,
 		...(title ? { title } : {}),
@@ -322,6 +325,7 @@ export function registerTaskRoutes(
 						parentQueue.enqueue({
 							source: "task_message",
 							id: ulid(),
+							ts: Date.now(),
 							fromTaskId: nodeId,
 							fromTitle: node.title,
 							content: `User continued child task "${node.title}" (${nodeId}).`,
@@ -357,6 +361,7 @@ export function registerTaskRoutes(
 			await persistMessage(ctx.config.dataDir, project.id, nodeId, {
 				source: "task_message",
 				id: ulid(),
+				ts: Date.now(),
 				fromTaskId: parentNode?.id ?? "",
 				fromTitle: parentNode?.title ?? "User",
 				content,
@@ -401,6 +406,7 @@ export function registerTaskRoutes(
 				await persistMessage(ctx.config.dataDir, project.id, nodeId, {
 					source: "task_message",
 					id: ulid(),
+					ts: Date.now(),
 					fromTaskId: parentNode2?.id ?? "",
 					fromTitle: parentNode2?.title ?? "User",
 					content,
@@ -610,6 +616,7 @@ export function registerTaskRoutes(
 		const statusBeforeDelivery = node?.status;
 
 		const msgId = ulid();
+		const ts = Date.now();
 
 		// Phase 1 of two-phase lifecycle: write + broadcast message at send time.
 		// Frontend derives pending state from message events without matching messages_consumed.
@@ -619,6 +626,7 @@ export function registerTaskRoutes(
 		const msg: QueueMessage = {
 			source: "user",
 			id: msgId,
+			ts,
 			content,
 			...(body.images?.length ? { images: body.images } : {}),
 		};
@@ -627,7 +635,7 @@ export function registerTaskRoutes(
 			id: msgId,
 			taskId: nodeId,
 			body: msg,
-			ts: Date.now(),
+			ts,
 		};
 		emitEvent(ctx, project.id, userMsgEvent);
 

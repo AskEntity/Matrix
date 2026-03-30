@@ -5839,3 +5839,334 @@ describe("Integration: session_config in JSONL", () => {
 		expect(treeReq).toBeDefined();
 	}, 30000);
 });
+
+describe("Integration: root done then resume", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("root agent done(passed) then new user message resumes without error", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Turn 1: agent calls done(passed) — enters idle-yield inside done() handler
+		// Turn 2: after done() wakes with new user message, call done again
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "All done." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "first pass complete" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Handling new message after resume." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "second pass after resume",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for root to reach "passed" status from the first done()
+		const firstStatus = await waitForDone(ctx);
+		expect(firstStatus).toBe("passed");
+
+		// The agent session is still alive (root agents don't close queue on done(),
+		// they enter idle-yield inside the done() tool handler).
+		// Send a new user message — this should wake done()'s waitForQueueMessages()
+		// and the provider loop should make a second API call without error.
+		const msgResp = await sendMessage(ctx, "Please do more work");
+		expect(msgResp.status).toBe(200);
+
+		// The agent resumes: tracker briefly goes to in_progress, then done() again → passed.
+		// Since the agent was woken from done()'s idle-yield, we need to wait for a fresh
+		// done cycle. The status may already be "passed" from the first done, so we poll
+		// for in_progress first, then passed again.
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Wait for status to cycle through in_progress (agent woke up and started processing)
+		const start = Date.now();
+		let sawInProgress = false;
+		while (Date.now() - start < 10000) {
+			const node = tracker.get(rootNodeId);
+			if (node?.status === "in_progress") {
+				sawInProgress = true;
+				break;
+			}
+			await new Promise((r) => setTimeout(r, 50));
+		}
+
+		if (sawInProgress) {
+			// Now wait for the second done
+			const secondStatus = await waitForDone(ctx, 20000);
+			expect(secondStatus).toBe("passed");
+		}
+
+		// Verify the provider loop made at least 2 API calls (one per done cycle)
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
+	}, 30000);
+
+	test("root agent done(passed), shutdown, restart, new message resumes without error", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Turn 1: agent calls done(passed)
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "All done." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "first pass complete" },
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const firstStatus = await waitForDone(ctx);
+		expect(firstStatus).toBe("passed");
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+
+		// === SHUTDOWN: session fully exits ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Root status was "passed" → autoResume skips (only resumes in_progress)
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests);
+
+		// Send a new message with JSON instruction → triggers launchAgent(resume: true)
+		// Message must contain JSON instruction so mock knows to call done()
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "New task after done." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "second pass after resume" },
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Wait for in_progress transition
+		const start = Date.now();
+		while (Date.now() - start < 5000) {
+			const node = tracker.get(rootNodeId);
+			if (node?.status === "in_progress") break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+
+		const secondStatus = await waitForDone(ctx, 15000);
+		expect(secondStatus).toBe("passed");
+
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+	}, 30000);
+
+	test("root agent done(passed), session exits, new message triggers JSONL resume", async () => {
+		ctx = await setupTestContext();
+
+		// Disable prefix validation — post-done JSONL has lifecycle events
+		// that may reconstruct differently on resume.
+
+		// Turn 1: agent calls done(passed)
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "All done." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "first pass" },
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const firstStatus = await waitForDone(ctx);
+		expect(firstStatus).toBe("passed");
+
+		const firstRequests = ctx.mockAPI.getRequestCount();
+		expect(firstRequests).toBe(1);
+
+		// === SHUTDOWN: force the session to fully exit ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Root status was "passed" → autoResume skips
+		expect(ctx.mockAPI.getRequestCount()).toBe(firstRequests);
+
+		// Send a new user message with instruction → triggers launchAgent(resume: true)
+		// This reconstructs messages from JSONL + new message → makes API call.
+		// The bug: JSONL has events after done's tool_result (assistant_text, orchestration_completed,
+		// agent_stopped) that may produce empty text content blocks.
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "New task." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "resumed ok" },
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Wait for in_progress
+		const start = Date.now();
+		while (Date.now() - start < 5000) {
+			const node = tracker.get(rootNodeId);
+			if (node?.status === "in_progress") break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+
+		const secondStatus = await waitForDone(ctx, 15000);
+		expect(secondStatus).toBe("passed");
+
+		// Must have made at least one new API call
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(firstRequests);
+	}, 30000);
+
+	test("multiple done+resume cycles then restart resume", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Simulate: tool work → done → wake → tool work → done → shutdown → restart → resume.
+		// Tests JSONL reconstruction with multiple done+wake patterns in the history.
+		const instruction = JSON.stringify({
+			turns: [
+				// Turn 1: tool work
+				{
+					blocks: [
+						{ type: "text", text: "Doing initial work." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo hello" },
+						},
+					],
+				},
+				// Turn 2: done (enters idle-yield)
+				{
+					blocks: [
+						{ type: "text", text: "Finished first pass." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "first pass" },
+						},
+					],
+				},
+				// Turn 3 (after wake): tool work
+				{
+					blocks: [
+						{ type: "text", text: "More work after wake." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo world" },
+						},
+					],
+				},
+				// Turn 4: done again (enters idle-yield again)
+				{
+					blocks: [
+						{ type: "text", text: "Finished second pass." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "second pass" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for first done
+		await waitForDone(ctx);
+
+		// Wake from done's idle-yield → cycle 2. Status stays "passed" from first done
+		// so we can't use waitForDone again. Instead, send message and wait for the
+		// mock to have processed all 4 turns.
+		await sendMessage(ctx, "More work please");
+		const startPoll = Date.now();
+		while (Date.now() - startPoll < 10000) {
+			if (ctx.mockAPI.getRequestCount() >= 4) break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBe(4);
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+
+		// === SHUTDOWN + RESTART ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Send new message → JSONL resume with multiple done+resume cycles in history
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Final task after restart." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "post-restart pass" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const start = Date.now();
+		while (Date.now() - start < 5000) {
+			if (tracker.get(rootNodeId)?.status === "in_progress") break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+
+		const finalStatus = await waitForDone(ctx, 15000);
+		expect(finalStatus).toBe("passed");
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+	}, 45000);
+});

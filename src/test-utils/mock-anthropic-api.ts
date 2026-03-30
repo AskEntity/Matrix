@@ -759,7 +759,11 @@ export class ValidatingMockAPI {
 				const msg = messages[i];
 				if (msg?.role === "user") {
 					const texts = extractUserTextBlocks(msg);
-					return `fork:${texts.join("|").slice(0, 200)}`;
+					const stripped = texts
+						.map((t) => t.replace(/^\[\d{2}:\d{2}:\d{2}\] /, ""))
+						.join("|")
+						.slice(0, 200);
+					return `fork:${stripped}`;
 				}
 			}
 			// No user message after fork — use the fork result itself as key
@@ -770,7 +774,14 @@ export class ValidatingMockAPI {
 		const firstUser = messages.find((m) => m.role === "user");
 		if (!firstUser) return "default";
 		const texts = extractUserTextBlocks(firstUser);
-		return texts.join("|").slice(0, 200);
+		// Strip [HH:MM:SS] timestamp prefixes for stable key — timestamps differ
+		// between live path (Date.now() at format time) and JSONL reconstruction
+		// (original event ts), so they can't be part of the key.
+		const stripped = texts
+			.map((t) => t.replace(/^\[\d{2}:\d{2}:\d{2}\] /, ""))
+			.join("|")
+			.slice(0, 200);
+		return stripped;
 	}
 
 	/**

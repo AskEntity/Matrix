@@ -25,11 +25,13 @@ describe("persistent-queue", () => {
 		const msg1: QueueMessage = {
 			source: "user",
 			id: "test-id",
+			ts: 0,
 			content: "hello",
 		};
 		const msg2: QueueMessage = {
 			source: "task_message",
 			id: "test-id",
+			ts: 0,
 			fromTaskId: "p1",
 			fromTitle: "Orchestrator",
 			content: "update",
@@ -61,6 +63,7 @@ describe("persistent-queue", () => {
 		const msg: QueueMessage = {
 			source: "user",
 			id: "test-id",
+			ts: 0,
 			content: "hello",
 		};
 		await persistMessage(TEST_DATA_DIR, "proj-1", "task-1", msg);
@@ -81,16 +84,19 @@ describe("persistent-queue", () => {
 		await persistMessage(TEST_DATA_DIR, "proj-1", "task-1", {
 			source: "user",
 			id: "test-id",
+			ts: 0,
 			content: "p1t1",
 		});
 		await persistMessage(TEST_DATA_DIR, "proj-1", "task-2", {
 			source: "user",
 			id: "test-id",
+			ts: 0,
 			content: "p1t2",
 		});
 		await persistMessage(TEST_DATA_DIR, "proj-2", "task-1", {
 			source: "user",
 			id: "test-id",
+			ts: 0,
 			content: "p2t1",
 		});
 
@@ -108,19 +114,21 @@ describe("persistent-queue", () => {
 
 	test("persists various message types correctly", async () => {
 		const messages: QueueMessage[] = [
-			{ source: "user", id: "test-id", content: "hello" },
+			{ source: "user", id: "test-id", ts: 0, content: "hello" },
 			{
 				source: "task_complete",
 				id: "test-id",
+				ts: 0,
 				taskId: "c1",
 				title: "Auth",
 				success: true,
 				output: "done",
 			},
-			{ source: "clarify_response", id: "test-id", answer: "yes" },
+			{ source: "clarify_response", id: "test-id", ts: 0, answer: "yes" },
 			{
 				source: "cross_project",
 				id: "test-id",
+				ts: 0,
 				fromProjectId: "other",
 				fromProjectName: "Other",
 				content: "hi",
@@ -128,6 +136,7 @@ describe("persistent-queue", () => {
 			{
 				source: "background_complete",
 				id: "test-id",
+				ts: 0,
 				commandId: "bg1",
 				command: "ls",
 				exitCode: 0,
@@ -136,6 +145,7 @@ describe("persistent-queue", () => {
 			{
 				source: "tree_change",
 				id: "test-id",
+				ts: 0,
 				action: "created",
 				nodeId: "node-1",
 				title: "New Task",
