@@ -388,8 +388,11 @@ function createAnthropicAdapter(
 			const messages = params.messages as MessageParam[];
 			const tools = params.tools as Tool[];
 
-			// Cache control: system prompt cached as array of TextBlockParam
-			const systemText = params.systemPrompt;
+			// Cache control: system prompt split into stable + variable for optimal caching.
+			// Stable part is shared by ALL agents — auto-hits via Anthropic's 20-block lookback.
+			// Variable part (role + date) gets its own 1h cache breakpoint.
+			// OAuth mode adds Claude Code preamble as a separate block.
+			const { stable, variable } = params.systemPrompt;
 			const systemBlocks: TextBlockParam[] = useOAuth
 				? [
 						{
@@ -397,11 +400,14 @@ function createAnthropicAdapter(
 							text: "You are Claude Code, Anthropic's official CLI for Claude.",
 							cache_control: { type: "ephemeral", ttl: "1h" },
 						},
-						...(systemText
+						// Stable part — shared across all agents, auto-cached via lookback
+						...(stable ? [{ type: "text" as const, text: stable }] : []),
+						// Variable part — per-agent, gets its own cache breakpoint
+						...(variable
 							? [
 									{
 										type: "text" as const,
-										text: systemText,
+										text: variable,
 										cache_control: {
 											type: "ephemeral" as const,
 											ttl: "1h" as const,
@@ -411,9 +417,12 @@ function createAnthropicAdapter(
 							: []),
 					]
 				: [
+						// Stable part — shared across all agents, auto-cached via lookback
+						...(stable ? [{ type: "text" as const, text: stable }] : []),
+						// Variable part — per-agent, gets its own cache breakpoint
 						{
 							type: "text",
-							text: systemText,
+							text: variable || "(no variable prompt)",
 							cache_control: { type: "ephemeral", ttl: "1h" },
 						},
 					];

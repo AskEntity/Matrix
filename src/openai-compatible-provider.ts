@@ -553,8 +553,10 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 
 			// Build messages for API: system prompt first, then conversation
 			// Append tool-use instruction — models on OpenAI-compatible APIs need explicit guidance
-			const systemContent = params.systemPrompt
-				? `${params.systemPrompt}\n\nIMPORTANT: Always call at least one tool in each response. Use your tools to accomplish the task. Do not generate text responses without making tool calls.`
+			const combinedPrompt =
+				`${params.systemPrompt.stable}\n\n${params.systemPrompt.variable}`.trim();
+			const systemContent = combinedPrompt
+				? `${combinedPrompt}\n\nIMPORTANT: Always call at least one tool in each response. Use your tools to accomplish the task. Do not generate text responses without making tool calls.`
 				: "IMPORTANT: Always call at least one tool in each response.";
 			const apiMessages: OpenAIMessage[] = [
 				{

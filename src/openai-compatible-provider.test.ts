@@ -336,7 +336,7 @@ describe("runLoop integration", () => {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const session = provider.startSession({
 				cwd: tmpDir,
-				systemPrompt: "You are a helpful agent.",
+				systemPrompt: { stable: "You are a helpful agent.", variable: "" },
 				queue: queueWithPrompt("Do something", tmpDir),
 				mcpToolDefs: {
 					opengraft: [
@@ -471,7 +471,7 @@ describe("runLoop integration", () => {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const result = await provider.execute({
 				cwd: tmpDir,
-				systemPrompt: "You are helpful.",
+				systemPrompt: { stable: "You are helpful.", variable: "" },
 				queue: queueWithPrompt("Say hello", tmpDir),
 			});
 			expect(result.exitReason).not.toBe("done_failed");
@@ -557,7 +557,7 @@ describe("runLoop integration", () => {
 			};
 			const gen = provider.stream({
 				cwd: tmpDir,
-				systemPrompt: "Be helpful",
+				systemPrompt: { stable: "Be helpful", variable: "" },
 				queue: retryQueue,
 			});
 			let result = await gen.next();
@@ -813,7 +813,7 @@ describe("Event recording via emit callback", () => {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
 			const session = provider.startSession({
 				cwd: tmpDir,
-				systemPrompt: "You are a helpful agent.",
+				systemPrompt: { stable: "You are a helpful agent.", variable: "" },
 				emit,
 				queue: queueWithPrompt("Do something", tmpDir),
 				mcpToolDefs: {
@@ -1040,7 +1040,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const result = await provider.execute({
 					cwd: testDir,
-					systemPrompt: "You are helpful.",
+					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
 					queue: queueWithPrompt("Say hello", testDir),
 				});
@@ -1130,7 +1130,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const session = provider.startSession({
 					cwd: testDir,
-					systemPrompt: "You are helpful.",
+					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
 					queue: queueWithPrompt("Do the task", testDir),
 					mcpToolDefs: {
@@ -1259,7 +1259,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				session = provider.startSession({
 					cwd: testDir,
-					systemPrompt: "You are helpful.",
+					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
 					queue,
 				});
@@ -1359,7 +1359,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const session = provider.startSession({
 					cwd: testDir,
-					systemPrompt: "You are helpful.",
+					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
 					queue: queueWithPrompt("Try something", testDir),
 					mcpToolDefs: {
@@ -1463,7 +1463,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
 				const session = provider.startSession({
 					cwd: testDir,
-					systemPrompt: "You are helpful.",
+					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
 					queue: queueWithPrompt("Run three tools", testDir),
 					mcpToolDefs: {

@@ -28,8 +28,27 @@ interface MessageEvent {
 	ts: number;
 }
 
+/**
+ * Session configuration snapshot — persisted at JSONL start and after compact_marker.
+ * Records the exact tools + system prompt used for this session segment.
+ * Fork copies this event → child gets parent's exact config → cache hit.
+ * Between compactions, system + tools are FROZEN → cache 100% stable.
+ */
+export interface SessionConfigEvent {
+	type: "session_config";
+	/** MCP-spec tool definitions (full JSON schema) as passed to provider. */
+	tools: unknown[];
+	/** SYSTEM_PROMPT pure text — shared by ALL agents, never changes. */
+	systemStable: string;
+	/** Role + date + selfBootstrap — per-agent, per-day. */
+	systemVariable: string;
+	taskId: string;
+	ts: number;
+}
+
 export type Event =
 	| MessageEvent
+	| SessionConfigEvent
 	| { type: "assistant_text"; content: string; taskId: string; ts: number }
 	| {
 			type: "tool_call";
@@ -193,6 +212,7 @@ export function isPersistedByEmitEvent(event: Event): boolean {
 			return false;
 
 		// Persisted — written to JSONL by emitEvent
+		case "session_config":
 		case "message":
 		case "assistant_text":
 		case "tool_call":

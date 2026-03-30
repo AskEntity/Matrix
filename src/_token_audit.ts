@@ -3,13 +3,14 @@
  * Usage: bun run src/_token_audit.ts [sessionId]
  * Defaults to the investigation task session if no sessionId provided.
  */
+
+import { readFileSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
-import { readFileSync } from "node:fs";
-import { buildSystemPrompt } from "./system-prompts.ts";
 import { loadGlobalConfig, resolveAuthGroup } from "./config.ts";
 import type { Event } from "./events.ts";
+import { buildSystemPrompt } from "./system-prompts.ts";
 
 // Read auth from config (supports OAuth)
 const globalConfig = await loadGlobalConfig();
@@ -34,8 +35,7 @@ if (useOAuth) {
 }
 
 const sessionDir = `${process.env.HOME}/.opengraft/sessions/b3d7a1f3-6f5b-4dd7-a046-55591a8c7d02`;
-const sid =
-	process.argv[2] || "01KMXGHDB3C4AYJ38FAKSG9ETX";
+const sid = process.argv[2] || "01KMXGHDB3C4AYJ38FAKSG9ETX";
 
 const path = `${sessionDir}/${sid}.events.jsonl`;
 const lines = readFileSync(path, "utf-8").trim().split("\n");
@@ -54,7 +54,10 @@ while (messages.length > 0) {
 	const last = messages[messages.length - 1]!;
 	if (last.role === "assistant") {
 		const content = last.content;
-		if (Array.isArray(content) && content.some((b: any) => b.type === "tool_use")) {
+		if (
+			Array.isArray(content) &&
+			content.some((b: any) => b.type === "tool_use")
+		) {
 			messages = messages.slice(0, -1);
 			continue;
 		}
@@ -62,7 +65,8 @@ while (messages.length > 0) {
 	break;
 }
 
-const systemPrompt = buildSystemPrompt(false);
+const sp = buildSystemPrompt();
+const systemPrompt = `${sp.stable}\n\n${sp.variable}`;
 
 console.log(`Session: ${sid}`);
 console.log(`Active events: ${activeEvents.length}`);
@@ -93,7 +97,9 @@ try {
 	}
 	// Sample ~10 points evenly
 	const step = Math.max(1, Math.floor(validSlicePoints.length / 10));
-	const sampledPoints = validSlicePoints.filter((_, i) => i % step === 0 || i === validSlicePoints.length - 1);
+	const sampledPoints = validSlicePoints.filter(
+		(_, i) => i % step === 0 || i === validSlicePoints.length - 1,
+	);
 	for (const n of sampledPoints) {
 		try {
 			const slice = messages.slice(0, n);

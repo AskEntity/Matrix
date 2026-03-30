@@ -2216,7 +2216,7 @@ describe("Event deterministic verification", () => {
 		// Provider drains queue for first message
 		const result = await provider.execute({
 			cwd: testDir,
-			systemPrompt: "You are helpful.",
+			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
 			queue: queueWithPrompt("Say hello", testDir),
 		});
@@ -2292,7 +2292,7 @@ describe("Event deterministic verification", () => {
 
 		const session = provider.startSession({
 			cwd: testDir,
-			systemPrompt: "You are helpful.",
+			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
 			queue: queueWithPrompt("Do the task", testDir),
 			mcpToolDefs: {
@@ -2420,7 +2420,7 @@ describe("Event deterministic verification", () => {
 
 		const session = provider.startSession({
 			cwd: testDir,
-			systemPrompt: "You are helpful.",
+			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
 			queue: queueWithPrompt("Try something", testDir),
 			mcpToolDefs: {
@@ -2537,7 +2537,7 @@ describe("Event deterministic verification", () => {
 		const queue = queueWithPrompt("Start working", testDir);
 		const session = provider.startSession({
 			cwd: testDir,
-			systemPrompt: "You are helpful.",
+			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
 			queue,
 		});
@@ -2648,7 +2648,7 @@ describe("Event deterministic verification", () => {
 
 		const session = provider.startSession({
 			cwd: testDir,
-			systemPrompt: "You are helpful.",
+			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
 			queue: queueWithPrompt("Run three tools", testDir),
 			mcpToolDefs: {
@@ -2937,7 +2937,7 @@ describe("Event deterministic verification", () => {
 		const queue = queueWithPrompt("Do task", testDir);
 		const session = provider.startSession({
 			cwd: testDir,
-			systemPrompt: "You are helpful.",
+			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
 			queue,
 			mcpToolDefs: {

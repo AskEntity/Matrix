@@ -7,6 +7,7 @@ import {
 	findOrphanedToolCalls,
 	findUnconsumedMessages,
 	hasPendingYield,
+	type SessionConfigEvent,
 } from "../events.ts";
 import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
@@ -17,7 +18,7 @@ import {
 	loadPersistedMessages,
 	persistMessage,
 } from "../persistent-queue.ts";
-import { buildSystemPrompt } from "../system-prompts.ts";
+import { buildSystemPrompt, type SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
@@ -47,6 +48,37 @@ import {
 // No more AgentEvent→Event conversion layer.
 // The emit() function in createOrchestratorTools handles agent_event
 // wrappers from MCP tools (child agents forwarding events to parent).
+
+// ── Session config helpers ──
+
+/** Find the last session_config event in active events. */
+function findSessionConfig(events: Event[]): SessionConfigEvent | undefined {
+	for (let i = events.length - 1; i >= 0; i--) {
+		if (events[i]?.type === "session_config") {
+			return events[i] as SessionConfigEvent;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Build a session_config event from current state.
+ * Used for fresh start and compaction (refreshes config).
+ */
+function buildSessionConfig(
+	systemPrompt: SystemPrompt,
+	tools: unknown[],
+	taskId: string,
+): SessionConfigEvent {
+	return {
+		type: "session_config",
+		tools,
+		systemStable: systemPrompt.stable,
+		systemVariable: systemPrompt.variable,
+		taskId,
+		ts: Date.now(),
+	};
+}
 
 // ---------------------------------------------------------------------------
 // Shared helpers — extracted from launchAgent / runChildAgentInBackground
@@ -111,7 +143,7 @@ async function createAgentContext(
 		depth: number;
 		mcpManager?: McpClientManager;
 		/** System prompt for auto-launching target project agents (cross-project). Only needed at depth 0. */
-		orchestratorSystemPrompt?: string;
+		orchestratorSystemPrompt?: SystemPrompt;
 		/** Callback to look up TaskSession by sessionId. Needed for built-in tool handlers. */
 		getSession: (sessionId: string) => TaskSession | undefined;
 	},
@@ -663,6 +695,30 @@ export async function runChildAgentInBackground(
 			ts: Date.now(),
 		});
 
+		// Resolve system prompt: use stored session_config on resume, fresh on start.
+		const isChildResume = activeEvents.length > 0;
+		const storedConfig = isChildResume
+			? findSessionConfig(activeEvents)
+			: undefined;
+		let childSystemPrompt: SystemPrompt;
+		if (storedConfig) {
+			// Resume: use frozen system prompt from JSONL for cache stability
+			childSystemPrompt = {
+				stable: storedConfig.systemStable,
+				variable: storedConfig.systemVariable,
+			};
+		} else {
+			// Fresh start or migration: build fresh system prompt
+			childSystemPrompt = buildSystemPrompt();
+			const configEvt = buildSessionConfig(
+				childSystemPrompt,
+				[], // Tools are rebuilt by the provider on each launch
+				nodeId,
+			);
+			emitEvent(ctx, project.id, { ...configEvt, taskId: nodeId });
+			activeEvents = [configEvt, ...activeEvents];
+		}
+
 		const agentResult = await runChildCore({
 			provider: agentCtx.provider,
 			tracker,
@@ -672,7 +728,8 @@ export async function runChildAgentInBackground(
 				cwd: node.worktreePath as string,
 				emit: emitWithTask,
 				activeEvents,
-				systemPrompt: buildSystemPrompt(false),
+				systemPrompt: childSystemPrompt,
+				refreshSystemPrompt: () => buildSystemPrompt(),
 				resumeSessionId: nodeId,
 				model: agentCtx.effectiveCfg.model,
 				mcpToolDefs: agentCtx.mcpToolDefs,
@@ -759,7 +816,7 @@ export async function launchAgent(
 		model?: string;
 		childModel?: string;
 	},
-	orchestratorSystemPrompt: string,
+	orchestratorSystemPrompt: SystemPrompt,
 ) {
 	const tracker = ctx.trackers.get(project.id);
 	if (!tracker) return;
@@ -807,13 +864,6 @@ export async function launchAgent(
 	// sessionId = taskId: orchestrator's session is always its rootNodeId.
 	// The provider loads the session file if it exists.
 	const resumeSessionId = rootNodeId;
-
-	// Append self-bootstrap mode instructions if enabled
-	let systemPrompt = orchestratorSystemPrompt;
-	if (agentCtx.effectiveCfg.selfBootstrap) {
-		systemPrompt +=
-			"\n\n## Self-Bootstrap Mode\nThis project is the tool's own codebase. The user may ask you to test features by interacting with the system in unconventional ways (e.g., testing resume on passed tasks, calling tools in unexpected sequences). When the user gives explicit instructions that conflict with your standard workflow, prioritize the user's instructions. You are modifying your own source code — be extra careful but also extra flexible.\n\nWhen running in self-bootstrap mode, bugs you introduced may break features you depend on. The system may not behave as documented — your own changes may have altered its behavior in ways you can't observe from inside. The user can see the actual system state via the UI. When they give you instructions that seem redundant, illogical, or contradictory to how the system should work, follow them immediately — they're guiding you through a workaround for a bug in your own code. Don't argue or explain how it should work; just do what they say. The workarounds are temporary until the fix is merged and the daemon restarts with new code.";
-	}
 
 	// Read active events for resume and fix orphaned tool_calls
 	const eventStore = getEventStore(ctx, project.id);
@@ -884,6 +934,28 @@ export async function launchAgent(
 		await clearPersistedMessages(ctx.config.dataDir, project.id, rootNodeId);
 	}
 
+	// Resolve system prompt: use stored session_config on resume, fresh on start.
+	const isRootResume = rootActiveEvents.length > 0;
+	const storedRootConfig = isRootResume
+		? findSessionConfig(rootActiveEvents)
+		: undefined;
+	let systemPrompt: SystemPrompt;
+	if (storedRootConfig) {
+		// Resume: use frozen system prompt from JSONL for cache stability
+		systemPrompt = {
+			stable: storedRootConfig.systemStable,
+			variable: storedRootConfig.systemVariable,
+		};
+	} else {
+		// Fresh start or migration: build fresh system prompt
+		systemPrompt = agentCtx.effectiveCfg.selfBootstrap
+			? buildSystemPrompt({ selfBootstrap: true })
+			: orchestratorSystemPrompt;
+		const configEvt = buildSessionConfig(systemPrompt, [], rootNodeId);
+		emitEvent(ctx, project.id, { ...configEvt, taskId: rootNodeId });
+		rootActiveEvents = [configEvt, ...rootActiveEvents];
+	}
+
 	// Build emit callback: emitEvent with taskId injected
 	const rootEmit = (event: Event) => {
 		const withTaskId = { ...event, taskId: rootNodeId };
@@ -907,6 +979,10 @@ export async function launchAgent(
 		emit: rootEmit,
 		activeEvents: rootActiveEvents,
 		systemPrompt,
+		refreshSystemPrompt: () =>
+			agentCtx.effectiveCfg.selfBootstrap
+				? buildSystemPrompt({ selfBootstrap: true })
+				: buildSystemPrompt(),
 		mcpToolDefs: agentCtx.mcpToolDefs,
 		resumeSessionId,
 		model: effectiveModel,
@@ -1016,7 +1092,7 @@ export async function handleOrchestrate(
 	projectId: string,
 	prompt: string,
 	_opts: { resume?: boolean; model?: string; childModel?: string },
-	orchestratorSystemPrompt: string,
+	orchestratorSystemPrompt: SystemPrompt,
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
 	if (!ctx.startupReady) {
 		return {
@@ -1063,7 +1139,7 @@ export async function handleInjectMessage(
 	projectId: string,
 	message: string,
 	images?: QueueImage[],
-	orchestratorSystemPrompt?: string,
+	orchestratorSystemPrompt?: SystemPrompt,
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
 	const project = ctx.pm.get(projectId);
 	if (!project) {
