@@ -483,30 +483,17 @@ Records `tools`, `systemStable`, `systemVariable` for the session segment.
 
 ## Test-is-Golden Philosophy
 
-**Test is golden. Not spec, not architecture.** Tests are the single source of truth for system behavior. Supersedes "purpose is golden, not code" — purpose is expressed AS tests.
+**Test is golden. Not spec, not architecture.** System prompt `## Test is Golden` section contains the full philosophy (was `## Test Quality`). Applies to ALL projects using OpenGraft.
 
-- Bottom-up: decide what behavior you want (write tests), then find simplest architecture that passes them
+- Bottom-up: write tests that define behavior → find simplest architecture that passes them
 - Architecture serves tests — question it freely ("is there a simpler design that passes these tests?")
-- Reject spec-driven development: spec is natural language with interpretation gaps, tests can't be interpreted — only satisfied or not
-- System prompt `## Test is Golden` section (was `## Test Quality`) contains the full philosophy
-- This principle applies to ALL projects using OpenGraft, not just OpenGraft itself
+- Reject spec-driven development: spec has interpretation gaps, tests can only be satisfied or not
 
+## Integration Test Infrastructure (March 2026)
 
+**Mock API conversation keying**: Uses `sessionId` (via `metadata.sessionId` in API params) as conversation key. Old message-content heuristic had collisions in 3-level nesting (child/grandchild share memory.md prefix). Falls back to content-based key when sessionId absent.
 
-## Mock API Session-Based Conversation Keying (March 2026)
+**Interrupted child resume**: `autoResumeProjects` now persists a "daemon restarted" message for interrupted (non-yielding) child agents before `runChildAgentInBackground`. Without this, provider blocks on `queue.wait()` forever during initial drain. Yielding children bypass drain — no message needed.
 
-The mock API now uses `sessionId` (passed via `metadata.sessionId` in API params) as the conversation key for turn queuing and prefix validation. This replaces the old message-content heuristic which had key collisions in 3-level nesting (child and grandchild agents had identical memory.md prefixes → same key → cross-contamination).
-
-- Provider passes `sessionId` through `callAPI` params → `createParams.metadata.sessionId`
-- Mock extracts it and uses `session:<id>` as the conversation key
-- Falls back to message-content heuristic when sessionId is not provided (backward compat)
-- `getConversationKey` strips `[HH:MM:SS]` timestamp prefixes from message-based keys
-
-## Interrupted Child Resume Messages
-
-`autoResumeProjects` now persists a "daemon restarted" message for interrupted (non-yielding) child agents before calling `runChildAgentInBackground`. Without this, the provider blocks on `queue.wait()` forever during initial drain. Yielding children bypass the drain so they dont need a message.
-
-## Known: Prefix Violation After Double Restart (Restart N)
-
-Prefix validation fails at msg index 4 after double restart with accumulated tool results. The resume message from `autoResumeProjects` causes a reconstruction mismatch. The autoResume resume message is formatted differently from the original messages. This is a real cache-miss issue. Test documented with prefix validation disabled.
+**Known: Prefix violation after double restart** (Restart N test). Resume message from `autoResumeProjects` reconstructs differently on 2nd restart → cache miss. Test runs with prefix validation disabled. Real bug, unfixed.
 
