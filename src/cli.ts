@@ -1272,7 +1272,7 @@ async function handleHealth(): Promise<void> {
 
 // ── Daemon management via launchctl ──
 
-const PLIST_LABEL = "com.mxd.daemon";
+const PLIST_LABEL = "dev.matrix.daemon";
 const PLIST_DIR = `${process.env.HOME}/Library/LaunchAgents`;
 const PLIST_PATH = `${PLIST_DIR}/${PLIST_LABEL}.plist`;
 const MXD_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
