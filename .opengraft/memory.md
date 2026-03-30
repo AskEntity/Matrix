@@ -519,3 +519,19 @@ Records `tools`, `systemStable`, `systemVariable` for the session segment.
 
 如果改不到，说明架构有问题。架构是disposable的——test在，随时可以换更简单的架构。AI写的架构会烂，接受这个事实，用test+类型系统约束，而不是指望AI有architectural taste。
 
+## Unified deliverMessage (March 2026)
+
+`deliverMessage` is THE single message delivery path. All external message delivery goes through it:
+1. Write to JSONL (emitEvent — SSE + persistence)
+2. Try queue delivery (if agent running)
+3. Flush JSONL (await — ensures on disk before auto-launch reads)
+4. Auto-launch child (unless `quiet: true`)
+
+Callers must NOT call emitEvent separately for messages — deliverMessage owns that.
+
+`quiet: true` for notifications (tree_change, parent chain) that should not auto-launch stopped agents.
+
+The persistent disk queue (persistent-queue.ts) was removed. JSONL + findUnconsumedMessages is the sole persistence mechanism. No more dual writes, no dedup logic.
+
+Resume messages from autoResumeProjects must be written to JSONL (via deliverMessage). Otherwise messages_consumed references an ID that doesn't exist in the JSONL event index → empty interleaved text on reconstruction → prefix mismatch.
+

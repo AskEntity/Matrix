@@ -1836,7 +1836,7 @@ describe("POST /projects/:id/clarify", () => {
 		});
 		expect(res.status).toBe(404);
 		const body = (await res.json()) as { error: string };
-		expect(body.error).toBe("No active session for this project");
+		expect(body.error).toBe("Project not found");
 	});
 
 	test("routes clarify_response to orchestrator queue when taskId is root", async () => {
@@ -2076,7 +2076,7 @@ describe("POST /projects/:id/clarify", () => {
 		}
 	});
 
-	test("returns 409 when child queue is closed", async () => {
+	test("returns 200 when child queue is closed (persists to JSONL)", async () => {
 		// Create a long-running provider so the agent stays alive
 		const longRunningProvider: AgentProvider = {
 			name: "mock",
@@ -2188,9 +2188,8 @@ describe("POST /projects/:id/clarify", () => {
 					}),
 				},
 			);
-			expect(clarifyRes.status).toBe(409);
-			const body = (await clarifyRes.json()) as { error: string };
-			expect(body.error).toBe("Queue closed");
+			// With unified deliverMessage, closed queue falls through to JSONL persistence → 200
+			expect(clarifyRes.status).toBe(200);
 		} finally {
 			childNode.session = undefined;
 			await localApp.request(`/projects/${project.id}/stop`, {

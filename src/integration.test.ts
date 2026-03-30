@@ -624,6 +624,7 @@ describe("Integration: full stack with mock API", () => {
 					// Missing tool_result for tc_1
 					{ role: "user", content: "no results here" },
 				],
+				metadata: { sessionId: "s7" },
 			}),
 		).toThrow(MockValidationError);
 	}, 10000);
@@ -952,6 +953,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		// First call: establishes prefix
 		mockAPI.createStream({
 			messages: [{ role: "user", content: "hello" }],
+			metadata: { sessionId: "restart-e" },
 		});
 
 		// Second call: valid extension (prefix match + new messages)
@@ -964,6 +966,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				},
 				{ role: "user", content: "bye" },
 			],
+			metadata: { sessionId: "restart-e" },
 		});
 
 		// Third call: INVALID — changes assistant message at index 1
@@ -978,6 +981,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 					},
 					{ role: "user", content: "bye" },
 				],
+				metadata: { sessionId: "restart-e" },
 			}),
 		).toThrow(MockValidationError);
 	}, 10000);
@@ -1003,6 +1007,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		mockAPI.createStream({
 			messages: [{ role: "user", content: "hello" }],
 			system: systemBlocks,
+			metadata: { sessionId: "sys-prompt" },
 		});
 
 		// Second call: same system, extended messages — OK
@@ -1013,6 +1018,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ role: "user", content: "next" },
 			],
 			system: systemBlocks,
+			metadata: { sessionId: "sys-prompt" },
 		});
 
 		// Third call: CHANGED system prompt — must throw
@@ -1033,6 +1039,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						cache_control: { type: "ephemeral", ttl: "1h" },
 					},
 				],
+				metadata: { sessionId: "sys-prompt" },
 			}),
 		).toThrow(MockValidationError);
 	}, 10000);
@@ -1054,6 +1061,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		mockAPI.createStream({
 			messages: [{ role: "user", content: "hello" }],
 			tools,
+			metadata: { sessionId: "tools-change" },
 		});
 
 		// Second call: same tools — OK
@@ -1064,6 +1072,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ role: "user", content: "next" },
 			],
 			tools,
+			metadata: { sessionId: "tools-change" },
 		});
 
 		// Third call: tools changed (added a tool) — must throw
@@ -1080,12 +1089,13 @@ describe("Integration: daemon restart with prefix consistency", () => {
 					...tools,
 					{ name: "write", description: "Write file", input_schema: {} },
 				],
+				metadata: { sessionId: "tools-change" },
 			}),
 		).toThrow(MockValidationError);
 	}, 10000);
 
 	test("Prefix validation: different conversations don't interfere", async () => {
-		// Parent and child have different first user messages → different conversations.
+		// Parent and child have different sessionIds → different conversations.
 		// System prompt change in one shouldn't affect the other.
 		const mockAPI = new ValidatingMockAPI();
 		mockAPI.enablePrefixValidation();
@@ -1096,12 +1106,14 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		mockAPI.createStream({
 			messages: [{ role: "user", content: "parent msg" }],
 			system,
+			metadata: { sessionId: "parent-session" },
 		});
 
-		// Child conversation (different first user message)
+		// Child conversation (different sessionId)
 		mockAPI.createStream({
 			messages: [{ role: "user", content: "child msg" }],
 			system,
+			metadata: { sessionId: "child-session" },
 		});
 
 		// Parent turn 2: same system — should NOT throw
@@ -1112,6 +1124,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ role: "user", content: "next" },
 			],
 			system,
+			metadata: { sessionId: "parent-session" },
 		});
 
 		// Child turn 2: same system — should NOT throw
@@ -1122,6 +1135,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ role: "user", content: "next" },
 			],
 			system,
+			metadata: { sessionId: "child-session" },
 		});
 	}, 10000);
 
@@ -1156,6 +1170,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 			messages: [{ role: "user", content: "parent start" }],
 			system,
 			tools,
+			metadata: { sessionId: "fork-parent" },
 		});
 
 		// Parent turn 2 (extended prefix)
@@ -1187,6 +1202,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 			],
 			system,
 			tools,
+			metadata: { sessionId: "fork-parent" },
 		});
 
 		// Child turn 1 — shares parent's prefix up to fork point, then diverges.
@@ -1220,6 +1236,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 			],
 			system, // same system — should pass
 			tools, // same tools — should pass
+			metadata: { sessionId: "fork-child" },
 		});
 
 		// Child turn 2 — same system/tools, extended messages — should pass
@@ -1272,6 +1289,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 			],
 			system, // same — pass
 			tools, // same — pass
+			metadata: { sessionId: "fork-child" },
 		});
 
 		// Now: mutation — if child had a DIFFERENT system prompt, it should throw.
@@ -1295,6 +1313,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 			messages: [{ role: "user", content: "parent msg v2" }],
 			system,
 			tools,
+			metadata: { sessionId: "fork-parent-v2" },
 		});
 
 		// Child with WRONG system — same first user message prefix as parent
@@ -1305,6 +1324,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 			messages: [{ role: "user", content: "child v2 start" }],
 			system,
 			tools,
+			metadata: { sessionId: "fork-child-v2" },
 		});
 
 		expect(() =>
@@ -1316,6 +1336,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				],
 				system: wrongSystem, // changed system — MUST throw
 				tools,
+				metadata: { sessionId: "fork-child-v2" },
 			}),
 		).toThrow(MockValidationError);
 	}, 10000);

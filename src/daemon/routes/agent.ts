@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import { DEFAULT_MODEL } from "../../config.ts";
-import { persistMessage } from "../../persistent-queue.ts";
+import { emitEvent } from "../event-system.ts";
+import type { QueueMessage } from "../../message-queue.ts";
 import type { SystemPrompt } from "../../system-prompts.ts";
 import { cancelAwait, moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
@@ -194,16 +195,23 @@ export function registerAgentRoutes(
 		try {
 			await stopAgent(ctx, project.id);
 
-			// Persist a resume message — no header needed, agent has context from JSONL
+			// Write resume message to JSONL — findUnconsumedMessages recovers it on launch
 			const restartTracker = await getTracker(ctx, project.id);
 			const restartRootId = restartTracker.rootNodeId;
 			if (restartRootId) {
-				await persistMessage(ctx.config.dataDir, project.id, restartRootId, {
+				const restartMsg: QueueMessage = {
 					source: "user",
 					id: ulid(),
 					ts: Date.now(),
 					content:
 						"Orchestrator restarted to pick up new config. Continue where you left off.",
+				};
+				emitEvent(ctx, project.id, {
+					type: "message",
+					id: restartMsg.id,
+					taskId: restartRootId,
+					body: restartMsg,
+					ts: restartMsg.ts,
 				});
 			}
 

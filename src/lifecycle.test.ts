@@ -8,7 +8,7 @@ import { createApp } from "./daemon.ts";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
-import { loadPersistedMessages } from "./persistent-queue.ts";
+
 
 import { TaskTracker } from "./task-tracker.ts";
 import { attachMockSession } from "./test-utils.ts";
@@ -319,12 +319,17 @@ describe("lifecycle: task state vs message delivery", () => {
 		};
 		expect(body.ok).toBe(true);
 
-		// Verify the message was persisted to disk
-		const persisted = await loadPersistedMessages(dataDir, project.id, task.id);
-		expect(persisted.length).toBeGreaterThanOrEqual(1);
-		const userMsg = persisted.find((m) => m.source === "user");
+		// Verify the message was written to JSONL
+		await delay(50); // flush
+		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const events = eventStore.read(task.id);
+		const userMsg = events.find(
+			(e: any) =>
+				e.type === "message" &&
+				e.body?.source === "user" &&
+				e.body?.content === "hello",
+		);
 		expect(userMsg).toBeTruthy();
-		expect((userMsg as { content: string }).content).toBe("hello");
 	});
 
 	test("message to running task enqueues immediately", async () => {
@@ -1059,15 +1064,14 @@ describe("lifecycle: parent chain notifications", () => {
 		expect(cMsgs).toHaveLength(1);
 		expect(cMsgs[0]?.source).toBe("user");
 
-		// Parent notification should be persisted to disk
-		const persisted = await loadPersistedMessages(
-			dataDir,
-			project.id,
-			parent.id,
-		);
-		expect(persisted.length).toBeGreaterThanOrEqual(1);
-		const notification = persisted.find(
-			(m) => m.source === "user_message_forwarded",
+		// Parent notification should be written to JSONL
+		await delay(50); // flush
+		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const events = eventStore.read(parent.id);
+		const notification = events.find(
+			(e: any) =>
+				e.type === "message" &&
+				e.body?.source === "user_message_forwarded",
 		);
 		expect(notification).toBeTruthy();
 
@@ -1310,7 +1314,7 @@ describe("lifecycle: waitForMessage timeout", () => {
 	});
 });
 
-describe("lifecycle: persistent queue integration", () => {
+describe("lifecycle: message persistence via JSONL", () => {
 	let tempDir: string;
 	let dataDir: string;
 	let projectDir: string;
@@ -1327,7 +1331,7 @@ describe("lifecycle: persistent queue integration", () => {
 		await rm(dataDir, { recursive: true, force: true });
 	});
 
-	test("message to task without queue persists to disk", async () => {
+	test("message to task without queue persists to JSONL", async () => {
 		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
@@ -1338,22 +1342,25 @@ describe("lifecycle: persistent queue integration", () => {
 		const project = await createProject(app, projectDir);
 		const task = await createTask(app, project.id, "Persist test");
 
-		// No session — message should be persisted
-
+		// No session — message should be written to JSONL via deliverMessage
 		await sendTaskMessage(app, project.id, task.id, "persisted content");
 
-		// Wait briefly for async persistence
+		// Wait briefly for async JSONL write
 		await delay(50);
 
-		// Verify message was persisted
-		const persisted = await loadPersistedMessages(dataDir, project.id, task.id);
-		expect(persisted.length).toBeGreaterThanOrEqual(1);
-		const userMsg = persisted.find((m) => m.source === "user");
-		expect(userMsg).toBeTruthy();
-		expect((userMsg as { content: string }).content).toBe("persisted content");
+		// Verify message was written to JSONL
+		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const events = eventStore.read(task.id);
+		const msgEvents = events.filter(
+			(e: any) =>
+				e.type === "message" &&
+				e.body?.source === "user" &&
+				e.body?.content === "persisted content",
+		);
+		expect(msgEvents.length).toBeGreaterThanOrEqual(1);
 	});
 
-	test("persisted messages accumulate when multiple sent without queue", async () => {
+	test("multiple messages accumulate in JSONL when sent without queue", async () => {
 		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
@@ -1364,19 +1371,21 @@ describe("lifecycle: persistent queue integration", () => {
 		const project = await createProject(app, projectDir);
 		const task = await createTask(app, project.id, "Multi persist");
 
-		// Send multiple messages (will persist since no queue)
+		// Send multiple messages (will persist to JSONL since no queue)
 		await sendTaskMessage(app, project.id, task.id, "msg 1");
 		await delay(50);
 		await sendTaskMessage(app, project.id, task.id, "msg 2");
 		await delay(50);
 
-		// Both should be persisted (auto-launch may fail in test env with fake git)
-		const persisted = await loadPersistedMessages(dataDir, project.id, task.id);
-		// At least the user messages should be there
-		const userMsgs = persisted.filter((m) => m.source === "user");
-		expect(userMsgs.length).toBeGreaterThanOrEqual(2);
-		expect((userMsgs[0] as { content: string }).content).toBe("msg 1");
-		expect((userMsgs[1] as { content: string }).content).toBe("msg 2");
+		// Both should be in JSONL
+		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const events = eventStore.read(task.id);
+		const userMsgEvents = events.filter(
+			(e: any) => e.type === "message" && e.body?.source === "user",
+		);
+		expect(userMsgEvents.length).toBeGreaterThanOrEqual(2);
+		expect((userMsgEvents[0] as any).body.content).toBe("msg 1");
+		expect((userMsgEvents[1] as any).body.content).toBe("msg 2");
 	});
 });
 
@@ -1538,11 +1547,16 @@ describe("lifecycle: clarify response routing", () => {
 		// Without an active session, this falls through to persist
 		expect(res.status).toBe(200);
 
-		const persisted = await loadPersistedMessages(dataDir, project.id, task.id);
-		expect(persisted.length).toBeGreaterThanOrEqual(1);
-		const clarifyMsg = persisted.find((m) => m.source === "clarify_response");
-		expect(clarifyMsg).toBeTruthy();
-		expect((clarifyMsg as { answer: string }).answer).toBe("offline answer");
+		await delay(50); // flush
+		const eventStore = new EventStore(join(dataDir, "sessions", project.id));
+		const events = eventStore.read(task.id);
+		const clarifyEvt = events.find(
+			(e: any) =>
+				e.type === "message" &&
+				e.body?.source === "clarify_response" &&
+				e.body?.answer === "offline answer",
+		);
+		expect(clarifyEvt).toBeTruthy();
 	});
 });
 

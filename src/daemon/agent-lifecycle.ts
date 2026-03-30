@@ -13,11 +13,7 @@ import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { MessageQueue } from "../message-queue.ts";
 import { createOrchestratorTools } from "../orchestrator-tools.ts";
-import {
-	clearPersistedMessages,
-	loadPersistedMessages,
-	persistMessage,
-} from "../persistent-queue.ts";
+
 import { buildSystemPrompt, type SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
@@ -287,13 +283,8 @@ export interface RunChildCoreParams {
 	queue?: MessageQueue;
 	/** Full AgentRequest to pass to provider.stream(). Queue will be set on the request. */
 	sessionRequest: AgentRequest;
-	/** Config for loading persisted messages from disk. Omit to skip. */
-	persistedMessages?: {
-		dataDir: string;
-		projectId: string;
-	};
-	/** IDs of messages already recovered from JSONL (unconsumed). Skip these when loading persisted messages. */
-	unconsumedIds?: Set<string>;
+
+
 }
 
 /**
@@ -313,36 +304,14 @@ export async function runChildCore(
 		tracker,
 		taskId,
 		sessionRequest,
-		persistedMessages,
-		unconsumedIds,
 	} = params;
 
 	// Use pre-created queue or create a new one
 	const childQueue = params.queue ?? new MessageQueue();
 	sessionRequest.queue = childQueue;
 
-	// Load any persisted messages from disk and enqueue them.
-	// Skip messages already recovered from JSONL (unconsumed) to avoid duplicates —
-	// handleInjectMessage writes to both JSONL (emitEvent) and persistent queue (deliverMessage).
-	if (persistedMessages) {
-		const persisted = await loadPersistedMessages(
-			persistedMessages.dataDir,
-			persistedMessages.projectId,
-			taskId,
-		);
-		for (const msg of persisted) {
-			if (unconsumedIds && "id" in msg && msg.id && unconsumedIds.has(msg.id))
-				continue;
-			childQueue.enqueue(msg);
-		}
-		if (persisted.length > 0) {
-			await clearPersistedMessages(
-				persistedMessages.dataDir,
-				persistedMessages.projectId,
-				taskId,
-			);
-		}
-	}
+	// Messages are recovered from JSONL via findUnconsumedMessages (already enqueued
+	// by the caller). No disk queue — JSONL is the sole persistence path.
 
 	try {
 		const stream = provider.stream(sessionRequest);
@@ -499,43 +468,65 @@ export async function stopAgent(
  * Callers should NOT include the message content in any launch prompt — the agent
  * will receive it via queue drain of persisted messages.
  *
+ * THE single message delivery path. All message delivery goes through here.
+ * Handles: JSONL persistence (SSE + persist), queue delivery (if running), auto-launch (if not).
+ *
+ * Callers must NOT call emitEvent separately for the message — deliverMessage owns that.
+ *
+ * @param opts.quiet - If true, skip auto-launch when agent is not running.
+ *   Used for notifications (tree_change) that shouldn't wake stopped agents.
+ *
  * @returns "enqueued" if delivered to a running agent's queue,
- *          "persisted" if written to disk (agent not running).
+ *          "persisted" if written to JSONL (agent not running).
  */
 export async function deliverMessage(
 	ctx: DaemonContext,
 	project: { id: string; path: string },
 	nodeId: string,
 	message: QueueMessage,
+	opts?: { quiet?: boolean },
 ): Promise<"enqueued" | "persisted"> {
 	const tracker = await getTracker(ctx, project.id);
 
-	// 1. Try direct queue delivery via session on tracker node
+	// Step 1: ALWAYS write to JSONL (SSE broadcast + persistence).
+	// This ensures findUnconsumedMessages can recover it on restart.
+	emitEvent(ctx, project.id, {
+		type: "message",
+		id: message.id,
+		taskId: nodeId,
+		body: message,
+		ts: message.ts,
+	});
+
+	// Step 2: Try direct queue delivery if agent is running
 	const queue = tracker.get(nodeId)?.session?.queue;
 	if (queue) {
 		try {
 			queue.enqueue(message);
 			return "enqueued";
 		} catch {
-			// Queue was closed — fall through to persist + launch
+			// Queue was closed — fall through to persist/launch
 		}
 	}
 
-	// 2. No running agent — persist to disk
-	await persistMessage(ctx.config.dataDir, project.id, nodeId, message);
+	// Step 3: Agent not running — flush JSONL.
+	const eventStore = getEventStore(ctx, project.id);
+	await eventStore.flushSession(nodeId);
 
-	// 4. Auto-launch for child nodes only. Root launch requires caller-specific
-	// logic (orchestratorSystemPrompt, resume detection) — caller handles it.
-	const node = tracker.get(nodeId);
-	if (node?.parentId) {
-		ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
-			emitEvent(ctx, project.id, {
-				type: "error",
-				taskId: nodeId,
-				message: `Auto-launch failed: ${e instanceof Error ? e.message : String(e)}`,
-				ts: Date.now(),
+	// Step 4: Auto-launch for children (unless quiet).
+	// Root launch requires caller-specific logic (orchestratorSystemPrompt, resume).
+	if (!opts?.quiet) {
+		const node = tracker.get(nodeId);
+		if (node?.parentId) {
+			ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
+				emitEvent(ctx, project.id, {
+					type: "error",
+					taskId: nodeId,
+					message: `Auto-launch failed: ${e instanceof Error ? e.message : String(e)}`,
+					ts: Date.now(),
+				});
 			});
-		});
+		}
 	}
 
 	return "persisted";
@@ -648,7 +639,6 @@ export async function runChildAgentInBackground(
 		let activeEvents = eventStore.has(nodeId)
 			? eventStore.readActive(nodeId)
 			: [];
-		const childUnconsumedIds = new Set<string>();
 		if (activeEvents.length > 0) {
 			const orphanFixes = findOrphanedToolCalls(activeEvents, nodeId);
 			if (orphanFixes.length > 0) {
@@ -677,7 +667,6 @@ export async function runChildAgentInBackground(
 			const unconsumed = findUnconsumedMessages(activeEvents);
 			for (const msg of unconsumed) {
 				childQueue.enqueue(msg);
-				if ("id" in msg && msg.id) childUnconsumedIds.add(msg.id);
 			}
 		}
 
@@ -739,11 +728,6 @@ export async function runChildAgentInBackground(
 				buildYieldPendingSection: agentCtx.buildYieldPendingSection,
 				getSession,
 			},
-			persistedMessages: {
-				dataDir: ctx.config.dataDir,
-				projectId: project.id,
-			},
-			unconsumedIds: childUnconsumedIds,
 		});
 
 		// --- Post-completion logic (unified for both MCP and daemon paths) ---
@@ -872,7 +856,6 @@ export async function launchAgent(
 	let rootActiveEvents = eventStore.has(rootNodeId)
 		? eventStore.readActive(rootNodeId)
 		: [];
-	const unconsumedIds = new Set<string>();
 	if (rootActiveEvents.length > 0) {
 		const orphanFixes = findOrphanedToolCalls(rootActiveEvents, rootNodeId);
 		if (orphanFixes.length > 0) {
@@ -913,28 +896,11 @@ export async function launchAgent(
 		const unconsumed = findUnconsumedMessages(rootActiveEvents);
 		for (const msg of unconsumed) {
 			queue.enqueue(msg);
-			// Track IDs to dedup against persistent queue (handleInjectMessage writes
-			// the same message to BOTH JSONL and persistent queue on disk)
-			if ("id" in msg && msg.id) unconsumedIds.add(msg.id);
 		}
 	}
 
-	// Load persisted messages from disk (sent after restart, before agent launched).
-	// These come AFTER unconsumed messages in the queue since they're chronologically later.
-	// Skip messages already recovered from JSONL (unconsumed) to avoid duplicates —
-	// handleInjectMessage writes to both JSONL (emitEvent) and persistent queue (deliverMessage).
-	const persistedMsgs = await loadPersistedMessages(
-		ctx.config.dataDir,
-		project.id,
-		rootNodeId,
-	);
-	for (const msg of persistedMsgs) {
-		if ("id" in msg && msg.id && unconsumedIds.has(msg.id)) continue;
-		queue.enqueue(msg);
-	}
-	if (persistedMsgs.length > 0) {
-		await clearPersistedMessages(ctx.config.dataDir, project.id, rootNodeId);
-	}
+	// Messages are recovered from JSONL via findUnconsumedMessages above.
+	// No disk queue — JSONL is the sole persistence path.
 
 	// Resolve system prompt: use stored session_config on resume, fresh on start.
 	const isRootResume = rootActiveEvents.length > 0;
@@ -1159,36 +1125,18 @@ export async function handleInjectMessage(
 	// Only include header (memory.md + working dir) on true cold start.
 	// Resume agents already have context from their JSONL session.
 	let msg: QueueMessage;
-	let event: Event;
 	if (shouldResume) {
-		const msgId = ulid();
-		const ts = Date.now();
 		msg = {
 			source: "user",
-			id: msgId,
-			ts,
+			id: ulid(),
+			ts: Date.now(),
 			content: message,
 			...(images?.length ? { images } : {}),
 		};
-		event = {
-			type: "message",
-			id: msgId,
-			taskId: rootNodeId,
-			body: msg,
-			ts,
-		};
 	} else {
-		const prepared = prepareAgentMessage(
-			project.path,
-			rootNodeId,
-			message,
-			images,
-		);
-		msg = prepared.msg;
-		event = prepared.event;
+		msg = prepareAgentMessage(project.path, rootNodeId, message, images).msg;
 	}
-	emitEvent(ctx, projectId, event);
-
+	// deliverMessage is the SOLE path for message persistence + delivery.
 	const result = await deliverMessage(ctx, project, rootNodeId, msg);
 
 	if (result === "enqueued") {
@@ -1216,46 +1164,20 @@ export async function handleClarifyResponse(
 	answer: string,
 	clarificationId?: string,
 ): Promise<{ ok: boolean; error?: string; status?: number }> {
-	// Route the response to the correct agent's queue via session on tracker
-	const tracker = await getTracker(ctx, projectId);
-	const targetQueue = tracker.get(taskId)?.session?.queue;
-	if (targetQueue) {
-		try {
-			targetQueue.enqueue({
-				source: "clarify_response",
-				id: ulid(),
-				ts: Date.now(),
-				answer,
-			});
-		} catch {
-			return { ok: false, error: "Queue closed", status: 409 };
-		}
-		removePendingClarification(ctx, projectId, taskId, clarificationId);
-		emitEvent(ctx, projectId, {
-			type: "clarification_answered",
-			taskId,
-			answer,
-			ts: Date.now(),
-		});
-		return { ok: true };
-	}
-
-	// No running agent — persist the clarify_response to disk
 	const project = ctx.pm.get(projectId);
 	if (!project) {
-		return {
-			ok: false,
-			error: "No active session for this project",
-			status: 404,
-		};
+		return { ok: false, error: "Project not found", status: 404 };
 	}
 
-	await persistMessage(ctx.config.dataDir, projectId, taskId, {
+	// Single delivery path — handles JSONL + queue + auto-launch
+	const clarifyMsg: QueueMessage = {
 		source: "clarify_response",
 		id: ulid(),
 		ts: Date.now(),
 		answer,
-	});
+	};
+	await deliverMessage(ctx, project, taskId, clarifyMsg);
+
 	removePendingClarification(ctx, projectId, taskId, clarificationId);
 	emitEvent(ctx, projectId, {
 		type: "clarification_answered",

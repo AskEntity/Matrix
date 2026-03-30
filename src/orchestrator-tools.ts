@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { Event } from "./events.ts";
 import type { QueueMessage } from "./message-queue.ts";
-import { clearPersistedMessages } from "./persistent-queue.ts";
+
 import type { PendingState } from "./shared-types.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import {
@@ -1107,20 +1107,6 @@ export function createOrchestratorTools(
 					// Delete event JSONL files
 					deps.clearEventStore(node.id);
 
-					// Clear persisted messages for this task and all descendants
-					if (deps.dataDir) {
-						const dd = deps.dataDir;
-						const collectIds = (id: string): string[] => {
-							const n = tracker.get(id);
-							if (!n) return [];
-							return [id, ...n.children.flatMap((cid) => collectIds(cid))];
-						};
-						const allIds = collectIds(node.id);
-						await Promise.all(
-							allIds.map((id) => clearPersistedMessages(dd, projectId, id)),
-						);
-					}
-
 					// Remove node from tree
 					tracker.remove(node.id);
 					await tracker.save();
@@ -1199,11 +1185,6 @@ export function createOrchestratorTools(
 
 					// Delete event JSONL files
 					deps.clearEventStore(node.id);
-
-					// Clear persisted messages (follows session lifecycle)
-					if (deps.dataDir) {
-						await clearPersistedMessages(deps.dataDir, projectId, node.id);
-					}
 
 					tracker.updateStatus(node.id, "pending");
 					await tracker.save();
