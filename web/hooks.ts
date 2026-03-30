@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "./api.ts";
 import { authFetch, getToken } from "./auth.ts";
 
 export type { TaskNode, TaskStatus } from "../src/types.ts";
@@ -274,7 +275,7 @@ export function useProjects() {
 
 	const deleteProject = useCallback(
 		async (id: string) => {
-			const res = await authFetch(`/projects/${id}`, { method: "DELETE" });
+			const res = await authFetch(api.project(id), { method: "DELETE" });
 			if (!res.ok) throw new Error((await res.json()).error);
 			await refresh();
 		},
@@ -298,7 +299,7 @@ export function useTasks(
 			return;
 		}
 		try {
-			const res = await authFetch(`/projects/${projectId}/tasks`);
+			const res = await authFetch(api.tasks(projectId));
 			const data = await res.json();
 			setNodes(data.nodes || []);
 			if (data.rootNodeId && setRootNodeId) {
@@ -337,7 +338,7 @@ export function useAgent(projectId: string) {
 		}
 		try {
 			// Fetch per-agent idle/active status
-			const statusRes = await authFetch(`/projects/${projectId}/agent/status`);
+			const statusRes = await authFetch(api.agentStatus(projectId));
 			if (statusRes.ok) {
 				const statusData = (await statusRes.json()) as {
 					idle: string[];
@@ -346,7 +347,7 @@ export function useAgent(projectId: string) {
 				setActiveAgents(new Set(statusData.active));
 			}
 			// Fetch provider/model from legacy endpoint
-			const res = await authFetch(`/projects/${projectId}/agent`);
+			const res = await authFetch(api.agent(projectId));
 			const data = await res.json();
 			if (data.provider) setProvider(data.provider);
 			if (data.model) setModel(data.model);
@@ -361,7 +362,7 @@ export function useAgent(projectId: string) {
 
 	const start = useCallback(
 		async (opts: { prompt: string; model?: string; childModel?: string }) => {
-			const res = await authFetch(`/projects/${projectId}/orchestrate/agent`, {
+			const res = await authFetch(api.orchestrate(projectId), {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(opts),
@@ -373,7 +374,7 @@ export function useAgent(projectId: string) {
 	);
 
 	const stop = useCallback(async () => {
-		const res = await authFetch(`/projects/${projectId}/stop`, {
+		const res = await authFetch(api.stop(projectId), {
 			method: "POST",
 		});
 		if (!res.ok) {
@@ -391,14 +392,11 @@ export function useAgent(projectId: string) {
 		async (taskId: string, message?: string) => {
 			const body: Record<string, unknown> = {};
 			if (message) body.message = message;
-			const res = await authFetch(
-				`/projects/${projectId}/tasks/${taskId}/continue`,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(body),
-				},
-			);
+			const res = await authFetch(api.taskContinue(projectId, taskId), {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
 			if (!res.ok) throw new Error((await res.json()).error);
 			return await res.json();
 		},
@@ -407,7 +405,7 @@ export function useAgent(projectId: string) {
 
 	const deleteTask = useCallback(
 		async (taskId: string) => {
-			const res = await authFetch(`/projects/${projectId}/tasks/${taskId}`, {
+			const res = await authFetch(api.task(projectId, taskId), {
 				method: "DELETE",
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
@@ -417,17 +415,16 @@ export function useAgent(projectId: string) {
 
 	const clearTaskSession = useCallback(
 		async (taskId: string) => {
-			const res = await authFetch(
-				`/projects/${projectId}/tasks/${taskId}/sessions/clear`,
-				{ method: "POST" },
-			);
+			const res = await authFetch(api.taskSessionsClear(projectId, taskId), {
+				method: "POST",
+			});
 			if (!res.ok) throw new Error((await res.json()).error);
 		},
 		[projectId],
 	);
 
 	const compact = useCallback(async () => {
-		const res = await authFetch(`/projects/${projectId}/compact`, {
+		const res = await authFetch(api.compact(projectId), {
 			method: "POST",
 		});
 		if (!res.ok) throw new Error((await res.json()).error);
@@ -441,14 +438,11 @@ export function useAgent(projectId: string) {
 		) => {
 			const body: Record<string, unknown> = { content };
 			if (images?.length) body.images = images;
-			const res = await authFetch(
-				`/projects/${projectId}/tasks/${taskId}/message`,
-				{
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify(body),
-				},
-			);
+			const res = await authFetch(api.taskMessage(projectId, taskId), {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+			});
 			if (!res.ok) throw new Error((await res.json()).error);
 		},
 		[projectId],
@@ -456,14 +450,11 @@ export function useAgent(projectId: string) {
 
 	const reorderTasks = useCallback(
 		async (nodeId: string, children: string[]) => {
-			const res = await authFetch(
-				`/projects/${projectId}/tasks/${nodeId}/reorder`,
-				{
-					method: "PATCH",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ children }),
-				},
-			);
+			const res = await authFetch(api.taskReorder(projectId, nodeId), {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ children }),
+			});
 			if (!res.ok) throw new Error((await res.json()).error);
 		},
 		[projectId],
@@ -471,7 +462,7 @@ export function useAgent(projectId: string) {
 
 	const reparentTask = useCallback(
 		async (nodeId: string, newParentId: string) => {
-			const res = await authFetch(`/projects/${projectId}/tasks/${nodeId}`, {
+			const res = await authFetch(api.task(projectId, nodeId), {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ parentId: newParentId }),
@@ -549,7 +540,7 @@ export function useThreeLayerConfig(projectId: string | null) {
 		}
 		setLoading(true);
 		try {
-			const res = await authFetch(`/projects/${projectId}/config/all`);
+			const res = await authFetch(api.configAll(projectId));
 			if (res.ok) setLayers(await res.json());
 		} catch (e) {
 			console.warn("[useConfigLayers] Failed to fetch config:", e);
@@ -577,7 +568,7 @@ export function useThreeLayerConfig(projectId: string | null) {
 	const updateRepo = useCallback(
 		async (partial: Record<string, unknown>) => {
 			if (!projectId) return;
-			const res = await authFetch(`/projects/${projectId}/config/repo`, {
+			const res = await authFetch(api.configRepo(projectId), {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(partial),
@@ -590,7 +581,7 @@ export function useThreeLayerConfig(projectId: string | null) {
 	const updateLocal = useCallback(
 		async (partial: Record<string, unknown>) => {
 			if (!projectId) return;
-			const res = await authFetch(`/projects/${projectId}/config`, {
+			const res = await authFetch(api.config(projectId), {
 				method: "PATCH",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(partial),

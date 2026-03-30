@@ -1,4 +1,5 @@
 import type React from "react";
+import { api } from "./api.ts";
 import { authFetch } from "./auth.ts";
 import type { LogEntry, Project, TaskNode, UIEvent } from "./hooks.ts";
 
@@ -145,7 +146,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		if (cmd === "/clear") {
 			if (!confirm(t("confirm.clearSessions"))) return true;
 			try {
-				const res = await authFetch(`/projects/${projectId}/sessions/clear`, {
+				const res = await authFetch(api.sessionsClear(projectId), {
 					method: "POST",
 				});
 				if (!res.ok) throw new Error((await res.json()).error);
@@ -228,7 +229,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		);
 		if (!clarification) return;
 		try {
-			const res = await authFetch(`/projects/${projectId}/clarify`, {
+			const res = await authFetch(api.clarify(projectId), {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -271,7 +272,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 	async function handleClearSessions() {
 		if (!confirm(t("confirm.clearSessions"))) return;
 		try {
-			const res = await authFetch(`/projects/${projectId}/sessions/clear`, {
+			const res = await authFetch(api.sessionsClear(projectId), {
 				method: "POST",
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
@@ -422,7 +423,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		const body: Record<string, string> = { title };
 		if (selectedTaskId && !isOrchestratorNode) body.parentId = selectedTaskId;
 		try {
-			const res = await authFetch(`/projects/${projectId}/tasks`, {
+			const res = await authFetch(api.tasks(projectId), {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(body),

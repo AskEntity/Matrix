@@ -1,5 +1,6 @@
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api } from "./api.ts";
 import { authFetch, clearToken } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
 import { AppFooter } from "./components/AppFooter.tsx";
@@ -429,14 +430,14 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const handleReconnect = useCallback(() => {
 		if (!projectId) return;
 		// Re-fetch events with compact barrier — processEventBatch derives pending state from JSONL events
-		authFetch(`/projects/${projectId}/events?after=compact`)
+		authFetch(api.events(projectId, "after=compact"))
 			.then((r) => r.json())
 			.then(processEventResponse)
 			.catch((e) =>
 				console.warn("[App] Failed to re-fetch events on reconnect:", e),
 			);
 		// Re-fetch pending clarifications (still ephemeral/in-memory)
-		authFetch(`/projects/${projectId}/clarifications`)
+		authFetch(api.clarifications(projectId))
 			.then((r) => r.json())
 			.then(
 				(data: {
@@ -478,7 +479,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		if (!projectId) return;
 		let cancelled = false;
 		setOlderEventsAvailable(new Map());
-		authFetch(`/projects/${projectId}/events?after=compact`)
+		authFetch(api.events(projectId, "after=compact"))
 			.then((r) => r.json())
 			.then((data: { events?: IncomingEvent[]; hasOlderEvents?: boolean }) => {
 				if (cancelled) return;
@@ -541,7 +542,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			setClarifyAnswers({});
 			return;
 		}
-		authFetch(`/projects/${projectId}/clarifications`)
+		authFetch(api.clarifications(projectId))
 			.then((r) => r.json())
 			.then((data: { clarifications: typeof pendingClarifications }) =>
 				setPendingClarifications(data.clarifications ?? []),
@@ -719,7 +720,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			setLoadingOlderEvents(true);
 			try {
 				const res = await authFetch(
-					`/projects/${projectId}/events/older?session=${encodeURIComponent(sessionId)}&before=${info.oldestTs}&limit=200`,
+					api.eventsOlder(
+						projectId,
+						`session=${encodeURIComponent(sessionId)}&before=${info.oldestTs}&limit=200`,
+					),
 				);
 				const data = (await res.json()) as {
 					events?: IncomingEvent[];
@@ -728,7 +732,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				if (data.events && data.events.length > 0) {
 					// Re-fetch all events to get a complete picture, then re-process.
 					// Simpler than trying to prepend and re-process.
-					const fullRes = await authFetch(`/projects/${projectId}/events`);
+					const fullRes = await authFetch(api.events(projectId));
 					const fullData = (await fullRes.json()) as {
 						events?: IncomingEvent[];
 					};

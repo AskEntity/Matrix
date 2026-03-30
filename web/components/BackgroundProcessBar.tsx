@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useState } from "react";
+import { api } from "../api.ts";
 import { authFetch } from "../auth.ts";
 
 interface BackgroundProcess {
@@ -49,7 +50,7 @@ export const BackgroundProcessBar = memo(function BackgroundProcessBar({
 		async (bgId: string, taskId?: string) => {
 			setKilling((prev) => new Set(prev).add(bgId));
 			try {
-				await authFetch(`/projects/${projectId}/background/${bgId}/kill`, {
+				await authFetch(api.backgroundKill(projectId, bgId), {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({
