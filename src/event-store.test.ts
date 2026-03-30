@@ -488,7 +488,7 @@ describe("EventStore", () => {
 	test("preserves all event fields through round-trip", async () => {
 		const event: Event = {
 			type: "tool_result",
-			tool: "mcp__opengraft__bash",
+			tool: "mcp__mxd__bash",
 			toolCallId: "tc1",
 			content: 'result with "quotes" and\nnewlines',
 			isError: false,

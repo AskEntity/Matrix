@@ -19,13 +19,13 @@ export interface McpServerConfig {
 export interface WebAuthnConfig {
 	/** Whether passkey auth is required on the main port. Defaults to false. */
 	enforced?: boolean;
-	/** Relying Party display name. Defaults to "OpenGraft". */
+	/** Relying Party display name. Defaults to "Matrix". */
 	rpName?: string;
 	/** Relying Party ID (domain). Defaults to request host. */
 	rpID?: string;
 }
 
-export interface OpenGraftConfig {
+export interface MatrixConfig {
 	authGroups?: Record<string, AuthGroup>;
 	defaultAuth?: string;
 	model?: string;
@@ -44,25 +44,23 @@ export interface OpenGraftConfig {
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 function globalConfigPath(): string {
-	return join(homedir(), ".opengraft", "config.json");
+	return join(homedir(), ".mxd", "config.json");
 }
 
-async function readJsonConfig(path: string): Promise<OpenGraftConfig> {
+async function readJsonConfig(path: string): Promise<MatrixConfig> {
 	try {
-		return JSON.parse(await readFile(path, "utf-8")) as OpenGraftConfig;
+		return JSON.parse(await readFile(path, "utf-8")) as MatrixConfig;
 	} catch {
 		return {};
 	}
 }
 
-export async function loadGlobalConfig(
-	path?: string,
-): Promise<OpenGraftConfig> {
+export async function loadGlobalConfig(path?: string): Promise<MatrixConfig> {
 	return readJsonConfig(path ?? globalConfigPath());
 }
 
 export async function saveGlobalConfig(
-	config: OpenGraftConfig,
+	config: MatrixConfig,
 	path?: string,
 ): Promise<void> {
 	const resolvedPath = path ?? globalConfigPath();
@@ -72,15 +70,15 @@ export async function saveGlobalConfig(
 
 export async function loadProjectRepoConfig(
 	projectPath: string,
-): Promise<OpenGraftConfig> {
-	return readJsonConfig(join(projectPath, ".opengraft", "config.json"));
+): Promise<MatrixConfig> {
+	return readJsonConfig(join(projectPath, ".mxd", "config.json"));
 }
 
 export async function saveProjectRepoConfig(
 	projectPath: string,
-	config: OpenGraftConfig,
+	config: MatrixConfig,
 ): Promise<void> {
-	const path = join(projectPath, ".opengraft", "config.json");
+	const path = join(projectPath, ".mxd", "config.json");
 	await mkdir(dirname(path), { recursive: true });
 	await writeFile(path, JSON.stringify(config, null, "\t"), "utf-8");
 }
@@ -88,14 +86,14 @@ export async function saveProjectRepoConfig(
 export async function loadProjectLocalConfig(
 	dataDir: string,
 	projectId: string,
-): Promise<OpenGraftConfig> {
+): Promise<MatrixConfig> {
 	return readJsonConfig(join(dataDir, "projects", projectId, "config.json"));
 }
 
 export async function saveProjectLocalConfig(
 	dataDir: string,
 	projectId: string,
-	config: OpenGraftConfig,
+	config: MatrixConfig,
 ): Promise<void> {
 	const path = join(dataDir, "projects", projectId, "config.json");
 	await mkdir(dirname(path), { recursive: true });
@@ -109,11 +107,11 @@ export async function saveProjectLocalConfig(
  * authGroups: union of all groups; local overrides same-named group from repo/global.
  */
 export function resolveConfig(
-	global: OpenGraftConfig,
-	repo: OpenGraftConfig,
-	local: OpenGraftConfig,
-): OpenGraftConfig {
-	const result: OpenGraftConfig = {};
+	global: MatrixConfig,
+	repo: MatrixConfig,
+	local: MatrixConfig,
+): MatrixConfig {
+	const result: MatrixConfig = {};
 
 	// Scalar fields — first defined value wins (local > repo > global)
 	const scalarKeys = [
@@ -182,7 +180,7 @@ export function isAuthEnforced(auth?: WebAuthnConfig): boolean {
  * Returns null if the group doesn't exist.
  */
 export function resolveAuthGroup(
-	config: OpenGraftConfig,
+	config: MatrixConfig,
 	groupName?: string,
 ): AuthGroup | null {
 	const name = groupName ?? config.defaultAuth;

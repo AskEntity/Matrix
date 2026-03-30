@@ -69,30 +69,30 @@ export function McpToolCardBody({
 				resultTasks = resultJson.tasks as typeof resultTasks;
 			}
 			return (
-				<div className="og-mcp-body">
+				<div className="mxd-mcp-body">
 					{resultTasks.map((rt, i) => {
 						const taskInput = tasks[i];
 						return (
 							// biome-ignore lint/suspicious/noArrayIndexKey: stable index
-							<div key={i} className="og-mcp-task-item">
-								<span className="og-mcp-task-title">
+							<div key={i} className="mxd-mcp-task-item">
+								<span className="mxd-mcp-task-title">
 									{rt.title ??
 										(rt.taskId
 											? (nodeMap?.get(rt.taskId)?.title ?? rt.taskId)
 											: "?")}
 								</span>
 								{taskInput?.mode && taskInput.mode !== "new" && (
-									<span className="og-mcp-task-mode">{taskInput.mode}</span>
+									<span className="mxd-mcp-task-mode">{taskInput.mode}</span>
 								)}
 								{taskInput?.message && (
-									<div className="og-mcp-task-msg">{taskInput.message}</div>
+									<div className="mxd-mcp-task-msg">{taskInput.message}</div>
 								)}
 							</div>
 						);
 					})}
 					{resultTasks.length === 0 && tasks.length > 0 && (
-						<div className="og-mcp-task-item">
-							<span className="og-mcp-task-title">
+						<div className="mxd-mcp-task-item">
+							<span className="mxd-mcp-task-title">
 								{tasks.length} {t("log.tasks")}
 							</span>
 						</div>
@@ -105,9 +105,9 @@ export function McpToolCardBody({
 				getArg(toolArgs, "title") ?? String(resultJson?.title ?? "");
 			const desc = getArg(toolArgs, "description");
 			return (
-				<div className="og-mcp-body">
-					{title && <div className="og-mcp-task-title">{title}</div>}
-					{desc && <div className="og-mcp-task-desc">{desc}</div>}
+				<div className="mxd-mcp-body">
+					{title && <div className="mxd-mcp-task-title">{title}</div>}
+					{desc && <div className="mxd-mcp-task-desc">{desc}</div>}
 				</div>
 			);
 		}
@@ -118,14 +118,14 @@ export function McpToolCardBody({
 				status === "passed" || (isOk && resultContent?.includes("passed"));
 			const taskTitle = taskId ? nodeMap?.get(taskId)?.title : undefined;
 			return (
-				<div className="og-mcp-body">
-					{taskTitle && <div className="og-mcp-done-title">{taskTitle}</div>}
+				<div className="mxd-mcp-body">
+					{taskTitle && <div className="mxd-mcp-done-title">{taskTitle}</div>}
 					<div
-						className={`og-mcp-done-status ${isPassed ? "og-mcp-done-passed" : "og-mcp-done-failed"}`}
+						className={`mxd-mcp-done-status ${isPassed ? "mxd-mcp-done-passed" : "mxd-mcp-done-failed"}`}
 					>
 						{isPassed ? t("tool.passed") : t("tool.failed")}
 					</div>
-					{summary && <div className="og-mcp-task-desc">{summary}</div>}
+					{summary && <div className="mxd-mcp-task-desc">{summary}</div>}
 				</div>
 			);
 		}
@@ -135,8 +135,8 @@ export function McpToolCardBody({
 					? formatMcpToolResult(toolName, resultContent, t)
 					: null;
 			return (
-				<div className="og-mcp-body">
-					<div className="og-mcp-yield">{formatted ?? t("tool.waiting")}</div>
+				<div className="mxd-mcp-body">
+					<div className="mxd-mcp-yield">{formatted ?? t("tool.waiting")}</div>
 				</div>
 			);
 		}
@@ -145,13 +145,13 @@ export function McpToolCardBody({
 				typeof resultJson?.title === "string" ? resultJson.title : null;
 			const argTaskId = getArg(toolArgs, "taskId");
 			return (
-				<div className="og-mcp-body">
+				<div className="mxd-mcp-body">
 					{title ? (
-						<div className="og-mcp-task-title">
+						<div className="mxd-mcp-task-title">
 							{t("log.deletedTask")} "{title}"
 						</div>
 					) : (
-						<div className="og-mcp-task-title">
+						<div className="mxd-mcp-task-title">
 							{(argTaskId
 								? (nodeMap?.get(argTaskId)?.title ?? argTaskId)
 								: null) ?? "?"}
@@ -166,8 +166,8 @@ export function McpToolCardBody({
 					? formatMcpToolResult(toolName, resultContent, t)
 					: null;
 			return (
-				<div className="og-mcp-body">
-					<div className="og-mcp-tree-summary">
+				<div className="mxd-mcp-body">
+					<div className="mxd-mcp-tree-summary">
 						{formatted ?? resultContent ?? ""}
 					</div>
 				</div>
@@ -180,16 +180,16 @@ export function McpToolCardBody({
 			const msg = getArg(toolArgs, "message") ?? "";
 			if (!msg) return null;
 			return (
-				<div className="og-mcp-body">
-					<div className="og-mcp-task-desc">{msg}</div>
+				<div className="mxd-mcp-body">
+					<div className="mxd-mcp-task-desc">{msg}</div>
 				</div>
 			);
 		}
 		case "send_message_to_project": {
 			const msg = getArg(toolArgs, "message") ?? "";
 			return (
-				<div className="og-mcp-body">
-					{msg && <div className="og-mcp-task-desc">{msg}</div>}
+				<div className="mxd-mcp-body">
+					{msg && <div className="mxd-mcp-task-desc">{msg}</div>}
 				</div>
 			);
 		}
@@ -199,8 +199,8 @@ export function McpToolCardBody({
 			const newStr = getArg(toolArgs, "new_string");
 			if (oldStr != null && newStr != null) {
 				return (
-					<div className="og-mcp-body">
-						{path && <div className="og-mcp-diff-path">{path}</div>}
+					<div className="mxd-mcp-body">
+						{path && <div className="mxd-mcp-diff-path">{path}</div>}
 						<DiffView oldText={oldStr} newText={newStr} />
 					</div>
 				);
@@ -212,7 +212,7 @@ export function McpToolCardBody({
 			const newDesc = getArg(toolArgs, "new_description");
 			if (oldDesc != null && newDesc != null) {
 				return (
-					<div className="og-mcp-body">
+					<div className="mxd-mcp-body">
 						<DiffView oldText={oldDesc} newText={newDesc} />
 					</div>
 				);

@@ -9,7 +9,6 @@ import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { MessageQueue, type QueueMessage } from "./message-queue.ts";
 
-
 import { TaskTracker } from "./task-tracker.ts";
 import { attachMockSession } from "./test-utils.ts";
 import type { AgentResult, Project, TaskNode } from "./types.ts";
@@ -288,8 +287,8 @@ describe("lifecycle: task state vs message delivery", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-state-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-stated-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-state-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-stated-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -544,8 +543,8 @@ describe("lifecycle: concurrent message sources", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-conc-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-concd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-conc-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-concd-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -715,8 +714,8 @@ describe("lifecycle: queue state transitions", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-qtrans-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-qtransd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-qtrans-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-qtransd-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -859,8 +858,8 @@ describe("lifecycle: session consistency on tracker nodes", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-gaq-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-gaqd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-gaq-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-gaqd-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -931,8 +930,8 @@ describe("lifecycle: parent chain notifications", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-parent-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-parentd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-parent-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-parentd-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -1070,8 +1069,7 @@ describe("lifecycle: parent chain notifications", () => {
 		const events = eventStore.read(parent.id);
 		const notification = events.find(
 			(e: any) =>
-				e.type === "message" &&
-				e.body?.source === "user_message_forwarded",
+				e.type === "message" && e.body?.source === "user_message_forwarded",
 		);
 		expect(notification).toBeTruthy();
 
@@ -1136,8 +1134,8 @@ describe("lifecycle: orchestrator message routing", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-orch-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-orchd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-orch-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-orchd-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -1320,8 +1318,8 @@ describe("lifecycle: message persistence via JSONL", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-pq-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-pqd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-pq-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-pqd-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -1395,8 +1393,8 @@ describe("lifecycle: stop agent cascading", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-stop-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-stopd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-stop-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-stopd-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -1465,8 +1463,8 @@ describe("lifecycle: clarify response routing", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-clarify-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-clarifyd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-clarify-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-clarifyd-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -1566,8 +1564,8 @@ describe("lifecycle: edge cases and error handling", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-edge-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-edged-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-edge-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-edged-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -1812,8 +1810,8 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-restdel-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-restdeld-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-restdel-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-restdeld-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -1932,8 +1930,8 @@ describe("lifecycle: child completion notification paths", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-childcomp-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-childcompd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-childcomp-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-childcompd-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -2494,8 +2492,8 @@ describe("lifecycle edge cases — session continuity", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-session-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-sessiond-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-session-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-sessiond-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
@@ -2995,14 +2993,14 @@ describe("lifecycle: header only on cold start", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-lc-header-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-lc-headerd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-lc-header-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lc-headerd-"));
 		projectDir = join(tempDir, "proj");
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 		// Write a memory.md so header content is non-trivial
-		await mkdir(join(projectDir, ".opengraft"), { recursive: true });
+		await mkdir(join(projectDir, ".mxd"), { recursive: true });
 		await writeFile(
-			join(projectDir, ".opengraft", "memory.md"),
+			join(projectDir, ".mxd", "memory.md"),
 			"# Test Memory\n\n- Important fact: tests are good\n",
 		);
 	});

@@ -1,21 +1,21 @@
 /**
  * MCP tool name constants.
  *
- * All builtin tools are registered under the "opengraft" MCP server namespace.
- * The full wire name is `mcp__<server>__<tool>`, e.g. `mcp__opengraft__bash`.
+ * All builtin tools are registered under the "mxd" MCP server namespace.
+ * The full wire name is `mcp__<server>__<tool>`, e.g. `mcp__mxd__bash`.
  *
  * Use these constants instead of hardcoded strings so renaming is a one-place change.
  */
 
 /** MCP server name for builtin tools. Used as key in mcpToolDefs. */
-export const MCP_SERVER_NAME = "opengraft";
+export const MCP_SERVER_NAME = "mxd";
 
 /** Prefix for all builtin MCP tool names on the wire. */
 export const MCP_PREFIX = `mcp__${MCP_SERVER_NAME}__` as const;
 
 /** Build the full wire name for a builtin tool. */
-export function mcpToolName<T extends string>(base: T): `mcp__opengraft__${T}` {
-	return `${MCP_PREFIX}${base}` as `mcp__opengraft__${T}`;
+export function mcpToolName<T extends string>(base: T): `mcp__mxd__${T}` {
+	return `${MCP_PREFIX}${base}` as `mcp__mxd__${T}`;
 }
 
 /** Strip the MCP prefix from a full tool name, returning the base name. */
@@ -25,8 +25,8 @@ export function stripMcpPrefix(fullName: string): string {
 		: fullName;
 }
 
-/** Check if a tool name belongs to the opengraft namespace. */
-export function isOpengraftTool(toolName: string): boolean {
+/** Check if a tool name belongs to the mxd namespace. */
+export function isBuiltinTool(toolName: string): boolean {
 	return toolName.startsWith(MCP_PREFIX);
 }
 

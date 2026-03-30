@@ -95,11 +95,11 @@ function SettingNumberField({
 	const value = draft[field] !== undefined ? String(draft[field]) : "";
 
 	return (
-		<div className="og-settings-field">
-			<span className="og-settings-label">{label}</span>
+		<div className="mxd-settings-field">
+			<span className="mxd-settings-label">{label}</span>
 			<input
 				type="number"
-				className="og-settings-input"
+				className="mxd-settings-input"
 				placeholder={inherited ?? placeholder ?? t("settings.inherit")}
 				min={min}
 				step={step}
@@ -138,16 +138,16 @@ function SettingBoolField({
 	const checked = isSet ? value : inherited === "true";
 
 	return (
-		<div className="og-settings-field">
-			<span className="og-settings-label">{label}</span>
-			<label className="og-settings-toggle">
+		<div className="mxd-settings-field">
+			<span className="mxd-settings-label">{label}</span>
+			<label className="mxd-settings-toggle">
 				<input
 					type="checkbox"
 					checked={checked}
 					onChange={(e) => onDraftChange({ [field]: e.target.checked })}
 				/>
 				{!isSet && tab !== "global" && (
-					<span className="og-settings-inherited-hint">(inherited)</span>
+					<span className="mxd-settings-inherited-hint">(inherited)</span>
 				)}
 			</label>
 		</div>
@@ -215,16 +215,16 @@ function ModelsAuthSection({
 	};
 
 	return (
-		<div className="og-settings-section">
-			<div className="og-settings-section-title">
+		<div className="mxd-settings-section">
+			<div className="mxd-settings-section-title">
 				{t("settings.sectionModels")}
 			</div>
 
 			{/* Root Auth */}
-			<div className="og-settings-field">
-				<span className="og-settings-label">{t("settings.rootAuth")}</span>
+			<div className="mxd-settings-field">
+				<span className="mxd-settings-label">{t("settings.rootAuth")}</span>
 				<select
-					className="og-select og-settings-input"
+					className="mxd-select mxd-settings-input"
 					value={defaultAuth}
 					onChange={(e) => onDraftChange({ defaultAuth: e.target.value })}
 				>
@@ -237,11 +237,11 @@ function ModelsAuthSection({
 			</div>
 
 			{/* Root Model */}
-			<div className="og-settings-field">
-				<span className="og-settings-label">{t("settings.rootModel")}</span>
+			<div className="mxd-settings-field">
+				<span className="mxd-settings-label">{t("settings.rootModel")}</span>
 				<input
 					type="text"
-					className="og-settings-input"
+					className="mxd-settings-input"
 					placeholder={
 						isGlobal
 							? t("settings.rootModelPlaceholder")
@@ -253,10 +253,10 @@ function ModelsAuthSection({
 			</div>
 
 			{/* Child Auth */}
-			<div className="og-settings-field">
-				<span className="og-settings-label">{t("settings.childAuth")}</span>
+			<div className="mxd-settings-field">
+				<span className="mxd-settings-label">{t("settings.childAuth")}</span>
 				<select
-					className="og-select og-settings-input"
+					className="mxd-select mxd-settings-input"
 					value={childAuthValue}
 					onChange={(e) => handleChildAuthChange(e.target.value)}
 				>
@@ -269,11 +269,11 @@ function ModelsAuthSection({
 			</div>
 
 			{/* Child Model */}
-			<div className="og-settings-field">
-				<span className="og-settings-label">{t("settings.childModel")}</span>
+			<div className="mxd-settings-field">
+				<span className="mxd-settings-label">{t("settings.childModel")}</span>
 				<input
 					type="text"
-					className="og-settings-input"
+					className="mxd-settings-input"
 					placeholder={
 						isGlobal ? t("settings.useRootModel") : t("settings.inheritOption")
 					}
@@ -327,20 +327,20 @@ function AuthGroupEditor({
 	};
 
 	return (
-		<div className="og-auth-editor">
-			<label className="og-settings-field">
-				<span className="og-settings-label">{t("settings.authName")}</span>
+		<div className="mxd-auth-editor">
+			<label className="mxd-settings-field">
+				<span className="mxd-settings-label">{t("settings.authName")}</span>
 				<input
 					type="text"
-					className="og-settings-input"
+					className="mxd-settings-input"
 					value={editName}
 					onChange={(e) => setEditName(e.target.value)}
 				/>
 			</label>
-			<label className="og-settings-field">
-				<span className="og-settings-label">{t("settings.authProvider")}</span>
+			<label className="mxd-settings-field">
+				<span className="mxd-settings-label">{t("settings.authProvider")}</span>
 				<select
-					className="og-select og-settings-input"
+					className="mxd-select mxd-settings-input"
 					value={provider}
 					onChange={(e) =>
 						setProvider(e.target.value as "anthropic" | "openai")
@@ -352,25 +352,25 @@ function AuthGroupEditor({
 			</label>
 			{provider === "anthropic" ? (
 				<>
-					<label className="og-settings-field">
-						<span className="og-settings-label">
+					<label className="mxd-settings-field">
+						<span className="mxd-settings-label">
 							{t("settings.anthropicApiKey")}
 						</span>
 						<input
 							type="password"
-							className="og-settings-input"
+							className="mxd-settings-input"
 							placeholder="sk-ant-..."
 							value={anthropicApiKey}
 							onChange={(e) => setAnthropicApiKey(e.target.value)}
 						/>
 					</label>
-					<label className="og-settings-field">
-						<span className="og-settings-label">
+					<label className="mxd-settings-field">
+						<span className="mxd-settings-label">
 							{t("settings.claudeOauthToken")}
 						</span>
 						<input
 							type="password"
-							className="og-settings-input"
+							className="mxd-settings-input"
 							placeholder={t("settings.optionalFallback")}
 							value={claudeOauthToken}
 							onChange={(e) => setClaudeOauthToken(e.target.value)}
@@ -379,25 +379,25 @@ function AuthGroupEditor({
 				</>
 			) : (
 				<>
-					<label className="og-settings-field">
-						<span className="og-settings-label">
+					<label className="mxd-settings-field">
+						<span className="mxd-settings-label">
 							{t("settings.openaiApiKey")}
 						</span>
 						<input
 							type="password"
-							className="og-settings-input"
+							className="mxd-settings-input"
 							placeholder="sk-..."
 							value={openaiApiKey}
 							onChange={(e) => setOpenaiApiKey(e.target.value)}
 						/>
 					</label>
-					<label className="og-settings-field">
-						<span className="og-settings-label">
+					<label className="mxd-settings-field">
+						<span className="mxd-settings-label">
 							{t("settings.openaiBaseUrl")}
 						</span>
 						<input
 							type="text"
-							className="og-settings-input"
+							className="mxd-settings-input"
 							placeholder="https://api.openai.com/v1"
 							value={openaiBaseUrl}
 							onChange={(e) => setOpenaiBaseUrl(e.target.value)}
@@ -405,21 +405,21 @@ function AuthGroupEditor({
 					</label>
 				</>
 			)}
-			<div className="og-auth-editor-actions">
+			<div className="mxd-auth-editor-actions">
 				<button
 					type="button"
-					className="og-btn og-btn-sm og-btn-primary"
+					className="mxd-btn mxd-btn-sm mxd-btn-primary"
 					onClick={handleSave}
 				>
 					{t("settings.save")}
 				</button>
-				<button type="button" className="og-btn og-btn-sm" onClick={onCancel}>
+				<button type="button" className="mxd-btn mxd-btn-sm" onClick={onCancel}>
 					{t("settings.cancel")}
 				</button>
 				{onDelete && (
 					<button
 						type="button"
-						className="og-btn og-btn-sm og-btn-danger"
+						className="mxd-btn mxd-btn-sm mxd-btn-danger"
 						onClick={onDelete}
 					>
 						<IconTrash size={11} />
@@ -469,12 +469,12 @@ function AuthGroupsSection({
 	};
 
 	return (
-		<div className="og-settings-auth-groups">
-			<div className="og-settings-label og-settings-auth-groups-title">
+		<div className="mxd-settings-auth-groups">
+			<div className="mxd-settings-label mxd-settings-auth-groups-title">
 				{t("settings.authGroups")}
 			</div>
 			{Object.entries(authGroups).map(([name, group]) => (
-				<div key={name} className="og-auth-group-row">
+				<div key={name} className="mxd-auth-group-row">
 					{editingGroup === name ? (
 						<AuthGroupEditor
 							name={name}
@@ -486,16 +486,16 @@ function AuthGroupsSection({
 					) : (
 						<button
 							type="button"
-							className="og-auth-group-item"
+							className="mxd-auth-group-item"
 							onClick={() => {
 								setEditingGroup(name);
 								setAddingNew(false);
 							}}
 						>
-							<span className="og-auth-group-name">{name}</span>
-							<span className="og-auth-group-provider">
-								<span className="og-auth-group-badge">{group.provider}</span>
-								<span className="og-auth-group-key">{maskedKey(group)}</span>
+							<span className="mxd-auth-group-name">{name}</span>
+							<span className="mxd-auth-group-provider">
+								<span className="mxd-auth-group-badge">{group.provider}</span>
+								<span className="mxd-auth-group-key">{maskedKey(group)}</span>
 							</span>
 						</button>
 					)}
@@ -511,7 +511,7 @@ function AuthGroupsSection({
 			) : (
 				<button
 					type="button"
-					className="og-btn og-btn-sm"
+					className="mxd-btn mxd-btn-sm"
 					onClick={() => {
 						setAddingNew(true);
 						setEditingGroup(null);
@@ -595,8 +595,8 @@ function McpServersSection({
 	};
 
 	return (
-		<div className="og-settings-section">
-			<div className="og-settings-section-title">
+		<div className="mxd-settings-section">
+			<div className="mxd-settings-section-title">
 				{t("settings.mcpServers")}
 			</div>
 
@@ -604,19 +604,22 @@ function McpServersSection({
 			{Object.entries(inheritedServers)
 				.filter(([n]) => !(n in servers))
 				.map(([name, srv]) => (
-					<div key={name} className="og-mcp-server-row og-mcp-server-inherited">
-						<span className="og-mcp-server-name">{name}</span>
-						<span className="og-mcp-server-cmd">
+					<div
+						key={name}
+						className="mxd-mcp-server-row mxd-mcp-server-inherited"
+					>
+						<span className="mxd-mcp-server-name">{name}</span>
+						<span className="mxd-mcp-server-cmd">
 							{srv.command}
 							{srv.env && Object.keys(srv.env).length > 0 && (
-								<span className="og-mcp-server-env-badge">
+								<span className="mxd-mcp-server-env-badge">
 									{Object.keys(srv.env)
 										.map((k) => `${k}=***`)
 										.join(", ")}
 								</span>
 							)}
 						</span>
-						<span className="og-mcp-server-inherited-badge">
+						<span className="mxd-mcp-server-inherited-badge">
 							{t("settings.inherited")}
 						</span>
 					</div>
@@ -624,12 +627,12 @@ function McpServersSection({
 
 			{/* This layer's servers */}
 			{Object.entries(servers).map(([name, srv]) => (
-				<div key={name} className="og-mcp-server-row">
-					<span className="og-mcp-server-name">{name}</span>
-					<span className="og-mcp-server-cmd">
+				<div key={name} className="mxd-mcp-server-row">
+					<span className="mxd-mcp-server-name">{name}</span>
+					<span className="mxd-mcp-server-cmd">
 						{srv.command}
 						{srv.env && Object.keys(srv.env).length > 0 && (
-							<span className="og-mcp-server-env-badge">
+							<span className="mxd-mcp-server-env-badge">
 								{Object.keys(srv.env)
 									.map((k) => `${k}=***`)
 									.join(", ")}
@@ -638,7 +641,7 @@ function McpServersSection({
 					</span>
 					<button
 						type="button"
-						className="og-btn-icon og-mcp-server-delete"
+						className="mxd-btn-icon mxd-mcp-server-delete"
 						onClick={() => deleteServer(name)}
 						title={t("settings.delete")}
 					>
@@ -648,46 +651,46 @@ function McpServersSection({
 			))}
 
 			{addingNew ? (
-				<div className="og-mcp-server-add-form">
+				<div className="mxd-mcp-server-add-form">
 					<input
 						type="text"
-						className="og-settings-input"
+						className="mxd-settings-input"
 						placeholder={t("settings.mcpServerName")}
 						value={newName}
 						onChange={(e) => setNewName(e.target.value)}
 					/>
 					<input
 						type="text"
-						className="og-settings-input"
+						className="mxd-settings-input"
 						placeholder={t("settings.mcpServerCommand")}
 						value={newCommand}
 						onChange={(e) => setNewCommand(e.target.value)}
 					/>
 					<input
 						type="text"
-						className="og-settings-input"
+						className="mxd-settings-input"
 						placeholder={t("settings.mcpServerArgs")}
 						value={newArgs}
 						onChange={(e) => setNewArgs(e.target.value)}
 					/>
 					<textarea
-						className="og-settings-input og-mcp-env-textarea"
+						className="mxd-settings-input mxd-mcp-env-textarea"
 						placeholder={t("settings.mcpServerEnv")}
 						value={newEnv}
 						onChange={(e) => setNewEnv(e.target.value)}
 						rows={2}
 					/>
-					<div className="og-auth-editor-actions">
+					<div className="mxd-auth-editor-actions">
 						<button
 							type="button"
-							className="og-btn og-btn-sm og-btn-primary"
+							className="mxd-btn mxd-btn-sm mxd-btn-primary"
 							onClick={addServer}
 						>
 							{t("settings.save")}
 						</button>
 						<button
 							type="button"
-							className="og-btn og-btn-sm"
+							className="mxd-btn mxd-btn-sm"
 							onClick={() => {
 								setAddingNew(false);
 								setNewName("");
@@ -703,7 +706,7 @@ function McpServersSection({
 			) : (
 				<button
 					type="button"
-					className="og-btn og-btn-sm"
+					className="mxd-btn mxd-btn-sm"
 					onClick={() => setAddingNew(true)}
 				>
 					<IconPlus size={11} /> {t("settings.addMcpServer")}
@@ -726,10 +729,10 @@ function TabActions({
 }) {
 	const { t } = useLocale();
 	return (
-		<div className="og-settings-tab-actions">
+		<div className="mxd-settings-tab-actions">
 			<button
 				type="button"
-				className="og-btn og-btn-sm og-btn-primary"
+				className="mxd-btn mxd-btn-sm mxd-btn-primary"
 				onClick={onSave}
 				disabled={!dirty}
 			>
@@ -737,7 +740,7 @@ function TabActions({
 			</button>
 			<button
 				type="button"
-				className="og-btn og-btn-sm og-btn-ghost"
+				className="mxd-btn mxd-btn-sm mxd-btn-ghost"
 				onClick={onRevert}
 				disabled={!dirty}
 			>
@@ -773,7 +776,7 @@ function GlobalTab({
 	);
 
 	return (
-		<div className="og-tab-content">
+		<div className="mxd-tab-content">
 			<AuthGroupsSection draft={draft} onDraftChange={onDraftChange} />
 
 			<ModelsAuthSection
@@ -790,8 +793,8 @@ function GlobalTab({
 				onDraftChange={onDraftChange}
 			/>
 
-			<div className="og-settings-section">
-				<div className="og-settings-section-title">
+			<div className="mxd-settings-section">
+				<div className="mxd-settings-section-title">
 					{t("settings.sectionDaemon")}
 				</div>
 				<SettingNumberField
@@ -816,13 +819,13 @@ function GlobalTab({
 					draft={draft}
 					onDraftChange={onDraftChange}
 				/>
-				<div className="og-settings-field">
-					<span className="og-settings-label">
+				<div className="mxd-settings-field">
+					<span className="mxd-settings-label">
 						{t("settings.restartDaemonHint")}
 					</span>
 					<button
 						type="button"
-						className="og-btn og-btn-warning og-btn-sm"
+						className="mxd-btn mxd-btn-warning mxd-btn-sm"
 						onClick={onRestart}
 					>
 						<IconRefresh size={12} /> {t("settings.restartDaemon")}
@@ -858,7 +861,7 @@ function ProjectTab({
 	);
 
 	return (
-		<div className="og-tab-content">
+		<div className="mxd-tab-content">
 			<ModelsAuthSection
 				layer={tab}
 				authGroupNames={authGroupNames}
@@ -866,8 +869,8 @@ function ProjectTab({
 				onDraftChange={onDraftChange}
 			/>
 
-			<div className="og-settings-section">
-				<div className="og-settings-section-title">
+			<div className="mxd-settings-section">
+				<div className="mxd-settings-section-title">
 					{t("settings.sectionLimits")}
 				</div>
 				<SettingNumberField
@@ -1077,43 +1080,43 @@ export const SettingsPanel = memo(function SettingsPanel({
 	} as const;
 
 	return (
-		<div className="og-settings-panel og-settings-panel-wide">
-			<div className="og-settings-header">
-				<span className="og-settings-title">{t(tabTitleKey[activeTab])}</span>
-				<button type="button" className="og-btn-icon" onClick={onClose}>
+		<div className="mxd-settings-panel mxd-settings-panel-wide">
+			<div className="mxd-settings-header">
+				<span className="mxd-settings-title">{t(tabTitleKey[activeTab])}</span>
+				<button type="button" className="mxd-btn-icon" onClick={onClose}>
 					<IconClose size={11} />
 				</button>
 			</div>
 
 			{loading && (
-				<div className="og-settings-loading">{t("settings.loading")}</div>
+				<div className="mxd-settings-loading">{t("settings.loading")}</div>
 			)}
 
 			{/* Tab buttons */}
-			<div className="og-settings-tabs">
+			<div className="mxd-settings-tabs">
 				<button
 					type="button"
-					className={`og-settings-tab og-settings-tab-global${activeTab === "global" ? " og-settings-tab-active og-settings-tab-active-global" : ""}`}
+					className={`mxd-settings-tab mxd-settings-tab-global${activeTab === "global" ? " mxd-settings-tab-active mxd-settings-tab-active-global" : ""}`}
 					onClick={() => setActiveTab("global")}
 				>
 					{t("settings.tabGlobal")}
-					{dirtyGlobal && <span className="og-settings-dirty">*</span>}
+					{dirtyGlobal && <span className="mxd-settings-dirty">*</span>}
 				</button>
 				<button
 					type="button"
-					className={`og-settings-tab og-settings-tab-project${activeTab === "project" ? " og-settings-tab-active og-settings-tab-active-project" : ""}`}
+					className={`mxd-settings-tab mxd-settings-tab-project${activeTab === "project" ? " mxd-settings-tab-active mxd-settings-tab-active-project" : ""}`}
 					onClick={() => setActiveTab("project")}
 				>
 					{t("settings.tabProject")}
-					{dirtyRepo && <span className="og-settings-dirty">*</span>}
+					{dirtyRepo && <span className="mxd-settings-dirty">*</span>}
 				</button>
 				<button
 					type="button"
-					className={`og-settings-tab og-settings-tab-local${activeTab === "local" ? " og-settings-tab-active og-settings-tab-active-local" : ""}`}
+					className={`mxd-settings-tab mxd-settings-tab-local${activeTab === "local" ? " mxd-settings-tab-active mxd-settings-tab-active-local" : ""}`}
 					onClick={() => setActiveTab("local")}
 				>
 					{t("settings.tabLocal")}
-					{dirtyLocal && <span className="og-settings-dirty">*</span>}
+					{dirtyLocal && <span className="mxd-settings-dirty">*</span>}
 				</button>
 			</div>
 
@@ -1153,18 +1156,18 @@ export const SettingsPanel = memo(function SettingsPanel({
 			)}
 
 			{(onClearAllSessions || onDeleteProject) && (
-				<div className="og-settings-danger-zone">
-					<div className="og-settings-section-title">
+				<div className="mxd-settings-danger-zone">
+					<div className="mxd-settings-section-title">
 						{t("settings.dangerZone")}
 					</div>
 					{onClearAllSessions && (
 						<>
-							<p className="og-settings-danger-description">
+							<p className="mxd-settings-danger-description">
 								{t("settings.clearAllSessionsDescription")}
 							</p>
 							<button
 								type="button"
-								className="og-btn og-btn-danger"
+								className="mxd-btn mxd-btn-danger"
 								onClick={onClearAllSessions}
 							>
 								<IconTrash size={12} /> {t("settings.clearAllSessions")}
@@ -1173,12 +1176,12 @@ export const SettingsPanel = memo(function SettingsPanel({
 					)}
 					{onDeleteProject && (
 						<>
-							<p className="og-settings-danger-description">
+							<p className="mxd-settings-danger-description">
 								{t("settings.removeProjectDescription")}
 							</p>
 							<button
 								type="button"
-								className="og-btn og-btn-danger"
+								className="mxd-btn mxd-btn-danger"
 								onClick={onDeleteProject}
 							>
 								<IconTrash size={12} /> {t("settings.removeProject")}

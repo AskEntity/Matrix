@@ -34,20 +34,20 @@ export const SlashCommandMenu = memo(function SlashCommandMenu({
 	if (commands.length === 0) return null;
 
 	return (
-		<div className="og-slash-menu" ref={listRef}>
+		<div className="mxd-slash-menu" ref={listRef}>
 			{commands.map((cmd, i) => (
 				<button
 					type="button"
 					key={cmd.name}
-					className={`og-slash-menu-item${i === selectedIndex ? " og-slash-menu-item-selected" : ""}`}
+					className={`mxd-slash-menu-item${i === selectedIndex ? " mxd-slash-menu-item-selected" : ""}`}
 					onMouseDown={(e) => {
 						// Use mousedown instead of click to fire before textarea blur
 						e.preventDefault();
 						onSelect(cmd);
 					}}
 				>
-					<span className="og-slash-menu-name">/{cmd.name}</span>
-					<span className="og-slash-menu-desc">{cmd.description}</span>
+					<span className="mxd-slash-menu-name">/{cmd.name}</span>
+					<span className="mxd-slash-menu-desc">{cmd.description}</span>
 				</button>
 			))}
 		</div>

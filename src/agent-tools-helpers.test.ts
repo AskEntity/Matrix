@@ -100,9 +100,7 @@ describe("buildTaskPrompt", () => {
 			tracker,
 			"## Important\nRemember this.",
 		);
-		expect(result).toContain(
-			"# .opengraft/memory.md (Preloaded, do not read again)",
-		);
+		expect(result).toContain("# .mxd/memory.md (Preloaded, do not read again)");
 		expect(result).toContain("Remember this.");
 	});
 
@@ -110,7 +108,7 @@ describe("buildTaskPrompt", () => {
 		const tracker = makeTracker([]);
 		const result = buildTaskPrompt(makeNode({ id: "task-1" }), tracker, "");
 		expect(result).not.toContain(
-			"# .opengraft/memory.md (Preloaded, do not read again)",
+			"# .mxd/memory.md (Preloaded, do not read again)",
 		);
 	});
 
@@ -119,14 +117,14 @@ describe("buildTaskPrompt", () => {
 		const result = buildTaskPrompt(
 			makeNode({
 				id: "task-1",
-				branch: "og/task-1/fix-bug",
+				branch: "mxd/task-1/fix-bug",
 				worktreePath: "/tmp/worktree",
 			}),
 			tracker,
 			"",
 		);
 		expect(result).toContain("## Git Context");
-		expect(result).toContain("`og/task-1/fix-bug`");
+		expect(result).toContain("`mxd/task-1/fix-bug`");
 		expect(result).toContain("`/tmp/worktree`");
 		expect(result).toContain("Do NOT switch branches");
 	});

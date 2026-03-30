@@ -19,12 +19,12 @@ This file is the agent's scratch pad. Discoveries, patterns, and lessons go here
 
 ## CRITICAL: First Launch Setup
 
-\`.opengraft/hooks/setup_worktree.sh\` is THE most important config.
+\`.mxd/hooks/setup_worktree.sh\` is THE most important config.
 It runs every time a sub task starts — installs deps, sets up env.
 If it's wrong, EVERY sub task fails on startup and wastes money.
 
 DO THIS FIRST:
-1. Review \`.opengraft/hooks/setup_worktree.sh.example\` — understand what each section does
+1. Review \`.mxd/hooks/setup_worktree.sh.example\` — understand what each section does
 2. Customize it for this project (dependencies, env vars, build steps, any project-specific setup)
 3. Save as \`setup_worktree.sh\` and make executable (\`chmod +x\`)
 4. TEST IT: create a test task, verify it can run the project's test suite
@@ -38,12 +38,12 @@ to understand the project, then update this file with key knowledge for future s
 
 ## CRITICAL: First Launch Setup
 
-\`.opengraft/hooks/setup_worktree.sh\` is THE most important config.
+\`.mxd/hooks/setup_worktree.sh\` is THE most important config.
 It runs every time a sub task starts — installs deps, sets up env.
 If it's wrong, EVERY sub task fails on startup and wastes money.
 
 DO THIS FIRST:
-1. Review \`.opengraft/hooks/setup_worktree.sh.example\` — understand what each section does
+1. Review \`.mxd/hooks/setup_worktree.sh.example\` — understand what each section does
 2. Customize it for this project (dependencies, env vars, build steps, any project-specific setup)
 3. Save as \`setup_worktree.sh\` and make executable (\`chmod +x\`)
 4. TEST IT: create a test task, verify it can run the project's test suite
@@ -56,7 +56,7 @@ export class ProjectManager {
 	private loaded = false;
 
 	constructor(
-		/** Daemon data directory for metadata (e.g. ~/.opengraft). */
+		/** Daemon data directory for metadata (e.g. ~/.mxd). */
 		private readonly dataDir: string,
 	) {}
 
@@ -84,8 +84,8 @@ export class ProjectManager {
 	/**
 	 * Initialize a project at the given path.
 	 * - If the directory does not exist, create it as a fresh project.
-	 * - If the directory exists, convert it into an OpenGraft project.
-	 * Sets up .opengraft/ structure and daemon-side metadata.
+	 * - If the directory exists, convert it into an Matrix project.
+	 * Sets up .mxd/ structure and daemon-side metadata.
 	 */
 	async init(path: string): Promise<Project> {
 		this.ensureLoaded();
@@ -109,11 +109,11 @@ export class ProjectManager {
 	/** Create a fresh project from scratch. */
 	private async createNew(projectPath: string): Promise<Project> {
 		await mkdir(projectPath, { recursive: true });
-		await mkdir(join(projectPath, ".opengraft"), { recursive: true });
+		await mkdir(join(projectPath, ".mxd"), { recursive: true });
 		await mkdir(join(projectPath, "src"), { recursive: true });
 
 		await writeFile(
-			join(projectPath, ".opengraft", "memory.md"),
+			join(projectPath, ".mxd", "memory.md"),
 			NEW_PROJECT_MEMORY,
 			"utf-8",
 		);
@@ -121,7 +121,7 @@ export class ProjectManager {
 		await this.createSetupHook(projectPath);
 
 		// Initialize git repo with a minimal first commit (.gitignore only).
-		// Everything else (.opengraft/, src/) stays uncommitted —
+		// Everything else (.mxd/, src/) stays uncommitted —
 		// the agent reviews and commits as part of first-launch setup.
 		await this.exec(["git", "init"], projectPath);
 		await this.excludeWorktrees(projectPath);
@@ -138,13 +138,13 @@ export class ProjectManager {
 		return this.register(projectPath);
 	}
 
-	/** Convert an existing directory into an OpenGraft project. */
+	/** Convert an existing directory into an Matrix project. */
 	private async convertExisting(projectPath: string): Promise<Project> {
-		// Create .opengraft/ if it doesn't exist
-		await mkdir(join(projectPath, ".opengraft"), { recursive: true });
+		// Create .mxd/ if it doesn't exist
+		await mkdir(join(projectPath, ".mxd"), { recursive: true });
 
 		// Only write memory.md if it doesn't already exist
-		const memoryPath = join(projectPath, ".opengraft", "memory.md");
+		const memoryPath = join(projectPath, ".mxd", "memory.md");
 		if (!existsSync(memoryPath)) {
 			await writeFile(memoryPath, CONVERTED_PROJECT_MEMORY, "utf-8");
 		}
@@ -157,18 +157,18 @@ export class ProjectManager {
 		}
 		await this.excludeWorktrees(projectPath);
 
-		// Don't auto-commit .opengraft/ files — the agent reviews and commits
+		// Don't auto-commit .mxd/ files — the agent reviews and commits
 		// as part of first-launch setup (especially the setup hook).
 
 		return this.register(projectPath);
 	}
 
 	/**
-	 * Create .opengraft/hooks/setup_worktree.sh with auto-detected content.
+	 * Create .mxd/hooks/setup_worktree.sh with auto-detected content.
 	 * Returns true if the file was created, false if it already existed.
 	 */
 	private async createSetupHook(projectPath: string): Promise<boolean> {
-		const hookDir = join(projectPath, ".opengraft", "hooks");
+		const hookDir = join(projectPath, ".mxd", "hooks");
 		const hookPath = join(hookDir, "setup_worktree.sh.example");
 
 		// Don't create .example if either the final or example file already exists
@@ -247,7 +247,7 @@ export class ProjectManager {
 
 	/**
 	 * Update a project's metadata (path and/or name).
-	 * When updating path: validates the new path exists and has a .opengraft/ directory.
+	 * When updating path: validates the new path exists and has a .mxd/ directory.
 	 */
 	async updateProject(
 		id: string,
@@ -266,9 +266,9 @@ export class ProjectManager {
 				throw new Error(`Path does not exist: ${newPath}`);
 			}
 
-			if (!existsSync(join(newPath, ".opengraft"))) {
+			if (!existsSync(join(newPath, ".mxd"))) {
 				throw new Error(
-					`Path is not an OpenGraft project (missing .opengraft/ directory): ${newPath}`,
+					`Path is not an Matrix project (missing .mxd/ directory): ${newPath}`,
 				);
 			}
 

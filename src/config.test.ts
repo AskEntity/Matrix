@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
 	loadProjectLocalConfig,
 	loadProjectRepoConfig,
-	type OpenGraftConfig,
+	type MatrixConfig,
 	resolveAuthGroup,
 	resolveConfig,
 	saveProjectLocalConfig,
@@ -13,16 +13,16 @@ import {
 
 describe("resolveConfig", () => {
 	test("local > repo > global for scalar fields", () => {
-		const global: OpenGraftConfig = {
+		const global: MatrixConfig = {
 			model: "global-model",
 			budgetUsd: 10,
 			maxDepth: 3,
 		};
-		const repo: OpenGraftConfig = {
+		const repo: MatrixConfig = {
 			model: "repo-model",
 			budgetUsd: 20,
 		};
-		const local: OpenGraftConfig = {
+		const local: MatrixConfig = {
 			model: "local-model",
 		};
 
@@ -33,7 +33,7 @@ describe("resolveConfig", () => {
 	});
 
 	test("empty layers are skipped", () => {
-		const global: OpenGraftConfig = { model: "global-model" };
+		const global: MatrixConfig = { model: "global-model" };
 		const result = resolveConfig(global, {}, {});
 		expect(result.model).toBe("global-model");
 	});
@@ -44,18 +44,18 @@ describe("resolveConfig", () => {
 	});
 
 	test("mcpServers are merged (union), local overrides same-named", () => {
-		const global: OpenGraftConfig = {
+		const global: MatrixConfig = {
 			mcpServers: {
 				filesystem: { command: "mcp-fs", args: ["--read-only"] },
 				search: { command: "mcp-search" },
 			},
 		};
-		const repo: OpenGraftConfig = {
+		const repo: MatrixConfig = {
 			mcpServers: {
 				database: { command: "mcp-db" },
 			},
 		};
-		const local: OpenGraftConfig = {
+		const local: MatrixConfig = {
 			mcpServers: {
 				filesystem: {
 					command: "mcp-fs-v2",
@@ -78,13 +78,13 @@ describe("resolveConfig", () => {
 	});
 
 	test("authGroups are merged (union), local overrides same-named", () => {
-		const global: OpenGraftConfig = {
+		const global: MatrixConfig = {
 			authGroups: {
 				work: { provider: "anthropic", anthropicApiKey: "sk-work" },
 				personal: { provider: "openai", openaiApiKey: "sk-personal" },
 			},
 		};
-		const local: OpenGraftConfig = {
+		const local: MatrixConfig = {
 			authGroups: {
 				work: {
 					provider: "anthropic",
@@ -99,15 +99,15 @@ describe("resolveConfig", () => {
 	});
 
 	test("partial configs merge correctly across all layers", () => {
-		const global: OpenGraftConfig = {
+		const global: MatrixConfig = {
 			maxDepth: 5,
 			clarifyTimeoutMs: 30000,
 		};
-		const repo: OpenGraftConfig = {
+		const repo: MatrixConfig = {
 			childModel: "sonnet",
 			mcpServers: { git: { command: "mcp-git" } },
 		};
-		const local: OpenGraftConfig = {
+		const local: MatrixConfig = {
 			defaultAuth: "team",
 			childAuth: "team",
 		};
@@ -124,9 +124,9 @@ describe("resolveConfig", () => {
 	});
 
 	test("selfBootstrap boolean resolves with local > repo > global priority", () => {
-		const global: OpenGraftConfig = { selfBootstrap: false };
-		const repo: OpenGraftConfig = { selfBootstrap: true };
-		const local: OpenGraftConfig = {};
+		const global: MatrixConfig = { selfBootstrap: false };
+		const repo: MatrixConfig = { selfBootstrap: true };
+		const local: MatrixConfig = {};
 
 		// repo wins over global when local is empty
 		const result = resolveConfig(global, repo, local);
@@ -139,7 +139,7 @@ describe("resolveConfig", () => {
 });
 
 describe("resolveAuthGroup", () => {
-	const config: OpenGraftConfig = {
+	const config: MatrixConfig = {
 		defaultAuth: "default-group",
 		authGroups: {
 			"default-group": {
@@ -178,7 +178,7 @@ describe("resolveAuthGroup", () => {
 	});
 
 	test("returns null when no authGroups defined", () => {
-		const cfg: OpenGraftConfig = { defaultAuth: "missing" };
+		const cfg: MatrixConfig = { defaultAuth: "missing" };
 		expect(resolveAuthGroup(cfg)).toBeNull();
 	});
 });
@@ -187,18 +187,18 @@ describe("file loading", () => {
 	let tmpDir: string;
 
 	beforeEach(async () => {
-		tmpDir = await mkdtemp(join(tmpdir(), "og-config-test-"));
+		tmpDir = await mkdtemp(join(tmpdir(), "mxd-config-test-"));
 	});
 
 	afterEach(async () => {
 		await rm(tmpDir, { recursive: true, force: true });
 	});
 
-	test("loadProjectRepoConfig reads from .opengraft/config.json", async () => {
+	test("loadProjectRepoConfig reads from .mxd/config.json", async () => {
 		const projectPath = join(tmpDir, "my-project");
-		const configDir = join(projectPath, ".opengraft");
+		const configDir = join(projectPath, ".mxd");
 		await mkdir(configDir, { recursive: true });
-		const config: OpenGraftConfig = { model: "test-model" };
+		const config: MatrixConfig = { model: "test-model" };
 		await writeFile(join(configDir, "config.json"), JSON.stringify(config));
 
 		const loaded = await loadProjectRepoConfig(projectPath);
@@ -214,7 +214,7 @@ describe("file loading", () => {
 		const projectId = "abc-123";
 		const configDir = join(tmpDir, "projects", projectId);
 		await mkdir(configDir, { recursive: true });
-		const config: OpenGraftConfig = { budgetUsd: 42 };
+		const config: MatrixConfig = { budgetUsd: 42 };
 		await writeFile(join(configDir, "config.json"), JSON.stringify(config));
 
 		const loaded = await loadProjectLocalConfig(tmpDir, projectId);
@@ -228,7 +228,7 @@ describe("file loading", () => {
 
 	test("saveProjectLocalConfig creates directories and writes config", async () => {
 		const projectId = "new-project";
-		const config: OpenGraftConfig = {
+		const config: MatrixConfig = {
 			model: "claude-4",
 			mcpServers: { test: { command: "test-cmd" } },
 		};

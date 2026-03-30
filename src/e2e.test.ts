@@ -39,8 +39,8 @@ describe.skipIf(!hasApiKey)("E2E: AnthropicCompatibleProvider", () => {
 	let app: ReturnType<typeof createApp>["app"];
 
 	beforeAll(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-e2e-direct-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-e2e-direct-data-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-e2e-direct-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-e2e-direct-data-"));
 		const result = createApp({
 			dataDir,
 			agentProvider: new AnthropicCompatibleProvider(),

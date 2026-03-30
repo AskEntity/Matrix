@@ -7,7 +7,7 @@ import {
 	type AuthGroup,
 	loadProjectLocalConfig,
 	loadProjectRepoConfig,
-	type OpenGraftConfig,
+	type MatrixConfig,
 	resolveAuthGroup,
 	resolveConfig,
 } from "../config.ts";
@@ -36,7 +36,7 @@ function createProviderFromAuth(
 
 /** Create a provider from resolved config. Requires an auth group to be configured. */
 function createProviderFromConfig(
-	effectiveConfig: OpenGraftConfig,
+	effectiveConfig: MatrixConfig,
 ): AgentProvider {
 	const authGroup = resolveAuthGroup(effectiveConfig);
 	if (!authGroup) {
@@ -99,7 +99,7 @@ export async function resolveProjectConfig(
 	ctx: DaemonContext,
 	projectPath: string,
 	projectId: string,
-): Promise<OpenGraftConfig> {
+): Promise<MatrixConfig> {
 	const repoConfig = await loadProjectRepoConfig(projectPath);
 	const localConfig = await loadProjectLocalConfig(
 		ctx.config.dataDir,
@@ -111,18 +111,18 @@ export async function resolveProjectConfig(
 /** Create a provider for a project using resolved config. */
 export function getProjectProvider(
 	ctx: DaemonContext,
-	effectiveConfig: OpenGraftConfig,
+	effectiveConfig: MatrixConfig,
 ): AgentProvider {
 	// If a provider was explicitly injected (e.g. tests), use it
 	if (ctx.config.agentProvider) return ctx.config.agentProvider;
 	return createProviderFromConfig(effectiveConfig);
 }
 
-/** Read .opengraft/memory.md for the project. Returns content or empty string. */
+/** Read .mxd/memory.md for the project. Returns content or empty string. */
 export function readProjectMemory(projectPath: string): string {
 	try {
 		const memory = readFileSync(
-			join(projectPath, ".opengraft", "memory.md"),
+			join(projectPath, ".mxd", "memory.md"),
 			"utf-8",
 		);
 		return memory || "";

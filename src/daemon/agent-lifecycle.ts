@@ -96,7 +96,7 @@ function prepareAgentMessage(
 ): { msg: QueueMessage; event: Event } {
 	const memory = readProjectMemory(projectPath);
 	const header = memory
-		? `Working directory: ${projectPath}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${memory}`
+		? `Working directory: ${projectPath}\n\n# .mxd/memory.md (Preloaded, do not read again)\n${memory}`
 		: `Working directory: ${projectPath}`;
 	const msg = createUserMessage(content, { images, header });
 	const event: Event = {
@@ -286,7 +286,7 @@ export interface RunChildCoreParams {
  *
  * Done detection: done() handler closes the queue directly (derived from session),
  * which closes the queue before waitForQueueMessages() blocks. The fallback path detects
- * tool_result for mcp__opengraft__done and closes the queue (handles edge cases).
+ * tool_result for mcp__mxd__done and closes the queue (handles edge cases).
  */
 export async function runChildCore(
 	params: RunChildCoreParams,

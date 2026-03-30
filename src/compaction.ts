@@ -121,7 +121,7 @@ export async function buildCompactedContext(
 	let freshMemory = "";
 	if (cwd) {
 		try {
-			const memPath = join(cwd, ".opengraft", "memory.md");
+			const memPath = join(cwd, ".mxd", "memory.md");
 			freshMemory = await readFile(memPath, "utf-8");
 		} catch {
 			// No memory file — that's fine
@@ -131,7 +131,7 @@ export async function buildCompactedContext(
 	const parts: string[] = [];
 	if (freshMemory) {
 		parts.push(
-			`# .opengraft/memory.md (Preloaded, do not read again)\n${freshMemory}`,
+			`# .mxd/memory.md (Preloaded, do not read again)\n${freshMemory}`,
 		);
 	}
 	parts.push(`## Checkpoint Summary\n\n${checkpoint}`);

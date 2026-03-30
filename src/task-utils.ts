@@ -85,11 +85,7 @@ export function buildTaskPrompt(
 	const parts: string[] = [];
 
 	if (memory) {
-		parts.push(
-			"# .opengraft/memory.md (Preloaded, do not read again)",
-			memory,
-			"",
-		);
+		parts.push("# .mxd/memory.md (Preloaded, do not read again)", memory, "");
 	}
 
 	parts.push(`# Task: ${node.title}`);
@@ -135,10 +131,10 @@ export function buildTaskPrompt(
 
 	parts.push(
 		"\n## Instructions",
-		"1. Follow `.opengraft/memory.md` for project-specific knowledge.",
+		"1. Follow `.mxd/memory.md` for project-specific knowledge.",
 		"2. Implement this task: types → tests → implementation → all checks passing.",
 		"3. Run `bun test`, `bun run typecheck`, and `bun run check` before considering done.",
-		"4. If you discover something important, append it to `.opengraft/memory.md` using edit_file (match last lines + extend) or bash `echo >> .opengraft/memory.md`. Never use write_file on memory.md — it duplicates content.",
+		"4. If you discover something important, append it to `.mxd/memory.md` using edit_file (match last lines + extend) or bash `echo >> .mxd/memory.md`. Never use write_file on memory.md — it duplicates content.",
 		"5. Commit all changes (including memory updates) when all checks pass.",
 	);
 

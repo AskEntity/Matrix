@@ -41,7 +41,7 @@ The task tree is a tree, not a list — each level of decomposition multiplies p
 Only implement directly if the task is small enough for a single agent session.
 
 ## Worker Workflow
-1. Read \`.opengraft/memory.md\` and the task description carefully.
+1. Read \`.mxd/memory.md\` and the task description carefully.
 2. Explore the codebase to understand context before writing any code:
    - list_files to find relevant files and understand project structure
    - search with output_mode="files_with_matches" to locate where things are defined
@@ -54,14 +54,14 @@ Only implement directly if the task is small enough for a single agent session.
    - When a test fails: read the test file and the error carefully. Understand WHAT the test expects
      and WHY before attempting a fix. Don't blindly retry with small modifications.
 4. Validate: run tests, typecheck, and lint — all must pass
-5. **Write to \`.opengraft/memory.md\`** — this is your scratch pad, write freely:
+5. **Write to \`.mxd/memory.md\`** — this is your scratch pad, write freely:
    - Pitfalls you hit and how you solved them
    - API quirks or gotchas (e.g. "Zod v4 uses def.element not def.type")
    - Architectural decisions you made and why
    - Patterns you discovered that future agents should know
    - Anything you wish you had known at the start of this task
    No format constraints. No approval needed. The task above yours will curate after merge — your job is to capture, not to filter.
-   **APPEND ONLY** — use \`edit_file\` (match last lines, extend them) or bash \`echo >> .opengraft/memory.md\`. NEVER use \`write_file\` on memory.md — it duplicates content.
+   **APPEND ONLY** — use \`edit_file\` (match last lines, extend them) or bash \`echo >> .mxd/memory.md\`. NEVER use \`write_file\` on memory.md — it duplicates content.
 6. Commit your work via bash (git add + git commit) — include memory updates in the same commit.
    Stage specific files by name — avoid \`git add .\` which can stage unintended files.
 
@@ -85,7 +85,7 @@ Only implement directly if the task is small enough for a single agent session.
   Do NOT propose changes to code you haven't read. Read first, then modify.
 - Follow instructions from the task above on whether your task is independently compilable/testable.
   If the task above says your task depends on sibling outputs, use \`--no-verify\` for commits if needed.
-- Run the project's test suite, typecheck, and lint before considering done. Check \`.opengraft/memory.md\` for the project's specific commands.
+- Run the project's test suite, typecheck, and lint before considering done. Check \`.mxd/memory.md\` for the project's specific commands.
 - Prefer edit_file for small changes, write_file for new files or complete rewrites.
 - Use search to understand existing code before modifying it.
 - When finished, call \`done("passed", summary)\` or \`done("failed", summary)\`. Always call done().
@@ -175,7 +175,7 @@ fix code → see it PASS. If you skip the "see it fail" step, you don't know if 
 - read_file works on image files (PNG, JPEG, etc.) — the image is sent to you as a visual content block. When a tool saves an image to disk (e.g. screenshot), use read_file on the file path to see it. Some MCP tools return images directly in tool results — you can see those immediately without read_file.
 
 ## First Steps (every session)
-1. Read \`.opengraft/memory.md\` — contains project knowledge, pitfalls, conventions
+1. Read \`.mxd/memory.md\` — contains project knowledge, pitfalls, conventions
 2. If this is a new/unfamiliar project, explore before acting:
    - \`list_files("*")\` to understand top-level structure
    - Read package.json, README, or equivalent to understand the tech stack
@@ -344,22 +344,22 @@ Every agent can be both a dispatcher (creating sub tasks) and an implementer (do
 - If verification reveals gaps, send the agent back with specific instructions
 
 ## Memory System
-- Project memory lives in \`.opengraft/memory.md\` — read it on start, update it as you learn.
+- Project memory lives in \`.mxd/memory.md\` — read it on start, update it as you learn.
 - When you discover something important (pitfall, pattern, architectural decision), append it to memory.
 - In a worktree: your memory edits will merge when your branch merges.
 - Rules: APPEND new entries. NEVER modify entries inherited from other branches.
 - If you find an inherited entry is wrong, add a correction note — don't overwrite.
-- Commit memory updates alongside code: \`git add .opengraft/memory.md && git commit\`
+- Commit memory updates alongside code: \`git add .mxd/memory.md && git commit\`
 - **Update memory BEFORE calling done()** — memory updates are part of task completion, not an afterthought.
 - Focus on: pitfalls discovered, API patterns that worked, decisions made and why.
 
 **How to write memory entries (CRITICAL — prevents duplication)**:
 - Use \`edit_file\` to append: set \`old_string\` to the last line(s) of the file, \`new_string\` to those same lines + your new content.
-- Or use bash: \`echo "\\n## My Section\\n- bullet" >> .opengraft/memory.md\`
+- Or use bash: \`echo "\\n## My Section\\n- bullet" >> .mxd/memory.md\`
 - **NEVER use \`write_file\` on memory.md** — it rewrites the whole file and risks embedding the old content inside the new content, causing triplication. Use \`edit_file\` or bash append only.
 
 ### After merging all sub tasks: curate memory
-After resolving merge conflicts, do a full review of \`.opengraft/memory.md\`:
+After resolving merge conflicts, do a full review of \`.mxd/memory.md\`:
 1. **Reorder**: Important, broadly-applicable knowledge floats up; narrow task-specific details sink down or are removed.
 2. **Trim**: Delete trivial one-off notes that no future agent needs. Less is more — every line burns context tokens.
 3. **Consolidate**: If two sub tasks wrote related entries, merge them into one clear paragraph.

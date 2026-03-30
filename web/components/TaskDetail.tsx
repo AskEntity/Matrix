@@ -112,16 +112,16 @@ export const TaskDetail = memo(function TaskDetail({
 	);
 
 	return (
-		<div className="og-detail-content">
-			<div className="og-detail-title">
+		<div className="mxd-detail-content">
+			<div className="mxd-detail-title">
 				<span
-					className={`og-task-status-dot ${statusDotClass(node.status)}`}
+					className={`mxd-task-status-dot ${statusDotClass(node.status)}`}
 					style={{ width: "10px", height: "10px", flexShrink: 0 }}
 				/>
 				{editingTitle ? (
 					<input
 						ref={titleInputRef}
-						className="og-editable-title-input"
+						className="mxd-editable-title-input"
 						value={editTitle}
 						onChange={(e) => setEditTitle(e.target.value)}
 						onBlur={() => saveTitle(editTitle)}
@@ -136,7 +136,7 @@ export const TaskDetail = memo(function TaskDetail({
 				) : (
 					<button
 						type="button"
-						className="og-editable-title"
+						className="mxd-editable-title"
 						onClick={() => {
 							setEditingTitle(true);
 							setTimeout(() => titleInputRef.current?.focus(), 0);
@@ -150,21 +150,21 @@ export const TaskDetail = memo(function TaskDetail({
 
 			<button
 				type="button"
-				className="og-detail-task-id"
+				className="mxd-detail-task-id"
 				onClick={copyId}
 				title={t("detail.copyId")}
 			>
-				<span className="og-detail-task-id-text">{node.id}</span>
+				<span className="mxd-detail-task-id-text">{node.id}</span>
 				<IconCopy size={10} />
 				{idCopied && (
-					<span className="og-detail-id-copied">{t("detail.copied")}</span>
+					<span className="mxd-detail-id-copied">{t("detail.copied")}</span>
 				)}
 			</button>
 
 			{editingDesc ? (
 				<textarea
 					ref={descTextareaRef}
-					className="og-editable-desc-textarea"
+					className="mxd-editable-desc-textarea"
 					value={editDesc}
 					onChange={(e) => setEditDesc(e.target.value)}
 					onBlur={() => saveDescription(editDesc)}
@@ -179,7 +179,7 @@ export const TaskDetail = memo(function TaskDetail({
 			) : (
 				<button
 					type="button"
-					className="og-detail-description og-editable-desc"
+					className="mxd-detail-description mxd-editable-desc"
 					onClick={() => {
 						setEditingDesc(true);
 						setTimeout(() => descTextareaRef.current?.focus(), 0);
@@ -187,27 +187,29 @@ export const TaskDetail = memo(function TaskDetail({
 					title={t("detail.clickToEdit")}
 				>
 					{node.description || (
-						<span className="og-text-faint">{t("detail.editDescription")}</span>
+						<span className="mxd-text-faint">
+							{t("detail.editDescription")}
+						</span>
 					)}
 					{isRunning && (
-						<div className="og-running-hint">{t("detail.runningHint")}</div>
+						<div className="mxd-running-hint">{t("detail.runningHint")}</div>
 					)}
 				</button>
 			)}
 
-			<div className="og-detail-grid">
-				<div className="og-detail-field">
-					<div className="og-detail-label">{t("detail.status")}</div>
+			<div className="mxd-detail-grid">
+				<div className="mxd-detail-field">
+					<div className="mxd-detail-label">{t("detail.status")}</div>
 					<StatusBadge status={node.status} />
 				</div>
-				<div className="og-detail-field">
-					<div className="og-detail-label">{t("detail.color")}</div>
-					<div className="og-color-picker">
+				<div className="mxd-detail-field">
+					<div className="mxd-detail-label">{t("detail.color")}</div>
+					<div className="mxd-color-picker">
 						{TASK_COLORS.map((c) => (
 							<button
 								key={c.value}
 								type="button"
-								className={`og-color-category${node.color === c.value ? " selected" : ""}`}
+								className={`mxd-color-category${node.color === c.value ? " selected" : ""}`}
 								onClick={() => {
 									const newColor = node.color === c.value ? null : c.value;
 									authFetch(api.task(projectId, node.id), {
@@ -218,7 +220,7 @@ export const TaskDetail = memo(function TaskDetail({
 								}}
 							>
 								<span
-									className="og-color-swatch"
+									className="mxd-color-swatch"
 									style={{ backgroundColor: c.value }}
 								/>
 								{c.name}
@@ -227,7 +229,7 @@ export const TaskDetail = memo(function TaskDetail({
 						{node.color && (
 							<button
 								type="button"
-								className="og-color-clear"
+								className="mxd-color-clear"
 								title="Clear color"
 								onClick={() => {
 									authFetch(api.task(projectId, node.id), {
@@ -243,37 +245,37 @@ export const TaskDetail = memo(function TaskDetail({
 					</div>
 				</div>
 				{node.branch && (
-					<div className="og-detail-field">
-						<div className="og-detail-label">{t("detail.branch")}</div>
-						<div className="og-detail-value mono">{node.branch}</div>
+					<div className="mxd-detail-field">
+						<div className="mxd-detail-label">{t("detail.branch")}</div>
+						<div className="mxd-detail-value mono">{node.branch}</div>
 					</div>
 				)}
 				{node.worktreePath && (
-					<div className="og-detail-field">
-						<div className="og-detail-label">{t("detail.worktree")}</div>
-						<div className="og-detail-value mono" style={{ fontSize: "10px" }}>
+					<div className="mxd-detail-field">
+						<div className="mxd-detail-label">{t("detail.worktree")}</div>
+						<div className="mxd-detail-value mono" style={{ fontSize: "10px" }}>
 							{node.worktreePath}
 						</div>
 					</div>
 				)}
 				{node.updatedAt && (
-					<div className="og-detail-field">
-						<div className="og-detail-label">{t("detail.updated")}</div>
-						<div className="og-detail-value">
+					<div className="mxd-detail-field">
+						<div className="mxd-detail-label">{t("detail.updated")}</div>
+						<div className="mxd-detail-value">
 							{new Date(node.updatedAt).toLocaleString()}
 						</div>
 					</div>
 				)}
 				{(node.createdAt || node.updatedAt) && (
-					<div className="og-detail-field">
-						<div className="og-detail-label">
+					<div className="mxd-detail-field">
+						<div className="mxd-detail-label">
 							{node.status === "in_progress"
 								? t("detail.elapsed")
 								: node.status === "pending"
 									? t("detail.waiting")
 									: t("detail.age")}
 						</div>
-						<div className="og-detail-value">
+						<div className="mxd-detail-value">
 							{node.status === "in_progress"
 								? formatRunningDuration(node.createdAt ?? node.updatedAt)
 								: node.status === "pending"
@@ -283,9 +285,9 @@ export const TaskDetail = memo(function TaskDetail({
 					</div>
 				)}
 				{node.costUsd > 0 || node.budgetUsd ? (
-					<div className="og-detail-field">
-						<div className="og-detail-label">{t("detail.cost")}</div>
-						<div className="og-detail-value mono">
+					<div className="mxd-detail-field">
+						<div className="mxd-detail-label">{t("detail.cost")}</div>
+						<div className="mxd-detail-value mono">
 							${node.costUsd.toFixed(4)}
 							{node.budgetUsd
 								? ` / ${node.budgetUsd.toFixed(2)} ${t("detail.budget")}`
@@ -295,11 +297,11 @@ export const TaskDetail = memo(function TaskDetail({
 				) : null}
 			</div>
 
-			<div className="og-detail-actions">
+			<div className="mxd-detail-actions">
 				{isRunning && onPause && (
 					<button
 						type="button"
-						className="og-btn og-btn-warning og-btn-sm"
+						className="mxd-btn mxd-btn-warning mxd-btn-sm"
 						onClick={onPause}
 					>
 						<IconPause size={12} />
@@ -312,7 +314,7 @@ export const TaskDetail = memo(function TaskDetail({
 					onClearSession && (
 						<button
 							type="button"
-							className="og-btn og-btn-ghost og-btn-sm"
+							className="mxd-btn mxd-btn-ghost mxd-btn-sm"
 							onClick={onClearSession}
 						>
 							<IconTrash size={12} />
@@ -321,7 +323,7 @@ export const TaskDetail = memo(function TaskDetail({
 					)}
 				<button
 					type="button"
-					className="og-btn og-btn-danger og-btn-sm"
+					className="mxd-btn mxd-btn-danger mxd-btn-sm"
 					onClick={onDelete}
 				>
 					<IconTrash size={12} />

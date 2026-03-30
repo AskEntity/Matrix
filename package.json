@@ -1,10 +1,10 @@
 {
-	"name": "opengraft",
+	"name": "mxd",
 	"version": "0.1.0",
 	"type": "module",
 	"private": true,
 	"bin": {
-		"og": "src/cli.ts"
+		"mxd": "src/cli.ts"
 	},
 	"scripts": {
 		"dev": "bun run --watch src/daemon.ts",

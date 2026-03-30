@@ -167,7 +167,7 @@ describe("ValidatingMockAPI", () => {
 					{ type: "text", text: "Hello world" },
 					{
 						type: "tool_use",
-						name: "mcp__opengraft__bash",
+						name: "mcp__mxd__bash",
 						input: { command: "echo hi" },
 					},
 				],
@@ -184,7 +184,7 @@ describe("ValidatingMockAPI", () => {
 			});
 			expect(msg.content[1]).toMatchObject({
 				type: "tool_use",
-				name: "mcp__opengraft__bash",
+				name: "mcp__mxd__bash",
 				input: { command: "echo hi" },
 			});
 			expect(msg.stop_reason).toBe("tool_use");
@@ -234,7 +234,7 @@ describe("ValidatingMockAPI", () => {
 							{ type: "text", text: "Turn 2" },
 							{
 								type: "tool_use",
-								name: "mcp__opengraft__done",
+								name: "mcp__mxd__done",
 								input: { status: "passed", summary: "ok" },
 							},
 						],

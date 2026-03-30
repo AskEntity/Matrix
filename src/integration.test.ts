@@ -40,8 +40,8 @@ interface TestContext {
  * - Project registered in the PM
  */
 async function setupTestContext(): Promise<TestContext> {
-	const dataDir = await mkdtemp(join(tmpdir(), "og-integ-data-"));
-	const projectDir = await mkdtemp(join(tmpdir(), "og-integ-project-"));
+	const dataDir = await mkdtemp(join(tmpdir(), "mxd-integ-data-"));
+	const projectDir = await mkdtemp(join(tmpdir(), "mxd-integ-project-"));
 
 	// Initialize git in the project dir (needed for tracker, worktree manager)
 	Bun.spawnSync(["git", "init"], { cwd: projectDir });
@@ -70,16 +70,11 @@ async function setupTestContext(): Promise<TestContext> {
 	// Without this, child agent tasks can't create worktrees.
 	const hookExample = join(
 		projectDir,
-		".opengraft",
+		".mxd",
 		"hooks",
 		"setup_worktree.sh.example",
 	);
-	const hookActive = join(
-		projectDir,
-		".opengraft",
-		"hooks",
-		"setup_worktree.sh",
-	);
+	const hookActive = join(projectDir, ".mxd", "hooks", "setup_worktree.sh");
 	if (existsSync(hookExample)) {
 		await rename(hookExample, hookActive);
 	}
@@ -259,7 +254,7 @@ describe("Integration: full stack with mock API", () => {
 						{ type: "text", text: "Let me check." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo hello_world" },
 						},
 					],
@@ -277,7 +272,7 @@ describe("Integration: full stack with mock API", () => {
 						{ type: "text", text: "All done!" },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "executed echo successfully",
@@ -333,12 +328,12 @@ describe("Integration: full stack with mock API", () => {
 						{ type: "text", text: "Running two tools." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo tool_one_output" },
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__read_file",
+							name: "mcp__mxd__read_file",
 							input: { path: "test-file.txt" },
 						},
 					],
@@ -362,7 +357,7 @@ describe("Integration: full stack with mock API", () => {
 						{ type: "text", text: "Got both results." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "multi-tool ok" },
 						},
 					],
@@ -390,7 +385,7 @@ describe("Integration: full stack with mock API", () => {
 				{ type: "text", text: "Waiting for input." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__yield",
+					name: "mcp__mxd__yield",
 					input: {},
 				},
 			],
@@ -411,7 +406,7 @@ describe("Integration: full stack with mock API", () => {
 				{ type: "text", text: "Finished." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "woke from yield" },
 				},
 			],
@@ -450,7 +445,7 @@ describe("Integration: full stack with mock API", () => {
 				{ type: "text", text: "Goodbye." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
 						summary: "woke from implicit yield",
@@ -477,7 +472,7 @@ describe("Integration: full stack with mock API", () => {
 						{ type: "text", text: "Running bash." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo jsonl_test" },
 						},
 					],
@@ -487,7 +482,7 @@ describe("Integration: full stack with mock API", () => {
 						{ type: "text", text: "Done." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "jsonl verified" },
 						},
 					],
@@ -552,7 +547,7 @@ describe("Integration: full stack with mock API", () => {
 						{ type: "text", text: "Running slow command." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 0.3 && echo slow_done" },
 						},
 					],
@@ -562,7 +557,7 @@ describe("Integration: full stack with mock API", () => {
 						{ type: "text", text: "Got everything." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "message received during tool",
@@ -668,7 +663,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ type: "text", text: "Waiting for input." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__yield",
+					name: "mcp__mxd__yield",
 					input: {},
 				},
 			],
@@ -705,7 +700,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ type: "text", text: "Finished after restart." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "survived yield restart" },
 				},
 			],
@@ -734,7 +729,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Running a long command." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -746,7 +741,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Bash was interrupted, finishing up." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "handled bash interruption",
@@ -789,7 +784,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ type: "text", text: "Continue after crash." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "recovered from bash crash" },
 				},
 			],
@@ -851,7 +846,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ type: "text", text: "Wrapping up after restart." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
 						summary: "survived implicit yield restart",
@@ -879,7 +874,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ type: "text", text: "Done immediately." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "quick done" },
 				},
 			],
@@ -912,7 +907,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ type: "text", text: "New task after restart." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "second pass after restart" },
 				},
 			],
@@ -1187,7 +1182,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		];
 		const tools = [
 			{
-				name: "mcp__opengraft__done",
+				name: "mcp__mxd__done",
 				description: "Finish",
 				input_schema: {},
 			},
@@ -1215,7 +1210,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							{
 								type: "tool_use",
 								id: "t1",
-								name: "mcp__opengraft__fork_task_context",
+								name: "mcp__mxd__fork_task_context",
 								input: {},
 							},
 						],
@@ -1251,7 +1246,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							{
 								type: "tool_use",
 								id: "t1",
-								name: "mcp__opengraft__fork_task_context",
+								name: "mcp__mxd__fork_task_context",
 								input: {},
 							},
 						],
@@ -1285,7 +1280,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							{
 								type: "tool_use",
 								id: "t1",
-								name: "mcp__opengraft__fork_task_context",
+								name: "mcp__mxd__fork_task_context",
 								input: {},
 							},
 						],
@@ -1306,7 +1301,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 							{
 								type: "tool_use",
 								id: "t2",
-								name: "mcp__opengraft__done",
+								name: "mcp__mxd__done",
 								input: { status: "passed", summary: "done" },
 							},
 						],
@@ -1396,7 +1391,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Running long command." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -1406,7 +1401,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Got all messages, finishing." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "both messages received after restart",
@@ -1479,7 +1474,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ type: "text", text: "Done immediately." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "quick done" },
 				},
 			],
@@ -1507,7 +1502,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ type: "text", text: "UNIQUE_RESTART_MESSAGE" },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "no duplicates" },
 				},
 			],
@@ -1565,7 +1560,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Running background process." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30", run_in_background: true },
 						},
 					],
@@ -1576,7 +1571,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Waiting for input." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -1587,7 +1582,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Background was interrupted, finishing." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "survived bg + yield restart",
@@ -1658,7 +1653,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ type: "text", text: "Continue after bg restart." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
 						summary: "survived bg + yield restart",
@@ -1692,12 +1687,12 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Running two commands in parallel." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo FAST_RESULT_A" },
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -1722,7 +1717,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Both results received, finishing." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "concurrent bash + crash handled",
@@ -1786,7 +1781,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Running sleep." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -1801,7 +1796,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Got orphan result and message." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "inject + crash ok" },
 						},
 					],
@@ -1866,7 +1861,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Running long command." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -1876,7 +1871,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Survived double restart." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "double restart survived" },
 						},
 					],
@@ -1977,7 +1972,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 				{ type: "text", text: "Finish up after crash." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "end_turn crash recovered" },
 				},
 			],
@@ -2028,7 +2023,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Starting bg." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 60", run_in_background: true },
 						},
 					],
@@ -2038,7 +2033,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Foreground bash." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -2048,7 +2043,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 						{ type: "text", text: "Resumed after restart." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "bg orphan handled on restart",
@@ -2171,12 +2166,12 @@ describe("Integration: same-turn tool conflicts", () => {
 						{ type: "text", text: "Running bash and yielding." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo yield_bash_test" },
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -2201,7 +2196,7 @@ describe("Integration: same-turn tool conflicts", () => {
 						{ type: "text", text: "Both tools handled." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "yield + bash same turn ok",
@@ -2230,12 +2225,12 @@ describe("Integration: same-turn tool conflicts", () => {
 						{ type: "text", text: "Yield first, then bash." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo reverse_order_test" },
 						},
 					],
@@ -2259,7 +2254,7 @@ describe("Integration: same-turn tool conflicts", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "reverse order ok",
@@ -2290,12 +2285,12 @@ describe("Integration: same-turn tool conflicts", () => {
 						{ type: "text", text: "Trying to bash and done together." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo done_bash_test" },
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "premature done" },
 						},
 					],
@@ -2320,7 +2315,7 @@ describe("Integration: same-turn tool conflicts", () => {
 						{ type: "text", text: "Now properly done." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "done after seeing error",
@@ -2355,12 +2350,12 @@ describe("Integration: same-turn tool conflicts", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo OUTPUT_A", run_in_background: true },
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo OUTPUT_B", run_in_background: true },
 						},
 					],
@@ -2383,7 +2378,7 @@ describe("Integration: same-turn tool conflicts", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "bg commands done" },
 						},
 					],
@@ -2503,7 +2498,7 @@ describe("Integration: yield wakeup assertions", () => {
 						{ type: "text", text: "Waiting for input." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -2526,7 +2521,7 @@ describe("Integration: yield wakeup assertions", () => {
 						{ type: "text", text: "Woke up." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "yield resume structure verified",
@@ -2580,7 +2575,7 @@ describe("Integration: yield wakeup assertions", () => {
 				{ type: "text", text: "All done." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
 						summary: "implicit yield wake verified",
@@ -2633,7 +2628,7 @@ describe("Integration: yield wakeup assertions", () => {
 						{ type: "text", text: "Yielding now." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -2654,7 +2649,7 @@ describe("Integration: yield wakeup assertions", () => {
 						{ type: "text", text: "Got first message, yielding for second." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -2673,7 +2668,7 @@ describe("Integration: yield wakeup assertions", () => {
 						{ type: "text", text: "Got both messages." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "multiple yield messages verified",
@@ -2720,7 +2715,7 @@ describe("Integration: yield wakeup assertions", () => {
 						{ type: "text", text: "Yielding." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -2743,7 +2738,7 @@ describe("Integration: yield wakeup assertions", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "message format verified",
@@ -2787,7 +2782,7 @@ describe("Integration: parent-child lifecycle", () => {
 						{ type: "text", text: "Child working." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo CHILD_OUTPUT_123" },
 						},
 					],
@@ -2804,7 +2799,7 @@ describe("Integration: parent-child lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "child completed work" },
 						},
 					],
@@ -2820,7 +2815,7 @@ describe("Integration: parent-child lifecycle", () => {
 						{ type: "text", text: "Creating child task." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Test Child Task",
 								description: "A child task for testing",
@@ -2844,7 +2839,7 @@ describe("Integration: parent-child lifecycle", () => {
 						{ type: "text", text: "Sending message to child." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Start work",
@@ -2865,7 +2860,7 @@ describe("Integration: parent-child lifecycle", () => {
 						{ type: "text", text: "Waiting for child." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -2894,7 +2889,7 @@ describe("Integration: parent-child lifecycle", () => {
 						{ type: "text", text: "Child completed. Finishing." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "parent-child lifecycle complete",
@@ -2936,7 +2931,7 @@ describe("Integration: parent-child lifecycle", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "failed", summary: "child encountered an error" },
 				},
 			],
@@ -2949,7 +2944,7 @@ describe("Integration: parent-child lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Failing Child",
 								description: "A child task that will fail",
@@ -2971,7 +2966,7 @@ describe("Integration: parent-child lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Start",
@@ -2984,7 +2979,7 @@ describe("Integration: parent-child lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -3012,7 +3007,7 @@ describe("Integration: parent-child lifecycle", () => {
 						{ type: "text", text: "Child failed as expected." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "handled child failure",
@@ -3054,7 +3049,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "all good" },
 				},
 			],
@@ -3076,7 +3071,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "failed", summary: "something went wrong" },
 				},
 			],
@@ -3097,7 +3092,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -3106,7 +3101,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "recovered" },
 						},
 					],
@@ -3136,7 +3131,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__yield",
+					name: "mcp__mxd__yield",
 					input: {},
 				},
 			],
@@ -3163,7 +3158,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__bash",
+					name: "mcp__mxd__bash",
 					input: { command: "sleep 30" },
 				},
 			],
@@ -3175,7 +3170,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Long Running Child",
 								description: "child that runs a long time",
@@ -3195,7 +3190,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Start",
@@ -3208,7 +3203,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -3254,7 +3249,7 @@ describe("Integration: yield bypass on restart", () => {
 				{ type: "text", text: "Going idle." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__yield",
+					name: "mcp__mxd__yield",
 					input: {},
 				},
 			],
@@ -3285,7 +3280,7 @@ describe("Integration: yield bypass on restart", () => {
 				{ type: "text", text: "Waking up after restart." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "survived restart" },
 				},
 			],
@@ -3309,7 +3304,7 @@ describe("Integration: yield bypass on restart", () => {
 						{ type: "text", text: "Running bash." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -3320,7 +3315,7 @@ describe("Integration: yield bypass on restart", () => {
 						{ type: "text", text: "Bash interrupted, done." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "handled interruption" },
 						},
 					],
@@ -3365,7 +3360,7 @@ describe("Integration: yield bypass on restart", () => {
 						{ type: "text", text: "Got a message, finishing." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "woke from end_turn" },
 						},
 					],
@@ -3390,7 +3385,7 @@ describe("Integration: yield bypass on restart", () => {
 				{ type: "text", text: "Continue please." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "continued after end_turn" },
 				},
 			],
@@ -3418,7 +3413,7 @@ describe("Integration: autoResume with mixed agent states", () => {
 				{ type: "text", text: "Yielding." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__yield",
+					name: "mcp__mxd__yield",
 					input: {},
 				},
 			],
@@ -3443,7 +3438,7 @@ describe("Integration: autoResume with mixed agent states", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "after restart" },
 				},
 			],
@@ -3475,7 +3470,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: {
 								command: "sleep 2 && echo timeout_done",
 								foreground_timeout: 500,
@@ -3501,7 +3496,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "foreground timeout triggered background",
@@ -3531,7 +3526,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: {
 								command: "echo bg_await_output",
 								run_in_background: true,
@@ -3554,7 +3549,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__background",
+							name: "mcp__mxd__background",
 							input: { action: "await", id: "$bgId" },
 						},
 					],
@@ -3571,7 +3566,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "bg await worked" },
 						},
 					],
@@ -3600,7 +3595,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: {
 								command: "sleep 5 && echo bg_list_a",
 								run_in_background: true,
@@ -3608,7 +3603,7 @@ describe("Integration: background process lifecycle", () => {
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: {
 								command: "sleep 5 && echo bg_list_b",
 								run_in_background: true,
@@ -3635,7 +3630,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__background",
+							name: "mcp__mxd__background",
 							input: { action: "list" },
 						},
 					],
@@ -3658,7 +3653,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__background",
+							name: "mcp__mxd__background",
 							input: { action: "status", id: "$bgId1" },
 						},
 					],
@@ -3680,7 +3675,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "bg list + status ok" },
 						},
 					],
@@ -3707,7 +3702,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: {
 								command: "sleep 30",
 								run_in_background: true,
@@ -3729,7 +3724,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__background",
+							name: "mcp__mxd__background",
 							input: { action: "kill", id: "$bgId" },
 						},
 					],
@@ -3746,7 +3741,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "bg kill ok" },
 						},
 					],
@@ -3773,7 +3768,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: {
 								command: "sleep 0.5 && echo BG_DONE_FIVE",
 								run_in_background: true,
@@ -3781,7 +3776,7 @@ describe("Integration: background process lifecycle", () => {
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 2 && echo FG_DONE_FIVE" },
 						},
 					],
@@ -3804,7 +3799,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "bg complete during fg tool",
@@ -3848,7 +3843,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: {
 								command: "sleep 0.3 && echo BG_SIX_A",
 								run_in_background: true,
@@ -3856,7 +3851,7 @@ describe("Integration: background process lifecycle", () => {
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: {
 								command: "sleep 0.6 && echo BG_SIX_B",
 								run_in_background: true,
@@ -3881,7 +3876,7 @@ describe("Integration: background process lifecycle", () => {
 						{ type: "text", text: "Yielding to wait for bg completions." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -3904,7 +3899,7 @@ describe("Integration: background process lifecycle", () => {
 						{ type: "text", text: "Got first bg_complete, yielding again." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -3926,7 +3921,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "multiple bg completions received via yield",
@@ -3970,7 +3965,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: {
 								command: "sleep 3 && echo REST_BG_DONE",
 								foreground_timeout: 60000,
@@ -3997,7 +3992,7 @@ describe("Integration: background process lifecycle", () => {
 						{ type: "text", text: "Moved via REST. Waiting for completion." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -4024,7 +4019,7 @@ describe("Integration: background process lifecycle", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "REST move-to-background worked",
@@ -4103,7 +4098,7 @@ describe("Integration: tree operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Tree Test Task",
 								description: "A task for tree testing",
@@ -4126,7 +4121,7 @@ describe("Integration: tree operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__update_task",
+							name: "mcp__mxd__update_task",
 							input: {
 								taskId: "$taskId",
 								title: "Updated Tree Task",
@@ -4146,7 +4141,7 @@ describe("Integration: tree operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__close_task",
+							name: "mcp__mxd__close_task",
 							input: { taskId: "$taskId" },
 						},
 					],
@@ -4162,7 +4157,7 @@ describe("Integration: tree operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "tree CRUD chain complete",
@@ -4200,7 +4195,7 @@ describe("Integration: tree operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__get_tree",
+							name: "mcp__mxd__get_tree",
 							input: {},
 						},
 					],
@@ -4219,17 +4214,17 @@ describe("Integration: tree operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: { title: "Task Alpha", description: "First" },
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: { title: "Task Beta", description: "Second" },
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: { title: "Task Gamma", description: "Third" },
 						},
 					],
@@ -4264,7 +4259,7 @@ describe("Integration: tree operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__reorder_tasks",
+							name: "mcp__mxd__reorder_tasks",
 							input: {
 								nodeId: "$rootId",
 								children: ["$id3", "$id1", "$id2"],
@@ -4283,7 +4278,7 @@ describe("Integration: tree operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "reorder ok" },
 						},
 					],
@@ -4317,7 +4312,7 @@ describe("Integration: tree operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Visible Task 42",
 								description: "Should appear in tree",
@@ -4336,7 +4331,7 @@ describe("Integration: tree operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__get_tree",
+							name: "mcp__mxd__get_tree",
 							input: { format: "flat" },
 						},
 					],
@@ -4353,7 +4348,7 @@ describe("Integration: tree operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "tree reflects task" },
 						},
 					],
@@ -4387,7 +4382,7 @@ describe("Integration: file operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__write_file",
+							name: "mcp__mxd__write_file",
 							input: {
 								path: "test-write.txt",
 								content: "WRITTEN_CONTENT_XYZ",
@@ -4406,7 +4401,7 @@ describe("Integration: file operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__read_file",
+							name: "mcp__mxd__read_file",
 							input: { path: "test-write.txt" },
 						},
 					],
@@ -4423,7 +4418,7 @@ describe("Integration: file operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "write+read ok" },
 						},
 					],
@@ -4453,7 +4448,7 @@ describe("Integration: file operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__read_file",
+							name: "mcp__mxd__read_file",
 							input: { path: "editable.txt" },
 						},
 					],
@@ -4470,7 +4465,7 @@ describe("Integration: file operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__edit_file",
+							name: "mcp__mxd__edit_file",
 							input: {
 								path: "editable.txt",
 								old_string: "ORIGINAL_VALUE",
@@ -4490,7 +4485,7 @@ describe("Integration: file operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__read_file",
+							name: "mcp__mxd__read_file",
 							input: { path: "editable.txt" },
 						},
 					],
@@ -4508,7 +4503,7 @@ describe("Integration: file operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "edit ok" },
 						},
 					],
@@ -4546,7 +4541,7 @@ describe("Integration: file operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__search",
+							name: "mcp__mxd__search",
 							input: {
 								pattern: "FINDME_PATTERN",
 								path: ".",
@@ -4576,7 +4571,7 @@ describe("Integration: file operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "search ok" },
 						},
 					],
@@ -4607,7 +4602,7 @@ describe("Integration: file operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__list_files",
+							name: "mcp__mxd__list_files",
 							input: { pattern: "subdir/*.ts" },
 						},
 					],
@@ -4634,7 +4629,7 @@ describe("Integration: file operations", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "list_files ok" },
 						},
 					],
@@ -4660,7 +4655,7 @@ describe("Integration: file operations", () => {
 						{ type: "text", text: "Let me check." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo hello_retry" },
 						},
 					],
@@ -4677,7 +4672,7 @@ describe("Integration: file operations", () => {
 						{ type: "text", text: "All done!" },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "survived rate limit" },
 						},
 					],
@@ -4725,7 +4720,7 @@ describe("Integration: file operations", () => {
 						{ type: "text", text: "Let me check." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo test" },
 						},
 					],
@@ -4735,7 +4730,7 @@ describe("Integration: file operations", () => {
 						{ type: "text", text: "Done!" },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "ok" },
 						},
 					],
@@ -4825,7 +4820,7 @@ describe("Integration: fork prefix consistency", () => {
 				{ type: "text", text: "I am the forked child." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "forked child done" },
 				},
 			],
@@ -4839,7 +4834,7 @@ describe("Integration: fork prefix consistency", () => {
 						{ type: "text", text: "Work 1." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo PARENT_WORK_1" },
 						},
 					],
@@ -4852,7 +4847,7 @@ describe("Integration: fork prefix consistency", () => {
 						{ type: "text", text: "Work 2." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo PARENT_WORK_2" },
 						},
 					],
@@ -4864,7 +4859,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Forked Child",
 								description: "Testing fork prefix",
@@ -4887,7 +4882,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__fork_task_context",
+							name: "mcp__mxd__fork_task_context",
 							input: { sourceTaskId: "$rootId", targetTaskId: "$childId" },
 						},
 					],
@@ -4899,7 +4894,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Start",
@@ -4910,16 +4905,14 @@ describe("Integration: fork prefix consistency", () => {
 				},
 				{
 					assert: [{ block: 0, type: "tool_result", isError: false }],
-					blocks: [
-						{ type: "tool_use", name: "mcp__opengraft__yield", input: {} },
-					],
+					blocks: [{ type: "tool_use", name: "mcp__mxd__yield", input: {} }],
 				},
 				{
 					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "fork prefix test done" },
 						},
 					],
@@ -4955,7 +4948,7 @@ describe("Integration: fork prefix consistency", () => {
 				.find((m) => m.role === "assistant");
 			if (!last || !Array.isArray(last.content)) return false;
 			return (last.content as Array<{ name?: string }>).some(
-				(b) => b.name === "mcp__opengraft__fork_task_context",
+				(b) => b.name === "mcp__mxd__fork_task_context",
 			);
 		});
 		expect(forkRequestIdx).toBeGreaterThanOrEqual(0);
@@ -4995,7 +4988,7 @@ describe("Integration: fork prefix consistency", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "child done" },
 				},
 			],
@@ -5012,7 +5005,7 @@ describe("Integration: fork prefix consistency", () => {
 						{ type: "text", text: "Working." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo WORK" },
 						},
 					],
@@ -5023,7 +5016,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: { title: "Fork Target", description: "test" },
 						},
 					],
@@ -5044,7 +5037,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__fork_task_context",
+							name: "mcp__mxd__fork_task_context",
 							input: { sourceTaskId: "$rootId", targetTaskId: "$childId" },
 						},
 					],
@@ -5057,7 +5050,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Go",
@@ -5071,7 +5064,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -5081,7 +5074,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "done" },
 						},
 					],
@@ -5138,9 +5131,7 @@ describe("Integration: fork prefix consistency", () => {
 		// should flush pending writes before reading). And it should have a
 		// synthetic tool_result before fork_marker.
 		const forkToolCall = eventsBeforeFork.find(
-			(e) =>
-				e.type === "tool_call" &&
-				e.tool === "mcp__opengraft__fork_task_context",
+			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__fork_task_context",
 		);
 		expect(forkToolCall).toBeDefined();
 		if (forkToolCall && forkToolCall.type === "tool_call") {
@@ -5170,7 +5161,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo CHILD_A_WORK" },
 						},
 					],
@@ -5180,7 +5171,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "A done" },
 						},
 					],
@@ -5192,7 +5183,7 @@ describe("Integration: fork prefix consistency", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "child B done" },
 				},
 			],
@@ -5207,7 +5198,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: { title: "Child A", description: "source agent" },
 						},
 					],
@@ -5225,7 +5216,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childAId",
 								title: "Do work",
@@ -5240,7 +5231,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -5251,7 +5242,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: { title: "Child B", description: "forked from A" },
 						},
 					],
@@ -5269,7 +5260,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__fork_task_context",
+							name: "mcp__mxd__fork_task_context",
 							input: { sourceTaskId: "$childAId", targetTaskId: "$childBId" },
 						},
 					],
@@ -5282,7 +5273,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childBId",
 								title: "Continue from A",
@@ -5297,7 +5288,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -5308,7 +5299,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "all done" },
 						},
 					],
@@ -5340,9 +5331,7 @@ describe("Integration: fork prefix consistency", () => {
 		// Case 2 check: synthetic fork tool_call should be injected
 		// (A's JSONL has no fork tool_call — A was cold-started, not forked)
 		const syntheticForkCall = eventsBeforeFork.find(
-			(e) =>
-				e.type === "tool_call" &&
-				e.tool === "mcp__opengraft__fork_task_context",
+			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__fork_task_context",
 		);
 		expect(syntheticForkCall).toBeDefined();
 
@@ -5376,7 +5365,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: { title: "Target", description: "test" },
 						},
 					],
@@ -5397,12 +5386,12 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo HI" },
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__fork_task_context",
+							name: "mcp__mxd__fork_task_context",
 							input: { sourceTaskId: "$rootId", targetTaskId: "$childId" },
 						},
 					],
@@ -5421,7 +5410,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "fork rejected as expected" },
 						},
 					],
@@ -5445,7 +5434,7 @@ describe("Integration: fork prefix consistency", () => {
 				{ type: "text", text: "Forked child reporting." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "child done" },
 				},
 			],
@@ -5459,7 +5448,7 @@ describe("Integration: fork prefix consistency", () => {
 						{ type: "text", text: "Doing work before fork." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo PRE_FORK_WORK" },
 						},
 					],
@@ -5471,7 +5460,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Fork Target",
 								description: "Cross-fork prefix test",
@@ -5494,7 +5483,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__fork_task_context",
+							name: "mcp__mxd__fork_task_context",
 							input: { sourceTaskId: "$rootId", targetTaskId: "$childId" },
 						},
 					],
@@ -5506,7 +5495,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Go",
@@ -5516,15 +5505,13 @@ describe("Integration: fork prefix consistency", () => {
 					],
 				},
 				{
-					blocks: [
-						{ type: "tool_use", name: "mcp__opengraft__yield", input: {} },
-					],
+					blocks: [{ type: "tool_use", name: "mcp__mxd__yield", input: {} }],
 				},
 				{
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "fork prefix validated" },
 						},
 					],
@@ -5573,7 +5560,7 @@ describe("Integration: message near done() race condition", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "initial work done" },
 				},
 			],
@@ -5586,7 +5573,7 @@ describe("Integration: message near done() race condition", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Race Test Child",
 								description: "Child for message race test",
@@ -5608,7 +5595,7 @@ describe("Integration: message near done() race condition", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Start",
@@ -5621,7 +5608,7 @@ describe("Integration: message near done() race condition", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -5631,7 +5618,7 @@ describe("Integration: message near done() race condition", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "parent done after child passed",
@@ -5663,7 +5650,7 @@ describe("Integration: message near done() race condition", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
 						summary: "resumed and saw messages",
@@ -5744,7 +5731,7 @@ describe("Integration: session_config in JSONL", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "done" },
 				},
 			],
@@ -5787,7 +5774,7 @@ describe("Integration: session_config in JSONL", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo FIRST_RUN" },
 						},
 					],
@@ -5797,7 +5784,7 @@ describe("Integration: session_config in JSONL", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "first done" },
 						},
 					],
@@ -5826,7 +5813,7 @@ describe("Integration: session_config in JSONL", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "resumed done" },
 				},
 			],
@@ -5855,7 +5842,7 @@ describe("Integration: session_config in JSONL", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "forked child done" },
 				},
 			],
@@ -5867,7 +5854,7 @@ describe("Integration: session_config in JSONL", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Config Fork Child",
 								description: "Testing session_config fork",
@@ -5890,7 +5877,7 @@ describe("Integration: session_config in JSONL", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__fork_task_context",
+							name: "mcp__mxd__fork_task_context",
 							input: { sourceTaskId: "$rootId", targetTaskId: "$childId" },
 						},
 					],
@@ -5902,7 +5889,7 @@ describe("Integration: session_config in JSONL", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Start",
@@ -5913,16 +5900,14 @@ describe("Integration: session_config in JSONL", () => {
 				},
 				{
 					assert: [{ block: 0, type: "tool_result", isError: false }],
-					blocks: [
-						{ type: "tool_use", name: "mcp__opengraft__yield", input: {} },
-					],
+					blocks: [{ type: "tool_use", name: "mcp__mxd__yield", input: {} }],
 				},
 				{
 					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "fork config test done",
@@ -5967,7 +5952,7 @@ describe("Integration: session_config in JSONL", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__get_tree",
+							name: "mcp__mxd__get_tree",
 							input: {},
 						},
 					],
@@ -5983,7 +5968,7 @@ describe("Integration: session_config in JSONL", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "tree test done" },
 						},
 					],
@@ -6035,7 +6020,7 @@ describe("Integration: root done then resume", () => {
 						{ type: "text", text: "All done." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "first pass complete" },
 						},
 					],
@@ -6045,7 +6030,7 @@ describe("Integration: root done then resume", () => {
 						{ type: "text", text: "Handling new message after resume." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "second pass after resume",
@@ -6109,7 +6094,7 @@ describe("Integration: root done then resume", () => {
 				{ type: "text", text: "All done." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "first pass complete" },
 				},
 			],
@@ -6141,7 +6126,7 @@ describe("Integration: root done then resume", () => {
 				{ type: "text", text: "New task after done." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "second pass after resume" },
 				},
 			],
@@ -6178,7 +6163,7 @@ describe("Integration: root done then resume", () => {
 				{ type: "text", text: "All done." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "first pass" },
 				},
 			],
@@ -6213,7 +6198,7 @@ describe("Integration: root done then resume", () => {
 				{ type: "text", text: "New task." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "resumed ok" },
 				},
 			],
@@ -6253,7 +6238,7 @@ describe("Integration: root done then resume", () => {
 						{ type: "text", text: "Doing initial work." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo hello" },
 						},
 					],
@@ -6264,7 +6249,7 @@ describe("Integration: root done then resume", () => {
 						{ type: "text", text: "Finished first pass." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "first pass" },
 						},
 					],
@@ -6275,7 +6260,7 @@ describe("Integration: root done then resume", () => {
 						{ type: "text", text: "More work after wake." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo world" },
 						},
 					],
@@ -6286,7 +6271,7 @@ describe("Integration: root done then resume", () => {
 						{ type: "text", text: "Finished second pass." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "second pass" },
 						},
 					],
@@ -6325,7 +6310,7 @@ describe("Integration: root done then resume", () => {
 				{ type: "text", text: "Final task after restart." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "post-restart pass" },
 				},
 			],
@@ -6367,7 +6352,7 @@ describe("Integration: nested parent-child", () => {
 						{ type: "text", text: "Grandchild working." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo GRANDCHILD_OUTPUT" },
 						},
 					],
@@ -6384,7 +6369,7 @@ describe("Integration: nested parent-child", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "grandchild done" },
 						},
 					],
@@ -6400,7 +6385,7 @@ describe("Integration: nested parent-child", () => {
 						{ type: "text", text: "Child creating grandchild." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Grandchild Task",
 								description: "A grandchild task",
@@ -6422,7 +6407,7 @@ describe("Integration: nested parent-child", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$grandchildId",
 								title: "Start grandchild",
@@ -6435,7 +6420,7 @@ describe("Integration: nested parent-child", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -6452,7 +6437,7 @@ describe("Integration: nested parent-child", () => {
 						{ type: "text", text: "Grandchild completed." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "child done, grandchild passed",
@@ -6471,7 +6456,7 @@ describe("Integration: nested parent-child", () => {
 						{ type: "text", text: "Parent creating child." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Child Task",
 								description: "A child task that creates a grandchild",
@@ -6493,7 +6478,7 @@ describe("Integration: nested parent-child", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Start child",
@@ -6506,7 +6491,7 @@ describe("Integration: nested parent-child", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -6523,7 +6508,7 @@ describe("Integration: nested parent-child", () => {
 						{ type: "text", text: "Child completed. All done." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "full tree done" },
 						},
 					],
@@ -6557,7 +6542,7 @@ describe("Integration: nested parent-child", () => {
 		// Verify grandchild JSONL has bash events
 		const grandchildEvents = readSessionEvents(ctx, grandchildId);
 		const bashCalls = grandchildEvents.filter(
-			(e) => e.type === "tool_call" && e.tool === "mcp__opengraft__bash",
+			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__bash",
 		);
 		expect(bashCalls.length).toBe(1);
 	}, 90000);
@@ -6571,7 +6556,7 @@ describe("Integration: nested parent-child", () => {
 			blocks: [
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "failed", summary: "grandchild error" },
 				},
 			],
@@ -6584,7 +6569,7 @@ describe("Integration: nested parent-child", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Failing Grandchild",
 								description: "Will fail",
@@ -6606,7 +6591,7 @@ describe("Integration: nested parent-child", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$grandchildId",
 								title: "Go",
@@ -6619,7 +6604,7 @@ describe("Integration: nested parent-child", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -6636,7 +6621,7 @@ describe("Integration: nested parent-child", () => {
 						{ type: "text", text: "Handled grandchild failure." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "handled failure" },
 						},
 					],
@@ -6651,7 +6636,7 @@ describe("Integration: nested parent-child", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Child With Failing Grandchild",
 								description: "Handles grandchild failure",
@@ -6673,7 +6658,7 @@ describe("Integration: nested parent-child", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Start",
@@ -6686,7 +6671,7 @@ describe("Integration: nested parent-child", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -6703,7 +6688,7 @@ describe("Integration: nested parent-child", () => {
 						{ type: "text", text: "All handled." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "failure handled" },
 						},
 					],
@@ -6754,7 +6739,7 @@ describe("Integration: child restart scenarios", () => {
 						{ type: "text", text: "Child running long task." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -6764,7 +6749,7 @@ describe("Integration: child restart scenarios", () => {
 						{ type: "text", text: "Resumed after crash." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "child survived restart" },
 						},
 					],
@@ -6779,7 +6764,7 @@ describe("Integration: child restart scenarios", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Restartable Child",
 								description: "Child that survives restart",
@@ -6801,7 +6786,7 @@ describe("Integration: child restart scenarios", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Start",
@@ -6814,7 +6799,7 @@ describe("Integration: child restart scenarios", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -6825,7 +6810,7 @@ describe("Integration: child restart scenarios", () => {
 						{ type: "text", text: "Child done after restart." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "parent done" },
 						},
 					],
@@ -6888,7 +6873,7 @@ describe("Integration: child restart scenarios", () => {
 						{ type: "text", text: "Child doing work." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -6898,7 +6883,7 @@ describe("Integration: child restart scenarios", () => {
 						{ type: "text", text: "Resumed child." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "child survived" },
 						},
 					],
@@ -6913,7 +6898,7 @@ describe("Integration: child restart scenarios", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Child For Restart",
 								description: "Both crash and resume",
@@ -6935,7 +6920,7 @@ describe("Integration: child restart scenarios", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Go",
@@ -6948,7 +6933,7 @@ describe("Integration: child restart scenarios", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -6958,7 +6943,7 @@ describe("Integration: child restart scenarios", () => {
 						{ type: "text", text: "Both survived." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "both resumed" },
 						},
 					],
@@ -7025,7 +7010,7 @@ describe("Integration: multiple restarts with accumulated state", () => {
 						{ type: "text", text: "First bash." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo FIRST_RESULT" },
 						},
 					],
@@ -7043,7 +7028,7 @@ describe("Integration: multiple restarts with accumulated state", () => {
 						{ type: "text", text: "Second bash." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -7054,7 +7039,7 @@ describe("Integration: multiple restarts with accumulated state", () => {
 						{ type: "text", text: "Third bash after first restart." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -7065,7 +7050,7 @@ describe("Integration: multiple restarts with accumulated state", () => {
 						{ type: "text", text: "Final after second restart." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "survived triple restart" },
 						},
 					],
@@ -7118,7 +7103,7 @@ describe("Integration: multiple restarts with accumulated state", () => {
 		const rootNodeId = await getRootNodeId(ctx);
 		const events = readSessionEvents(ctx, rootNodeId);
 		const bashCalls = events.filter(
-			(e) => e.type === "tool_call" && e.tool === "mcp__opengraft__bash",
+			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__bash",
 		);
 		expect(bashCalls.length).toBe(3);
 

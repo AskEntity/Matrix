@@ -9,7 +9,7 @@ describe("TaskTracker", () => {
 	let tracker: TaskTracker;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-tracker-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-tracker-"));
 		tracker = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker.load();
 	});

@@ -13,12 +13,12 @@ interface WorktreeInfo {
 /**
  * Manages git worktrees for task isolation.
  * Each task gets its own worktree on a dedicated branch.
- * Branch naming: og/<taskId-short>/<slug>
+ * Branch naming: mxd/<taskId-short>/<slug>
  *
  * Worktree setup:
  * - extensions.worktreeConfig is enabled so per-worktree git config works
  * - Hooks are disabled per-worktree (core.hooksPath = /dev/null)
- * - Setup hook (.opengraft/hooks/setup_worktree.sh) is run if present
+ * - Setup hook (.mxd/hooks/setup_worktree.sh) is run if present
  */
 export class WorktreeManager {
 	constructor(
@@ -48,7 +48,7 @@ export class WorktreeManager {
 	 * Sets up a fully isolated environment:
 	 * 1. Creates worktree with new branch
 	 * 2. Disables hooks (so child agents don't trigger parent project's pre-commit)
-	 * 3. Runs .opengraft/hooks/setup_worktree.sh if present
+	 * 3. Runs .mxd/hooks/setup_worktree.sh if present
 	 */
 	async create(
 		taskId: string,
@@ -140,8 +140,8 @@ export class WorktreeManager {
 				currentPath = line.slice("worktree ".length);
 			} else if (line.startsWith("branch refs/heads/") && currentPath) {
 				const branch = line.slice("branch refs/heads/".length);
-				// Only include og/ branches (our managed worktrees)
-				if (branch.startsWith("og/")) {
+				// Only include mxd/ branches (our managed worktrees)
+				if (branch.startsWith("mxd/")) {
 					worktrees.push({ path: currentPath, branch });
 				}
 				currentPath = "";
@@ -178,10 +178,10 @@ export class WorktreeManager {
 
 	/** Run the project's setup hook. Fails if hook is missing. */
 	private async runSetupHook(wtPath: string): Promise<void> {
-		const hookPath = join(wtPath, ".opengraft", "hooks", "setup_worktree.sh");
+		const hookPath = join(wtPath, ".mxd", "hooks", "setup_worktree.sh");
 		if (!existsSync(hookPath)) {
 			throw new Error(
-				"Missing .opengraft/hooks/setup_worktree.sh — create this file to configure worktree environment setup.",
+				"Missing .mxd/hooks/setup_worktree.sh — create this file to configure worktree environment setup.",
 			);
 		}
 
@@ -198,6 +198,6 @@ export class WorktreeManager {
 	}
 
 	private branchName(taskId: string, slug: string): string {
-		return `og/${taskId}/${slug}`;
+		return `mxd/${taskId}/${slug}`;
 	}
 }

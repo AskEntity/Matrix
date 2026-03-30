@@ -11,15 +11,15 @@
  * ```json
  * {"blocks": [
  *   {"type": "text", "text": "Let me check."},
- *   {"type": "tool_use", "name": "mcp__opengraft__bash", "input": {"command": "echo hi"}}
+ *   {"type": "tool_use", "name": "mcp__mxd__bash", "input": {"command": "echo hi"}}
  * ], "stop_reason": "tool_use"}
  * ```
  *
  * ### Multi-turn (scripts an entire conversation):
  * ```json
  * {"turns": [
- *   {"blocks": [{"type": "text", "text": "Let me check."}, {"type": "tool_use", "name": "mcp__opengraft__bash", "input": {"command": "echo hi"}}]},
- *   {"blocks": [{"type": "text", "text": "Done!"}, {"type": "tool_use", "name": "mcp__opengraft__done", "input": {"status": "passed", "summary": "ok"}}]}
+ *   {"blocks": [{"type": "text", "text": "Let me check."}, {"type": "tool_use", "name": "mcp__mxd__bash", "input": {"command": "echo hi"}}]},
+ *   {"blocks": [{"type": "text", "text": "Done!"}, {"type": "tool_use", "name": "mcp__mxd__done", "input": {"status": "passed", "summary": "ok"}}]}
  * ]}
  * ```
  *

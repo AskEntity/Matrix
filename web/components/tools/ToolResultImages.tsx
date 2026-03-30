@@ -6,13 +6,13 @@ export function ToolResultImages({
 }) {
 	if (images.length === 0) return null;
 	return (
-		<div className="og-tool-result-images">
+		<div className="mxd-tool-result-images">
 			{images.map((img) => (
 				<img
 					key={img.base64.slice(-32)}
 					src={`data:${img.mediaType};base64,${img.base64}`}
 					alt="tool result"
-					className="og-tool-result-image"
+					className="mxd-tool-result-image"
 					onClick={() => {
 						const binary = atob(img.base64);
 						const bytes = new Uint8Array(binary.length);

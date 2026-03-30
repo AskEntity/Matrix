@@ -36,7 +36,7 @@ export function mockDaemonContext(opts: {
 
 	return {
 		config: {
-			dataDir: opts.dataDir ?? "/tmp/og-test-mock",
+			dataDir: opts.dataDir ?? "/tmp/mxd-test-mock",
 		},
 		pm,
 		trackers,
@@ -76,7 +76,7 @@ export function mockOrchestratorDeps(opts: {
 		clearEventStore: () => {},
 		hasEventStore: () => false,
 		copySessionFrom: async (_s, _t, _opts) => ({ eventCount: 0 }),
-		dataDir: opts.dataDir ?? "/tmp/og-test-mock",
+		dataDir: opts.dataDir ?? "/tmp/mxd-test-mock",
 		getClarifyTimeoutMs: () => undefined,
 		getDefaultBudgetUsd: () => undefined,
 		listProjects: () => [

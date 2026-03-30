@@ -73,20 +73,20 @@ export const BackgroundProcessBar = memo(function BackgroundProcessBar({
 	if (visible.length === 0) return null;
 
 	return (
-		<div className="og-background-bar">
-			<span className="og-background-label">⚙ Background</span>
+		<div className="mxd-background-bar">
+			<span className="mxd-background-label">⚙ Background</span>
 			{visible.map((p) => (
-				<div key={p.id} className="og-background-item">
-					<span className="og-background-id">{p.id}</span>
-					<span className="og-background-command">
+				<div key={p.id} className="mxd-background-item">
+					<span className="mxd-background-id">{p.id}</span>
+					<span className="mxd-background-command">
 						{p.command.length > 40 ? `${p.command.slice(0, 40)}…` : p.command}
 					</span>
-					<span className="og-background-elapsed">
+					<span className="mxd-background-elapsed">
 						{formatElapsed(now - p.startTime)}
 					</span>
 					<button
 						type="button"
-						className="og-background-kill"
+						className="mxd-background-kill"
 						onClick={() => handleKill(p.id, p.taskId)}
 						disabled={killing.has(p.id)}
 						title="Kill process"

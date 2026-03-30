@@ -1,10 +1,10 @@
-# OpenGraft
+# Matrix
 
 **可自举的自主 AI 编程系统** — 给定目标，AI 自主规划、实现、测试、迭代。Agent 像枝条一样分出去工作，完成后嫁接回主干。
 
 > 本文档供 AI session 冷启动使用。包含架构设计、方法论、实现路径。
 > 来源：多个 AI 辅助开发项目的实战经验 + 业界自主编程 agent 研究。
-> 官网：opengraft.com
+> 官网：mxd.com
 
 ## 一、系统目标
 
@@ -227,7 +227,7 @@ AI 生成代码的系统性问题：**功能正确但架构判断缺失**。GitC
 - **每个 agent 一个分支**：agent 和 branch 是 1:1 绑定的。agent 的生命周期 = 分支的生命周期
 
 **API 层**：
-- `POST /projects` — 指定文件夹，创建项目（初始化 git + `.opengraft/`）
+- `POST /projects` — 指定文件夹，创建项目（初始化 git + `.mxd/`）
 - `DELETE /projects/:id` — 删除项目（只删元数据，不删代码）
 - `POST /projects/:id/start` — 启动 root agent
 - `POST /projects/:id/stop` — 优雅停止（root 通知所有子 agent 完成当前原子操作后停）
@@ -244,10 +244,10 @@ AI 生成代码的系统性问题：**功能正确但架构判断缺失**。GitC
 
 判断标准：**`git clone` 到别处还有用吗？**
 
-**在 git 仓库内**（`.opengraft/` 目录，随代码版本化）：
+**在 git 仓库内**（`.mxd/` 目录，随代码版本化）：
 ```
 project/
-├── .opengraft/
+├── .mxd/
 │   ├── memory.md          # 积累的知识（随分支合并，见 4.3）
 │   └── project.yaml       # 项目级配置（autonomy level、质量门禁阈值）
 ├── src/
@@ -258,9 +258,9 @@ project/
 - **memory.md**：AI 积累的经验。跟随分支走、合并时汇聚。clone 到别处这些知识仍然有价值
 - **project.yaml**：项目自身的配置偏好。新的 daemon 接手这个项目时应该读到同样的配置
 
-**在 daemon 数据目录**（`~/.opengraft-daemon/projects/{id}/`）：
+**在 daemon 数据目录**（`~/.mxd-daemon/projects/{id}/`）：
 ```
-~/.opengraft-daemon/
+~/.mxd-daemon/
 ├── daemon.yaml                # 全局配置：API keys、模型偏好、默认安全策略模板
 ├── projects/
 │   ├── {project-id}/
@@ -282,8 +282,8 @@ project/
 | 数据 | 位置 | 理由 |
 |------|------|------|
 | 代码、测试 | git | 核心产物 |
-| Agent 记忆 | git `.opengraft/memory.md` | scratch pad，每个 agent 在自己分支上自由写，merge 时上浮 + 父 agent 审查 |
-| 项目配置 | git `.opengraft/project.yaml` | 项目自带偏好，换 daemon 仍适用 |
+| Agent 记忆 | git `.mxd/memory.md` | scratch pad，每个 agent 在自己分支上自由写，merge 时上浮 + 父 agent 审查 |
+| 项目配置 | git `.mxd/project.yaml` | 项目自带偏好，换 daemon 仍适用 |
 | 任务树状态 | daemon `tree.json` | 运行时状态，变化极频繁（每秒级），不适合 git commit |
 | 分支绑定 | daemon `tree.json` | 是关于 git 的元数据，不是 git 管理的内容 |
 | AI 对话日志 | daemon `sessions/` | 体积大、仅调试用、不是项目知识 |
@@ -291,7 +291,7 @@ project/
 | 安全策略 | daemon `security.yaml` | per project，但在 AI 的沙箱之外，不可被项目内的 AI 修改 |
 | API keys | daemon `daemon.yaml` | 敏感信息，绝对不进 git |
 
-**关键设计**：安全策略在 daemon 侧（per project），**不在项目 git 内**。这意味着项目内的所有 agent（root 和子 agent）都无法通过修改 `.opengraft/` 文件来突破安全边界——安全规则在它们的修改范围之外。
+**关键设计**：安全策略在 daemon 侧（per project），**不在项目 git 内**。这意味着项目内的所有 agent（root 和子 agent）都无法通过修改 `.mxd/` 文件来突破安全边界——安全规则在它们的修改范围之外。
 
 ### 4.3 每个 Agent 的内部结构
 
@@ -352,7 +352,7 @@ Agent 退出通过 `exitReason` 明确区分：
 
 **记忆系统**：
 
-每个 agent 有自己的记忆文件（`.opengraft/memory.md`），性质是 **scratch pad**——不是正式文档，而是 agent 随手记下的笔记、踩坑记录、发现的模式。类似 Claude 的 auto memory，不是 CLAUDE.md。
+每个 agent 有自己的记忆文件（`.mxd/memory.md`），性质是 **scratch pad**——不是正式文档，而是 agent 随手记下的笔记、踩坑记录、发现的模式。类似 Claude 的 auto memory，不是 CLAUDE.md。
 
 ```
 feat/auth 分支上 agent 的 memory.md：
@@ -381,7 +381,7 @@ feat/realtime-msg 分支上 agent 的 memory.md：
 
 **鼓励同步写入**：agent 每次 commit 功能代码时，同时 commit 相关记忆。不要等功能全做完再补——中途的发现最容易遗忘。
 
-这解决了 Context Manager 的核心难题：context window 会被压缩，对话历史会丢失，但**记忆已经持久化在 git 中**。新 session / 新 agent 启动时读 `.opengraft/memory.md`，就能继承之前积累的经验，无需从对话历史中恢复。
+这解决了 Context Manager 的核心难题：context window 会被压缩，对话历史会丢失，但**记忆已经持久化在 git 中**。新 session / 新 agent 启动时读 `.mxd/memory.md`，就能继承之前积累的经验，无需从对话历史中恢复。
 
 **任务树即 UI**：
 
@@ -428,11 +428,11 @@ feat/realtime-msg 分支上 agent 的 memory.md：
 关键设计：
 - **前瞻性**：checkpoint 重点在"下一步该做什么"，不是回顾历史
 - **记录被拒绝的方案**：防止 compact 后重复尝试已失败的路径
-- **Fresh memory**：从磁盘重读 `.opengraft/memory.md`（agent 可能在 session 中修改了它）
+- **Fresh memory**：从磁盘重读 `.mxd/memory.md`（agent 可能在 session 中修改了它）
 - **UI 显示**：compact 事件在 activity log 中显示为可折叠的边界线，附带 checkpoint 内容，并标注"上方内容对 AI 不可见"
 - **JSONL 保全**：compact 不删除 JSONL 内容，只标记边界。全部历史保留
 
-跨 session 持久化的核心——session 恢复时先读任务树 + `.opengraft/memory.md`，就知道从哪里继续、带着什么经验继续。
+跨 session 持久化的核心——session 恢复时先读任务树 + `.mxd/memory.md`，就知道从哪里继续、带着什么经验继续。
 
 - **子 agent 不需要全局 context**：它只需要知道自己负责的子树 + 从 root 继承的方法论和架构约束
 
@@ -471,7 +471,7 @@ Root agent（优先级从高到低）：
 5. **为 LLM 设计，不为人设计**：search/replace 比 unified diff 更适合 LLM（[Aider 的发现](https://aider.chat/docs/more/edit-formats.html)：LLM 写 diff 需要先预测行号，容易错）
 
 ```
-Worker Tools（内置，mcp__opengraft__ namespace）：
+Worker Tools（内置，mcp__mxd__ namespace）：
   bash(command, foreground_timeout?, run_in_background?) → { stdout, stderr, exit_code }
   background(action, id?) → list/status/kill/await background processes
   read_file(path, offset?, limit?) → content_with_line_numbers
@@ -480,7 +480,7 @@ Worker Tools（内置，mcp__opengraft__ namespace）：
   list_files(pattern) → paths (capped at 500)
   search(pattern, path?, glob?, context?, output_mode?, head_limit?) → matches
 
-Orchestration Tools（MCP server "opengraft"）：
+Orchestration Tools（MCP server "mxd"）：
   get_tree(format?, include_closed?) → task tree (flat or tree, lightweight default)
   get_task(taskId) → single node detail
   create_task(title, desc, parentId?, draft?) → node
@@ -515,15 +515,15 @@ Orchestration Tools（MCP server "opengraft"）：
 
 ### 4.5 起源与演进路径
 
-OpenGraft 现在不存在于物理世界上。**它的第一个版本应该脱胎于 Claude Code**——不是从零造轮子，而是在已有的、能用的 AI 编程工具上构建 orchestration 层。
+Matrix 现在不存在于物理世界上。**它的第一个版本应该脱胎于 Claude Code**——不是从零造轮子，而是在已有的、能用的 AI 编程工具上构建 orchestration 层。
 
 **三阶段演进**：
 
-1. **脱胎于 Claude Code**（Phase 0-1）：用 Claude Code 的 headless 模式（`claude -p`）或 Agent SDK 作为执行引擎。OpenGraft 只负责 orchestration（任务树、agent 管理、记忆）。好处：tool 实现、沙箱、context 管理全部白嫖 Claude Code 已有的
+1. **脱胎于 Claude Code**（Phase 0-1）：用 Claude Code 的 headless 模式（`claude -p`）或 Agent SDK 作为执行引擎。Matrix 只负责 orchestration（任务树、agent 管理、记忆）。好处：tool 实现、沙箱、context 管理全部白嫖 Claude Code 已有的
 2. **替换为直接 API 调用**（Phase 2-3）：逐步把 Claude Code 依赖替换为直接 Messages API + 自建 tool 层。此时支持通用 API key
 3. **多 provider 支持**（Phase 4+）：支持 Claude OAuth + 通用 API key + 其他 LLM provider
 
-**目标是完全自建 tool 层**——OpenGraft 最终拥有自己的文件编辑、搜索、命令执行、context 管理实现，不依赖 Claude Code。但 Phase 0 不是做这件事的时候。先用 Claude Code 跑通 orchestration 逻辑（任务树、agent 层级、记忆上浮），确认设计可行后，再逐步替换底层。这本身就是自举——用别人的工具造出自己的工具，然后用自己的工具替掉别人的。
+**目标是完全自建 tool 层**——Matrix 最终拥有自己的文件编辑、搜索、命令执行、context 管理实现，不依赖 Claude Code。但 Phase 0 不是做这件事的时候。先用 Claude Code 跑通 orchestration 逻辑（任务树、agent 层级、记忆上浮），确认设计可行后，再逐步替换底层。这本身就是自举——用别人的工具造出自己的工具，然后用自己的工具替掉别人的。
 
 ### 4.6 认证配置
 
@@ -546,12 +546,12 @@ authGroups:
 
 **Web UI 认证**：RSA-OAEP 挑战-响应 + JWT。
 
-流程：浏览器生成 RSA-OAEP 2048 密钥对 → 用户运行 `og auth <public_key>` → CLI 用公钥加密 JWT → 用户粘贴密文 → 浏览器用私钥解密 → 得到 JWT → 认证完成。JWT 明文从不离开浏览器。
+流程：浏览器生成 RSA-OAEP 2048 密钥对 → 用户运行 `mxd auth <public_key>` → CLI 用公钥加密 JWT → 用户粘贴密文 → 浏览器用私钥解密 → 得到 JWT → 认证完成。JWT 明文从不离开浏览器。
 
 - CLI 每次请求自动签发短期 JWT（5min TTL）
 - Web UI 使用 localStorage 存储 session JWT（30 天 TTL），`authFetch()` 自动附加 Bearer header
 - SSE 连接通过 query param 传递 auth token
-- JWT signing key 存储在 `~/.opengraft/auth.json`（HMAC-SHA256，自动生成）
+- JWT signing key 存储在 `~/.mxd/auth.json`（HMAC-SHA256，自动生成）
 
 ## 五、运行行为模型
 
@@ -691,7 +691,7 @@ autonomy:
 | 失败模式 | 表现 | 检测 | 防御 |
 |---------|------|------|------|
 | **无限循环** | 反复尝试同一个修复，永远过不了测试 | 同一错误出现 3+ 次；同一文件编辑 5+ 次 | 自动标记 stuck（断路器），父 agent 跳过处理其他任务 |
-| **上下文污染** | 压缩丢失关键信息，AI 重复之前的错误决策 | 重复相同的失败路径；与记忆中的决策矛盾 | 记忆持久化在 git 中；压缩后强制重读 `.opengraft/memory.md` |
+| **上下文污染** | 压缩丢失关键信息，AI 重复之前的错误决策 | 重复相同的失败路径；与记忆中的决策矛盾 | 记忆持久化在 git 中；压缩后强制重读 `.mxd/memory.md` |
 | **抽象层级错误** | AI 在实现细节上打转，没意识到是设计问题 | 一个节点内反复重构但测试不变；代码量增长但功能未增加 | 节点预算用尽时强制回退到规划阶段，重新分解 |
 | **依赖地狱** | 引入互相冲突的库，或版本不兼容 | 安装依赖失败；类型错误来自第三方包 | 依赖变更需要 autonomy level 检查；lockfile 变更 diff 审查 |
 | **镀金（Gold Plating）** | 功能已完成但 AI 不停优化、重构、加"改进" | 测试早已全绿但仍在提交；改动集中在非功能性方面 | Stimulus Generator 在全绿后进入收敛模式：只修 stuck 节点和质量门禁不通过的问题 |
@@ -712,7 +712,7 @@ autonomy:
 - AI 修改自身的安全规则 → 永远需要用户确认，无论 autonomy level
 - 安全规则本身是**不可被 AI 绕过的硬编码约束**，不是 prompt 中的"建议"
 
-**架构保证**（见 4.2.1）：安全策略存储在 daemon 侧（`~/.opengraft-daemon/projects/{id}/security.yaml`），per project 配置，但不在项目 git 仓库内。AI 的文件系统访问被限制在项目目录——它物理上无法修改自己的安全规则。这不是靠 prompt 约束，是靠沙箱隔离。
+**架构保证**（见 4.2.1）：安全策略存储在 daemon 侧（`~/.mxd-daemon/projects/{id}/security.yaml`），per project 配置，但不在项目 git 仓库内。AI 的文件系统访问被限制在项目目录——它物理上无法修改自己的安全规则。这不是靠 prompt 约束，是靠沙箱隔离。
 
 ## 八、实现路径
 
@@ -1047,7 +1047,7 @@ interface ToolPlugin {
 | §二 技术选型 | ✅ | TypeScript strict + Bun + Biome。快速反馈循环（秒级测试）。 |
 | §三 核心方法论 | ✅ | 垂直迭代、测试驱动、实际执行消灭幻觉、调试协议、替换铁律、膨胀防控——全部注入 system prompt。 |
 | §4.2 系统结构 | ✅ | Daemon (Hono HTTP+SSE)。REST API 完整。Agent 树 = 任务树，每 agent 一个 worktree + branch。 |
-| §4.2.1 数据分离 | ✅ | `.opengraft/memory.md` 在 git。tree.json / sessions / events 在 daemon 侧。配置三层（global > repo > local）。 |
+| §4.2.1 数据分离 | ✅ | `.mxd/memory.md` 在 git。tree.json / sessions / events 在 daemon 侧。配置三层（global > repo > local）。 |
 | §4.3 Agent 内部结构 | ✅ | Task Tracker、Context Manager (compaction)、Stimulus Generator (system prompt 优先级规则)。exitReason 模型（done_passed/done_failed/interrupted）。autoResume 按 JSONL 状态独立评估每个 agent。 |
 | §4.3 记忆系统 | ✅ | scratch pad 式 memory.md。子 agent 自由写入、append-only。合并后上层整理。分支丢弃 = 记忆丢弃。`setup_worktree.sh.example` 模式：项目 init 创建示例，agent 必须审查定制后创建 .sh。 |
 | §4.3 任务树即 UI | ✅ | 节点状态、分支信息、点击展开 agent 对话流（activity log）、实时 SSE streaming。 |

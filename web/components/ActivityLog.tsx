@@ -216,21 +216,21 @@ export const ActivityLog = memo(function ActivityLog({
 
 	return (
 		<>
-			<div className="og-log-search-bar">
+			<div className="mxd-lmxd-search-bar">
 				<input
 					type="text"
-					className="og-log-search"
+					className="mxd-lmxd-search"
 					placeholder={t("activity.searchLogs")}
 					value={searchText}
 					onChange={(e) => setSearchText(e.target.value)}
 				/>
 			</div>
-			<div className="og-activity-log" ref={logRef} onScroll={handleScroll}>
+			<div className="mxd-activity-log" ref={logRef} onScroll={handleScroll}>
 				{olderSessionId && (
-					<div className="og-load-older-bar">
+					<div className="mxd-load-older-bar">
 						<button
 							type="button"
-							className="og-load-older-btn"
+							className="mxd-load-older-btn"
 							onClick={handleLoadOlder}
 							disabled={loadingOlderEvents}
 						>
@@ -239,9 +239,9 @@ export const ActivityLog = memo(function ActivityLog({
 					</div>
 				)}
 				{/* Sentinel for IntersectionObserver — triggers loading more entries when scrolled near top */}
-				<div ref={sentinelRef} className="og-lazy-sentinel" />
+				<div ref={sentinelRef} className="mxd-lazy-sentinel" />
 				{hasMoreAbove && (
-					<div className="og-lazy-more-indicator">
+					<div className="mxd-lazy-more-indicator">
 						{visible.length - rendered.length} earlier entries
 					</div>
 				)}
@@ -260,12 +260,12 @@ export const ActivityLog = memo(function ActivityLog({
 				)}
 				{isActive && (
 					<div
-						className="og-thinking-indicator"
+						className="mxd-thinking-indicator"
 						style={{ visibility: showThinking ? "visible" : "hidden" }}
 					>
-						<span className="og-thinking-dots">
+						<span className="mxd-thinking-dots">
 							Thinking
-							<span className="og-dots-anim">...</span>
+							<span className="mxd-dots-anim">...</span>
 						</span>
 					</div>
 				)}

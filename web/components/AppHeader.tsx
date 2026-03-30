@@ -65,12 +65,12 @@ export const AppHeader = memo(function AppHeader({
 	}, []);
 
 	return (
-		<header className="og-header">
-			<div className="og-header-brand">
+		<header className="mxd-header">
+			<div className="mxd-header-brand">
 				{onToggleSidebar && (
 					<button
 						type="button"
-						className="og-hamburger-btn"
+						className="mxd-hamburger-btn"
 						onClick={onToggleSidebar}
 						aria-label="Toggle sidebar"
 					>
@@ -108,10 +108,10 @@ export const AppHeader = memo(function AppHeader({
 						</svg>
 					</button>
 				)}
-				<div className="og-logo">
+				<div className="mxd-logo">
 					<IconHexagon size={14} />
 				</div>
-				<span className="og-header-title">{t("header.title")}</span>
+				<span className="mxd-header-title">{t("header.title")}</span>
 				{versionInfo && (
 					<span
 						style={{
@@ -123,20 +123,20 @@ export const AppHeader = memo(function AppHeader({
 						{versionInfo}
 					</span>
 				)}
-				<div className={`og-connection-badge${connected ? " connected" : ""}`}>
-					<span className="og-connection-dot" />
+				<div className={`mxd-connection-badge${connected ? " connected" : ""}`}>
+					<span className="mxd-connection-dot" />
 					{connected ? t("header.connected") : t("header.disconnected")}
 				</div>
 			</div>
 
-			<div className="og-header-right">
+			<div className="mxd-header-right">
 				{showAddProject ? (
 					<form
 						onSubmit={onAddProject}
 						style={{ display: "flex", alignItems: "center", gap: "6px" }}
 					>
 						<input
-							className="og-continue-input"
+							className="mxd-continue-input"
 							type="text"
 							placeholder={t("project.pathPlaceholder")}
 							value={newProjectPath}
@@ -146,13 +146,13 @@ export const AppHeader = memo(function AppHeader({
 						/>
 						<button
 							type="submit"
-							className="og-btn og-btn-primary"
+							className="mxd-btn mxd-btn-primary"
 							style={{ fontSize: "12px", padding: "4px 10px" }}
 							disabled={creatingProject}
 						>
 							{creatingProject ? (
 								<>
-									<span className="og-spinner" /> {t("project.adding")}
+									<span className="mxd-spinner" /> {t("project.adding")}
 								</>
 							) : (
 								t("project.add")
@@ -160,7 +160,7 @@ export const AppHeader = memo(function AppHeader({
 						</button>
 						<button
 							type="button"
-							className="og-btn-icon"
+							className="mxd-btn-icon"
 							title={t("project.cancel")}
 							onClick={onCancelAddProject}
 							disabled={creatingProject}
@@ -172,7 +172,7 @@ export const AppHeader = memo(function AppHeader({
 					<>
 						{projects.length > 0 && (
 							<select
-								className="og-select"
+								className="mxd-select"
 								value={projectId}
 								onChange={(e) => onProjectChange(e.target.value)}
 							>
@@ -191,7 +191,7 @@ export const AppHeader = memo(function AppHeader({
 						)}
 						<button
 							type="button"
-							className="og-btn-icon"
+							className="mxd-btn-icon"
 							title={t("project.addProject")}
 							onClick={onShowAddProject}
 						>
@@ -202,7 +202,7 @@ export const AppHeader = memo(function AppHeader({
 				{projectId && (
 					<button
 						type="button"
-						className={`og-btn-icon og-settings-toggle-btn${showSettings ? " active" : ""}`}
+						className={`mxd-btn-icon mxd-settings-toggle-btn${showSettings ? " active" : ""}`}
 						title={t("project.settings")}
 						aria-label={t("project.settings")}
 						onClick={onToggleSettings}
@@ -211,7 +211,7 @@ export const AppHeader = memo(function AppHeader({
 					</button>
 				)}
 				<select
-					className="og-select"
+					className="mxd-select"
 					value={locale}
 					onChange={(e) => setLocale(e.target.value as "en" | "zh")}
 					title={t("lang.selector")}
@@ -221,7 +221,7 @@ export const AppHeader = memo(function AppHeader({
 					<option value="zh">{t("lang.zh")}</option>
 				</select>
 				<select
-					className="og-select"
+					className="mxd-select"
 					value={theme}
 					onChange={(e) => onThemeChange(e.target.value)}
 					title={t("theme.selector")}
@@ -235,7 +235,7 @@ export const AppHeader = memo(function AppHeader({
 				{onLogout && (
 					<button
 						type="button"
-						className="og-btn-icon"
+						className="mxd-btn-icon"
 						title={t("header.logout")}
 						aria-label={t("header.logout")}
 						onClick={onLogout}

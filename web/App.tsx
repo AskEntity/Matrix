@@ -115,10 +115,10 @@ function AppInner() {
 
 	if (authState === "loading") {
 		return (
-			<div className="og-login-page">
-				<div className="og-login-card">
-					<div className="og-login-icon">⏳</div>
-					<p className="og-login-subtitle">Loading...</p>
+			<div className="mxd-login-page">
+				<div className="mxd-login-card">
+					<div className="mxd-login-icon">⏳</div>
+					<p className="mxd-login-subtitle">Loading...</p>
 				</div>
 			</div>
 		);
@@ -167,13 +167,13 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [isDragging, setIsDragging] = useState(false);
 	const [autoScroll, setAutoScroll] = useState(true);
 	const [detailCollapsed, setDetailCollapsed] = useState(
-		() => localStorage.getItem("og-detail-collapsed") === "true",
+		() => localStorage.getItem("mxd-detail-collapsed") === "true",
 	);
 	const [fullscreen, setFullscreen] = useState(false);
 	const [theme, setThemeState] = useState<
 		"dark" | "light" | "cute-light" | "cute-dark"
 	>(() => {
-		const stored = localStorage.getItem("og-theme");
+		const stored = localStorage.getItem("mxd-theme");
 		if (stored === "light" || stored === "cute-light" || stored === "cute-dark")
 			return stored;
 		return "dark";
@@ -285,13 +285,13 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	useEffect(() => {
 		const config = themes[theme];
 		if (config) applyTheme(config);
-		localStorage.setItem("og-theme", theme);
+		localStorage.setItem("mxd-theme", theme);
 	}, [theme]);
 
 	useEffect(() => {
 		const currentProject = projects.find((p) => p.id === projectId);
 		const projectName = currentProject?.name ?? "";
-		const base = `OpenGraft${projectName ? ` — ${projectName}` : ""}`;
+		const base = `Matrix${projectName ? ` — ${projectName}` : ""}`;
 
 		const childNodes = rootNodeId
 			? nodes.filter((n) => n.id !== rootNodeId)
@@ -352,7 +352,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			if (e.key === "/" && !isInput) {
 				e.preventDefault();
 				(
-					document.querySelector(".og-log-search") as HTMLInputElement | null
+					document.querySelector(".mxd-lmxd-search") as HTMLInputElement | null
 				)?.focus();
 			}
 		};
@@ -566,7 +566,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	useEffect(() => {
 		setAutoScroll(true);
 		requestAnimationFrame(() => {
-			const logEl = document.querySelector(".og-activity-log");
+			const logEl = document.querySelector(".mxd-activity-log");
 			if (logEl) logEl.scrollTop = logEl.scrollHeight;
 		});
 	}, [selectedTaskId]);
@@ -845,25 +845,27 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				/>
 			)}
 
-			<main className={`og-main${fullscreen ? " og-fullscreen" : ""}`}>
+			<main className={`mxd-main${fullscreen ? " mxd-fullscreen" : ""}`}>
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop is a visual overlay, not a focusable control */}
 				{/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop is dismissed by Escape key or clicking outside */}
 				<div
-					className={`og-sidebar-backdrop${sidebarOpen ? " og-sidebar-open" : ""}`}
+					className={`mxd-sidebar-backdrop${sidebarOpen ? " mxd-sidebar-open" : ""}`}
 					onClick={() => setSidebarOpen(false)}
 				/>
-				<aside className={`og-sidebar${sidebarOpen ? " og-sidebar-open" : ""}`}>
-					<div className="og-panel-header">
-						<span className="og-panel-title">{t("tasks.title")}</span>
-						<div className="og-panel-actions">
+				<aside
+					className={`mxd-sidebar${sidebarOpen ? " mxd-sidebar-open" : ""}`}
+				>
+					<div className="mxd-panel-header">
+						<span className="mxd-panel-title">{t("tasks.title")}</span>
+						<div className="mxd-panel-actions">
 							{selectedTaskId && !isOrchestratorNode && (
 								<>
-									<span className="og-filter-chip" title={filterLabel ?? ""}>
+									<span className="mxd-filter-chip" title={filterLabel ?? ""}>
 										{filterLabel}
 									</span>
 									<button
 										type="button"
-										className="og-btn-icon"
+										className="mxd-btn-icon"
 										onClick={() => setSelectedTaskId(rootNodeId)}
 										data-tip={t("tasks.clearFilter")}
 									>
@@ -873,7 +875,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 							)}
 							<button
 								type="button"
-								className="og-btn-icon"
+								className="mxd-btn-icon"
 								onClick={handleAddTask}
 								data-tip={t("tasks.addTask")}
 							>
@@ -881,7 +883,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 							</button>
 							<button
 								type="button"
-								className="og-btn-icon"
+								className="mxd-btn-icon"
 								onClick={() => {
 									refreshTasks();
 									refreshProjects();
@@ -893,7 +895,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 							{projectId && (
 								<button
 									type="button"
-									className="og-btn-icon og-sidebar-settings-btn"
+									className="mxd-btn-icon mxd-sidebar-settings-btn"
 									onClick={() => {
 										setSidebarOpen(false);
 										handleToggleSettings();
@@ -921,7 +923,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				</aside>
 
 				<section
-					className={`og-content${isDragging ? " dragging" : ""}${detailCollapsed ? " og-detail-collapsed" : ""}`}
+					className={`mxd-content${isDragging ? " dragging" : ""}${detailCollapsed ? " mxd-detail-collapsed" : ""}`}
 					ref={contentPanelRef}
 				>
 					{projectPathMissing && currentProject && (
@@ -931,7 +933,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						/>
 					)}
 					<div
-						className="og-detail-panel"
+						className="mxd-detail-panel"
 						style={
 							detailCollapsed
 								? undefined
@@ -941,14 +943,14 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									} as React.CSSProperties)
 						}
 					>
-						<div className="og-panel-header">
+						<div className="mxd-panel-header">
 							<button
 								type="button"
-								className="og-detail-collapse-toggle"
+								className="mxd-detail-collapse-toggle"
 								onClick={() => {
 									setDetailCollapsed((prev) => {
 										const next = !prev;
-										localStorage.setItem("og-detail-collapsed", String(next));
+										localStorage.setItem("mxd-detail-collapsed", String(next));
 										return next;
 									});
 								}}
@@ -958,7 +960,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 							>
 								<IconChevron size={10} expanded={!detailCollapsed} />
 							</button>
-							<span className="og-panel-title">
+							<span className="mxd-panel-title">
 								{isOrchestratorNode
 									? t("orch.label")
 									: selectedNode
@@ -995,7 +997,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									onClearSession={handleClearTaskSession}
 								/>
 							) : (
-								<div className="og-detail-empty">
+								<div className="mxd-detail-empty">
 									<IconHexagon size={28} />
 									<span>{t("detail.selectTask")}</span>
 								</div>
@@ -1005,13 +1007,13 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					{!detailCollapsed && (
 						/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */
 						<div
-							className="og-resize-divider"
+							className="mxd-resize-divider"
 							onMouseDown={handleDividerMouseDown}
 						/>
 					)}
 
 					<div
-						className="og-activity-panel"
+						className="mxd-activity-panel"
 						style={
 							detailCollapsed
 								? undefined
@@ -1020,8 +1022,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									} as React.CSSProperties)
 						}
 					>
-						<div className="og-panel-header">
-							<span className="og-panel-title">
+						<div className="mxd-panel-header">
+							<span className="mxd-panel-title">
 								{t("activity.title")}
 								{filterLabel && !isOrchestratorNode && (
 									<span
@@ -1038,7 +1040,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									</span>
 								)}
 							</span>
-							<div className="og-panel-actions">
+							<div className="mxd-panel-actions">
 								{(() => {
 									const usageTaskId =
 										targetNodeId ??
@@ -1066,7 +1068,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								{!autoScroll && (
 									<button
 										type="button"
-										className="og-scroll-follow-btn"
+										className="mxd-scroll-follow-btn"
 										onClick={() => setAutoScroll(true)}
 									>
 										<IconArrowDown size={10} />
@@ -1075,7 +1077,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								)}
 								<button
 									type="button"
-									className="og-btn-icon og-fullscreen-btn"
+									className="mxd-btn-icon mxd-fullscreen-btn"
 									onClick={() => setFullscreen((f) => !f)}
 									title={
 										fullscreen

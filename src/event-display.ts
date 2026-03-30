@@ -10,7 +10,7 @@
 import type { Event } from "./events.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import {
-	isOpengraftTool,
+	isBuiltinTool,
 	stripMcpPrefix,
 	TOOL_BACKGROUND,
 	TOOL_BASH,
@@ -47,7 +47,7 @@ export interface ToolCallDisplay {
 	title: string;
 	/** Short tool name without namespace (e.g. "bash", "read_file"). */
 	shortName: string;
-	/** Whether this is an opengraft builtin tool. */
+	/** Whether this is a builtin tool. */
 	isBuiltin: boolean;
 	/** Whether the card body should be collapsed by default. */
 	titleOnly: boolean;
@@ -351,7 +351,7 @@ export function summarizeToolResult(
 	content: string,
 ): string | null {
 	const baseName = stripMcpPrefix(toolName);
-	if (!isOpengraftTool(toolName)) return null;
+	if (!isBuiltinTool(toolName)) return null;
 
 	let json: Record<string, unknown> | null = null;
 	try {
@@ -413,7 +413,7 @@ export function eventToDisplay(
 				kind: "tool_call",
 				title: getToolTitle(event.tool, event.input, null, nodeMap),
 				shortName: stripMcpPrefix(event.tool),
-				isBuiltin: isOpengraftTool(event.tool),
+				isBuiltin: isBuiltinTool(event.tool),
 				titleOnly: isTitleOnly(event.tool, event.input),
 				argsText: formatToolArgs(event.input),
 				doneStatus:
@@ -429,7 +429,7 @@ export function eventToDisplay(
 				kind: "tool_result",
 				title: getToolTitle(event.tool, undefined, event.content, nodeMap),
 				shortName: stripMcpPrefix(event.tool),
-				isBuiltin: isOpengraftTool(event.tool),
+				isBuiltin: isBuiltinTool(event.tool),
 				titleOnly: isTitleOnly(event.tool),
 				isError: event.isError,
 				summary: event.isError
