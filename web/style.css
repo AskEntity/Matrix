@@ -569,20 +569,14 @@ select {
 	background: var(--color-in-progress);
 	animation: dot-pulse 1.5s ease-in-out infinite;
 }
-.status-dot-testing {
-	background: var(--color-testing);
-	animation: dot-pulse 2s ease-in-out infinite;
-}
+
 .status-dot-passed {
 	background: var(--color-passed);
 }
 .status-dot-failed {
 	background: var(--color-failed);
 }
-.status-dot-stuck {
-	background: var(--color-stuck);
-	animation: dot-blink 1s step-end infinite;
-}
+
 .status-dot-draft {
 	background: var(--color-pending);
 	opacity: 0.5;
@@ -1241,11 +1235,7 @@ select {
 	color: var(--color-in-progress);
 	border-color: rgba(56, 139, 253, 0.3);
 }
-.og-status-badge.testing {
-	background: var(--bg-testing);
-	color: var(--color-testing);
-	border-color: rgba(163, 113, 247, 0.3);
-}
+
 .og-status-badge.passed {
 	background: var(--bg-passed);
 	color: var(--color-passed);
@@ -1256,11 +1246,7 @@ select {
 	color: var(--color-failed);
 	border-color: rgba(248, 81, 73, 0.3);
 }
-.og-status-badge.stuck {
-	background: var(--bg-stuck);
-	color: var(--color-stuck);
-	border-color: rgba(227, 179, 65, 0.3);
-}
+
 .og-status-badge.closed {
 	background: var(--bg-closed);
 	color: var(--color-closed);
@@ -1381,7 +1367,7 @@ select {
 }
 
 /* =========================================================
-   Continue Form (failed/stuck tasks)
+   Continue Form (failed tasks)
    ========================================================= */
 
 .og-continue-form {

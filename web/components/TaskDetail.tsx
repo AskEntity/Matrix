@@ -56,8 +56,7 @@ export const TaskDetail = memo(function TaskDetail({
 	onClearSession?: () => void;
 }) {
 	const { t } = useLocale();
-	const isRunning =
-		isActive ?? (node.status === "in_progress" || node.status === "testing");
+	const isRunning = isActive ?? node.status === "in_progress";
 	const [editingTitle, setEditingTitle] = useState(false);
 	const [editTitle, setEditTitle] = useState(node.title);
 	const [editingDesc, setEditingDesc] = useState(false);
@@ -282,23 +281,17 @@ export const TaskDetail = memo(function TaskDetail({
 						</div>
 					</div>
 				)}
-				{(node.costUsd != null && node.costUsd > 0) || node.budgetUsd ? (
+				{node.costUsd > 0 || node.budgetUsd ? (
 					<div className="og-detail-field">
 						<div className="og-detail-label">{t("detail.cost")}</div>
 						<div className="og-detail-value mono">
-							${(node.costUsd ?? 0).toFixed(4)}
+							${node.costUsd.toFixed(4)}
 							{node.budgetUsd
 								? ` / ${node.budgetUsd.toFixed(2)} ${t("detail.budget")}`
 								: ""}
 						</div>
 					</div>
 				) : null}
-				{node.message && (
-					<div className="og-detail-field" style={{ width: "100%" }}>
-						<div className="og-detail-label">{t("detail.message")}</div>
-						<div className="og-detail-value">{node.message}</div>
-					</div>
-				)}
 			</div>
 
 			<div className="og-detail-actions">

@@ -19,7 +19,7 @@ import {
 	type ProviderTokenUsage,
 	type ProviderToolUse,
 	runProviderLoop,
-	type ToolExecResult,
+	type ToolResult,
 } from "./provider-shared.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
@@ -705,7 +705,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 
 			for (let i = 0; i < params.toolUses.length; i++) {
 				const toolUse = params.toolUses[i] as ProviderToolUse;
-				const exec = params.execResults[i] as ToolExecResult;
+				const exec = params.execResults[i] as ToolResult;
 
 				// OpenAI format: each tool result is a separate message
 				result.push({
@@ -949,13 +949,6 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			sessionId,
 			events: eventStream(),
 			queue,
-			async sendMessage(text: string): Promise<void> {
-				try {
-					queue.enqueue({ source: "user", id: ulid(), content: text });
-				} catch {
-					// Queue may be closed
-				}
-			},
 			stop() {
 				queue.close();
 				abortController.abort();

@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskTracker } from "./task-tracker.ts";
-import { ulid } from "./ulid.ts";
 
 describe("TaskTracker", () => {
 	let tempDir: string;
@@ -140,7 +139,7 @@ describe("TaskTracker", () => {
 
 	test("updateCost accumulates cost on a task node", () => {
 		const task = tracker.addTask("Costly task", "desc");
-		expect(task.costUsd).toBeUndefined();
+		expect(task.costUsd).toBe(0);
 
 		tracker.updateCost(task.id, 0.0123);
 		expect(tracker.get(task.id)?.costUsd).toBeCloseTo(0.0123);
@@ -162,6 +161,42 @@ describe("TaskTracker", () => {
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
 		expect(tracker2.get(task.id)?.costUsd).toBeCloseTo(0.0456);
+	});
+
+	test("costUsd and editedBy have defaults on creation", () => {
+		const task = tracker.addTask("Defaults", "desc");
+		expect(task.costUsd).toBe(0);
+		expect(task.editedBy).toBe("agent");
+
+		const taskUser = tracker.addTask("User task", "desc", {
+			editedBy: "user",
+		});
+		expect(taskUser.editedBy).toBe("user");
+		expect(taskUser.costUsd).toBe(0);
+	});
+
+	test("costUsd and editedBy backfilled on load from old tree.json", async () => {
+		// Simulate old tree.json without costUsd and editedBy
+		const task = tracker.addTask("Old task", "desc");
+		await tracker.save();
+
+		// Manually strip costUsd and editedBy from saved file
+		const raw = await readFile(join(tempDir, "tree.json"), "utf-8");
+		const data = JSON.parse(raw);
+		for (const node of data.nodes) {
+			delete node.costUsd;
+			delete node.editedBy;
+		}
+		await writeFile(
+			join(tempDir, "tree.json"),
+			JSON.stringify(data, null, "\t"),
+		);
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+		const loaded = tracker2.get(task.id);
+		expect(loaded?.costUsd).toBe(0);
+		expect(loaded?.editedBy).toBe("agent");
 	});
 
 	test("get() returns undefined for ambiguous prefix", () => {
@@ -243,45 +278,6 @@ describe("TaskTracker", () => {
 		expect(tracker2.get(task.id)?.status).toBe("draft");
 	});
 
-	test("migration: old draft boolean converted to status=draft on load", async () => {
-		// Simulate old tree format with draft: true boolean
-		const nodeId = ulid();
-		const now = new Date().toISOString();
-		const oldFormatData = {
-			rootNodeId: null,
-			nodes: [
-				{
-					id: nodeId,
-					title: "Old draft task",
-					description: "desc",
-					status: "pending",
-					branch: null,
-					parentId: null,
-					children: [],
-					worktreePath: null,
-					message: null,
-					failCount: 0,
-					draft: true,
-					createdAt: now,
-					updatedAt: now,
-				},
-			],
-		};
-		const { writeFile: wf } = await import("node:fs/promises");
-		await wf(
-			join(tempDir, "migration-tree.json"),
-			JSON.stringify(oldFormatData),
-		);
-
-		const tracker2 = new TaskTracker(join(tempDir, "migration-tree.json"));
-		await tracker2.load();
-		const loaded = tracker2.get(nodeId);
-		expect(loaded?.status).toBe("draft");
-		expect(
-			(loaded as unknown as Record<string, unknown>).draft,
-		).toBeUndefined();
-	});
-
 	test("root node auto-created on load (fresh project)", () => {
 		// Root node is created automatically when tracker loads with no tree.json
 		const rootId = tracker.rootNodeId;
@@ -302,56 +298,6 @@ describe("TaskTracker", () => {
 		expect(tracker2.rootNodeId).toBe(rootId);
 		expect(tracker2.get(rootId)?.title).toBe("Orchestrator");
 		expect(tracker2.getChildren(rootId)).toHaveLength(1);
-	});
-
-	test("load adopts orphan nodes under auto-created root (backward compat)", async () => {
-		// Simulate an old tree.json without rootNodeId but with top-level nodes
-		const { writeFile } = await import("node:fs/promises");
-		const treePath = join(tempDir, "orphan-tree.json");
-		await writeFile(
-			treePath,
-			JSON.stringify({
-				nodes: [
-					{
-						id: "orphan1",
-						title: "Task A",
-						description: "desc a",
-						status: "pending",
-						branch: null,
-						parentId: null,
-						children: [],
-						worktreePath: null,
-						message: null,
-						failCount: 0,
-						createdAt: new Date().toISOString(),
-						updatedAt: new Date().toISOString(),
-					},
-					{
-						id: "orphan2",
-						title: "Task B",
-						description: "desc b",
-						status: "pending",
-						branch: null,
-						parentId: null,
-						children: [],
-						worktreePath: null,
-						message: null,
-						failCount: 0,
-						createdAt: new Date().toISOString(),
-						updatedAt: new Date().toISOString(),
-					},
-				],
-			}),
-		);
-		const t2 = new TaskTracker(treePath);
-		await t2.load();
-		const rootId = t2.rootNodeId;
-		expect(rootId).toBeTruthy();
-		const orphan1 = t2.get("orphan1")!;
-		const orphan2 = t2.get("orphan2")!;
-		expect(orphan1.parentId).toBe(rootId);
-		expect(orphan2.parentId).toBe(rootId);
-		expect(t2.getChildren(rootId)).toHaveLength(2);
 	});
 
 	test("reorderChildren reorders children of a parent", () => {

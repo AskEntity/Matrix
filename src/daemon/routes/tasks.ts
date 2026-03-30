@@ -21,9 +21,8 @@ import {
 	collectDescendants,
 	getEventStore,
 	getTracker,
-	isStaleEphemeralEvent,
-	normalizeEventForUI,
 	readProjectMemory,
+	stripEventForUI,
 } from "../helpers.ts";
 
 /** Notify each ancestor in the parent chain that the user sent a message to a child task. */
@@ -302,7 +301,6 @@ export function registerTaskRoutes(
 		}
 		if (
 			node.status !== "failed" &&
-			node.status !== "stuck" &&
 			node.status !== "passed" &&
 			node.status !== "closed"
 		) {
@@ -314,10 +312,6 @@ export function registerTaskRoutes(
 		const body = await c.req
 			.json<{ message?: string; model?: string }>()
 			.catch(() => ({ message: undefined, model: undefined }));
-		if (body.message) {
-			tracker.setMessage(nodeId, body.message);
-		}
-
 		/** Notify parent agent (waking) that a child was continued by the user. */
 		const notifyParentOfContinue = () => {
 			if (node.parentId) {
@@ -555,9 +549,9 @@ export function registerTaskRoutes(
 
 		if (afterCompact) {
 			const result = eventStore.readFromLastCompactMarker(nodeId);
-			const events = result.events
-				.filter((e) => !isStaleEphemeralEvent(e))
-				.map((e) => normalizeEventForUI(e, nodeId));
+			const events = result.events.map((e) =>
+				stripEventForUI(e as unknown as Record<string, unknown>),
+			);
 			return c.json({
 				events,
 				hasOlderEvents: result.hasOlderEvents,
@@ -566,8 +560,7 @@ export function registerTaskRoutes(
 
 		const events = eventStore
 			.read(nodeId)
-			.filter((e) => !isStaleEphemeralEvent(e))
-			.map((e) => normalizeEventForUI(e, nodeId));
+			.map((e) => stripEventForUI(e as unknown as Record<string, unknown>));
 		return c.json({ events, hasOlderEvents: false });
 	});
 

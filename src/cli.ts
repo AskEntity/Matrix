@@ -136,7 +136,7 @@ async function handleStatus(args: string[]): Promise<void> {
 	}
 
 	// Show cost summary if any tasks have cost data
-	const withCost = body.nodes.filter((n) => n.costUsd && n.costUsd > 0);
+	const withCost = body.nodes.filter((n) => (n.costUsd ?? 0) > 0);
 	const total = withCost.reduce((acc, n) => acc + (n.costUsd ?? 0), 0);
 	if (total > 0) {
 		console.log("");
@@ -173,14 +173,10 @@ function statusEmoji(status: string): string {
 			return "o";
 		case "in_progress":
 			return ">";
-		case "testing":
-			return "~";
 		case "passed":
 			return "+";
 		case "failed":
 			return "x";
-		case "stuck":
-			return "!";
 		default:
 			return "?";
 	}
@@ -479,8 +475,10 @@ async function handleLogs(args: string[]): Promise<void> {
 
 		switch (type) {
 			case "orchestration_started": {
-				const prompt = String(event.prompt ?? "").slice(0, 200);
-				line = `🚀 Orchestration started: ${prompt}`;
+				const model = String(event.model ?? "");
+				line = model
+					? `🚀 Orchestration started (${model})`
+					: "🚀 Orchestration started";
 				break;
 			}
 			case "task_created": {
@@ -1596,7 +1594,7 @@ switch (command) {
 		console.log(
 			"    orchestrate --resume     Resume from saved session history",
 		);
-		console.log("    continue <taskId> [msg]  Continue a failed/stuck task");
+		console.log("    continue <taskId> [msg]  Continue a failed task");
 		console.log("    stop                     Stop running agent");
 		console.log("    agent [id]               Check if an agent is running");
 		console.log("    send <msg>               Send message to running agent");

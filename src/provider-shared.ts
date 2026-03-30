@@ -1,16 +1,21 @@
 /**
- * Shared provider logic: the unified run loop, tool execution, queue handling,
- * and budget management. Both providers import these to avoid code duplication.
+ * Shared provider logic: the unified run loop and provider adapter interface.
+ * Both providers import these to avoid code duplication.
  *
  * The unified `runProviderLoop()` is the single run loop used by both providers.
  * Each provider implements a `ProviderAdapter` interface with hooks for the
  * API-specific operations (message format, API call, response parsing, etc.).
  *
- * Compaction logic: see ./compaction.ts
- * Event converter walker: see ./event-converter.ts
- * Zod-to-JSON-Schema: see ./zod-schema.ts
+ * Split modules:
+ * - Tool execution + transient error detection: see ./tool-execution.ts
+ * - Queue utilities (images, formatting, drain): see ./queue-utils.ts
+ * - Budget management: see ./budget.ts
+ * - Compaction logic: see ./compaction.ts
+ * - Event converter walker: see ./event-converter.ts
+ * - Zod-to-JSON-Schema: see ./zod-schema.ts
  */
 import type { AgentRequest } from "./agent-provider.ts";
+import { checkBudget, recordBudgetWarning } from "./budget.ts";
 import {
 	buildSummarizationInstruction,
 	getCompactionThresholds,
@@ -18,238 +23,38 @@ import {
 } from "./compaction.ts";
 import { type Event, queueMessageToEvent } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
-import type {
-	EventImageData,
-	InternalToolResult,
-	PendingState,
-} from "./shared-types.ts";
+import {
+	drainQueueAtCancellationPoint,
+	formatQueueMessagesWithHeaders,
+	recordQueueEvents,
+} from "./queue-utils.ts";
+import type { EventImageData } from "./shared-types.ts";
 import { formatQueueMessage } from "./task-utils.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
+import {
+	defaultOuterRetryDelay,
+	executeTool,
+	isTransientAPIError,
+	MAX_OUTER_RETRIES,
+} from "./tool-execution.ts";
 import type { AgentResult, ExitReason } from "./types.ts";
+
+// ── Re-exports for backward compatibility ──
+// These symbols were originally defined here. Re-export so existing importers
+// don't need to change their import paths.
+
+export {
+	extractQueueImageParts,
+	extractQueueImages,
+} from "./queue-utils.ts";
+// ToolResult: unified tool execution result type. Canonical definition in shared-types.ts.
+// Re-exported here for consumers that imported ToolExecResult from provider-shared.
+export type { ToolResult } from "./shared-types.ts";
+export { executeTool, isTransientAPIError } from "./tool-execution.ts";
 
 // ── Constants ──
 
 const DEFAULT_MAX_TOKENS = 16384;
-
-// ── Tool execution result type ──
-
-/**
- * Unified result type from executing a tool (built-in or MCP).
- * Used by both providers' tool execution paths.
- */
-export interface ToolExecResult {
-	content: string;
-	isError: boolean;
-	cwd?: string;
-	/** Background process ID — set when bash moves a command to background. */
-	backgroundId?: string;
-	/** Background command — set when bash moves a command to background. */
-	backgroundCommand?: string;
-	isImage?: boolean;
-	imageData?: string;
-	mediaType?: string;
-	mcpImages?: Array<EventImageData & { data?: string }>;
-	/** User message IDs consumed (already persisted at send time). */
-	consumedMessageIds?: string[];
-	/** Raw queue messages from yield/done that need to flow through emit for SSE broadcast + persistence. */
-	consumedQueueMessages?: QueueMessage[];
-	/** Formatted text of all consumed queue messages for display. */
-	formattedQueueMessages?: string;
-	/** Structured pending state after yield/done. */
-	pending?: PendingState;
-}
-
-// ── Transient error detection (provider-agnostic) ──
-
-/** Maximum number of outer retries when callAPI fails after exhausting its own retries. */
-const MAX_OUTER_RETRIES = 3;
-
-/** Default outer retry delay: exponential backoff starting at 30s. */
-function defaultOuterRetryDelay(attempt: number): number {
-	return Math.min(30000 * 2 ** attempt, 120000);
-}
-
-/**
- * Detect transient API errors that the outer retry should catch.
- * Provider-agnostic — checks error properties rather than SDK-specific class types.
- * The inner retry (in each provider's callAPI) handles SDK-specific errors.
- * The outer retry catches anything that slips through.
- */
-export function isTransientAPIError(e: unknown): boolean {
-	if (!(e instanceof Error)) return false;
-	const status = (e as { status?: number }).status;
-	// Rate limit, overloaded, server errors (Anthropic SDK errors have .status)
-	if (
-		status === 429 ||
-		status === 529 ||
-		status === 500 ||
-		status === 502 ||
-		status === 503
-	)
-		return true;
-	// Check error message for transient patterns (OpenAI errors encode status in message)
-	const msg = e.message.toLowerCase();
-	if (msg.includes("rate limit") || msg.includes("overloaded")) return true;
-	// Connection errors
-	if (
-		msg.includes("econnrefused") ||
-		msg.includes("econnreset") ||
-		msg.includes("fetch failed") ||
-		msg.includes("failed to get api response")
-	)
-		return true;
-	return false;
-}
-
-/**
- * Execute a single tool via its handler.
- * ALL tools (built-in + orchestrator + external MCP) go through this single path.
- * Returns a unified ToolExecResult.
- */
-export async function executeTool(
-	toolName: string,
-	input: Record<string, unknown>,
-	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-	mcpHandlers: Map<string, ToolDefinition<any>>,
-	toolCallId?: string,
-): Promise<ToolExecResult> {
-	const mcpHandler = mcpHandlers.get(toolName);
-	if (!mcpHandler) {
-		return {
-			content: `Unknown tool: ${toolName}`,
-			isError: true,
-		};
-	}
-
-	try {
-		const mcpResult = await mcpHandler.handler(input, { toolCallId });
-		const parts = Array.isArray(mcpResult.content) ? mcpResult.content : [];
-		const textParts: string[] = [];
-		const mcpImages: Array<{
-			base64: string;
-			mediaType: string;
-			data: string;
-		}> = [];
-		for (const c of parts as Array<Record<string, unknown>>) {
-			if (c.type === "text") {
-				textParts.push((c.text as string) ?? "");
-			} else if (c.type === "image" && c.data) {
-				// MCP format: { type: "image", data, mimeType }
-				mcpImages.push({
-					mediaType: (c.mimeType as string) ?? "image/png",
-					data: c.data as string,
-					base64: c.data as string,
-				});
-			} else if (
-				c.type === "image" &&
-				(c.source as Record<string, unknown>)?.type === "base64"
-			) {
-				// Anthropic format: { type: "image", source: { type: "base64", media_type, data } }
-				const src = c.source as Record<string, string>;
-				mcpImages.push({
-					mediaType: src.media_type ?? "image/png",
-					data: src.data ?? "",
-					base64: src.data ?? "",
-				});
-			} else {
-				textParts.push(JSON.stringify(c));
-			}
-		}
-		// Extract non-standard properties from handler results.
-		// InternalToolResult has typed fields — no `as any` needed.
-		const r = mcpResult as InternalToolResult;
-
-		return {
-			content: textParts.join("\n"),
-			isError: mcpResult.isError ?? false,
-			isImage: r.isImage ?? mcpImages.length > 0,
-			...(r.cwd ? { cwd: r.cwd } : {}),
-			...(r.backgroundId ? { backgroundId: r.backgroundId } : {}),
-			...(r.backgroundCommand
-				? { backgroundCommand: r.backgroundCommand }
-				: {}),
-			...(r.imageData ? { imageData: r.imageData } : {}),
-			...(r.mediaType ? { mediaType: r.mediaType } : {}),
-			mcpImages,
-			...(r.consumedMessageIds?.length
-				? { consumedMessageIds: r.consumedMessageIds }
-				: {}),
-			...(r.consumedQueueMessages?.length
-				? { consumedQueueMessages: r.consumedQueueMessages }
-				: {}),
-			...(r.pending ? { pending: r.pending } : {}),
-			...(r.formattedQueueMessages
-				? { formattedQueueMessages: r.formattedQueueMessages }
-				: {}),
-		};
-	} catch (e) {
-		return {
-			content: `Tool error (${toolName}): ${e instanceof Error ? e.message : String(e)}`,
-			isError: true,
-		};
-	}
-}
-
-// ── Queue image extraction ──
-
-/**
- * Extract images from queue messages in Anthropic format (base64 image blocks).
- */
-export function extractQueueImages(msgs: QueueMessage[]): Array<{
-	type: "image";
-	source: {
-		type: "base64";
-		media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-		data: string;
-	};
-}> {
-	type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-	const blocks: Array<{
-		type: "image";
-		source: { type: "base64"; media_type: ImageMediaType; data: string };
-	}> = [];
-	for (const msg of msgs) {
-		if (msg.source === "user" && msg.images) {
-			for (const img of msg.images) {
-				blocks.push({
-					type: "image",
-					source: {
-						type: "base64",
-						media_type: img.mediaType as ImageMediaType,
-						data: img.base64,
-					},
-				});
-			}
-		}
-	}
-	return blocks;
-}
-
-/**
- * Extract images from queue messages in OpenAI format (image_url parts with data URIs).
- */
-export function extractQueueImageParts(
-	msgs: QueueMessage[],
-): Array<{ type: "image_url"; image_url: { url: string; detail: "auto" } }> {
-	const parts: Array<{
-		type: "image_url";
-		image_url: { url: string; detail: "auto" };
-	}> = [];
-	for (const msg of msgs) {
-		if (msg.source === "user" && msg.images) {
-			for (const img of msg.images) {
-				parts.push({
-					type: "image_url",
-					image_url: {
-						url: `data:${img.mediaType};base64,${img.base64}`,
-						detail: "auto",
-					},
-				});
-			}
-		}
-	}
-	return parts;
-}
 
 // ── Implicit yield (end_turn with queue) ──
 
@@ -257,27 +62,25 @@ export function extractQueueImageParts(
  * Shared implicit yield logic: wait for messages on queue, format them, emit events.
  * Returns the formatted messages and images, or null if queue was closed.
  *
- * @returns Object with formatted messages and image data, or null if queue closed
+ * Events (agent_idle, agent_active) are emitted directly via the emit callback —
+ * they don't need to be yielded since consumers of the provider generator ignore
+ * intermediate events (they only care about driving the generator and the final AgentResult).
  */
-async function* handleImplicitYield(
+async function handleImplicitYield(
 	queue: MessageQueue,
 	emit?: (event: Event) => void,
-): AsyncGenerator<
-	Event,
-	{
-		formatted: string;
-		nonCompact: QueueMessage[];
-		manualCompactRequested: boolean;
-		compactOnly: boolean;
-	} | null
-> {
+): Promise<{
+	formatted: string;
+	nonCompact: QueueMessage[];
+	manualCompactRequested: boolean;
+	compactOnly: boolean;
+} | null> {
 	const idleEvt: Event = {
 		type: "agent_idle",
 		taskId: "",
 		ts: Date.now(),
 	};
 	emit?.(idleEvt);
-	yield idleEvt;
 	try {
 		queue.idle = true;
 		const first = await queue.wait();
@@ -288,7 +91,6 @@ async function* handleImplicitYield(
 			ts: Date.now(),
 		};
 		emit?.(activeEvt);
-		yield activeEvt;
 		const rest = queue.drain();
 		const all = [first, ...rest];
 		const manualCompactRequested = all.some((m) => m.source === "compact");
@@ -314,97 +116,14 @@ async function* handleImplicitYield(
 	}
 }
 
-/**
- * Format queue messages with headers extracted to message level.
- * For user messages: header placed before raw content (not via formatQueueMessage which embeds header).
- * For task_messages with header: header placed before the XML-formatted content (sans header).
- * Other messages: formatted normally via formatQueueMessage.
- */
-function formatQueueMessagesWithHeaders(msgs: QueueMessage[]): string {
-	const parts: string[] = [];
-	for (const msg of msgs) {
-		if (msg.source === "user" && msg.header) {
-			parts.push(msg.header);
-			parts.push(msg.content);
-		} else if (msg.source === "task_message" && msg.header) {
-			parts.push(msg.header);
-			// Format without header to avoid duplication (formatQueueMessage includes header)
-			const stripped = { ...msg, header: undefined };
-			parts.push(formatQueueMessage(stripped));
-		} else {
-			parts.push(formatQueueMessage(msg));
-		}
-	}
-	return parts.join("\n\n");
-}
-
-// ── Cancellation point queue drain ──
-
-/**
- * Drain queue at cancellation point (between tool execution and next API call).
- * Returns the queue messages and formatted text, or null if nothing to drain.
- */
-function drainQueueAtCancellationPoint(queue: MessageQueue): {
-	messages: QueueMessage[];
-	formatted: string;
-	manualCompactRequested: boolean;
-} | null {
-	if (queue.pending <= 0) return null;
-
-	const queueMsgs = queue.drain();
-	const manualCompactRequested = queueMsgs.some((m) => m.source === "compact");
-	const nonCompactMsgs = queueMsgs.filter((m) => m.source !== "compact");
-	if (nonCompactMsgs.length === 0) {
-		return { messages: [], formatted: "", manualCompactRequested };
-	}
-
-	const formatted = nonCompactMsgs.map(formatQueueMessage).join("\n");
-	return { messages: nonCompactMsgs, formatted, manualCompactRequested };
-}
-
 // ── Event emission helpers ──
-
-/**
- * Emit queue events and messages_consumed event via the emit callback.
- * Handles the two-phase message lifecycle: user messages with IDs are already
- * written at send time — just track their IDs. Other messages get converted.
- */
-function recordQueueEvents(
-	emit: (event: Event) => void,
-	queueMsgs: QueueMessage[],
-	additionalConsumedIds?: string[],
-	taskId = "",
-): void {
-	const consumedIds: string[] = [...(additionalConsumedIds ?? [])];
-
-	for (const msg of queueMsgs) {
-		if (msg.source === "user" && msg.id) {
-			// message already written to JSONL at send time — don't duplicate
-			consumedIds.push(msg.id);
-		} else {
-			const evt = queueMessageToEvent(msg, taskId);
-			const evtId = (evt as { id?: string }).id;
-			if (evtId) consumedIds.push(evtId);
-			emit(evt);
-		}
-	}
-
-	if (consumedIds.length > 0) {
-		emit({
-			type: "messages_consumed",
-			messageIds: consumedIds,
-			taskId,
-			ts: Date.now(),
-		});
-	}
-}
 
 /**
  * Collect images for the UI tool_result event from execution result.
  * When `_formattedQueueMessages` is set, mcpImages are user queue images
  * — they go alongside the queue text, not in the tool_result.
  */
-function collectToolResultImages(exec: ToolExecResult): EventImageData[] {
+function collectToolResultImages(exec: ToolResult): EventImageData[] {
 	const images: EventImageData[] = [];
 	if (!exec.formattedQueueMessages && exec.mcpImages?.length) {
 		for (const img of exec.mcpImages) {
@@ -426,7 +145,7 @@ function collectToolResultImages(exec: ToolExecResult): EventImageData[] {
  */
 function buildToolResultEvents(
 	toolIds: Array<{ id: string; name: string }>,
-	execResults: ToolExecResult[],
+	execResults: ToolResult[],
 	cancellationQueueMsgs: QueueMessage[],
 	taskId = "",
 ): Event[] {
@@ -449,7 +168,7 @@ function buildToolResultEvents(
 
 	for (let idx = 0; idx < toolIds.length; idx++) {
 		const toolId = toolIds[idx] as { id: string; name: string };
-		const exec = execResults[idx] as ToolExecResult;
+		const exec = execResults[idx] as ToolResult;
 
 		// Record pure tool output — queue text is NOT embedded.
 		// The converter reconstructs queue messages from messagesConsumed + message events.
@@ -522,50 +241,6 @@ function buildToolResultEvents(
 	}
 
 	return toolEvents;
-}
-
-// ── Budget check ──
-
-/**
- * Check budget and inject warnings at 80% and 100% thresholds.
- * Returns warning events and the warning text to inject, if any.
- */
-function checkBudget(
-	budgetUsd: number,
-	runningCost: number,
-): { warning: string; ratio: number } | null {
-	const ratio = runningCost / budgetUsd;
-	if (ratio >= 1.0) {
-		return {
-			warning: `⚠️ Budget exceeded (${runningCost.toFixed(4)} / ${budgetUsd.toFixed(2)} budget). Call done() now.`,
-			ratio,
-		};
-	}
-	if (ratio >= 0.8) {
-		return {
-			warning: `⚠️ Warning: task has used ${Math.round(ratio * 100)}% of its ${budgetUsd.toFixed(2)} budget (${runningCost.toFixed(4)} spent). Wrap up soon.`,
-			ratio,
-		};
-	}
-	return null;
-}
-
-/**
- * Emit a budget warning event.
- */
-function recordBudgetWarning(
-	emit: ((event: Event) => void) | undefined,
-	warning: string,
-	taskId = "",
-): void {
-	if (emit) {
-		emit({
-			type: "budget_warning",
-			warning,
-			taskId,
-			ts: Date.now(),
-		});
-	}
 }
 
 // ── Unified Provider Adapter Interface ──
@@ -674,7 +349,7 @@ export interface ProviderAdapter {
 	 */
 	buildToolResultsMessage(params: {
 		toolUses: ProviderToolUse[];
-		execResults: ToolExecResult[];
+		execResults: ToolResult[];
 		cancellationQueueMsgs: QueueMessage[];
 		cancellationFormatted: string;
 	}): unknown[];
@@ -706,7 +381,6 @@ export interface ProviderAdapter {
 	 * Override to include provider-specific fields (e.g. Anthropic cache tokens).
 	 */
 	buildResult?(params: {
-		success: boolean;
 		exitReason: ExitReason;
 		output: string;
 		costUsd: number;
@@ -719,9 +393,11 @@ export interface ProviderAdapter {
 	}): AgentResult;
 }
 
+// ── Import ToolResult type for use in this file ──
+import type { ToolResult } from "./shared-types.ts";
+
 /** Default buildResult — used when adapter doesn't override. */
 function defaultBuildResult(params: {
-	success: boolean;
 	exitReason: ExitReason;
 	output: string;
 	costUsd: number;
@@ -733,7 +409,6 @@ function defaultBuildResult(params: {
 	totalCacheReadTokens: number;
 }): AgentResult {
 	return {
-		success: params.success,
 		exitReason: params.exitReason,
 		output: params.output,
 		costUsd: params.costUsd,
@@ -918,13 +593,7 @@ export async function* runProviderLoop(
 		// or (b) yield was detected in tool execution and deferred to loop level.
 		// Wait for messages, write yield tool_result, then continue to next API call.
 		if (pendingYieldToolCall && queue) {
-			const yieldGen = handleImplicitYield(queue, emit);
-			let yieldStep = await yieldGen.next();
-			while (!yieldStep.done) {
-				yield yieldStep.value;
-				yieldStep = await yieldGen.next();
-			}
-			const yieldResult = yieldStep.value;
+			const yieldResult = await handleImplicitYield(queue, emit);
 
 			if (yieldResult === null) {
 				// Queue closed — exit (stop/reset during yield = interrupted)
@@ -938,7 +607,6 @@ export async function* runProviderLoop(
 				const exitReason = doneExitReason ?? "interrupted";
 				const buildResult = adapter.buildResult ?? defaultBuildResult;
 				return buildResult({
-					success: exitReason !== "done_failed",
 					exitReason,
 					output: lastText,
 					costUsd: cost,
@@ -1351,7 +1019,6 @@ export async function* runProviderLoop(
 				const noQExitReason = doneExitReason ?? "interrupted";
 				const noQBuildResult = adapter.buildResult ?? defaultBuildResult;
 				return noQBuildResult({
-					success: noQExitReason !== "done_failed",
 					exitReason: noQExitReason,
 					output: lastText,
 					costUsd: noQCost,
@@ -1374,13 +1041,7 @@ export async function* runProviderLoop(
 			emit?.(idleStatusEvt);
 			yield idleStatusEvt;
 
-			const yieldGen = handleImplicitYield(queue, emit);
-			let yieldStep = await yieldGen.next();
-			while (!yieldStep.done) {
-				yield yieldStep.value;
-				yieldStep = await yieldGen.next();
-			}
-			const yieldResult = yieldStep.value;
+			const yieldResult = await handleImplicitYield(queue, emit);
 
 			if (yieldResult === null) {
 				// Queue closed during implicit yield (stop/reset = interrupted).
@@ -1394,7 +1055,6 @@ export async function* runProviderLoop(
 				const exitReason = doneExitReason ?? "interrupted";
 				const buildResult = adapter.buildResult ?? defaultBuildResult;
 				return buildResult({
-					success: exitReason !== "done_failed",
 					exitReason,
 					output: lastText,
 					costUsd: cost,
@@ -1469,7 +1129,7 @@ export async function* runProviderLoop(
 						content:
 							"yield() ignored — other tools in the same turn produced results. Process them first.",
 						isError: false,
-					} satisfies ToolExecResult;
+					} satisfies ToolResult;
 				}
 				// done + other tools: done returns error
 				if (toolUse.name === "mcp__opengraft__done" && hasOtherTools) {
@@ -1477,7 +1137,7 @@ export async function* runProviderLoop(
 						content:
 							"Cannot call done() alongside other tools — you must process their results first before finishing.",
 						isError: true,
-					} satisfies ToolExecResult;
+					} satisfies ToolResult;
 				}
 				// fork + other tools: fork returns error (fork must be sole tool
 				// to ensure clean event state — like unix fork(), no race conditions)
@@ -1489,7 +1149,7 @@ export async function* runProviderLoop(
 						content:
 							"Cannot call fork_task_context alongside other tools — fork must be the only tool in the turn to ensure clean event state.",
 						isError: true,
-					} satisfies ToolExecResult;
+					} satisfies ToolResult;
 				}
 				return executeTool(
 					toolUse.name,
@@ -1515,7 +1175,7 @@ export async function* runProviderLoop(
 		// Yield tool_result events for consumer loop
 		for (let i = 0; i < toolUses.length; i++) {
 			const toolUse = toolUses[i] as ProviderToolUse;
-			const exec = execResults[i] as ToolExecResult;
+			const exec = execResults[i] as ToolResult;
 			const images = collectToolResultImages(exec);
 			yield {
 				type: "tool_result" as const,
@@ -1578,7 +1238,7 @@ export async function* runProviderLoop(
 		// Only set doneExitReason if the tool execution succeeded (isError = false).
 		if (doneToolUse && !hasOtherTools) {
 			const doneIndex = toolUses.indexOf(doneToolUse);
-			const doneResult = execResults[doneIndex] as ToolExecResult | undefined;
+			const doneResult = execResults[doneIndex] as ToolResult | undefined;
 			if (doneResult && !doneResult.isError) {
 				const doneInput = doneToolUse.input as { status?: string } | undefined;
 				doneExitReason =
@@ -1599,7 +1259,6 @@ export async function* runProviderLoop(
 			const exitReason = doneExitReason ?? "interrupted";
 			const buildResult2 = adapter.buildResult ?? defaultBuildResult;
 			return buildResult2({
-				success: exitReason !== "done_failed",
 				exitReason,
 				output: lastText,
 				costUsd: cost,
@@ -1652,7 +1311,6 @@ export async function* runProviderLoop(
 	const finalExitReason = doneExitReason ?? "interrupted";
 	const buildResultFinal = adapter.buildResult ?? defaultBuildResult;
 	return buildResultFinal({
-		success: finalExitReason !== "done_failed",
 		exitReason: finalExitReason,
 		output: lastText,
 		costUsd: finalCost,

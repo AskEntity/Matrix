@@ -64,8 +64,6 @@ export interface AgentSession {
 	events: AsyncGenerator<Event, AgentResult>;
 	/** Message queue for async event delivery (user messages, child completions, etc.) */
 	readonly queue: MessageQueue;
-	/** @deprecated Use queue.enqueue({ source: "user", content: text }) instead */
-	sendMessage(text: string): Promise<void>;
 	/** Stop the agent. */
 	stop(): void;
 }
@@ -91,7 +89,7 @@ export interface AgentProvider {
 
 	/**
 	 * Start an interactive agent session that supports mid-execution message injection.
-	 * Returns a session handle with sendMessage() and an event stream.
+	 * Returns a session handle with a queue and an event stream.
 	 */
 	startSession(request: AgentRequest): AgentSession;
 }

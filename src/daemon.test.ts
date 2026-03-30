@@ -26,16 +26,24 @@ function createMockProvider(
 	const execute =
 		handler ??
 		(async () => ({
-			success: true,
 			exitReason: "interrupted" as const,
 			output: "",
+			costUsd: 0,
+			turns: 0,
+			sessionId: "mock-session",
 		}));
 	return {
 		name: "mock",
 		execute,
 		// biome-ignore lint/correctness/useYield: mock provider never streams
 		stream: async function* () {
-			return { success: true, exitReason: "interrupted" as const, output: "" };
+			return {
+				exitReason: "interrupted" as const,
+				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock-session",
+			};
 		},
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
@@ -54,16 +62,18 @@ function createMockProvider(
 					// Queue closed — normal exit
 				}
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock-session",
 				};
 			}
 			return {
 				sessionId: "mock-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},
@@ -191,10 +201,8 @@ describe("daemon stats", () => {
 			draft: 0,
 			pending: 0,
 			in_progress: 0,
-			testing: 0,
 			passed: 0,
 			failed: 0,
-			stuck: 0,
 			closed: 0,
 		});
 
@@ -297,7 +305,6 @@ describe("daemon stats", () => {
 		expect(stats.taskCounts.in_progress).toBe(1); // Root
 		expect(stats.taskCounts.passed).toBe(1); // Child1
 		expect(stats.taskCounts.failed).toBe(0);
-		expect(stats.taskCounts.stuck).toBe(0);
 
 		await rm(tempDir, { recursive: true });
 		await rm(dataDir, { recursive: true });
@@ -797,7 +804,6 @@ describe("daemon tasks API", () => {
 		expect(contRes.status).toBe(200);
 		const continued = (await contRes.json()) as TaskNode;
 		expect(continued.status).toBe("pending");
-		expect(continued.message).toBe("Try a different approach");
 	});
 
 	test("POST /tasks/:nodeId/continue rejects non-failed task", async () => {
@@ -823,9 +829,11 @@ describe("daemon tasks API", () => {
 		const agentProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* (req) {
@@ -837,9 +845,11 @@ describe("daemon tasks API", () => {
 					receivedQueue = true;
 				}
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "done",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -847,16 +857,18 @@ describe("daemon tasks API", () => {
 				// biome-ignore lint/correctness/useYield: mock session never streams
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "done",
+						costUsd: 0,
+						turns: 0,
+						sessionId: "mock",
 					};
 				}
 				return {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -1832,16 +1844,20 @@ describe("POST /projects/:id/clarify", () => {
 		const longRunningProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -1849,16 +1865,18 @@ describe("POST /projects/:id/clarify", () => {
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
+						sessionId: "mock",
 					};
 				}
 				return {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -1928,16 +1946,20 @@ describe("POST /projects/:id/clarify", () => {
 		const longRunningProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -1945,16 +1967,18 @@ describe("POST /projects/:id/clarify", () => {
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
+						sessionId: "mock",
 					};
 				}
 				return {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -2057,16 +2081,20 @@ describe("POST /projects/:id/clarify", () => {
 		const longRunningProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -2074,16 +2102,18 @@ describe("POST /projects/:id/clarify", () => {
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
+						sessionId: "mock",
 					};
 				}
 				return {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -2185,17 +2215,21 @@ describe("daemon orchestrate/agent API", () => {
 					receivedMcpToolDefs = true;
 				}
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "orchestrated",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -2206,16 +2240,18 @@ describe("daemon orchestrate/agent API", () => {
 				// biome-ignore lint/correctness/useYield: mock session never streams
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "orchestrated",
+						costUsd: 0,
+						turns: 0,
+						sessionId: "mock",
 					};
 				}
 				return {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -2538,16 +2574,20 @@ describe("POST /projects/:id/stop", () => {
 		const longRunningProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -2555,16 +2595,18 @@ describe("POST /projects/:id/stop", () => {
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
+						sessionId: "mock",
 					};
 				}
 				return {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -3001,18 +3043,18 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.status).toBe("pending");
 	});
 
-	test("resets stuck task without worktree to pending", async () => {
+	test("resets failed task without worktree to pending", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Stuck task", description: "Do stuff" }),
+			body: JSON.stringify({ title: "Failed task", description: "Do stuff" }),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
 		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "stuck" }),
+			body: JSON.stringify({ status: "failed" }),
 		});
 
 		const res = await app.request(
@@ -3024,7 +3066,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.status).toBe("pending");
 	});
 
-	test("stores message when provided for task without worktree", async () => {
+	test("continues task with message for task without worktree", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -3049,7 +3091,6 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as TaskNode;
 		expect(body.status).toBe("pending");
-		expect(body.message).toBe("Try a different approach");
 	});
 
 	test("sets status to in_progress for failed task with worktree", async () => {
@@ -3193,7 +3234,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		await new Promise((r) => setTimeout(r, 150));
 	});
 
-	test("stores message when continuing passed task", async () => {
+	test("continues passed task with message — launches agent", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -3217,7 +3258,8 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		);
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as TaskNode;
-		expect(body.message).toBe("Add tests for edge cases");
+		// Task gets a worktree created and agent launched → in_progress
+		expect(body.status).toBe("in_progress");
 	});
 
 	test("passes emit callback to stream for child agent event emission", async () => {
@@ -3226,17 +3268,21 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const agentProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* (req) {
 				receivedEmit = req.emit;
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -3244,16 +3290,18 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 				// biome-ignore lint/correctness/useYield: mock session never streams
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "done",
+						costUsd: 0,
+						turns: 0,
+						sessionId: "mock",
 					};
 				}
 				return {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -3717,16 +3765,20 @@ describe("POST /projects/:id/restart", () => {
 		const restartProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -3736,9 +3788,10 @@ describe("POST /projects/:id/restart", () => {
 					// Keep the session alive long enough for the restart test
 					await new Promise((resolve) => setTimeout(resolve, 5000));
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
 						sessionId: `session-${sessionCount}`,
 					};
 				}
@@ -3746,7 +3799,7 @@ describe("POST /projects/:id/restart", () => {
 					sessionId: `session-${sessionCount}`,
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -3808,16 +3861,20 @@ describe("POST /projects/:id/restart", () => {
 		const slowStopProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -3826,9 +3883,10 @@ describe("POST /projects/:id/restart", () => {
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 5000));
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
 						sessionId: `session-${sessionCount}`,
 					};
 				}
@@ -3836,7 +3894,7 @@ describe("POST /projects/:id/restart", () => {
 					sessionId: `session-${sessionCount}`,
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -3887,16 +3945,20 @@ describe("POST /projects/:id/restart", () => {
 		const trackingProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -3905,9 +3967,10 @@ describe("POST /projects/:id/restart", () => {
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 5000));
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
 						sessionId: `session-${sessionCount}`,
 					};
 				}
@@ -3915,7 +3978,7 @@ describe("POST /projects/:id/restart", () => {
 					sessionId: `session-${sessionCount}`,
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -3985,16 +4048,20 @@ describe("POST /projects/:id/restart", () => {
 		const restartSafeProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -4010,9 +4077,10 @@ describe("POST /projects/:id/restart", () => {
 						// queue.close() rejects pending waits — session stopped
 					}
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
 						sessionId: `session-${currentNum}`,
 					};
 				}
@@ -4020,7 +4088,7 @@ describe("POST /projects/:id/restart", () => {
 					sessionId: `session-${currentNum}`,
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -4089,16 +4157,20 @@ describe("POST /projects/:id/restart", () => {
 		const sessionIdProvider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -4108,9 +4180,10 @@ describe("POST /projects/:id/restart", () => {
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 5000));
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
 						sessionId: currentSessionId,
 					};
 				}
@@ -4118,7 +4191,7 @@ describe("POST /projects/:id/restart", () => {
 					sessionId: currentSessionId,
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -4207,16 +4280,20 @@ describe("lifecycle edge cases", () => {
 		return {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -4225,16 +4302,18 @@ describe("lifecycle edge cases", () => {
 					// Keep the session alive
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
+						sessionId: "mock",
 					};
 				}
 				return {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						queue.close();
 					},
@@ -4286,16 +4365,20 @@ describe("lifecycle edge cases", () => {
 		const provider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -4303,16 +4386,18 @@ describe("lifecycle edge cases", () => {
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
+						sessionId: "mock",
 					};
 				}
 				return {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						stopCalled = true;
 						queue.close();
@@ -4361,16 +4446,20 @@ describe("lifecycle edge cases", () => {
 		const provider: AgentProvider = {
 			name: "mock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* () {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				};
 			},
 			startSession(req) {
@@ -4378,16 +4467,18 @@ describe("lifecycle edge cases", () => {
 				async function* events(): AsyncGenerator<Event, AgentResult> {
 					await new Promise((resolve) => setTimeout(resolve, 10000));
 					return {
-						success: true,
 						exitReason: "interrupted" as const,
 						output: "",
+						costUsd: 0,
+						turns: 0,
+						sessionId: "mock",
 					};
 				}
 				return {
 					sessionId: "mock-session",
 					events: events(),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => {
 						stopCalled = true;
 						queue.close();

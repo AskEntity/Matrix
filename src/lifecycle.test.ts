@@ -23,29 +23,39 @@ function createInstantProvider(): AgentProvider {
 	return {
 		name: "mock",
 		execute: async () => ({
-			success: true,
 			exitReason: "interrupted" as const,
 			output: "",
+			costUsd: 0,
+			turns: 0,
+			sessionId: "mock-session",
 		}),
 		// biome-ignore lint/correctness/useYield: mock provider never streams
 		stream: async function* () {
-			return { success: true, exitReason: "interrupted" as const, output: "" };
+			return {
+				exitReason: "interrupted" as const,
+				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock-session",
+			};
 		},
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
 			// biome-ignore lint/correctness/useYield: mock session never streams
 			async function* events(): AsyncGenerator<Event, AgentResult> {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock-session",
 				};
 			}
 			return {
 				sessionId: "mock-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},
@@ -59,13 +69,21 @@ function createLongRunningProvider(): AgentProvider {
 	return {
 		name: "mock-long",
 		execute: async () => ({
-			success: true,
 			exitReason: "interrupted" as const,
 			output: "",
+			costUsd: 0,
+			turns: 0,
+			sessionId: "mock-long-session",
 		}),
 		// biome-ignore lint/correctness/useYield: mock
 		stream: async function* () {
-			return { success: true, exitReason: "interrupted" as const, output: "" };
+			return {
+				exitReason: "interrupted" as const,
+				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock-long-session",
+			};
 		},
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
@@ -80,16 +98,18 @@ function createLongRunningProvider(): AgentProvider {
 					// Queue closed — exit cleanly
 				}
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock-long-session",
 				};
 			}
 			return {
 				sessionId: "mock-long-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},
@@ -110,13 +130,21 @@ function createRecordingProvider(): {
 	const provider: AgentProvider = {
 		name: "mock-recording",
 		execute: async () => ({
-			success: true,
 			exitReason: "interrupted" as const,
 			output: "",
+			costUsd: 0,
+			turns: 0,
+			sessionId: "mock-recording-session",
 		}),
 		// biome-ignore lint/correctness/useYield: mock
 		stream: async function* () {
-			return { success: true, exitReason: "interrupted" as const, output: "" };
+			return {
+				exitReason: "interrupted" as const,
+				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock-recording-session",
+			};
 		},
 		startSession(req) {
 			const queue = req.queue ?? new MessageQueue();
@@ -142,16 +170,18 @@ function createRecordingProvider(): {
 					}
 				}
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock-recording-session",
 				};
 			}
 			return {
 				sessionId: "mock-recording-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},
@@ -1882,7 +1912,7 @@ describe("lifecycle: child completion notification paths", () => {
 				queue: firstQueue,
 			},
 		});
-		expect(result1.success).toBe(true);
+		expect(result1.exitReason).toBe("interrupted");
 
 		// Simulate runChildAgentInBackground's post-completion: send task_complete
 		parentQueue.enqueue({
@@ -1922,7 +1952,7 @@ describe("lifecycle: child completion notification paths", () => {
 				queue: secondQueue,
 			},
 		});
-		expect(result2.success).toBe(true);
+		expect(result2.exitReason).toBe("interrupted");
 
 		// Simulate task_complete again
 		parentQueue.enqueue({
@@ -1974,9 +2004,11 @@ describe("lifecycle: child completion notification paths", () => {
 		const doneYieldProvider: AgentProvider = {
 			name: "mock-done-yield",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			stream: async function* (req) {
 				const queue = req.queue ?? new MessageQueue();
@@ -2004,9 +2036,11 @@ describe("lifecycle: child completion notification paths", () => {
 				}
 
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "done",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				} as AgentResult;
 			},
 			startSession(req) {
@@ -2015,7 +2049,7 @@ describe("lifecycle: child completion notification paths", () => {
 					sessionId: "mock",
 					events: this.stream(req),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => queue.close(),
 				};
 			},
@@ -2069,9 +2103,11 @@ describe("lifecycle: child completion notification paths", () => {
 		const deadlockProvider: AgentProvider = {
 			name: "mock-deadlock",
 			execute: async () => ({
-				success: true,
 				exitReason: "interrupted" as const,
 				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock",
 			}),
 			stream: async function* (req) {
 				const queue = req.queue ?? new MessageQueue();
@@ -2092,9 +2128,11 @@ describe("lifecycle: child completion notification paths", () => {
 					// If somehow closed, exit
 				}
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "done",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock",
 				} as AgentResult;
 			},
 			startSession(req) {
@@ -2103,7 +2141,7 @@ describe("lifecycle: child completion notification paths", () => {
 					sessionId: "mock",
 					events: this.stream(req),
 					queue,
-					sendMessage: async () => {},
+
 					stop: () => queue.close(),
 				};
 			},
@@ -2257,13 +2295,21 @@ function createCapturingProvider(): {
 	const provider: AgentProvider = {
 		name: "mock-capturing",
 		execute: async () => ({
-			success: true,
 			exitReason: "interrupted" as const,
 			output: "",
+			costUsd: 0,
+			turns: 0,
+			sessionId: "mock-capturing-session",
 		}),
 		// biome-ignore lint/correctness/useYield: mock
 		stream: async function* () {
-			return { success: true, exitReason: "interrupted" as const, output: "" };
+			return {
+				exitReason: "interrupted" as const,
+				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock-capturing-session",
+			};
 		},
 		startSession(req) {
 			sessionRequests.push(req);
@@ -2283,16 +2329,18 @@ function createCapturingProvider(): {
 					// Queue closed
 				}
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock-capturing-session",
 				};
 			}
 			return {
 				sessionId: req.resumeSessionId ?? "mock-capturing-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},
@@ -2314,13 +2362,21 @@ function createInstantCapturingProvider(): {
 	const provider: AgentProvider = {
 		name: "mock-instant-capturing",
 		execute: async () => ({
-			success: true,
 			exitReason: "interrupted" as const,
 			output: "",
+			costUsd: 0,
+			turns: 0,
+			sessionId: "mock-instant-capturing-session",
 		}),
 		// biome-ignore lint/correctness/useYield: mock
 		stream: async function* () {
-			return { success: true, exitReason: "interrupted" as const, output: "" };
+			return {
+				exitReason: "interrupted" as const,
+				output: "",
+				costUsd: 0,
+				turns: 0,
+				sessionId: "mock-instant-capturing-session",
+			};
 		},
 		startSession(req) {
 			sessionRequests.push(req);
@@ -2328,16 +2384,18 @@ function createInstantCapturingProvider(): {
 			// biome-ignore lint/correctness/useYield: mock session exits immediately
 			async function* events(): AsyncGenerator<Event, AgentResult> {
 				return {
-					success: true,
 					exitReason: "interrupted" as const,
 					output: "",
+					costUsd: 0,
+					turns: 0,
+					sessionId: "mock-instant-capturing-session",
 				};
 			}
 			return {
 				sessionId: req.resumeSessionId ?? "mock-instant-session",
 				events: events(),
 				queue,
-				sendMessage: async () => {},
+
 				stop: () => {
 					queue.close();
 				},

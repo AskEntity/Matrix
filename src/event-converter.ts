@@ -312,13 +312,6 @@ export function walkEventsToMessages(
 				i++;
 				break;
 
-			case "fork_marker":
-				// Normally consumed inside tool_result loop (merged with fork tool_result).
-				// If encountered standalone (legacy JSONL without synthetic fork events),
-				// skip it — identity info should come from the fork tool_result.
-				i++;
-				break;
-
 			default:
 				// Skip lifecycle/broadcast events
 				i++;

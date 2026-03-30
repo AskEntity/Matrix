@@ -101,8 +101,6 @@ export type Event =
 			type: "orchestration_started";
 			taskId: string;
 			resume: boolean;
-			/** @deprecated Legacy field — prompt is now delivered via queue. Present in old JSONL only. */
-			prompt?: string;
 			model: string;
 			provider: string;
 			ts: number;

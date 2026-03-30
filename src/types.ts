@@ -1,15 +1,13 @@
 import type { MessageQueue } from "./message-queue.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
 
-/** Task status follows the lifecycle: draft → pending → in_progress → testing → passed | failed | stuck | closed */
+/** Task status follows the lifecycle: draft → pending → in_progress → passed | failed | closed */
 export type TaskStatus =
 	| "draft"
 	| "pending"
 	| "in_progress"
-	| "testing"
 	| "passed"
 	| "failed"
-	| "stuck"
 	| "closed";
 
 /**
@@ -40,16 +38,12 @@ export interface TaskNode {
 	children: string[];
 	/** Absolute path to the git worktree for this task. */
 	worktreePath: string | null;
-	/** Optional message to pass when continuing a failed/stuck task. */
-	message: string | null;
-	/** Number of consecutive failures (auto-stuck at 3). */
-	failCount: number;
-	/** Accumulated cost in USD for this task's agent execution. */
-	costUsd?: number;
+	/** Accumulated cost in USD for this task's agent execution. Default 0. */
+	costUsd: number;
 	/** Maximum cost in USD this task is allowed to spend. */
 	budgetUsd?: number;
-	/** Who last modified this node: 'user' (REST/CLI) or 'agent' (MCP tools). */
-	editedBy?: "user" | "agent";
+	/** Who last modified this node: 'user' (REST/CLI) or 'agent' (MCP tools). Default "agent". */
+	editedBy: "user" | "agent";
 	/** Optional color label for visual categorization. */
 	color?: string;
 	createdAt: string;
@@ -70,23 +64,15 @@ export type ExitReason = "done_passed" | "done_failed" | "interrupted";
 
 /** Result returned by an agent after executing a task step. */
 export interface AgentResult {
-	/** @deprecated Use exitReason instead. Kept for backward compat. */
-	success: boolean;
 	/** Why the provider loop exited. */
 	exitReason: ExitReason;
 	output: string;
 	/** Cost in USD for this execution. */
-	costUsd?: number;
+	costUsd: number;
 	/** Number of agentic turns (tool-use round trips). */
-	turns?: number;
+	turns: number;
 	/** Session ID for resuming this conversation later. */
-	sessionId?: string;
-	/** Structured test results, if the step involved running tests. */
-	testResults?: {
-		passed: string[];
-		failed: string[];
-		errors: string[];
-	};
+	sessionId: string;
 	// Token breakdown (AnthropicCompatibleProvider only; undefined for ClaudeAgentSdkProvider)
 	/** Non-cached input tokens consumed. */
 	inputTokens?: number;
@@ -134,10 +120,8 @@ export interface StatsResponse {
 		draft: number;
 		pending: number;
 		in_progress: number;
-		testing: number;
 		passed: number;
 		failed: number;
-		stuck: number;
 		closed: number;
 	};
 }

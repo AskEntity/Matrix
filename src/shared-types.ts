@@ -16,20 +16,16 @@ export interface EventImageData {
 }
 
 /**
- * Extended CallToolResult with typed non-standard fields.
- * Tool handlers return this to pass extra data through executeTool()
- * without `as any` casts. The index signature satisfies CallToolResult compatibility.
+ * Unified tool execution result type. Used by executeTool(), both providers,
+ * and the run loop. Content is always string (executeTool converts MCP Array→string).
+ * No index signature — all fields explicitly typed.
  *
  * Built-in tools use: cwd, backgroundId, backgroundCommand, isImage, imageData, mediaType
  * Orchestrator tools use: consumedMessageIds, consumedQueueMessages, formattedQueueMessages, pending
  */
-export interface InternalToolResult {
-	[key: string]: unknown;
-	content: Array<
-		| { type: "text"; text: string }
-		| { type: "image"; data: string; mimeType: string }
-	>;
-	isError?: boolean;
+export interface ToolResult {
+	content: string;
+	isError: boolean;
 	/** Updated working directory after tool execution. */
 	cwd?: string;
 	/** Background process ID — set when bash moves a command to background. */
@@ -42,6 +38,8 @@ export interface InternalToolResult {
 	imageData?: string;
 	/** MIME type of the image (e.g. "image/png"). */
 	mediaType?: string;
+	/** MCP images from tool results (e.g. screenshots from external MCP servers). */
+	mcpImages?: Array<EventImageData & { data?: string }>;
 	/** User message IDs consumed (already persisted at send time). */
 	consumedMessageIds?: string[];
 	/** Raw queue messages from yield/done that need to flow through emit for SSE broadcast + persistence. */

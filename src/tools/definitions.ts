@@ -18,10 +18,24 @@ import { resolvePath } from "./executor.ts";
 export { resolvePath };
 
 /**
- * Extended CallToolResult with non-standard properties for built-in tools.
- * Uses InternalToolResult field names — executeTool() reads these typed fields directly.
+ * Handler return type for built-in tools. Content is MCP Array format (executeTool converts to string).
+ * Extra fields are passed through to ToolResult by executeTool().
+ * The index signature satisfies CallToolResult compatibility from the MCP SDK.
  */
-type BuiltinToolResult = import("../shared-types.ts").InternalToolResult;
+interface BuiltinToolResult {
+	[key: string]: unknown;
+	content: Array<
+		| { type: "text"; text: string }
+		| { type: "image"; data: string; mimeType: string }
+	>;
+	isError?: boolean;
+	cwd?: string;
+	backgroundId?: string;
+	backgroundCommand?: string;
+	isImage?: boolean;
+	imageData?: string;
+	mediaType?: string;
+}
 
 /** Helper to build a text CallToolResult with optional extended properties. */
 function textResult(

@@ -690,17 +690,13 @@ export async function runChildAgentInBackground(
 		// --- Post-completion logic (unified for both MCP and daemon paths) ---
 
 		// Cost reporting
-		if (agentResult.costUsd) {
+		if (agentResult.costUsd > 0) {
 			tracker.updateCost(nodeId, agentResult.costUsd);
 		}
 
 		// Budget exceeded check
 		const updatedNode = tracker.get(nodeId);
-		if (
-			updatedNode?.budgetUsd &&
-			updatedNode.costUsd &&
-			updatedNode.costUsd > updatedNode.budgetUsd
-		) {
+		if (updatedNode?.budgetUsd && updatedNode.costUsd > updatedNode.budgetUsd) {
 			emitEvent(ctx, project.id, {
 				type: "budget_exceeded",
 				taskId: nodeId,
@@ -716,18 +712,6 @@ export async function runChildAgentInBackground(
 		// If done() was NOT called, the agent was interrupted (stop, reset, error,
 		// queue close, daemon restart). Status stays in_progress — agent is resumable.
 		// No fallback task_complete — the parent is not notified of interruptions.
-		const currentNode = tracker.get(nodeId);
-		const doneWasCalled =
-			currentNode?.status === "passed" || currentNode?.status === "failed";
-		// TODO: Once sibling task adds exitReason to AgentResult, use
-		// agentResult.exitReason instead of status check for doneWasCalled detection.
-
-		if (doneWasCalled && currentNode?.status === "failed") {
-			node.failCount = (node.failCount ?? 0) + 1;
-		} else if (doneWasCalled) {
-			node.failCount = 0;
-		}
-		// If !doneWasCalled: status stays in_progress, no failCount change.
 		await tracker.save();
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
@@ -951,13 +935,10 @@ export async function launchAgent(
 			// Sum child costs from the tree (source of truth)
 			const allNodes = tracker.allNodes();
 			const childNodes = allNodes.filter(
-				(n) => n.id !== rootNodeId && n.costUsd,
+				(n) => n.id !== rootNodeId && n.costUsd > 0,
 			);
-			const childCostUsd = childNodes.reduce(
-				(sum, n) => sum + (n.costUsd ?? 0),
-				0,
-			);
-			const totalCostUsd = (finalResult.costUsd ?? 0) + childCostUsd;
+			const childCostUsd = childNodes.reduce((sum, n) => sum + n.costUsd, 0);
+			const totalCostUsd = finalResult.costUsd + childCostUsd;
 			emitEvent(ctx, project.id, {
 				type: "orchestration_completed",
 				taskId: rootNodeId,

@@ -393,49 +393,51 @@ ONE message endpoint: `POST /projects/:id/tasks/:nodeId/message` with `{ content
 `orchestrator-tools.ts` send_message handler: cold-start detection changed from `node.session != null` to `node.session != null || deps.hasEventStore(node.id)`. Prevents double-header on fork + send_message (forked agent already has context from JSONL events).
 
 
-## Architecture Audit Results (March 2026)
+## Architecture Cleanup (March 2026)
 
-29 sins found. Top priorities:
+**Breaking changes** — old JSONL/tree.json formats no longer supported.
 
-**Tier 1 — Structural rot:**
-1. InternalToolResult: god-bag with index signature defeats type checking → split into discriminated union
-2. ToolExecResult duplicates InternalToolResult → merge into ONE type
-3. AgentResult: deprecated success, optional fields that are always present, dead testResults → clean up
-4. TaskNode: costUsd should default 0, session should be separate Map, editedBy required
-5. TaskNode.message: dead field, dead method → delete
-6. TaskStatus: stuck/testing never used → delete
+### Deleted
+- `TaskNode.message`, `setMessage()`, `failCount` — dead fields
+- `TaskStatus`: removed `"stuck"`, `"testing"` — never used by agents
+- `AgentSession.sendMessage()` — use `queue.enqueue()` directly
+- `AgentResult.success` — use `exitReason` instead (`.not.toBe("done_failed")` for "not failed" checks)
+- `AgentResult.testResults` — dead field
+- `orchestration_started.prompt` — CLI now shows model name
+- `InternalToolResult`, `ToolExecResult` — unified into `ToolResult`
+- All backward compat: `migrateQueueMessage()`, EventStore read patches, `runEventMigrations()`, `isStaleEphemeralEvent`, `normalizeEventForUI`, standalone `fork_marker` case, `initRootNode()` orphan adoption, draft boolean migration
 
-**Tier 2 — Dead backward compat:**
-7-16: TOOL_NAME_ALIASES, migrateQueueMessage, EventStore read patches, runEventMigrations, normalizeEventForUI, old tree format compat, deprecated prompt field, deprecated sendMessage(), dead getTopLevel/assignBranch
+### Type changes
+- `ToolResult` in shared-types.ts: `content: string`, `isError: boolean` (both required), NO index signature. `BuiltinToolResult` in definitions.ts is local (MCP Array format + index sig for CallToolResult compat).
+- `AgentResult`: `costUsd`, `turns`, `sessionId` all required. Mock providers must provide: `{ exitReason, output, costUsd: 0, turns: 0, sessionId: "mock" }`
+- `TaskNode`: `costUsd: number` (default 0), `editedBy: "user" | "agent"` (default "agent"). Both required. `load()` backfills via `??=`.
+- `TaskTracker.load()` requires `rootNodeId: string` in tree.json (no more optional/null).
+- CLI inline types kept `costUsd?: number` for API response compat.
 
-**Tier 3 — Design smells:**
-17-26: phantom agent_event type, non-ULID clarification ID, provider-shared.ts 800 lines mixing concerns, handleImplicitYield as generator, pendingClarifications as mutable map, stale comments, dual image extractors
+### File splits
+- `src/tool-execution.ts`: `executeTool()`, `isTransientAPIError()`, retry constants
+- `src/queue-utils.ts`: queue image extraction, message formatting, drain, record
+- `src/budget.ts`: `checkBudget()`, `recordBudgetWarning()`
+- Re-exports from provider-shared.ts preserved to minimize import churn.
 
-Most impactful: fix #1+#2+#3 (core type backbone)
+- `PendingClarification.id`: uses `ulid()` (not `Date.now()-random`)
+- `handleImplicitYield`: async function (not generator). Events emitted via `emit()` callback; provider generator yields are consumed but ignored.
+- `jti` field deleted from JwtPayload (unused)
+- CSS variables `--color-testing`/`--color-stuck` kept for non-status uses (compact labels, warnings). Consider renaming to `--color-purple`/`--color-warning`.
 
-
-## Token Usage Investigation (March 2026)
-
-**Anthropic changes**: Sonnet 4.6 released, 1M context window GA at standard pricing ($3/$15 per Mtok). No long-context premium. Our DEFAULT_MODEL "claude-sonnet-4-6" is correct.
-
-**Fork double header bug**: Every forked child gets memory.md twice — once inherited from parent session (~25KB), once from send_message cold start header (~29KB). ~13K tokens wasted per fork. Root cause: cold start detection checks `node.session != null` instead of `eventStore.has(nodeId)`.
-
-**Token breakdown** (orchestrator session): tool_result 67%, tool_call 16%, consumed_message 9%, assistant_text 3%. get_tree was 56KB/call (fixed with lightweight default). Total active session ~254K tokens.
-
-
-## Token Usage Analysis (March 2026)
-
-tool_result is 64-87% of ALL tokens across every session. #1 cost driver.
-
-**Token/char ratio**: ~0.37 (1 token ≈ 2.7 chars, not 4).
-
-**Biggest optimization opportunity**: tool_result stays full size forever in context. Search returning 15KB where agent uses 2 lines = 14.8KB burned every subsequent API call. Cannot truncate in JSONL (breaks cache). Must be addressed at compaction time or via smarter search result formatting.
-
-**Fork double header**: confirmed ~13K tokens wasted per fork. Fix: check eventStore.has(nodeId) for cold start detection, not just node.session.
-
-**Audit scripts**: src/_token_audit.ts and src/_cache_audit.ts for future analysis.
+### Deferred
+- Session-as-Map: moving `TaskNode.session` to `Map<string, TaskSession>` on tracker (~117 refs)
+- Derive pendingClarifications from events instead of mutable Map
 
 
-## Activity Log Lazy Rendering
+## Token Usage (March 2026)
 
-ActivityLog.tsx renders only the last 50 entries by default (RENDER_BATCH = 50). IntersectionObserver on a sentinel div at the top loads more in batches. Search results bypass lazy rendering (all matches shown). renderCount resets on filterTaskId and searchText changes. Scroll position preserved via scrollBottom trick when loading older entries.
+**Anthropic**: Sonnet 4.6, 1M context GA, $3/$15 per Mtok. No long-context premium.
+
+**Token breakdown**: tool_result 64-87% of ALL tokens. #1 cost driver. Token/char ratio ~0.37.
+
+**Fork double header**: ~13K tokens wasted per fork. Fixed: cold start detection now checks `eventStore.has(nodeId)`.
+
+**Optimization**: tool_result stays full size forever in context. Anthropic `clear_tool_uses_20250919` beta can auto-clear old tool results.
+
+**Audit scripts**: src/_token_audit.ts and src/_cache_audit.ts.

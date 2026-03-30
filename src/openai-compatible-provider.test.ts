@@ -394,7 +394,7 @@ describe("runLoop integration", () => {
 			})();
 
 			const agentResult = await consumePromise;
-			expect(agentResult.success).toBe(true);
+			expect(agentResult.exitReason).not.toBe("done_failed");
 			expect(agentResult.costUsd).toBeGreaterThan(0);
 			expect(agentResult.turns).toBeGreaterThanOrEqual(1);
 
@@ -474,7 +474,7 @@ describe("runLoop integration", () => {
 				systemPrompt: "You are helpful.",
 				queue: queueWithPrompt("Say hello", tmpDir),
 			});
-			expect(result.success).toBe(true);
+			expect(result.exitReason).not.toBe("done_failed");
 			expect(result.output).toBe("All done!");
 		} finally {
 			clearContextWindowCache();
@@ -863,7 +863,7 @@ describe("Event recording via emit callback", () => {
 			})();
 
 			const agentResult = await consumePromise;
-			expect(agentResult.success).toBe(true);
+			expect(agentResult.exitReason).not.toBe("done_failed");
 
 			// Verify Events were recorded
 			const strongEvents = emittedEvents;
@@ -1045,7 +1045,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 					queue: queueWithPrompt("Say hello", testDir),
 				});
 
-				expect(result.success).toBe(true);
+				expect(result.exitReason).not.toBe("done_failed");
 
 				const events = emittedEvents;
 				expect(events.length).toBeGreaterThanOrEqual(2);
@@ -1169,7 +1169,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				})();
 
 				const agentResult = await consumePromise;
-				expect(agentResult.success).toBe(true);
+				expect(agentResult.exitReason).not.toBe("done_failed");
 
 				const types = emittedEvents.map((e) => e.type);
 				expect(types).toContain("assistant_text");
@@ -1209,11 +1209,28 @@ describe("Event deterministic verification (OpenAI)", () => {
 	test("implicit yield: stop → queue drain → continue", async () => {
 		const testDir = join(tmpDir, "implicit-yield");
 		const emittedEvents: Event[] = [];
+		// Detect idle state via emit callback — handleImplicitYield emits agent_idle
+		// synchronously before queue.wait(), so enqueuing here resolves the wait immediately.
+		let idleCount = 0;
+		let session: ReturnType<OpenAICompatibleProvider["startSession"]>;
 		const emit = (event: Event) => {
 			emittedEvents.push(event);
+			if (event.type === "agent_idle") {
+				idleCount++;
+				if (idleCount === 1) {
+					queue.enqueue({
+						source: "user",
+						id: "test-id",
+						content: "New instruction for you",
+					});
+				} else {
+					session.stop();
+				}
+			}
 		};
 
 		let chatCallCount = 0;
+		let queue: MessageQueue;
 		await withMockFetch(
 			mock(async (url: string | URL | Request) => {
 				const urlStr =
@@ -1238,38 +1255,26 @@ describe("Event deterministic verification (OpenAI)", () => {
 				});
 			}) as unknown as typeof fetch,
 			async () => {
-				const queue = queueWithPrompt("Start working", testDir);
+				queue = queueWithPrompt("Start working", testDir);
 				const provider = new OpenAICompatibleProvider("gpt-4o");
-				const session = provider.startSession({
+				session = provider.startSession({
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
 					emit,
 					queue,
 				});
 
-				let idleCount = 0;
+				// Drive the generator to completion — idle detection is in emit callback
 				const consumePromise = (async () => {
 					let result = await session.events.next();
 					while (!result.done) {
-						if (result.value.type === "agent_idle") {
-							idleCount++;
-							if (idleCount === 1) {
-								queue.enqueue({
-									source: "user",
-									id: "test-id",
-									content: "New instruction for you",
-								});
-							} else {
-								session.stop();
-							}
-						}
 						result = await session.events.next();
 					}
 					return result.value as AgentResult;
 				})();
 
 				const agentResult = await consumePromise;
-				expect(agentResult.success).toBe(true);
+				expect(agentResult.exitReason).not.toBe("done_failed");
 				expect(idleCount).toBe(2);
 
 				// Provider emits messages_consumed but not message events for user messages
@@ -1394,7 +1399,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				})();
 
 				const agentResult = await consumePromise;
-				expect(agentResult.success).toBe(true);
+				expect(agentResult.exitReason).not.toBe("done_failed");
 
 				const events = emittedEvents;
 				const toolResult = events.find((e) => e.type === "tool_result");
@@ -1508,7 +1513,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				})();
 
 				const agentResult = await consumePromise;
-				expect(agentResult.success).toBe(true);
+				expect(agentResult.exitReason).not.toBe("done_failed");
 
 				const events = emittedEvents;
 				const toolCalls = events.filter((e) => e.type === "tool_call");

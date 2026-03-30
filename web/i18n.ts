@@ -74,10 +74,8 @@ const en: Translations = {
 	"status.draft": "Draft",
 	"status.pending": "Pending",
 	"status.in_progress": "In Progress",
-	"status.testing": "Testing",
 	"status.passed": "Passed",
 	"status.failed": "Failed",
-	"status.stuck": "Stuck",
 	"status.closed": "Closed",
 
 	// Task Detail
@@ -92,7 +90,6 @@ const en: Translations = {
 	"detail.waiting": "Waiting",
 	"detail.age": "Age",
 	"detail.cost": "Cost",
-	"detail.message": "Message",
 	"detail.commits": "Commits",
 	"detail.delete": "Delete",
 	"detail.budget": "budget",
@@ -358,10 +355,8 @@ const zh: Translations = {
 	"status.draft": "草稿",
 	"status.pending": "等待中",
 	"status.in_progress": "进行中",
-	"status.testing": "测试中",
 	"status.passed": "通过",
 	"status.failed": "失败",
-	"status.stuck": "卡住",
 	"status.closed": "已关闭",
 
 	// Task Detail
@@ -376,7 +371,6 @@ const zh: Translations = {
 	"detail.waiting": "等待中",
 	"detail.age": "时长",
 	"detail.cost": "费用",
-	"detail.message": "消息",
 	"detail.commits": "提交",
 	"detail.delete": "删除",
 	"detail.budget": "预算",
