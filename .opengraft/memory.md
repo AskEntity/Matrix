@@ -491,3 +491,22 @@ Records `tools`, `systemStable`, `systemVariable` for the session segment.
 - System prompt `## Test is Golden` section (was `## Test Quality`) contains the full philosophy
 - This principle applies to ALL projects using OpenGraft, not just OpenGraft itself
 
+
+
+## Mock API Session-Based Conversation Keying (March 2026)
+
+The mock API now uses `sessionId` (passed via `metadata.sessionId` in API params) as the conversation key for turn queuing and prefix validation. This replaces the old message-content heuristic which had key collisions in 3-level nesting (child and grandchild agents had identical memory.md prefixes → same key → cross-contamination).
+
+- Provider passes `sessionId` through `callAPI` params → `createParams.metadata.sessionId`
+- Mock extracts it and uses `session:<id>` as the conversation key
+- Falls back to message-content heuristic when sessionId is not provided (backward compat)
+- `getConversationKey` strips `[HH:MM:SS]` timestamp prefixes from message-based keys
+
+## Interrupted Child Resume Messages
+
+`autoResumeProjects` now persists a "daemon restarted" message for interrupted (non-yielding) child agents before calling `runChildAgentInBackground`. Without this, the provider blocks on `queue.wait()` forever during initial drain. Yielding children bypass the drain so they dont need a message.
+
+## Known: Prefix Violation After Double Restart (Restart N)
+
+Prefix validation fails at msg index 4 after double restart with accumulated tool results. The resume message from `autoResumeProjects` causes a reconstruction mismatch. The autoResume resume message is formatted differently from the original messages. This is a real cache-miss issue. Test documented with prefix validation disabled.
+
