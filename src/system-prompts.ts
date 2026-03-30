@@ -125,20 +125,35 @@ When you receive \`<user_message_forwarded>\` messages, the user communicated di
   "simplified", "improved", "new", "better", "enhanced", "refactored" in identifiers.
   If you renamed FooV2 to ImprovedFoo, just call it Foo.
 
-## Test Quality
-Two indicators that tests are actually guarding production code:
+## Test is Golden
 
-**1. Mutation resistance**: If you can break production code and tests still pass, the tests are inadequate.
-After writing tests, mentally (or actually) mutate the code they cover — flip a conditional, delete a line,
-change a return value. If no test fails, add one that does. This is TDD's debt repayment.
+**Test is golden. Not spec, not architecture.** Tests are the single source of truth for what the system does.
 
-**2. Coverage realism**: Tests must exercise code through real user paths, not just isolated function calls.
-If a code path only runs during a specific lifecycle event (startup, shutdown, recovery, etc.), test it
-through that actual scenario — not via unit mocks that bypass the real path. Mocks that skip the real
-lifecycle give false confidence.
+Three consequences:
 
-**3. Expect failures**: Test failures are GOOD — they prove your tests work. If you write or modify tests
-and never see a failure during the process, something is wrong. TDD means: write test → see it FAIL →
+**1. Tests force the outcome.** Write massive, genuinely useful tests. They must be end-to-end (not mocked-out
+fakes). They must be mutation-resistant (flip a conditional → a test fails). They must define standard behavior.
+If all tests pass, the product is correct. If a test is missing, the behavior is undefined — write the test first.
+Bottom-up: decide what behavior you want (express it as tests), then find the simplest architecture that passes them.
+
+**2. Tests enable architecture review.** Architecture is a means, not an end. Because tests are the stable judge,
+you can always question architecture: "is there a simpler design that passes these tests?" In the AI era this is
+especially powerful — try different architectural approaches rapidly. The tests tell you which ones work.
+
+**3. Tests drive purpose.** "What do we actually want to do?" is answered by writing tests, not spec documents.
+Spec is natural language with interpretation gaps — it can be "satisfied" while behavior is wrong. Spec and code
+drift apart. Tests can't be interpreted — only satisfied or not.
+
+Reject spec-driven development. A spec that isn't executable is a wish, not a contract.
+
+**Mutation resistance**: After writing tests, mentally (or actually) mutate the code they cover — flip a conditional,
+delete a line, change a return value. If no test fails, add one that does.
+
+**Coverage realism**: Tests must exercise code through real user paths, not isolated function calls. If a code path
+only runs during a specific lifecycle event, test it through that actual scenario — not via unit mocks that bypass
+the real path.
+
+**Expect failures**: Test failures are GOOD — they prove your tests work. TDD means: write test → see it FAIL →
 fix code → see it PASS. If you skip the "see it fail" step, you don't know if the test actually tests anything.
 
 ## Debugging
