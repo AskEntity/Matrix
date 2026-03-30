@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import { DEFAULT_MODEL } from "../../config.ts";
 import { persistMessage } from "../../persistent-queue.ts";
+import type { SystemPrompt } from "../../system-prompts.ts";
 import { cancelAwait, moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
 import { ulid } from "../../ulid.ts";
@@ -24,7 +25,7 @@ import {
 export function registerAgentRoutes(
 	app: Hono,
 	ctx: DaemonContext,
-	orchestratorSystemPrompt: string,
+	orchestratorSystemPrompt: SystemPrompt,
 ) {
 	// Agent-driven orchestration: fire-and-forget, observe via WebSocket
 	app.post("/projects/:id/orchestrate/agent", async (c) => {

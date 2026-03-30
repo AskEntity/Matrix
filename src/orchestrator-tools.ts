@@ -363,10 +363,14 @@ export function createOrchestratorTools(
 					nodes = nodes.filter((n) => n.status !== "closed");
 				}
 				const result = include_details
-					? nodes.map(({ session: _session, ...rest }) => rest)
+					? nodes.map(({ session: _session, ...rest }) => ({
+							...rest,
+							// Mark calling agent's node so it can discover its position
+							...(rest.id === currentTaskId ? { you: true } : {}),
+						}))
 					: nodes.map((n) => ({
 							id: n.id,
-							title: n.title,
+							title: n.title + (n.id === currentTaskId ? " (you)" : ""),
 							status: n.status,
 							children: n.children,
 							parentId: n.parentId,

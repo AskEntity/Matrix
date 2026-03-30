@@ -309,6 +309,8 @@ export function walkEventsToMessages(
 			}
 
 			case "compact_marker":
+			case "session_config":
+				// Structural events — skip, not part of conversation messages
 				i++;
 				break;
 

@@ -6,6 +6,7 @@ import {
 	clearPersistedMessages,
 	persistMessage,
 } from "../../persistent-queue.ts";
+import type { SystemPrompt } from "../../system-prompts.ts";
 import { buildTaskPrompt, slugify } from "../../task-utils.ts";
 import type { TaskStatus } from "../../types.ts";
 import { ulid } from "../../ulid.ts";
@@ -153,7 +154,7 @@ function notifyTreeChange(
 export function registerTaskRoutes(
 	app: Hono,
 	ctx: DaemonContext,
-	orchestratorSystemPrompt: string,
+	orchestratorSystemPrompt: SystemPrompt,
 ) {
 	// Task tree
 	app.get("/projects/:id/tasks", async (c) => {

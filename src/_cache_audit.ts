@@ -3,13 +3,14 @@
  * Also analyzes what a REAL API call would look like at different conversation points.
  * Usage: bun run src/_cache_audit.ts [sessionId]
  */
+
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { buildSystemPrompt } from "./system-prompts.ts";
 import { loadGlobalConfig, resolveAuthGroup } from "./config.ts";
 import type { Event } from "./events.ts";
+import { buildSystemPrompt } from "./system-prompts.ts";
 
 const globalConfig = await loadGlobalConfig();
 const authGroup = resolveAuthGroup(globalConfig);
@@ -78,15 +79,13 @@ for (const file of files) {
 		if (events[i]!.type === "compact_marker") lastCompact = i;
 	}
 	const activeEvents = events.slice(lastCompact + 1);
-	const rawMessages = eventsToAnthropicMessages(
-		activeEvents,
-	) as MessageParam[];
+	const rawMessages = eventsToAnthropicMessages(activeEvents) as MessageParam[];
 	const messages = trimOrphanTail(rawMessages);
 
 	if (messages.length < 2) continue;
 
-	const isRoot = file.sid.startsWith("ea053810");
-	const systemPrompt = buildSystemPrompt(isRoot);
+	const sp = buildSystemPrompt();
+	const systemPrompt = `${sp.stable}\n\n${sp.variable}`;
 
 	try {
 		const result = await client.messages.countTokens({

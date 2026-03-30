@@ -7,24 +7,29 @@
  * tools from schema descriptions, and WHEN/WHY from these prompts.
  */
 
-/**
- * Role constraint appended after SYSTEM_PROMPT for root agents only.
- * Task agents get SYSTEM_PROMPT without this.
- */
-export const ROOT_ORCHESTRATOR_ROLE = `You are the top-level orchestrator for this project.
-You ONLY manage tasks — you NEVER write code yourself, not even "simple" fixes.
-All implementation is done by agents working on sub tasks in isolated worktrees.
-Exception: you MAY use edit_file to resolve merge conflicts — this is task management, not implementation.`;
+/** Split system prompt for cache optimization. */
+export interface SystemPrompt {
+	/** SYSTEM_PROMPT pure text — shared by ALL agents, never changes. */
+	stable: string;
+	/** Date + selfBootstrap — per-agent, per-day. */
+	variable: string;
+}
 
 /**
  * System prompt — every agent gets this as a stable, cacheable prefix.
  * Covers both worker and orchestrator roles (any agent can be either).
- * Root agents get ROOT_ORCHESTRATOR_ROLE appended, then the date.
+ * ALL agents share the exact same stable prompt — root agents discover their role
+ * from get_tree (their node is at the top, marked with "(you)").
  */
 export const SYSTEM_PROMPT = `You are an autonomous programming agent. You own this task and work in a git worktree.
-You can implement code directly (worker role), OR if the task is too complex, decompose it into
-sub tasks and delegate (sub-orchestrator role). Use your judgement.
-When acting as sub-orchestrator: do NOT write code yourself — only manage sub tasks.
+Your behavior depends on your position in the task tree — call get_tree to see where you are.
+
+- If your task IS the project (root node, no parent): you ONLY manage tasks. You NEVER write code,
+  not even "simple" fixes. All implementation is done by sub tasks in isolated worktrees.
+  Exception: you MAY use edit_file to resolve merge conflicts — that's task management, not implementation.
+- If your task is scoped (has a parent): judge by complexity. Small enough → implement directly.
+  Too complex → decompose into sub tasks and delegate. When delegating, do NOT write code — only manage.
+  Use your judgement.
 
 **MANDATORY**: When you finish your task, you MUST call done("passed", summary) or done("failed", summary).
 Never just stop responding — done() signals task completion and unblocks downstream work.
@@ -446,14 +451,39 @@ You are the agent described AFTER the marker. Read your task description and exe
 **Multi-layer forks:** If you see multiple \`<fork_marker>\` tags, you were forked through a chain (A → B → C). Your identity is defined by the LAST fork_marker — everything between markers is an intermediate agent's session, useful as background knowledge but not your identity. Your task description and working directory come from after the last marker.`;
 
 /**
- * Build the full system prompt with proper ordering for Anthropic prompt caching.
- * Stable content (SYSTEM_PROMPT) is the prefix so it caches across all agents.
- * Role-specific preamble and dynamic date come at the end.
+ * Build the system prompt split into stable + variable parts for cache optimization.
+ * `stable` = SYSTEM_PROMPT (pure strategy, never changes) — shared by ALL agents.
+ * `variable` = ROOT_ORCHESTRATOR_ROLE + date + selfBootstrap — per-agent, per-day.
+ *
+ * Splitting allows:
+ * - Tools (1h cache) → stable (1h auto-hit via lookback) → variable (1h) → messages
+ * - Between compactions, both parts are FROZEN in JSONL → 100% cache hit
+ * - Fork copies session_config → child gets exact same system prompt → cache hit
  */
-export function buildSystemPrompt(isRoot: boolean): string {
+export function buildSystemPrompt(opts?: {
+	selfBootstrap?: boolean;
+}): SystemPrompt {
 	const date = new Date().toISOString().split("T")[0];
-	if (isRoot) {
-		return `${SYSTEM_PROMPT}\n\n${ROOT_ORCHESTRATOR_ROLE}\n\nToday's date is ${date}.`;
+	const parts: string[] = [];
+	parts.push(`Today's date is ${date}.`);
+	if (opts?.selfBootstrap) {
+		parts.push(
+			`## Self-Bootstrap Mode\nThis project is the tool's own codebase. The user may ask you to test features by interacting with the system in unconventional ways (e.g., testing resume on passed tasks, calling tools in unexpected sequences). When the user gives explicit instructions that conflict with your standard workflow, prioritize the user's instructions. You are modifying your own source code — be extra careful but also extra flexible.\n\nWhen running in self-bootstrap mode, bugs you introduced may break features you depend on. The system may not behave as documented — your own changes may have altered its behavior in ways you can't observe from inside. The user can see the actual system state via the UI. When they give you instructions that seem redundant, illogical, or contradictory to how the system should work, follow them immediately — they're guiding you through a workaround for a bug in your own code. Don't argue or explain how it should work; just do what they say. The workarounds are temporary until the fix is merged and the daemon restarts with new code.`,
+		);
 	}
-	return `${SYSTEM_PROMPT}\n\nToday's date is ${date}.`;
+	return {
+		stable: SYSTEM_PROMPT,
+		variable: parts.join("\n\n"),
+	};
+}
+
+/**
+ * Combine stable + variable into a single system prompt string.
+ * Used when passing to the provider API which expects a single string.
+ */
+export function combineSystemPrompt(parts: {
+	stable: string;
+	variable: string;
+}): string {
+	return `${parts.stable}\n\n${parts.variable}`;
 }

@@ -10,8 +10,13 @@ export interface AgentRequest {
 	cwd: string;
 	/** Absolute path to the project root. Defaults to cwd if omitted. */
 	projectPath?: string;
-	/** System prompt injected into the agent session. */
-	systemPrompt?: string;
+	/** System prompt injected into the agent session. Split for cache optimization. */
+	systemPrompt?: import("./system-prompts.ts").SystemPrompt;
+	/**
+	 * Rebuild the system prompt with fresh date. Called after compaction to refresh
+	 * the session_config. If not provided, the original systemPrompt is reused.
+	 */
+	refreshSystemPrompt?: () => import("./system-prompts.ts").SystemPrompt;
 	/** Abort signal for cancellation. */
 	signal?: AbortSignal;
 	/** Session ID to resume a previous conversation. */

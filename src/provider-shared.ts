@@ -297,7 +297,7 @@ export interface ProviderAdapter {
 		model: string;
 		messages: unknown[];
 		tools: unknown[];
-		systemPrompt: string;
+		systemPrompt: import("./system-prompts.ts").SystemPrompt;
 		maxTokens: number;
 		signal?: AbortSignal;
 		isCompacting: boolean;
@@ -775,6 +775,26 @@ export async function* runProviderLoop(
 				});
 				estimatedInputTokens = compactResult.estimatedInputTokens;
 				manualCompactRequested = false;
+
+				// Refresh session_config after compaction — updates date, tools if changed.
+				// compact_marker was already emitted by processCompaction; session_config
+				// follows it so readActive() sees the fresh config for this segment.
+				if (emit) {
+					const freshPrompt = request.refreshSystemPrompt
+						? request.refreshSystemPrompt()
+						: request.systemPrompt;
+					if (freshPrompt) {
+						const sessionConfigEvt: Event = {
+							type: "session_config",
+							tools: allTools,
+							systemStable: freshPrompt.stable,
+							systemVariable: freshPrompt.variable,
+							taskId: "",
+							ts: Date.now(),
+						} as Event;
+						emit(sessionConfigEvt);
+					}
+				}
 			}
 			continue; // Skip normal processing, go to next API call with rebuilt context
 		}
@@ -819,9 +839,10 @@ export async function* runProviderLoop(
 					adapter.supportsTokenCounting &&
 					adapter.countTokens
 				) {
+					const sp = request.systemPrompt ?? { stable: "", variable: "" };
 					const result = await adapter.countTokens({
 						model,
-						system: request.systemPrompt ?? "",
+						system: `${sp.stable}\n\n${sp.variable}`,
 						messages,
 						tools: allTools,
 					});
@@ -890,7 +911,7 @@ export async function* runProviderLoop(
 					model,
 					messages,
 					tools: allTools,
-					systemPrompt: request.systemPrompt ?? "",
+					systemPrompt: request.systemPrompt ?? { stable: "", variable: "" },
 					maxTokens: DEFAULT_MAX_TOKENS,
 					signal: request.signal,
 					isCompacting: compactionPending,
