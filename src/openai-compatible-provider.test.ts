@@ -1209,11 +1209,28 @@ describe("Event deterministic verification (OpenAI)", () => {
 	test("implicit yield: stop → queue drain → continue", async () => {
 		const testDir = join(tmpDir, "implicit-yield");
 		const emittedEvents: Event[] = [];
+		// Detect idle state via emit callback — handleImplicitYield emits agent_idle
+		// synchronously before queue.wait(), so enqueuing here resolves the wait immediately.
+		let idleCount = 0;
+		let session: ReturnType<OpenAICompatibleProvider["startSession"]>;
 		const emit = (event: Event) => {
 			emittedEvents.push(event);
+			if (event.type === "agent_idle") {
+				idleCount++;
+				if (idleCount === 1) {
+					queue.enqueue({
+						source: "user",
+						id: "test-id",
+						content: "New instruction for you",
+					});
+				} else {
+					session.stop();
+				}
+			}
 		};
 
 		let chatCallCount = 0;
+		let queue: MessageQueue;
 		await withMockFetch(
 			mock(async (url: string | URL | Request) => {
 				const urlStr =
@@ -1238,31 +1255,19 @@ describe("Event deterministic verification (OpenAI)", () => {
 				});
 			}) as unknown as typeof fetch,
 			async () => {
-				const queue = queueWithPrompt("Start working", testDir);
+				queue = queueWithPrompt("Start working", testDir);
 				const provider = new OpenAICompatibleProvider("gpt-4o");
-				const session = provider.startSession({
+				session = provider.startSession({
 					cwd: testDir,
 					systemPrompt: "You are helpful.",
 					emit,
 					queue,
 				});
 
-				let idleCount = 0;
+				// Drive the generator to completion — idle detection is in emit callback
 				const consumePromise = (async () => {
 					let result = await session.events.next();
 					while (!result.done) {
-						if (result.value.type === "agent_idle") {
-							idleCount++;
-							if (idleCount === 1) {
-								queue.enqueue({
-									source: "user",
-									id: "test-id",
-									content: "New instruction for you",
-								});
-							} else {
-								session.stop();
-							}
-						}
 						result = await session.events.next();
 					}
 					return result.value as AgentResult;

@@ -472,3 +472,12 @@ provider-shared.ts split into focused modules (no behavior changes):
 - `src/provider-shared.ts`: kept `ProviderAdapter`, `ProviderToolUse`, `ProviderTokenUsage`, `runProviderLoop()`, `handleImplicitYield()`, `defaultBuildResult()`, `buildToolResultEvents()`, `collectToolResultImages()`
 
 Re-exports from provider-shared.ts: `ToolResult` (type), `executeTool`, `isTransientAPIError`, `extractQueueImages`, `extractQueueImageParts`. This means neither provider file needed import changes.
+
+
+## Phase 3H: handleImplicitYield Refactored to Async Function
+
+`handleImplicitYield` changed from `async function*` (AsyncGenerator) to `async function` (returns Promise).
+
+**Why it works**: Both consumers of the provider generator (`consumeAgentEvents` in launchAgent, `runChildCore` for children) completely ignore yielded event values — they only drive the generator to completion and read the final `AgentResult`. The `agent_idle` and `agent_active` events that `handleImplicitYield` used to yield were already emitted via the `emit()` callback, making the yields redundant.
+
+**Test impact**: Tests that detected idle state by consuming `agent_idle` from `session.events.next()` were changed to detect it via the `emit` callback instead. The emit fires synchronously before `queue.wait()`, so enqueuing a message in the emit callback resolves the wait immediately.

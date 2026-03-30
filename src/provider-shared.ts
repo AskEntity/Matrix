@@ -62,27 +62,25 @@ const DEFAULT_MAX_TOKENS = 16384;
  * Shared implicit yield logic: wait for messages on queue, format them, emit events.
  * Returns the formatted messages and images, or null if queue was closed.
  *
- * @returns Object with formatted messages and image data, or null if queue closed
+ * Events (agent_idle, agent_active) are emitted directly via the emit callback —
+ * they don't need to be yielded since consumers of the provider generator ignore
+ * intermediate events (they only care about driving the generator and the final AgentResult).
  */
-async function* handleImplicitYield(
+async function handleImplicitYield(
 	queue: MessageQueue,
 	emit?: (event: Event) => void,
-): AsyncGenerator<
-	Event,
-	{
-		formatted: string;
-		nonCompact: QueueMessage[];
-		manualCompactRequested: boolean;
-		compactOnly: boolean;
-	} | null
-> {
+): Promise<{
+	formatted: string;
+	nonCompact: QueueMessage[];
+	manualCompactRequested: boolean;
+	compactOnly: boolean;
+} | null> {
 	const idleEvt: Event = {
 		type: "agent_idle",
 		taskId: "",
 		ts: Date.now(),
 	};
 	emit?.(idleEvt);
-	yield idleEvt;
 	try {
 		queue.idle = true;
 		const first = await queue.wait();
@@ -93,7 +91,6 @@ async function* handleImplicitYield(
 			ts: Date.now(),
 		};
 		emit?.(activeEvt);
-		yield activeEvt;
 		const rest = queue.drain();
 		const all = [first, ...rest];
 		const manualCompactRequested = all.some((m) => m.source === "compact");
@@ -596,13 +593,7 @@ export async function* runProviderLoop(
 		// or (b) yield was detected in tool execution and deferred to loop level.
 		// Wait for messages, write yield tool_result, then continue to next API call.
 		if (pendingYieldToolCall && queue) {
-			const yieldGen = handleImplicitYield(queue, emit);
-			let yieldStep = await yieldGen.next();
-			while (!yieldStep.done) {
-				yield yieldStep.value;
-				yieldStep = await yieldGen.next();
-			}
-			const yieldResult = yieldStep.value;
+			const yieldResult = await handleImplicitYield(queue, emit);
 
 			if (yieldResult === null) {
 				// Queue closed — exit (stop/reset during yield = interrupted)
@@ -1050,13 +1041,7 @@ export async function* runProviderLoop(
 			emit?.(idleStatusEvt);
 			yield idleStatusEvt;
 
-			const yieldGen = handleImplicitYield(queue, emit);
-			let yieldStep = await yieldGen.next();
-			while (!yieldStep.done) {
-				yield yieldStep.value;
-				yieldStep = await yieldGen.next();
-			}
-			const yieldResult = yieldStep.value;
+			const yieldResult = await handleImplicitYield(queue, emit);
 
 			if (yieldResult === null) {
 				// Queue closed during implicit yield (stop/reset = interrupted).

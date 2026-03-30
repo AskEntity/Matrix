@@ -2490,8 +2490,25 @@ describe("Event deterministic verification", () => {
 	test("implicit yield: end_turn → queue.wait → queue drain → continue", async () => {
 		const testDir = join(tmpDir, "implicit-yield");
 		const emittedEvents: Event[] = [];
+		// Detect idle state via emit callback — handleImplicitYield emits agent_idle
+		// synchronously before queue.wait(), so enqueuing here resolves the wait immediately.
+		let idleCount = 0;
 		const emit = (event: Event) => {
 			emittedEvents.push(event);
+			if (event.type === "agent_idle") {
+				idleCount++;
+				if (idleCount === 1) {
+					// First idle: inject a message to wake the agent
+					queue.enqueue({
+						source: "user",
+						id: "test-id",
+						content: "Here is a new instruction",
+					});
+				} else {
+					// Second idle: stop the session
+					session.stop();
+				}
+			}
 		};
 
 		let callCount = 0;
@@ -2525,25 +2542,10 @@ describe("Event deterministic verification", () => {
 			queue,
 		});
 
-		// Consume events, enqueue a message when idle, then stop on second idle
-		let idleCount = 0;
+		// Drive the generator to completion — idle detection is in emit callback
 		const consumePromise = (async () => {
 			let result = await session.events.next();
 			while (!result.done) {
-				if (result.value.type === "agent_idle") {
-					idleCount++;
-					if (idleCount === 1) {
-						// First idle: inject a message
-						queue.enqueue({
-							source: "user",
-							id: "test-id",
-							content: "Here is a new instruction",
-						});
-					} else {
-						// Second idle: stop the session
-						session.stop();
-					}
-				}
 				result = await session.events.next();
 			}
 			return result.value as AgentResult;
