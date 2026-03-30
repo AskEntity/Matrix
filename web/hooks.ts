@@ -15,6 +15,7 @@ export interface Project {
 	id: string;
 	name: string;
 	path: string;
+	pathExists?: boolean;
 }
 
 /**
@@ -282,7 +283,22 @@ export function useProjects() {
 		[refresh],
 	);
 
-	return { projects, refresh, initProject, deleteProject };
+	const updateProject = useCallback(
+		async (id: string, updates: { path?: string; name?: string }) => {
+			const res = await authFetch(api.project(id), {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(updates),
+			});
+			if (!res.ok) throw new Error((await res.json()).error);
+			const project = await res.json();
+			await refresh();
+			return project as Project;
+		},
+		[refresh],
+	);
+
+	return { projects, refresh, initProject, deleteProject, updateProject };
 }
 
 // --- useTasks ---

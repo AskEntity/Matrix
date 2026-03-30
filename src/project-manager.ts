@@ -238,6 +238,60 @@ export class ProjectManager {
 		return project;
 	}
 
+	/** Check if a project's path exists on disk. */
+	checkPathExists(id: string): boolean {
+		const project = this.get(id);
+		if (!project) return false;
+		return existsSync(project.path);
+	}
+
+	/**
+	 * Update a project's metadata (path and/or name).
+	 * When updating path: validates the new path exists and has a .opengraft/ directory.
+	 */
+	async updateProject(
+		id: string,
+		updates: { path?: string; name?: string },
+	): Promise<Project> {
+		this.ensureLoaded();
+		const project = this.projects.get(id);
+		if (!project) {
+			throw new Error(`Project not found: ${id}`);
+		}
+
+		if (updates.path !== undefined) {
+			const newPath = resolve(updates.path);
+
+			if (!existsSync(newPath)) {
+				throw new Error(`Path does not exist: ${newPath}`);
+			}
+
+			if (!existsSync(join(newPath, ".opengraft"))) {
+				throw new Error(
+					`Path is not an OpenGraft project (missing .opengraft/ directory): ${newPath}`,
+				);
+			}
+
+			// Check no other project uses this path
+			for (const p of this.projects.values()) {
+				if (p.id !== id && p.path === newPath) {
+					throw new Error(
+						`Path already used by project "${p.name}": ${newPath}`,
+					);
+				}
+			}
+
+			project.path = newPath;
+		}
+
+		if (updates.name !== undefined) {
+			project.name = updates.name;
+		}
+
+		await this.save();
+		return project;
+	}
+
 	/** Get a project by ID. */
 	get(id: string): Project | undefined {
 		this.ensureLoaded();

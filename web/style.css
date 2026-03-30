@@ -3883,3 +3883,68 @@ button.og-tool-card-header:hover {
 	opacity: 0.4;
 	cursor: default;
 }
+
+/* Relocate Banner */
+.og-relocate-banner {
+	display: flex;
+	gap: 10px;
+	padding: 12px 14px;
+	margin: 8px;
+	border-radius: 6px;
+	background: rgba(255, 180, 50, 0.08);
+	border: 1px solid rgba(255, 180, 50, 0.25);
+}
+
+.og-relocate-banner-icon {
+	font-size: 18px;
+	line-height: 1;
+	flex-shrink: 0;
+}
+
+.og-relocate-banner-body {
+	flex: 1;
+	min-width: 0;
+}
+
+.og-relocate-banner-title {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-primary);
+	margin-bottom: 2px;
+}
+
+.og-relocate-banner-path {
+	font-size: 11px;
+	color: var(--text-muted);
+	font-family: var(--font-mono);
+	word-break: break-all;
+	margin-bottom: 8px;
+}
+
+.og-relocate-banner-form {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+}
+
+.og-relocate-banner-input {
+	flex: 1;
+	font-size: 12px;
+	padding: 4px 8px;
+	border-radius: 4px;
+	border: 1px solid var(--border-subtle);
+	background: var(--bg-primary);
+	color: var(--text-primary);
+	font-family: var(--font-mono);
+	outline: none;
+}
+
+.og-relocate-banner-input:focus {
+	border-color: var(--color-accent);
+}
+
+.og-relocate-banner-error {
+	font-size: 11px;
+	color: var(--color-failed);
+	margin-top: 4px;
+}

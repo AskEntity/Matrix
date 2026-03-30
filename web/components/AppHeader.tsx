@@ -178,6 +178,7 @@ export const AppHeader = memo(function AppHeader({
 							>
 								{projects.map((p) => (
 									<option key={p.id} value={p.id}>
+										{p.pathExists === false ? "⚠ " : ""}
 										{p.name}
 									</option>
 								))}

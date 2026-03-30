@@ -21,6 +21,7 @@ import {
 } from "./components/icons.tsx";
 import { LoginPage } from "./components/LoginPage.tsx";
 import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
+import { RelocateBanner } from "./components/RelocateBanner.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
 import { TaskTree } from "./components/TaskTree.tsx";
@@ -137,6 +138,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		refresh: refreshProjects,
 		initProject,
 		deleteProject,
+		updateProject,
 	} = useProjects();
 	const initialHash = useMemo(() => parseHash(), []);
 	const [projectId, setProjectId] = useState(initialHash.projectId ?? "");
@@ -772,6 +774,17 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		[projectId, loadingOlderEvents, olderEventsAvailable, processEventBatch],
 	);
 
+	const currentProject = projects.find((p) => p.id === projectId);
+	const projectPathMissing = currentProject?.pathExists === false;
+
+	const handleRelocate = useCallback(
+		async (newPath: string) => {
+			if (!projectId) return;
+			await updateProject(projectId, { path: newPath });
+		},
+		[projectId, updateProject],
+	);
+
 	const filterLabel = isOrchestratorNode
 		? t("orch.label")
 		: selectedNode
@@ -911,6 +924,12 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					className={`og-content${isDragging ? " dragging" : ""}${detailCollapsed ? " og-detail-collapsed" : ""}`}
 					ref={contentPanelRef}
 				>
+					{projectPathMissing && currentProject && (
+						<RelocateBanner
+							projectPath={currentProject.path}
+							onRelocate={handleRelocate}
+						/>
+					)}
 					<div
 						className="og-detail-panel"
 						style={
