@@ -1083,9 +1083,9 @@ export class ValidatingMockAPI {
 		// Validate request structure
 		validateRequest(messages);
 
-		// Validate prefix consistency across calls
+		// Validate prefix consistency across calls (messages + system + tools)
 		if (this.prefixValidationEnabled) {
-			this.validatePrefix(messages);
+			this.validatePrefix(messages, system, tools);
 		}
 
 		const modelName = (model as string) ?? "claude-sonnet-4-6";
@@ -1171,13 +1171,19 @@ export class ValidatingMockAPI {
 	}
 
 	/**
-	 * Validate that current messages are a prefix extension of the previous request
-	 * from the SAME conversation. Each conversation (identified by first user message)
-	 * has independent prefix validation — parent and child don't interfere.
+	 * Validate that current request is a prefix extension of the previous request
+	 * from the SAME conversation. Checks messages, system prompt, and tools.
+	 *
+	 * System + tools must be IDENTICAL across calls (they don't grow).
+	 * Messages must be strictly monotonically increasing (prefix extension).
 	 *
 	 * Compaction is a valid reset point — after compaction, prefix restarts from scratch.
 	 */
-	private validatePrefix(messages: MessageParam[]): void {
+	private validatePrefix(
+		messages: MessageParam[],
+		system?: unknown,
+		tools?: unknown,
+	): void {
 		if (this.requestHistory.length < 2) return;
 
 		// Current request might be a compaction — skip prefix check for compactions
@@ -1186,16 +1192,44 @@ export class ValidatingMockAPI {
 		const convKey = this.getConversationKey(messages);
 
 		// Find previous non-compaction request from the SAME conversation
-		let prevMessages: MessageParam[] | null = null;
+		let prevRequest: (typeof this.requestHistory)[0] | null = null;
 		for (let i = this.requestHistory.length - 2; i >= 0; i--) {
 			const prev = this.requestHistory[i];
 			if (!prev || isCompactionRequest(prev.messages)) continue;
 			if (this.getConversationKey(prev.messages) === convKey) {
-				prevMessages = prev.messages;
+				prevRequest = prev;
 				break;
 			}
 		}
-		if (!prevMessages) return;
+		if (!prevRequest) return;
+
+		// System prompt must be identical across calls (cache-critical)
+		if (system !== undefined && prevRequest.system !== undefined) {
+			const prevSystem = JSON.stringify(prevRequest.system);
+			const currSystem = JSON.stringify(system);
+			if (prevSystem !== currSystem) {
+				throw new MockValidationError(
+					`System prompt changed between API calls for the same conversation.\n` +
+						`Previous: ${prevSystem.slice(0, 200)}...\n` +
+						`Current:  ${currSystem.slice(0, 200)}...`,
+				);
+			}
+		}
+
+		// Tools must be identical across calls (cache-critical)
+		if (tools !== undefined && prevRequest.tools !== undefined) {
+			const prevTools = JSON.stringify(prevRequest.tools);
+			const currTools = JSON.stringify(tools);
+			if (prevTools !== currTools) {
+				throw new MockValidationError(
+					`Tools changed between API calls for the same conversation.\n` +
+						`Previous tool count: ${Array.isArray(prevRequest.tools) ? prevRequest.tools.length : "?"}\n` +
+						`Current tool count: ${Array.isArray(tools) ? tools.length : "?"}`,
+				);
+			}
+		}
+
+		const prevMessages = prevRequest.messages;
 
 		// The previous messages must be a prefix of the current messages.
 		// Current messages length must be >= previous messages length.

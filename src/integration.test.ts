@@ -4416,6 +4416,7 @@ describe("Integration: fork prefix consistency", () => {
 
 	test("Forked child's messages have parent's complete turns as prefix", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Child instruction: simple done
 		const childInstruction = JSON.stringify({
@@ -4586,6 +4587,7 @@ describe("Integration: fork prefix consistency", () => {
 
 	test("Fork writes synthetic tool_results before fork_marker for orphaned tool_calls", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Child: just done
 		const childInstruction = JSON.stringify({
@@ -4755,6 +4757,7 @@ describe("Integration: fork prefix consistency", () => {
 
 	test("Fork from closed agent injects synthetic tool_call + tool_result", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Scenario: parent creates child A → A does work and completes →
 		// parent creates child B → forks A's context to B → B launches
@@ -5277,9 +5280,7 @@ describe("Integration: session_config in JSONL", () => {
 					],
 				},
 				{
-					assert: [
-						{ block: 0, type: "tool_result", contains: "FIRST_RUN" },
-					],
+					assert: [{ block: 0, type: "tool_result", contains: "FIRST_RUN" }],
 					blocks: [
 						{
 							type: "tool_use",
@@ -5335,6 +5336,7 @@ describe("Integration: session_config in JSONL", () => {
 
 	test("Forked child inherits session_config from parent", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const childInstruction = JSON.stringify({
 			blocks: [
@@ -5429,9 +5431,7 @@ describe("Integration: session_config in JSONL", () => {
 
 		// Parent JSONL should have session_config
 		const parentEvents = readSessionEvents(ctx, rootId);
-		const parentConfig = parentEvents.find(
-			(e) => e.type === "session_config",
-		);
+		const parentConfig = parentEvents.find((e) => e.type === "session_config");
 		expect(parentConfig).toBeDefined();
 
 		// Child JSONL should have session_config inherited from parent
