@@ -393,91 +393,40 @@ ONE message endpoint: `POST /projects/:id/tasks/:nodeId/message` with `{ content
 `orchestrator-tools.ts` send_message handler: cold-start detection changed from `node.session != null` to `node.session != null || deps.hasEventStore(node.id)`. Prevents double-header on fork + send_message (forked agent already has context from JSONL events).
 
 
-## Architecture Audit Results (March 2026)
+## Architecture Cleanup (March 2026)
 
-29 sins found. Top priorities:
+**Breaking changes** — old JSONL/tree.json formats no longer supported.
 
-**Tier 1 — Structural rot:**
-1. InternalToolResult: god-bag with index signature defeats type checking → split into discriminated union
-2. ToolExecResult duplicates InternalToolResult → merge into ONE type
-3. AgentResult: deprecated success, optional fields that are always present, dead testResults → clean up
-4. TaskNode: costUsd should default 0, session should be separate Map, editedBy required
-5. TaskNode.message: dead field, dead method → delete
-6. TaskStatus: stuck/testing never used → delete
+### Deleted
+- `TaskNode.message`, `setMessage()`, `failCount` — dead fields
+- `TaskStatus`: removed `"stuck"`, `"testing"` — never used by agents
+- `AgentSession.sendMessage()` — use `queue.enqueue()` directly
+- `AgentResult.success` — use `exitReason` instead (`.not.toBe("done_failed")` for "not failed" checks)
+- `AgentResult.testResults` — dead field
+- `orchestration_started.prompt` — CLI now shows model name
+- `InternalToolResult`, `ToolExecResult` — unified into `ToolResult`
+- All backward compat: `migrateQueueMessage()`, EventStore read patches, `runEventMigrations()`, `isStaleEphemeralEvent`, `normalizeEventForUI`, standalone `fork_marker` case, `initRootNode()` orphan adoption, draft boolean migration
 
-**Tier 2 — Dead backward compat:**
-7-16: TOOL_NAME_ALIASES, migrateQueueMessage, EventStore read patches, runEventMigrations, normalizeEventForUI, old tree format compat, deprecated prompt field, deprecated sendMessage(), dead getTopLevel/assignBranch
+### Type changes
+- `ToolResult` in shared-types.ts: `content: string`, `isError: boolean` (both required), NO index signature. `BuiltinToolResult` in definitions.ts is local (MCP Array format + index sig for CallToolResult compat).
+- `AgentResult`: `costUsd`, `turns`, `sessionId` all required. Mock providers must provide: `{ exitReason, output, costUsd: 0, turns: 0, sessionId: "mock" }`
+- `TaskNode`: `costUsd: number` (default 0), `editedBy: "user" | "agent"` (default "agent"). Both required. `load()` backfills via `??=`.
+- `TaskTracker.load()` requires `rootNodeId: string` in tree.json (no more optional/null).
+- CLI inline types kept `costUsd?: number` for API response compat.
 
-**Tier 3 — Design smells:**
-17-26: phantom agent_event type, non-ULID clarification ID, provider-shared.ts 800 lines mixing concerns, handleImplicitYield as generator, pendingClarifications as mutable map, stale comments, dual image extractors
-
-Most impactful: fix #1+#2+#3 (core type backbone)
-
-
-## Worktree Path Format (updated March 2026)
-
-WorktreeManager now uses full taskId (not taskId.slice(0,8)) for both directory names (`.worktrees/${taskId}-${slug}`) and branch names (`og/${taskId}/${slug}`). This eliminates collision risk with concurrent ULIDs that share the same 8-char prefix within the same millisecond.
-
-## Backward Compat Code Deleted (Phase 1B)
-
-The following backward compat code has been removed — old JSONL and tree.json formats are no longer supported:
-- `migrateQueueMessage()` — old source names (child_complete, child_report, parent_update) no longer migrated
-- EventStore `read()` patches — no more auto-filling taskId, orchestration_started fields, clarification title, etc.
-- `runEventMigrations()` — no longer strips tree_updated events from JSONL at startup
-- `isStaleEphemeralEvent` / `FILTERED_EVENT_TYPES` — REST responses no longer filter stale ephemeral events
-- `normalizeEventForUI` wrapper — replaced by direct `stripEventForUI()` calls
-- Standalone `fork_marker` case in event-converter.ts — legacy JSONL path removed
-- `initRootNode()` orphan adoption — `TaskTracker.load()` requires `rootNodeId: string` in tree.json
-- Draft boolean migration and failCount undefined checks — old tree.json format not supported
-
-## Phase 1A: Dead Fields Cleanup Notes
-
-- CSS variables `--color-testing` (purple) and `--color-stuck` (amber) are reused throughout style.css for non-status purposes (compact labels, warning buttons, settings dirty indicator). They were kept as-is to avoid a CSS-wide rename. Consider renaming to `--color-purple`/`--color-warning` in a future task.
-- The continue endpoint (`/tasks/:nodeId/continue`) for passed tasks with no worktree creates a worktree and launches the agent (status → in_progress), not just reset to pending. Tests needed updating accordingly.
-- `failCount` backward compat patch in task-tracker.ts `load()` was removed — old tree.json files with failCount will have it ignored (harmless extra field in JSON).
-- `orchestration_started.prompt` removed from Event type. CLI now shows model name instead. Old JSONL files with prompt field will have it ignored by the event converter.
-
-
-## Phase 2D: ToolResult Unification
-
-- `InternalToolResult` (shared-types.ts) deleted. `ToolExecResult` (provider-shared.ts) deleted.
-- Single type: `ToolResult` in shared-types.ts. `content: string`, `isError: boolean` (both required), all optional fields explicitly typed, NO index signature.
-- Re-exported from provider-shared.ts for consumers that imported ToolExecResult.
-- `executeTool()` simplified: casts handler result to `Record<string, unknown>` and extracts known fields into `ToolResult`. No more field-by-field spread copy.
-- `BuiltinToolResult` in definitions.ts is now a local interface (not imported). Keeps MCP Array content format + index signature for CallToolResult compatibility. Only used by built-in tool handlers.
-- `mcpImages` field moved from ToolExecResult into ToolResult (was missing from InternalToolResult).
-
-## Phase 2E: AgentResult Cleanup
-
-- `success: boolean` removed from AgentResult — use `exitReason` instead
-- `costUsd`, `turns`, `sessionId` are now required fields (no more optional chaining)
-- Mock providers in tests must provide all required fields: `{ exitReason, output, costUsd: 0, turns: 0, sessionId: "mock" }`
-- Old `expect(x.success).toBe(true)` mapped to `exitReason !== "done_failed"`, NOT to `exitReason === "done_passed"`. Mocks returning "interrupted" had `success: true` because success meant "not failed". Use `.not.toBe("done_failed")` for tests that just want to confirm no failure.
-
-## Phase 2F: TaskNode costUsd/editedBy Required
-
-- `costUsd: number` (was optional) — default 0. `createNode` sets it, `load()` backfills via `??= 0`.
-- `editedBy: "user" | "agent"` (was optional) — default "agent". `createNode` sets from opts, `load()` backfills via `??= "agent"`.
-- CLI inline types kept `costUsd?: number` because they represent API response shape (older daemons may omit).
-- Test helpers (makeNode) must include both fields for TaskNode literal to compile.
-- Session-as-Map deferred — too many references (~117 across ~12 files).
-
-
-## Phase 3G: provider-shared.ts Split
-
-provider-shared.ts split into focused modules (no behavior changes):
-- `src/tool-execution.ts`: `executeTool()`, `isTransientAPIError()`, `MAX_OUTER_RETRIES`, `defaultOuterRetryDelay()`
-- `src/queue-utils.ts`: `extractQueueImages()`, `extractQueueImageParts()`, `formatQueueMessagesWithHeaders()`, `drainQueueAtCancellationPoint()`, `recordQueueEvents()`
+### File splits
+- `src/tool-execution.ts`: `executeTool()`, `isTransientAPIError()`, retry constants
+- `src/queue-utils.ts`: queue image extraction, message formatting, drain, record
 - `src/budget.ts`: `checkBudget()`, `recordBudgetWarning()`
-- `src/provider-shared.ts`: kept `ProviderAdapter`, `ProviderToolUse`, `ProviderTokenUsage`, `runProviderLoop()`, `handleImplicitYield()`, `defaultBuildResult()`, `buildToolResultEvents()`, `collectToolResultImages()`
+- Re-exports from provider-shared.ts preserved to minimize import churn.
 
-Re-exports from provider-shared.ts: `ToolResult` (type), `executeTool`, `isTransientAPIError`, `extractQueueImages`, `extractQueueImageParts`. This means neither provider file needed import changes.
+### Other fixes
+- WorktreeManager: full taskId in paths/branches (not `taskId.slice(0,8)`)
+- `PendingClarification.id`: uses `ulid()` (not `Date.now()-random`)
+- `handleImplicitYield`: async function (not generator). Events emitted via `emit()` callback; provider generator yields are consumed but ignored.
+- `jti` field deleted from JwtPayload (unused)
+- CSS variables `--color-testing`/`--color-stuck` kept for non-status uses (compact labels, warnings). Consider renaming to `--color-purple`/`--color-warning`.
 
-
-## Phase 3H: handleImplicitYield Refactored to Async Function
-
-`handleImplicitYield` changed from `async function*` (AsyncGenerator) to `async function` (returns Promise).
-
-**Why it works**: Both consumers of the provider generator (`consumeAgentEvents` in launchAgent, `runChildCore` for children) completely ignore yielded event values — they only drive the generator to completion and read the final `AgentResult`. The `agent_idle` and `agent_active` events that `handleImplicitYield` used to yield were already emitted via the `emit()` callback, making the yields redundant.
-
-**Test impact**: Tests that detected idle state by consuming `agent_idle` from `session.events.next()` were changed to detect it via the `emit` callback instead. The emit fires synchronously before `queue.wait()`, so enqueuing a message in the emit callback resolves the wait immediately.
+### Deferred
+- Session-as-Map: moving `TaskNode.session` to `Map<string, TaskSession>` on tracker (~117 refs)
+- Derive pendingClarifications from events instead of mutable Map
