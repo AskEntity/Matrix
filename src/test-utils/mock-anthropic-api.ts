@@ -124,6 +124,54 @@ export class MockValidationError extends Error {
 	}
 }
 
+// ── API field validation ──
+// Mirrors the real Anthropic API's strict field validation.
+// Unknown fields → 400 "Extra inputs are not permitted" (same as production).
+const KNOWN_API_FIELDS = new Set([
+	"cache_control",
+	"container",
+	"inference_geo",
+	"max_tokens",
+	"messages",
+	"metadata",
+	"model",
+	"output_config",
+	"service_tier",
+	"stop_sequences",
+	"stream",
+	"system",
+	"temperature",
+	"thinking",
+	"tool_choice",
+	"tools",
+	"top_k",
+	"top_p",
+]);
+
+const KNOWN_METADATA_FIELDS = new Set(["user_id"]);
+
+function validateAPIFields(params: Record<string, unknown>): void {
+	for (const key of Object.keys(params)) {
+		if (!KNOWN_API_FIELDS.has(key)) {
+			throw new MockValidationError(
+				`${key}: Extra inputs are not permitted. ` +
+					`Known fields: ${[...KNOWN_API_FIELDS].join(", ")}`,
+			);
+		}
+	}
+	// Validate metadata sub-fields
+	if (params.metadata && typeof params.metadata === "object") {
+		for (const key of Object.keys(params.metadata as Record<string, unknown>)) {
+			if (!KNOWN_METADATA_FIELDS.has(key)) {
+				throw new MockValidationError(
+					`metadata.${key}: Extra inputs are not permitted. ` +
+						`Allowed metadata fields: ${[...KNOWN_METADATA_FIELDS].join(", ")}`,
+				);
+			}
+		}
+	}
+}
+
 function validateRequest(messages: MessageParam[]): void {
 	if (messages.length === 0) {
 		throw new MockValidationError("Messages array must not be empty");
@@ -745,7 +793,7 @@ export class ValidatingMockAPI {
 	): string {
 		if (!sessionId) {
 			throw new MockValidationError(
-				"sessionId is required — pass metadata: { sessionId } in createStream params. " +
+				"sessionId is required — provider must set client._currentSessionId before stream call. " +
 					"All API calls must have a session identity for conversation keying.",
 			);
 		}
@@ -1036,18 +1084,21 @@ export class ValidatingMockAPI {
 	 * Validates the request, dequeues from turn queue or parses new instruction,
 	 * and returns a streaming mock response.
 	 */
-	createStream(params: {
-		messages: MessageParam[];
-		system?: unknown;
-		tools?: unknown;
-		model?: string;
-		max_tokens?: number;
-		metadata?: { sessionId?: string };
-		[key: string]: unknown;
-	}): ReturnType<typeof createMockAnthropicStream> {
+	createStream(
+		params: {
+			messages: MessageParam[];
+			system?: unknown;
+			tools?: unknown;
+			model?: string;
+			max_tokens?: number;
+			[key: string]: unknown;
+		},
+		sessionId?: string,
+	): ReturnType<typeof createMockAnthropicStream> {
 		const { messages, system, tools, model } = params;
-		const sessionId = (params.metadata as { sessionId?: string } | undefined)
-			?.sessionId;
+
+		// Validate API fields — reject unknown fields just like the real Anthropic API.
+		validateAPIFields(params as Record<string, unknown>);
 
 		// Record the request
 		this.requestHistory.push({
@@ -1387,15 +1438,19 @@ export function createMockedProviderWithMock(
 	);
 	process.env.ANTHROPIC_API_KEY = savedKey;
 
-	// Replace the client's messages.stream with our mock
+	// Replace the client's messages.stream with our mock.
+	// The provider sets mockClient._currentSessionId before each stream call
+	// (side channel — avoids putting test-only fields in the API params).
 	// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
-	(provider as any).client = {
+	const mockClient: any = {
+		_currentSessionId: undefined as string | undefined,
 		messages: {
 			stream: (params: Parameters<typeof mockAPI.createStream>[0]) =>
-				mockAPI.createStream(params),
+				mockAPI.createStream(params, mockClient._currentSessionId),
 			countTokens: async () => ({ input_tokens: 100 }),
 		},
 	};
+	(provider as any).client = mockClient;
 
 	// Fast outer retry delay for tests (100ms instead of 30s+)
 	provider.outerRetryDelayMs = () => 100;

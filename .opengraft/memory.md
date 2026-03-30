@@ -552,3 +552,10 @@ Resume messages from autoResumeProjects must be written to JSONL (via deliverMes
 **Mock `isCompactionRequest` fix**: Changed from `<summary>` to `Context compression required` (avoids false positive on post-compaction checkpoint content).
 
 **Flaky tests**: `Fork from closed agent` and `BG5` — timing-dependent race conditions.
+
+
+## Mock API Field Validation (March 2026)
+
+`ValidatingMockAPI.createStream()` validates incoming params against a whitelist of known Anthropic API fields. Rejects unknown fields with `MockValidationError`, mirroring the real API behavior (`"Extra inputs are not permitted"`). Also validates `metadata` sub-fields (only `user_id` is allowed).
+
+**sessionId side channel**: The provider stores `params.sessionId` on the client object as `_currentSessionId` before each `client.messages.stream()` call. The mock client wrapper reads it and passes to `createStream` as a separate argument. The real Anthropic SDK ignores this JS property (never serialized to HTTP). This avoids putting test-only fields in the API params where the real API would reject them.
