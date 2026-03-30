@@ -6837,12 +6837,7 @@ describe("Integration: multiple restarts with accumulated state", () => {
 
 	test("Restart N: Triple restart with accumulated tool results", async () => {
 		ctx = await setupTestContext();
-		// KNOWN BUG: prefix validation fails at msg index 4 after double restart.
-		// The resume message from autoResumeProjects causes a prefix mismatch
-		// because the reconstructed messages differ from the live path at the
-		// point where the resume message is inserted. This is a real production
-		// cache-miss issue that needs investigation.
-		// ctx.mockAPI.enablePrefixValidation();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: bash echo → result
 		// Turn 2: second bash sleep → CRASH

@@ -18,6 +18,7 @@ import type {
 	PendingClarification,
 	SSEClient,
 } from "./daemon/context.ts";
+import { emitEvent } from "./daemon/event-system.ts";
 import {
 	getEventStore,
 	getTracker,
@@ -33,6 +34,7 @@ import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
 import { findOrphanedBackgroundProcesses, hasPendingYield } from "./events.ts";
+import type { QueueMessage } from "./message-queue.ts";
 import { persistMessage } from "./persistent-queue.ts";
 import { ProjectManager } from "./project-manager.ts";
 import { buildSystemPrompt } from "./system-prompts.ts";
@@ -313,13 +315,29 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						const resumeHeader = resumeMemory
 							? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${resumeMemory}`
 							: `Working directory: ${project.path}`;
-						await persistMessage(ctx.config.dataDir, project.id, rootNodeId, {
+						const resumeMsg: QueueMessage = {
 							source: "user",
 							id: ulid(),
 							ts: Date.now(),
 							content: `Continue where you left off. The daemon restarted (${GIT_HASH}).\n\nCheck the task tree and proceed.`,
 							header: resumeHeader,
+						};
+						// Write to BOTH JSONL and disk — the two-phase message lifecycle
+						// requires the message event in JSONL so messages_consumed can
+						// reference it during reconstruction.
+						emitEvent(ctx, project.id, {
+							type: "message",
+							id: resumeMsg.id,
+							taskId: rootNodeId,
+							body: resumeMsg,
+							ts: resumeMsg.ts,
 						});
+						await persistMessage(
+							ctx.config.dataDir,
+							project.id,
+							rootNodeId,
+							resumeMsg,
+						);
 						await launchAgent(
 							ctx,
 							project,
@@ -338,13 +356,27 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						// Interrupted children need a resume message — the provider's
 						// initial drain blocks on queue.wait() and won't proceed without one.
 						// Yielding children bypass the drain, so no message needed.
+						// Write to BOTH JSONL and disk — same as root resume messages.
 						if (!isYielding) {
-							await persistMessage(ctx.config.dataDir, project.id, node.id, {
+							const childResumeMsg: QueueMessage = {
 								source: "user",
 								id: ulid(),
 								ts: Date.now(),
 								content: `The daemon restarted (${GIT_HASH}). Continue where you left off.`,
+							};
+							emitEvent(ctx, project.id, {
+								type: "message",
+								id: childResumeMsg.id,
+								taskId: node.id,
+								body: childResumeMsg,
+								ts: childResumeMsg.ts,
 							});
+							await persistMessage(
+								ctx.config.dataDir,
+								project.id,
+								node.id,
+								childResumeMsg,
+							);
 						}
 						runChildAgentInBackground(ctx, project, tracker, node.id).catch(
 							(e) => {
