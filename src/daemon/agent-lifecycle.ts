@@ -100,9 +100,11 @@ function prepareAgentMessage(
 		? `Working directory: ${projectPath}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${memory}`
 		: `Working directory: ${projectPath}`;
 	const msgId = ulid();
+	const ts = Date.now();
 	const msg: QueueMessage = {
 		source: "user",
 		id: msgId,
+		ts,
 		content,
 		...(images?.length ? { images } : {}),
 		header,
@@ -112,7 +114,7 @@ function prepareAgentMessage(
 		id: msgId,
 		taskId,
 		body: msg,
-		ts: Date.now(),
+		ts,
 	};
 	return { msg, event };
 }
@@ -1160,9 +1162,11 @@ export async function handleInjectMessage(
 	let event: Event;
 	if (shouldResume) {
 		const msgId = ulid();
+		const ts = Date.now();
 		msg = {
 			source: "user",
 			id: msgId,
+			ts,
 			content: message,
 			...(images?.length ? { images } : {}),
 		};
@@ -1171,7 +1175,7 @@ export async function handleInjectMessage(
 			id: msgId,
 			taskId: rootNodeId,
 			body: msg,
-			ts: Date.now(),
+			ts,
 		};
 	} else {
 		const prepared = prepareAgentMessage(
@@ -1217,7 +1221,7 @@ export async function handleClarifyResponse(
 	const targetQueue = tracker.get(taskId)?.session?.queue;
 	if (targetQueue) {
 		try {
-			targetQueue.enqueue({ source: "clarify_response", id: ulid(), answer });
+			targetQueue.enqueue({ source: "clarify_response", id: ulid(), ts: Date.now(), answer });
 		} catch {
 			return { ok: false, error: "Queue closed", status: 409 };
 		}
@@ -1244,6 +1248,7 @@ export async function handleClarifyResponse(
 	await persistMessage(ctx.config.dataDir, projectId, taskId, {
 		source: "clarify_response",
 		id: ulid(),
+		ts: Date.now(),
 		answer,
 	});
 	removePendingClarification(ctx, projectId, taskId, clarificationId);

@@ -259,7 +259,7 @@ export function queueMessageToEvent(
 	msg: QueueMessage,
 	taskId: string,
 ): MessageEvent {
-	return { type: "message", id: msg.id, taskId, body: msg, ts: Date.now() };
+	return { type: "message", id: msg.id, taskId, body: msg, ts: msg.ts };
 }
 
 /**
@@ -518,6 +518,7 @@ export function findOrphanedBackgroundProcesses(
 	for (const [bgId, info] of bgProcesses) {
 		if (!completedIds.has(bgId)) {
 			const msgId = ulid();
+			const ts = Date.now();
 			orphans.push({
 				type: "message",
 				id: msgId,
@@ -525,6 +526,7 @@ export function findOrphanedBackgroundProcesses(
 				body: {
 					source: "background_complete",
 					id: msgId,
+					ts,
 					commandId: bgId,
 					command: info.command,
 					exitCode: null,
@@ -532,7 +534,7 @@ export function findOrphanedBackgroundProcesses(
 					stdout: "",
 					stderr: "Background process interrupted by daemon restart",
 				},
-				ts: Date.now(),
+				ts,
 			});
 		}
 	}

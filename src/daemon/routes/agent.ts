@@ -173,7 +173,7 @@ export function registerAgentRoutes(
 		if (!rootQueue) {
 			return c.json({ error: "No active agent for this project" }, 404);
 		}
-		rootQueue.enqueue({ source: "compact", id: ulid() });
+		rootQueue.enqueue({ source: "compact", id: ulid(), ts: Date.now() });
 		return c.json({ compacting: true });
 	});
 
@@ -200,7 +200,7 @@ export function registerAgentRoutes(
 			if (restartRootId) {
 				await persistMessage(ctx.config.dataDir, project.id, restartRootId, {
 					source: "user",
-					id: ulid(),
+					id: ulid(), ts: Date.now(),
 					content:
 						"Orchestrator restarted to pick up new config. Continue where you left off.",
 				});

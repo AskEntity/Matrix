@@ -49,6 +49,7 @@ function queueWithPrompt(content: string, cwd?: string): MessageQueue {
 	q.enqueue({
 		source: "user",
 		id: "test-prompt",
+		ts: 0,
 		content,
 		...(header ? { header } : {}),
 	});
@@ -1867,6 +1868,7 @@ describe("done tool", () => {
 			queue.enqueue({
 				source: "task_message",
 				id: "test-id",
+				ts: 0,
 				fromTaskId: "p1",
 				fromTitle: "Orchestrator",
 				content: "Resume with new instructions",
@@ -2229,7 +2231,7 @@ describe("Event deterministic verification", () => {
 			type: "message",
 			id: "test-prompt",
 			taskId: "",
-			body: { source: "user", id: "test-prompt", content: "Say hello" },
+			body: { source: "user", id: "test-prompt", ts: 0, content: "Say hello" },
 			ts: Date.now(),
 		};
 		const events = [userMsgEvent, ...emittedEvents];
@@ -2355,7 +2357,7 @@ describe("Event deterministic verification", () => {
 			type: "message",
 			id: "test-prompt",
 			taskId: "",
-			body: { source: "user", id: "test-prompt", content: "Do the task" },
+			body: { source: "user", id: "test-prompt", ts: 0, content: "Do the task" },
 			ts: Date.now(),
 		};
 		const events = [userMsgEvent, ...emittedEvents];
@@ -2502,6 +2504,7 @@ describe("Event deterministic verification", () => {
 					queue.enqueue({
 						source: "user",
 						id: "test-id",
+						ts: 0,
 						content: "Here is a new instruction",
 					});
 				} else {
@@ -2561,7 +2564,7 @@ describe("Event deterministic verification", () => {
 			type: "message",
 			id: "test-prompt",
 			taskId: "",
-			body: { source: "user", id: "test-prompt", content: "Start working" },
+			body: { source: "user", id: "test-prompt", ts: 0, content: "Start working" },
 			ts: Date.now(),
 		};
 		const userMsg2: Event = {
@@ -2571,6 +2574,7 @@ describe("Event deterministic verification", () => {
 			body: {
 				source: "user",
 				id: "test-id",
+				ts: 0,
 				content: "Here is a new instruction",
 			},
 			ts: Date.now(),
@@ -2721,7 +2725,7 @@ describe("Event deterministic verification", () => {
 			type: "message",
 			id: "test-prompt",
 			taskId: "",
-			body: { source: "user", id: "test-prompt", content: "Run three tools" },
+			body: { source: "user", id: "test-prompt", ts: 0, content: "Run three tools" },
 			ts: Date.now(),
 		};
 		const allEvents = [userMsgEvent, ...events];
@@ -2766,6 +2770,7 @@ describe("Event deterministic verification", () => {
 				body: {
 					source: "user",
 					id: "test-id",
+					ts: 0,
 					content: "Old message before compaction",
 				},
 				taskId: "test",
@@ -2841,7 +2846,7 @@ describe("Event deterministic verification", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", id: "test-id", content: "Start working" },
+				body: { source: "user", id: "test-id", ts: 0, content: "Start working" },
 				taskId: "test",
 				ts: 1000,
 			},
@@ -2951,6 +2956,7 @@ describe("Event deterministic verification", () => {
 							queue.enqueue({
 								source: "user",
 								id: "test-id",
+								ts: 0,
 								content: "Urgent update during tool execution",
 							});
 							return {

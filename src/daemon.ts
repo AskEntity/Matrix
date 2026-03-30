@@ -315,7 +315,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							: `Working directory: ${project.path}`;
 						await persistMessage(ctx.config.dataDir, project.id, rootNodeId, {
 							source: "user",
-							id: ulid(),
+							id: ulid(), ts: Date.now(),
 							content: `Continue where you left off. The daemon restarted (${GIT_HASH}).\n\nCheck the task tree and proceed.`,
 							header: resumeHeader,
 						});

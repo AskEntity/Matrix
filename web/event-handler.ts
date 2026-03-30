@@ -175,6 +175,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					body: {
 						source: "user",
 						id: qe.id,
+						ts: qe.ts ?? Date.now(),
 						content: qe.content,
 						...(qe.images?.length ? { images: qe.images } : {}),
 					},
@@ -325,6 +326,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			body: {
 				source: "user",
 				id: ulid(),
+				ts: Date.now(),
 				content: msg.content,
 				...(msg.images?.length ? { images: msg.images } : {}),
 			},
@@ -734,6 +736,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 							body: {
 								source: "user",
 								id: umId ?? ulid(),
+								ts: Date.now(),
 								content: umContent,
 								...(umImages?.length ? { images: umImages } : {}),
 							},

@@ -808,7 +808,14 @@ export class ValidatingMockAPI {
 		const firstUser = messages.find((m) => m.role === "user");
 		if (!firstUser) return "default";
 		const texts = extractUserTextBlocks(firstUser);
-		return texts.join("|").slice(0, 200);
+		// Strip [HH:MM:SS] timestamp prefixes for stable key — timestamps differ
+		// between live path (Date.now() at format time) and JSONL reconstruction
+		// (original event ts), so they can't be part of the key.
+		const stripped = texts
+			.map((t) => t.replace(/^\[\d{2}:\d{2}:\d{2}\] /, ""))
+			.join("|")
+			.slice(0, 200);
+		return stripped;
 	}
 
 	/**
