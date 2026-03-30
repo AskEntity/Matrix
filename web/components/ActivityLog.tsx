@@ -4,6 +4,9 @@ import { useLocale } from "../i18n.ts";
 import { LogEntryView, ToolCard } from "./ToolCard.tsx";
 import { getEntryText } from "./tools/utils.ts";
 
+/** How many entries to render per batch */
+const RENDER_BATCH = 50;
+
 /** Get searchable text content from a LogEntry. Uses getEntryText as base, adds extra searchable fields. */
 function getSearchableText(entry: LogEntry): string {
 	const base = getEntryText(entry);
@@ -53,9 +56,15 @@ export const ActivityLog = memo(function ActivityLog({
 	entriesRef.current = entries;
 	const [showThinking, setShowThinking] = useState(false);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: reset search when filter task changes
+	// Lazy rendering: only render the last `renderCount` entries from `visible`.
+	// Increases when user scrolls near the top (via IntersectionObserver).
+	const [renderCount, setRenderCount] = useState(RENDER_BATCH);
+	const sentinelRef = useRef<HTMLDivElement>(null);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset search and render count when filter task changes
 	useEffect(() => {
 		setSearchText("");
+		setRenderCount(RENDER_BATCH);
 	}, [filterTaskId]);
 
 	const isRootFilter = !filterTaskId || filterTaskId === rootNodeId;
@@ -80,6 +89,53 @@ export const ActivityLog = memo(function ActivityLog({
 
 		return items;
 	}, [entries, filterTaskId, rootNodeId, isRootFilter, searchText]);
+
+	// When searching, render all results. Otherwise, render the last `renderCount`.
+	const isSearching = searchText.trim().length > 0;
+	const rendered = useMemo(() => {
+		if (isSearching) return visible;
+		if (renderCount >= visible.length) return visible;
+		return visible.slice(visible.length - renderCount);
+	}, [visible, renderCount, isSearching]);
+
+	const hasMoreAbove = !isSearching && rendered.length < visible.length;
+
+	// Reset renderCount when search text changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: reset render count on search change
+	useEffect(() => {
+		setRenderCount(RENDER_BATCH);
+	}, [searchText]);
+
+	// IntersectionObserver: when the sentinel at the top becomes visible, load more entries.
+	// Preserves scroll position so the user doesn't jump.
+	useEffect(() => {
+		const sentinel = sentinelRef.current;
+		const container = logRef.current;
+		if (!sentinel || !container) return;
+
+		const observer = new IntersectionObserver(
+			(entries) => {
+				const entry = entries[0];
+				if (!entry?.isIntersecting) return;
+
+				// Save scroll position relative to bottom before adding entries
+				const scrollBottom = container.scrollHeight - container.scrollTop;
+
+				setRenderCount((prev) => {
+					const next = prev + RENDER_BATCH;
+					// After React renders the new entries, restore scroll position
+					requestAnimationFrame(() => {
+						container.scrollTop = container.scrollHeight - scrollBottom;
+					});
+					return next;
+				});
+			},
+			{ root: container, rootMargin: "200px 0px 0px 0px" },
+		);
+
+		observer.observe(sentinel);
+		return () => observer.disconnect();
+	}, []);
 
 	// Scroll to bottom using scrollTop instead of scrollIntoView.
 	// iOS Safari propagates scrollIntoView to ancestor containers even with overflow:hidden,
@@ -182,7 +238,14 @@ export const ActivityLog = memo(function ActivityLog({
 						</button>
 					</div>
 				)}
-				{visible.map((entry) =>
+				{/* Sentinel for IntersectionObserver — triggers loading more entries when scrolled near top */}
+				<div ref={sentinelRef} className="og-lazy-sentinel" />
+				{hasMoreAbove && (
+					<div className="og-lazy-more-indicator">
+						{visible.length - rendered.length} earlier entries
+					</div>
+				)}
+				{rendered.map((entry) =>
 					entry.type === "tool_pair" ? (
 						<ToolCard key={entry.id} entry={entry} nodeMap={nodeMap} />
 					) : (
