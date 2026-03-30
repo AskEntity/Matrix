@@ -270,7 +270,7 @@ export function queueMessageToEvent(
 function formatBodyForAI(body: QueueMessage): string {
 	switch (body.source) {
 		case "task_complete":
-			return `<task_complete from_task="${body.taskId}" task_name="${body.title}" status="${body.success ? "passed" : "failed"}">${body.output.slice(0, 500)}</task_complete>`;
+			return `<task_complete from_task="${body.taskId}" task_name="${body.title}" status="${body.success ? "passed" : "failed"}">${body.output}</task_complete>`;
 		case "clarify_response":
 			return `<clarify_response>${body.answer}</clarify_response>`;
 		case "user_message_forwarded":
