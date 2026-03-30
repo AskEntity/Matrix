@@ -448,7 +448,11 @@ function createAnthropicAdapter(
 				system: systemBlocks,
 				messages: messagesWithCache,
 				tools: toolsWithCache,
-			};
+				// sessionId passed through for test mock conversation keying.
+				// Real Anthropic API ignores extra fields on the mock.
+				// biome-ignore lint/suspicious/noExplicitAny: test-only field
+				...(params.sessionId ? { metadata: { sessionId: params.sessionId } } : {}),
+			} as any;
 
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {
