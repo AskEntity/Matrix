@@ -34,16 +34,15 @@ import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
 import { findOrphanedBackgroundProcesses, hasPendingYield } from "./events.ts";
-import type { QueueMessage } from "./message-queue.ts";
 
 import { ProjectManager } from "./project-manager.ts";
+import { createUserMessage } from "./queue-message-factory.ts";
 import { buildSystemPrompt } from "./system-prompts.ts";
 import type {
 	HealthResponse,
 	StatsResponse,
 	VersionResponse,
 } from "./types.ts";
-import { ulid } from "./ulid.ts";
 
 // Re-export DaemonConfig so tests can import from daemon.ts
 export type { DaemonConfig } from "./daemon/context.ts";
@@ -315,13 +314,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						const resumeHeader = resumeMemory
 							? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${resumeMemory}`
 							: `Working directory: ${project.path}`;
-						const resumeMsg: QueueMessage = {
-							source: "user",
-							id: ulid(),
-							ts: Date.now(),
-							content: `Continue where you left off. The daemon restarted (${GIT_HASH}).\n\nCheck the task tree and proceed.`,
-							header: resumeHeader,
-						};
+						const resumeMsg = createUserMessage(
+							`Continue where you left off. The daemon restarted (${GIT_HASH}).\n\nCheck the task tree and proceed.`,
+							{ header: resumeHeader },
+						);
 						// Write to JSONL — findUnconsumedMessages recovers it on launch.
 						emitEvent(ctx, project.id, {
 							type: "message",
@@ -349,12 +345,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						// initial drain blocks on queue.wait() and won't proceed without one.
 						// Yielding children bypass the drain, so no message needed.
 						if (!isYielding) {
-							const childResumeMsg: QueueMessage = {
-								source: "user",
-								id: ulid(),
-								ts: Date.now(),
-								content: `The daemon restarted (${GIT_HASH}). Continue where you left off.`,
-							};
+							const childResumeMsg = createUserMessage(
+								`The daemon restarted (${GIT_HASH}). Continue where you left off.`,
+							);
 							// Write to JSONL — findUnconsumedMessages recovers it on launch.
 							emitEvent(ctx, project.id, {
 								type: "message",

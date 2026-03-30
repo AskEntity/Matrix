@@ -1,11 +1,12 @@
 import type { Hono } from "hono";
 import { DEFAULT_MODEL } from "../../config.ts";
-import { emitEvent } from "../event-system.ts";
-import type { QueueMessage } from "../../message-queue.ts";
+import {
+	createCompactMessage,
+	createUserMessage,
+} from "../../queue-message-factory.ts";
 import type { SystemPrompt } from "../../system-prompts.ts";
 import { cancelAwait, moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
-import { ulid } from "../../ulid.ts";
 import {
 	handleClarifyResponse,
 	handleInjectMessage,
@@ -14,7 +15,7 @@ import {
 	stopAgent,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
-import { broadcastTreeUpdate } from "../event-system.ts";
+import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
 import {
 	getEventStore,
 	getProjectProvider,
@@ -174,7 +175,7 @@ export function registerAgentRoutes(
 		if (!rootQueue) {
 			return c.json({ error: "No active agent for this project" }, 404);
 		}
-		rootQueue.enqueue({ source: "compact", id: ulid(), ts: Date.now() });
+		rootQueue.enqueue(createCompactMessage());
 		return c.json({ compacting: true });
 	});
 
@@ -199,13 +200,9 @@ export function registerAgentRoutes(
 			const restartTracker = await getTracker(ctx, project.id);
 			const restartRootId = restartTracker.rootNodeId;
 			if (restartRootId) {
-				const restartMsg: QueueMessage = {
-					source: "user",
-					id: ulid(),
-					ts: Date.now(),
-					content:
-						"Orchestrator restarted to pick up new config. Continue where you left off.",
-				};
+				const restartMsg = createUserMessage(
+					"Orchestrator restarted to pick up new config. Continue where you left off.",
+				);
 				emitEvent(ctx, project.id, {
 					type: "message",
 					id: restartMsg.id,

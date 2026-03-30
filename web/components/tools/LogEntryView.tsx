@@ -5,6 +5,7 @@ import {
 	TOOL_DONE,
 	TOOL_YIELD,
 } from "../../../src/tool-names.ts";
+import { api } from "../../api.ts";
 import { authFetch } from "../../auth.ts";
 import {
 	formatTime,
@@ -77,7 +78,7 @@ export const LogEntryView = memo(function LogEntryView({
 		if (!toolCallId) return;
 		setMovingToBg(true);
 		try {
-			await authFetch(`/projects/${projectId}/background/move`, {
+			await authFetch(api.backgroundMove(projectId), {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({

@@ -535,3 +535,36 @@ The persistent disk queue (persistent-queue.ts) was removed. JSONL + findUnconsu
 
 Resume messages from autoResumeProjects must be written to JSONL (via deliverMessage). Otherwise messages_consumed references an ID that doesn't exist in the JSONL event index → empty interleaved text on reconstruction → prefix mismatch.
 
+
+
+## MCP Tool Name Constants (March 2026)
+
+`src/tool-names.ts` — single source for all MCP tool name strings:
+- `MCP_SERVER_NAME = "opengraft"` — key in mcpToolDefs
+- `MCP_PREFIX = "mcp__opengraft__"` — wire prefix
+- `TOOL_*` constants for each tool (TOOL_YIELD, TOOL_DONE, etc.)
+- `mcpToolName(base)`, `stripMcpPrefix(full)`, `isOpengraftTool(name)` helpers
+- Test files keep literal strings (they document the wire contract)
+- The generic `mcp__${serverName}__${def.name}` construction in provider-shared.ts stays generic (handles all MCP servers, not just opengraft)
+
+## QueueMessage Factories (March 2026)
+
+`src/queue-message-factory.ts` — factories for all QueueMessage variants:
+- `createUserMessage(content, opts?)`, `createTaskComplete(...)`, etc.
+- All enforce `id: ulid(), ts: Date.now()` invariant
+- `createUserMessage` accepts optional `id`/`ts` overrides for cases where caller needs pre-determined values
+
+## Frontend API URL Builder (March 2026)
+
+`web/api.ts` — centralized URL construction for all frontend → backend calls:
+- `api.tasks(projectId)`, `api.task(projectId, nodeId)`, etc.
+- Changing API prefix is a one-place change
+- SSE endpoint (`/events?projectId=...`) is top-level, not under `/projects/`
+
+## Event Display Layer (March 2026)
+
+`src/event-display.ts` — platform-agnostic event rendering:
+- `EventDisplay` union type: ToolCallDisplay, ToolResultDisplay, MessageDisplay, AssistantTextDisplay
+- `eventToDisplay(event, nodeMap?)` — converts raw Event to structured display
+- React components in `web/components/tools/utils.ts` re-export shared functions
+- New platforms (CLI, Telegram) should use `src/event-display.ts` directly
