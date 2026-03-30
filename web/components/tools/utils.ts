@@ -1,3 +1,31 @@
+import {
+	isOpengraftTool,
+	stripMcpPrefix,
+	TOOL_BACKGROUND,
+	TOOL_BASH,
+	TOOL_CLARIFY,
+	TOOL_CLOSE_TASK,
+	TOOL_CREATE_TASK,
+	TOOL_DELETE_TASK,
+	TOOL_DONE,
+	TOOL_EDIT_FILE,
+	TOOL_EXECUTE_TASKS,
+	TOOL_FORK_TASK_CONTEXT,
+	TOOL_GET_TREE,
+	TOOL_LIST_FILES,
+	TOOL_LIST_PROJECTS,
+	TOOL_READ_FILE,
+	TOOL_REORDER_TASKS,
+	TOOL_REPORT_TO_PARENT,
+	TOOL_RESET_TASK,
+	TOOL_SEARCH,
+	TOOL_SEND_MESSAGE,
+	TOOL_SEND_MESSAGE_TO_CHILD,
+	TOOL_SEND_MESSAGE_TO_PROJECT,
+	TOOL_UPDATE_TASK,
+	TOOL_WRITE_FILE,
+	TOOL_YIELD,
+} from "../../../src/tool-names.ts";
 import type { LogEntry } from "../../hooks.ts";
 
 /** Get the primary display text for any LogEntry type. */
@@ -96,8 +124,7 @@ export function bashBgExcludeKeys(
 	toolName: string,
 	toolArgs: Record<string, unknown> | undefined,
 ): Set<string> | undefined {
-	if (toolName === "mcp__opengraft__bash" && toolArgs?.bg_action)
-		return BASH_BG_EXCLUDE;
+	if (toolName === TOOL_BASH && toolArgs?.bg_action) return BASH_BG_EXCLUDE;
 	return undefined;
 }
 
@@ -107,8 +134,8 @@ export function formatMcpToolResult(
 	content: string,
 	t: (key: string, params?: Record<string, string>) => string,
 ): string | null {
-	const mcpTool = toolName.replace("mcp__opengraft__", "");
-	if (!toolName.startsWith("mcp__opengraft__")) return null;
+	const mcpTool = stripMcpPrefix(toolName);
+	if (!isOpengraftTool(toolName)) return null;
 
 	// Try to parse JSON content
 	let json: Record<string, unknown> | null = null;
@@ -207,19 +234,19 @@ export function getToolCardTitle(
 ): string {
 	switch (toolName) {
 		// Built-in tools
-		case "mcp__opengraft__read_file": {
+		case TOOL_READ_FILE: {
 			const path = getArg(toolArgs, "path");
 			return path ? `⌕ Read: ${basename(path)}` : "⌕ Read";
 		}
-		case "mcp__opengraft__write_file": {
+		case TOOL_WRITE_FILE: {
 			const path = getArg(toolArgs, "path");
 			return path ? `← Write: ${basename(path)}` : "← Write";
 		}
-		case "mcp__opengraft__edit_file": {
+		case TOOL_EDIT_FILE: {
 			const path = getArg(toolArgs, "path");
 			return path ? `✎ Edit: ${basename(path)}` : "✎ Edit";
 		}
-		case "mcp__opengraft__search": {
+		case TOOL_SEARCH: {
 			const pattern = getArg(toolArgs, "pattern");
 			if (pattern) {
 				const display =
@@ -228,11 +255,11 @@ export function getToolCardTitle(
 			}
 			return "⌕ Search";
 		}
-		case "mcp__opengraft__list_files": {
+		case TOOL_LIST_FILES: {
 			const pattern = getArg(toolArgs, "pattern");
 			return pattern ? `ls: ${pattern}` : "ls";
 		}
-		case "mcp__opengraft__bash": {
+		case TOOL_BASH: {
 			const bgAction = getArg(toolArgs, "bg_action");
 			if (bgAction) {
 				const bgId = getArg(toolArgs, "background_id") ?? "?";
@@ -246,7 +273,7 @@ export function getToolCardTitle(
 			}
 			return "$ bash";
 		}
-		case "mcp__opengraft__background": {
+		case TOOL_BACKGROUND: {
 			const action = getArg(toolArgs, "action");
 			const bgId = getArg(toolArgs, "id") ?? "";
 			if (action) {
@@ -255,11 +282,11 @@ export function getToolCardTitle(
 			return "bg";
 		}
 		// Orchestrator tools
-		case "mcp__opengraft__create_task": {
+		case TOOL_CREATE_TASK: {
 			const title = getArg(toolArgs, "title");
 			return title ? `+ Task Created: ${title}` : "+ Task Created";
 		}
-		case "mcp__opengraft__delete_task": {
+		case TOOL_DELETE_TASK: {
 			// Try to get title from result
 			if (resultContent) {
 				try {
@@ -277,7 +304,7 @@ export function getToolCardTitle(
 			}
 			return "– Task Deleted";
 		}
-		case "mcp__opengraft__execute_tasks": {
+		case TOOL_EXECUTE_TASKS: {
 			// Legacy: toolArgs.tasks may be an array (live) or a JSON string (event_history)
 			let parsedTasks: Array<{ taskId?: string; title?: string }> = [];
 			const tasksVal = toolArgs?.tasks;
@@ -315,7 +342,7 @@ export function getToolCardTitle(
 			}
 			return "⚡ Run";
 		}
-		case "mcp__opengraft__done": {
+		case TOOL_DONE: {
 			const status = getArg(toolArgs, "status");
 			const summary = getArg(toolArgs, "summary");
 			const isPassed = status === "passed";
@@ -328,16 +355,16 @@ export function getToolCardTitle(
 			}
 			return `${icon} ${label}`;
 		}
-		case "mcp__opengraft__yield": {
+		case TOOL_YIELD: {
 			// If we have result content, yield has returned with messages
 			if (resultContent) {
 				return "▶ Resume from yield";
 			}
 			return "⏸ Yield";
 		}
-		case "mcp__opengraft__get_tree":
+		case TOOL_GET_TREE:
 			return "Tree";
-		case "mcp__opengraft__update_task": {
+		case TOOL_UPDATE_TASK: {
 			let resolvedTitle = "";
 			if (resultContent) {
 				try {
@@ -360,8 +387,8 @@ export function getToolCardTitle(
 			}
 			return "Task Updated";
 		}
-		case "mcp__opengraft__send_message":
-		case "mcp__opengraft__send_message_to_child": {
+		case TOOL_SEND_MESSAGE:
+		case TOOL_SEND_MESSAGE_TO_CHILD: {
 			const taskId = getArg(toolArgs, "taskId");
 			if (taskId) {
 				const title = nodeMap?.get(taskId)?.title;
@@ -369,7 +396,7 @@ export function getToolCardTitle(
 			}
 			return "→ Send Message";
 		}
-		case "mcp__opengraft__close_task": {
+		case TOOL_CLOSE_TASK: {
 			const taskId = getArg(toolArgs, "taskId");
 			if (taskId) {
 				const title = nodeMap?.get(taskId)?.title;
@@ -377,7 +404,7 @@ export function getToolCardTitle(
 			}
 			return "– Task Closed";
 		}
-		case "mcp__opengraft__reset_task": {
+		case TOOL_RESET_TASK: {
 			const taskId = getArg(toolArgs, "taskId");
 			if (taskId) {
 				const title = nodeMap?.get(taskId)?.title;
@@ -385,15 +412,15 @@ export function getToolCardTitle(
 			}
 			return "↺ Task Reset";
 		}
-		case "mcp__opengraft__reorder_tasks":
+		case TOOL_REORDER_TASKS:
 			return "↕ Reorder tasks";
-		case "mcp__opengraft__list_projects":
+		case TOOL_LIST_PROJECTS:
 			return "⌕ List projects";
-		case "mcp__opengraft__send_message_to_project": {
+		case TOOL_SEND_MESSAGE_TO_PROJECT: {
 			const projectId = getArg(toolArgs, "projectId");
 			return projectId ? `→ Cross-project: ${projectId}` : "→ Cross-project";
 		}
-		case "mcp__opengraft__report_to_parent": {
+		case TOOL_REPORT_TO_PARENT: {
 			// backward compat for old JSONL events
 			const title = getArg(toolArgs, "title");
 			if (title) {
@@ -402,7 +429,7 @@ export function getToolCardTitle(
 			}
 			return "← Report";
 		}
-		case "mcp__opengraft__clarify": {
+		case TOOL_CLARIFY: {
 			const question = getArg(toolArgs, "question");
 			if (question) {
 				// Show first line as title (may be multi-line with title\nbody)
@@ -413,7 +440,7 @@ export function getToolCardTitle(
 			}
 			return "? Clarify";
 		}
-		case "mcp__opengraft__fork_task_context": {
+		case TOOL_FORK_TASK_CONTEXT: {
 			const sourceId = getArg(toolArgs, "sourceTaskId");
 			const targetId = getArg(toolArgs, "targetTaskId");
 			if (sourceId && targetId) {
@@ -434,22 +461,22 @@ export function isTitleOnlyCard(
 	toolArgs?: Record<string, unknown>,
 ): boolean {
 	switch (toolName) {
-		case "mcp__opengraft__get_tree":
-		case "mcp__opengraft__yield":
-		case "mcp__opengraft__delete_task":
-		case "mcp__opengraft__close_task":
-		case "mcp__opengraft__reset_task":
-		case "mcp__opengraft__reorder_tasks":
-		case "mcp__opengraft__list_projects":
-		case "mcp__opengraft__fork_task_context":
+		case TOOL_GET_TREE:
+		case TOOL_YIELD:
+		case TOOL_DELETE_TASK:
+		case TOOL_CLOSE_TASK:
+		case TOOL_RESET_TASK:
+		case TOOL_REORDER_TASKS:
+		case TOOL_LIST_PROJECTS:
+		case TOOL_FORK_TASK_CONTEXT:
 			return true;
-		case "mcp__opengraft__update_task": {
+		case TOOL_UPDATE_TASK: {
 			// Expandable when surgical edit (old_description/new_description) is used
 			const oldDesc = getArg(toolArgs, "old_description");
 			const newDesc = getArg(toolArgs, "new_description");
 			return !(oldDesc != null && newDesc != null);
 		}
-		case "mcp__opengraft__report_to_parent": {
+		case TOOL_REPORT_TO_PARENT: {
 			// backward compat for old JSONL events
 			const msg = getArg(toolArgs, "message");
 			return !msg;

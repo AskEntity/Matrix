@@ -8,6 +8,7 @@ import {
 import { appendFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Event } from "./events.ts";
+import { TOOL_FORK_TASK_CONTEXT } from "./tool-names.ts";
 import { ulid } from "./ulid.ts";
 
 /**
@@ -220,7 +221,7 @@ export class EventStore {
 		for (const [id, tool] of toolCallIds) {
 			if (toolResultIds.has(id)) continue;
 
-			if (tool === "mcp__opengraft__fork_task_context") {
+			if (tool === TOOL_FORK_TASK_CONTEXT) {
 				// Case 1: fork's own tool_call is in the events — write child-side result
 				hasForkToolCall = true;
 				syntheticEvents.push({
@@ -252,7 +253,7 @@ export class EventStore {
 			const syntheticCallId = `toolu_fork_${ulid()}`;
 			syntheticEvents.push({
 				type: "tool_call" as const,
-				tool: "mcp__opengraft__fork_task_context",
+				tool: TOOL_FORK_TASK_CONTEXT,
 				toolCallId: syntheticCallId,
 				input: { sourceTaskId: sourceId, targetTaskId: targetId },
 				taskId: targetId,
@@ -260,7 +261,7 @@ export class EventStore {
 			});
 			syntheticEvents.push({
 				type: "tool_result" as const,
-				tool: "mcp__opengraft__fork_task_context",
+				tool: TOOL_FORK_TASK_CONTEXT,
 				toolCallId: syntheticCallId,
 				content: childForkResult,
 				isError: false,

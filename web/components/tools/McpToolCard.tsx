@@ -1,3 +1,4 @@
+import { stripMcpPrefix } from "../../../src/tool-names.ts";
 import { DiffView } from "./DiffView.tsx";
 import { formatMcpToolResult, getArg } from "./utils.ts";
 
@@ -35,7 +36,7 @@ export function McpToolCardBody({
 	nodeMap?: Map<string, { title?: string }>;
 	taskId?: string;
 }) {
-	const mcpTool = toolName.replace("mcp__opengraft__", "");
+	const mcpTool = stripMcpPrefix(toolName);
 
 	// Try to parse result as JSON for structured display
 	let resultJson: Record<string, unknown> | null = null;
