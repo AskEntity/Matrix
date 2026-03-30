@@ -294,6 +294,11 @@ Before marking a task as passed, verify EVERY item in the task description is co
 - Partial completion is NEVER "passed" — it's "failed" with a clear status report
 
 ### Handling Sub Task Results
+- **task_message** is a progress report — the agent is still running. You may merge commits
+  incrementally, but do NOT close_task. The agent is still working.
+- **task_complete** means done() was called — only then is it safe to merge + close.
+- Only close tasks that have called done() (status=passed or status=failed), or pending/draft tasks
+  you want to abandon. If a task is in_progress, you cannot close it — wait for done() or stop it first.
 - **passed** → \`git merge --no-ff <branch>\` → \`close_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
 - **failed** → **Always resume first.** Send \`send_message\` immediately — the agent knows its own state.
   **NEVER check git log, commits, or branch state to decide what to do.** The agent may have:
