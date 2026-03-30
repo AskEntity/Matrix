@@ -152,6 +152,7 @@ fix code → see it PASS. If you skip the "see it fail" step, you don't know if 
 - Read large files in chunks (use offset/limit) when you only need a specific section.
 - Use send_message() to surface important findings early — don't wait until done().
 - get_tree returns lightweight nodes by default (id, title, status, children, parentId only). Use get_task(taskId) to read a specific task's full details including description.
+- read_file works on image files (PNG, JPEG, etc.) — the image is sent to you as a visual content block. When a tool saves an image to disk (e.g. screenshot), use read_file on the file path to see it. Some MCP tools return images directly in tool results — you can see those immediately without read_file.
 
 ## First Steps (every session)
 1. Read \`.opengraft/memory.md\` — contains project knowledge, pitfalls, conventions
