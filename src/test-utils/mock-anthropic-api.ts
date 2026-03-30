@@ -110,6 +110,8 @@ export interface RequestRecord {
 	tools?: unknown;
 	model?: string;
 	timestamp: number;
+	/** Session ID from provider — used as conversation key for turn queuing and prefix validation. */
+	sessionId?: string;
 }
 
 // ── Validation ──
@@ -735,7 +737,15 @@ export class ValidatingMockAPI {
 	 * we detect the fork tool_result ("You are the CHILD") and use the first user
 	 * message AFTER that fork point as the key.
 	 */
-	private getConversationKey(messages: MessageParam[]): string {
+	private getConversationKey(
+		messages: MessageParam[],
+		sessionId?: string,
+	): string {
+		// Use sessionId when available — guaranteed unique per agent session.
+		// Falls back to message-content heuristic for backward compat with tests
+		// that don't pass sessionId (e.g. unit tests calling createStream directly).
+		if (sessionId) return `session:${sessionId}`;
+
 		// Find the fork point: a user message containing "You are the CHILD" tool_result
 		let forkMsgIdx = -1;
 		for (let i = 0; i < messages.length; i++) {
@@ -762,7 +772,7 @@ export class ValidatingMockAPI {
 					const stripped = texts
 						.map((t) => t.replace(/^\[\d{2}:\d{2}:\d{2}\] /, ""))
 						.join("|")
-						.slice(0, 200);
+						.slice(0, 500);
 					return `fork:${stripped}`;
 				}
 			}
@@ -780,7 +790,7 @@ export class ValidatingMockAPI {
 		const stripped = texts
 			.map((t) => t.replace(/^\[\d{2}:\d{2}:\d{2}\] /, ""))
 			.join("|")
-			.slice(0, 200);
+			.slice(0, 500);
 		return stripped;
 	}
 
@@ -1077,6 +1087,8 @@ export class ValidatingMockAPI {
 		[key: string]: unknown;
 	}): ReturnType<typeof createMockAnthropicStream> {
 		const { messages, system, tools, model } = params;
+		const sessionId =
+			(params.metadata as { sessionId?: string } | undefined)?.sessionId;
 
 		// Record the request
 		this.requestHistory.push({
@@ -1085,6 +1097,7 @@ export class ValidatingMockAPI {
 			tools: tools ? structuredClone(tools) : undefined,
 			model,
 			timestamp: Date.now(),
+			sessionId,
 		});
 
 		// Check error injection — throws before any validation/response
@@ -1096,7 +1109,7 @@ export class ValidatingMockAPI {
 
 		// Validate prefix consistency across calls (messages + system + tools)
 		if (this.prefixValidationEnabled) {
-			this.validatePrefix(messages, system, tools);
+			this.validatePrefix(messages, system, tools, sessionId);
 		}
 
 		const modelName = (model as string) ?? "claude-sonnet-4-6";
@@ -1109,7 +1122,7 @@ export class ValidatingMockAPI {
 
 		// Identify conversation for per-conversation turn queuing.
 		// This allows parent and child agents to have independent turn queues.
-		const convKey = this.getConversationKey(messages);
+		const convKey = this.getConversationKey(messages, sessionId);
 
 		// 1. Try to dequeue from this conversation's turn queue
 		const convQueue = this.conversationQueues.get(convKey);
@@ -1194,20 +1207,21 @@ export class ValidatingMockAPI {
 		messages: MessageParam[],
 		system?: unknown,
 		tools?: unknown,
+		sessionId?: string,
 	): void {
 		if (this.requestHistory.length < 2) return;
 
 		// Current request might be a compaction — skip prefix check for compactions
 		if (isCompactionRequest(messages)) return;
 
-		const convKey = this.getConversationKey(messages);
+		const convKey = this.getConversationKey(messages, sessionId);
 
 		// Find previous non-compaction request from the SAME conversation
 		let prevRequest: (typeof this.requestHistory)[0] | null = null;
 		for (let i = this.requestHistory.length - 2; i >= 0; i--) {
 			const prev = this.requestHistory[i];
 			if (!prev || isCompactionRequest(prev.messages)) continue;
-			if (this.getConversationKey(prev.messages) === convKey) {
+			if (this.getConversationKey(prev.messages, prev.sessionId) === convKey) {
 				prevRequest = prev;
 				break;
 			}

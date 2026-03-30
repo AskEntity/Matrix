@@ -303,6 +303,8 @@ export interface ProviderAdapter {
 		isCompacting: boolean;
 		/** True for root orchestrator sessions (depth 0). Affects cache TTL strategy. */
 		isOrchestrator?: boolean;
+		/** Session ID for test mock conversation keying. */
+		sessionId?: string;
 	}): AsyncGenerator<Event, unknown>;
 
 	/** Extract text content from a provider response. */
@@ -904,6 +906,7 @@ export async function* runProviderLoop(
 					signal: request.signal,
 					isCompacting: compactionPending,
 					isOrchestrator: request.isOrchestrator,
+					sessionId,
 				});
 
 				let apiStep = await apiGen.next();
