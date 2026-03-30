@@ -738,61 +738,19 @@ export class ValidatingMockAPI {
 	 * message AFTER that fork point as the key.
 	 */
 	private getConversationKey(
-		messages: MessageParam[],
+		_messages: MessageParam[],
 		sessionId?: string,
 	): string {
-		// Use sessionId when available — guaranteed unique per agent session.
-		// Falls back to message-content heuristic for backward compat with tests
-		// that don't pass sessionId (e.g. unit tests calling createStream directly).
-		if (sessionId) return `session:${sessionId}`;
-
-		// Find the fork point: a user message containing "You are the CHILD" tool_result
-		let forkMsgIdx = -1;
-		for (let i = 0; i < messages.length; i++) {
-			const msg = messages[i];
-			if (!msg || msg.role !== "user" || !Array.isArray(msg.content)) continue;
-			const hasForkResult = (
-				msg.content as Array<{ type: string; content?: string }>
-			).some(
-				(b) =>
-					b.type === "tool_result" && b.content?.includes("You are the CHILD"),
+		if (!sessionId) {
+			throw new MockValidationError(
+				"sessionId is required — pass metadata: { sessionId } in createStream params. " +
+					"All API calls must have a session identity for conversation keying.",
 			);
-			if (hasForkResult) {
-				forkMsgIdx = i;
-				break;
-			}
 		}
-
-		// For forked agents: use the first user message after fork point
-		if (forkMsgIdx >= 0) {
-			for (let i = forkMsgIdx + 1; i < messages.length; i++) {
-				const msg = messages[i];
-				if (msg?.role === "user") {
-					const texts = extractUserTextBlocks(msg);
-					const stripped = texts
-						.map((t) => t.replace(/^\[\d{2}:\d{2}:\d{2}\] /, ""))
-						.join("|")
-						.slice(0, 500);
-					return `fork:${stripped}`;
-				}
-			}
-			// No user message after fork — use the fork result itself as key
-			return `fork:${forkMsgIdx}`;
-		}
-
-		// Normal (non-forked) agent: use first user message
-		const firstUser = messages.find((m) => m.role === "user");
-		if (!firstUser) return "default";
-		const texts = extractUserTextBlocks(firstUser);
-		// Strip [HH:MM:SS] timestamp prefixes for stable key — timestamps differ
-		// between live path (Date.now() at format time) and JSONL reconstruction
-		// (original event ts), so they can't be part of the key.
-		const stripped = texts
-			.map((t) => t.replace(/^\[\d{2}:\d{2}:\d{2}\] /, ""))
-			.join("|")
-			.slice(0, 500);
-		return stripped;
+		return `session:${sessionId}`;
 	}
+
+
 
 	/**
 	 * Extract all content blocks from the last user message in the request.
@@ -1084,6 +1042,7 @@ export class ValidatingMockAPI {
 		tools?: unknown;
 		model?: string;
 		max_tokens?: number;
+		metadata?: { sessionId?: string };
 		[key: string]: unknown;
 	}): ReturnType<typeof createMockAnthropicStream> {
 		const { messages, system, tools, model } = params;

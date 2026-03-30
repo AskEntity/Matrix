@@ -35,7 +35,7 @@ import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
 import { findOrphanedBackgroundProcesses, hasPendingYield } from "./events.ts";
 import type { QueueMessage } from "./message-queue.ts";
-import { persistMessage } from "./persistent-queue.ts";
+
 import { ProjectManager } from "./project-manager.ts";
 import { buildSystemPrompt } from "./system-prompts.ts";
 import type {
@@ -322,9 +322,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							content: `Continue where you left off. The daemon restarted (${GIT_HASH}).\n\nCheck the task tree and proceed.`,
 							header: resumeHeader,
 						};
-						// Write to BOTH JSONL and disk — the two-phase message lifecycle
-						// requires the message event in JSONL so messages_consumed can
-						// reference it during reconstruction.
+						// Write to JSONL — findUnconsumedMessages recovers it on launch.
 						emitEvent(ctx, project.id, {
 							type: "message",
 							id: resumeMsg.id,
@@ -332,12 +330,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							body: resumeMsg,
 							ts: resumeMsg.ts,
 						});
-						await persistMessage(
-							ctx.config.dataDir,
-							project.id,
-							rootNodeId,
-							resumeMsg,
-						);
 						await launchAgent(
 							ctx,
 							project,
@@ -356,7 +348,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						// Interrupted children need a resume message — the provider's
 						// initial drain blocks on queue.wait() and won't proceed without one.
 						// Yielding children bypass the drain, so no message needed.
-						// Write to BOTH JSONL and disk — same as root resume messages.
 						if (!isYielding) {
 							const childResumeMsg: QueueMessage = {
 								source: "user",
@@ -364,6 +355,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								ts: Date.now(),
 								content: `The daemon restarted (${GIT_HASH}). Continue where you left off.`,
 							};
+							// Write to JSONL — findUnconsumedMessages recovers it on launch.
 							emitEvent(ctx, project.id, {
 								type: "message",
 								id: childResumeMsg.id,
@@ -371,12 +363,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								body: childResumeMsg,
 								ts: childResumeMsg.ts,
 							});
-							await persistMessage(
-								ctx.config.dataDir,
-								project.id,
-								node.id,
-								childResumeMsg,
-							);
 						}
 						runChildAgentInBackground(ctx, project, tracker, node.id).catch(
 							(e) => {

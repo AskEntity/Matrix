@@ -1,11 +1,7 @@
 import { join } from "node:path";
 import type { Hono } from "hono";
-import type { Event } from "../../events.ts";
 import type { QueueImage, QueueMessage } from "../../message-queue.ts";
-import {
-	clearPersistedMessages,
-	persistMessage,
-} from "../../persistent-queue.ts";
+
 import type { SystemPrompt } from "../../system-prompts.ts";
 import { buildTaskPrompt, slugify } from "../../task-utils.ts";
 import type { TaskStatus } from "../../types.ts";
@@ -29,13 +25,13 @@ import {
 /** Notify each ancestor in the parent chain that the user sent a message to a child task. */
 async function notifyParentChain(
 	ctx: DaemonContext,
-	projectId: string,
+	project: { id: string; path: string },
 	taskId: string,
 	taskTitle: string,
 	messageContent: string,
 	statusBeforeDelivery?: string,
 ): Promise<void> {
-	const tracker = await getTracker(ctx, projectId);
+	const tracker = await getTracker(ctx, project.id);
 	const node = tracker.get(taskId);
 	if (!node?.parentId) return;
 
@@ -77,78 +73,56 @@ async function notifyParentChain(
 					content,
 				};
 
-		// Agent queues are on session of tracker nodes
-		const ancestorQueue = ancestor.session?.queue;
-
-		if (ancestorQueue) {
-			try {
-				ancestorQueue.enqueue(notification);
-			} catch {
-				/* queue may be closed */
-			}
-		} else {
-			await persistMessage(
-				ctx.config.dataDir,
-				projectId,
-				currentId,
-				notification,
-			);
-		}
+		// Quiet delivery — don't auto-launch stopped agents for notifications
+		await deliverMessage(ctx, project, currentId, notification, {
+			quiet: true,
+		});
 
 		if (!ancestor.parentId) break;
 		currentId = ancestor.parentId;
 	}
 }
 
-/** Notify running agents in the parent chain that the task tree was modified by the user.
- * Walks from nodeId up through parentId, then to root. Quiet enqueue — doesn't interrupt yield. */
+/** Notify agents in the parent chain that the task tree was modified by the user.
+ * Walks from nodeId up through parentId, then to root. Quiet — doesn't auto-launch. */
 function notifyTreeChange(
 	ctx: DaemonContext,
-	projectId: string,
+	project: { id: string; path: string },
 	action: "created" | "updated" | "reordered" | "deleted",
 	nodeId: string,
 	title?: string,
 ): void {
-	const tracker = ctx.trackers.get(projectId);
+	const tracker = ctx.trackers.get(project.id);
 	if (!tracker) return;
 
-	const msg: QueueMessage = {
-		source: "tree_change",
-		id: ulid(),
-		ts: Date.now(),
-		action,
-		nodeId,
-		...(title ? { title } : {}),
-	};
-
-	// For "updated" actions, also notify the modified node itself (if it has a running agent).
-	// The node needs to know its own description/title changed.
+	// For "updated" actions, also notify the modified node itself.
 	if (action === "updated") {
-		const self = tracker.get(nodeId);
-		if (self?.session?.queue) {
-			try {
-				self.session.queue.enqueue(msg, { quiet: true });
-			} catch {
-				/* queue may be closed */
-			}
-		}
+		const msg: QueueMessage = {
+			source: "tree_change",
+			id: ulid(),
+			ts: Date.now(),
+			action,
+			nodeId,
+			...(title ? { title } : {}),
+		};
+		deliverMessage(ctx, project, nodeId, msg, { quiet: true });
 	}
 
-	// Walk up from the changed node's parent to root, quiet-enqueue to each running agent.
-	// The loop naturally reaches root (parentId chain ends at root whose parentId is null).
+	// Walk up from the changed node's parent to root.
 	const node = tracker.get(nodeId);
 	let currentId = node?.parentId;
 	while (currentId) {
 		const ancestor = tracker.get(currentId);
 		if (!ancestor) break;
-		const queue = ancestor.session?.queue;
-		if (queue) {
-			try {
-				queue.enqueue(msg, { quiet: true });
-			} catch {
-				/* queue may be closed */
-			}
-		}
+		const msg: QueueMessage = {
+			source: "tree_change",
+			id: ulid(),
+			ts: Date.now(),
+			action,
+			nodeId,
+			...(title ? { title } : {}),
+		};
+		deliverMessage(ctx, project, currentId, msg, { quiet: true });
 		if (!ancestor.parentId) break;
 		currentId = ancestor.parentId;
 	}
@@ -203,7 +177,7 @@ export function registerTaskRoutes(
 				: tracker.addTask(body.title, body.description ?? "", opts);
 			await tracker.save();
 			broadcastTreeUpdate(ctx, project.id, tracker);
-			notifyTreeChange(ctx, project.id, "created", node.id, node.title);
+			notifyTreeChange(ctx, project, "created", node.id, node.title);
 			return c.json(node, 201);
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -259,7 +233,7 @@ export function registerTaskRoutes(
 		}
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyTreeChange(ctx, project.id, "updated", nodeId, node.title);
+		notifyTreeChange(ctx, project, "updated", nodeId, node.title);
 		return c.json(tracker.get(nodeId));
 	});
 
@@ -288,7 +262,7 @@ export function registerTaskRoutes(
 		}
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyTreeChange(ctx, project.id, "reordered", nodeId, node.title);
+		notifyTreeChange(ctx, project, "reordered", nodeId, node.title);
 		return c.json({ ok: true });
 	});
 
@@ -316,24 +290,25 @@ export function registerTaskRoutes(
 		const body = await c.req
 			.json<{ message?: string; model?: string }>()
 			.catch(() => ({ message: undefined, model: undefined }));
-		/** Notify parent agent (waking) that a child was continued by the user. */
+		/** Notify parent agent that a child was continued by the user. */
 		const notifyParentOfContinue = () => {
 			if (node.parentId) {
-				const parentQueue = tracker.get(node.parentId)?.session?.queue;
-				if (parentQueue) {
-					try {
-						parentQueue.enqueue({
-							source: "task_message",
-							id: ulid(),
-							ts: Date.now(),
-							fromTaskId: nodeId,
-							fromTitle: node.title,
-							content: `User continued child task "${node.title}" (${nodeId}).`,
-						});
-					} catch {
-						/* queue may be closed */
-					}
-				}
+				deliverMessage(
+					ctx,
+					project,
+					node.parentId,
+					{
+						source: "task_message",
+						id: ulid(),
+						ts: Date.now(),
+						fromTaskId: nodeId,
+						fromTitle: node.title,
+						content: `User continued child task "${node.title}" (${nodeId}).`,
+					},
+					{ quiet: true },
+				).catch(() => {
+					/* delivery may fail if no project */
+				});
 			}
 		};
 
@@ -358,7 +333,7 @@ export function registerTaskRoutes(
 				? body.message
 				: "Continue working. Pick up where you left off and complete the task.";
 			const parentNode = node.parentId ? tracker.get(node.parentId) : undefined;
-			await persistMessage(ctx.config.dataDir, project.id, nodeId, {
+			const continueMsg: QueueMessage = {
 				source: "task_message",
 				id: ulid(),
 				ts: Date.now(),
@@ -366,6 +341,13 @@ export function registerTaskRoutes(
 				fromTitle: parentNode?.title ?? "User",
 				content,
 				header,
+			};
+			emitEvent(ctx, project.id, {
+				type: "message",
+				id: continueMsg.id,
+				taskId: nodeId,
+				body: continueMsg,
+				ts: continueMsg.ts,
 			});
 
 			// Run async — return immediately so UI updates
@@ -403,7 +385,7 @@ export function registerTaskRoutes(
 				const parentNode2 = node.parentId
 					? tracker.get(node.parentId)
 					: undefined;
-				await persistMessage(ctx.config.dataDir, project.id, nodeId, {
+				const continueMsg2: QueueMessage = {
 					source: "task_message",
 					id: ulid(),
 					ts: Date.now(),
@@ -411,6 +393,13 @@ export function registerTaskRoutes(
 					fromTitle: parentNode2?.title ?? "User",
 					content,
 					header,
+				};
+				emitEvent(ctx, project.id, {
+					type: "message",
+					id: continueMsg2.id,
+					taskId: nodeId,
+					body: continueMsg2,
+					ts: continueMsg2.ts,
 				});
 
 				runChildAgentInBackground(ctx, project, tracker, nodeId, body.model);
@@ -484,17 +473,12 @@ export function registerTaskRoutes(
 			eventStore.clear(n.id);
 		}
 
-		// Clear persisted messages for all removed tasks
-		await Promise.all(
-			nodesToRemove.map((n) =>
-				clearPersistedMessages(ctx.config.dataDir, project.id, n.id),
-			),
-		);
+
 
 		tracker.remove(nodeId);
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyTreeChange(ctx, project.id, "deleted", nodeId, node.title);
+		notifyTreeChange(ctx, project, "deleted", nodeId, node.title);
 		return c.json({ ok: true });
 	});
 
@@ -630,23 +614,13 @@ export function registerTaskRoutes(
 			content,
 			...(body.images?.length ? { images: body.images } : {}),
 		};
-		const userMsgEvent: Event = {
-			type: "message",
-			id: msgId,
-			taskId: nodeId,
-			body: msg,
-			ts,
-		};
-		emitEvent(ctx, project.id, userMsgEvent);
-
-		// Unified delivery: enqueue (if running) or persist + launch (if not).
-		// Uses same msg object as event body — both must have id for dedup.
+		// deliverMessage is the SOLE path — handles JSONL write + queue delivery.
 		await deliverMessage(ctx, project, nodeId, msg);
 
 		// Notify parent chain that user sent a message to this task (REST-only)
 		await notifyParentChain(
 			ctx,
-			project.id,
+			project,
 			nodeId,
 			taskTitle,
 			content,
@@ -688,9 +662,6 @@ export function registerTaskRoutes(
 		// Clear the JSONL events file for this task
 		const eventStore = getEventStore(ctx, project.id);
 		eventStore.clear(nodeId);
-
-		// Also clear any persisted (pending) messages for this task
-		await clearPersistedMessages(ctx.config.dataDir, project.id, nodeId);
 
 		// Broadcast tree update so UI reflects any status changes
 		broadcastTreeUpdate(ctx, project.id, tracker);
