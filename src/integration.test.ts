@@ -5211,3 +5211,303 @@ describe("Integration: message near done() race condition", () => {
 		expect(occurrences).toBe(1);
 	}, 45000);
 });
+
+// ── session_config tests ──
+
+describe("Integration: session_config in JSONL", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("Fresh start writes session_config as first event in JSONL", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "done" },
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		await waitForDone(ctx, 15000);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+		const events = readSessionEvents(ctx, rootId);
+
+		// session_config should be early in JSONL (after the initial user message)
+		const config = events.find((e) => e.type === "session_config") as
+			| {
+					type: "session_config";
+					systemStable: string;
+					systemVariable: string;
+					tools: unknown[];
+			  }
+			| undefined;
+		expect(config).toBeDefined();
+		// stable part should contain the SYSTEM_PROMPT content
+		expect(config.systemStable.length).toBeGreaterThan(100);
+		expect(config.systemStable).toContain("autonomous programming agent");
+		// variable part should contain the date
+		expect(config.systemVariable).toContain(
+			new Date().toISOString().split("T")[0] as string,
+		);
+	}, 30000);
+
+	test("Resume uses frozen system prompt from session_config", async () => {
+		ctx = await setupTestContext();
+
+		// First run: bash → done
+		const firstInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__bash",
+					input: { command: "echo FIRST_RUN" },
+				},
+			],
+			// Multi-turn: second turn does done()
+		});
+		const doneInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo FIRST_RUN" },
+						},
+					],
+				},
+				{
+					assert: [
+						{ block: 0, type: "tool_result", contains: "FIRST_RUN" },
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "first done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, doneInstruction);
+		expect(resp.status).toBe(200);
+		await waitForDone(ctx, 15000);
+
+		// Verify session_config was written
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+		const events = readSessionEvents(ctx, rootId);
+		const configEvt = events.find((e) => e.type === "session_config");
+		expect(configEvt).toBeDefined();
+
+		// Restart the app (simulates daemon restart)
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+
+		// Send a new message to trigger resume
+		const resumeInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "resumed done" },
+				},
+			],
+		});
+
+		const resumeResp = await sendMessage(ctx, resumeInstruction);
+		expect(resumeResp.status).toBe(200);
+		await waitForDone(ctx, 15000);
+
+		// Verify the resumed API request uses the stored system prompt from session_config
+		const history = ctx.mockAPI.getRequestHistory();
+		// Should have at least 3 requests (first run = 2 turns, resume = 1)
+		expect(history.length).toBeGreaterThanOrEqual(3);
+
+		// The resume request's system should match the first request's system
+		const firstReqSystem = history[0]!.system;
+		const resumeReq = history[history.length - 1]!;
+		expect(resumeReq.system).toEqual(firstReqSystem);
+	}, 45000);
+
+	test("Forked child inherits session_config from parent", async () => {
+		ctx = await setupTestContext();
+
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "forked child done" },
+				},
+			],
+		});
+
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: {
+								title: "Config Fork Child",
+								description: "Testing session_config fork",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+								rootId: 'regex:"parentId":\\s*"([^"]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__fork_task_context",
+							input: { sourceTaskId: "$rootId", targetTaskId: "$childId" },
+						},
+					],
+				},
+				{
+					assert: [
+						{ block: 0, type: "tool_result", contains: "You are the PARENT" },
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{ type: "tool_use", name: "mcp__opengraft__yield", input: {} },
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: {
+								status: "passed",
+								summary: "fork config test done",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+		await waitForDone(ctx, 30000);
+
+		// Get child node ID
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+		const childNodeId = tracker.get(rootId)!.children![0]!;
+
+		// Parent JSONL should have session_config
+		const parentEvents = readSessionEvents(ctx, rootId);
+		const parentConfig = parentEvents.find(
+			(e) => e.type === "session_config",
+		);
+		expect(parentConfig).toBeDefined();
+
+		// Child JSONL should have session_config inherited from parent
+		const childEvents = readSessionEvents(ctx, childNodeId);
+		const childConfig = childEvents.find((e) => e.type === "session_config");
+		expect(childConfig).toBeDefined();
+
+		// Both should have the same stable system prompt
+		const pc = parentConfig as { systemStable: string; systemVariable: string };
+		const cc = childConfig as { systemStable: string; systemVariable: string };
+		expect(cc.systemStable).toBe(pc.systemStable);
+	}, 45000);
+
+	test("get_tree marks calling agent's node with (you)", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__get_tree",
+							input: {},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "(you)",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "tree test done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		await waitForDone(ctx, 15000);
+
+		// Verify the get_tree result in request history contains "(you)"
+		const history = ctx.mockAPI.getRequestHistory();
+		const treeReq = history.find((req) =>
+			req.messages.some((m) => {
+				if (m.role !== "user") return false;
+				const text =
+					typeof m.content === "string"
+						? m.content
+						: Array.isArray(m.content)
+							? (m.content as Array<{ text?: string }>)
+									.map((b) => b.text ?? "")
+									.join("")
+							: "";
+				return text.includes("(you)");
+			}),
+		);
+		expect(treeReq).toBeDefined();
+	}, 30000);
+});
