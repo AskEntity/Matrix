@@ -461,3 +461,14 @@ The following backward compat code has been removed — old JSONL and tree.json 
 - CLI inline types kept `costUsd?: number` because they represent API response shape (older daemons may omit).
 - Test helpers (makeNode) must include both fields for TaskNode literal to compile.
 - Session-as-Map deferred — too many references (~117 across ~12 files).
+
+
+## Phase 3G: provider-shared.ts Split
+
+provider-shared.ts split into focused modules (no behavior changes):
+- `src/tool-execution.ts`: `executeTool()`, `isTransientAPIError()`, `MAX_OUTER_RETRIES`, `defaultOuterRetryDelay()`
+- `src/queue-utils.ts`: `extractQueueImages()`, `extractQueueImageParts()`, `formatQueueMessagesWithHeaders()`, `drainQueueAtCancellationPoint()`, `recordQueueEvents()`
+- `src/budget.ts`: `checkBudget()`, `recordBudgetWarning()`
+- `src/provider-shared.ts`: kept `ProviderAdapter`, `ProviderToolUse`, `ProviderTokenUsage`, `runProviderLoop()`, `handleImplicitYield()`, `defaultBuildResult()`, `buildToolResultEvents()`, `collectToolResultImages()`
+
+Re-exports from provider-shared.ts: `ToolResult` (type), `executeTool`, `isTransientAPIError`, `extractQueueImages`, `extractQueueImageParts`. This means neither provider file needed import changes.
