@@ -5253,10 +5253,10 @@ describe("Integration: session_config in JSONL", () => {
 			| undefined;
 		expect(config).toBeDefined();
 		// stable part should contain the SYSTEM_PROMPT content
-		expect(config.systemStable.length).toBeGreaterThan(100);
-		expect(config.systemStable).toContain("autonomous programming agent");
+		expect(config!.systemStable.length).toBeGreaterThan(100);
+		expect(config!.systemStable).toContain("autonomous programming agent");
 		// variable part should contain the date
-		expect(config.systemVariable).toContain(
+		expect(config!.systemVariable).toContain(
 			new Date().toISOString().split("T")[0] as string,
 		);
 	}, 30000);
@@ -5264,17 +5264,7 @@ describe("Integration: session_config in JSONL", () => {
 	test("Resume uses frozen system prompt from session_config", async () => {
 		ctx = await setupTestContext();
 
-		// First run: bash → done
-		const firstInstruction = JSON.stringify({
-			blocks: [
-				{
-					type: "tool_use",
-					name: "mcp__opengraft__bash",
-					input: { command: "echo FIRST_RUN" },
-				},
-			],
-			// Multi-turn: second turn does done()
-		});
+		// First run: bash → done (two turns)
 		const doneInstruction = JSON.stringify({
 			turns: [
 				{

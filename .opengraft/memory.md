@@ -441,3 +441,25 @@ ONE message endpoint: `POST /projects/:id/tasks/:nodeId/message` with `{ content
 **Optimization**: tool_result stays full size forever in context. Anthropic `clear_tool_uses_20250919` beta can auto-clear old tool results.
 
 **Audit scripts**: src/_token_audit.ts and src/_cache_audit.ts.
+
+## session_config Event in JSONL
+
+**Event type**: `session_config` — persisted at JSONL start and after each `compact_marker`.
+Records `tools`, `systemStable`, `systemVariable` for the session segment.
+
+**Lifecycle**:
+- Fresh start: `buildSessionConfig()` writes session_config, provider uses it
+- Resume: `findSessionConfig(activeEvents)` finds stored config → frozen system prompt for cache stability
+- Compaction: provider loop emits fresh session_config via `refreshSystemPrompt` callback after `compact_marker`
+- Fork: `copySessionFrom` copies all active events including session_config → child inherits parent's config
+
+**buildSystemPrompt()**: Returns `SystemPrompt { stable: string; variable: string }`. No more `isRoot` parameter — all agents share the same stable prompt. `variable` = date + optional selfBootstrap.
+
+**Identity via tree**: ROOT_ORCHESTRATOR_ROLE merged into SYSTEM_PROMPT. Behavior derives from tree position (root node = project-level = only manage tasks). `get_tree` marks calling agent's node with `(you)` in default mode and `you: true` in detailed mode.
+
+**Cache breakpoints (Anthropic)**: 3 slots used:
+1. Last tool definition → `cache_control: {type: "ephemeral", ttl: "1h"}`
+2. systemVariable end → `cache_control: {type: "ephemeral", ttl: "1h"}` (stable auto-hits via 20-block lookback)
+3. Second-to-last user message → `1h` (orchestrator) or `5m` (leaf worker)
+
+**Migration**: Old JSONL without session_config gets one synthesized at agent launch. Written to JSONL end (appended), found by `findSessionConfig` which searches backwards.
