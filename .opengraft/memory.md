@@ -497,3 +497,10 @@ Records `tools`, `systemStable`, `systemVariable` for the session segment.
 
 **Known: Prefix violation after double restart** (Restart N test). Resume message from `autoResumeProjects` reconstructs differently on 2nd restart → cache miss. Test runs with prefix validation disabled. Real bug, unfixed.
 
+## ⚠️ AI Agent Laziness Patterns (fight these)
+
+1. **怕大改动** — 被告知删文件，第一反应是revert/fallback而不是执行。大改动是正常的，不要退缩。
+2. **加不必要的fallback** — 比如新方案已经work但保留"falls back to old approach"。除非明确要求backward compat，删掉旧路径。
+3. **不主动沟通** — text block里自言自语parent看不到。send_message是唯一通道，用它。
+4. **不质疑架构** — 看到数据写两个地方不会问"为什么"。"这个为什么存在"比"怎么让它work"更重要。
+
