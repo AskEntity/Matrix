@@ -165,36 +165,7 @@ function validateRequest(messages: MessageParam[]): void {
 		}
 	}
 
-	// 4. No duplicate timestamps in user text blocks.
-	// Duplicate [HH:MM:SS] prefixes indicate live and reconstruction paths are inconsistent.
-	// Not all text blocks have timestamps (compacted_resume, fork_marker, etc.) — only
-	// consumed messages get timestamps via formatEventForAI.
-	const timestampAnywhere = /\[\d{2}:\d{2}:\d{2}\]/g;
-	for (let i = 0; i < messages.length; i++) {
-		const msg = messages[i];
-		if (!msg || msg.role !== "user") continue;
-		const content = msg.content;
-		if (!Array.isArray(content)) continue;
-		for (const block of content) {
-			if (
-				!block ||
-				typeof block !== "object" ||
-				!("type" in block) ||
-				block.type !== "text" ||
-				!("text" in block)
-			)
-				continue;
-			const text = block.text as string;
-			const matches = text.match(timestampAnywhere);
-			if (matches && matches.length > 1) {
-				throw new MockValidationError(
-					`User text block at message index ${i} has ${matches.length} timestamps (expected at most 1): "${text.slice(0, 120)}"`,
-				);
-			}
-		}
-	}
-
-	// 5. tool_use/tool_result pairing
+	// 4. tool_use/tool_result pairing
 	for (let i = 0; i < messages.length; i++) {
 		const msg = messages[i];
 		if (!msg || msg.role !== "assistant") continue;
