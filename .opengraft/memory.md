@@ -499,25 +499,25 @@ Records `tools`, `systemStable`, `systemVariable` for the session segment.
 
 ## ⚠️ AI Agent Laziness Patterns (fight these)
 
-1. **怕大改动** — 被告知删文件，第一反应是revert/fallback而不是执行。大改动是正常的，不要退缩。
-2. **加不必要的fallback** — 比如新方案已经work但保留"falls back to old approach"。除非明确要求backward compat，删掉旧路径。
-3. **不主动沟通** — text block里自言自语parent看不到。send_message是唯一通道，用它。
-4. **不质疑架构** — 看到数据写两个地方不会问"为什么"。"这个为什么存在"比"怎么让它work"更重要。
-5. **"统一"变成"加第三条路径"** — 被要求统一codepath时，AI倾向于新建unified入口但保留旧入口。这不是统一，这是增加复杂度。统一 = 删掉所有旧路径，只保留一个。
+1. **Fear of large changes** — told to delete a file, first instinct is revert/fallback instead of executing. Large changes are normal, don't shy away.
+2. **Unnecessary fallbacks** — new approach works but keeps "falls back to old approach". Unless backward compat is explicitly required, delete the old path.
+3. **Won't communicate** — text blocks are invisible to parent. send_message is the only channel, use it.
+4. **Won't question architecture** — sees data written to two places, doesn't ask "why". "Why does this exist" matters more than "how to make it work".
+5. **"Unify" = add a third path** — when asked to unify codepaths, AI tends to create a new unified entry but keep old entries. This isn't unification, it's added complexity. Unify = delete all old paths, keep one.
 
 ## Architecture Quality: Feature Mutation Test
 
-验证架构质量的方法：提出一个假需求（比如"改消息时间戳格式"），看需要改几个地方。
+Probe architecture quality by posing a hypothetical change and counting how many places need modification.
 
-- **改1个地方** = 架构OK，真正统一的codepath
-- **改3个+** = 有duplicate codepath，先重构到能1处改为止
+- **1 place** = architecture OK, truly unified codepath
+- **3+ places** = duplicate codepaths exist, refactor until it's a one-place change
 
-典型探针：
-- "把`[HH:MM:SS]`改成`[HH:MM]`" — 应该只改`formatTimestamp`一个函数
-- "给所有message delivery加audit log" — 应该只改`deliverMessage`一个函数
-- "改某种消息的格式" — 如果format在统一的地方做，就是one-line change
+Example probes:
+- "Change `[HH:MM:SS]` to `[HH:MM]`" — should only touch `formatTimestamp`
+- "Add audit log to all message delivery" — should only touch `deliverMessage`
+- "Change a message format" — if formatted in one place, it's a one-line change
 
-如果改不到，说明架构有问题。架构是disposable的——test在，随时可以换更简单的架构。AI写的架构会烂，接受这个事实，用test+类型系统约束，而不是指望AI有architectural taste。
+If it can't be done in one place, the architecture has a problem. Architecture is disposable — tests are the stable anchor. AI-written architecture will be messy; accept this, constrain with tests + type system, don't expect architectural taste.
 
 ## Unified deliverMessage (March 2026)
 
