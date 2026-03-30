@@ -26,6 +26,17 @@ import {
 	TOOL_WRITE_FILE,
 	TOOL_YIELD,
 } from "../../../src/tool-names.ts";
+
+// Platform-agnostic display logic lives in src/event-display.ts.
+// These React-specific wrappers add LogEntry handling on top.
+// New platforms (CLI, Telegram) should use src/event-display.ts directly.
+export {
+	formatToolArgs,
+	getToolTitle,
+	isTitleOnly,
+	summarizeToolResult,
+} from "../../../src/event-display.ts";
+
 import type { LogEntry } from "../../hooks.ts";
 
 /** Get the primary display text for any LogEntry type. */
