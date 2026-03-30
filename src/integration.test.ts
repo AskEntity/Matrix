@@ -982,6 +982,344 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		).toThrow(MockValidationError);
 	}, 10000);
 
+	test("Prefix validation catches system prompt change between calls", async () => {
+		const { MockValidationError } = await import(
+			"./test-utils/mock-anthropic-api.ts"
+		);
+
+		const mockAPI = new ValidatingMockAPI();
+		mockAPI.enablePrefixValidation();
+
+		const systemBlocks = [
+			{ type: "text", text: "You are helpful." },
+			{
+				type: "text",
+				text: "Today is 2026-03-30.",
+				cache_control: { type: "ephemeral", ttl: "1h" },
+			},
+		];
+
+		// First call: establishes system + messages
+		mockAPI.createStream({
+			messages: [{ role: "user", content: "hello" }],
+			system: systemBlocks,
+		});
+
+		// Second call: same system, extended messages — OK
+		mockAPI.createStream({
+			messages: [
+				{ role: "user", content: "hello" },
+				{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+				{ role: "user", content: "next" },
+			],
+			system: systemBlocks,
+		});
+
+		// Third call: CHANGED system prompt — must throw
+		expect(() =>
+			mockAPI.createStream({
+				messages: [
+					{ role: "user", content: "hello" },
+					{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+					{ role: "user", content: "next" },
+					{ role: "assistant", content: [{ type: "text", text: "ok" }] },
+					{ role: "user", content: "more" },
+				],
+				system: [
+					{ type: "text", text: "You are helpful." },
+					{
+						type: "text",
+						text: "Today is 2026-03-31.", // Date changed!
+						cache_control: { type: "ephemeral", ttl: "1h" },
+					},
+				],
+			}),
+		).toThrow(MockValidationError);
+	}, 10000);
+
+	test("Prefix validation catches tools change between calls", async () => {
+		const { MockValidationError } = await import(
+			"./test-utils/mock-anthropic-api.ts"
+		);
+
+		const mockAPI = new ValidatingMockAPI();
+		mockAPI.enablePrefixValidation();
+
+		const tools = [
+			{ name: "bash", description: "Run bash", input_schema: {} },
+			{ name: "read", description: "Read file", input_schema: {} },
+		];
+
+		// First call
+		mockAPI.createStream({
+			messages: [{ role: "user", content: "hello" }],
+			tools,
+		});
+
+		// Second call: same tools — OK
+		mockAPI.createStream({
+			messages: [
+				{ role: "user", content: "hello" },
+				{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+				{ role: "user", content: "next" },
+			],
+			tools,
+		});
+
+		// Third call: tools changed (added a tool) — must throw
+		expect(() =>
+			mockAPI.createStream({
+				messages: [
+					{ role: "user", content: "hello" },
+					{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+					{ role: "user", content: "next" },
+					{ role: "assistant", content: [{ type: "text", text: "ok" }] },
+					{ role: "user", content: "more" },
+				],
+				tools: [
+					...tools,
+					{ name: "write", description: "Write file", input_schema: {} },
+				],
+			}),
+		).toThrow(MockValidationError);
+	}, 10000);
+
+	test("Prefix validation: different conversations don't interfere", async () => {
+		// Parent and child have different first user messages → different conversations.
+		// System prompt change in one shouldn't affect the other.
+		const mockAPI = new ValidatingMockAPI();
+		mockAPI.enablePrefixValidation();
+
+		const system = [{ type: "text", text: "shared system prompt" }];
+
+		// Parent conversation
+		mockAPI.createStream({
+			messages: [{ role: "user", content: "parent msg" }],
+			system,
+		});
+
+		// Child conversation (different first user message)
+		mockAPI.createStream({
+			messages: [{ role: "user", content: "child msg" }],
+			system,
+		});
+
+		// Parent turn 2: same system — should NOT throw
+		mockAPI.createStream({
+			messages: [
+				{ role: "user", content: "parent msg" },
+				{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+				{ role: "user", content: "next" },
+			],
+			system,
+		});
+
+		// Child turn 2: same system — should NOT throw
+		mockAPI.createStream({
+			messages: [
+				{ role: "user", content: "child msg" },
+				{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+				{ role: "user", content: "next" },
+			],
+			system,
+		});
+	}, 10000);
+
+	test("Prefix validation: fork parent and child share system+tools", async () => {
+		// Verifies that fork parent and child, when they diverge in messages
+		// but share system/tools, pass validation. And if system differs, it catches it.
+		const { MockValidationError } = await import(
+			"./test-utils/mock-anthropic-api.ts"
+		);
+
+		const mockAPI = new ValidatingMockAPI();
+		mockAPI.enablePrefixValidation();
+
+		const system = [
+			{ type: "text", text: "Stable prompt text." },
+			{
+				type: "text",
+				text: "Variable: date=2026-03-30",
+				cache_control: { type: "ephemeral", ttl: "1h" },
+			},
+		];
+		const tools = [
+			{
+				name: "mcp__opengraft__done",
+				description: "Finish",
+				input_schema: {},
+			},
+		];
+
+		// Parent turn 1
+		mockAPI.createStream({
+			messages: [{ role: "user", content: "parent start" }],
+			system,
+			tools,
+		});
+
+		// Parent turn 2 (extended prefix)
+		mockAPI.createStream({
+			messages: [
+				{ role: "user", content: "parent start" },
+				{
+					role: "assistant",
+					content: [
+						{ type: "text", text: "working" },
+						{
+							type: "tool_use",
+							id: "t1",
+							name: "mcp__opengraft__fork_task_context",
+							input: {},
+						},
+					],
+				},
+				{
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "t1",
+							content: "You are the PARENT",
+						},
+					],
+				},
+			],
+			system,
+			tools,
+		});
+
+		// Child turn 1 — shares parent's prefix up to fork point, then diverges.
+		// Key: system + tools must match parent's.
+		// First user message is different (child gets fork result) → different conversation key.
+		mockAPI.createStream({
+			messages: [
+				{ role: "user", content: "parent start" }, // inherited prefix
+				{
+					role: "assistant",
+					content: [
+						{ type: "text", text: "working" },
+						{
+							type: "tool_use",
+							id: "t1",
+							name: "mcp__opengraft__fork_task_context",
+							input: {},
+						},
+					],
+				},
+				{
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "t1",
+							content: "You are the CHILD",
+						},
+					],
+				},
+			],
+			system, // same system — should pass
+			tools, // same tools — should pass
+		});
+
+		// Child turn 2 — same system/tools, extended messages — should pass
+		mockAPI.createStream({
+			messages: [
+				{ role: "user", content: "parent start" },
+				{
+					role: "assistant",
+					content: [
+						{ type: "text", text: "working" },
+						{
+							type: "tool_use",
+							id: "t1",
+							name: "mcp__opengraft__fork_task_context",
+							input: {},
+						},
+					],
+				},
+				{
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "t1",
+							content: "You are the CHILD",
+						},
+					],
+				},
+				{
+					role: "assistant",
+					content: [
+						{
+							type: "tool_use",
+							id: "t2",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "done" },
+						},
+					],
+				},
+				{
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "t2",
+							content: "passed",
+						},
+					],
+				},
+			],
+			system, // same — pass
+			tools, // same — pass
+		});
+
+		// Now: mutation — if child had a DIFFERENT system prompt, it should throw.
+		// This is the exact bug we fixed: fork child used to get buildSystemPrompt(false)
+		// while parent had buildSystemPrompt(true).
+		const wrongSystem = [
+			{ type: "text", text: "DIFFERENT stable prompt." },
+			{
+				type: "text",
+				text: "Variable: date=2026-03-30",
+				cache_control: { type: "ephemeral", ttl: "1h" },
+			},
+		];
+
+		// Reset and replay parent so we get a fresh conversation
+		mockAPI.reset();
+		mockAPI.enablePrefixValidation();
+
+		// Parent
+		mockAPI.createStream({
+			messages: [{ role: "user", content: "parent msg v2" }],
+			system,
+			tools,
+		});
+
+		// Child with WRONG system — same first user message prefix as parent
+		// but since child has different content at fork point, it's a different
+		// conversation key. So we need to check within the SAME conversation.
+		// Simulate: child makes 2 calls, second one has wrong system.
+		mockAPI.createStream({
+			messages: [{ role: "user", content: "child v2 start" }],
+			system,
+			tools,
+		});
+
+		expect(() =>
+			mockAPI.createStream({
+				messages: [
+					{ role: "user", content: "child v2 start" },
+					{ role: "assistant", content: [{ type: "text", text: "ok" }] },
+					{ role: "user", content: "next" },
+				],
+				system: wrongSystem, // changed system — MUST throw
+				tools,
+			}),
+		).toThrow(MockValidationError);
+	}, 10000);
+
 	test("Restart F: messages enqueued during bash survive restart", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
