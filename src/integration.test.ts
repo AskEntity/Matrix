@@ -6684,19 +6684,7 @@ describe("Integration: child restart scenarios", () => {
 
 		// autoResumeProjects resumes both:
 		// - Parent: yielding → bypass to queue.wait
-		// - Child: interrupted bash → runChildAgentInBackground
-		// BUT: interrupted children need a message in their queue to wake the
-		// provider's initial drain. Send a resume message to the child.
-		const childMsgResp = await ctx.app.app.request(
-			`/projects/${ctx.projectId}/tasks/${childId}/message`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ content: "Resume after restart" }),
-			},
-		);
-		expect(childMsgResp.status).toBe(200);
-
+		// - Child: interrupted bash → persists resume message + runChildAgentInBackground
 		// Child resumes → orphan bash + resume message → API call → done(passed)
 		// Parent wakes from yield → receives task_complete → done(passed)
 		const status = await waitForDone(ctx, 20000);
@@ -6825,16 +6813,7 @@ describe("Integration: child restart scenarios", () => {
 		ctx.app = await recreateApp(ctx);
 		await ctx.app.autoResumeProjects();
 
-		// Send resume message to interrupted child (provider needs a queue message to proceed)
-		await ctx.app.app.request(
-			`/projects/${ctx.projectId}/tasks/${childId}/message`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ content: "Resume after restart" }),
-			},
-		);
-
+		// autoResumeProjects persists resume message for interrupted child + launches it.
 		// Child resumes → done → task_complete → parent wakes → done
 		const status = await waitForDone(ctx, 30000);
 		expect(status).toBe("passed");

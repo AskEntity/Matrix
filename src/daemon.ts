@@ -335,6 +335,22 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						console.log(
 							`Auto-resuming ${project.name} child ${node.id.slice(0, 8)} (${isYielding ? "yielding" : "interrupted"})`,
 						);
+						// Interrupted children need a resume message — the provider's
+						// initial drain blocks on queue.wait() and won't proceed without one.
+						// Yielding children bypass the drain, so no message needed.
+						if (!isYielding) {
+							await persistMessage(
+								ctx.config.dataDir,
+								project.id,
+								node.id,
+								{
+									source: "user",
+									id: ulid(),
+									ts: Date.now(),
+									content: `The daemon restarted (${GIT_HASH}). Continue where you left off.`,
+								},
+							);
+						}
 						runChildAgentInBackground(ctx, project, tracker, node.id).catch(
 							(e) => {
 								console.error(
