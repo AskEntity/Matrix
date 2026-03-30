@@ -1,16 +1,21 @@
 /**
- * Shared provider logic: the unified run loop, tool execution, queue handling,
- * and budget management. Both providers import these to avoid code duplication.
+ * Shared provider logic: the unified run loop and provider adapter interface.
+ * Both providers import these to avoid code duplication.
  *
  * The unified `runProviderLoop()` is the single run loop used by both providers.
  * Each provider implements a `ProviderAdapter` interface with hooks for the
  * API-specific operations (message format, API call, response parsing, etc.).
  *
- * Compaction logic: see ./compaction.ts
- * Event converter walker: see ./event-converter.ts
- * Zod-to-JSON-Schema: see ./zod-schema.ts
+ * Split modules:
+ * - Tool execution + transient error detection: see ./tool-execution.ts
+ * - Queue utilities (images, formatting, drain): see ./queue-utils.ts
+ * - Budget management: see ./budget.ts
+ * - Compaction logic: see ./compaction.ts
+ * - Event converter walker: see ./event-converter.ts
+ * - Zod-to-JSON-Schema: see ./zod-schema.ts
  */
 import type { AgentRequest } from "./agent-provider.ts";
+import { checkBudget, recordBudgetWarning } from "./budget.ts";
 import {
 	buildSummarizationInstruction,
 	getCompactionThresholds,
@@ -18,212 +23,38 @@ import {
 } from "./compaction.ts";
 import { type Event, queueMessageToEvent } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
-import type {
-	EventImageData,
-	PendingState,
-	ToolResult,
-} from "./shared-types.ts";
+import {
+	drainQueueAtCancellationPoint,
+	formatQueueMessagesWithHeaders,
+	recordQueueEvents,
+} from "./queue-utils.ts";
+import type { EventImageData } from "./shared-types.ts";
 import { formatQueueMessage } from "./task-utils.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
+import {
+	defaultOuterRetryDelay,
+	executeTool,
+	isTransientAPIError,
+	MAX_OUTER_RETRIES,
+} from "./tool-execution.ts";
 import type { AgentResult, ExitReason } from "./types.ts";
+
+// ── Re-exports for backward compatibility ──
+// These symbols were originally defined here. Re-export so existing importers
+// don't need to change their import paths.
+
+export {
+	extractQueueImageParts,
+	extractQueueImages,
+} from "./queue-utils.ts";
+// ToolResult: unified tool execution result type. Canonical definition in shared-types.ts.
+// Re-exported here for consumers that imported ToolExecResult from provider-shared.
+export type { ToolResult } from "./shared-types.ts";
+export { executeTool, isTransientAPIError } from "./tool-execution.ts";
 
 // ── Constants ──
 
 const DEFAULT_MAX_TOKENS = 16384;
-
-// ToolResult: unified tool execution result type. Canonical definition in shared-types.ts.
-// Re-exported here for consumers that imported ToolExecResult from provider-shared.
-export type { ToolResult } from "./shared-types.ts";
-
-// ── Transient error detection (provider-agnostic) ──
-
-/** Maximum number of outer retries when callAPI fails after exhausting its own retries. */
-const MAX_OUTER_RETRIES = 3;
-
-/** Default outer retry delay: exponential backoff starting at 30s. */
-function defaultOuterRetryDelay(attempt: number): number {
-	return Math.min(30000 * 2 ** attempt, 120000);
-}
-
-/**
- * Detect transient API errors that the outer retry should catch.
- * Provider-agnostic — checks error properties rather than SDK-specific class types.
- * The inner retry (in each provider's callAPI) handles SDK-specific errors.
- * The outer retry catches anything that slips through.
- */
-export function isTransientAPIError(e: unknown): boolean {
-	if (!(e instanceof Error)) return false;
-	const status = (e as { status?: number }).status;
-	// Rate limit, overloaded, server errors (Anthropic SDK errors have .status)
-	if (
-		status === 429 ||
-		status === 529 ||
-		status === 500 ||
-		status === 502 ||
-		status === 503
-	)
-		return true;
-	// Check error message for transient patterns (OpenAI errors encode status in message)
-	const msg = e.message.toLowerCase();
-	if (msg.includes("rate limit") || msg.includes("overloaded")) return true;
-	// Connection errors
-	if (
-		msg.includes("econnrefused") ||
-		msg.includes("econnreset") ||
-		msg.includes("fetch failed") ||
-		msg.includes("failed to get api response")
-	)
-		return true;
-	return false;
-}
-
-/**
- * Execute a single tool via its handler.
- * ALL tools (built-in + orchestrator + external MCP) go through this single path.
- * Returns a unified ToolResult.
- */
-export async function executeTool(
-	toolName: string,
-	input: Record<string, unknown>,
-	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-	mcpHandlers: Map<string, ToolDefinition<any>>,
-	toolCallId?: string,
-): Promise<ToolResult> {
-	const mcpHandler = mcpHandlers.get(toolName);
-	if (!mcpHandler) {
-		return {
-			content: `Unknown tool: ${toolName}`,
-			isError: true,
-		};
-	}
-
-	try {
-		const mcpResult = await mcpHandler.handler(input, { toolCallId });
-		const parts = Array.isArray(mcpResult.content) ? mcpResult.content : [];
-		const textParts: string[] = [];
-		const mcpImages: Array<{
-			base64: string;
-			mediaType: string;
-			data: string;
-		}> = [];
-		for (const c of parts as Array<Record<string, unknown>>) {
-			if (c.type === "text") {
-				textParts.push((c.text as string) ?? "");
-			} else if (c.type === "image" && c.data) {
-				// MCP format: { type: "image", data, mimeType }
-				mcpImages.push({
-					mediaType: (c.mimeType as string) ?? "image/png",
-					data: c.data as string,
-					base64: c.data as string,
-				});
-			} else if (
-				c.type === "image" &&
-				(c.source as Record<string, unknown>)?.type === "base64"
-			) {
-				// Anthropic format: { type: "image", source: { type: "base64", media_type, data } }
-				const src = c.source as Record<string, string>;
-				mcpImages.push({
-					mediaType: src.media_type ?? "image/png",
-					data: src.data ?? "",
-					base64: src.data ?? "",
-				});
-			} else {
-				textParts.push(JSON.stringify(c));
-			}
-		}
-		// Extract non-standard properties from handler results.
-		// Handlers return CallToolResult (MCP type with index signature).
-		// We cast to Record to extract known fields into a clean ToolResult.
-		const r = mcpResult as Record<string, unknown>;
-
-		const result: ToolResult = {
-			content: textParts.join("\n"),
-			isError: mcpResult.isError ?? false,
-		};
-		if (r.isImage || mcpImages.length > 0) result.isImage = true;
-		if (r.cwd) result.cwd = r.cwd as string;
-		if (r.backgroundId) result.backgroundId = r.backgroundId as string;
-		if (r.backgroundCommand)
-			result.backgroundCommand = r.backgroundCommand as string;
-		if (r.imageData) result.imageData = r.imageData as string;
-		if (r.mediaType) result.mediaType = r.mediaType as string;
-		if (mcpImages.length > 0) result.mcpImages = mcpImages;
-		const consumedIds = r.consumedMessageIds as string[] | undefined;
-		if (consumedIds?.length) result.consumedMessageIds = consumedIds;
-		const consumedMsgs = r.consumedQueueMessages as QueueMessage[] | undefined;
-		if (consumedMsgs?.length) result.consumedQueueMessages = consumedMsgs;
-		if (r.pending) result.pending = r.pending as PendingState;
-		if (r.formattedQueueMessages)
-			result.formattedQueueMessages = r.formattedQueueMessages as string;
-		return result;
-	} catch (e) {
-		return {
-			content: `Tool error (${toolName}): ${e instanceof Error ? e.message : String(e)}`,
-			isError: true,
-		};
-	}
-}
-
-// ── Queue image extraction ──
-
-/**
- * Extract images from queue messages in Anthropic format (base64 image blocks).
- */
-export function extractQueueImages(msgs: QueueMessage[]): Array<{
-	type: "image";
-	source: {
-		type: "base64";
-		media_type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-		data: string;
-	};
-}> {
-	type ImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-	const blocks: Array<{
-		type: "image";
-		source: { type: "base64"; media_type: ImageMediaType; data: string };
-	}> = [];
-	for (const msg of msgs) {
-		if (msg.source === "user" && msg.images) {
-			for (const img of msg.images) {
-				blocks.push({
-					type: "image",
-					source: {
-						type: "base64",
-						media_type: img.mediaType as ImageMediaType,
-						data: img.base64,
-					},
-				});
-			}
-		}
-	}
-	return blocks;
-}
-
-/**
- * Extract images from queue messages in OpenAI format (image_url parts with data URIs).
- */
-export function extractQueueImageParts(
-	msgs: QueueMessage[],
-): Array<{ type: "image_url"; image_url: { url: string; detail: "auto" } }> {
-	const parts: Array<{
-		type: "image_url";
-		image_url: { url: string; detail: "auto" };
-	}> = [];
-	for (const msg of msgs) {
-		if (msg.source === "user" && msg.images) {
-			for (const img of msg.images) {
-				parts.push({
-					type: "image_url",
-					image_url: {
-						url: `data:${img.mediaType};base64,${img.base64}`,
-						detail: "auto",
-					},
-				});
-			}
-		}
-	}
-	return parts;
-}
 
 // ── Implicit yield (end_turn with queue) ──
 
@@ -288,90 +119,7 @@ async function* handleImplicitYield(
 	}
 }
 
-/**
- * Format queue messages with headers extracted to message level.
- * For user messages: header placed before raw content (not via formatQueueMessage which embeds header).
- * For task_messages with header: header placed before the XML-formatted content (sans header).
- * Other messages: formatted normally via formatQueueMessage.
- */
-function formatQueueMessagesWithHeaders(msgs: QueueMessage[]): string {
-	const parts: string[] = [];
-	for (const msg of msgs) {
-		if (msg.source === "user" && msg.header) {
-			parts.push(msg.header);
-			parts.push(msg.content);
-		} else if (msg.source === "task_message" && msg.header) {
-			parts.push(msg.header);
-			// Format without header to avoid duplication (formatQueueMessage includes header)
-			const stripped = { ...msg, header: undefined };
-			parts.push(formatQueueMessage(stripped));
-		} else {
-			parts.push(formatQueueMessage(msg));
-		}
-	}
-	return parts.join("\n\n");
-}
-
-// ── Cancellation point queue drain ──
-
-/**
- * Drain queue at cancellation point (between tool execution and next API call).
- * Returns the queue messages and formatted text, or null if nothing to drain.
- */
-function drainQueueAtCancellationPoint(queue: MessageQueue): {
-	messages: QueueMessage[];
-	formatted: string;
-	manualCompactRequested: boolean;
-} | null {
-	if (queue.pending <= 0) return null;
-
-	const queueMsgs = queue.drain();
-	const manualCompactRequested = queueMsgs.some((m) => m.source === "compact");
-	const nonCompactMsgs = queueMsgs.filter((m) => m.source !== "compact");
-	if (nonCompactMsgs.length === 0) {
-		return { messages: [], formatted: "", manualCompactRequested };
-	}
-
-	const formatted = nonCompactMsgs.map(formatQueueMessage).join("\n");
-	return { messages: nonCompactMsgs, formatted, manualCompactRequested };
-}
-
 // ── Event emission helpers ──
-
-/**
- * Emit queue events and messages_consumed event via the emit callback.
- * Handles the two-phase message lifecycle: user messages with IDs are already
- * written at send time — just track their IDs. Other messages get converted.
- */
-function recordQueueEvents(
-	emit: (event: Event) => void,
-	queueMsgs: QueueMessage[],
-	additionalConsumedIds?: string[],
-	taskId = "",
-): void {
-	const consumedIds: string[] = [...(additionalConsumedIds ?? [])];
-
-	for (const msg of queueMsgs) {
-		if (msg.source === "user" && msg.id) {
-			// message already written to JSONL at send time — don't duplicate
-			consumedIds.push(msg.id);
-		} else {
-			const evt = queueMessageToEvent(msg, taskId);
-			const evtId = (evt as { id?: string }).id;
-			if (evtId) consumedIds.push(evtId);
-			emit(evt);
-		}
-	}
-
-	if (consumedIds.length > 0) {
-		emit({
-			type: "messages_consumed",
-			messageIds: consumedIds,
-			taskId,
-			ts: Date.now(),
-		});
-	}
-}
 
 /**
  * Collect images for the UI tool_result event from execution result.
@@ -496,50 +244,6 @@ function buildToolResultEvents(
 	}
 
 	return toolEvents;
-}
-
-// ── Budget check ──
-
-/**
- * Check budget and inject warnings at 80% and 100% thresholds.
- * Returns warning events and the warning text to inject, if any.
- */
-function checkBudget(
-	budgetUsd: number,
-	runningCost: number,
-): { warning: string; ratio: number } | null {
-	const ratio = runningCost / budgetUsd;
-	if (ratio >= 1.0) {
-		return {
-			warning: `⚠️ Budget exceeded (${runningCost.toFixed(4)} / ${budgetUsd.toFixed(2)} budget). Call done() now.`,
-			ratio,
-		};
-	}
-	if (ratio >= 0.8) {
-		return {
-			warning: `⚠️ Warning: task has used ${Math.round(ratio * 100)}% of its ${budgetUsd.toFixed(2)} budget (${runningCost.toFixed(4)} spent). Wrap up soon.`,
-			ratio,
-		};
-	}
-	return null;
-}
-
-/**
- * Emit a budget warning event.
- */
-function recordBudgetWarning(
-	emit: ((event: Event) => void) | undefined,
-	warning: string,
-	taskId = "",
-): void {
-	if (emit) {
-		emit({
-			type: "budget_warning",
-			warning,
-			taskId,
-			ts: Date.now(),
-		});
-	}
 }
 
 // ── Unified Provider Adapter Interface ──
@@ -691,6 +395,9 @@ export interface ProviderAdapter {
 		totalCacheReadTokens: number;
 	}): AgentResult;
 }
+
+// ── Import ToolResult type for use in this file ──
+import type { ToolResult } from "./shared-types.ts";
 
 /** Default buildResult — used when adapter doesn't override. */
 function defaultBuildResult(params: {
