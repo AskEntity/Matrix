@@ -380,7 +380,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	};
 }
 
-const ORCHESTRATOR_SYSTEM_PROMPT = buildSystemPrompt(true);
+const ORCHESTRATOR_SYSTEM_PROMPT = buildSystemPrompt();
 
 // Only start the server when run directly, not when imported for testing.
 if (import.meta.main) {
