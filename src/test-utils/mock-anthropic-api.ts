@@ -1285,6 +1285,121 @@ export class ValidatingMockAPI {
 		return this.capturedVars;
 	}
 
+	/**
+	 * Validate that a forked child's pre-fork messages are an exact prefix
+	 * of the source agent's messages at fork time.
+	 *
+	 * For fork-self: sourceSessionId is the parent, childSessionId is the forked child.
+	 * For fork-other: sourceSessionId is the closed task, childSessionId is the new task.
+	 *
+	 * Returns the number of matching prefix messages, or throws MockValidationError on mismatch.
+	 */
+	validateForkPrefix(
+		sourceSessionId: string,
+		childSessionId: string,
+	): number {
+		const sourceKey = `session:${sourceSessionId}`;
+		const childKey = `session:${childSessionId}`;
+
+		// Find the source's last request before the child's first request
+		const childFirstIdx = this.requestHistory.findIndex(
+			(r) =>
+				this.getConversationKey(r.messages, r.sessionId) === childKey,
+		);
+		if (childFirstIdx === -1) {
+			throw new MockValidationError(
+				`validateForkPrefix: no requests found for child session ${childSessionId}`,
+			);
+		}
+
+		// Find the source request whose response included fork_task_context.
+		// That response's tool_result is in the NEXT source request's messages.
+		// The next source request after fork = the one with the fork tool_result.
+		// Its messages ARE the fork-point snapshot (all pre-fork messages + fork turn).
+		let forkResultRequest: RequestRecord | null = null;
+		for (let i = 0; i < childFirstIdx; i++) {
+			const req = this.requestHistory[i];
+			if (
+				!req ||
+				this.getConversationKey(req.messages, req.sessionId) !== sourceKey
+			)
+				continue;
+
+			// Check if this request's user messages contain a fork tool_result
+			// ("You are the PARENT")
+			const hasForkResult = req.messages.some((m) => {
+				if (m.role !== "user" || !Array.isArray(m.content)) return false;
+				return (m.content as Array<{ type: string; content?: string }>).some(
+					(b) =>
+						b.type === "tool_result" &&
+						b.content?.includes("You are the PARENT"),
+				);
+			});
+			if (hasForkResult) {
+				forkResultRequest = req;
+				break;
+			}
+		}
+
+		// The fork-point messages are the previous source request (before fork result).
+		// The fork tool_result request has messages = pre-fork + fork assistant + fork result.
+		// The child's first request should match pre-fork + fork assistant + child's fork result.
+		// Use the fork result request — they share everything except the last user message.
+		let sourceMessages: MessageParam[];
+		if (forkResultRequest) {
+			sourceMessages = forkResultRequest.messages;
+		} else {
+			// Fallback: use the last source request before child
+			let fallback: RequestRecord | null = null;
+			for (let i = childFirstIdx - 1; i >= 0; i--) {
+				const req = this.requestHistory[i];
+				if (
+					req &&
+					this.getConversationKey(req.messages, req.sessionId) === sourceKey
+				) {
+					fallback = req;
+					break;
+				}
+			}
+			if (!fallback) {
+				throw new MockValidationError(
+					`validateForkPrefix: no source requests found for session ${sourceSessionId}`,
+				);
+			}
+			sourceMessages = fallback.messages;
+		}
+		const childMessages = this.requestHistory[childFirstIdx]!.messages;
+
+		// The child should have the source's messages as a prefix, followed by the
+		// fork tool_result (with "You are the CHILD") and any additional messages.
+		// The fork point is where they diverge — the user message containing the fork
+		// tool_result will differ (parent has "PARENT", child has "CHILD").
+		let matchCount = 0;
+		const minLen = Math.min(sourceMessages.length, childMessages.length);
+		for (let i = 0; i < minLen; i++) {
+			if (deepEqualMessage(sourceMessages[i], childMessages[i])) {
+				matchCount++;
+			} else {
+				break;
+			}
+		}
+
+		// At minimum, the pre-fork messages should match. The fork divergence point
+		// should be the LAST message in the source (the one with the fork tool_result).
+		// So matchCount should be sourceMessages.length - 1 (everything except the
+		// last user message which has parent vs child fork result).
+		if (matchCount < sourceMessages.length - 1) {
+			const divergeIdx = matchCount;
+			throw new MockValidationError(
+				`Fork prefix mismatch at message index ${divergeIdx}.\n` +
+					`Source (${sourceSessionId}): ${JSON.stringify(sourceMessages[divergeIdx], abbreviateContent, 2)}\n` +
+					`Child  (${childSessionId}): ${JSON.stringify(childMessages[divergeIdx], abbreviateContent, 2)}`,
+			);
+		}
+
+		return matchCount;
+	}
+
 	/** Reset state between tests. */
 	reset(): void {
 		this.requestHistory = [];

@@ -5371,6 +5371,118 @@ describe("Integration: fork prefix consistency", () => {
 		const status = await waitForDone(ctx, 15000);
 		expect(status).toBe("passed");
 	}, 30000);
+
+	test("Cross-fork prefix: forked child's pre-fork messages exactly match source's", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Child: simple done
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Forked child reporting." },
+				{
+					type: "tool_use",
+					name: "mcp__opengraft__done",
+					input: { status: "passed", summary: "child done" },
+				},
+			],
+		});
+
+		// Parent: bash work → create → fork → send → yield → done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Doing work before fork." },
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__bash",
+							input: { command: "echo PRE_FORK_WORK" },
+						},
+					],
+				},
+				{
+					assert: [
+						{ block: 0, type: "tool_result", contains: "PRE_FORK_WORK" },
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__create_task",
+							input: {
+								title: "Fork Target",
+								description: "Cross-fork prefix test",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+								rootId: 'regex:"parentId":\\s*"([^"]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__fork_task_context",
+							input: { sourceTaskId: "$rootId", targetTaskId: "$childId" },
+						},
+					],
+				},
+				{
+					assert: [
+						{ block: 0, type: "tool_result", contains: "You are the PARENT" },
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Go",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "tool_use", name: "mcp__opengraft__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__opengraft__done",
+							input: { status: "passed", summary: "fork prefix validated" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+		const status = await waitForDone(ctx, 30000);
+		expect(status).toBe("passed");
+
+		// Use validateForkPrefix to check cross-conversation prefix consistency
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const childId = tracker.get(rootNodeId)!.children![0]!;
+
+		const matchCount = ctx.mockAPI.validateForkPrefix(rootNodeId, childId);
+		// Pre-fork messages should all match (everything before the fork tool_result)
+		expect(matchCount).toBeGreaterThanOrEqual(3);
+	}, 45000);
 });
 
 // ── Race condition: message near done() ──
