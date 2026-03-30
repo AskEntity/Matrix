@@ -447,6 +447,13 @@ The following backward compat code has been removed — old JSONL and tree.json 
 - `BuiltinToolResult` in definitions.ts is now a local interface (not imported). Keeps MCP Array content format + index signature for CallToolResult compatibility. Only used by built-in tool handlers.
 - `mcpImages` field moved from ToolExecResult into ToolResult (was missing from InternalToolResult).
 
+## Phase 2E: AgentResult Cleanup
+
+- `success: boolean` removed from AgentResult — use `exitReason` instead
+- `costUsd`, `turns`, `sessionId` are now required fields (no more optional chaining)
+- Mock providers in tests must provide all required fields: `{ exitReason, output, costUsd: 0, turns: 0, sessionId: "mock" }`
+- Old `expect(x.success).toBe(true)` mapped to `exitReason !== "done_failed"`, NOT to `exitReason === "done_passed"`. Mocks returning "interrupted" had `success: true` because success meant "not failed". Use `.not.toBe("done_failed")` for tests that just want to confirm no failure.
+
 ## Phase 2F: TaskNode costUsd/editedBy Required
 
 - `costUsd: number` (was optional) — default 0. `createNode` sets it, `load()` backfills via `??= 0`.
