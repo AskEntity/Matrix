@@ -13,7 +13,10 @@ import { McpClientManager } from "../mcp-client.ts";
 import type { QueueImage, QueueMessage } from "../message-queue.ts";
 import { MessageQueue } from "../message-queue.ts";
 import { createOrchestratorTools } from "../orchestrator-tools.ts";
-
+import {
+	createClarifyResponse,
+	createUserMessage,
+} from "../queue-message-factory.ts";
 import { buildSystemPrompt, type SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
@@ -24,7 +27,6 @@ import {
 	createBuiltinTools,
 } from "../tools/index.ts";
 import type { AgentResult, TaskSession } from "../types.ts";
-import { ulid } from "../ulid.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
 import {
@@ -96,22 +98,13 @@ function prepareAgentMessage(
 	const header = memory
 		? `Working directory: ${projectPath}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${memory}`
 		: `Working directory: ${projectPath}`;
-	const msgId = ulid();
-	const ts = Date.now();
-	const msg: QueueMessage = {
-		source: "user",
-		id: msgId,
-		ts,
-		content,
-		...(images?.length ? { images } : {}),
-		header,
-	};
+	const msg = createUserMessage(content, { images, header });
 	const event: Event = {
 		type: "message",
-		id: msgId,
+		id: msg.id,
 		taskId,
 		body: msg,
-		ts,
+		ts: msg.ts,
 	};
 	return { msg, event };
 }
@@ -1120,13 +1113,7 @@ export async function handleInjectMessage(
 	// Resume agents already have context from their JSONL session.
 	let msg: QueueMessage;
 	if (shouldResume) {
-		msg = {
-			source: "user",
-			id: ulid(),
-			ts: Date.now(),
-			content: message,
-			...(images?.length ? { images } : {}),
-		};
+		msg = createUserMessage(message, { images });
 	} else {
 		msg = prepareAgentMessage(project.path, rootNodeId, message, images).msg;
 	}
@@ -1164,12 +1151,7 @@ export async function handleClarifyResponse(
 	}
 
 	// Single delivery path — handles JSONL + queue + auto-launch
-	const clarifyMsg: QueueMessage = {
-		source: "clarify_response",
-		id: ulid(),
-		ts: Date.now(),
-		answer,
-	};
+	const clarifyMsg = createClarifyResponse(answer);
 	await deliverMessage(ctx, project, taskId, clarifyMsg);
 
 	removePendingClarification(ctx, projectId, taskId, clarificationId);

@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessageQueue } from "../message-queue.ts";
+import { createBackgroundComplete } from "../queue-message-factory.ts";
 import { ulid } from "../ulid.ts";
 
 // ── Background Process Manager ──
@@ -513,17 +514,16 @@ export async function executeBashWithTimeout(
 				// Notify via queue with content when small
 				if (queue) {
 					try {
-						queue.enqueue({
-							source: "background_complete",
-							id: ulid(),
-							ts: Date.now(),
-							commandId: bgId,
-							command,
-							exitCode,
-							durationMs: Date.now() - startTime,
-							stdout: result.stdout || undefined,
-							stderr: result.stderr || undefined,
-						});
+						queue.enqueue(
+							createBackgroundComplete({
+								commandId: bgId,
+								command,
+								exitCode,
+								durationMs: Date.now() - startTime,
+								stdout: result.stdout || undefined,
+								stderr: result.stderr || undefined,
+							}),
+						);
 					} catch {
 						// Queue may be closed
 					}
@@ -647,17 +647,16 @@ export async function executeBashWithTimeout(
 
 			if (queue) {
 				try {
-					queue.enqueue({
-						source: "background_complete",
-						id: ulid(),
-						ts: Date.now(),
-						commandId: bgId,
-						command,
-						exitCode,
-						durationMs: Date.now() - startTime,
-						stdout: result.stdout || undefined,
-						stderr: result.stderr || undefined,
-					});
+					queue.enqueue(
+						createBackgroundComplete({
+							commandId: bgId,
+							command,
+							exitCode,
+							durationMs: Date.now() - startTime,
+							stdout: result.stdout || undefined,
+							stderr: result.stderr || undefined,
+						}),
+					);
 				} catch {
 					// Queue may be closed
 				}

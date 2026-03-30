@@ -11,6 +11,13 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { Event } from "./events.ts";
 import type { QueueMessage } from "./message-queue.ts";
+import {
+	createClarifyResponse,
+	createCrossProjectMessage,
+	createTaskComplete,
+	createTaskMessage,
+	createTreeChange,
+} from "./queue-message-factory.ts";
 
 import type { PendingState } from "./shared-types.ts";
 import type { TaskTracker } from "./task-tracker.ts";
@@ -24,7 +31,7 @@ import {
 	slugify,
 } from "./task-utils.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
-import { ulid } from "./ulid.ts";
+
 import { WorktreeManager } from "./worktree-manager.ts";
 
 /**
@@ -205,12 +212,7 @@ export function createOrchestratorTools(
 					});
 					const synthesized: QueueMessage[] = Array.from(
 						{ length: pendingClarifications },
-						() => ({
-							source: "clarify_response" as const,
-							id: ulid(),
-							ts: Date.now(),
-							answer: timeoutMsg,
-						}),
+						() => createClarifyResponse(timeoutMsg),
 					);
 					pendingClarifications = 0;
 					all = [...synthesized, ...queue.drain()];
@@ -711,14 +713,7 @@ export function createOrchestratorTools(
 						if (targetNode?.session?.queue) {
 							try {
 								targetNode.session.queue.enqueue(
-									{
-										source: "tree_change",
-										id: ulid(),
-										ts: Date.now(),
-										action: "updated",
-										nodeId: args.taskId,
-										title: targetNode.title,
-									},
+									createTreeChange("updated", args.taskId, targetNode.title),
 									{ quiet: true },
 								);
 							} catch {
@@ -848,16 +843,14 @@ export function createOrchestratorTools(
 					const taskTitle = currentNode?.title ?? "unknown";
 
 					try {
-						parentQueue.enqueue({
-							source: "task_message",
-							id: ulid(),
-							ts: Date.now(),
-							fromTaskId: currentTaskId ?? "unknown",
-							fromTitle: taskTitle,
-							title: args.title,
-							content: args.message,
-							...(args.requestReply ? { requestReply: true } : {}),
-						});
+						parentQueue.enqueue(
+							createTaskMessage(
+								currentTaskId ?? "unknown",
+								taskTitle,
+								args.message,
+								{ title: args.title, requestReply: args.requestReply },
+							),
+						);
 						return {
 							content: [
 								{
@@ -940,16 +933,15 @@ export function createOrchestratorTools(
 					// Deliver message via unified path: persist → enqueue/launch
 					// The message is NOT included in the launch prompt — it arrives
 					// via queue drain of persisted messages (exactly-once delivery).
-					const queueMessage: QueueMessage = {
-						source: "task_message",
-						id: ulid(),
-						ts: Date.now(),
-						fromTaskId: currentTaskId ?? "unknown",
-						fromTitle: currentNode?.title ?? "unknown",
-						content: args.message,
-						...(args.requestReply ? { requestReply: true } : {}),
-						...(header ? { header } : {}),
-					};
+					const queueMessage = createTaskMessage(
+						currentTaskId ?? "unknown",
+						currentNode?.title ?? "unknown",
+						args.message,
+						{
+							requestReply: args.requestReply,
+							header: header ?? undefined,
+						},
+					);
 
 					if (lifecycleDeps?.deliverMessage) {
 						await lifecycleDeps.deliverMessage(args.taskId, queueMessage);
@@ -1397,14 +1389,13 @@ export function createOrchestratorTools(
 					: undefined;
 				if (targetQueue) {
 					try {
-						targetQueue.enqueue({
-							source: "cross_project",
-							id: ulid(),
-							ts: Date.now(),
-							fromProjectId,
-							fromProjectName,
-							content: args.message,
-						});
+						targetQueue.enqueue(
+							createCrossProjectMessage(
+								fromProjectId,
+								fromProjectName,
+								args.message,
+							),
+						);
 						return {
 							content: [
 								{
@@ -1625,15 +1616,12 @@ export function createOrchestratorTools(
 				if (currentTaskId && depth > 0 && lifecycleDeps?.deliverMessage) {
 					const node = tracker.get(currentTaskId);
 					if (node?.parentId) {
-						const completionMsg: QueueMessage = {
-							source: "task_complete",
-							id: ulid(),
-							ts: Date.now(),
-							taskId: currentTaskId,
-							title: node.title ?? "unknown",
-							success: args.status === "passed",
-							output: args.summary.slice(0, 2000),
-						};
+						const completionMsg = createTaskComplete(
+							currentTaskId,
+							node.title ?? "unknown",
+							args.status === "passed",
+							args.summary.slice(0, 2000),
+						);
 						lifecycleDeps
 							.deliverMessage(node.parentId, completionMsg)
 							.catch((e) => {

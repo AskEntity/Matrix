@@ -1,11 +1,15 @@
 import { join } from "node:path";
 import type { Hono } from "hono";
-import type { QueueImage, QueueMessage } from "../../message-queue.ts";
-
+import type { QueueImage } from "../../message-queue.ts";
+import {
+	createTaskMessage,
+	createTreeChange,
+	createUserMessage,
+	createUserMessageForwarded,
+} from "../../queue-message-factory.ts";
 import type { SystemPrompt } from "../../system-prompts.ts";
 import { buildTaskPrompt, slugify } from "../../task-utils.ts";
 import type { TaskStatus } from "../../types.ts";
-import { ulid } from "../../ulid.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
 	deliverMessage,
@@ -55,23 +59,9 @@ async function notifyParentChain(
 			content = `User sent a message to child task '${taskTitle}' (${taskId}): ${messageContent}`;
 		}
 
-		const notification: QueueMessage = wasResumed
-			? {
-					source: "task_message",
-					id: ulid(),
-					ts: Date.now(),
-					fromTaskId: taskId,
-					fromTitle: taskTitle,
-					content,
-				}
-			: {
-					source: "user_message_forwarded",
-					id: ulid(),
-					ts: Date.now(),
-					fromTaskId: taskId,
-					fromTitle: taskTitle,
-					content,
-				};
+		const notification = wasResumed
+			? createTaskMessage(taskId, taskTitle, content)
+			: createUserMessageForwarded(taskId, taskTitle, content);
 
 		// Quiet delivery — don't auto-launch stopped agents for notifications
 		await deliverMessage(ctx, project, currentId, notification, {
@@ -97,14 +87,7 @@ function notifyTreeChange(
 
 	// For "updated" actions, also notify the modified node itself.
 	if (action === "updated") {
-		const msg: QueueMessage = {
-			source: "tree_change",
-			id: ulid(),
-			ts: Date.now(),
-			action,
-			nodeId,
-			...(title ? { title } : {}),
-		};
+		const msg = createTreeChange(action, nodeId, title);
 		deliverMessage(ctx, project, nodeId, msg, { quiet: true });
 	}
 
@@ -114,14 +97,7 @@ function notifyTreeChange(
 	while (currentId) {
 		const ancestor = tracker.get(currentId);
 		if (!ancestor) break;
-		const msg: QueueMessage = {
-			source: "tree_change",
-			id: ulid(),
-			ts: Date.now(),
-			action,
-			nodeId,
-			...(title ? { title } : {}),
-		};
+		const msg = createTreeChange(action, nodeId, title);
 		deliverMessage(ctx, project, currentId, msg, { quiet: true });
 		if (!ancestor.parentId) break;
 		currentId = ancestor.parentId;
@@ -297,14 +273,11 @@ export function registerTaskRoutes(
 					ctx,
 					project,
 					node.parentId,
-					{
-						source: "task_message",
-						id: ulid(),
-						ts: Date.now(),
-						fromTaskId: nodeId,
-						fromTitle: node.title,
-						content: `User continued child task "${node.title}" (${nodeId}).`,
-					},
+					createTaskMessage(
+						nodeId,
+						node.title,
+						`User continued child task "${node.title}" (${nodeId}).`,
+					),
 					{ quiet: true },
 				).catch(() => {
 					/* delivery may fail if no project */
@@ -333,15 +306,12 @@ export function registerTaskRoutes(
 				? body.message
 				: "Continue working. Pick up where you left off and complete the task.";
 			const parentNode = node.parentId ? tracker.get(node.parentId) : undefined;
-			const continueMsg: QueueMessage = {
-				source: "task_message",
-				id: ulid(),
-				ts: Date.now(),
-				fromTaskId: parentNode?.id ?? "",
-				fromTitle: parentNode?.title ?? "User",
+			const continueMsg = createTaskMessage(
+				parentNode?.id ?? "",
+				parentNode?.title ?? "User",
 				content,
-				header,
-			};
+				{ header },
+			);
 			emitEvent(ctx, project.id, {
 				type: "message",
 				id: continueMsg.id,
@@ -385,15 +355,12 @@ export function registerTaskRoutes(
 				const parentNode2 = node.parentId
 					? tracker.get(node.parentId)
 					: undefined;
-				const continueMsg2: QueueMessage = {
-					source: "task_message",
-					id: ulid(),
-					ts: Date.now(),
-					fromTaskId: parentNode2?.id ?? "",
-					fromTitle: parentNode2?.title ?? "User",
+				const continueMsg2 = createTaskMessage(
+					parentNode2?.id ?? "",
+					parentNode2?.title ?? "User",
 					content,
-					header,
-				};
+					{ header },
+				);
 				emitEvent(ctx, project.id, {
 					type: "message",
 					id: continueMsg2.id,
@@ -472,8 +439,6 @@ export function registerTaskRoutes(
 			// Delete event JSONL files
 			eventStore.clear(n.id);
 		}
-
-
 
 		tracker.remove(nodeId);
 		await tracker.save();
@@ -599,21 +564,14 @@ export function registerTaskRoutes(
 		const taskTitle = node?.title ?? nodeId;
 		const statusBeforeDelivery = node?.status;
 
-		const msgId = ulid();
-		const ts = Date.now();
-
 		// Phase 1 of two-phase lifecycle: write + broadcast message at send time.
 		// Frontend derives pending state from message events without matching messages_consumed.
-		// CRITICAL: body must include `id: msgId` so findUnconsumedMessages can track it
+		// CRITICAL: body must include `id` so findUnconsumedMessages can track it
 		// for dedup against the persistent queue copy. Without it, the message gets
 		// loaded from BOTH JSONL (unconsumed) and persistent queue on resume → duplication.
-		const msg: QueueMessage = {
-			source: "user",
-			id: msgId,
-			ts,
-			content,
-			...(body.images?.length ? { images: body.images } : {}),
-		};
+		const msg = createUserMessage(content, {
+			images: body.images,
+		});
 		// deliverMessage is the SOLE path — handles JSONL write + queue delivery.
 		await deliverMessage(ctx, project, nodeId, msg);
 

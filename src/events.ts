@@ -1,7 +1,7 @@
 import type { QueueMessage } from "./message-queue.ts";
+import { createBackgroundComplete } from "./queue-message-factory.ts";
 import type { EventImageData, PendingState } from "./shared-types.ts";
 import { TOOL_YIELD } from "./tool-names.ts";
-import { ulid } from "./ulid.ts";
 
 export type { EventImageData, PendingState } from "./shared-types.ts";
 
@@ -515,24 +515,20 @@ export function findOrphanedBackgroundProcesses(
 	const orphans: Event[] = [];
 	for (const [bgId, info] of bgProcesses) {
 		if (!completedIds.has(bgId)) {
-			const msgId = ulid();
-			const ts = Date.now();
+			const body = createBackgroundComplete({
+				commandId: bgId,
+				command: info.command,
+				exitCode: null,
+				durationMs: 0,
+				stdout: "",
+				stderr: "Background process interrupted by daemon restart",
+			});
 			orphans.push({
 				type: "message",
-				id: msgId,
+				id: body.id,
 				taskId,
-				body: {
-					source: "background_complete",
-					id: msgId,
-					ts,
-					commandId: bgId,
-					command: info.command,
-					exitCode: null,
-					durationMs: 0,
-					stdout: "",
-					stderr: "Background process interrupted by daemon restart",
-				},
-				ts,
+				body,
+				ts: body.ts,
 			});
 		}
 	}
