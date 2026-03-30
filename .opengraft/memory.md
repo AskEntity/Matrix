@@ -481,3 +481,13 @@ Records `tools`, `systemStable`, `systemVariable` for the session segment.
 
 **Key invariant**: `QueueMessage.ts` = `Event.ts` = timestamp used in `[HH:MM:SS]`. All three are the same value, set once at message creation. Never use `Date.now()` at format time.
 
+## Test-is-Golden Philosophy
+
+**Test is golden. Not spec, not architecture.** Tests are the single source of truth for system behavior. Supersedes "purpose is golden, not code" — purpose is expressed AS tests.
+
+- Bottom-up: decide what behavior you want (write tests), then find simplest architecture that passes them
+- Architecture serves tests — question it freely ("is there a simpler design that passes these tests?")
+- Reject spec-driven development: spec is natural language with interpretation gaps, tests can't be interpreted — only satisfied or not
+- System prompt `## Test is Golden` section (was `## Test Quality`) contains the full philosophy
+- This principle applies to ALL projects using OpenGraft, not just OpenGraft itself
+
