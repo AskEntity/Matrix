@@ -1002,15 +1002,19 @@ export function createOrchestratorTools(
 					};
 				}
 
-				try {
-					// Close running agent if active
-					const closeNode = tracker.get(args.taskId);
-					const activeQueueClose = closeNode?.session?.queue;
-					if (activeQueueClose) {
-						closeNode.session = undefined;
-						activeQueueClose.close();
-					}
+				if (node.status === "in_progress") {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "Error: Cannot close a running task. Stop it first or wait for done().",
+							},
+						],
+						isError: true,
+					};
+				}
 
+				try {
 					// Clean up worktree + branch if they exist
 					if (node.worktreePath && node.branch) {
 						const slug = slugify(node.title);
