@@ -1500,6 +1500,18 @@ select {
 	opacity: 0.6;
 }
 
+.og-lazy-sentinel {
+	height: 1px;
+	width: 100%;
+}
+.og-lazy-more-indicator {
+	text-align: center;
+	padding: 8px 14px;
+	font-size: 11px;
+	color: var(--text-faint);
+	font-family: var(--font-mono);
+}
+
 .og-thinking-indicator {
 	padding: 8px 16px;
 	color: var(--text-muted);

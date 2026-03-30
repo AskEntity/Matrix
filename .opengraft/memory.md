@@ -434,3 +434,8 @@ tool_result is 64-87% of ALL tokens across every session. #1 cost driver.
 **Fork double header**: confirmed ~13K tokens wasted per fork. Fix: check eventStore.has(nodeId) for cold start detection, not just node.session.
 
 **Audit scripts**: src/_token_audit.ts and src/_cache_audit.ts for future analysis.
+
+
+## Activity Log Lazy Rendering
+
+ActivityLog.tsx renders only the last 50 entries by default (RENDER_BATCH = 50). IntersectionObserver on a sentinel div at the top loads more in batches. Search results bypass lazy rendering (all matches shown). renderCount resets on filterTaskId and searchText changes. Scroll position preserved via scrollBottom trick when loading older entries.
