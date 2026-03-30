@@ -497,3 +497,23 @@ Records `tools`, `systemStable`, `systemVariable` for the session segment.
 
 **Known: Prefix violation after double restart** (Restart N test). Resume message from `autoResumeProjects` reconstructs differently on 2nd restart → cache miss. Test runs with prefix validation disabled. Real bug, unfixed.
 
+
+
+## Unified deliverMessage (March 2026)
+
+`deliverMessage` is THE single message delivery path. All external message delivery goes through it:
+1. Write to JSONL (emitEvent — SSE + persistence)
+2. Try queue delivery (if agent running)
+3. Flush JSONL (await — ensures on disk before auto-launch reads)
+4. Auto-launch child (unless `quiet: true`)
+
+Callers must NOT call emitEvent separately for messages — deliverMessage owns that.
+
+`quiet: true` for notifications (tree_change, parent chain) that should not auto-launch stopped agents.
+
+The persistent disk queue (persistent-queue.ts) was removed. JSONL + findUnconsumedMessages is the sole persistence mechanism. No more dual writes, no dedup logic.
+
+## Resume Message JSONL Invariant
+
+Resume messages from autoResumeProjects must be written to JSONL (not just disk). Otherwise messages_consumed references an ID that doesnt exist in the JSONL event index, causing empty interleaved text on reconstruction → prefix mismatch.
+
