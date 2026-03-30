@@ -339,7 +339,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					// Yielding children: provider loop detects pendingYieldToolCall from JSONL.
 					if (node.worktreePath) {
 						console.log(
-							`Auto-resuming ${project.name} child ${node.id.slice(0, 8)} (${isYielding ? "yielding" : "interrupted"})`,
+							`Auto-resuming ${project.name} child ${node.id} (${isYielding ? "yielding" : "interrupted"})`,
 						);
 						// Interrupted children need a resume message — the provider's
 						// initial drain blocks on queue.wait() and won't proceed without one.

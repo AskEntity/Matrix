@@ -1620,7 +1620,7 @@ export function createOrchestratorTools(
 							currentTaskId,
 							node.title ?? "unknown",
 							args.status === "passed",
-							args.summary.slice(0, 2000),
+							args.summary,
 						);
 						lifecycleDeps
 							.deliverMessage(node.parentId, completionMsg)

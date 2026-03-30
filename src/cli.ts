@@ -95,7 +95,7 @@ async function handleList(): Promise<void> {
 
 	for (const p of projects) {
 		const warning = p.pathExists === false ? " ⚠ (path not found)" : "";
-		console.log(`${p.id.slice(0, 8)}  ${p.name}  ${p.path}${warning}`);
+		console.log(`${p.id}  ${p.name}  ${p.path}${warning}`);
 	}
 }
 
@@ -247,7 +247,6 @@ async function handleTasks(args: string[]): Promise<void> {
 		isChild: boolean,
 	): void {
 		const icon = statusEmoji(node.status);
-		const shortId = node.id.slice(0, 8);
 		const title = node.title.padEnd(36).slice(0, 36);
 		const branch = node.branch ?? "";
 		const cost =
@@ -256,7 +255,7 @@ async function handleTasks(args: string[]): Promise<void> {
 				: "";
 		const prefix = isChild ? "↳ " : "  ";
 		console.log(
-			`${indent}${prefix}${icon} ${shortId}  ${title}  ${branch}${cost}`,
+			`${indent}${prefix}${icon} ${node.id}  ${title}  ${branch}${cost}`,
 		);
 
 		if (node.description) {
