@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import {
-	isOpengraftTool,
+	isBuiltinTool,
 	stripMcpPrefix,
 	TOOL_DONE,
 } from "../../src/tool-names.ts";
@@ -43,7 +43,7 @@ export const ToolCard = memo(function ToolCard({
 	const isErr = entry.isError;
 	const isOk = !isErr;
 
-	const isOpengraft = isOpengraftTool(toolName);
+	const isBuiltin = isBuiltinTool(toolName);
 	const titleOnly = isTitleOnlyCard(toolName, toolArgs);
 	const totalContent = argsStr + (resultContent ?? "");
 	const [defaultExpanded] = useState(() =>
@@ -58,23 +58,23 @@ export const ToolCard = memo(function ToolCard({
 		const doneSummary = toolArgs?.summary as string | undefined;
 		const donePassed = doneStatus === "passed";
 		const borderClass = donePassed
-			? "og-tool-card-done-passed"
-			: "og-tool-card-done-failed";
+			? "mxd-tool-card-done-passed"
+			: "mxd-tool-card-done-failed";
 		const doneTaskId = getLogTaskId(entry);
 		const doneTaskTitle = doneTaskId
 			? nodeMap?.get(doneTaskId)?.title
 			: undefined;
 		const doneTitle = `Task ${donePassed ? "Passed" : "Failed"}: ${doneTaskTitle || "Orchestrator"}`;
 		return (
-			<div className="og-log-entry og-event-tool_card">
-				<span className="og-log-time">{formatTime(entry.ts)}</span>
+			<div className="mxd-lmxd-entry mxd-event-tool_card">
+				<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
 				<Card
 					title={`${donePassed ? "✓" : "✗"} ${doneTitle}`}
 					className={borderClass}
 				>
 					{doneSummary ? (
-						<div className="og-tool-card-body">
-							<div className="og-tool-card-result">{doneSummary}</div>
+						<div className="mxd-tool-card-body">
+							<div className="mxd-tool-card-result">{doneSummary}</div>
 						</div>
 					) : null}
 				</Card>
@@ -85,7 +85,7 @@ export const ToolCard = memo(function ToolCard({
 	// Try structured MCP rendering (only for tools with custom card bodies)
 	const shortName = stripMcpPrefix(toolName);
 	const mcpBody =
-		isOpengraft && !titleOnly && MCP_CARD_BODY_TOOLS.has(shortName) ? (
+		isBuiltin && !titleOnly && MCP_CARD_BODY_TOOLS.has(shortName) ? (
 			<McpToolCardBody
 				toolName={toolName}
 				toolArgs={toolArgs}
@@ -100,16 +100,16 @@ export const ToolCard = memo(function ToolCard({
 	const mcpFormatted =
 		isOk && !mcpBody ? formatMcpToolResult(toolName, resultContent, t) : null;
 
-	const statusClass = isErr ? "og-tool-card-err" : "og-tool-card-ok";
-	const accentClass = isOpengraft ? "og-tool-card-mcp" : "";
+	const statusClass = isErr ? "mxd-tool-card-err" : "mxd-tool-card-ok";
+	const accentClass = isBuiltin ? "mxd-tool-card-mcp" : "";
 
 	const hasImages = entry.images && entry.images.length > 0;
 
 	return (
-		<div className="og-log-entry og-event-tool_card">
-			<span className="og-log-time">{formatTime(entry.ts)}</span>
+		<div className="mxd-lmxd-entry mxd-event-tool_card">
+			<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
 			{taskLabel && (
-				<span className="og-log-badge" title={getLogTaskId(entry)}>
+				<span className="mxd-lmxd-badge" title={getLogTaskId(entry)}>
 					{taskLabel}
 				</span>
 			)}
@@ -120,7 +120,7 @@ export const ToolCard = memo(function ToolCard({
 				defaultExpanded={defaultExpanded}
 				statusSlot={
 					!titleOnly && toolName !== TOOL_DONE ? (
-						<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
+						<span className={`mxd-tool-card-status ${isErr ? "err" : "ok"}`}>
 							{isErr ? "✗" : "✓"}
 						</span>
 					) : undefined
@@ -128,19 +128,19 @@ export const ToolCard = memo(function ToolCard({
 			>
 				{!titleOnly ? (
 					<>
-						{mcpBody && <div className="og-tool-card-body">{mcpBody}</div>}
+						{mcpBody && <div className="mxd-tool-card-body">{mcpBody}</div>}
 						{!mcpBody && (
-							<div className="og-tool-card-body">
-								{argsStr && <div className="og-tool-card-args">{argsStr}</div>}
+							<div className="mxd-tool-card-body">
+								{argsStr && <div className="mxd-tool-card-args">{argsStr}</div>}
 								{resultContent && (
-									<div className="og-tool-card-result">
+									<div className="mxd-tool-card-result">
 										{mcpFormatted ?? resultContent}
 									</div>
 								)}
 							</div>
 						)}
 						{hasImages && entry.images && (
-							<div className="og-tool-card-body">
+							<div className="mxd-tool-card-body">
 								<ToolResultImages images={entry.images} />
 							</div>
 						)}

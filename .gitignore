@@ -33,7 +33,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Finder (MacOS) folder config
 .DS_Store
 
-# OpenGraft worktrees (created during task execution)
+# Matrix worktrees (created during task execution)
 .worktrees
 
 # Test project artifacts (from E2E runs)

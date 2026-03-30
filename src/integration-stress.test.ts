@@ -36,8 +36,8 @@ interface TestContext {
 }
 
 async function setupTestContext(): Promise<TestContext> {
-	const dataDir = await mkdtemp(join(tmpdir(), "og-stress-data-"));
-	const projectDir = await mkdtemp(join(tmpdir(), "og-stress-project-"));
+	const dataDir = await mkdtemp(join(tmpdir(), "mxd-stress-data-"));
+	const projectDir = await mkdtemp(join(tmpdir(), "mxd-stress-project-"));
 
 	Bun.spawnSync(["git", "init"], { cwd: projectDir });
 	Bun.spawnSync(["git", "config", "user.email", "test@test.com"], {
@@ -62,16 +62,11 @@ async function setupTestContext(): Promise<TestContext> {
 	// Activate setup hook
 	const hookExample = join(
 		projectDir,
-		".opengraft",
+		".mxd",
 		"hooks",
 		"setup_worktree.sh.example",
 	);
-	const hookActive = join(
-		projectDir,
-		".opengraft",
-		"hooks",
-		"setup_worktree.sh",
-	);
+	const hookActive = join(projectDir, ".mxd", "hooks", "setup_worktree.sh");
 	if (existsSync(hookExample)) {
 		await rename(hookExample, hookActive);
 	}
@@ -198,7 +193,7 @@ describe("Stress: compaction + restart", () => {
 		// Directly test that JSONL with compact_marker behaves correctly.
 		// This verifies the critical invariant: resume from compacted JSONL
 		// only sees events after the last compact_marker.
-		const tmpDir = join(tmpdir(), `og-compact-test-${Date.now()}`);
+		const tmpDir = join(tmpdir(), `mxd-compact-test-${Date.now()}`);
 		const store = new EventStore(tmpDir);
 
 		// Simulate a JSONL with pre-compact events, compact_marker, and post-compact events
@@ -223,7 +218,7 @@ describe("Stress: compaction + restart", () => {
 			},
 			{
 				type: "tool_call" as const,
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc_old",
 				input: { command: "echo old" },
 				taskId: "test",
@@ -231,7 +226,7 @@ describe("Stress: compaction + restart", () => {
 			},
 			{
 				type: "tool_result" as const,
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc_old",
 				content: "old output",
 				isError: false,
@@ -272,7 +267,7 @@ describe("Stress: compaction + restart", () => {
 			},
 			{
 				type: "tool_call" as const,
-				tool: "mcp__opengraft__yield",
+				tool: "mcp__mxd__yield",
 				toolCallId: "tc_yield",
 				input: {},
 				taskId: "test",
@@ -335,7 +330,7 @@ describe("Stress: compaction + restart", () => {
 						{ type: "text", text: "Work." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo A" },
 						},
 					],
@@ -344,7 +339,7 @@ describe("Stress: compaction + restart", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo B" },
 						},
 					],
@@ -353,7 +348,7 @@ describe("Stress: compaction + restart", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo C" },
 						},
 					],
@@ -362,7 +357,7 @@ describe("Stress: compaction + restart", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -415,7 +410,7 @@ describe("Stress: multi-child coordination", () => {
 							{ type: "text", text: `Child ${label} working.` },
 							{
 								type: "tool_use",
-								name: "mcp__opengraft__bash",
+								name: "mcp__mxd__bash",
 								input: { command: `sleep 30` },
 							},
 						],
@@ -426,7 +421,7 @@ describe("Stress: multi-child coordination", () => {
 							{ type: "text", text: `Child ${label} resumed.` },
 							{
 								type: "tool_use",
-								name: "mcp__opengraft__done",
+								name: "mcp__mxd__done",
 								input: {
 									status: "passed",
 									summary: `child ${label} survived restart`,
@@ -446,7 +441,7 @@ describe("Stress: multi-child coordination", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: { title: "Child A", description: "Parallel child A" },
 						},
 					],
@@ -463,7 +458,7 @@ describe("Stress: multi-child coordination", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: { title: "Child B", description: "Parallel child B" },
 						},
 					],
@@ -480,7 +475,7 @@ describe("Stress: multi-child coordination", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: { title: "Child C", description: "Parallel child C" },
 						},
 					],
@@ -498,7 +493,7 @@ describe("Stress: multi-child coordination", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childAId",
 								title: "Start A",
@@ -507,7 +502,7 @@ describe("Stress: multi-child coordination", () => {
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childBId",
 								title: "Start B",
@@ -516,7 +511,7 @@ describe("Stress: multi-child coordination", () => {
 						},
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childCId",
 								title: "Start C",
@@ -531,7 +526,7 @@ describe("Stress: multi-child coordination", () => {
 						{ type: "text", text: "All children launched, yielding." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -549,7 +544,7 @@ describe("Stress: multi-child coordination", () => {
 						{ type: "text", text: "Got some completions, yielding for more." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -560,7 +555,7 @@ describe("Stress: multi-child coordination", () => {
 						{ type: "text", text: "More completions, yielding again." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -571,7 +566,7 @@ describe("Stress: multi-child coordination", () => {
 						{ type: "text", text: "All children done." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "all 3 children completed after restart",
@@ -650,7 +645,7 @@ describe("Stress: multiple messages during yield", () => {
 						{ type: "text", text: "Yielding." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -668,7 +663,7 @@ describe("Stress: multiple messages during yield", () => {
 						{ type: "text", text: "Got msg 1, yielding." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -686,7 +681,7 @@ describe("Stress: multiple messages during yield", () => {
 						{ type: "text", text: "Got msg 2, yielding." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -703,7 +698,7 @@ describe("Stress: multiple messages during yield", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "all 3 messages consumed sequentially",
@@ -771,7 +766,7 @@ describe("Stress: multiple messages during yield", () => {
 						{ type: "text", text: "Yielding." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -782,7 +777,7 @@ describe("Stress: multiple messages during yield", () => {
 						{ type: "text", text: "Got message, yielding." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -793,7 +788,7 @@ describe("Stress: multiple messages during yield", () => {
 						{ type: "text", text: "Finishing." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "message survived",
@@ -875,7 +870,7 @@ describe("Stress: fork + restart", () => {
 						{ type: "text", text: "Forked child working." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "sleep 30" },
 						},
 					],
@@ -886,7 +881,7 @@ describe("Stress: fork + restart", () => {
 						{ type: "text", text: "Forked child resumed." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "forked child survived restart",
@@ -905,7 +900,7 @@ describe("Stress: fork + restart", () => {
 						{ type: "text", text: "Pre-fork work." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo PARENT_PREFORK" },
 						},
 					],
@@ -921,7 +916,7 @@ describe("Stress: fork + restart", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Fork Restart Child",
 								description: "Tests fork + restart",
@@ -944,7 +939,7 @@ describe("Stress: fork + restart", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__fork_task_context",
+							name: "mcp__mxd__fork_task_context",
 							input: {
 								sourceTaskId: "$rootId",
 								targetTaskId: "$childId",
@@ -963,7 +958,7 @@ describe("Stress: fork + restart", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Start",
@@ -976,7 +971,7 @@ describe("Stress: fork + restart", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -987,7 +982,7 @@ describe("Stress: fork + restart", () => {
 						{ type: "text", text: "Fork child completed after restart." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "fork + restart lifecycle complete",
@@ -1048,7 +1043,7 @@ describe("Stress: fork + restart", () => {
 describe("Stress: JSONL corruption recovery", () => {
 	test("CORRUPT1: EventStore.read skips malformed JSON lines", () => {
 		// Create a temp dir with a corrupt JSONL file
-		const tmpDir = join(tmpdir(), `og-corrupt-test-${Date.now()}`);
+		const tmpDir = join(tmpdir(), `mxd-corrupt-test-${Date.now()}`);
 		const store = new EventStore(tmpDir);
 
 		const validEvent1 = JSON.stringify({
@@ -1083,12 +1078,12 @@ describe("Stress: JSONL corruption recovery", () => {
 	});
 
 	test("CORRUPT2: truncated last line (simulates crash during write)", () => {
-		const tmpDir = join(tmpdir(), `og-corrupt-test-${Date.now()}`);
+		const tmpDir = join(tmpdir(), `mxd-corrupt-test-${Date.now()}`);
 		const store = new EventStore(tmpDir);
 
 		const validEvent = JSON.stringify({
 			type: "tool_call",
-			tool: "mcp__opengraft__bash",
+			tool: "mcp__mxd__bash",
 			toolCallId: "tc_1",
 			input: { command: "echo hi" },
 			taskId: "test",
@@ -1096,7 +1091,7 @@ describe("Stress: JSONL corruption recovery", () => {
 		});
 		// Simulate truncated write — last line is incomplete JSON
 		const truncatedEvent =
-			'{"type": "tool_result", "tool": "mcp__opengraft__bash", "toolCa';
+			'{"type": "tool_result", "tool": "mcp__mxd__bash", "toolCa';
 
 		const content = `${validEvent}\n${truncatedEvent}\n`;
 		writeFileSync(join(tmpDir, "truncated.events.jsonl"), content);
@@ -1109,7 +1104,7 @@ describe("Stress: JSONL corruption recovery", () => {
 	});
 
 	test("CORRUPT3: empty JSONL file returns empty array", () => {
-		const tmpDir = join(tmpdir(), `og-corrupt-test-${Date.now()}`);
+		const tmpDir = join(tmpdir(), `mxd-corrupt-test-${Date.now()}`);
 		const store = new EventStore(tmpDir);
 
 		writeFileSync(join(tmpDir, "empty.events.jsonl"), "");
@@ -1121,7 +1116,7 @@ describe("Stress: JSONL corruption recovery", () => {
 	});
 
 	test("CORRUPT4: JSONL with only blank lines returns empty array", () => {
-		const tmpDir = join(tmpdir(), `og-corrupt-test-${Date.now()}`);
+		const tmpDir = join(tmpdir(), `mxd-corrupt-test-${Date.now()}`);
 		const store = new EventStore(tmpDir);
 
 		writeFileSync(join(tmpDir, "blanks.events.jsonl"), "\n\n\n");
@@ -1133,7 +1128,7 @@ describe("Stress: JSONL corruption recovery", () => {
 	});
 
 	test("CORRUPT5: readActive finds correct events after corrupt lines", () => {
-		const tmpDir = join(tmpdir(), `og-corrupt-test-${Date.now()}`);
+		const tmpDir = join(tmpdir(), `mxd-corrupt-test-${Date.now()}`);
 		const store = new EventStore(tmpDir);
 
 		const preCompactEvent = JSON.stringify({
@@ -1197,7 +1192,7 @@ describe("Stress: session lifecycle edge cases", () => {
 						{ type: "text", text: "First work." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo FIRST" },
 						},
 					],
@@ -1213,7 +1208,7 @@ describe("Stress: session lifecycle edge cases", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "first done" },
 						},
 					],
@@ -1224,7 +1219,7 @@ describe("Stress: session lifecycle edge cases", () => {
 						{ type: "text", text: "Second work after wake." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__bash",
+							name: "mcp__mxd__bash",
 							input: { command: "echo SECOND" },
 						},
 					],
@@ -1240,7 +1235,7 @@ describe("Stress: session lifecycle edge cases", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "second done" },
 						},
 					],
@@ -1251,7 +1246,7 @@ describe("Stress: session lifecycle edge cases", () => {
 						{ type: "text", text: "Third work after restart." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: { status: "passed", summary: "third done" },
 						},
 					],
@@ -1293,7 +1288,7 @@ describe("Stress: session lifecycle edge cases", () => {
 				{ type: "text", text: "Post-restart work." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: { status: "passed", summary: "third done" },
 				},
 			],
@@ -1317,7 +1312,7 @@ describe("Stress: session lifecycle edge cases", () => {
 
 		// Count done tool_calls (3 cycles = 3 done calls at minimum)
 		const doneCalls = events.filter(
-			(e) => e.type === "tool_call" && e.tool === "mcp__opengraft__done",
+			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__done",
 		);
 		expect(doneCalls.length).toBeGreaterThanOrEqual(3);
 	}, 45000);
@@ -1335,7 +1330,7 @@ describe("Stress: session lifecycle edge cases", () => {
 					{ type: "text", text: `Step ${i}.` },
 					{
 						type: "tool_use",
-						name: "mcp__opengraft__bash",
+						name: "mcp__mxd__bash",
 						input: { command: `echo STEP_${i}` },
 					},
 				],
@@ -1365,7 +1360,7 @@ describe("Stress: session lifecycle edge cases", () => {
 				{ type: "text", text: "Long running." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__bash",
+					name: "mcp__mxd__bash",
 					input: { command: "sleep 30" },
 				},
 			],
@@ -1377,7 +1372,7 @@ describe("Stress: session lifecycle edge cases", () => {
 				{ type: "text", text: "Resumed after many steps." },
 				{
 					type: "tool_use",
-					name: "mcp__opengraft__done",
+					name: "mcp__mxd__done",
 					input: {
 						status: "passed",
 						summary: "survived many steps + restart",
@@ -1421,7 +1416,7 @@ describe("Stress: session lifecycle edge cases", () => {
 
 		// Should have 9 bash tool_calls (8 echoes + 1 sleep)
 		const bashCalls = events.filter(
-			(e) => e.type === "tool_call" && e.tool === "mcp__opengraft__bash",
+			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__bash",
 		);
 		expect(bashCalls.length).toBe(9);
 	}, 60000);
@@ -1447,7 +1442,7 @@ describe("Stress: concurrent message delivery", () => {
 						{ type: "text", text: "Yielding." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -1457,7 +1452,7 @@ describe("Stress: concurrent message delivery", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "all concurrent messages received",
@@ -1536,7 +1531,7 @@ describe("Stress: child restart edge cases", () => {
 						{ type: "text", text: "Child yielding." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -1547,7 +1542,7 @@ describe("Stress: child restart edge cases", () => {
 						{ type: "text", text: "Child resumed from yield." },
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "child yield restart ok",
@@ -1566,7 +1561,7 @@ describe("Stress: child restart edge cases", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__create_task",
+							name: "mcp__mxd__create_task",
 							input: {
 								title: "Yielding Child",
 								description: "Tests child yield + restart",
@@ -1586,7 +1581,7 @@ describe("Stress: child restart edge cases", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Start",
@@ -1599,7 +1594,7 @@ describe("Stress: child restart edge cases", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -1617,7 +1612,7 @@ describe("Stress: child restart edge cases", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__send_message",
+							name: "mcp__mxd__send_message",
 							input: {
 								taskId: "$childId",
 								title: "Wake up",
@@ -1630,7 +1625,7 @@ describe("Stress: child restart edge cases", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__yield",
+							name: "mcp__mxd__yield",
 							input: {},
 						},
 					],
@@ -1640,7 +1635,7 @@ describe("Stress: child restart edge cases", () => {
 					blocks: [
 						{
 							type: "tool_use",
-							name: "mcp__opengraft__done",
+							name: "mcp__mxd__done",
 							input: {
 								status: "passed",
 								summary: "parent done, child yield restart handled",
@@ -1702,7 +1697,7 @@ describe("Stress: child restart edge cases", () => {
 
 describe("Stress: JSONL atomic operations", () => {
 	test("ATOMIC1: concurrent appends to same session are serialized", async () => {
-		const tmpDir = await mkdtemp(join(tmpdir(), "og-atomic-"));
+		const tmpDir = await mkdtemp(join(tmpdir(), "mxd-atomic-"));
 		const store = new EventStore(tmpDir);
 
 		// Launch 20 concurrent appends — they should all serialize correctly
@@ -1740,7 +1735,7 @@ describe("Stress: JSONL atomic operations", () => {
 	});
 
 	test("ATOMIC2: appendBatch writes all events atomically", async () => {
-		const tmpDir = await mkdtemp(join(tmpdir(), "og-atomic-"));
+		const tmpDir = await mkdtemp(join(tmpdir(), "mxd-atomic-"));
 		const store = new EventStore(tmpDir);
 
 		const batch = Array.from({ length: 10 }, (_, i) => ({
@@ -1766,7 +1761,7 @@ describe("Stress: JSONL atomic operations", () => {
 	});
 
 	test("ATOMIC3: interleaved append and appendBatch don't corrupt", async () => {
-		const tmpDir = await mkdtemp(join(tmpdir(), "og-atomic-"));
+		const tmpDir = await mkdtemp(join(tmpdir(), "mxd-atomic-"));
 		const store = new EventStore(tmpDir);
 
 		// Interleave single appends and batch appends

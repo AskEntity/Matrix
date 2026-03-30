@@ -12,7 +12,7 @@ type Translations = Record<string, string>;
 
 const en: Translations = {
 	// Header
-	"header.title": "OpenGraft",
+	"header.title": "Matrix",
 	"header.connected": "Connected",
 	"header.disconnected": "Disconnected",
 	"header.logout": "Logout",
@@ -190,7 +190,7 @@ const en: Translations = {
 		"Delete all session JSONL files for this project. All agents will start fresh.",
 	"settings.removeProject": "Remove Project",
 	"settings.removeProjectDescription":
-		"Remove this project from OpenGraft. This does not delete any files on disk.",
+		"Remove this project from Matrix. This does not delete any files on disk.",
 
 	// Footer
 	"footer.sendMessage": "Send a message…",
@@ -267,15 +267,15 @@ const en: Translations = {
 	"log.tasks": "tasks",
 
 	// Tool names (MCP)
-	"tools.mcp__opengraft__get_tree": "Get Tree",
-	"tools.mcp__opengraft__create_task": "Create Task",
-	"tools.mcp__opengraft__update_task": "Update Task",
-	"tools.mcp__opengraft__execute_tasks": "Execute Tasks",
-	"tools.mcp__opengraft__yield": "yield",
-	"tools.mcp__opengraft__send_message": "Send Message",
-	"tools.mcp__opengraft__delete_task": "Delete Task",
-	"tools.mcp__opengraft__clarify": "Ask Clarification",
-	"tools.mcp__opengraft__done": "Done",
+	"tools.mcp__mxd__get_tree": "Get Tree",
+	"tools.mcp__mxd__create_task": "Create Task",
+	"tools.mcp__mxd__update_task": "Update Task",
+	"tools.mcp__mxd__execute_tasks": "Execute Tasks",
+	"tools.mcp__mxd__yield": "yield",
+	"tools.mcp__mxd__send_message": "Send Message",
+	"tools.mcp__mxd__delete_task": "Delete Task",
+	"tools.mcp__mxd__clarify": "Ask Clarification",
+	"tools.mcp__mxd__done": "Done",
 
 	// Tool card labels
 	"tool.showMore": "Show more",
@@ -297,7 +297,7 @@ const en: Translations = {
 
 const zh: Translations = {
 	// Header
-	"header.title": "OpenGraft",
+	"header.title": "Matrix",
 	"header.connected": "已连接",
 	"header.disconnected": "未连接",
 	"header.logout": "登出",
@@ -473,7 +473,7 @@ const zh: Translations = {
 		"删除此项目的所有会话 JSONL 文件。所有代理将重新开始。",
 	"settings.removeProject": "移除项目",
 	"settings.removeProjectDescription":
-		"从 OpenGraft 中移除此项目。这不会删除磁盘上的任何文件。",
+		"从 Matrix 中移除此项目。这不会删除磁盘上的任何文件。",
 
 	// Footer
 	"footer.sendMessage": "发送消息…",
@@ -547,15 +547,15 @@ const zh: Translations = {
 	"log.tasks": "个任务",
 
 	// Tool names (MCP)
-	"tools.mcp__opengraft__get_tree": "查看任务树",
-	"tools.mcp__opengraft__create_task": "创建任务",
-	"tools.mcp__opengraft__update_task": "更新任务",
-	"tools.mcp__opengraft__execute_tasks": "执行任务",
-	"tools.mcp__opengraft__yield": "yield",
-	"tools.mcp__opengraft__send_message": "发送消息",
-	"tools.mcp__opengraft__delete_task": "删除任务",
-	"tools.mcp__opengraft__clarify": "请求澄清",
-	"tools.mcp__opengraft__done": "完成",
+	"tools.mcp__mxd__get_tree": "查看任务树",
+	"tools.mcp__mxd__create_task": "创建任务",
+	"tools.mcp__mxd__update_task": "更新任务",
+	"tools.mcp__mxd__execute_tasks": "执行任务",
+	"tools.mcp__mxd__yield": "yield",
+	"tools.mcp__mxd__send_message": "发送消息",
+	"tools.mcp__mxd__delete_task": "删除任务",
+	"tools.mcp__mxd__clarify": "请求澄清",
+	"tools.mcp__mxd__done": "完成",
 
 	// Tool card labels
 	"tool.showMore": "展开",
@@ -579,7 +579,7 @@ const translations: Record<Locale, Translations> = { en, zh };
 
 function getDefaultLocale(): Locale {
 	try {
-		const stored = localStorage.getItem("og-locale");
+		const stored = localStorage.getItem("mxd-locale");
 		if (stored === "en" || stored === "zh") return stored;
 		return navigator.language.startsWith("zh") ? "zh" : "en";
 	} catch {
@@ -607,7 +607,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 	const setLocale = useCallback((l: Locale) => {
 		setLocaleState(l);
 		try {
-			localStorage.setItem("og-locale", l);
+			localStorage.setItem("mxd-locale", l);
 		} catch {
 			// ignore storage errors
 		}

@@ -6,7 +6,7 @@ interface CardProps {
 	title: string | ReactNode;
 	/** Right-aligned detail text in header */
 	detail?: string | ReactNode;
-	/** Additional CSS class on the og-tool-card element (e.g. status/variant classes) */
+	/** Additional CSS class on the mxd-tool-card element (e.g. status/variant classes) */
 	className?: string;
 	/** Whether clicking header toggles body (default: true if children provided) */
 	collapsible?: boolean;
@@ -20,7 +20,7 @@ interface CardProps {
 
 /**
  * Base card component for all activity log entries.
- * Uses existing og-tool-card CSS classes for consistent styling.
+ * Uses existing mxd-tool-card CSS classes for consistent styling.
  */
 export function Card({
 	title,
@@ -36,24 +36,24 @@ export function Card({
 	const [expanded, setExpanded] = useState(defaultExpanded);
 
 	return (
-		<div className={`og-tool-card ${className ?? ""}`}>
+		<div className={`mxd-tool-card ${className ?? ""}`}>
 			{isCollapsible ? (
 				<button
 					type="button"
-					className="og-tool-card-header"
+					className="mxd-tool-card-header"
 					onClick={() => setExpanded(!expanded)}
 				>
-					<span className="og-tool-card-name">{title}</span>
-					{detail && <span className="og-tool-card-detail">{detail}</span>}
+					<span className="mxd-tool-card-name">{title}</span>
+					{detail && <span className="mxd-tool-card-detail">{detail}</span>}
 					{statusSlot}
-					<span className="og-tool-card-toggle">
+					<span className="mxd-tool-card-toggle">
 						<IconChevron size={10} expanded={expanded} />
 					</span>
 				</button>
 			) : (
-				<div className="og-tool-card-header">
-					<span className="og-tool-card-name">{title}</span>
-					{detail && <span className="og-tool-card-detail">{detail}</span>}
+				<div className="mxd-tool-card-header">
+					<span className="mxd-tool-card-name">{title}</span>
+					{detail && <span className="mxd-tool-card-detail">{detail}</span>}
 					{statusSlot}
 				</div>
 			)}

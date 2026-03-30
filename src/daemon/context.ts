@@ -1,5 +1,5 @@
 import type { AgentProvider, AgentSession } from "../agent-provider.ts";
-import type { OpenGraftConfig } from "../config.ts";
+import type { MatrixConfig } from "../config.ts";
 import type { EventStore } from "../event-store.ts";
 import type { ProjectManager } from "../project-manager.ts";
 import type { TaskTracker } from "../task-tracker.ts";
@@ -26,7 +26,7 @@ export interface PendingClarification {
 export interface DaemonConfig {
 	dataDir: string;
 	agentProvider?: AgentProvider;
-	initialConfig?: OpenGraftConfig;
+	initialConfig?: MatrixConfig;
 	globalConfigPath?: string;
 }
 
@@ -47,5 +47,5 @@ export interface DaemonContext {
 	/** Mutable counters/flags */
 	requestCount: number;
 	startupReady: boolean;
-	globalConfig: OpenGraftConfig;
+	globalConfig: MatrixConfig;
 }

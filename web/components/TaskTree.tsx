@@ -99,7 +99,7 @@ export const TaskTree = memo(function TaskTree({
 
 	const [taskFilter, setTaskFilter] = useState("");
 	const [hideCompleted, setHideCompleted] = useState(
-		() => localStorage.getItem("og-hide-closed") === "true",
+		() => localStorage.getItem("mxd-hide-closed") === "true",
 	);
 
 	/** Set of node IDs that should be hidden because they (or an ancestor) are completed */
@@ -322,25 +322,25 @@ export const TaskTree = memo(function TaskTree({
 	const topLevelSiblingIds = roots.map((r) => r.id);
 
 	return (
-		<div className="og-task-tree">
+		<div className="mxd-task-tree">
 			{/* Non-scrolling header area */}
-			<div className="og-tree-header">
+			<div className="mxd-tree-header">
 				{/* Search bar */}
-				<div className="og-tree-search-bar">
+				<div className="mxd-tree-search-bar">
 					<input
 						type="text"
-						className="og-tree-search"
+						className="mxd-tree-search"
 						placeholder={t("tasks.filter")}
 						value={taskFilter}
 						onChange={(e) => setTaskFilter(e.target.value)}
 					/>
 					<button
 						type="button"
-						className={`og-hide-completed-btn${hideCompleted ? " active" : ""}`}
+						className={`mxd-hide-completed-btn${hideCompleted ? " active" : ""}`}
 						onClick={() =>
 							setHideCompleted((v) => {
 								const next = !v;
-								localStorage.setItem("og-hide-closed", String(next));
+								localStorage.setItem("mxd-hide-closed", String(next));
 								return next;
 							})
 						}
@@ -353,16 +353,16 @@ export const TaskTree = memo(function TaskTree({
 				{/* Orchestrator row */}
 				<button
 					type="button"
-					className={`og-orch-node${isOrchestratorSelected ? " selected" : ""}`}
+					className={`mxd-orch-node${isOrchestratorSelected ? " selected" : ""}`}
 					onClick={(e) => {
 						e.stopPropagation();
 						onSelect(rootNodeId);
 					}}
 				>
-					<span className="og-orch-icon">
+					<span className="mxd-orch-icon">
 						<IconHexagon size={14} />
 					</span>
-					<span className="og-orch-label">{t("orch.label")}</span>
+					<span className="mxd-orch-label">{t("orch.label")}</span>
 				</button>
 
 				{/* Root-level drop zone — visible only during drag for reparenting to root */}
@@ -376,11 +376,11 @@ export const TaskTree = memo(function TaskTree({
 					/>
 				)}
 
-				{roots.length > 0 && <div className="og-sidebar-divider" />}
+				{roots.length > 0 && <div className="mxd-sidebar-divider" />}
 			</div>
 
 			{/* Scrollable task list */}
-			<div className="og-task-list">
+			<div className="mxd-task-list">
 				{filteredRoots.map((root, i) => (
 					<TaskNodeView
 						key={root.id}
@@ -408,8 +408,8 @@ export const TaskTree = memo(function TaskTree({
 				))}
 
 				{roots.length === 0 && (
-					<div className="og-empty-state">
-						<span className="og-empty-icon">
+					<div className="mxd-empty-state">
+						<span className="mxd-empty-icon">
 							<IconHexagon size={24} />
 						</span>
 						<span>{t("tasks.noTasks")}</span>
@@ -420,7 +420,7 @@ export const TaskTree = memo(function TaskTree({
 				)}
 
 				{roots.length > 0 && filteredRoots.length === 0 && taskFilter && (
-					<div className="og-tree-empty">
+					<div className="mxd-tree-empty">
 						{t("tasks.noMatch")} "{taskFilter}"
 					</div>
 				)}
@@ -530,13 +530,13 @@ function TaskNodeView({
 		<>
 			{showIndicatorBefore && (
 				<div
-					className="og-drop-indicator"
+					className="mxd-drop-indicator"
 					style={{ marginLeft: `${12 + depth * 10}px` }}
 				/>
 			)}
 			<button
 				type="button"
-				className={`og-task-node${isSelected ? " selected" : ""}${node.status === "draft" ? " og-task-draft" : ""}${isDragging ? " og-task-dragging" : ""}${isReparentTarget ? " og-reparent-target" : ""}${node.status === "closed" ? " og-task-closed" : ""}`}
+				className={`mxd-task-node${isSelected ? " selected" : ""}${node.status === "draft" ? " mxd-task-draft" : ""}${isDragging ? " mxd-task-dragging" : ""}${isReparentTarget ? " mxd-reparent-target" : ""}${node.status === "closed" ? " mxd-task-closed" : ""}`}
 				style={node.color ? { borderLeftColor: node.color } : undefined}
 				draggable
 				onDragStart={(e) => onDragStart(node.id, parentId, e)}
@@ -549,13 +549,13 @@ function TaskNodeView({
 				}}
 			>
 				<div
-					className="og-task-row"
+					className="mxd-task-row"
 					style={{ paddingLeft: `${12 + depth * 10}px` }}
 				>
 					{hasChildren ? (
 						<button
 							type="button"
-							className="og-tree-toggle"
+							className="mxd-tree-toggle"
 							onClick={(e) => {
 								e.stopPropagation();
 								toggleCollapse(node.id);
@@ -564,31 +564,31 @@ function TaskNodeView({
 							<IconChevron expanded={!isCollapsed} />
 						</button>
 					) : (
-						<span className="og-tree-toggle-placeholder" />
+						<span className="mxd-tree-toggle-placeholder" />
 					)}
 					{activeAgents?.has(node.id) ? (
-						<span className="og-task-spinner" />
+						<span className="mxd-task-spinner" />
 					) : (
 						<span
-							className={`og-task-status-dot ${statusDotClass(node.status)}`}
+							className={`mxd-task-status-dot ${statusDotClass(node.status)}`}
 						/>
 					)}
 
-					<span className="og-task-title">{node.title}</span>
+					<span className="mxd-task-title">{node.title}</span>
 					{node.status === "draft" && (
-						<span className="og-task-draft-badge">draft</span>
+						<span className="mxd-task-draft-badge">draft</span>
 					)}
 					{node.branch && (
-						<span className="og-task-branch-tag" title={node.branch}>
-							{node.branch.replace("og/", "").split("/").slice(1).join("/") ||
-								node.branch.replace("og/", "")}
+						<span className="mxd-task-branch-tag" title={node.branch}>
+							{node.branch.replace("mxd/", "").split("/").slice(1).join("/") ||
+								node.branch.replace("mxd/", "")}
 						</span>
 					)}
 				</div>
 			</button>
 			{showIndicatorAfter && (
 				<div
-					className="og-drop-indicator"
+					className="mxd-drop-indicator"
 					style={{ marginLeft: `${12 + depth * 10}px` }}
 				/>
 			)}
@@ -643,14 +643,14 @@ function InlineCreateRow({
 	}, []);
 
 	return (
-		<div className="og-task-node og-inline-create">
-			<div className="og-task-row" style={{ paddingLeft: "22px" }}>
-				<span className="og-tree-toggle-placeholder" />
-				<span className="og-task-status-dot dot-pending" />
+		<div className="mxd-task-node mxd-inline-create">
+			<div className="mxd-task-row" style={{ paddingLeft: "22px" }}>
+				<span className="mxd-tree-toggle-placeholder" />
+				<span className="mxd-task-status-dot dot-pending" />
 				<input
 					ref={setRef}
 					type="text"
-					className="og-inline-create-input"
+					className="mxd-inline-create-input"
 					placeholder={t("prompt.taskTitle")}
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
@@ -706,7 +706,7 @@ function RootDropZone({
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: drop target for drag-and-drop
 		<div
-			className={`og-root-drop-zone${isOver ? " og-root-drop-over" : ""}`}
+			className={`mxd-root-drop-zone${isOver ? " mxd-root-drop-over" : ""}`}
 			onDragOver={(e) => {
 				e.preventDefault();
 				e.dataTransfer.dropEffect = "move";
@@ -720,7 +720,7 @@ function RootDropZone({
 				onDragEnd();
 			}}
 		>
-			<span className="og-root-drop-label">{t("tasks.moveToRoot")}</span>
+			<span className="mxd-root-drop-label">{t("tasks.moveToRoot")}</span>
 		</div>
 	);
 }
@@ -740,7 +740,7 @@ function TrashDropZone({
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: drop target for drag-and-drop
 		<div
-			className={`og-trash-drop-zone${isOver ? " og-trash-over" : ""}`}
+			className={`mxd-trash-drop-zone${isOver ? " mxd-trash-over" : ""}`}
 			onDragOver={(e) => {
 				e.preventDefault();
 				e.dataTransfer.dropEffect = "move";

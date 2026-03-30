@@ -28,16 +28,16 @@ export const TokenUsageBadge = memo(function TokenUsageBadge({
 			{onCompact && (
 				<button
 					type="button"
-					className="og-compact-trigger-btn"
+					className="mxd-compact-trigger-btn"
 					onClick={onCompact}
 					title={t("footer.compact")}
 				>
 					⌘
 				</button>
 			)}
-			<span className={`og-token-badge og-token-${level}`} title={tooltip}>
+			<span className={`mxd-token-badge mxd-token-${level}`} title={tooltip}>
 				{formatTokenCount(inputTokens)} / {formatTokenCount(contextWindow)}
-				{estimated && <span className="og-token-estimated">~</span>}
+				{estimated && <span className="mxd-token-estimated">~</span>}
 			</span>
 		</>
 	);

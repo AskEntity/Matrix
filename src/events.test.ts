@@ -2375,7 +2375,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "tool_call",
 				toolCallId: "tc-yield",
-				tool: "mcp__opengraft__yield",
+				tool: "mcp__mxd__yield",
 				input: {},
 				taskId: "test",
 				ts: 1002,
@@ -2451,7 +2451,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "tool_call",
 				toolCallId: "tc-yield",
-				tool: "mcp__opengraft__yield",
+				tool: "mcp__mxd__yield",
 				input: {},
 				taskId: "test",
 				ts: 1002,
@@ -2698,7 +2698,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 			{
 				type: "tool_call",
 				toolCallId: "tc-yield",
-				tool: "mcp__opengraft__yield",
+				tool: "mcp__mxd__yield",
 				input: {},
 				taskId: "test",
 				ts: 1002,

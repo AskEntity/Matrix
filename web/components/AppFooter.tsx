@@ -48,28 +48,28 @@ export const AppFooter = memo(function AppFooter({
 	const { t } = useLocale();
 
 	return (
-		<footer className="og-footer">
+		<footer className="mxd-footer">
 			{/* Pending clarifications — shown above footer when agent called clarify() */}
 			{pendingClarifications.length > 0 && (
-				<div className="og-clarifications">
+				<div className="mxd-clarifications">
 					{pendingClarifications.map((c) => {
 						const taskTitle = nodeMap.get(c.taskId)?.title ?? c.taskId;
 						return (
-							<div key={c.id} className="og-clarification-card">
-								<div className="og-clarification-header">
-									<span className="og-clarification-badge">
+							<div key={c.id} className="mxd-clarification-card">
+								<div className="mxd-clarification-header">
+									<span className="mxd-clarification-badge">
 										❓ {t("clarify.needed")}
 									</span>
-									<span className="og-clarification-task">
+									<span className="mxd-clarification-task">
 										{t("clarify.from")} {taskTitle}
 									</span>
 								</div>
-								<p className="og-clarification-question">
+								<p className="mxd-clarification-question">
 									{c.title ?? c.question}
 								</p>
-								{c.body && <p className="og-clarification-body">{c.body}</p>}
+								{c.body && <p className="mxd-clarification-body">{c.body}</p>}
 								<form
-									className="og-clarification-form"
+									className="mxd-clarification-form"
 									onSubmit={(e) => {
 										e.preventDefault();
 										onClarifySubmit(c.id);
@@ -77,7 +77,7 @@ export const AppFooter = memo(function AppFooter({
 								>
 									<input
 										type="text"
-										className="og-clarification-input"
+										className="mxd-clarification-input"
 										placeholder={t("clarify.placeholder")}
 										value={clarifyAnswers[c.id] ?? ""}
 										onChange={(e) =>
@@ -88,7 +88,7 @@ export const AppFooter = memo(function AppFooter({
 									/>
 									<button
 										type="submit"
-										className="og-btn-run"
+										className="mxd-btn-run"
 										disabled={!clarifyAnswers[c.id]?.trim()}
 									>
 										{t("clarify.answer")}
@@ -107,10 +107,10 @@ export const AppFooter = memo(function AppFooter({
 				);
 				return (
 					filtered.length > 0 && (
-						<div className="og-pending-messages">
-							<span className="og-pending-label">{t("pending.label")}</span>
+						<div className="mxd-pending-messages">
+							<span className="mxd-pending-label">{t("pending.label")}</span>
 							{filtered.map((m) => (
-								<span key={m.id} className="og-pending-chip">
+								<span key={m.id} className="mxd-pending-chip">
 									{m.text.length > 30 ? `${m.text.slice(0, 30)}…` : m.text}
 								</span>
 							))}
@@ -119,14 +119,14 @@ export const AppFooter = memo(function AppFooter({
 				);
 			})()}
 			{targetNodeId && (
-				<div className="og-message-target">
-					<span className="og-message-target-label">
+				<div className="mxd-message-target">
+					<span className="mxd-message-target-label">
 						→ {t("target.sendingTo")}{" "}
 						<strong>{nodeMap.get(targetNodeId)?.title ?? targetNodeId}</strong>
 					</span>
 					<button
 						type="button"
-						className="og-message-target-clear"
+						className="mxd-message-target-clear"
 						onClick={onClearTarget}
 						aria-label={t("target.sendToOrch")}
 						title={t("target.sendToOrch")}

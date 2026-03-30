@@ -1,6 +1,6 @@
 import { memo, useCallback, useState } from "react";
 import {
-	isOpengraftTool,
+	isBuiltinTool,
 	TOOL_BASH,
 	TOOL_DONE,
 	TOOL_YIELD,
@@ -41,10 +41,10 @@ function LogEntryWrapper({
 	children: React.ReactNode;
 }) {
 	return (
-		<div className={`og-log-entry ${className ?? "og-event-tool_card"}`}>
-			<span className="og-log-time">{formatTime(ts)}</span>
+		<div className={`mxd-lmxd-entry ${className ?? "mxd-event-tool_card"}`}>
+			<span className="mxd-lmxd-time">{formatTime(ts)}</span>
 			{taskLabel && (
-				<span className="og-log-badge" title={taskId}>
+				<span className="mxd-lmxd-badge" title={taskId}>
 					{taskLabel}
 				</span>
 			)}
@@ -96,14 +96,14 @@ export const LogEntryView = memo(function LogEntryView({
 	if (entry.type === "compact_marker") {
 		const displayText = `Context compacted (saved ~${entry.savedTokens} tokens)`;
 		return (
-			<div className="og-compact-boundary">
-				<div className="og-compact-hint">{t("compact.notVisible")}</div>
-				<div className="og-compact-bar">
-					<span className="og-compact-label">◈ {displayText}</span>
+			<div className="mxd-compact-boundary">
+				<div className="mxd-compact-hint">{t("compact.notVisible")}</div>
+				<div className="mxd-compact-bar">
+					<span className="mxd-compact-label">◈ {displayText}</span>
 					{entry.checkpoint && (
 						<button
 							type="button"
-							className="og-compact-toggle"
+							className="mxd-compact-toggle"
 							onClick={() => setExpanded(!expanded)}
 						>
 							{expanded ? t("compact.collapse") : t("compact.checkpoint")}
@@ -111,7 +111,7 @@ export const LogEntryView = memo(function LogEntryView({
 					)}
 				</div>
 				{expanded && entry.checkpoint && (
-					<pre className="og-compact-checkpoint">{entry.checkpoint}</pre>
+					<pre className="mxd-compact-checkpoint">{entry.checkpoint}</pre>
 				)}
 			</div>
 		);
@@ -119,10 +119,10 @@ export const LogEntryView = memo(function LogEntryView({
 
 	if (entry.type === "compact_started") {
 		return (
-			<div className="og-compact-boundary">
-				<div className="og-compact-hint">{t("compact.notVisible")}</div>
-				<div className="og-compact-bar og-compact-bar-loading">
-					<span className="og-compact-label">◈ Compacting context...</span>
+			<div className="mxd-compact-boundary">
+				<div className="mxd-compact-hint">{t("compact.notVisible")}</div>
+				<div className="mxd-compact-bar mxd-compact-bar-loading">
+					<span className="mxd-compact-label">◈ Compacting context...</span>
 				</div>
 			</div>
 		);
@@ -130,9 +130,9 @@ export const LogEntryView = memo(function LogEntryView({
 
 	if (entry.type === "fork_marker") {
 		return (
-			<div className="og-compact-boundary">
-				<div className="og-compact-bar">
-					<span className="og-compact-label">
+			<div className="mxd-compact-boundary">
+				<div className="mxd-compact-bar">
+					<span className="mxd-compact-label">
 						⑂ Forked from {entry.sourceTaskId}
 					</span>
 				</div>
@@ -145,7 +145,7 @@ export const LogEntryView = memo(function LogEntryView({
 		const toolName = getToolName(entry);
 		const toolArgs = entry.input;
 		const argsStr = formatArgs(toolArgs, bashBgExcludeKeys(toolName, toolArgs));
-		const isOpengraft = isOpengraftTool(toolName);
+		const isBuiltin = isBuiltinTool(toolName);
 		const isDone = toolName === TOOL_DONE;
 		const isYield = toolName === TOOL_YIELD;
 
@@ -155,8 +155,8 @@ export const LogEntryView = memo(function LogEntryView({
 			const doneSummary = toolArgs?.summary as string | undefined;
 			const donePassed = doneStatus === "passed";
 			const borderClass = donePassed
-				? "og-tool-card-done-passed"
-				: "og-tool-card-done-failed";
+				? "mxd-tool-card-done-passed"
+				: "mxd-tool-card-done-failed";
 			const doneTaskId = getLogTaskId(entry);
 			const doneTaskTitle = doneTaskId
 				? nodeMap?.get(doneTaskId)?.title
@@ -173,8 +173,8 @@ export const LogEntryView = memo(function LogEntryView({
 						className={borderClass}
 					>
 						{doneSummary ? (
-							<div className="og-tool-card-body">
-								<div className="og-tool-card-result">{doneSummary}</div>
+							<div className="mxd-tool-card-body">
+								<div className="mxd-tool-card-result">{doneSummary}</div>
 							</div>
 						) : null}
 					</Card>
@@ -192,7 +192,7 @@ export const LogEntryView = memo(function LogEntryView({
 				>
 					<Card
 						title={`⏸ ${t("tool.waiting")}`}
-						className="og-tool-card-yield-waiting og-tool-card-mcp"
+						className="mxd-tool-card-yield-waiting mxd-tool-card-mcp"
 						collapsible={false}
 					/>
 				</LogEntryWrapper>
@@ -208,7 +208,7 @@ export const LogEntryView = memo(function LogEntryView({
 			>
 				<Card
 					title={getToolCardTitle(toolName, toolArgs, null, nodeMap)}
-					className={`og-tool-card-pending og-tool-card-loading ${isOpengraft ? "og-tool-card-mcp" : ""}`}
+					className={`mxd-tool-card-pending mxd-tool-card-loading ${isBuiltin ? "mxd-tool-card-mcp" : ""}`}
 					defaultExpanded={!!argsStr}
 					collapsible={!!argsStr}
 					statusSlot={
@@ -216,7 +216,7 @@ export const LogEntryView = memo(function LogEntryView({
 							{toolName === TOOL_BASH && projectId && (
 								<button
 									type="button"
-									className="og-bash-background-btn"
+									className="mxd-bash-background-btn"
 									onClick={(e) => {
 										e.stopPropagation();
 										handleMoveToBackground();
@@ -227,15 +227,15 @@ export const LogEntryView = memo(function LogEntryView({
 									⏎ Background
 								</button>
 							)}
-							<span className="og-tool-card-status pending">
-								<span className="og-spinner" />
+							<span className="mxd-tool-card-status pending">
+								<span className="mxd-spinner" />
 							</span>
 						</>
 					}
 				>
 					{argsStr ? (
-						<div className="og-tool-card-body">
-							<div className="og-tool-card-args">{argsStr}</div>
+						<div className="mxd-tool-card-body">
+							<div className="mxd-tool-card-args">{argsStr}</div>
 						</div>
 					) : null}
 				</Card>
@@ -254,8 +254,8 @@ export const LogEntryView = memo(function LogEntryView({
 		const mcpFormatted = isOk
 			? formatMcpToolResult(toolName, content, t)
 			: null;
-		const isOpengraft = isOpengraftTool(toolName);
-		const statusClass = isErr ? "og-tool-card-err" : "og-tool-card-ok";
+		const isBuiltin = isBuiltinTool(toolName);
+		const statusClass = isErr ? "mxd-tool-card-err" : "mxd-tool-card-ok";
 		const hasImages = entry.images && entry.images.length > 0;
 		const hasBody = (content && !isTitleOnlyCard(toolName)) || hasImages;
 
@@ -267,12 +267,12 @@ export const LogEntryView = memo(function LogEntryView({
 			>
 				<Card
 					title={getToolCardTitle(toolName, undefined, content, nodeMap)}
-					className={`${statusClass} ${isOpengraft ? "og-tool-card-mcp" : ""}`}
+					className={`${statusClass} ${isBuiltin ? "mxd-tool-card-mcp" : ""}`}
 					collapsible={!!hasBody}
 					defaultExpanded={!!hasBody}
 					statusSlot={
 						toolName !== TOOL_DONE ? (
-							<span className={`og-tool-card-status ${isErr ? "err" : "ok"}`}>
+							<span className={`mxd-tool-card-status ${isErr ? "err" : "ok"}`}>
 								{isErr ? "✗" : "✓"}
 							</span>
 						) : undefined
@@ -281,14 +281,14 @@ export const LogEntryView = memo(function LogEntryView({
 					{hasBody ? (
 						<>
 							{content && !isTitleOnlyCard(toolName) && (
-								<div className="og-tool-card-body">
-									<div className="og-tool-card-result">
+								<div className="mxd-tool-card-body">
+									<div className="mxd-tool-card-result">
 										{mcpFormatted ?? content}
 									</div>
 								</div>
 							)}
 							{hasImages && (
-								<div className="og-tool-card-body">
+								<div className="mxd-tool-card-body">
 									<ToolResultImages images={entry.images!} />
 								</div>
 							)}
@@ -309,7 +309,7 @@ export const LogEntryView = memo(function LogEntryView({
 			>
 				<Card
 					title={`▶ ${t("lifecycle.taskStarted")} ${entry.title}`}
-					className="og-tool-card-pending"
+					className="mxd-tool-card-pending"
 					collapsible={false}
 				/>
 			</LogEntryWrapper>
@@ -322,8 +322,8 @@ export const LogEntryView = memo(function LogEntryView({
 		const success = entry.success;
 		const output = entry.output ?? "";
 		const borderClass = success
-			? "og-tool-card-done-passed"
-			: "og-tool-card-done-failed";
+			? "mxd-tool-card-done-passed"
+			: "mxd-tool-card-done-failed";
 		const completedTitle = `Task ${success ? "Passed" : "Failed"}: ${title}`;
 
 		return (
@@ -337,8 +337,8 @@ export const LogEntryView = memo(function LogEntryView({
 					className={borderClass}
 				>
 					{output.length > 0 ? (
-						<div className="og-tool-card-body">
-							<div className="og-tool-card-result">{output}</div>
+						<div className="mxd-tool-card-body">
+							<div className="mxd-tool-card-result">{output}</div>
 						</div>
 					) : null}
 				</Card>
@@ -354,7 +354,7 @@ export const LogEntryView = memo(function LogEntryView({
 				<Card
 					title={`🌿 ${t("log.treeUpdated")}`}
 					detail={text}
-					className="og-tool-card-system"
+					className="mxd-tool-card-system"
 					collapsible={false}
 				/>
 			</LogEntryWrapper>
@@ -386,11 +386,11 @@ export const LogEntryView = memo(function LogEntryView({
 				<Card
 					title={label}
 					detail={isLong ? headerText : text}
-					className="og-tool-card-task-message"
+					className="mxd-tool-card-task-message"
 				>
 					{isLong ? (
-						<div className="og-tool-card-body">
-							<div className="og-tool-card-result">{text.trim()}</div>
+						<div className="mxd-tool-card-body">
+							<div className="mxd-tool-card-result">{text.trim()}</div>
 						</div>
 					) : null}
 				</Card>
@@ -410,7 +410,7 @@ export const LogEntryView = memo(function LogEntryView({
 				taskLabel={taskLabel}
 				taskId={getLogTaskId(entry)}
 			>
-				<Card title={label} detail={text} className="og-tool-card-forwarded" />
+				<Card title={label} detail={text} className="mxd-tool-card-forwarded" />
 			</LogEntryWrapper>
 		);
 	}
@@ -441,11 +441,11 @@ export const LogEntryView = memo(function LogEntryView({
 				<Card
 					title={`⚙ Background Complete${cmdDisplay ? `: ${cmdDisplay}` : ""}`}
 					detail={detail || undefined}
-					className={`og-tool-card-bg-complete ${isErr ? "og-tool-card-err" : ""}`}
+					className={`mxd-tool-card-bg-complete ${isErr ? "mxd-tool-card-err" : ""}`}
 				>
 					{outputContent ? (
-						<div className="og-tool-card-body">
-							<div className="og-tool-card-result">{outputContent}</div>
+						<div className="mxd-tool-card-body">
+							<div className="mxd-tool-card-result">{outputContent}</div>
 						</div>
 					) : null}
 				</Card>
@@ -473,11 +473,11 @@ export const LogEntryView = memo(function LogEntryView({
 				<Card
 					title={label}
 					detail={isLong ? headerText : text}
-					className="og-tool-card-cross-project"
+					className="mxd-tool-card-cross-project"
 				>
 					{isLong ? (
-						<div className="og-tool-card-body">
-							<div className="og-tool-card-result">{text.trim()}</div>
+						<div className="mxd-tool-card-body">
+							<div className="mxd-tool-card-result">{text.trim()}</div>
 						</div>
 					) : null}
 				</Card>
@@ -488,19 +488,19 @@ export const LogEntryView = memo(function LogEntryView({
 	// User message — special bubble rendering, not a card
 	if (entry.type === "message" && entry.body.source === "user") {
 		return (
-			<div className="og-log-entry og-event-user_message">
-				<span className="og-log-time">{formatTime(entry.ts)}</span>
-				<div className="og-user-prompt-bubble">
-					<span className="og-user-prompt-text">{entry.body.content}</span>
+			<div className="mxd-lmxd-entry mxd-event-user_message">
+				<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
+				<div className="mxd-user-prompt-bubble">
+					<span className="mxd-user-prompt-text">{entry.body.content}</span>
 					{entry.body.images && entry.body.images.length > 0 && (
-						<div className="og-user-images">
+						<div className="mxd-user-images">
 							{entry.body.images.map(
 								(img: { base64: string; mediaType: string }) => (
 									<img
 										key={img.base64.slice(-32)}
 										src={`data:${img.mediaType};base64,${img.base64}`}
 										alt="attached"
-										className="og-user-image-thumb"
+										className="mxd-user-image-thumb"
 										onClick={() =>
 											window.open(
 												`data:${img.mediaType};base64,${img.base64}`,
@@ -531,11 +531,11 @@ export const LogEntryView = memo(function LogEntryView({
 				ts={entry.ts}
 				taskLabel={taskLabel}
 				taskId={entry.taskId}
-				className="og-log-entry og-event-tool_card"
+				className="mxd-lmxd-entry mxd-event-tool_card"
 			>
-				<Card title={`✗ Error`} className="og-tool-card-err" defaultExpanded>
-					<div className="og-tool-card-body">
-						<div className="og-tool-card-result">{entry.message}</div>
+				<Card title={`✗ Error`} className="mxd-tool-card-err" defaultExpanded>
+					<div className="mxd-tool-card-body">
+						<div className="mxd-tool-card-result">{entry.message}</div>
 					</div>
 				</Card>
 			</LogEntryWrapper>
@@ -545,18 +545,18 @@ export const LogEntryView = memo(function LogEntryView({
 	// Fallback for lifecycle and any other event types
 	const text = getEntryText(entry);
 	return (
-		<div className={`og-log-entry og-event-${entry.type}`}>
-			<span className="og-log-time">{formatTime(entry.ts)}</span>
+		<div className={`mxd-lmxd-entry mxd-event-${entry.type}`}>
+			<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
 			{taskLabel && (
 				<span
-					className="og-log-badge"
+					className="mxd-lmxd-badge"
 					title={"taskId" in entry ? entry.taskId : undefined}
 				>
 					{taskLabel}
 				</span>
 			)}
-			<div className="og-log-body">
-				<span className="og-log-text">{text}</span>
+			<div className="mxd-lmxd-body">
+				<span className="mxd-lmxd-text">{text}</span>
 			</div>
 		</div>
 	);

@@ -28,17 +28,17 @@ export const RelocateBanner = memo(function RelocateBanner({
 	};
 
 	return (
-		<div className="og-relocate-banner">
-			<div className="og-relocate-banner-icon">⚠</div>
-			<div className="og-relocate-banner-body">
-				<div className="og-relocate-banner-title">
+		<div className="mxd-relocate-banner">
+			<div className="mxd-relocate-banner-icon">⚠</div>
+			<div className="mxd-relocate-banner-body">
+				<div className="mxd-relocate-banner-title">
 					{t("project.pathMissing")}
 				</div>
-				<div className="og-relocate-banner-path">{projectPath}</div>
-				<form className="og-relocate-banner-form" onSubmit={handleSubmit}>
+				<div className="mxd-relocate-banner-path">{projectPath}</div>
+				<form className="mxd-relocate-banner-form" onSubmit={handleSubmit}>
 					<input
 						type="text"
-						className="og-relocate-banner-input"
+						className="mxd-relocate-banner-input"
 						placeholder={t("project.newPathPlaceholder")}
 						value={newPath}
 						onChange={(e) => setNewPath(e.target.value)}
@@ -46,13 +46,13 @@ export const RelocateBanner = memo(function RelocateBanner({
 					/>
 					<button
 						type="submit"
-						className="og-btn og-btn-primary og-btn-sm"
+						className="mxd-btn mxd-btn-primary mxd-btn-sm"
 						disabled={loading || !newPath.trim()}
 					>
 						{loading ? t("project.relocating") : t("project.relocate")}
 					</button>
 				</form>
-				{error && <div className="og-relocate-banner-error">{error}</div>}
+				{error && <div className="mxd-relocate-banner-error">{error}</div>}
 			</div>
 		</div>
 	);

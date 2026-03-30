@@ -48,41 +48,41 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 		(n) => n.status === "in_progress",
 	).length;
 	return (
-		<div className="og-orch-detail">
-			<div className="og-orch-detail-header">
-				<div className="og-orch-icon-lg">
+		<div className="mxd-orch-detail">
+			<div className="mxd-orch-detail-header">
+				<div className="mxd-orch-icon-lg">
 					<IconHexagon size={18} />
 				</div>
 				<div style={{ flex: 1 }}>
-					<div className="og-orch-name">{t("orch.label")}</div>
-					<div className="og-orch-sub">{t("orch.rootSession")}</div>
+					<div className="mxd-orch-name">{t("orch.label")}</div>
+					<div className="mxd-orch-sub">{t("orch.rootSession")}</div>
 				</div>
 			</div>
-			<div className="og-stats-row">
+			<div className="mxd-stats-row">
 				{provider && (
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.provider")}</span>
-						<span className="og-stat-value" style={{ fontSize: "12px" }}>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.provider")}</span>
+						<span className="mxd-stat-value" style={{ fontSize: "12px" }}>
 							{provider}
 						</span>
 					</div>
 				)}
 				{model && (
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.model")}</span>
-						<span className="og-stat-value" style={{ fontSize: "12px" }}>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.model")}</span>
+						<span className="mxd-stat-value" style={{ fontSize: "12px" }}>
 							{model}
 						</span>
 					</div>
 				)}
-				<div className="og-stat-card">
-					<span className="og-stat-label">{t("orch.tasks")}</span>
-					<span className="og-stat-value">{nodeCount}</span>
+				<div className="mxd-stat-card">
+					<span className="mxd-stat-label">{t("orch.tasks")}</span>
+					<span className="mxd-stat-value">{nodeCount}</span>
 				</div>
 				{nodeCount > 0 && (
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.done")}</span>
-						<span className="og-stat-value" style={{ fontSize: "14px" }}>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.done")}</span>
+						<span className="mxd-stat-value" style={{ fontSize: "14px" }}>
 							<span style={{ color: "var(--color-passed)" }}>{done}</span>
 							<span style={{ color: "var(--text-faint)", fontWeight: 400 }}>
 								{" "}
@@ -92,10 +92,10 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 					</div>
 				)}
 				{passed > 0 && (
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.passed")}</span>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.passed")}</span>
 						<span
-							className="og-stat-value"
+							className="mxd-stat-value"
 							style={{ color: "var(--color-passed)" }}
 						>
 							{passed}
@@ -103,10 +103,10 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 					</div>
 				)}
 				{inProgress > 0 && (
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.active")}</span>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.active")}</span>
 						<span
-							className="og-stat-value"
+							className="mxd-stat-value"
 							style={{ color: "var(--color-in-progress)" }}
 						>
 							{inProgress}
@@ -114,10 +114,10 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 					</div>
 				)}
 				{failed > 0 && (
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.failed")}</span>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.failed")}</span>
 						<span
-							className="og-stat-value"
+							className="mxd-stat-value"
 							style={{ color: "var(--color-failed)" }}
 						>
 							{failed}
@@ -125,15 +125,15 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 					</div>
 				)}
 				{totalCost != null && totalCost > 0 && (
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.totalCost")}</span>
-						<span className="og-stat-value">${totalCost.toFixed(3)}</span>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.totalCost")}</span>
+						<span className="mxd-stat-value">${totalCost.toFixed(3)}</span>
 					</div>
 				)}
 				{turns != null && turns > 0 && (
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.turns")}</span>
-						<span className="og-stat-value">{turns}</span>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.turns")}</span>
+						<span className="mxd-stat-value">{turns}</span>
 					</div>
 				)}
 			</div>
@@ -141,28 +141,28 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 				cacheCreationTokens != null ||
 				cacheReadTokens != null ||
 				outputTokens != null) && (
-				<div className="og-stats-row" style={{ marginTop: "8px" }}>
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.input")}</span>
-						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+				<div className="mxd-stats-row" style={{ marginTop: "8px" }}>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.input")}</span>
+						<span className="mxd-stat-value" style={{ fontSize: "13px" }}>
 							{(inputTokens ?? 0).toLocaleString()}
 						</span>
 					</div>
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.cacheWrite")}</span>
-						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.cacheWrite")}</span>
+						<span className="mxd-stat-value" style={{ fontSize: "13px" }}>
 							{(cacheCreationTokens ?? 0).toLocaleString()}
 						</span>
 					</div>
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.cacheRead")}</span>
-						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.cacheRead")}</span>
+						<span className="mxd-stat-value" style={{ fontSize: "13px" }}>
 							{(cacheReadTokens ?? 0).toLocaleString()}
 						</span>
 					</div>
-					<div className="og-stat-card">
-						<span className="og-stat-label">{t("orch.output")}</span>
-						<span className="og-stat-value" style={{ fontSize: "13px" }}>
+					<div className="mxd-stat-card">
+						<span className="mxd-stat-label">{t("orch.output")}</span>
+						<span className="mxd-stat-value" style={{ fontSize: "13px" }}>
 							{(outputTokens ?? 0).toLocaleString()}
 						</span>
 					</div>
@@ -179,7 +179,7 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 				{isRootActive && onStop && (
 					<button
 						type="button"
-						className="og-btn og-btn-sm og-btn-ghost"
+						className="mxd-btn mxd-btn-sm mxd-btn-ghost"
 						onClick={onStop}
 					>
 						<IconPause size={12} />
@@ -189,7 +189,7 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 				{!isRootActive && onClearSession && (
 					<button
 						type="button"
-						className="og-btn og-btn-sm og-btn-ghost"
+						className="mxd-btn mxd-btn-sm mxd-btn-ghost"
 						onClick={onClearSession}
 					>
 						<IconTrash size={12} />

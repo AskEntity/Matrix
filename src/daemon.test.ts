@@ -86,7 +86,7 @@ const mockProvider = createMockProvider();
 
 describe("daemon health", () => {
 	test("GET /health returns ok with version and uptime", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-health-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-health-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -102,7 +102,7 @@ describe("daemon health", () => {
 	});
 
 	test("GET /health without check_model has no model field", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-health-nomodel-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-health-nomodel-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -117,7 +117,7 @@ describe("daemon health", () => {
 	});
 
 	test("GET /health?check_model=true returns model status", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-health-model-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-health-model-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -150,7 +150,7 @@ describe("daemon health", () => {
 	});
 
 	test("GET /unknown returns 404", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-404-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-404-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -163,7 +163,7 @@ describe("daemon health", () => {
 
 describe("daemon version", () => {
 	test("GET /version returns version, nodeCount, and projectCount", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-version-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-version-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -184,7 +184,7 @@ describe("daemon version", () => {
 
 describe("daemon stats", () => {
 	test("GET /stats returns uptime, requestCount, projectCount, and taskCounts", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-stats-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-stats-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -210,7 +210,7 @@ describe("daemon stats", () => {
 	});
 
 	test("GET /stats requestCount increments with each request", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-stats2-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-stats2-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -228,7 +228,7 @@ describe("daemon stats", () => {
 	});
 
 	test("GET /stats uptime is in seconds not milliseconds", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-stats3-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-stats3-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -243,8 +243,8 @@ describe("daemon stats", () => {
 	});
 
 	test("GET /stats reflects projects and task counts", async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "og-stats4-"));
-		const dataDir = await mkdtemp(join(tmpdir(), "og-stats4d-"));
+		const tempDir = await mkdtemp(join(tmpdir(), "mxd-stats4-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-stats4d-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -317,8 +317,8 @@ describe("daemon projects API", () => {
 	let app: ReturnType<typeof createApp>["app"];
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-projects-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-data-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-projects-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-data-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -473,7 +473,7 @@ describe("daemon projects API", () => {
 		});
 		const created = (await createRes.json()) as Project;
 
-		// Simulate move: rename old dir, new dir has .opengraft/
+		// Simulate move: rename old dir, new dir has .mxd/
 		const newPath = join(tempDir, "relocated");
 		await rename(created.path, newPath);
 
@@ -556,8 +556,8 @@ describe("daemon tasks API", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-tasks-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-tdata-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-tasks-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-tdata-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		getTracker = result.getTracker;
@@ -964,7 +964,7 @@ describe("daemon tasks API", () => {
 			// biome-ignore lint/correctness/useYield: mock provider never streams
 			stream: async function* (req) {
 				streamCalled = true;
-				if (req.mcpToolDefs && "opengraft" in req.mcpToolDefs) {
+				if (req.mcpToolDefs && "mxd" in req.mcpToolDefs) {
 					receivedMcpToolDefs = true;
 				}
 				if (req.queue) {
@@ -1002,7 +1002,7 @@ describe("daemon tasks API", () => {
 			},
 		};
 
-		const localDataDir = await mkdtemp(join(tmpdir(), "og-cont-wt-"));
+		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-cont-wt-"));
 		const {
 			app: localApp,
 			pm: localPm,
@@ -1042,7 +1042,7 @@ describe("daemon tasks API", () => {
 		// assignWorktree(nodeId, branch, worktreePath)
 		daemonTracker.assignWorktree(
 			task.id,
-			"og/fake/branch",
+			"mxd/fake/branch",
 			join(tempDir, "cont-wt-app"),
 		);
 		await daemonTracker.save();
@@ -1097,7 +1097,7 @@ describe("daemon tasks API", () => {
 
 	test("GET /tasks/:nodeId/gitlog returns commits when branch exists", async () => {
 		// Use a local app instance to access getTracker
-		const localDataDir = await mkdtemp(join(tmpdir(), "og-gitlog-wt-"));
+		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-gitlog-wt-"));
 		const {
 			app: localApp,
 			pm: localPm,
@@ -1261,8 +1261,8 @@ describe("GET /projects/:id/events", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-events-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-evdata-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-events-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-evdata-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -1408,8 +1408,8 @@ describe("GET /projects/:id/events/older", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-older-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-olderdata-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-older-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-olderdata-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -1546,8 +1546,8 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 	let taskId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-taskev-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-taskevd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-taskev-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-taskevd-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -1654,8 +1654,8 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	let taskQueue: MessageQueue;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-taskmsg-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-taskmsgd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-taskmsg-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-taskmsgd-"));
 		const { app: localApp, pm: localPm } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
@@ -1826,8 +1826,8 @@ describe("POST /projects/:id/tasks/:nodeId/message (root node)", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-projmsg-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-projmsgd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-projmsg-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-projmsgd-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		getTracker = result.getTracker;
@@ -1901,8 +1901,8 @@ describe("POST /projects/:id/clarify", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-clarify-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-clarifyd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-clarify-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-clarifyd-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -2010,7 +2010,7 @@ describe("POST /projects/:id/clarify", () => {
 			},
 		};
 
-		const localDataDir = await mkdtemp(join(tmpdir(), "og-clarify-route-"));
+		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-clarify-route-"));
 		const {
 			app: localApp,
 			pm: localPm,
@@ -2113,7 +2113,7 @@ describe("POST /projects/:id/clarify", () => {
 		};
 
 		const localDataDir = await mkdtemp(
-			join(tmpdir(), "og-clarify-child-route-"),
+			join(tmpdir(), "mxd-clarify-child-route-"),
 		);
 		const {
 			app: localApp,
@@ -2248,7 +2248,7 @@ describe("POST /projects/:id/clarify", () => {
 		};
 
 		const localDataDir = await mkdtemp(
-			join(tmpdir(), "og-clarify-closed-queue-"),
+			join(tmpdir(), "mxd-clarify-closed-queue-"),
 		);
 		const {
 			app: localApp,
@@ -2328,15 +2328,15 @@ describe("POST /projects/:id/clarify", () => {
 
 describe("daemon orchestrate/agent API", () => {
 	test("POST /orchestrate/agent invokes agent with MCP tools", async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "og-orchagent-"));
-		const dataDir = await mkdtemp(join(tmpdir(), "og-oadata-"));
+		const tempDir = await mkdtemp(join(tmpdir(), "mxd-orchagent-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-oadata-"));
 
 		// Mock provider that verifies mcpToolDefs was passed
 		let receivedMcpToolDefs = false;
 		const agentProvider: AgentProvider = {
 			name: "mock",
 			execute: async (req) => {
-				if (req.mcpToolDefs && "opengraft" in req.mcpToolDefs) {
+				if (req.mcpToolDefs && "mxd" in req.mcpToolDefs) {
 					receivedMcpToolDefs = true;
 				}
 				return {
@@ -2358,7 +2358,7 @@ describe("daemon orchestrate/agent API", () => {
 				};
 			},
 			startSession(req) {
-				if (req.mcpToolDefs && "opengraft" in req.mcpToolDefs) {
+				if (req.mcpToolDefs && "mxd" in req.mcpToolDefs) {
 					receivedMcpToolDefs = true;
 				}
 				const queue = req.queue ?? new MessageQueue();
@@ -2415,8 +2415,8 @@ describe("daemon orchestrate/agent API", () => {
 	});
 
 	test("POST /orchestrate/agent requires prompt", async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "og-oa2-"));
-		const dataDir = await mkdtemp(join(tmpdir(), "og-oa2d-"));
+		const tempDir = await mkdtemp(join(tmpdir(), "mxd-oa2-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-oa2d-"));
 
 		const { app, pm, markReady } = createApp({
 			dataDir,
@@ -2444,7 +2444,7 @@ describe("daemon orchestrate/agent API", () => {
 	});
 
 	test("POST /orchestrate/agent returns 404 for unknown project", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-oa3d-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-oa3d-"));
 		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
@@ -2468,7 +2468,7 @@ describe("create_task validation", () => {
 	let tracker: TaskTracker;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-ct-val-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-ct-val-"));
 		tracker = new TaskTracker(join(tempDir, "tree.json"));
 	});
 
@@ -2612,8 +2612,8 @@ describe("GET /projects/:id/agent", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-agent-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-agentd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-agent-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-agentd-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -2655,8 +2655,8 @@ describe("POST /projects/:id/stop", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-stop-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-stopd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-stop-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-stopd-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -2739,7 +2739,7 @@ describe("POST /projects/:id/stop", () => {
 			},
 		};
 
-		const localDataDir = await mkdtemp(join(tmpdir(), "og-stop-cascade-"));
+		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-stop-cascade-"));
 		const {
 			app: localApp,
 			pm: localPm,
@@ -2843,8 +2843,8 @@ describe("POST /projects/:id/orchestrate/agent", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-run-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-rund-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-run-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-rund-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -2918,8 +2918,8 @@ describe("POST /projects/:id/sessions/prune", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-prune-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-pruned-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-prune-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-pruned-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -3024,8 +3024,8 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 	let getTracker: ReturnType<typeof createApp>["getTracker"];
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-continue-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-continued-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-continue-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-continued-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		getTracker = result.getTracker;
@@ -3040,7 +3040,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		projectId = project.id;
 
 		// Activate the .example hook so worktree creation works in tests
-		const hookDir = join(tempDir, "cont-proj", ".opengraft", "hooks");
+		const hookDir = join(tempDir, "cont-proj", ".mxd", "hooks");
 		const examplePath = join(hookDir, "setup_worktree.sh.example");
 		const hookPath = join(hookDir, "setup_worktree.sh");
 		await rename(examplePath, hookPath);
@@ -3236,7 +3236,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const tracker = await getTracker(projectId);
 		tracker.assignWorktree(
 			task.id,
-			"og/fake/branch",
+			"mxd/fake/branch",
 			join(tempDir, "cont-proj"),
 		);
 		await tracker.save();
@@ -3298,7 +3298,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const tracker = await getTracker(projectId);
 		tracker.assignWorktree(
 			task.id,
-			"og/fake/branch2",
+			"mxd/fake/branch2",
 			join(tempDir, "cont-proj"),
 		);
 		await tracker.save();
@@ -3338,7 +3338,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const tracker = await getTracker(projectId);
 		tracker.assignWorktree(
 			task.id,
-			"og/fake/passed-branch",
+			"mxd/fake/passed-branch",
 			join(tempDir, "cont-proj"),
 		);
 		await tracker.save();
@@ -3434,7 +3434,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 			},
 		};
 
-		const localDataDir = await mkdtemp(join(tmpdir(), "og-child-sess-"));
+		const localDataDir = await mkdtemp(join(tmpdir(), "mxd-child-sess-"));
 		const {
 			app: localApp,
 			pm: localPm,
@@ -3468,7 +3468,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const daemonTracker = await localGetTracker(project.id);
 		daemonTracker.assignWorktree(
 			task.id,
-			"og/fake/child-branch",
+			"mxd/fake/child-branch",
 			join(tempDir, "child-sess-proj"),
 		);
 		await daemonTracker.save();
@@ -3503,8 +3503,8 @@ describe("GET /projects/:id/clarifications", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-clarifs-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-clarifsd-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-clarifs-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-clarifsd-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -3564,8 +3564,8 @@ describe("GET /projects/:id/config", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-cfg-get-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-cfg-get-data-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-cfg-get-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-cfg-get-data-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -3617,8 +3617,8 @@ describe("PATCH /projects/:id/config", () => {
 	let projectId: string;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-cfg-patch-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-cfg-patch-data-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-cfg-patch-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-cfg-patch-data-"));
 		const result = createApp({ dataDir, agentProvider: mockProvider });
 		app = result.app;
 		await result.pm.load();
@@ -3699,7 +3699,7 @@ describe("PATCH /projects/:id/config", () => {
 
 describe("GET /config/global", () => {
 	test("returns empty object by default", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-gcfg-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-gcfg-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -3714,7 +3714,7 @@ describe("GET /config/global", () => {
 
 describe("PATCH /config/global", () => {
 	test("sets and returns global config", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-gcfg-patch-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-gcfg-patch-"));
 		const globalConfigPath = join(dataDir, "config.json");
 		const { app, pm } = createApp({
 			dataDir,
@@ -3746,7 +3746,7 @@ describe("PATCH /config/global", () => {
 	});
 
 	test("null removes a field", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-gcfg-null-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-gcfg-null-"));
 		const globalConfigPath = join(dataDir, "config.json");
 		const { app, pm } = createApp({
 			dataDir,
@@ -3778,8 +3778,8 @@ describe("PATCH /config/global", () => {
 
 describe("GET /projects/:id/config/repo", () => {
 	test("returns empty object when no repo config exists", async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "og-repo-cfg-"));
-		const dataDir = await mkdtemp(join(tmpdir(), "og-repo-cfg-data-"));
+		const tempDir = await mkdtemp(join(tmpdir(), "mxd-repo-cfg-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-repo-cfg-data-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -3799,9 +3799,9 @@ describe("GET /projects/:id/config/repo", () => {
 		await rm(dataDir, { recursive: true });
 	});
 
-	test("returns repo config when .opengraft/config.json exists", async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "og-repo-cfg2-"));
-		const dataDir = await mkdtemp(join(tmpdir(), "og-repo-cfg2-data-"));
+	test("returns repo config when .mxd/config.json exists", async () => {
+		const tempDir = await mkdtemp(join(tmpdir(), "mxd-repo-cfg2-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-repo-cfg2-data-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -3813,9 +3813,9 @@ describe("GET /projects/:id/config/repo", () => {
 		const project = (await projRes.json()) as Project;
 
 		// Write a repo config file in the project directory
-		await mkdir(join(tempDir, ".opengraft"), { recursive: true });
+		await mkdir(join(tempDir, ".mxd"), { recursive: true });
 		await writeFile(
-			join(tempDir, ".opengraft", "config.json"),
+			join(tempDir, ".mxd", "config.json"),
 			JSON.stringify({ model: "claude-haiku-4-5", maxDepth: 2 }),
 		);
 
@@ -3830,7 +3830,7 @@ describe("GET /projects/:id/config/repo", () => {
 	});
 
 	test("returns 404 for unknown project", async () => {
-		const dataDir = await mkdtemp(join(tmpdir(), "og-repo-cfg3-"));
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-repo-cfg3-"));
 		const { app, pm } = createApp({ dataDir, agentProvider: mockProvider });
 		await pm.load();
 
@@ -3846,8 +3846,8 @@ describe("POST /projects/:id/restart", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		dataDir = await mkdtemp(join(tmpdir(), "og-restart-"));
-		projectDir = await mkdtemp(join(tmpdir(), "og-restart-proj-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-restart-"));
+		projectDir = await mkdtemp(join(tmpdir(), "mxd-restart-proj-"));
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
 
@@ -4391,8 +4391,8 @@ describe("lifecycle edge cases", () => {
 	let projectDir: string;
 
 	beforeEach(async () => {
-		dataDir = await mkdtemp(join(tmpdir(), "og-lifecycle-"));
-		projectDir = await mkdtemp(join(tmpdir(), "og-lifecycle-proj-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-lifecycle-"));
+		projectDir = await mkdtemp(join(tmpdir(), "mxd-lifecycle-proj-"));
 		await mkdir(join(projectDir, ".git"), { recursive: true });
 	});
 

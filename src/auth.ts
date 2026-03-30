@@ -1,7 +1,7 @@
 /**
  * Local secret-based authentication.
  *
- * CLI is trust anchor — if you can read ~/.opengraft/auth.json, you're authenticated.
+ * CLI is trust anchor — if you can read ~/.mxd/auth.json, you're authenticated.
  * Challenge-response: browser generates RSA-OAEP keypair, CLI encrypts session JWT with public key.
  * HMAC-SHA256 signing key auto-generated and persisted in auth.json.
  */
@@ -259,7 +259,7 @@ export function base64ToUint8Array(b64: string): Uint8Array<ArrayBuffer> {
 
 /**
  * Import a base64-encoded RSA-OAEP public key (spki format) and encrypt data with it.
- * Used by CLI `og auth <public_key>` to encrypt a session JWT for the browser.
+ * Used by CLI `mxd auth <public_key>` to encrypt a session JWT for the browser.
  */
 export async function encryptWithPublicKey(
 	publicKeyBase64: string,

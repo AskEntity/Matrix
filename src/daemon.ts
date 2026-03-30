@@ -67,7 +67,7 @@ try {
 const startTime = Date.now();
 
 const defaultConfig: DaemonConfig = {
-	dataDir: join(homedir(), ".opengraft"),
+	dataDir: join(homedir(), ".mxd"),
 };
 
 export function createApp(config: DaemonConfig = defaultConfig) {
@@ -312,7 +312,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						);
 						const resumeMemory = readProjectMemory(project.path);
 						const resumeHeader = resumeMemory
-							? `Working directory: ${project.path}\n\n# .opengraft/memory.md (Preloaded, do not read again)\n${resumeMemory}`
+							? `Working directory: ${project.path}\n\n# .mxd/memory.md (Preloaded, do not read again)\n${resumeMemory}`
 							: `Working directory: ${project.path}`;
 						const resumeMsg = createUserMessage(
 							`Continue where you left off. The daemon restarted (${GIT_HASH}).\n\nCheck the task tree and proceed.`,
@@ -425,14 +425,14 @@ if (import.meta.main) {
 	try {
 		const res = await fetch(`http://localhost:${port}/health`);
 		if (res.ok) {
-			console.error(`Error: OpenGraft daemon already running on port ${port}`);
+			console.error(`Error: Matrix daemon already running on port ${port}`);
 			process.exit(1);
 		}
 	} catch {
 		// Port is free, proceed
 	}
 	console.log(
-		`OpenGraft daemon v${VERSION} (${GIT_HASH}) listening on http://localhost:${port}`,
+		`Matrix daemon v${VERSION} (${GIT_HASH}) listening on http://localhost:${port}`,
 	);
 	console.log(`Web UI: http://localhost:${port}/`);
 

@@ -9,7 +9,7 @@ import {
 	signCLIToken,
 	signSessionToken,
 } from "./auth.ts";
-import type { AuthGroup, OpenGraftConfig } from "./config.ts";
+import type { AuthGroup, MatrixConfig } from "./config.ts";
 import {
 	loadGlobalConfig,
 	loadProjectRepoConfig,
@@ -23,8 +23,8 @@ const _pkg = JSON.parse(
 ) as { version: string };
 const VERSION = _pkg.version;
 
-const DAEMON_URL = process.env.OG_DAEMON_URL ?? "http://localhost:7433";
-const AUTH_JSON_PATH = join(homedir(), ".opengraft", "auth.json");
+const DAEMON_URL = process.env.MXD_DAEMON_URL ?? "http://localhost:7433";
+const AUTH_JSON_PATH = join(homedir(), ".mxd", "auth.json");
 
 /**
  * Generate a short-lived CLI JWT for auto-auth.
@@ -103,7 +103,7 @@ async function handleRelocate(args: string[]): Promise<void> {
 	const target = args[0];
 	const newPath = args[1];
 	if (!target || !newPath) {
-		console.error("Usage: og relocate <project-id-or-name> <new-path>");
+		console.error("Usage: mxd relocate <project-id-or-name> <new-path>");
 		process.exit(1);
 	}
 
@@ -278,7 +278,7 @@ async function handleTasks(args: string[]): Promise<void> {
 async function handleDelete(args: string[]): Promise<void> {
 	const taskId = args[0];
 	if (!taskId) {
-		console.error("Usage: og delete <taskId>");
+		console.error("Usage: mxd delete <taskId>");
 		process.exit(1);
 	}
 
@@ -323,7 +323,7 @@ async function handleRun(args: string[]): Promise<void> {
 	}
 	const prompt = filteredArgs.join(" ");
 	if (!prompt) {
-		console.error("Usage: og run [--model <model>] <prompt>");
+		console.error("Usage: mxd run [--model <model>] <prompt>");
 		process.exit(1);
 	}
 
@@ -369,8 +369,8 @@ async function handleOrchestrate(args: string[]): Promise<void> {
 		: filteredArgs.join(" ");
 
 	if (!goal && !isResume) {
-		console.error("Usage: og orchestrate [--model <model>] <goal>");
-		console.error("       og orchestrate --resume [prompt]");
+		console.error("Usage: mxd orchestrate [--model <model>] <goal>");
+		console.error("       mxd orchestrate --resume [prompt]");
 		process.exit(1);
 	}
 
@@ -419,7 +419,7 @@ async function handleStop(): Promise<void> {
 	}
 	console.log("Agent stopped.");
 	console.log(
-		"Tip: Session history is preserved on disk. Restart the daemon and resume with: og orchestrate --resume",
+		"Tip: Session history is preserved on disk. Restart the daemon and resume with: mxd orchestrate --resume",
 	);
 }
 
@@ -571,7 +571,7 @@ async function resolveCurrentProject(): Promise<string | null> {
 
 	if (!match) {
 		console.error(
-			"No project found for current directory. Run: og run <prompt>",
+			"No project found for current directory. Run: mxd run <prompt>",
 		);
 		process.exit(1);
 	}
@@ -582,7 +582,7 @@ async function resolveCurrentProject(): Promise<string | null> {
 async function handleContinue(args: string[]): Promise<void> {
 	const taskId = args[0];
 	if (!taskId) {
-		console.error("Usage: og continue <taskId> [message]");
+		console.error("Usage: mxd continue <taskId> [message]");
 		process.exit(1);
 	}
 
@@ -851,7 +851,7 @@ async function handleAgent(args: string[]): Promise<void> {
 async function handleSend(args: string[]): Promise<void> {
 	const message = args.join(" ");
 	if (!message) {
-		console.error("Usage: og send <message>");
+		console.error("Usage: mxd send <message>");
 		process.exit(1);
 	}
 
@@ -868,7 +868,7 @@ async function handleSend(args: string[]): Promise<void> {
 	const rootNodeId = tasks.rootNodeId;
 	if (!rootNodeId) {
 		console.error(
-			"Error: no root node found. Start an agent first with: og run <prompt>",
+			"Error: no root node found. Start an agent first with: mxd run <prompt>",
 		);
 		process.exit(1);
 	}
@@ -899,7 +899,7 @@ const KNOWN_CONFIG_KEYS = [
 
 type KnownConfigKey = (typeof KNOWN_CONFIG_KEYS)[number];
 
-function printResolvedConfig(cfg: OpenGraftConfig): void {
+function printResolvedConfig(cfg: MatrixConfig): void {
 	const rows: [string, string][] = [
 		["model", cfg.model ?? "(not set)"],
 		["childModel", cfg.childModel ?? "(not set)"],
@@ -1053,13 +1053,13 @@ async function handleConfig(args: string[]): Promise<void> {
 		const repoCfg = projectPath ? await loadProjectRepoConfig(projectPath) : {};
 
 		// Try to get local config via daemon API
-		let localCfg: OpenGraftConfig = {};
+		let localCfg: MatrixConfig = {};
 		try {
 			const projectId = await resolveCurrentProject();
 			if (projectId) {
 				const res = await api(`/projects/${projectId}/config`);
 				if (res.ok) {
-					localCfg = (await res.json()) as OpenGraftConfig;
+					localCfg = (await res.json()) as MatrixConfig;
 				}
 			}
 		} catch {
@@ -1071,12 +1071,12 @@ async function handleConfig(args: string[]): Promise<void> {
 		console.log("");
 		printResolvedConfig(resolved);
 		console.log("");
-		console.log("  Use: og config set <key> <value> [--global|--project]");
-		console.log("       og config auth add <name> --provider <p> --key <k>");
-		console.log("       og config auth list");
+		console.log("  Use: mxd config set <key> <value> [--global|--project]");
+		console.log("       mxd config auth add <name> --provider <p> --key <k>");
+		console.log("       mxd config auth list");
 	} else {
 		console.error(
-			"Usage: og config [set <key> <value> | unset <key> | auth ...]",
+			"Usage: mxd config [set <key> <value> | unset <key> | auth ...]",
 		);
 		console.error(`Known keys: ${KNOWN_CONFIG_KEYS.join(", ")}`);
 		process.exit(1);
@@ -1162,7 +1162,7 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 		if (!resolved.authGroups || Object.keys(resolved.authGroups).length === 0) {
 			console.log("No auth groups configured.");
 			console.log(
-				"  Add one: og config auth add <name> --provider anthropic --key sk-ant-...",
+				"  Add one: mxd config auth add <name> --provider anthropic --key sk-ant-...",
 			);
 			return;
 		}
@@ -1217,10 +1217,10 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 	} else {
 		console.error("Usage:");
 		console.error(
-			"  og config auth add <name> --provider <anthropic|openai> --key <key> [--base-url <url>]",
+			"  mxd config auth add <name> --provider <anthropic|openai> --key <key> [--base-url <url>]",
 		);
-		console.error("  og config auth list");
-		console.error("  og config auth remove <name> [--global|--project]");
+		console.error("  mxd config auth list");
+		console.error("  mxd config auth remove <name> [--global|--project]");
 		process.exit(1);
 	}
 }
@@ -1228,10 +1228,8 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 async function handleAuth(args: string[]): Promise<void> {
 	const publicKeyBase64 = args[0];
 	if (!publicKeyBase64) {
-		console.error("Usage: og auth <public_key>");
-		console.error(
-			"\nCopy the public key from the OpenGraft web UI login page.",
-		);
+		console.error("Usage: mxd auth <public_key>");
+		console.error("\nCopy the public key from the Matrix web UI login page.");
 		process.exit(1);
 	}
 
@@ -1267,18 +1265,18 @@ async function handleHealth(): Promise<void> {
 			`Daemon: ${body.status} v${body.version}${hash} (uptime: ${Math.round(body.uptime / 1000)}s)`,
 		);
 	} catch {
-		console.error("Daemon not reachable. Start it with: og daemon start");
+		console.error("Daemon not reachable. Start it with: mxd daemon start");
 		process.exit(1);
 	}
 }
 
 // ── Daemon management via launchctl ──
 
-const PLIST_LABEL = "com.opengraft.daemon";
+const PLIST_LABEL = "dev.matrix.daemon";
 const PLIST_DIR = `${process.env.HOME}/Library/LaunchAgents`;
 const PLIST_PATH = `${PLIST_DIR}/${PLIST_LABEL}.plist`;
-const OG_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const LOG_DIR = `${process.env.HOME}/.opengraft/logs`;
+const MXD_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const LOG_DIR = `${process.env.HOME}/.mxd/logs`;
 
 function daemonPlist(): string {
 	const bunPath = process.argv[0]; // bun binary that's running this CLI
@@ -1308,10 +1306,10 @@ function daemonPlist(): string {
 \t<array>
 \t\t<string>${bunPath}</string>
 \t\t<string>run</string>
-\t\t<string>${OG_ROOT}/src/daemon.ts</string>
+\t\t<string>${MXD_ROOT}/src/daemon.ts</string>
 \t</array>
 \t<key>WorkingDirectory</key>
-\t<string>${OG_ROOT}</string>
+\t<string>${MXD_ROOT}</string>
 \t<key>EnvironmentVariables</key>
 \t<dict>
 ${envEntries.join("\n")}
@@ -1385,7 +1383,7 @@ async function handleDaemon(args: string[]): Promise<void> {
 			if (!(await daemonIsLoaded())) {
 				const { existsSync } = await import("node:fs");
 				if (!existsSync(PLIST_PATH)) {
-					console.log("Daemon not installed. Running: og daemon install");
+					console.log("Daemon not installed. Running: mxd daemon install");
 					await handleDaemon(["install"]);
 					return;
 				}
@@ -1434,7 +1432,7 @@ async function handleDaemon(args: string[]): Promise<void> {
 				// Fallback: maybe not loaded yet
 				const { existsSync } = await import("node:fs");
 				if (!existsSync(PLIST_PATH)) {
-					console.log("Daemon not installed. Running: og daemon install");
+					console.log("Daemon not installed. Running: mxd daemon install");
 					await handleDaemon(["install"]);
 					return;
 				}
@@ -1492,7 +1490,7 @@ async function handleDaemon(args: string[]): Promise<void> {
 		}
 
 		default:
-			console.log("Usage: og daemon <command>");
+			console.log("Usage: mxd daemon <command>");
 			console.log("");
 			console.log("Commands:");
 			console.log(
@@ -1523,7 +1521,7 @@ if (command === "--version" || command === "-v" || command === "version") {
 	} catch {
 		// git not available or not a git repo
 	}
-	console.log(`OpenGraft v${VERSION} (${gitHash})`);
+	console.log(`Matrix v${VERSION} (${gitHash})`);
 	process.exit(0);
 }
 
@@ -1575,7 +1573,7 @@ switch (command) {
 		} else if (sub === "prune") {
 			await handleSessionsPrune(args.slice(1));
 		} else {
-			console.error("Usage: og sessions clear|prune [--keep N]");
+			console.error("Usage: mxd sessions clear|prune [--keep N]");
 			process.exit(1);
 		}
 		break;
@@ -1607,10 +1605,10 @@ switch (command) {
 		await handleDaemon(args);
 		break;
 	default:
-		console.log(`OpenGraft v${VERSION}`);
+		console.log(`Matrix v${VERSION}`);
 		console.log("");
 		console.log("USAGE");
-		console.log("  og <command> [options]");
+		console.log("  mxd <command> [options]");
 		console.log("");
 		console.log("COMMANDS");
 		console.log("  Project");
@@ -1681,14 +1679,14 @@ switch (command) {
 		console.log("");
 		console.log("QUICK START");
 		console.log(
-			"  og daemon install                  # Install and start daemon",
+			"  mxd daemon install                  # Install and start daemon",
 		);
 		console.log(
-			"  og init .                          # Register current directory",
+			"  mxd init .                          # Register current directory",
 		);
-		console.log("  og orchestrate 'build feature X'   # Start agent");
+		console.log("  mxd orchestrate 'build feature X'   # Start agent");
 		console.log(
-			"  og watch                           # Watch in separate terminal",
+			"  mxd watch                           # Watch in separate terminal",
 		);
 		break;
 }

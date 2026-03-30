@@ -18,7 +18,7 @@ import { ulid } from "../ulid.ts";
 // ── Background Process Manager ──
 
 /** Temp directory for background process output files. */
-const BG_TMP_DIR = join(tmpdir(), "opengraft-bg");
+const BG_TMP_DIR = join(tmpdir(), "mxd-bg");
 
 /** Ensure the temp directory exists. */
 function ensureBgTmpDir(): void {

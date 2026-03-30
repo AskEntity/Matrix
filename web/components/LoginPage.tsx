@@ -69,7 +69,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 	useEffect(() => {
 		generateKeypair()
 			.then(({ keyPair, publicKeyBase64 }) => {
-				setCommand(`og auth ${publicKeyBase64}`);
+				setCommand(`mxd auth ${publicKeyBase64}`);
 				setPrivateKey(keyPair.privateKey);
 				setReady(true);
 			})
@@ -86,7 +86,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 			setTimeout(() => setCopied(false), 2000);
 		} catch {
 			// Fallback: select the command text
-			const el = document.querySelector(".og-login-command-text");
+			const el = document.querySelector(".mxd-login-command-text");
 			if (el) {
 				const range = document.createRange();
 				range.selectNodeContents(el);
@@ -131,34 +131,34 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 	);
 
 	return (
-		<div className="og-login-page">
-			<div className="og-login-card">
-				<div className="og-login-icon">🔐</div>
-				<h1 className="og-login-title">OpenGraft</h1>
+		<div className="mxd-login-page">
+			<div className="mxd-login-card">
+				<div className="mxd-login-icon">🔐</div>
+				<h1 className="mxd-login-title">Matrix</h1>
 
 				{!ready ? (
-					<p className="og-login-subtitle">Initializing…</p>
+					<p className="mxd-login-subtitle">Initializing…</p>
 				) : (
 					<>
-						<p className="og-login-subtitle">
+						<p className="mxd-login-subtitle">
 							Run this command in your terminal:
 						</p>
-						<div className="og-login-command-block">
-							<code className="og-login-command-text">{command}</code>
+						<div className="mxd-login-command-block">
+							<code className="mxd-login-command-text">{command}</code>
 							<button
 								type="button"
-								className="og-login-btn og-login-btn-copy"
+								className="mxd-login-btn mxd-login-btn-copy"
 								onClick={handleCopy}
 							>
 								{copied ? "✓ Copied" : "Copy"}
 							</button>
 						</div>
 
-						<p className="og-login-subtitle">Then paste the output here:</p>
+						<p className="mxd-login-subtitle">Then paste the output here:</p>
 						<input
 							ref={inputRef}
 							type="password"
-							className="og-login-input"
+							className="mxd-login-input"
 							placeholder="Paste output here"
 							value={pasteInput}
 							onChange={(e) => setPasteInput(e.target.value)}
@@ -167,7 +167,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 						/>
 						<button
 							type="button"
-							className="og-login-btn"
+							className="mxd-login-btn"
 							onClick={handleLogin}
 							disabled={loading || !pasteInput.trim()}
 						>
@@ -178,7 +178,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 
 				{status && (
 					<div
-						className={`og-login-status ${isError ? "og-login-status-error" : "og-login-status-ok"}`}
+						className={`mxd-login-status ${isError ? "mxd-login-status-error" : "mxd-login-status-ok"}`}
 					>
 						{status}
 					</div>

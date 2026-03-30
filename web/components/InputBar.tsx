@@ -27,7 +27,7 @@ export const InputBar = memo(function InputBar({
 	const composingRef = useRef(false);
 
 	const [prompt, setPrompt] = useState(
-		() => localStorage.getItem("og-prompt-draft") ?? "",
+		() => localStorage.getItem("mxd-prompt-draft") ?? "",
 	);
 	const [attachedImages, setAttachedImages] = useState<
 		{ base64: string; mediaType: string }[]
@@ -66,8 +66,8 @@ export const InputBar = memo(function InputBar({
 	// localStorage draft save with 2s debounce
 	useEffect(() => {
 		const timer = setTimeout(() => {
-			if (prompt) localStorage.setItem("og-prompt-draft", prompt);
-			else localStorage.removeItem("og-prompt-draft");
+			if (prompt) localStorage.setItem("mxd-prompt-draft", prompt);
+			else localStorage.removeItem("mxd-prompt-draft");
 		}, 2000);
 		return () => clearTimeout(timer);
 	}, [prompt]);
@@ -75,7 +75,7 @@ export const InputBar = memo(function InputBar({
 	// Save draft on page unload
 	useEffect(() => {
 		const handler = () => {
-			if (prompt) localStorage.setItem("og-prompt-draft", prompt);
+			if (prompt) localStorage.setItem("mxd-prompt-draft", prompt);
 		};
 		window.addEventListener("beforeunload", handler);
 		return () => window.removeEventListener("beforeunload", handler);
@@ -124,26 +124,26 @@ export const InputBar = memo(function InputBar({
 			onSend(prompt.trim(), images);
 			setPrompt("");
 			setAttachedImages([]);
-			localStorage.removeItem("og-prompt-draft");
+			localStorage.removeItem("mxd-prompt-draft");
 		},
 		[prompt, attachedImages, projectId, onSend],
 	);
 
 	return (
-		<form className="og-footer-form" onSubmit={handleSubmit}>
+		<form className="mxd-footer-form" onSubmit={handleSubmit}>
 			{/* Image preview thumbnails */}
 			{attachedImages.length > 0 && (
-				<div className="og-image-previews">
+				<div className="mxd-image-previews">
 					{attachedImages.map((img, i) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: images have no natural unique ID
-						<div key={`${img.mediaType}-${i}`} className="og-image-preview">
+						<div key={`${img.mediaType}-${i}`} className="mxd-image-preview">
 							<img
 								src={`data:${img.mediaType};base64,${img.base64}`}
 								alt={`Attachment ${i + 1}`}
 							/>
 							<button
 								type="button"
-								className="og-image-preview-remove"
+								className="mxd-image-preview-remove"
 								onClick={() =>
 									setAttachedImages((prev) =>
 										prev.filter((_, idx) => idx !== i),
@@ -167,7 +167,7 @@ export const InputBar = memo(function InputBar({
 			)}
 			<textarea
 				ref={textareaRef}
-				className="og-prompt-input"
+				className="mxd-prompt-input"
 				rows={1}
 				value={prompt}
 				onChange={(e) => {
@@ -244,7 +244,7 @@ export const InputBar = memo(function InputBar({
 				}
 				disabled={!projectId}
 			/>
-			<div className="og-footer-controls">
+			<div className="mxd-footer-controls">
 				<input
 					ref={fileInputRef}
 					type="file"
@@ -264,7 +264,7 @@ export const InputBar = memo(function InputBar({
 				/>
 				<button
 					type="button"
-					className="og-btn-attach"
+					className="mxd-btn-attach"
 					onClick={() => fileInputRef.current?.click()}
 					disabled={!projectId}
 					aria-label={t("footer.attachImage")}
@@ -274,11 +274,11 @@ export const InputBar = memo(function InputBar({
 				</button>
 				<button
 					type="submit"
-					className="og-btn-run"
+					className="mxd-btn-run"
 					disabled={!projectId || !prompt.trim()}
 				>
 					<IconSend size={13} />
-					<span className="og-btn-run-label">{t("footer.send")}</span>
+					<span className="mxd-btn-run-label">{t("footer.send")}</span>
 				</button>
 			</div>
 		</form>

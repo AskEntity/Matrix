@@ -283,7 +283,7 @@ describe("runLoop integration", () => {
 											id: "call_done",
 											type: "function",
 											function: {
-												name: "mcp__opengraft__done",
+												name: "mcp__mxd__done",
 												arguments: JSON.stringify({
 													status: "passed",
 													summary: "Task completed",
@@ -340,7 +340,7 @@ describe("runLoop integration", () => {
 				systemPrompt: { stable: "You are a helpful agent.", variable: "" },
 				queue: queueWithPrompt("Do something", tmpDir),
 				mcpToolDefs: {
-					opengraft: [
+					mxd: [
 						{
 							name: "done",
 							description: "Signal completion",
@@ -758,7 +758,7 @@ describe("Event recording via emit callback", () => {
 											id: "call_done",
 											type: "function",
 											function: {
-												name: "mcp__opengraft__done",
+												name: "mcp__mxd__done",
 												arguments: JSON.stringify({
 													status: "passed",
 													summary: "Task completed",
@@ -818,7 +818,7 @@ describe("Event recording via emit callback", () => {
 				emit,
 				queue: queueWithPrompt("Do something", tmpDir),
 				mcpToolDefs: {
-					opengraft: [
+					mxd: [
 						{
 							name: "done",
 							description: "Signal completion",
@@ -881,7 +881,7 @@ describe("Event recording via emit callback", () => {
 			const toolCallEvent = strongEvents.find((e) => e.type === "tool_call");
 			expect(toolCallEvent).toBeDefined();
 			if (toolCallEvent?.type === "tool_call") {
-				expect(toolCallEvent.tool).toBe("mcp__opengraft__done");
+				expect(toolCallEvent.tool).toBe("mcp__mxd__done");
 				expect(toolCallEvent.toolCallId).toBe("call_done");
 			}
 
@@ -1118,7 +1118,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 						toolCalls: [
 							{
 								id: "call_done",
-								name: "mcp__opengraft__done",
+								name: "mcp__mxd__done",
 								arguments: JSON.stringify({
 									status: "passed",
 									summary: "All done",
@@ -1140,7 +1140,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 					emit,
 					queue: queueWithPrompt("Do the task", testDir),
 					mcpToolDefs: {
-						opengraft: [
+						mxd: [
 							{
 								name: "done",
 								description: "Signal completion",
@@ -1185,7 +1185,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				// Verify tool_call details
 				const toolCall = emittedEvents.find((e) => e.type === "tool_call");
 				if (toolCall?.type === "tool_call") {
-					expect(toolCall.tool).toBe("mcp__opengraft__done");
+					expect(toolCall.tool).toBe("mcp__mxd__done");
 					expect(toolCall.toolCallId).toBe("call_done");
 				}
 
@@ -1359,7 +1359,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 						toolCalls: [
 							{
 								id: "call_err",
-								name: "mcp__opengraft__done",
+								name: "mcp__mxd__done",
 								arguments: JSON.stringify({
 									status: "failed",
 									summary: "Error",
@@ -1381,7 +1381,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 					emit,
 					queue: queueWithPrompt("Try something", testDir),
 					mcpToolDefs: {
-						opengraft: [
+						mxd: [
 							{
 								name: "done",
 								description: "Signal completion",

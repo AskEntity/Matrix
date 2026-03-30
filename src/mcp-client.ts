@@ -35,7 +35,7 @@ async function startMcpServer(
 	});
 
 	const client = new Client({
-		name: `opengraft-${name}`,
+		name: `mxd-${name}`,
 		version: "1.0.0",
 	});
 

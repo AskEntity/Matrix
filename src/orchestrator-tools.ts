@@ -921,7 +921,7 @@ export function createOrchestratorTools(
 						let memory = "";
 						try {
 							memory = readFileSync(
-								join(node.worktreePath ?? repoPath, ".opengraft", "memory.md"),
+								join(node.worktreePath ?? repoPath, ".mxd", "memory.md"),
 								"utf-8",
 							);
 						} catch {

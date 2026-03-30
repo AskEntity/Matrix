@@ -18,7 +18,7 @@ export function CuteCat() {
 	}, []);
 
 	return (
-		<div className={`og-cute-cat${isTyping ? " og-cat-typing" : ""}`}>
+		<div className={`mxd-cute-cat${isTyping ? " mxd-cat-typing" : ""}`}>
 			<svg
 				viewBox="0 0 100 120"
 				width="90"
@@ -31,7 +31,7 @@ export function CuteCat() {
 				<title>Cute cat</title>
 				{/* Tail */}
 				<path
-					className="og-cat-tail"
+					className="mxd-cat-tail"
 					d="M78 95 C88 85, 95 70, 88 58"
 					stroke="#ffb6c1"
 					strokeWidth="3.5"
@@ -52,7 +52,7 @@ export function CuteCat() {
 				<ellipse cx="50" cy="60" rx="28" ry="24" fill="#ffb6c1" />
 				{/* Eyes */}
 				<ellipse
-					className="og-cat-eye og-cat-eye-l"
+					className="mxd-cat-eye mxd-cat-eye-l"
 					cx="39"
 					cy="58"
 					rx="3"
@@ -60,7 +60,7 @@ export function CuteCat() {
 					fill="#4a2030"
 				/>
 				<ellipse
-					className="og-cat-eye og-cat-eye-r"
+					className="mxd-cat-eye mxd-cat-eye-r"
 					cx="61"
 					cy="58"
 					rx="3"
@@ -86,7 +86,7 @@ export function CuteCat() {
 				/>
 				{/* Whiskers — left side */}
 				<line
-					className="og-cat-whisker"
+					className="mxd-cat-whisker"
 					x1="35"
 					y1="63"
 					x2="8"
@@ -96,7 +96,7 @@ export function CuteCat() {
 					strokeLinecap="round"
 				/>
 				<line
-					className="og-cat-whisker"
+					className="mxd-cat-whisker"
 					x1="35"
 					y1="65"
 					x2="7"
@@ -106,7 +106,7 @@ export function CuteCat() {
 					strokeLinecap="round"
 				/>
 				<line
-					className="og-cat-whisker"
+					className="mxd-cat-whisker"
 					x1="35"
 					y1="67"
 					x2="8"
@@ -117,7 +117,7 @@ export function CuteCat() {
 				/>
 				{/* Whiskers — right side */}
 				<line
-					className="og-cat-whisker"
+					className="mxd-cat-whisker"
 					x1="65"
 					y1="63"
 					x2="92"
@@ -127,7 +127,7 @@ export function CuteCat() {
 					strokeLinecap="round"
 				/>
 				<line
-					className="og-cat-whisker"
+					className="mxd-cat-whisker"
 					x1="65"
 					y1="65"
 					x2="93"
@@ -137,7 +137,7 @@ export function CuteCat() {
 					strokeLinecap="round"
 				/>
 				<line
-					className="og-cat-whisker"
+					className="mxd-cat-whisker"
 					x1="65"
 					y1="67"
 					x2="92"
@@ -148,7 +148,7 @@ export function CuteCat() {
 				/>
 				{/* Left paw */}
 				<ellipse
-					className="og-cat-paw og-cat-paw-l"
+					className="mxd-cat-paw mxd-cat-paw-l"
 					cx="36"
 					cy="114"
 					rx="7"
@@ -157,7 +157,7 @@ export function CuteCat() {
 				/>
 				{/* Right paw */}
 				<ellipse
-					className="og-cat-paw og-cat-paw-r"
+					className="mxd-cat-paw mxd-cat-paw-r"
 					cx="64"
 					cy="114"
 					rx="7"

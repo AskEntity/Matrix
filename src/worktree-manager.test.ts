@@ -21,7 +21,7 @@ async function initRepo(dir: string): Promise<void> {
 	await exec(["git", "config", "user.name", "Test"], dir);
 	await writeFile(join(dir, "README.md"), "# Test\n");
 	// Create a no-op setup hook (required for worktree creation)
-	const hookDir = join(dir, ".opengraft", "hooks");
+	const hookDir = join(dir, ".mxd", "hooks");
 	await mkdir(hookDir, { recursive: true });
 	const hookPath = join(hookDir, "setup_worktree.sh");
 	await writeFile(hookPath, "#!/bin/bash\nexit 0\n", "utf-8");
@@ -32,7 +32,7 @@ async function initRepo(dir: string): Promise<void> {
 
 /** Add a setup_worktree.sh hook to the repo and commit it. */
 async function addSetupHook(dir: string, script: string): Promise<void> {
-	const hookDir = join(dir, ".opengraft", "hooks");
+	const hookDir = join(dir, ".mxd", "hooks");
 	await mkdir(hookDir, { recursive: true });
 	await writeFile(join(hookDir, "setup_worktree.sh"), script, "utf-8");
 	await chmod(join(hookDir, "setup_worktree.sh"), 0o755);
@@ -46,7 +46,7 @@ describe("WorktreeManager", () => {
 	let mgr: WorktreeManager;
 
 	beforeEach(async () => {
-		repoDir = await mkdtemp(join(tmpdir(), "og-wt-repo-"));
+		repoDir = await mkdtemp(join(tmpdir(), "mxd-wt-repo-"));
 		wtRoot = join(repoDir, ".worktrees");
 		await initRepo(repoDir);
 		mgr = new WorktreeManager(repoDir, wtRoot);
@@ -61,7 +61,7 @@ describe("WorktreeManager", () => {
 		const taskId = "abcdef12-3456-7890-abcd-ef1234567890";
 		const info = await mgr.create(taskId, "setup");
 
-		expect(info.branch).toBe("og/abcdef12-3456-7890-abcd-ef1234567890/setup");
+		expect(info.branch).toBe("mxd/abcdef12-3456-7890-abcd-ef1234567890/setup");
 		expect(existsSync(info.path)).toBe(true);
 		expect(existsSync(join(info.path, "README.md"))).toBe(true);
 	});
@@ -119,7 +119,7 @@ describe("WorktreeManager", () => {
 		// Branch should be gone
 		const branches = await exec(["git", "branch"], repoDir);
 		expect(branches).not.toContain(
-			"og/bbbbbbbb-1111-2222-3333-444444444444/cleanup",
+			"mxd/bbbbbbbb-1111-2222-3333-444444444444/cleanup",
 		);
 	});
 
@@ -132,8 +132,8 @@ describe("WorktreeManager", () => {
 		const list = await mgr.list();
 		expect(list).toHaveLength(2);
 		expect(list.map((w) => w.branch).sort()).toEqual([
-			"og/aaaaaaaa-1111-2222-3333-444444444444/alpha",
-			"og/cccccccc-1111-2222-3333-444444444444/beta",
+			"mxd/aaaaaaaa-1111-2222-3333-444444444444/alpha",
+			"mxd/cccccccc-1111-2222-3333-444444444444/beta",
 		]);
 	});
 
@@ -205,12 +205,12 @@ describe("WorktreeManager", () => {
 
 	test("create fails when setup hook is missing", async () => {
 		// Remove the hook from the repo
-		await exec(["git", "rm", ".opengraft/hooks/setup_worktree.sh"], repoDir);
+		await exec(["git", "rm", ".mxd/hooks/setup_worktree.sh"], repoDir);
 		await exec(["git", "commit", "-m", "remove hook"], repoDir);
 
 		const taskId = "11223344-1111-2222-3333-444444444444";
 		await expect(mgr.create(taskId, "no-hook")).rejects.toThrow(
-			"Missing .opengraft/hooks/setup_worktree.sh",
+			"Missing .mxd/hooks/setup_worktree.sh",
 		);
 
 		// Worktree should be cleaned up
@@ -237,7 +237,7 @@ describe("WorktreeManager", () => {
 		// Branch should be cleaned up
 		const branches = await exec(["git", "branch"], repoDir);
 		expect(branches).not.toContain(
-			"og/55667788-1111-2222-3333-444444444444/bad-hook",
+			"mxd/55667788-1111-2222-3333-444444444444/bad-hook",
 		);
 	});
 });

@@ -1,6 +1,6 @@
-# OpenGraft Project Memory
+# Matrix Project Memory
 
-> Single source of truth. Read on every session start. Full design: `OpenGraft.md`
+> Single source of truth. Read on every session start. Full design: `Matrix.md`
 
 ## ⚠️ Architecture Discipline
 
@@ -99,7 +99,7 @@ Missing any one causes: (1) orphan on resume, (2) missing UI feedback, (3) API 4
 
 ## Tool Architecture
 
-All tools are `ToolDefinition[]` under `mcp__opengraft__*` namespace. ONE execution path via `mcpHandler.handler()`.
+All tools are `ToolDefinition[]` under `mcp__mxd__*` namespace. ONE execution path via `mcpHandler.handler()`.
 
 **TaskSession** — runtime-only field on `TaskNode`. Contains: `queue`, `cwd`, `fallbackCwd`, `depth`, `backgroundProcesses`, `foregroundExecutions`.
 
@@ -163,7 +163,7 @@ Restart recovery handles several edge cases through a unified approach:
 - `processEvent` / `processEventBatch` — unified for live + batch. Skips `tree_updated` from JSONL.
 - `tool_pair` UIOnlyEvent combines tool_call + tool_result. `applyUpdate(entries, op)` pure function.
 - `SLASH_COMMANDS` in SlashCommandMenu.tsx: `/compact`, `/stop`, `/clear`, `/settings`.
-- localStorage keys: `og-` prefix. CSS file is `web/style.css` (not `styles.css`).
+- localStorage keys: `mxd-` prefix. CSS file is `web/style.css` (not `styles.css`).
 
 ## Known Pitfalls
 
@@ -178,16 +178,16 @@ Restart recovery handles several edge cases through a unified approach:
 - **Don't edit src/ directly as orchestrator**: Use child tasks in worktrees.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
 - **CSS attribute selectors break with i18n**: Use class-based selectors instead.
-- **Worktree setup hook**: `.opengraft/hooks/setup_worktree.sh` required. Missing = fail.
+- **Worktree setup hook**: `.mxd/hooks/setup_worktree.sh` required. Missing = fail.
 - **Concurrent ULID**: Use full `ulid()` (26 chars) for execId/bgId — sliced ULIDs collide within same millisecond.
 
 ## Auth
 
-Challenge-response with browser keypair (RSA-OAEP 2048). Browser generates keypair → user runs `og auth <public_key>` → CLI encrypts JWT → user pastes ciphertext → browser decrypts → authenticated. JWT never in plaintext outside browser.
+Challenge-response with browser keypair (RSA-OAEP 2048). Browser generates keypair → user runs `mxd auth <public_key>` → CLI encrypts JWT → user pastes ciphertext → browser decrypts → authenticated. JWT never in plaintext outside browser.
 
 - CLI auto-auth: every HTTP request gets short-lived JWT (5min TTL) via `signCLIToken()`
-- Web UI: session token in localStorage (`og-jwt`), `authFetch()` adds Bearer header. SSE auth via query param. 30-day TTL.
-- `~/.opengraft/auth.json` has `jwtSecret` (HMAC-SHA256, auto-generated)
+- Web UI: session token in localStorage (`mxd-jwt`), `authFetch()` adds Bearer header. SSE auth via query param. 30-day TTL.
+- `~/.mxd/auth.json` has `jwtSecret` (HMAC-SHA256, auto-generated)
 - `hasJwtSecret()` checks existence WITHOUT auto-creating (unlike `getSigningKey()`)
 - Biome flags functions starting with `use` as React hooks — renamed `useJti` to `consumeJti`
 
@@ -247,13 +247,13 @@ System prompt + tools: `ttl: "1h"`. Messages: orchestrator `1h`, child agents `5
 
 Key competitors: Claude Code Agent Teams, OpenClaw, Cursor 2.0, OpenAI Codex App, Devin, Stoneforge, Intent (Augment Code), GitHub Copilot Coding Agent.
 
-**OpenGraft unique features** (no competitor has ALL): recursive task tree (infinite nesting), cross-project communication, real-time MessageQueue, compaction + fork context combo.
+**Matrix unique features** (no competitor has ALL): recursive task tree (infinite nesting), cross-project communication, real-time MessageQueue, compaction + fork context combo.
 
 **Positioning**: "Scoped connectivity" — each project is scoped (task tree, memory, git) but not isolated (cross-project messaging = expert consultation).
 
-## og-docs
+## mxd-docs
 
-VitePress docs at og-docs project. Build with npm (not bun — hangs due to vuejs/vitepress#2943). Deploy: `npm install && npx vitepress build docs && npx wrangler pages deploy docs/.vitepress/dist --project-name=og-docs`.
+VitePress docs at mxd-docs project. Build with npm (not bun — hangs due to vuejs/vitepress#2943). Deploy: `npm install && npx vitepress build docs && npx wrangler pages deploy docs/.vitepress/dist --project-name=mxd-docs`.
 
 ## Integration Test Framework
 
@@ -291,7 +291,7 @@ Lifetime issues (daemon restart, message loss, orphan cleanup) MUST use TDD. Wri
 
 ## Test Quality Principles
 
-Two indicators of test quality — applies to ALL code, not just OpenGraft:
+Two indicators of test quality — applies to ALL code, not just Matrix:
 
 **Mutation resistance**: After writing tests, mentally mutate the code they cover — flip a conditional, delete a line, change a return value, swap an argument. If no test fails, the test suite has a gap. Add a test that catches the mutation. This is especially important for:
 - Conditional branches (if you flip `===` to `!==`, does a test fail?)
@@ -305,9 +305,9 @@ Two indicators of test quality — applies to ALL code, not just OpenGraft:
 - Testing an event handler by calling the handler function directly instead of emitting the event
 - Testing middleware by calling it as a function instead of making an HTTP request through the stack
 
-**OpenGraft-specific application**: For lifetime/restart bugs, use the integration test framework (`src/integration.test.ts`, `src/test-utils/mock-anthropic-api.ts`). The `recreateApp()` helper simulates real daemon restarts. Every restart test must complete the full lifecycle: crash → restart → resume → done(). Unit tests that call recovery functions directly give false confidence.
+**Matrix-specific application**: For lifetime/restart bugs, use the integration test framework (`src/integration.test.ts`, `src/test-utils/mock-anthropic-api.ts`). The `recreateApp()` helper simulates real daemon restarts. Every restart test must complete the full lifecycle: crash → restart → resume → done(). Unit tests that call recovery functions directly give false confidence.
 
-**System prompt boundary**: The system prompt is used by ALL projects, not just OpenGraft. Test quality principles in the system prompt must be general software engineering advice. OpenGraft-specific details (mock DSL, JSONL, EventStore, specific file paths) belong in memory.md only.
+**System prompt boundary**: The system prompt is used by ALL projects, not just Matrix. Test quality principles in the system prompt must be general software engineering advice. Matrix-specific details (mock DSL, JSONL, EventStore, specific file paths) belong in memory.md only.
 
 ## Mutation Testing Results (March 2025)
 
@@ -375,7 +375,7 @@ ONE message endpoint: `POST /projects/:id/tasks/:nodeId/message` with `{ content
 - **Child messages**: direct delivery with two-phase lifecycle + parent chain notification
 - **`POST /projects/:id/message`**: DELETED. All callers use the task endpoint.
 - **`/agents/start`** and **`/orchestrate/agent`**: thin wrappers that delegate to `handleInjectMessage` for message delivery. No duplicate enqueue logic.
-- **CLI `og send`**: resolves rootNodeId from task tree, sends via task endpoint
+- **CLI `mxd send`**: resolves rootNodeId from task tree, sends via task endpoint
 - **Frontend**: `sendMessageToTask(taskId, content, images?)` is the single function. `sendMessage` removed.
 - Field name: `content` (accepts `message` as alias for backward compat)
 
@@ -483,7 +483,7 @@ Records `tools`, `systemStable`, `systemVariable` for the session segment.
 
 ## Test-is-Golden Philosophy
 
-**Test is golden. Not spec, not architecture.** System prompt `## Test is Golden` section contains the full philosophy (was `## Test Quality`). Applies to ALL projects using OpenGraft.
+**Test is golden. Not spec, not architecture.** System prompt `## Test is Golden` section contains the full philosophy (was `## Test Quality`). Applies to ALL projects using Matrix.
 
 - Bottom-up: write tests that define behavior → find simplest architecture that passes them
 - Architecture serves tests — question it freely ("is there a simpler design that passes these tests?")
@@ -539,7 +539,7 @@ Resume messages from autoResumeProjects must be written to JSONL (via deliverMes
 
 ## Architecture Fix Centralization (March 2026)
 
-- `src/tool-names.ts` — MCP tool name constants (TOOL_YIELD, TOOL_DONE, etc.) + helpers (mcpToolName, stripMcpPrefix, isOpengraftTool). Test files keep literal strings.
+- `src/tool-names.ts` — MCP tool name constants (TOOL_YIELD, TOOL_DONE, etc.) + helpers (mcpToolName, stripMcpPrefix, isBuiltinTool). Test files keep literal strings.
 - `src/queue-message-factory.ts` — factories for all 8 QueueMessage variants. Enforce `id: ulid(), ts: Date.now()` invariant.
 - `web/api.ts` — centralized API URL builder. Changing API prefix = one-place change.
 - `src/event-display.ts` — platform-agnostic event rendering. New platforms (CLI, Telegram) use this directly.

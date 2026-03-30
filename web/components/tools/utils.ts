@@ -1,5 +1,5 @@
 import {
-	isOpengraftTool,
+	isBuiltinTool,
 	stripMcpPrefix,
 	TOOL_BACKGROUND,
 	TOOL_BASH,
@@ -146,7 +146,7 @@ export function formatMcpToolResult(
 	t: (key: string, params?: Record<string, string>) => string,
 ): string | null {
 	const mcpTool = stripMcpPrefix(toolName);
-	if (!isOpengraftTool(toolName)) return null;
+	if (!isBuiltinTool(toolName)) return null;
 
 	// Try to parse JSON content
 	let json: Record<string, unknown> | null = null;

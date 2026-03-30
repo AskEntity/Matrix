@@ -17,7 +17,7 @@ export function StatusBadge({ status }: { status: TaskStatus }) {
 	const { t } = useLocale();
 	const key = `status.${status}`;
 	return (
-		<span className={`og-status-badge ${status}`}>
+		<span className={`mxd-status-badge ${status}`}>
 			<span className="badge-dot" />
 			{t(key)}
 		</span>

@@ -11,8 +11,8 @@ describe("ProjectManager", () => {
 	let pm: ProjectManager;
 
 	beforeEach(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-test-"));
-		dataDir = await mkdtemp(join(tmpdir(), "og-data-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-test-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-data-"));
 		pm = new ProjectManager(dataDir);
 		await pm.load();
 	});
@@ -23,15 +23,13 @@ describe("ProjectManager", () => {
 	});
 
 	describe("init — new directory", () => {
-		test("creates directory structure with .opengraft/memory.md and git", async () => {
+		test("creates directory structure with .mxd/memory.md and git", async () => {
 			const projectPath = join(tempDir, "new-app");
 			const project = await pm.init(projectPath);
 
 			expect(project.name).toBe("new-app");
 			expect(project.path).toBe(projectPath);
-			expect(existsSync(join(projectPath, ".opengraft", "memory.md"))).toBe(
-				true,
-			);
+			expect(existsSync(join(projectPath, ".mxd", "memory.md"))).toBe(true);
 			expect(existsSync(join(projectPath, ".git"))).toBe(true);
 			expect(existsSync(join(projectPath, "src"))).toBe(true);
 			expect(existsSync(join(projectPath, ".gitignore"))).toBe(true);
@@ -42,7 +40,7 @@ describe("ProjectManager", () => {
 			await pm.init(projectPath);
 
 			const memory = await readFile(
-				join(projectPath, ".opengraft", "memory.md"),
+				join(projectPath, ".mxd", "memory.md"),
 				"utf-8",
 			);
 			expect(memory).toContain("scratch pad");
@@ -53,7 +51,7 @@ describe("ProjectManager", () => {
 			await pm.init(projectPath);
 
 			const memory = await readFile(
-				join(projectPath, ".opengraft", "memory.md"),
+				join(projectPath, ".mxd", "memory.md"),
 				"utf-8",
 			);
 			expect(memory).toContain("CRITICAL: First Launch Setup");
@@ -67,16 +65,11 @@ describe("ProjectManager", () => {
 
 			const examplePath = join(
 				projectPath,
-				".opengraft",
+				".mxd",
 				"hooks",
 				"setup_worktree.sh.example",
 			);
-			const finalPath = join(
-				projectPath,
-				".opengraft",
-				"hooks",
-				"setup_worktree.sh",
-			);
+			const finalPath = join(projectPath, ".mxd", "hooks", "setup_worktree.sh");
 			expect(existsSync(examplePath)).toBe(true);
 			expect(existsSync(finalPath)).toBe(false);
 			const content = await readFile(examplePath, "utf-8");
@@ -96,10 +89,8 @@ describe("ProjectManager", () => {
 			// Original file preserved
 			const readme = await readFile(join(projectPath, "README.md"), "utf-8");
 			expect(readme).toBe("# My App\n");
-			// .opengraft/ created
-			expect(existsSync(join(projectPath, ".opengraft", "memory.md"))).toBe(
-				true,
-			);
+			// .mxd/ created
+			expect(existsSync(join(projectPath, ".mxd", "memory.md"))).toBe(true);
 		});
 
 		test("converted project memory says to explore codebase", async () => {
@@ -109,7 +100,7 @@ describe("ProjectManager", () => {
 			await pm.init(projectPath);
 
 			const memory = await readFile(
-				join(projectPath, ".opengraft", "memory.md"),
+				join(projectPath, ".mxd", "memory.md"),
 				"utf-8",
 			);
 			expect(memory).toContain("Converted existing project");
@@ -126,7 +117,7 @@ describe("ProjectManager", () => {
 
 			const hookPath = join(
 				projectPath,
-				".opengraft",
+				".mxd",
 				"hooks",
 				"setup_worktree.sh.example",
 			);
@@ -143,7 +134,7 @@ describe("ProjectManager", () => {
 
 			const hookPath = join(
 				projectPath,
-				".opengraft",
+				".mxd",
 				"hooks",
 				"setup_worktree.sh.example",
 			);
@@ -153,7 +144,7 @@ describe("ProjectManager", () => {
 
 		test("does not create .example when setup_worktree.sh already exists", async () => {
 			const projectPath = join(tempDir, "has-hook");
-			const hookDir = join(projectPath, ".opengraft", "hooks");
+			const hookDir = join(projectPath, ".mxd", "hooks");
 			await mkdir(hookDir, { recursive: true });
 			await writeFile(
 				join(hookDir, "setup_worktree.sh"),
@@ -174,11 +165,11 @@ describe("ProjectManager", () => {
 			expect(content).toBe("#!/bin/bash\nexit 0\n");
 		});
 
-		test("does not overwrite existing .opengraft/memory.md", async () => {
+		test("does not overwrite existing .mxd/memory.md", async () => {
 			const projectPath = join(tempDir, "has-memory");
-			await mkdir(join(projectPath, ".opengraft"), { recursive: true });
+			await mkdir(join(projectPath, ".mxd"), { recursive: true });
 			await writeFile(
-				join(projectPath, ".opengraft", "memory.md"),
+				join(projectPath, ".mxd", "memory.md"),
 				"# Custom memory\n",
 				"utf-8",
 			);
@@ -186,7 +177,7 @@ describe("ProjectManager", () => {
 			await pm.init(projectPath);
 
 			const memory = await readFile(
-				join(projectPath, ".opengraft", "memory.md"),
+				join(projectPath, ".mxd", "memory.md"),
 				"utf-8",
 			);
 			expect(memory).toBe("# Custom memory\n");
@@ -335,11 +326,11 @@ describe("ProjectManager", () => {
 	});
 
 	describe("updateProject", () => {
-		test("updates project path to a valid opengraft directory", async () => {
+		test("updates project path to a valid mxd directory", async () => {
 			const project = await pm.init(join(tempDir, "original"));
-			// Create a new directory with .opengraft/
+			// Create a new directory with .mxd/
 			const newPath = join(tempDir, "relocated");
-			await mkdir(join(newPath, ".opengraft"), { recursive: true });
+			await mkdir(join(newPath, ".mxd"), { recursive: true });
 
 			const updated = await pm.updateProject(project.id, { path: newPath });
 			expect(updated.path).toBe(newPath);
@@ -357,7 +348,7 @@ describe("ProjectManager", () => {
 		test("updates both path and name", async () => {
 			const project = await pm.init(join(tempDir, "both"));
 			const newPath = join(tempDir, "both-new");
-			await mkdir(join(newPath, ".opengraft"), { recursive: true });
+			await mkdir(join(newPath, ".mxd"), { recursive: true });
 
 			const updated = await pm.updateProject(project.id, {
 				path: newPath,
@@ -376,13 +367,13 @@ describe("ProjectManager", () => {
 			).rejects.toThrow("Path does not exist");
 		});
 
-		test("rejects path without .opengraft/ directory", async () => {
-			const project = await pm.init(join(tempDir, "reject-og"));
-			const badPath = join(tempDir, "no-opengraft");
+		test("rejects path without .mxd/ directory", async () => {
+			const project = await pm.init(join(tempDir, "reject-mxd"));
+			const badPath = join(tempDir, "no-mxd");
 			await mkdir(badPath, { recursive: true });
 
 			expect(pm.updateProject(project.id, { path: badPath })).rejects.toThrow(
-				"missing .opengraft/ directory",
+				"missing .mxd/ directory",
 			);
 		});
 
@@ -406,7 +397,7 @@ describe("ProjectManager", () => {
 		test("persists updated path across reload", async () => {
 			const project = await pm.init(join(tempDir, "persist-update"));
 			const newPath = join(tempDir, "persist-new");
-			await mkdir(join(newPath, ".opengraft"), { recursive: true });
+			await mkdir(join(newPath, ".mxd"), { recursive: true });
 
 			await pm.updateProject(project.id, { path: newPath });
 

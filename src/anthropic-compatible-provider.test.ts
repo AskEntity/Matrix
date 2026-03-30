@@ -179,7 +179,7 @@ describe("executeTool", () => {
 	let tempDir: string;
 
 	beforeAll(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-dp-test-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-dp-test-"));
 	});
 
 	afterAll(async () => {
@@ -210,7 +210,7 @@ describe("executeTool", () => {
 		);
 		expect(result.isError).toBe(false);
 		expect(result.cwd).toBeUndefined();
-		expect(result.content).not.toContain("___OPENGRAFT_CWD___");
+		expect(result.content).not.toContain("___MXD_CWD___");
 	});
 
 	test("bash: cwd returned when cd changes directory", async () => {
@@ -219,7 +219,7 @@ describe("executeTool", () => {
 		expect(result.cwd).toBe("/tmp");
 		expect(result.content).toContain("workdir set to /tmp from now on");
 		// Marker should be stripped from output
-		expect(result.content).not.toContain("___OPENGRAFT_CWD___");
+		expect(result.content).not.toContain("___MXD_CWD___");
 	});
 
 	test("bash: cwd tracks cd within a multi-command chain", async () => {
@@ -282,7 +282,7 @@ describe("executeTool", () => {
 
 	test("bash: falls back to fallbackCwd when cwd is deleted", async () => {
 		// Create and then delete a temp dir to simulate a stale CWD
-		const deletedDir = await mkdtemp(join(tmpdir(), "og-deleted-"));
+		const deletedDir = await mkdtemp(join(tmpdir(), "mxd-deleted-"));
 		await rm(deletedDir, { recursive: true });
 
 		const result = await executeTool(
@@ -1051,8 +1051,8 @@ describe("executeBashWithTimeout", () => {
 					exitCode: 0,
 					status: "completed",
 					kill: null,
-					stdoutPath: "/tmp/opengraft-bg/exec-test.stdout",
-					stderrPath: "/tmp/opengraft-bg/exec-test.stderr",
+					stdoutPath: "/tmp/mxd-bg/exec-test.stdout",
+					stderrPath: "/tmp/mxd-bg/exec-test.stderr",
 				},
 			],
 		]);
@@ -1461,17 +1461,17 @@ describe("buildCompactedContext", () => {
 	});
 
 	test("includes fresh memory when cwd has memory file", async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "og-compact-test-"));
+		const tempDir = await mkdtemp(join(tmpdir(), "mxd-compact-test-"));
 		try {
-			await mkdir(join(tempDir, ".opengraft"), { recursive: true });
+			await mkdir(join(tempDir, ".mxd"), { recursive: true });
 			await writeFile(
-				join(tempDir, ".opengraft", "memory.md"),
+				join(tempDir, ".mxd", "memory.md"),
 				"# Project Memory\n- important note",
 			);
 
 			const result = await buildCompactedContext("checkpoint content", tempDir);
 			expect(result).toContain(
-				"# .opengraft/memory.md (Preloaded, do not read again)",
+				"# .mxd/memory.md (Preloaded, do not read again)",
 			);
 			expect(result).toContain("important note");
 		} finally {
@@ -1480,7 +1480,7 @@ describe("buildCompactedContext", () => {
 	});
 
 	test("works when memory file does not exist", async () => {
-		const tempDir = await mkdtemp(join(tmpdir(), "og-nomem-test-"));
+		const tempDir = await mkdtemp(join(tmpdir(), "mxd-nomem-test-"));
 		try {
 			const result = await buildCompactedContext("checkpoint", tempDir);
 			expect(result).toContain("Checkpoint Summary");
@@ -1713,7 +1713,7 @@ describe("done tool", () => {
 	let tracker: TaskTracker;
 
 	beforeAll(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-done-tool-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-done-tool-"));
 		tracker = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker.load();
 	});
@@ -1936,7 +1936,7 @@ describe("jsSearch", () => {
 	let tempDir: string;
 
 	beforeAll(async () => {
-		tempDir = await mkdtemp(join(tmpdir(), "og-search-test-"));
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-search-test-"));
 		await mkdir(join(tempDir, "sub"), { recursive: true });
 		await writeFile(join(tempDir, "hello.ts"), "const x = 1;\nconst y = 2;\n");
 		await writeFile(
@@ -2172,7 +2172,9 @@ describe("Event deterministic verification", () => {
 	let tmpDir: string;
 
 	beforeAll(async () => {
-		tmpDir = await mkdtemp(join(tmpdir(), "og-anthropic-strong-event-verify-"));
+		tmpDir = await mkdtemp(
+			join(tmpdir(), "mxd-anthropic-strong-event-verify-"),
+		);
 	});
 
 	afterAll(async () => {
@@ -2274,7 +2276,7 @@ describe("Event deterministic verification", () => {
 						toolUses: [
 							{
 								id: "tu_1",
-								name: "mcp__opengraft__done",
+								name: "mcp__mxd__done",
 								input: { status: "passed", summary: "All done" },
 							},
 						],
@@ -2298,7 +2300,7 @@ describe("Event deterministic verification", () => {
 			emit,
 			queue: queueWithPrompt("Do the task", testDir),
 			mcpToolDefs: {
-				opengraft: [
+				mxd: [
 					{
 						name: "done",
 						description: "Signal completion",
@@ -2341,7 +2343,7 @@ describe("Event deterministic verification", () => {
 		// Verify tool_call details
 		const toolCall = emittedEvents.find((e) => e.type === "tool_call");
 		if (toolCall?.type === "tool_call") {
-			expect(toolCall.tool).toBe("mcp__opengraft__done");
+			expect(toolCall.tool).toBe("mcp__mxd__done");
 			expect(toolCall.toolCallId).toBe("tu_1");
 		}
 
@@ -2408,7 +2410,7 @@ describe("Event deterministic verification", () => {
 						toolUses: [
 							{
 								id: "tu_err",
-								name: "mcp__opengraft__done",
+								name: "mcp__mxd__done",
 								input: { status: "failed", summary: "Error" },
 							},
 						],
@@ -2431,7 +2433,7 @@ describe("Event deterministic verification", () => {
 			emit,
 			queue: queueWithPrompt("Try something", testDir),
 			mcpToolDefs: {
-				opengraft: [
+				mxd: [
 					{
 						name: "done",
 						description: "Signal completion",
@@ -2942,7 +2944,7 @@ describe("Event deterministic verification", () => {
 						toolUses: [
 							{
 								id: "tu_cp",
-								name: "mcp__opengraft__done",
+								name: "mcp__mxd__done",
 								input: { status: "passed", summary: "Done" },
 							},
 						],
@@ -2966,7 +2968,7 @@ describe("Event deterministic verification", () => {
 			emit,
 			queue,
 			mcpToolDefs: {
-				opengraft: [
+				mxd: [
 					{
 						name: "done",
 						description: "Signal completion",

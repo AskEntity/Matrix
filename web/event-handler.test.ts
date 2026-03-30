@@ -524,7 +524,7 @@ describe("event-handler tool_pair creation", () => {
 		processEventBatch([
 			{
 				type: "tool_call",
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc-1",
 				input: { command: "ls" },
 				taskId: "task-1",
@@ -532,7 +532,7 @@ describe("event-handler tool_pair creation", () => {
 			},
 			{
 				type: "tool_result",
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc-1",
 				content: "file1.ts\nfile2.ts",
 				isError: false,
@@ -546,7 +546,7 @@ describe("event-handler tool_pair creation", () => {
 		const pair = capturedLogs[0];
 		expect(pair?.type).toBe("tool_pair");
 		if (pair?.type === "tool_pair") {
-			expect(pair.tool).toBe("mcp__opengraft__bash");
+			expect(pair.tool).toBe("mcp__mxd__bash");
 			expect(pair.toolCallId).toBe("tc-1");
 			expect(pair.input).toEqual({ command: "ls" });
 			expect(pair.resultContent).toBe("file1.ts\nfile2.ts");
@@ -570,7 +570,7 @@ describe("event-handler tool_pair creation", () => {
 		processEventBatch([
 			{
 				type: "tool_call",
-				tool: "mcp__opengraft__yield",
+				tool: "mcp__mxd__yield",
 				toolCallId: "tc-yield",
 				input: {},
 				taskId: "task-1",
@@ -578,7 +578,7 @@ describe("event-handler tool_pair creation", () => {
 			},
 			{
 				type: "tool_result",
-				tool: "mcp__opengraft__yield",
+				tool: "mcp__mxd__yield",
 				toolCallId: "tc-yield",
 				content: "resumed",
 				isError: false,
@@ -604,7 +604,7 @@ describe("event-handler tool_pair creation", () => {
 		processEventBatch([
 			{
 				type: "tool_call",
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc-pending",
 				input: { command: "sleep 10" },
 				taskId: "task-1",
@@ -634,7 +634,7 @@ describe("event-handler tool_pair creation", () => {
 		// 1. tool_call arrives
 		handleEvent({
 			type: "tool_call",
-			tool: "mcp__opengraft__read_file",
+			tool: "mcp__mxd__read_file",
 			toolCallId: "tc-live",
 			input: { path: "foo.ts" },
 			taskId: "task-1",
@@ -647,7 +647,7 @@ describe("event-handler tool_pair creation", () => {
 		// 2. tool_result arrives
 		handleEvent({
 			type: "tool_result",
-			tool: "mcp__opengraft__read_file",
+			tool: "mcp__mxd__read_file",
 			toolCallId: "tc-live",
 			content: "const x = 1;",
 			isError: false,
@@ -660,7 +660,7 @@ describe("event-handler tool_pair creation", () => {
 		const pair = capturedLogs[0];
 		expect(pair?.type).toBe("tool_pair");
 		if (pair?.type === "tool_pair") {
-			expect(pair.tool).toBe("mcp__opengraft__read_file");
+			expect(pair.tool).toBe("mcp__mxd__read_file");
 			expect(pair.resultContent).toBe("const x = 1;");
 			expect(pair.isError).toBe(false);
 		}
@@ -682,7 +682,7 @@ describe("event-handler tool_pair creation", () => {
 
 		handleEvent({
 			type: "tool_call",
-			tool: "mcp__opengraft__yield",
+			tool: "mcp__mxd__yield",
 			toolCallId: "tc-yield-live",
 			input: {},
 			taskId: "task-1",
@@ -694,7 +694,7 @@ describe("event-handler tool_pair creation", () => {
 
 		handleEvent({
 			type: "tool_result",
-			tool: "mcp__opengraft__yield",
+			tool: "mcp__mxd__yield",
 			toolCallId: "tc-yield-live",
 			content: "resumed",
 			isError: false,
@@ -723,7 +723,7 @@ describe("event-handler tool_pair creation", () => {
 		// 1. yield tool_call arrives
 		handleEvent({
 			type: "tool_call",
-			tool: "mcp__opengraft__yield",
+			tool: "mcp__mxd__yield",
 			toolCallId: "tc-yield-pair",
 			input: {},
 			taskId: "task-1",
@@ -736,7 +736,7 @@ describe("event-handler tool_pair creation", () => {
 		//    (e.g., duplicate event during reconnect replay)
 		handleEvent({
 			type: "tool_result",
-			tool: "mcp__opengraft__read_file",
+			tool: "mcp__mxd__read_file",
 			toolCallId: "tc-yield-pair",
 			content: "some content",
 			isError: false,
@@ -749,7 +749,7 @@ describe("event-handler tool_pair creation", () => {
 		// 3. The actual yield tool_result arrives with remove_tool
 		handleEvent({
 			type: "tool_result",
-			tool: "mcp__opengraft__yield",
+			tool: "mcp__mxd__yield",
 			toolCallId: "tc-yield-pair",
 			content: "resumed",
 			isError: false,
@@ -775,7 +775,7 @@ describe("event-handler tool_pair creation", () => {
 			// tool_call for yield
 			{
 				type: "tool_call",
-				tool: "mcp__opengraft__yield",
+				tool: "mcp__mxd__yield",
 				toolCallId: "tc-yield-batch",
 				input: {},
 				taskId: "task-1",
@@ -784,7 +784,7 @@ describe("event-handler tool_pair creation", () => {
 			// A non-yield tool_result resolves it to tool_pair first
 			{
 				type: "tool_result",
-				tool: "mcp__opengraft__read_file",
+				tool: "mcp__mxd__read_file",
 				toolCallId: "tc-yield-batch",
 				content: "content",
 				isError: false,
@@ -794,7 +794,7 @@ describe("event-handler tool_pair creation", () => {
 			// Then the actual yield tool_result fires remove_tool
 			{
 				type: "tool_result",
-				tool: "mcp__opengraft__yield",
+				tool: "mcp__mxd__yield",
 				toolCallId: "tc-yield-batch",
 				content: "resumed",
 				isError: false,
@@ -843,7 +843,7 @@ describe("event-handler tool_pair creation", () => {
 		processEventBatch([
 			{
 				type: "tool_call",
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc-bg",
 				input: { command: "long-running-cmd" },
 				taskId: "task-1",
@@ -851,7 +851,7 @@ describe("event-handler tool_pair creation", () => {
 			},
 			{
 				type: "tool_result",
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc-bg",
 				content: "moved to background",
 				isError: false,
@@ -888,7 +888,7 @@ describe("event-handler tool_pair creation", () => {
 		processEventBatch([
 			{
 				type: "tool_call",
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc-err",
 				input: { command: "failing-cmd" },
 				taskId: "task-1",
@@ -896,7 +896,7 @@ describe("event-handler tool_pair creation", () => {
 			},
 			{
 				type: "tool_result",
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc-err",
 				content: "command not found",
 				isError: true,
@@ -927,7 +927,7 @@ describe("event-handler tool_pair creation", () => {
 		processEventBatch([
 			{
 				type: "tool_result",
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc-orphan",
 				content: "orphan result",
 				isError: false,
@@ -941,7 +941,7 @@ describe("event-handler tool_pair creation", () => {
 		const pair = capturedLogs[0];
 		expect(pair?.type).toBe("tool_pair");
 		if (pair?.type === "tool_pair") {
-			expect(pair.tool).toBe("mcp__opengraft__bash");
+			expect(pair.tool).toBe("mcp__mxd__bash");
 			expect(pair.input).toEqual({});
 			expect(pair.resultContent).toBe("orphan result");
 		}
@@ -960,7 +960,7 @@ describe("event-handler tool_pair creation", () => {
 		processEventBatch([
 			{
 				type: "tool_call",
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc-a",
 				input: { command: "echo a" },
 				taskId: "task-1",
@@ -968,7 +968,7 @@ describe("event-handler tool_pair creation", () => {
 			},
 			{
 				type: "tool_result",
-				tool: "mcp__opengraft__bash",
+				tool: "mcp__mxd__bash",
 				toolCallId: "tc-a",
 				content: "a",
 				isError: false,
@@ -977,7 +977,7 @@ describe("event-handler tool_pair creation", () => {
 			},
 			{
 				type: "tool_call",
-				tool: "mcp__opengraft__read_file",
+				tool: "mcp__mxd__read_file",
 				toolCallId: "tc-b",
 				input: { path: "b.ts" },
 				taskId: "task-1",
@@ -985,7 +985,7 @@ describe("event-handler tool_pair creation", () => {
 			},
 			{
 				type: "tool_result",
-				tool: "mcp__opengraft__read_file",
+				tool: "mcp__mxd__read_file",
 				toolCallId: "tc-b",
 				content: "content of b",
 				isError: false,
@@ -998,11 +998,11 @@ describe("event-handler tool_pair creation", () => {
 		expect(capturedLogs[0]?.type).toBe("tool_pair");
 		expect(capturedLogs[1]?.type).toBe("tool_pair");
 		if (capturedLogs[0]?.type === "tool_pair") {
-			expect(capturedLogs[0].tool).toBe("mcp__opengraft__bash");
+			expect(capturedLogs[0].tool).toBe("mcp__mxd__bash");
 			expect(capturedLogs[0].resultContent).toBe("a");
 		}
 		if (capturedLogs[1]?.type === "tool_pair") {
-			expect(capturedLogs[1].tool).toBe("mcp__opengraft__read_file");
+			expect(capturedLogs[1].tool).toBe("mcp__mxd__read_file");
 			expect(capturedLogs[1].resultContent).toBe("content of b");
 		}
 	});
