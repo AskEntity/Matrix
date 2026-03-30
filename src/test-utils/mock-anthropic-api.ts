@@ -165,9 +165,10 @@ function validateRequest(messages: MessageParam[]): void {
 		}
 	}
 
-	// 4. Every user text block must have exactly one [HH:MM:SS] timestamp prefix.
-	// This enforces consistency between the live path and JSONL reconstruction path.
-	const timestampPrefix = /^\[\d{2}:\d{2}:\d{2}\] /;
+	// 4. No duplicate timestamps in user text blocks.
+	// Duplicate [HH:MM:SS] prefixes indicate live and reconstruction paths are inconsistent.
+	// Not all text blocks have timestamps (compacted_resume, fork_marker, etc.) — only
+	// consumed messages get timestamps via formatEventForAI.
 	const timestampAnywhere = /\[\d{2}:\d{2}:\d{2}\]/g;
 	for (let i = 0; i < messages.length; i++) {
 		const msg = messages[i];
@@ -184,20 +185,10 @@ function validateRequest(messages: MessageParam[]): void {
 			)
 				continue;
 			const text = block.text as string;
-			if (!text.trim()) continue;
-
-			// Must start with [HH:MM:SS]
-			if (!timestampPrefix.test(text)) {
-				console.error(`TIMESTAMP VALIDATION: msg[${i}] missing prefix: "${text.slice(0, 120)}"`);
-				throw new MockValidationError(
-					`User text block at message index ${i} missing [HH:MM:SS] timestamp prefix: "${text.slice(0, 120)}"`,
-				);
-			}
-			// Must have exactly one timestamp
 			const matches = text.match(timestampAnywhere);
 			if (matches && matches.length > 1) {
 				throw new MockValidationError(
-					`User text block at message index ${i} has ${matches.length} timestamps (expected 1): "${text.slice(0, 120)}"`,
+					`User text block at message index ${i} has ${matches.length} timestamps (expected at most 1): "${text.slice(0, 120)}"`,
 				);
 			}
 		}
@@ -797,7 +788,11 @@ export class ValidatingMockAPI {
 				const msg = messages[i];
 				if (msg?.role === "user") {
 					const texts = extractUserTextBlocks(msg);
-					return `fork:${texts.join("|").slice(0, 200)}`;
+					const stripped = texts
+						.map((t) => t.replace(/^\[\d{2}:\d{2}:\d{2}\] /, ""))
+						.join("|")
+						.slice(0, 200);
+					return `fork:${stripped}`;
 				}
 			}
 			// No user message after fork — use the fork result itself as key

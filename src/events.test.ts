@@ -14,7 +14,7 @@ describe("queueMessageToEvent", () => {
 			source: "user" as const,
 			id: "test-id",
 			ts: 0,
-			content: "hello",
+			content: "[00:00:01] hello",
 			images: [{ base64: "abc", mediaType: "image/png" }],
 		};
 		const event = queueMessageToEvent(msg, "test");
@@ -29,7 +29,7 @@ describe("queueMessageToEvent", () => {
 				source: "user",
 				id: "existing-id",
 				ts: 0,
-				content: "hello",
+				content: "[00:00:01] hello",
 			},
 			"test",
 		);
@@ -177,7 +177,9 @@ describe("formatEventForAI", () => {
 			taskId: "test",
 			ts: 1000,
 		};
-		expect(formatEventForAI(event)).toBe("[00:00:01] Manual compaction requested");
+		expect(formatEventForAI(event)).toBe(
+			"[00:00:01] Manual compaction requested",
+		);
 	});
 
 	test("formats user_message_forwarded tag", () => {
@@ -238,7 +240,7 @@ describe("eventsToAnthropicMessages", () => {
 			},
 		];
 		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "Hello world" },
+			{ role: "user", content: "[00:00:01] Hello world" },
 		]);
 	});
 
@@ -495,7 +497,12 @@ describe("eventsToAnthropicMessages", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", id: "test-id", ts: 0, content: "Please check this" },
+				body: {
+					source: "user",
+					id: "test-id",
+					ts: 0,
+					content: "Please check this",
+				},
 				taskId: "test",
 				ts: 1000,
 			},
@@ -503,7 +510,7 @@ describe("eventsToAnthropicMessages", () => {
 		expect(eventsToAnthropicMessages(events)).toEqual([
 			{
 				role: "user",
-				content: "Please check this",
+				content: "[00:00:01] Please check this",
 			},
 		]);
 	});
@@ -532,7 +539,7 @@ describe("eventsToAnthropicMessages", () => {
 			},
 		];
 		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "hello" },
+			{ role: "user", content: "[00:00:01] hello" },
 			{ role: "user", content: "summary" },
 		]);
 	});
@@ -581,7 +588,7 @@ describe("eventsToAnthropicMessages", () => {
 		expect(messages).toHaveLength(4);
 		expect(messages[0]).toEqual({
 			role: "user",
-			content: "Working directory: /tmp\n\nBuild a feature",
+			content: "[00:00:01] Working directory: /tmp\n\nBuild a feature",
 		});
 		expect(messages[1]).toEqual({
 			role: "assistant",
@@ -733,13 +740,18 @@ describe("eventsToAnthropicMessages", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", id: "test-id", ts: 0, content: "Continue the task" },
+				body: {
+					source: "user",
+					id: "test-id",
+					ts: 0,
+					content: "Continue the task",
+				},
 				taskId: "test",
 				ts: 1000,
 			},
 		];
 		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "Continue the task" },
+			{ role: "user", content: "[00:00:01] Continue the task" },
 		]);
 	});
 });
@@ -760,7 +772,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 		];
 		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "Hello world" },
+			{ role: "user", content: "[00:00:01] Hello world" },
 		]);
 	});
 
@@ -1039,7 +1051,7 @@ describe("eventsToOpenAIMessages", () => {
 			},
 		];
 		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "hello" },
+			{ role: "user", content: "[00:00:01] hello" },
 			{ role: "user", content: "summary" },
 		]);
 	});
@@ -1088,7 +1100,7 @@ describe("eventsToOpenAIMessages", () => {
 		expect(messages).toHaveLength(4);
 		expect(messages[0]).toEqual({
 			role: "user",
-			content: "Working directory: /tmp\n\nBuild a feature",
+			content: "[00:00:01] Working directory: /tmp\n\nBuild a feature",
 		});
 		expect(messages[1]).toEqual({
 			role: "assistant",
@@ -1123,14 +1135,19 @@ describe("eventsToOpenAIMessages", () => {
 
 				id: "",
 
-				body: { source: "user", id: "test-id", ts: 0, content: "Continue the task" },
+				body: {
+					source: "user",
+					id: "test-id",
+					ts: 0,
+					content: "Continue the task",
+				},
 
 				taskId: "test",
 				ts: 1000,
 			},
 		];
 		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "Continue the task" },
+			{ role: "user", content: "[00:00:01] Continue the task" },
 		]);
 	});
 
@@ -1595,7 +1612,12 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				id: "msg-1",
 
-				body: { source: "user", id: "test-id", ts: 0, content: "Please also check X" },
+				body: {
+					source: "user",
+					id: "test-id",
+					ts: 0,
+					content: "Please also check X",
+				},
 
 				taskId: "test",
 				ts: 2000,
@@ -1615,14 +1637,14 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		];
 		const messages = eventsToAnthropicMessages(events);
 		expect(messages).toHaveLength(4);
-		expect(messages[0]).toEqual({ role: "user", content: "Hello" });
+		expect(messages[0]).toEqual({ role: "user", content: "[00:00:01] Hello" });
 		expect(messages[1]).toEqual({
 			role: "assistant",
 			content: [{ type: "text", text: "Working..." }],
 		});
 		expect(messages[2]).toEqual({
 			role: "user",
-			content: "Please also check X",
+			content: "[00:00:02] Please also check X",
 		});
 		expect(messages[3]).toEqual({
 			role: "assistant",
@@ -1689,7 +1711,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		});
 		expect(toolResultMsg.content[1]).toEqual({
 			type: "text",
-			text: "Also do Y",
+			text: "[00:00:01] Also do Y",
 		});
 	});
 
@@ -1734,8 +1756,8 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		expect(messages[0]).toEqual({
 			role: "user",
 			content: [
-				{ type: "text", text: "First" },
-				{ type: "text", text: "Second" },
+				{ type: "text", text: "[00:00:01] First" },
+				{ type: "text", text: "[00:00:01] Second" },
 			],
 		});
 	});
@@ -1793,7 +1815,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		expect(toolResultMsg.content).toHaveLength(4);
 		expect(toolResultMsg.content[1]).toEqual({
 			type: "text",
-			text: "Look at this",
+			text: "[00:00:01] Look at this",
 		});
 		expect(toolResultMsg.content[2]).toEqual({
 			type: "image",
@@ -1829,7 +1851,12 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 
 				id: "msg-1",
 
-				body: { source: "user", id: "test-id", ts: 0, content: "Please also check X" },
+				body: {
+					source: "user",
+					id: "test-id",
+					ts: 0,
+					content: "Please also check X",
+				},
 
 				taskId: "test",
 				ts: 2000,
@@ -1849,14 +1876,14 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		];
 		const messages = eventsToOpenAIMessages(events);
 		expect(messages).toHaveLength(4);
-		expect(messages[0]).toEqual({ role: "user", content: "Hello" });
+		expect(messages[0]).toEqual({ role: "user", content: "[00:00:01] Hello" });
 		expect(messages[1]).toEqual({
 			role: "assistant",
 			content: "Working...",
 		});
 		expect(messages[2]).toEqual({
 			role: "user",
-			content: "Please also check X",
+			content: "[00:00:02] Please also check X",
 		});
 		expect(messages[3]).toEqual({
 			role: "assistant",
@@ -1993,7 +2020,7 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 		});
 		expect(toolResultMsg.content[1]).toEqual({
 			type: "text",
-			text: "Also do Y",
+			text: "[00:00:01] Also do Y",
 		});
 	});
 
@@ -2053,16 +2080,21 @@ describe("messages_consumed — two-phase user message lifecycle", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", id: "test-id", ts: 0, content: "Direct message" },
+				body: {
+					source: "user",
+					id: "test-id",
+					ts: 0,
+					content: "Direct message",
+				},
 				taskId: "test",
 				ts: 1000,
 			},
 		];
 		expect(eventsToAnthropicMessages(events)).toEqual([
-			{ role: "user", content: "Direct message" },
+			{ role: "user", content: "[00:00:01] Direct message" },
 		]);
 		expect(eventsToOpenAIMessages(events)).toEqual([
-			{ role: "user", content: "Direct message" },
+			{ role: "user", content: "[00:00:01] Direct message" },
 		]);
 	});
 });
@@ -2366,7 +2398,8 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "tool_result",
 				tool: "test_tool",
 				toolCallId: "tc-yield",
-				content: "",
+				content:
+					'## Pending\n- Running sub tasks: "Build" (t2)\n- Pending clarifications: none',
 				isError: false,
 				pending: {
 					runningChildren: [{ id: "t2", title: "Build" }],
@@ -2386,13 +2419,18 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		expect(messages).toHaveLength(3);
 		const userMsg = messages[2] as { role: string; content: unknown[] };
 		expect(userMsg.role).toBe("user");
-		// Should have tool_result + queue text + pending section
-		const allText = (userMsg.content as { type: string; text?: string }[])
-			.filter((b) => b.type === "text")
-			.map((b) => b.text)
-			.join("");
-		expect(allText).toContain("## Pending");
-		expect(allText).toContain('"Build" (t2)');
+		// pending section is embedded in tool_result content (not a separate text block).
+		// Text blocks should contain the consumed message only.
+		const toolResult = (
+			userMsg.content as { type: string; content?: string }[]
+		).find((b) => b.type === "tool_result");
+		expect(toolResult?.content).toContain("## Pending");
+		expect(toolResult?.content).toContain('"Build" (t2)');
+		// Consumed message should be in a text block with timestamp
+		const textBlocks = (
+			userMsg.content as { type: string; text?: string }[]
+		).filter((b) => b.type === "text");
+		expect(textBlocks.some((b) => b.text?.includes("50% done"))).toBe(true);
 	});
 
 	test("OpenAI: tool_result with pending section formats correctly", () => {
@@ -2436,7 +2474,8 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "tool_result",
 				tool: "test_tool",
 				toolCallId: "tc-yield",
-				content: "",
+				content:
+					'## Pending\n- Running sub tasks: "Build" (t2)\n- Pending clarifications: none',
 				isError: false,
 				pending: {
 					runningChildren: [{ id: "t2", title: "Build" }],
@@ -2456,7 +2495,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		expect(messages).toHaveLength(3);
 		const toolMsg = messages[2] as { role: string; content: string };
 		expect(toolMsg.role).toBe("tool");
-		// The tool content should have the pure yield content + queue text + pending
+		// pending section is in the tool content itself (not appended separately)
 		expect(toolMsg.content).toContain("## Pending");
 		expect(toolMsg.content).toContain('"Build" (t2)');
 	});
@@ -2725,12 +2764,15 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		const textBlocks = (
 			userMsg.content as { type: string; text?: string }[]
 		).filter((b) => b.type === "text");
-		// Should have: tool_result content + queue messages text + pending text
+		// Queue messages are in text blocks with timestamps. Pending section is in tool_result content only.
 		const allText = textBlocks.map((b) => b.text).join("");
 		expect(allText).toContain("Build UI");
 		expect(allText).toContain("Keep going");
-		expect(allText).toContain("## Pending");
-		expect(allText).toContain("none");
+		// Pending section is in tool_result content, not in text blocks
+		const toolResult = (
+			userMsg.content as { type: string; content?: string }[]
+		).find((b) => b.type === "tool_result");
+		expect(toolResult?.content).toContain("## Pending");
 	});
 
 	test("Anthropic: mixed tools — only last tool_result group gets queue messages", () => {

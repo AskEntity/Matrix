@@ -1067,7 +1067,12 @@ describe("Event deterministic verification (OpenAI)", () => {
 					type: "message",
 					id: "test-prompt",
 					taskId: "",
-					body: { source: "user", id: "test-prompt", ts: 0, content: "Say hello" },
+					body: {
+						source: "user",
+						id: "test-prompt",
+						ts: 0,
+						content: "Say hello",
+					},
 					ts: Date.now(),
 				};
 				const allEvents = [userMsgEvent, ...persistable];
@@ -1189,7 +1194,12 @@ describe("Event deterministic verification (OpenAI)", () => {
 					type: "message",
 					id: "test-prompt",
 					taskId: "",
-					body: { source: "user", id: "test-prompt", ts: 0, content: "Do the task" },
+					body: {
+						source: "user",
+						id: "test-prompt",
+						ts: 0,
+						content: "Do the task",
+					},
 					ts: Date.now(),
 				};
 				const events = [userMsgEvent, ...emittedEvents];
@@ -1285,7 +1295,12 @@ describe("Event deterministic verification (OpenAI)", () => {
 					type: "message",
 					id: "test-prompt",
 					taskId: "",
-					body: { source: "user", id: "test-prompt", ts: 0, content: "Start working" },
+					body: {
+						source: "user",
+						id: "test-prompt",
+						ts: 0,
+						content: "Start working",
+					},
 					ts: Date.now(),
 				};
 				const userMsg2: Event = {

@@ -39,7 +39,12 @@ describe("MessageQueue", () => {
 
 	test("wait() resolves immediately if messages pending", async () => {
 		const q = new MessageQueue();
-		q.enqueue({ source: "user", id: "test-id", ts: 0, content: "already here" });
+		q.enqueue({
+			source: "user",
+			id: "test-id",
+			ts: 0,
+			content: "already here",
+		});
 
 		const msg = await q.wait();
 		expect(msg).toEqual({
@@ -65,7 +70,12 @@ describe("MessageQueue", () => {
 		expect(resolved).toBe(false);
 
 		// Now enqueue — should resolve the waiter
-		q.enqueue({ source: "clarify_response", id: "test-id", ts: 0, answer: "yes" });
+		q.enqueue({
+			source: "clarify_response",
+			id: "test-id",
+			ts: 0,
+			answer: "yes",
+		});
 		const msg = await promise;
 		expect(msg).toEqual({
 			source: "clarify_response",
@@ -82,7 +92,12 @@ describe("MessageQueue", () => {
 		q.enqueue({ source: "user", id: "test-id", ts: 0, content: "third" });
 
 		const first = await q.wait();
-		expect(first).toEqual({ source: "user", id: "test-id", ts: 0, content: "first" });
+		expect(first).toEqual({
+			source: "user",
+			id: "test-id",
+			ts: 0,
+			content: "first",
+		});
 
 		const rest = q.drain();
 		expect(rest).toHaveLength(2);
@@ -158,7 +173,12 @@ describe("MessageQueue", () => {
 		expect(q.pending).toBe(0);
 
 		const msg = await promise;
-		expect(msg).toEqual({ source: "user", id: "test-id", ts: 0, content: "direct" });
+		expect(msg).toEqual({
+			source: "user",
+			id: "test-id",
+			ts: 0,
+			content: "direct",
+		});
 	});
 
 	test("different message types: user", () => {
@@ -272,7 +292,12 @@ describe("MessageQueue", () => {
 			fromTitle: "Orchestrator",
 			content: "hurry up",
 		});
-		q.enqueue({ source: "clarify_response", id: "test-id", ts: 0, answer: "42" });
+		q.enqueue({
+			source: "clarify_response",
+			id: "test-id",
+			ts: 0,
+			answer: "42",
+		});
 
 		const first = await q.wait();
 		expect(first.source).toBe("user");
@@ -288,7 +313,12 @@ describe("MessageQueue", () => {
 		const q = new MessageQueue();
 		q.enqueue({ source: "user", id: "test-id", ts: 0, content: "hello" });
 		const result = await q.waitForMessage(undefined);
-		expect(result).toEqual({ source: "user", id: "test-id", ts: 0, content: "hello" });
+		expect(result).toEqual({
+			source: "user",
+			id: "test-id",
+			ts: 0,
+			content: "hello",
+		});
 	});
 
 	test("waitForMessage() returns message before timeout fires", async () => {
@@ -297,12 +327,18 @@ describe("MessageQueue", () => {
 
 		// Deliver message quickly
 		setTimeout(
-			() => q.enqueue({ source: "user", id: "test-id", ts: 0, content: "fast" }),
+			() =>
+				q.enqueue({ source: "user", id: "test-id", ts: 0, content: "fast" }),
 			10,
 		);
 
 		const result = await promise;
-		expect(result).toEqual({ source: "user", id: "test-id", ts: 0, content: "fast" });
+		expect(result).toEqual({
+			source: "user",
+			id: "test-id",
+			ts: 0,
+			content: "fast",
+		});
 	});
 
 	test("waitForMessage() returns 'timeout' sentinel when no message arrives", async () => {
@@ -372,7 +408,12 @@ describe("MessageQueue", () => {
 		// A normal enqueue DOES wake the waiter
 		q.enqueue({ source: "user", id: "test-id", ts: 0, content: "hello" });
 		const msg = await promise;
-		expect(msg).toEqual({ source: "user", id: "test-id", ts: 0, content: "hello" });
+		expect(msg).toEqual({
+			source: "user",
+			id: "test-id",
+			ts: 0,
+			content: "hello",
+		});
 	});
 
 	test("quiet enqueue message is included in drain()", () => {
@@ -495,7 +536,12 @@ describe("MessageQueue", () => {
 		const promise = q.wait();
 
 		// Enqueue while waiter exists — message bypasses array
-		q.enqueue({ source: "user", id: "test-id", ts: 0, content: "direct to waiter" });
+		q.enqueue({
+			source: "user",
+			id: "test-id",
+			ts: 0,
+			content: "direct to waiter",
+		});
 
 		// onEnqueue should still have fired
 		expect(received).toHaveLength(1);

@@ -207,7 +207,8 @@ export function createOrchestratorTools(
 						{ length: pendingClarifications },
 						() => ({
 							source: "clarify_response" as const,
-							id: ulid(), ts: Date.now(),
+							id: ulid(),
+							ts: Date.now(),
 							answer: timeoutMsg,
 						}),
 					);
@@ -712,7 +713,8 @@ export function createOrchestratorTools(
 								targetNode.session.queue.enqueue(
 									{
 										source: "tree_change",
-										id: ulid(), ts: Date.now(),
+										id: ulid(),
+										ts: Date.now(),
 										action: "updated",
 										nodeId: args.taskId,
 										title: targetNode.title,
@@ -848,7 +850,8 @@ export function createOrchestratorTools(
 					try {
 						parentQueue.enqueue({
 							source: "task_message",
-							id: ulid(), ts: Date.now(),
+							id: ulid(),
+							ts: Date.now(),
 							fromTaskId: currentTaskId ?? "unknown",
 							fromTitle: taskTitle,
 							title: args.title,
@@ -939,7 +942,8 @@ export function createOrchestratorTools(
 					// via queue drain of persisted messages (exactly-once delivery).
 					const queueMessage: QueueMessage = {
 						source: "task_message",
-						id: ulid(), ts: Date.now(),
+						id: ulid(),
+						ts: Date.now(),
 						fromTaskId: currentTaskId ?? "unknown",
 						fromTitle: currentNode?.title ?? "unknown",
 						content: args.message,
@@ -1414,7 +1418,8 @@ export function createOrchestratorTools(
 					try {
 						targetQueue.enqueue({
 							source: "cross_project",
-							id: ulid(), ts: Date.now(),
+							id: ulid(),
+							ts: Date.now(),
 							fromProjectId,
 							fromProjectName,
 							content: args.message,
@@ -1641,7 +1646,8 @@ export function createOrchestratorTools(
 					if (node?.parentId) {
 						const completionMsg: QueueMessage = {
 							source: "task_complete",
-							id: ulid(), ts: Date.now(),
+							id: ulid(),
+							ts: Date.now(),
 							taskId: currentTaskId,
 							title: node.title ?? "unknown",
 							success: args.status === "passed",

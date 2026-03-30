@@ -2357,7 +2357,12 @@ describe("Event deterministic verification", () => {
 			type: "message",
 			id: "test-prompt",
 			taskId: "",
-			body: { source: "user", id: "test-prompt", ts: 0, content: "Do the task" },
+			body: {
+				source: "user",
+				id: "test-prompt",
+				ts: 0,
+				content: "Do the task",
+			},
 			ts: Date.now(),
 		};
 		const events = [userMsgEvent, ...emittedEvents];
@@ -2564,7 +2569,12 @@ describe("Event deterministic verification", () => {
 			type: "message",
 			id: "test-prompt",
 			taskId: "",
-			body: { source: "user", id: "test-prompt", ts: 0, content: "Start working" },
+			body: {
+				source: "user",
+				id: "test-prompt",
+				ts: 0,
+				content: "Start working",
+			},
 			ts: Date.now(),
 		};
 		const userMsg2: Event = {
@@ -2725,7 +2735,12 @@ describe("Event deterministic verification", () => {
 			type: "message",
 			id: "test-prompt",
 			taskId: "",
-			body: { source: "user", id: "test-prompt", ts: 0, content: "Run three tools" },
+			body: {
+				source: "user",
+				id: "test-prompt",
+				ts: 0,
+				content: "Run three tools",
+			},
 			ts: Date.now(),
 		};
 		const allEvents = [userMsgEvent, ...events];
@@ -2846,7 +2861,12 @@ describe("Event deterministic verification", () => {
 			{
 				type: "message",
 				id: "",
-				body: { source: "user", id: "test-id", ts: 0, content: "Start working" },
+				body: {
+					source: "user",
+					id: "test-id",
+					ts: 0,
+					content: "Start working",
+				},
 				taskId: "test",
 				ts: 1000,
 			},

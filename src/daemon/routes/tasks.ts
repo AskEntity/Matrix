@@ -62,14 +62,16 @@ async function notifyParentChain(
 		const notification: QueueMessage = wasResumed
 			? {
 					source: "task_message",
-					id: ulid(), ts: Date.now(),
+					id: ulid(),
+					ts: Date.now(),
 					fromTaskId: taskId,
 					fromTitle: taskTitle,
 					content,
 				}
 			: {
 					source: "user_message_forwarded",
-					id: ulid(), ts: Date.now(),
+					id: ulid(),
+					ts: Date.now(),
 					fromTaskId: taskId,
 					fromTitle: taskTitle,
 					content,
@@ -112,7 +114,8 @@ function notifyTreeChange(
 
 	const msg: QueueMessage = {
 		source: "tree_change",
-		id: ulid(), ts: Date.now(),
+		id: ulid(),
+		ts: Date.now(),
 		action,
 		nodeId,
 		...(title ? { title } : {}),
@@ -321,7 +324,8 @@ export function registerTaskRoutes(
 					try {
 						parentQueue.enqueue({
 							source: "task_message",
-							id: ulid(), ts: Date.now(),
+							id: ulid(),
+							ts: Date.now(),
 							fromTaskId: nodeId,
 							fromTitle: node.title,
 							content: `User continued child task "${node.title}" (${nodeId}).`,
@@ -356,7 +360,8 @@ export function registerTaskRoutes(
 			const parentNode = node.parentId ? tracker.get(node.parentId) : undefined;
 			await persistMessage(ctx.config.dataDir, project.id, nodeId, {
 				source: "task_message",
-				id: ulid(), ts: Date.now(),
+				id: ulid(),
+				ts: Date.now(),
 				fromTaskId: parentNode?.id ?? "",
 				fromTitle: parentNode?.title ?? "User",
 				content,
@@ -400,7 +405,8 @@ export function registerTaskRoutes(
 					: undefined;
 				await persistMessage(ctx.config.dataDir, project.id, nodeId, {
 					source: "task_message",
-					id: ulid(), ts: Date.now(),
+					id: ulid(),
+					ts: Date.now(),
 					fromTaskId: parentNode2?.id ?? "",
 					fromTitle: parentNode2?.title ?? "User",
 					content,

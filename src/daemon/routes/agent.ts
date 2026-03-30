@@ -200,7 +200,8 @@ export function registerAgentRoutes(
 			if (restartRootId) {
 				await persistMessage(ctx.config.dataDir, project.id, restartRootId, {
 					source: "user",
-					id: ulid(), ts: Date.now(),
+					id: ulid(),
+					ts: Date.now(),
 					content:
 						"Orchestrator restarted to pick up new config. Continue where you left off.",
 				});

@@ -214,7 +214,12 @@ describe("event-handler queueEntry handling", () => {
 			{
 				type: "message",
 				id: "msg-5",
-				body: { source: "user", id: "test-id", ts: 0, content: "Please check this" },
+				body: {
+					source: "user",
+					id: "test-id",
+					ts: 0,
+					content: "Please check this",
+				},
 				taskId: "task-1",
 				ts: 1000,
 			},
@@ -360,7 +365,12 @@ describe("event-handler queueEntry handling", () => {
 		handleEvent({
 			type: "message",
 			id: "msg-8",
-			body: { source: "user", id: "test-id", ts: 0, content: "Build a feature" },
+			body: {
+				source: "user",
+				id: "test-id",
+				ts: 0,
+				content: "Build a feature",
+			},
 			taskId: "task-1",
 			ts: 1000,
 		} satisfies IncomingEvent);

@@ -1221,7 +1221,12 @@ export async function handleClarifyResponse(
 	const targetQueue = tracker.get(taskId)?.session?.queue;
 	if (targetQueue) {
 		try {
-			targetQueue.enqueue({ source: "clarify_response", id: ulid(), ts: Date.now(), answer });
+			targetQueue.enqueue({
+				source: "clarify_response",
+				id: ulid(),
+				ts: Date.now(),
+				answer,
+			});
 		} catch {
 			return { ok: false, error: "Queue closed", status: 409 };
 		}
