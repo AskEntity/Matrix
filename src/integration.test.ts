@@ -6278,7 +6278,10 @@ describe("Integration: nested parent-child", () => {
 						{
 							type: "tool_use",
 							name: "mcp__opengraft__done",
-							input: { status: "passed", summary: "child done, grandchild passed" },
+							input: {
+								status: "passed",
+								summary: "child done, grandchild passed",
+							},
 						},
 					],
 				},

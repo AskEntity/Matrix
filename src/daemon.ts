@@ -339,17 +339,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						// initial drain blocks on queue.wait() and won't proceed without one.
 						// Yielding children bypass the drain, so no message needed.
 						if (!isYielding) {
-							await persistMessage(
-								ctx.config.dataDir,
-								project.id,
-								node.id,
-								{
-									source: "user",
-									id: ulid(),
-									ts: Date.now(),
-									content: `The daemon restarted (${GIT_HASH}). Continue where you left off.`,
-								},
-							);
+							await persistMessage(ctx.config.dataDir, project.id, node.id, {
+								source: "user",
+								id: ulid(),
+								ts: Date.now(),
+								content: `The daemon restarted (${GIT_HASH}). Continue where you left off.`,
+							});
 						}
 						runChildAgentInBackground(ctx, project, tracker, node.id).catch(
 							(e) => {

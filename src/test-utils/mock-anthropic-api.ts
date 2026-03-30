@@ -1087,8 +1087,8 @@ export class ValidatingMockAPI {
 		[key: string]: unknown;
 	}): ReturnType<typeof createMockAnthropicStream> {
 		const { messages, system, tools, model } = params;
-		const sessionId =
-			(params.metadata as { sessionId?: string } | undefined)?.sessionId;
+		const sessionId = (params.metadata as { sessionId?: string } | undefined)
+			?.sessionId;
 
 		// Record the request
 		this.requestHistory.push({
