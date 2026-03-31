@@ -20,15 +20,21 @@ import {
 } from "./queue-message-factory.ts";
 
 import type { PendingState } from "./shared-types.ts";
+import {
+	closeTaskOp,
+	createTaskOp,
+	deleteTaskOp,
+	reorderTasksOp,
+	resetTaskOp,
+	updateTaskOp,
+} from "./task-operations.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import {
 	buildTaskPrompt,
-	cleanupTaskResources,
 	findParentQueue,
 	formatQueueMessage,
 	getDescendantIds,
 	isDescendantOf,
-	resolveColor,
 	slugify,
 } from "./task-utils.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
@@ -504,35 +510,24 @@ export function createOrchestratorTools(
 						};
 					}
 
-					const opts: {
-						budgetUsd?: number;
-						draft?: boolean;
-						editedBy: "agent";
-						persistent?: false | "reset" | "continue";
-					} = { editedBy: "agent" };
-					const defaultBudgetUsd = deps.getDefaultBudgetUsd();
-					if (defaultBudgetUsd) opts.budgetUsd = defaultBudgetUsd;
-					if (args.draft) opts.draft = true;
-					if (args.persistent) opts.persistent = args.persistent;
-					const node = effectiveParentId
-						? tracker.addChild(
-								effectiveParentId,
-								args.title,
-								args.description,
-								opts,
-							)
-						: tracker.addTask(args.title, args.description, opts);
-					if (args.color) {
-						tracker.updateColor(node.id, resolveColor(args.color), "agent");
-					}
+					const node = await createTaskOp(
+						tracker,
+						{
+							title: args.title,
+							description: args.description,
+							parentId: effectiveParentId,
+							draft: args.draft,
+							color: args.color,
+							persistent: args.persistent,
+						},
+						"agent",
+						{
+							broadcastTree,
+							projectPath: getProjectPath(),
+							getDefaultBudgetUsd: deps.getDefaultBudgetUsd,
+						},
+					);
 
-					// Write persistent task definition to .mxd/tasks/<id>.json and commit
-					if (args.persistent) {
-						tracker.savePersistentDef(node.id, getProjectPath());
-					}
-
-					await tracker.save();
-					broadcastTree();
 					return {
 						content: [
 							{
@@ -603,10 +598,9 @@ export function createOrchestratorTools(
 			},
 			async (args) => {
 				try {
-					if (args.parentId !== undefined) {
-						// Scope validation: agent can only reparent tasks under itself or its descendants
+					// Scope validation for reparent: agent can only reparent tasks under itself or its descendants
+					if (args.parentId !== undefined && currentTaskId !== null) {
 						if (
-							currentTaskId !== null &&
 							args.taskId !== currentTaskId &&
 							!isDescendantOf(tracker, args.taskId, currentTaskId)
 						) {
@@ -621,7 +615,6 @@ export function createOrchestratorTools(
 							};
 						}
 						if (
-							currentTaskId !== null &&
 							args.parentId !== currentTaskId &&
 							!isDescendantOf(tracker, args.parentId, currentTaskId)
 						) {
@@ -635,143 +628,44 @@ export function createOrchestratorTools(
 								isError: true,
 							};
 						}
-						tracker.reparent(args.taskId, args.parentId);
-					}
-					if (args.status !== undefined) {
-						tracker.updateStatus(args.taskId, args.status, "agent");
-					}
-					if (args.title !== undefined) {
-						tracker.updateTitle(args.taskId, args.title, "agent");
-					}
-					if (
-						args.old_description !== undefined ||
-						args.new_description !== undefined
-					) {
-						if (
-							args.old_description === undefined ||
-							args.new_description === undefined
-						) {
-							return {
-								content: [
-									{
-										type: "text" as const,
-										text: "Error: old_description and new_description must both be provided",
-									},
-								],
-								isError: true,
-							};
-						}
-						if (args.description !== undefined) {
-							return {
-								content: [
-									{
-										type: "text" as const,
-										text: "Error: cannot use description with old_description/new_description — use one or the other",
-									},
-								],
-								isError: true,
-							};
-						}
-						const node = tracker.get(args.taskId);
-						if (!node?.description) {
-							return {
-								content: [
-									{
-										type: "text" as const,
-										text: "Error: task has no description to edit",
-									},
-								],
-								isError: true,
-							};
-						}
-						const idx = node.description.indexOf(args.old_description);
-						if (idx === -1) {
-							return {
-								content: [
-									{
-										type: "text" as const,
-										text: `Error: old_description not found in task description`,
-									},
-								],
-								isError: true,
-							};
-						}
-						if (
-							node.description.indexOf(args.old_description, idx + 1) !== -1
-						) {
-							return {
-								content: [
-									{
-										type: "text" as const,
-										text: "Error: old_description is not unique in task description — provide more context to make it unique",
-									},
-								],
-								isError: true,
-							};
-						}
-						const updated = node.description.replace(
-							args.old_description,
-							args.new_description,
-						);
-						tracker.updateDescription(args.taskId, updated, "agent");
-					}
-					if (args.description !== undefined) {
-						tracker.updateDescription(args.taskId, args.description, "agent");
-					}
-					if (args.draft !== undefined) {
-						tracker.updateStatus(
-							args.taskId,
-							args.draft ? "draft" : "pending",
-							"agent",
-						);
-					}
-					if (args.color !== undefined) {
-						tracker.updateColor(
-							args.taskId,
-							args.color ? resolveColor(args.color) : null,
-							"agent",
-						);
-					}
-					// For persistent nodes, write updated definition to .mxd/tasks/<id>.json
-					{
-						const titleOrDescChanged =
-							args.title !== undefined ||
-							args.description !== undefined ||
-							(args.old_description !== undefined &&
-								args.new_description !== undefined) ||
-							args.color !== undefined;
-						if (titleOrDescChanged) {
-							tracker.savePersistentDef(args.taskId, getProjectPath());
-						}
 					}
 
-					await tracker.save();
-					broadcastTree();
+					const node = await updateTaskOp(
+						tracker,
+						args.taskId,
+						{
+							status: args.status,
+							title: args.title,
+							description: args.description,
+							old_description: args.old_description,
+							new_description: args.new_description,
+							draft: args.draft,
+							parentId: args.parentId,
+							color: args.color,
+						},
+						"agent",
+						{
+							broadcastTree,
+							notifyTargetNode: (action, nodeId, title) => {
+								// Notify the modified node directly via queue
+								if (nodeId !== currentTaskId) {
+									const targetNode = tracker.get(nodeId);
+									if (targetNode?.session?.queue) {
+										try {
+											targetNode.session.queue.enqueue(
+												createTreeChange(action, nodeId, title),
+												{ quiet: true },
+											);
+										} catch {
+											/* queue may be closed */
+										}
+									}
+								}
+							},
+							projectPath: getProjectPath(),
+						},
+					);
 
-					// Notify the modified node itself if title/description changed
-					// and a different agent is running on it (quiet — doesn't interrupt yield)
-					const descriptionChanged =
-						args.description !== undefined ||
-						(args.old_description !== undefined &&
-							args.new_description !== undefined);
-					if (
-						(args.title !== undefined || descriptionChanged) &&
-						args.taskId !== currentTaskId
-					) {
-						const targetNode = tracker.get(args.taskId);
-						if (targetNode?.session?.queue) {
-							try {
-								targetNode.session.queue.enqueue(
-									createTreeChange("updated", args.taskId, targetNode.title),
-									{ quiet: true },
-								);
-							} catch {
-								/* queue may be closed */
-							}
-						}
-					}
-
-					const node = tracker.get(args.taskId);
 					return {
 						content: [
 							{
@@ -1065,73 +959,20 @@ export function createOrchestratorTools(
 				taskId: z.string().describe("ID of the task to close"),
 			},
 			async (args) => {
-				const node = tracker.get(args.taskId);
-				if (!node) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: "Error: Task not found",
-							},
-						],
-						isError: true,
-					};
-				}
-
-				if (node.status === "in_progress") {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: "Error: Cannot close a running task. Stop it first or wait for done().",
-							},
-						],
-						isError: true,
-					};
-				}
-
 				try {
-					// Clean up worktree + branch if they exist
-					if (node.worktreePath && node.branch) {
-						const slug = slugify(node.title);
-						const wtRoot = join(repoPath, ".worktrees");
-						const wm = new WorktreeManager(repoPath, wtRoot);
-						await wm.remove(node.id, slug);
-						node.worktreePath = null;
-						node.branch = null;
-						node.updatedAt = new Date().toISOString();
-					}
-
-					// Persistent tasks reset to pending on close; regular tasks go to closed.
-					if (node.persistent) {
-						// "reset" mode: clear session JSONL for a clean start each cycle
-						if (node.persistent === "reset") {
-							deps.clearEventStore(node.id);
-						}
-						// "continue" mode: keep session JSONL for resuming with context
-						tracker.updateStatus(node.id, "pending");
-					} else {
-						tracker.updateStatus(node.id, "closed");
-					}
-					await tracker.save();
-					broadcastTree();
+					const wtRoot = join(repoPath, ".worktrees");
+					const wm = new WorktreeManager(repoPath, wtRoot);
+					const result = await closeTaskOp(tracker, args.taskId, {
+						broadcastTree,
+						removeWorktree: (id, slug) => wm.remove(id, slug),
+						clearEventStore: deps.clearEventStore,
+					});
 
 					return {
 						content: [
 							{
 								type: "text" as const,
-								text: JSON.stringify(
-									{
-										closed: true,
-										taskId: node.id,
-										title: node.title,
-										...(node.persistent
-											? { persistent: node.persistent, resetTo: "pending" }
-											: {}),
-									},
-									null,
-									2,
-								),
+								text: JSON.stringify({ closed: true, ...result }, null, 2),
 							},
 						],
 					};
@@ -1159,45 +1000,20 @@ export function createOrchestratorTools(
 				taskId: z.string().describe("ID of the task to delete"),
 			},
 			async (args) => {
-				const node = tracker.get(args.taskId);
-				if (!node) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: "Error: Task not found",
-							},
-						],
-						isError: true,
-					};
-				}
-
 				try {
 					const wtRoot = join(repoPath, ".worktrees");
 					const wm = new WorktreeManager(repoPath, wtRoot);
-					await cleanupTaskResources(tracker, args.taskId, {
+					const result = await deleteTaskOp(tracker, args.taskId, "agent", {
+						broadcastTree,
 						removeWorktree: (id, slug) => wm.remove(id, slug),
 						clearEventStore: deps.clearEventStore,
 					});
 
-					// Remove node from tree (recursively removes descendants from Map)
-					tracker.remove(node.id);
-					await tracker.save();
-					broadcastTree();
-
 					return {
 						content: [
 							{
 								type: "text" as const,
-								text: JSON.stringify(
-									{
-										deleted: true,
-										taskId: node.id,
-										title: node.title,
-									},
-									null,
-									2,
-								),
+								text: JSON.stringify({ deleted: true, ...result }, null, 2),
 							},
 						],
 					};
@@ -1224,58 +1040,20 @@ export function createOrchestratorTools(
 				taskId: z.string().describe("ID of the task to reset"),
 			},
 			async (args) => {
-				const node = tracker.get(args.taskId);
-				if (!node) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: "Error: Task not found",
-							},
-						],
-						isError: true,
-					};
-				}
-
 				try {
-					// Close running agent if active
-					const resetNode = tracker.get(args.taskId);
-					const activeQueueReset = resetNode?.session?.queue;
-					if (activeQueueReset) {
-						resetNode.session = undefined;
-						activeQueueReset.close();
-					}
-
-					// Clean up worktree + branch if they exist
-					if (node.worktreePath && node.branch) {
-						const slug = slugify(node.title);
-						const wtRoot = join(repoPath, ".worktrees");
-						const wm = new WorktreeManager(repoPath, wtRoot);
-						await wm.remove(node.id, slug);
-						node.worktreePath = null;
-						node.branch = null;
-					}
-
-					// Delete event JSONL files
-					deps.clearEventStore(node.id);
-
-					tracker.updateStatus(node.id, "pending");
-					await tracker.save();
-					broadcastTree();
+					const wtRoot = join(repoPath, ".worktrees");
+					const wm = new WorktreeManager(repoPath, wtRoot);
+					const result = await resetTaskOp(tracker, args.taskId, {
+						broadcastTree,
+						removeWorktree: (id, slug) => wm.remove(id, slug),
+						clearEventStore: deps.clearEventStore,
+					});
 
 					return {
 						content: [
 							{
 								type: "text" as const,
-								text: JSON.stringify(
-									{
-										reset: true,
-										taskId: node.id,
-										title: node.title,
-									},
-									null,
-									2,
-								),
+								text: JSON.stringify({ reset: true, ...result }, null, 2),
 							},
 						],
 					};
@@ -1362,9 +1140,11 @@ export function createOrchestratorTools(
 							isError: true,
 						};
 					}
-					tracker.reorderChildren(args.nodeId, args.children);
-					await tracker.save();
-					broadcastTree();
+
+					await reorderTasksOp(tracker, args.nodeId, args.children, "agent", {
+						broadcastTree,
+					});
+
 					return {
 						content: [
 							{
