@@ -8340,4 +8340,201 @@ describe("Integration: stopTask lifecycle", () => {
 		);
 		expect(stopResp.status).toBe(404);
 	}, 10000);
+
+	test("Fork + child interrupt: no duplicate tool_result on restart", async () => {
+		// Bug scenario: fork copies parent events → child starts → crash →
+		// orphan cleanup writes synthetic tool_results → child resumes.
+		// If orphan cleanup doesn't check for existing synthetic results from
+		// copySessionFrom, it may write DUPLICATE tool_results → API 400.
+		ctx = await setupTestContext();
+
+		// Child: bash (will be interrupted) → on resume, done(passed)
+		const childInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Child starting work." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Resumed after crash." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "child survived fork+crash" },
+						},
+					],
+				},
+			],
+		});
+
+		// Parent: bash (creates context) → create_task → fork (solo turn) →
+		//         send_message → yield → done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					// Turn 1: bash to create some context in the parent's events
+					blocks: [
+						{ type: "text", text: "Building context." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "echo PARENT_CONTEXT" },
+						},
+					],
+				},
+				{
+					// Turn 2: create task
+					assert: [
+						{ block: 0, type: "tool_result", contains: "PARENT_CONTEXT" },
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Fork Crash Child",
+								description: "Test fork + crash recovery",
+							},
+						},
+					],
+				},
+				{
+					// Turn 3: fork (must be solo turn)
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+								rootId: 'regex:"parentId":\\s*"([^"]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__fork_task_context",
+							input: { sourceTaskId: "$rootId", targetTaskId: "$childId" },
+						},
+					],
+				},
+				{
+					// Turn 4: send_message to start child
+					assert: [
+						{ block: 0, type: "tool_result", contains: "You are the PARENT" },
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					// Turn 5: yield (waits for child)
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// Turn 6: done (after child completes)
+					blocks: [
+						{ type: "text", text: "Child completed after crash." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "fork+crash recovery done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for child to start bash sleep (parent needs ~5 turns, child 1)
+		const start = Date.now();
+		while (Date.now() - start < 20000) {
+			if (ctx.mockAPI.getRequestCount() >= 6) break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(6);
+		await new Promise((r) => setTimeout(r, 300));
+
+		// Get child ID before crash
+		const tracker1 = await ctx.app.getTracker(ctx.projectId);
+		const rootNode1 = tracker1.get(tracker1.rootNodeId);
+		const childId = rootNode1!.children![0]!;
+
+		// Verify child JSONL has fork_marker (fork was successful)
+		const precrashEvents = readSessionEvents(ctx, childId);
+		const hasForkMarker = precrashEvents.some((e) => e.type === "fork_marker");
+		expect(hasForkMarker).toBe(true);
+
+		// Verify child has some tool_calls (at least bash sleep)
+		const preCrashToolCalls = precrashEvents.filter(
+			(e) => e.type === "tool_call",
+		);
+		expect(preCrashToolCalls.length).toBeGreaterThan(0);
+
+		// === CRASH (both parent and child die) ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART: recreate app from disk ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// KEY CHECK before resume completes: verify no duplicate tool_results
+		// in child's JSONL after orphan cleanup
+		const postCrashEvents = readSessionEvents(ctx, childId);
+		const toolResultsByCallId = new Map<string, number>();
+		for (const e of postCrashEvents) {
+			if (e.type === "tool_result") {
+				const count = toolResultsByCallId.get(e.toolCallId) ?? 0;
+				toolResultsByCallId.set(e.toolCallId, count + 1);
+			}
+		}
+
+		// No tool_call should have more than one tool_result
+		for (const [callId, count] of toolResultsByCallId) {
+			if (count > 1) {
+				// Find the tool_call for debugging
+				const tc = postCrashEvents.find(
+					(e) => e.type === "tool_call" && e.toolCallId === callId,
+				);
+				const toolName = tc && tc.type === "tool_call" ? tc.tool : "unknown";
+				throw new Error(
+					`Duplicate tool_result for tool_call ${callId} (${toolName}): found ${count} results`,
+				);
+			}
+		}
+
+		// Child should resume → done → parent wakes → done
+		const status = await waitForDone(ctx, 30000);
+		expect(status).toBe("passed");
+
+		// Verify child completed successfully
+		const tracker2 = await ctx.app.getTracker(ctx.projectId);
+		expect(tracker2.get(childId)?.status).toBe("passed");
+	}, 60000);
 });
