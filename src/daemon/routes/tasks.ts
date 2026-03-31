@@ -521,10 +521,13 @@ export function registerTaskRoutes(
 		return c.json({ events, hasOlderEvents: false });
 	});
 
-	// Unified message endpoint — handles both root and child nodes.
+	// THE single message endpoint for all tasks (root and child).
 	// Root nodes delegate to handleInjectMessage (auto-launch, cold-start header, resume detection).
 	// Child nodes use direct delivery with two-phase lifecycle.
 	app.post("/projects/:id/tasks/:nodeId/message", async (c) => {
+		if (!ctx.startupReady) {
+			return c.json({ error: "Server starting up, please wait..." }, 503);
+		}
 		const project = ctx.pm.get(c.req.param("id"));
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);

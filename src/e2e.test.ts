@@ -59,27 +59,34 @@ describe.skipIf(!hasApiKey)("E2E: AnthropicCompatibleProvider", () => {
 		async () => {
 			const projectPath = join(tempDir, "calc-direct-api");
 
-			// Start agent via /agents/start
-			const startRes = await app.request("/agents/start", {
+			// Create project first, then send message via unified endpoint
+			const projRes = await app.request("/projects", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					path: projectPath,
-					prompt:
-						"Create a simple calculator module in src/calc.ts with add, subtract, multiply, divide functions. " +
-						"Also create src/calc.test.ts with tests for all four operations. " +
-						"Make sure divide by zero returns Infinity. " +
-						"Run the tests and make sure they pass.",
-				}),
+				body: JSON.stringify({ path: projectPath }),
 			});
+			const proj = (await projRes.json()) as { id: string };
+			const tasksRes = await app.request(`/projects/${proj.id}/tasks`);
+			const { rootNodeId } = (await tasksRes.json()) as { rootNodeId: string };
+			const startRes = await app.request(
+				`/projects/${proj.id}/tasks/${rootNodeId}/message`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						content:
+							"Create a simple calculator module in src/calc.ts with add, subtract, multiply, divide functions. " +
+							"Also create src/calc.test.ts with tests for all four operations. " +
+							"Make sure divide by zero returns Infinity. " +
+							"Run the tests and make sure they pass.",
+					}),
+				},
+			);
 
 			expect(startRes.status).toBe(200);
-			const { projectId } = (await startRes.json()) as {
-				projectId: string;
-			};
 
 			// Wait for agent to complete
-			await waitForAgent(app, projectId);
+			await waitForAgent(app, proj.id);
 
 			expect(existsSync(join(projectPath, "src", "calc.ts"))).toBe(true);
 

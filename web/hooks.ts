@@ -377,14 +377,18 @@ export function useAgent(projectId: string) {
 	}, [checkStatus]);
 
 	const start = useCallback(
-		async (opts: { prompt: string; model?: string; childModel?: string }) => {
-			const res = await authFetch(api.orchestrate(projectId), {
+		async (opts: { prompt: string }) => {
+			// Get root node ID, then send message via unified endpoint
+			const tasksRes = await authFetch(api.tasks(projectId));
+			if (!tasksRes.ok) throw new Error("Failed to load tasks");
+			const { rootNodeId } = (await tasksRes.json()) as { rootNodeId: string };
+			const res = await authFetch(api.taskMessage(projectId, rootNodeId), {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(opts),
+				body: JSON.stringify({ content: opts.prompt }),
 			});
 			if (!res.ok) throw new Error((await res.json()).error);
-			// The orchestration_started WS event will add the root to activeAgents
+			// The orchestration_started SSE event will add the root to activeAgents
 		},
 		[projectId],
 	);

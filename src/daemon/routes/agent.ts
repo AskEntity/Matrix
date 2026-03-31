@@ -9,8 +9,6 @@ import { cancelAwait, moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
 import {
 	handleClarifyResponse,
-	handleInjectMessage,
-	handleOrchestrate,
 	launchAgent,
 	stopAgent,
 } from "../agent-lifecycle.ts";
@@ -29,67 +27,6 @@ export function registerAgentRoutes(
 	ctx: DaemonContext,
 	orchestratorSystemPrompt: SystemPrompt,
 ) {
-	// Agent-driven orchestration: fire-and-forget, observe via WebSocket
-	app.post("/projects/:id/orchestrate/agent", async (c) => {
-		const body = await c.req.json<{
-			prompt: string;
-			resume?: boolean;
-			model?: string;
-			childModel?: string;
-		}>();
-		if (!body.prompt && !body.resume) {
-			return c.json({ error: "prompt is required" }, 400);
-		}
-
-		const result = await handleOrchestrate(
-			ctx,
-			c.req.param("id"),
-			body.prompt,
-			body,
-			orchestratorSystemPrompt,
-		);
-		if (!result.ok) {
-			return c.json({ error: result.error }, result.status as 404);
-		}
-		return c.json({ status: "running", projectId: c.req.param("id") });
-	});
-
-	// Start agent by project path (auto-creates project if needed).
-	// Thin wrapper: ensures project exists, then delegates to handleInjectMessage
-	// which is the single code path for delivering user messages to the root agent.
-	app.post("/agents/start", async (c) => {
-		if (!ctx.startupReady) {
-			return c.json({ error: "Server starting up, please wait..." }, 503);
-		}
-		const body = await c.req.json<{
-			path: string;
-			prompt: string;
-			model?: string;
-			childModel?: string;
-		}>();
-		if (!body.path) {
-			return c.json({ error: "path is required" }, 400);
-		}
-		if (!body.prompt) {
-			return c.json({ error: "prompt is required" }, 400);
-		}
-
-		const project = await ctx.pm.ensureProject(body.path);
-
-		// Delegate to the single message delivery path
-		const result = await handleInjectMessage(
-			ctx,
-			project.id,
-			body.prompt,
-			undefined,
-			orchestratorSystemPrompt,
-		);
-		if (!result.ok) {
-			return c.json({ error: result.error }, result.status as 404);
-		}
-		return c.json({ status: "running", projectId: project.id });
-	});
-
 	// Agent status
 	app.get("/projects/:id/agent", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));

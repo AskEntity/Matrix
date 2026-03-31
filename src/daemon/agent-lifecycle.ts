@@ -205,12 +205,12 @@ async function createAgentContext(
 			opts.currentTaskId,
 			{
 				deliverMessage: async (
-						nodeId: string,
-						message: QueueMessage,
-						opts?: { quiet?: boolean },
-					) => {
-						await deliverMessage(ctx, project, nodeId, message, opts);
-					},
+					nodeId: string,
+					message: QueueMessage,
+					opts?: { quiet?: boolean },
+				) => {
+					await deliverMessage(ctx, project, nodeId, message, opts);
+				},
 				injectMessageToProject:
 					opts.depth === 0 && opts.orchestratorSystemPrompt
 						? async (projectId: string, message: string) => {
@@ -1090,45 +1090,7 @@ export async function launchAgent(
 	})();
 }
 
-// --- Shared handlers (used by both REST routes and WS messages) ---
-
-/** Start orchestration for a project. Used by POST /orchestrate/agent and WS orchestrate. */
-export async function handleOrchestrate(
-	ctx: DaemonContext,
-	projectId: string,
-	prompt: string,
-	_opts: { resume?: boolean; model?: string; childModel?: string },
-	orchestratorSystemPrompt: SystemPrompt,
-): Promise<{ ok: boolean; error?: string; status?: number }> {
-	if (!ctx.startupReady) {
-		return {
-			ok: false,
-			error: "Server starting up, please wait...",
-			status: 503,
-		};
-	}
-	const project = ctx.pm.get(projectId);
-	if (!project) {
-		return { ok: false, error: "Project not found", status: 404 };
-	}
-	if (ctx.restartingProjects.has(projectId)) {
-		return {
-			ok: false,
-			error: "Agent restarting, please wait",
-			status: 409,
-		};
-	}
-
-	// Root node always exists — delegate to handleInjectMessage which handles
-	// auto-launch, cold-start headers, resume detection, and message delivery.
-	return handleInjectMessage(
-		ctx,
-		projectId,
-		prompt,
-		undefined,
-		orchestratorSystemPrompt,
-	);
-}
+// --- Shared handlers (used by REST routes) ---
 
 /**
  * Inject a user message into the root agent (running or stopped).

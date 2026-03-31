@@ -194,6 +194,23 @@ function createRecordingProvider(): {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Helper: get root node ID for a project, then send a message to start the agent. */
+async function startRootAgent(
+	app: {
+		request: (url: string, init?: RequestInit) => Response | Promise<Response>;
+	},
+	projectId: string,
+	prompt: string,
+): Promise<Response> {
+	const tasksRes = await app.request(`/projects/${projectId}/tasks`);
+	const { rootNodeId } = (await tasksRes.json()) as { rootNodeId: string };
+	return app.request(`/projects/${projectId}/tasks/${rootNodeId}/message`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ content: prompt }),
+	});
+}
+
 /** Create a project in the daemon and return its ID. */
 async function createProject(
 	app: ReturnType<typeof createApp>["app"],
@@ -1159,14 +1176,7 @@ describe("lifecycle: orchestrator message routing", () => {
 		const rootNodeId = tracker.rootNodeId;
 
 		// Start the orchestrator
-		const startRes = await app.request(
-			`/projects/${project.id}/orchestrate/agent`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: "initial prompt" }),
-			},
-		);
+		const startRes = await startRootAgent(app, project.id, "initial prompt");
 		expect(startRes.status).toBe(200);
 		await delay(100);
 
@@ -1204,11 +1214,7 @@ describe("lifecycle: orchestrator message routing", () => {
 		const rootNodeId = tracker.rootNodeId;
 
 		// Start and quickly stop to create a session
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "setup" }),
-		});
+		await startRootAgent(app, project.id, "setup");
 		await delay(200);
 
 		// Now agent should have completed (instant provider)
@@ -1226,7 +1232,7 @@ describe("lifecycle: orchestrator message routing", () => {
 		await delay(200);
 	});
 
-	test("POST /projects/:id/orchestrate/agent while running enqueues instead of 409", async () => {
+	test("POST /tasks/:nodeId/message while running enqueues instead of 409", async () => {
 		const { provider, receivedMessages } = createRecordingProvider();
 		const { app, pm, markReady } = createApp({
 			dataDir,
@@ -1238,29 +1244,14 @@ describe("lifecycle: orchestrator message routing", () => {
 		const project = await createProject(app, projectDir);
 
 		// Start orchestrator
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "first" }),
-		});
+		await startRootAgent(app, project.id, "first");
 		await delay(100);
 
-		// Send another orchestrate request — should enqueue, not error
-		const res2 = await app.request(
-			`/projects/${project.id}/orchestrate/agent`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: "second instruction" }),
-			},
-		);
+		// Send another message — should enqueue, not error
+		const res2 = await startRootAgent(app, project.id, "second instruction");
 		expect(res2.status).toBe(200);
-		// The endpoint returns { status: "running", projectId } for all success cases
-		const body2 = (await res2.json()) as {
-			status: string;
-			projectId: string;
-		};
-		expect(body2.status).toBe("running");
+		const body2 = (await res2.json()) as { ok: boolean };
+		expect(body2.ok).toBe(true);
 
 		await delay(100);
 		expect(
@@ -1415,11 +1406,7 @@ describe("lifecycle: stop agent cascading", () => {
 		const project = await createProject(app, projectDir);
 
 		// Start orchestrator
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
-		});
+		await startRootAgent(app, project.id, "test");
 		await delay(100);
 
 		// Create a child task and attach session (simulating a running child)
@@ -1486,11 +1473,7 @@ describe("lifecycle: clarify response routing", () => {
 		const project = await createProject(app, projectDir);
 
 		// Start orchestrator
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
-		});
+		await startRootAgent(app, project.id, "test");
 		await delay(100);
 
 		// Create a child and attach session
@@ -1647,11 +1630,7 @@ describe("lifecycle: edge cases and error handling", () => {
 
 		const project = await createProject(app, projectDir);
 
-		const res = await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
-		});
+		const res = await startRootAgent(app, project.id, "test");
 		expect(res.status).toBe(503);
 	});
 
@@ -2520,11 +2499,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		const project = await createProject(app, projectDir);
 
 		// Launch agent with initial prompt
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "initial task" }),
-		});
+		await startRootAgent(app, project.id, "initial task");
 		await delay(100);
 		expect(sessionRequests.length).toBe(1);
 
@@ -2604,11 +2579,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		const project = await createProject(app, projectDir);
 
 		// Launch agent
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "hello" }),
-		});
+		await startRootAgent(app, project.id, "hello");
 		await delay(100);
 
 		// Stop
@@ -2693,11 +2664,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		const project = await createProject(app, projectDir);
 
 		// Launch agent
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "initial work" }),
-		});
+		await startRootAgent(app, project.id, "initial work");
 		await delay(100);
 
 		// Write fake event data so handleInjectMessage detects existing session
@@ -2765,11 +2732,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		const project = await createProject(app, projectDir);
 
 		// Launch and stop to establish session
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "setup" }),
-		});
+		await startRootAgent(app, project.id, "setup");
 		await delay(100);
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
 		await delay(100);
@@ -2898,11 +2861,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		const project = await createProject(app, projectDir);
 
 		// Launch agent to generate some events
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "generate events" }),
-		});
+		await startRootAgent(app, project.id, "generate events");
 		await delay(200);
 
 		// Verify events exist
@@ -2934,11 +2893,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		const project = await createProject(app, projectDir);
 
 		// Launch agent
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "do work" }),
-		});
+		await startRootAgent(app, project.id, "do work");
 		await delay(100);
 
 		// Count events after first launch
@@ -3085,11 +3040,7 @@ describe("lifecycle: header only on cold start", () => {
 		const project = await createProject(app, projectDir);
 
 		// Launch agent
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "start" }),
-		});
+		await startRootAgent(app, project.id, "start");
 		await delay(200);
 
 		// Restart agent — stops then resumes with resume:true

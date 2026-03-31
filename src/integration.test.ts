@@ -146,14 +146,21 @@ async function waitForIdle(ctx: TestContext, timeoutMs = 10000): Promise<void> {
 }
 
 /**
- * Start the agent via HTTP and return the response.
+ * Start the agent via the unified task message endpoint.
  */
 async function startAgent(ctx: TestContext, prompt: string): Promise<Response> {
-	return ctx.app.app.request("/agents/start", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ path: ctx.projectDir, prompt }),
-	});
+	const tasksRes = await ctx.app.app.request(
+		`/projects/${ctx.projectId}/tasks`,
+	);
+	const { rootNodeId } = (await tasksRes.json()) as { rootNodeId: string };
+	return ctx.app.app.request(
+		`/projects/${ctx.projectId}/tasks/${rootNodeId}/message`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ content: prompt }),
+		},
+	);
 }
 
 /**
