@@ -14,9 +14,12 @@ import { jsSearch } from "./search.ts";
  */
 export type GetSessionFn = (sessionId: string) => TaskSession | undefined;
 
-import { resolvePath } from "./executor.ts";
+import { isAbsolute, join } from "node:path";
 
-export { resolvePath };
+/** Resolve a path relative to cwd if not absolute. */
+export function resolvePath(p: string, cwd: string): string {
+	return isAbsolute(p) ? p : join(cwd, p);
+}
 
 /**
  * Handler return type for built-in tools. Content is MCP Array format (executeTool converts to string).

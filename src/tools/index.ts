@@ -11,5 +11,4 @@ export {
 	killBackgroundProcess,
 } from "./bash.ts";
 export { createBuiltinTools, resolvePath } from "./definitions.ts";
-export { executeTool } from "./executor.ts";
 export { jsSearch, truncateSearchOutput } from "./search.ts";

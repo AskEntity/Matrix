@@ -1,6 +1,6 @@
 import { stripMcpPrefix } from "../../../src/tool-names.ts";
 import { DiffView } from "./DiffView.tsx";
-import { formatMcpToolResult, getArg } from "./utils.ts";
+import { getArg, summarizeToolResult } from "./utils.ts";
 
 /** Tool short names that have custom card body rendering in McpToolCardBody */
 export const MCP_CARD_BODY_TOOLS = new Set([
@@ -133,7 +133,7 @@ export function McpToolCardBody({
 		case "yield": {
 			const formatted =
 				isOk && resultContent
-					? formatMcpToolResult(toolName, resultContent, t)
+					? summarizeToolResult(toolName, resultContent)
 					: null;
 			return (
 				<div className="mxd-mcp-body">
@@ -168,7 +168,7 @@ export function McpToolCardBody({
 			if (toolArgs?.include_closed) opts.push("with closed");
 			const formatted =
 				isOk && resultContent
-					? formatMcpToolResult(toolName, resultContent, t)
+					? summarizeToolResult(toolName, resultContent)
 					: null;
 			return (
 				<div className="mxd-mcp-body">

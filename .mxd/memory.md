@@ -650,4 +650,7 @@ Event union type field names differ from what you might expect:
 - `assistant_text` event: field is `content` (not `text`)
 - Events have `taskId` (not `sessionId`)
 - Most Event variants do NOT have an `id` field — only `MessageEvent` has `id`
-- When writing test events for EventStore, use the exact Event type fields
+
+## Tool Display — Single Source
+
+`getToolTitle()` in `src/event-display.ts` is THE single tool title function. `{ emoji: true }` for UI contexts. `src/tools/executor.ts` deleted. `resolvePath()` in `definitions.ts`.

@@ -17,9 +17,9 @@ import { ToolResultImages } from "./tools/ToolResultImages.tsx";
 import {
 	bashBgExcludeKeys,
 	formatArgs,
-	formatMcpToolResult,
-	getToolCardTitle,
-	isTitleOnlyCard,
+	getToolTitle,
+	isTitleOnly,
+	summarizeToolResult,
 } from "./tools/utils.ts";
 
 export { LogEntryView } from "./tools/LogEntryView.tsx";
@@ -44,7 +44,7 @@ export const ToolCard = memo(function ToolCard({
 	const isOk = !isErr;
 
 	const isBuiltin = isBuiltinTool(toolName);
-	const titleOnly = isTitleOnlyCard(toolName, toolArgs);
+	const titleOnly = isTitleOnly(toolName, toolArgs);
 	const totalContent = argsStr + (resultContent ?? "");
 	const [defaultExpanded] = useState(() =>
 		titleOnly ? false : totalContent.length <= 200,
@@ -98,7 +98,7 @@ export const ToolCard = memo(function ToolCard({
 		) : null;
 
 	const mcpFormatted =
-		isOk && !mcpBody ? formatMcpToolResult(toolName, resultContent, t) : null;
+		isOk && !mcpBody ? summarizeToolResult(toolName, resultContent) : null;
 
 	const statusClass = isErr ? "mxd-tool-card-err" : "mxd-tool-card-ok";
 	const accentClass = isBuiltin ? "mxd-tool-card-mcp" : "";
@@ -114,7 +114,9 @@ export const ToolCard = memo(function ToolCard({
 				</span>
 			)}
 			<Card
-				title={getToolCardTitle(toolName, toolArgs, resultContent, nodeMap)}
+				title={getToolTitle(toolName, toolArgs, resultContent, nodeMap, {
+					emoji: true,
+				})}
 				className={`${statusClass} ${accentClass}`}
 				collapsible={!titleOnly}
 				defaultExpanded={defaultExpanded}
