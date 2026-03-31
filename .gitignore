@@ -43,3 +43,5 @@ test-project-*
 .claude
 .vscode/
 .test-event-store/
+*.pem
+*.key

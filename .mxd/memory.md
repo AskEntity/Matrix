@@ -10,7 +10,7 @@ Every bug fix MUST ask: (1) What caused this specific bug? (2) Why does the arch
 
 ## ⚠️ Task Execution Discipline
 
-Creating tasks is CHEAP. Executing must be DELIBERATE. When user discusses design → draft + discuss. Only execute when they say "go" / "做" / "开始".
+Creating tasks is CHEAP. Executing must be DELIBERATE. When user discusses design → draft + discuss. Only execute when they say "go" or explicitly ask to start.
 
 ## How to Run Tests
 
@@ -145,7 +145,7 @@ Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Archite
 - Don't change auth config without permission.
 - User communicates in Chinese.
 - Discuss architecture before executing.
-- "删到只剩一个" not "统一".
+- "Delete until ONE remains" not "unify".
 
 ## Known Bugs (unfixed)
 
