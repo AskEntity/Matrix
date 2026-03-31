@@ -673,3 +673,24 @@ Bug report: fork + child interrupt could produce duplicate tool_results. Investi
 - On restart, orphan cleanup only writes results for the child's OWN interrupted tool_calls, not for parent tool_calls that already have synthetic results from the fork
 
 Regression test added in integration.test.ts: "Fork + child interrupt: no duplicate tool_result on restart".
+
+
+## Test Gap Coverage (March 2026)
+
+### events.ts pure functions (restart safety)
+All four restart-safety functions now have unit tests in `src/events.test.ts`:
+- `findOrphanedToolCalls`: orphan detection, yield exclusion (TOOL_YIELD skipped), partial results, mixed scenarios
+- `findUnconsumedMessages`: consumed vs unconsumed, falsy id guard (id="" excluded), ordering, empty input
+- `hasPendingYield`: empty events, yield with/without result, reverse search correctness
+- `findOrphanedBackgroundProcesses`: detection, completion matching, orphan event structure
+
+### deliverMessage shouldResume ordering
+Integration test in `src/integration.test.ts` verifies the shouldResume invariant:
+- shouldResume = eventStore.has(nodeId) is checked BEFORE emitEvent writes the message
+- Test: cold start (resume=false) → restart → resume (resume=true)
+- Root agents never close queue on done() — must restart daemon to test fresh launch vs resume
+
+### surgical description edit
+Tests in `src/task-operations.test.ts` cover the string manipulation pattern:
+- Successful substring replacement + persistence through save/load
+- Not-found error, not-unique error, empty old_description edge case
