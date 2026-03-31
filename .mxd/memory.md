@@ -559,3 +559,20 @@ Resume messages from autoResumeProjects must be written to JSONL (via deliverMes
 `ValidatingMockAPI.createStream()` validates incoming params against a whitelist of known Anthropic API fields. Rejects unknown fields with `MockValidationError`, mirroring the real API behavior (`"Extra inputs are not permitted"`). Also validates `metadata` sub-fields (only `user_id` is allowed).
 
 **sessionId side channel**: The provider stores `params.sessionId` on the client object as `_currentSessionId` before each `client.messages.stream()` call. The mock client wrapper reads it and passes to `createStream` as a separate argument. The real Anthropic SDK ignores this JS property (never serialized to HTTP). This avoids putting test-only fields in the API params where the real API would reject them.
+
+
+## Root/Child Unification (March 2026)
+
+**Single message endpoint**: `POST /projects/:id/tasks/:nodeId/message` is THE endpoint for all messages. `/agents/start` and `/orchestrate/agent` deleted.
+
+**CLI**: `mxd run`, `mxd orchestrate`, `mxd send` all use shared `sendToRoot()` → resolveCurrentProject + GET tasks + POST task message. No more `/agents/start` — user must `mxd init` first.
+
+**deliverMessage now handles root auto-launch**: Pass `orchestratorSystemPrompt` in opts to trigger `launchAgent` for root nodes. `shouldResume` checked before JSONL write (the event about to be written shouldn't influence cold-start detection).
+
+**Cold-start header for all nodes**: Task message endpoint adds header on cold start for ALL nodes, not just root. Root gets memory.md + workdir. Child gets buildTaskPrompt (task description + siblings + memory).
+
+**stopTask()**: Per-task stop (close queue, clean session, write orphans). `POST /projects/:id/tasks/:nodeId/stop`. Frontend uses real stop instead of fake "PAUSED by user" text message.
+
+**Upward send_message**: Now goes through `deliverMessage(parentId, msg, {quiet: true})` — persists to parent's JSONL for crash safety. Previously used direct `parentQueue.enqueue()` which was lost on crash.
+
+**Root vs child launch**: genuinely different, NOT duplicated. Root has project-level session tracking (`ctx.activeSessions`), `provider.startSession()`, cost aggregation. Child uses `runChildCore()` with done() detection.
