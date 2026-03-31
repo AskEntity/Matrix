@@ -1452,6 +1452,43 @@ switch (command) {
 	case "daemon":
 		await handleDaemon(args);
 		break;
+	case "send":
+	case "s": {
+		let projectId: string | undefined;
+		let taskId: string | undefined;
+		const messageArgs: string[] = [];
+
+		for (let i = 0; i < args.length; i++) {
+			const arg = args[i];
+			if (arg === "-p" && i + 1 < args.length) {
+				projectId = args[++i];
+			} else if (arg === "-t" && i + 1 < args.length) {
+				taskId = args[++i];
+			} else if (arg === "--model" && i + 1 < args.length) {
+				i++; // skip model value (config is set separately)
+			} else if (arg === "--child-model" && i + 1 < args.length) {
+				i++; // skip child-model value
+			} else if (arg) {
+				messageArgs.push(arg);
+			}
+		}
+
+		const message = messageArgs.join(" ");
+		if (!message) {
+			console.error("No message provided. Usage: mxd send <message>");
+			process.exit(1);
+		}
+
+		if (!projectId) {
+			const resolved = await resolveCurrentProject();
+			if (!resolved) process.exit(1);
+			projectId = resolved;
+		}
+
+		await sendMessage(projectId, message, taskId);
+		console.log("Message sent.");
+		break;
+	}
 	case "help":
 	case "--help":
 	case "-h":
@@ -1459,16 +1496,18 @@ switch (command) {
 		console.log(`Matrix v${VERSION}`);
 		console.log("");
 		console.log("USAGE");
-		console.log("  mxd <message>              Send message to agent (default)");
 		console.log("  mxd <command> [options]");
 		console.log("");
-		console.log("FLAGS (for messages)");
-		console.log("  -p <id>                    Project ID (default: from cwd)");
-		console.log("  -t <id>                    Task ID (default: root node)");
-		console.log("  --model <model>            Model override");
-		console.log("  --child-model <model>      Child model override");
-		console.log("");
 		console.log("COMMANDS");
+		console.log("  Messaging");
+		console.log("    send <message>           Send message to agent");
+		console.log(
+			"      -p <id>                  Project ID (default: from cwd)",
+		);
+		console.log("      -t <id>                  Task ID (default: root node)");
+		console.log("      --model <model>          Model override");
+		console.log("      --child-model <model>    Child model override");
+		console.log("");
 		console.log("  Project");
 		console.log("    init [path]              Initialize a project");
 		console.log("    list                     List all projects");
@@ -1525,52 +1564,15 @@ switch (command) {
 		console.log("    version                  Show version");
 		console.log("");
 		console.log("EXAMPLES");
-		console.log("  mxd 'build feature X'               # Send to root agent");
+		console.log("  mxd send 'build feature X'           # Send to root agent");
 		console.log(
-			"  mxd -t abc123 'try a different approach'  # Send to specific task",
+			"  mxd send -t abc123 'try again'       # Send to specific task",
 		);
 		console.log(
-			"  mxd -p myproj 'fix the bug'         # Specify project explicitly",
+			"  mxd send -p myproj 'fix the bug'     # Specify project explicitly",
 		);
 		break;
-	default: {
-		// Default: treat all args as a message to send
-		let projectId: string | undefined;
-		let taskId: string | undefined;
-		const messageArgs: string[] = [];
-
-		// Re-parse from original argv (command is the first arg, already in args)
-		const allArgs = [command, ...args];
-		for (let i = 0; i < allArgs.length; i++) {
-			const arg = allArgs[i];
-			if (arg === "-p" && i + 1 < allArgs.length) {
-				projectId = allArgs[++i];
-			} else if (arg === "-t" && i + 1 < allArgs.length) {
-				taskId = allArgs[++i];
-			} else if (arg === "--model" && i + 1 < allArgs.length) {
-				i++; // skip model value (config is set separately)
-			} else if (arg === "--child-model" && i + 1 < allArgs.length) {
-				i++; // skip child-model value
-			} else if (arg) {
-				messageArgs.push(arg);
-			}
-		}
-
-		const message = messageArgs.join(" ");
-		if (!message) {
-			console.error("No message provided. Run `mxd --help` for usage.");
-			process.exit(1);
-		}
-
-		if (!projectId) {
-			const resolved = await resolveCurrentProject();
-			if (!resolved) process.exit(1);
-			projectId = resolved;
-		}
-
-		await sendMessage(projectId, message, taskId);
-		console.log("Message sent. Watching activity (Ctrl+C to detach)...\n");
-		await watchProject(projectId);
-		break;
-	}
+	default:
+		console.error(`Unknown command: ${command}. Run \`mxd --help\` for usage.`);
+		process.exit(1);
 }
