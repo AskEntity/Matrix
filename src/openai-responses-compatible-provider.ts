@@ -24,7 +24,6 @@ import {
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
-import { zodShapeToJsonSchema } from "./zod-schema.ts";
 
 interface HistoryMessage {
 	role: "user" | "assistant" | "tool";
@@ -735,8 +734,7 @@ function createOpenAIResponsesAdapter(
 							type: "function",
 							name: toolName,
 							description: def.description,
-							parameters:
-								def.jsonSchema ?? zodShapeToJsonSchema(def.inputSchema),
+							parameters: def.jsonSchema,
 						});
 					}
 				}

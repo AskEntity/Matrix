@@ -69,9 +69,9 @@ export async function executeTool(
 	}
 
 	// Validate input against Zod schema for built-in tools (not external MCP tools).
-	// External MCP tools have jsonSchema set and an empty inputSchema — skip validation for those.
+	// External MCP tools have an empty inputSchema {} — skip validation for those.
 	let validatedInput = input;
-	if (!mcpHandler.jsonSchema && Object.keys(mcpHandler.inputSchema).length > 0) {
+	if (Object.keys(mcpHandler.inputSchema).length > 0) {
 		const result = z.object(mcpHandler.inputSchema).safeParse(input);
 		if (!result.success) {
 			const issues = result.error.issues

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 import type {
 	MessageParam,
 	TextBlockParam,
@@ -27,7 +28,7 @@ import { MessageQueue } from "./message-queue.ts";
 import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { attachMockSession, mockOrchestratorDeps } from "./test-utils.ts";
-import type { ToolDefinition } from "./tool-definition.ts";
+import { type ToolDefinition, tool } from "./tool-definition.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
 import { createBuiltinTools } from "./tools/definitions.ts";
@@ -41,7 +42,6 @@ import {
 	truncateSearchOutput,
 } from "./tools/index.ts";
 import type { AgentResult } from "./types.ts";
-import { zodShapeToJsonSchema } from "./zod-schema.ts";
 
 /**
  * Test-only executeTool wrapper. Creates builtin tools with the given cwd
@@ -1603,26 +1603,31 @@ describe("buildSummarizationInstruction", () => {
 	});
 });
 
-describe("zodShapeToJsonSchema", () => {
+describe("tool() jsonSchema generation", () => {
 	test("converts nested object in array schema", async () => {
 		const { z } = await import("zod");
-		const shape = {
-			tasks: z
-				.array(
-					z.object({
-						taskId: z.string().describe("ID of the child task"),
-						message: z.string().optional().describe("Instructions"),
-						mode: z
-							.enum(["new", "resume", "reset"])
-							.optional()
-							.default("new")
-							.describe("Execution mode"),
-					}),
-				)
-				.describe("Tasks to execute"),
-		};
-		const result = zodShapeToJsonSchema(shape);
-		expect(result).toEqual({
+		const { tool: toolFactory } = await import("./tool-definition.ts");
+		const def = toolFactory(
+			"test",
+			"test tool",
+			{
+				tasks: z
+					.array(
+						z.object({
+							taskId: z.string().describe("ID of the child task"),
+							message: z.string().optional().describe("Instructions"),
+							mode: z
+								.enum(["new", "resume", "reset"])
+								.optional()
+								.default("new")
+								.describe("Execution mode"),
+						}),
+					)
+					.describe("Tasks to execute"),
+			},
+			async () => ({ content: [{ type: "text", text: "ok" }] }),
+		);
+		expect(def.jsonSchema).toEqual({
 			type: "object",
 			properties: {
 				tasks: {
@@ -1636,10 +1641,11 @@ describe("zodShapeToJsonSchema", () => {
 							mode: {
 								type: "string",
 								enum: ["new", "resume", "reset"],
+								default: "new",
 								description: "Execution mode",
 							},
 						},
-						required: ["taskId"],
+						required: ["taskId", "mode"],
 					},
 				},
 			},
@@ -1649,18 +1655,57 @@ describe("zodShapeToJsonSchema", () => {
 
 	test("handles simple string and number types", async () => {
 		const { z } = await import("zod");
-		const shape = {
-			name: z.string(),
-			count: z.number(),
-			active: z.boolean(),
-		};
-		const result = zodShapeToJsonSchema(shape);
-		expect(result.properties).toEqual({
+		const { tool: toolFactory } = await import("./tool-definition.ts");
+		const def = toolFactory(
+			"test",
+			"test tool",
+			{
+				name: z.string(),
+				count: z.number(),
+				active: z.boolean(),
+			},
+			async () => ({ content: [{ type: "text", text: "ok" }] }),
+		);
+		expect((def.jsonSchema as Record<string, unknown>).properties).toEqual({
 			name: { type: "string" },
 			count: { type: "number" },
 			active: { type: "boolean" },
 		});
-		expect(result.required).toEqual(["name", "count", "active"]);
+		expect((def.jsonSchema as Record<string, unknown>).required).toEqual([
+			"name",
+			"count",
+			"active",
+		]);
+	});
+
+	test("handles union of literal types (persistent field)", async () => {
+		const { z } = await import("zod");
+		const { tool: toolFactory } = await import("./tool-definition.ts");
+		const def = toolFactory(
+			"test",
+			"test tool",
+			{
+				persistent: z
+					.union([
+						z.literal(false),
+						z.literal("reset"),
+						z.literal("continue"),
+					])
+					.optional()
+					.describe("Persistent mode"),
+			},
+			async () => ({ content: [{ type: "text", text: "ok" }] }),
+		);
+		const props = (def.jsonSchema as Record<string, unknown>).properties as
+			Record<string, unknown>;
+		expect(props?.persistent).toEqual({
+			description: "Persistent mode",
+			anyOf: [
+				{ type: "boolean", const: false },
+				{ type: "string", const: "reset" },
+				{ type: "string", const: "continue" },
+			],
+		});
 	});
 });
 
@@ -2369,11 +2414,14 @@ describe("Event deterministic verification", () => {
 			queue: queueWithPrompt("Do the task", testDir),
 			mcpToolDefs: {
 				mxd: [
-					{
-						name: "done",
-						description: "Signal completion",
-						inputSchema: {},
-						handler: async (input: Record<string, unknown>) => ({
+					tool(
+						"done",
+						"Signal completion",
+						{
+							status: z.string(),
+							summary: z.string().optional(),
+						},
+						async (input) => ({
 							content: [
 								{
 									type: "text",
@@ -2381,7 +2429,7 @@ describe("Event deterministic verification", () => {
 								},
 							],
 						}),
-					},
+					),
 				],
 			},
 		});
@@ -2502,11 +2550,11 @@ describe("Event deterministic verification", () => {
 			queue: queueWithPrompt("Try something", testDir),
 			mcpToolDefs: {
 				mxd: [
-					{
-						name: "done",
-						description: "Signal completion",
-						inputSchema: {},
-						handler: async () => ({
+					tool(
+						"done",
+						"Signal completion",
+						{},
+						async () => ({
 							isError: true,
 							content: [
 								{
@@ -2515,7 +2563,7 @@ describe("Event deterministic verification", () => {
 								},
 							],
 						}),
-					},
+					),
 				],
 			},
 		});
@@ -2737,30 +2785,15 @@ describe("Event deterministic verification", () => {
 			queue: queueWithPrompt("Run three tools", testDir),
 			mcpToolDefs: {
 				test: [
-					{
-						name: "tool_a",
-						description: "Tool A",
-						inputSchema: {},
-						handler: async () => ({
-							content: [{ type: "text", text: "Result A" }],
-						}),
-					},
-					{
-						name: "tool_b",
-						description: "Tool B",
-						inputSchema: {},
-						handler: async () => ({
-							content: [{ type: "text", text: "Result B" }],
-						}),
-					},
-					{
-						name: "tool_c",
-						description: "Tool C",
-						inputSchema: {},
-						handler: async () => ({
-							content: [{ type: "text", text: "Result C" }],
-						}),
-					},
+					tool("tool_a", "Tool A", {}, async () => ({
+						content: [{ type: "text", text: "Result A" }],
+					})),
+					tool("tool_b", "Tool B", {}, async () => ({
+						content: [{ type: "text", text: "Result B" }],
+					})),
+					tool("tool_c", "Tool C", {}, async () => ({
+						content: [{ type: "text", text: "Result C" }],
+					})),
 				],
 			},
 		});
@@ -3037,11 +3070,14 @@ describe("Event deterministic verification", () => {
 			queue,
 			mcpToolDefs: {
 				mxd: [
-					{
-						name: "done",
-						description: "Signal completion",
-						inputSchema: {},
-						handler: async (input: Record<string, unknown>) => {
+					tool(
+						"done",
+						"Signal completion",
+						{
+							status: z.string(),
+							summary: z.string().optional(),
+						},
+						async (input) => {
 							// During tool execution, enqueue a message to simulate cancellation point
 							queue.enqueue({
 								source: "user",
@@ -3058,7 +3094,7 @@ describe("Event deterministic verification", () => {
 								],
 							};
 						},
-					},
+					),
 				],
 			},
 		});

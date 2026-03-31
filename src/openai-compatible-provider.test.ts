@@ -12,6 +12,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { tool } from "./tool-definition.ts";
 import { MessageQueue } from "./message-queue.ts";
 import {
 	clearContextWindowCache,
@@ -360,34 +361,22 @@ describe("runLoop integration", () => {
 				queue: queueWithPrompt("Do something", tmpDir),
 				mcpToolDefs: {
 					mxd: [
-						{
-							name: "done",
-							description: "Signal completion",
-							inputSchema: {
-								status: {
-									_zod: {
-										def: { type: "string" },
-										bag: { description: "passed or failed" },
-									},
-								},
-								summary: {
-									_zod: {
-										def: { type: "string" },
-										bag: { description: "Summary" },
-									},
-								},
+						tool(
+							"done",
+							"Signal completion",
+							{
+								status: z.string().describe("passed or failed"),
+								summary: z.string().describe("Summary"),
 							},
-							handler: async (input: Record<string, unknown>) => {
-								return {
-									content: [
-										{
-											type: "text",
-											text: `Task marked as ${input.status}. Entering idle state.`,
-										},
-									],
-								};
-							},
-						},
+							async (input) => ({
+								content: [
+									{
+										type: "text",
+										text: `Task marked as ${input.status}. Entering idle state.`,
+									},
+								],
+							}),
+						),
 					],
 				},
 			});
@@ -544,20 +533,20 @@ describe("runLoop integration", () => {
 				queue: queueWithPrompt("Say hello", tmpDir),
 				mcpToolDefs: {
 					mxd: [
-						{
-							name: "update_task",
-							description: "Update task",
-							inputSchema: {
+						tool(
+							"update_task",
+							"Update task",
+							{
 								taskId: z.string(),
 								draft: z.boolean().optional(),
 								old_description: z.string().optional(),
 								new_description: z.string().optional(),
 								parentId: z.string().optional(),
 							},
-							handler: async () => ({
+							async () => ({
 								content: [{ type: "text", text: "ok" }],
 							}),
-						},
+						),
 					],
 				},
 			});
@@ -925,24 +914,14 @@ describe("Event recording via emit callback", () => {
 				queue: queueWithPrompt("Do something", tmpDir),
 				mcpToolDefs: {
 					mxd: [
-						{
-							name: "done",
-							description: "Signal completion",
-							inputSchema: {
-								status: {
-									_zod: {
-										def: { type: "string" },
-										bag: { description: "passed or failed" },
-									},
-								},
-								summary: {
-									_zod: {
-										def: { type: "string" },
-										bag: { description: "Summary" },
-									},
-								},
+						tool(
+							"done",
+							"Signal completion",
+							{
+								status: z.string().describe("passed or failed"),
+								summary: z.string().describe("Summary"),
 							},
-							handler: async (input: Record<string, unknown>) => ({
+							async (input) => ({
 								content: [
 									{
 										type: "text",
@@ -950,7 +929,7 @@ describe("Event recording via emit callback", () => {
 									},
 								],
 							}),
-						},
+						),
 					],
 				},
 			});
@@ -1247,11 +1226,14 @@ describe("Event deterministic verification (OpenAI)", () => {
 					queue: queueWithPrompt("Do the task", testDir),
 					mcpToolDefs: {
 						mxd: [
-							{
-								name: "done",
-								description: "Signal completion",
-								inputSchema: {},
-								handler: async (input: Record<string, unknown>) => ({
+							tool(
+								"done",
+								"Signal completion",
+								{
+									status: z.string(),
+									summary: z.string().optional(),
+								},
+								async (input) => ({
 									content: [
 										{
 											type: "text",
@@ -1259,7 +1241,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 										},
 									],
 								}),
-							},
+							),
 						],
 					},
 				});
@@ -1488,11 +1470,11 @@ describe("Event deterministic verification (OpenAI)", () => {
 					queue: queueWithPrompt("Try something", testDir),
 					mcpToolDefs: {
 						mxd: [
-							{
-								name: "done",
-								description: "Signal completion",
-								inputSchema: {},
-								handler: async () => ({
+							tool(
+								"done",
+								"Signal completion",
+								{},
+								async () => ({
 									isError: true,
 									content: [
 										{
@@ -1501,7 +1483,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 										},
 									],
 								}),
-							},
+							),
 						],
 					},
 				});
@@ -1592,30 +1574,15 @@ describe("Event deterministic verification (OpenAI)", () => {
 					queue: queueWithPrompt("Run three tools", testDir),
 					mcpToolDefs: {
 						test: [
-							{
-								name: "tool_a",
-								description: "Tool A",
-								inputSchema: {},
-								handler: async () => ({
-									content: [{ type: "text", text: "Result A" }],
-								}),
-							},
-							{
-								name: "tool_b",
-								description: "Tool B",
-								inputSchema: {},
-								handler: async () => ({
-									content: [{ type: "text", text: "Result B" }],
-								}),
-							},
-							{
-								name: "tool_c",
-								description: "Tool C",
-								inputSchema: {},
-								handler: async () => ({
-									content: [{ type: "text", text: "Result C" }],
-								}),
-							},
+							tool("tool_a", "Tool A", {}, async () => ({
+								content: [{ type: "text", text: "Result A" }],
+							})),
+							tool("tool_b", "Tool B", {}, async () => ({
+								content: [{ type: "text", text: "Result B" }],
+							})),
+							tool("tool_c", "Tool C", {}, async () => ({
+								content: [{ type: "text", text: "Result C" }],
+							})),
 						],
 					},
 				});

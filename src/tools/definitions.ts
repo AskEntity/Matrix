@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { z } from "zod";
 import type { MessageQueue } from "../message-queue.ts";
-import type { ToolDefinition } from "../tool-definition.ts";
+import { tool } from "../tool-definition.ts";
 import type { TaskSession } from "../types.ts";
 import { executeBackgroundTool } from "./background.ts";
 import { executeBashWithTimeout } from "./bash.ts";
@@ -70,13 +70,12 @@ export function createBuiltinTools(
 	getCwd: () => string,
 	getFallbackCwd: () => string | undefined,
 	getQueue: () => MessageQueue | undefined,
-): ToolDefinition[] {
+) {
 	// ── bash ──
-	const bashTool: ToolDefinition = {
-		name: "bash",
-		description:
-			"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). The `cd` command has special behavior: working directory is tracked across calls, so if you `cd` in one command, subsequent commands automatically run from the new directory. Do NOT cd to your current working directory — it will return an error. No need to prefix every command with `cd /path &&`. Exception: after a daemon restart, your workdir resets to the project root. If you navigate outside your worktree, you'll be warned — remember to cd back when done.\n\nforeground_timeout controls how long to wait in the foreground before backgrounding the command. Use `run_in_background: true` as the preferred way to intentionally run a command in the background (equivalent to foreground_timeout=0). If the command finishes before the timeout, results are returned immediately. If not, the command moves to background and you get partial output + a background handle. Background completions are delivered as messages on your next yield() or tool call.\n\nForeground bash commands automatically track CWD changes (cd commands update the working directory for subsequent calls). Background commands (run_in_background=true or commands that exceeded foreground_timeout) do NOT affect CWD — your working directory stays at whatever it was before the backgrounded command. You can read_file on the output file paths to check partial output while the process runs.\n\nBackground completion notifications include stdout/stderr content inline when output is small (< 50KB). For large output, use read_file on the output file paths. Output files persist until the session ends.\n\nDo NOT pipe through head, tail, or grep to truncate output. Long output is automatically saved to files for you to read — if the output is short, truncation is pointless; if it's long, the tool saves it and you can read_file or search the saved file afterward. Especially for test runs: NEVER truncate test output. You need to see every failure, every stack trace, and every flaky result to debug effectively.",
-		inputSchema: {
+	const bashTool = tool(
+		"bash",
+		"Execute a bash command. Use for: running tests, git operations, build tools, package management, and system commands. Do NOT use bash for file operations — use the dedicated tools instead (read_file, write_file, edit_file, list_files, search). The `cd` command has special behavior: working directory is tracked across calls, so if you `cd` in one command, subsequent commands automatically run from the new directory. Do NOT cd to your current working directory — it will return an error. No need to prefix every command with `cd /path &&`. Exception: after a daemon restart, your workdir resets to the project root. If you navigate outside your worktree, you'll be warned — remember to cd back when done.\n\nforeground_timeout controls how long to wait in the foreground before backgrounding the command. Use `run_in_background: true` as the preferred way to intentionally run a command in the background (equivalent to foreground_timeout=0). If the command finishes before the timeout, results are returned immediately. If not, the command moves to background and you get partial output + a background handle. Background completions are delivered as messages on your next yield() or tool call.\n\nForeground bash commands automatically track CWD changes (cd commands update the working directory for subsequent calls). Background commands (run_in_background=true or commands that exceeded foreground_timeout) do NOT affect CWD — your working directory stays at whatever it was before the backgrounded command. You can read_file on the output file paths to check partial output while the process runs.\n\nBackground completion notifications include stdout/stderr content inline when output is small (< 50KB). For large output, use read_file on the output file paths. Output files persist until the session ends.\n\nDo NOT pipe through head, tail, or grep to truncate output. Long output is automatically saved to files for you to read — if the output is short, truncation is pointless; if it's long, the tool saves it and you can read_file or search the saved file afterward. Especially for test runs: NEVER truncate test output. You need to see every failure, every stack trace, and every flaky result to debug effectively.",
+		{
 			command: z.string().describe("The bash command to execute"),
 			run_in_background: z
 				.boolean()
@@ -91,12 +90,12 @@ export function createBuiltinTools(
 					"Maximum time in ms to run in foreground before backgrounding. 0 = immediate background. Default: 120000 (2 minutes).",
 				),
 		},
-		async handler(args, extra) {
-			const command = args.command as string;
-			const runInBackground = args.run_in_background as boolean | undefined;
+		async (args, extra) => {
+			const command = args.command;
+			const runInBackground = args.run_in_background;
 			const foregroundTimeout = runInBackground
 				? 0
-				: Math.max((args.foreground_timeout as number) ?? 120000, 0);
+				: Math.max(args.foreground_timeout ?? 120000, 0);
 
 			const session = getSession(sessionId);
 			const toolCallId = (extra as { toolCallId?: string })?.toolCallId;
@@ -124,14 +123,13 @@ export function createBuiltinTools(
 				);
 			}
 		},
-	};
+	);
 
 	// ── background ──
-	const backgroundTool: ToolDefinition = {
-		name: "background",
-		description:
-			"Manage background processes. Use to list, check status, kill, or await background processes that were started via bash with run_in_background=true or that exceeded foreground_timeout.\n\nActions:\n- list: Show all background processes for this session\n- status: Get detailed status of a specific background process\n- kill: Terminate a running background process\n- await: Block until a background process completes and return its full output (like a foreground command)",
-		inputSchema: {
+	const backgroundTool = tool(
+		"background",
+		"Manage background processes. Use to list, check status, kill, or await background processes that were started via bash with run_in_background=true or that exceeded foreground_timeout.\n\nActions:\n- list: Show all background processes for this session\n- status: Get detailed status of a specific background process\n- kill: Terminate a running background process\n- await: Block until a background process completes and return its full output (like a foreground command)",
+		{
 			action: z
 				.enum(["list", "status", "kill", "await"])
 				.describe(
@@ -150,10 +148,10 @@ export function createBuiltinTools(
 					"Maximum time in ms to wait for await action. Optional — defaults to waiting indefinitely.",
 				),
 		},
-		async handler(args) {
-			const action = args.action as string;
-			const id = args.id as string | undefined;
-			const timeout = args.timeout as number | undefined;
+		async (args) => {
+			const action = args.action;
+			const id = args.id;
+			const timeout = args.timeout;
 
 			const bgSession = getSession(sessionId);
 			if (!bgSession) {
@@ -171,14 +169,13 @@ export function createBuiltinTools(
 			);
 			return textResult(result.content, result.isError);
 		},
-	};
+	);
 
 	// ── read_file ──
-	const readFileTool: ToolDefinition = {
-		name: "read_file",
-		description:
-			"Read the contents of a file with line numbers. You MUST read a file before editing it to understand existing code. For large files, use offset and limit to read in chunks.",
-		inputSchema: {
+	const readFileTool = tool(
+		"read_file",
+		"Read the contents of a file with line numbers. You MUST read a file before editing it to understand existing code. For large files, use offset and limit to read in chunks.",
+		{
 			path: z.string().describe("Absolute or relative path to the file"),
 			offset: z
 				.number()
@@ -191,8 +188,8 @@ export function createBuiltinTools(
 					"Maximum number of lines to return (default: all). Use with offset for paginating large files.",
 				),
 		},
-		async handler(args) {
-			const path = resolvePath(args.path as string, getCwd());
+		async (args) => {
+			const path = resolvePath(args.path, getCwd());
 			const ext = path.split(".").pop()?.toLowerCase();
 			const IMAGE_MEDIA_TYPES: Record<
 				string,
@@ -226,8 +223,8 @@ export function createBuiltinTools(
 				}
 			}
 
-			const offset = Math.max(1, (args.offset as number) ?? 1);
-			const limit = args.limit as number | undefined;
+			const offset = Math.max(1, args.offset ?? 1);
+			const limit = args.limit;
 			try {
 				const raw = readFileSync(path, "utf-8");
 				if (offset === 1 && !limit) {
@@ -252,20 +249,19 @@ export function createBuiltinTools(
 				);
 			}
 		},
-	};
+	);
 
 	// ── write_file ──
-	const writeFileTool: ToolDefinition = {
-		name: "write_file",
-		description:
-			"Write content to a file. Creates parent directories automatically. Use for new files or complete rewrites. For modifying existing files, prefer edit_file.",
-		inputSchema: {
+	const writeFileTool = tool(
+		"write_file",
+		"Write content to a file. Creates parent directories automatically. Use for new files or complete rewrites. For modifying existing files, prefer edit_file.",
+		{
 			path: z.string().describe("Path to the file"),
 			content: z.string().describe("Content to write"),
 		},
-		async handler(args) {
-			const path = resolvePath(args.path as string, getCwd());
-			const content = args.content as string;
+		async (args) => {
+			const path = resolvePath(args.path, getCwd());
+			const content = args.content;
 			try {
 				mkdirSync(dirname(path), { recursive: true });
 				writeFileSync(path, content, "utf-8");
@@ -277,14 +273,13 @@ export function createBuiltinTools(
 				);
 			}
 		},
-	};
+	);
 
 	// ── edit_file ──
-	const editFileTool: ToolDefinition = {
-		name: "edit_file",
-		description:
-			"Replace a specific string in a file. The old_string must be an EXACT match (including whitespace and indentation). If old_string is not unique, provide more surrounding context lines to make it unique, or use replace_all=true for bulk renames. You must read_file first to see the exact content.",
-		inputSchema: {
+	const editFileTool = tool(
+		"edit_file",
+		"Replace a specific string in a file. The old_string must be an EXACT match (including whitespace and indentation). If old_string is not unique, provide more surrounding context lines to make it unique, or use replace_all=true for bulk renames. You must read_file first to see the exact content.",
+		{
 			path: z.string().describe("Path to the file"),
 			old_string: z
 				.string()
@@ -299,11 +294,11 @@ export function createBuiltinTools(
 					"If true, replace all occurrences (default: false, which requires old_string to be unique in file)",
 				),
 		},
-		async handler(args) {
-			const path = resolvePath(args.path as string, getCwd());
-			const oldStr = args.old_string as string;
-			const newStr = args.new_string as string;
-			const replaceAll = (args.replace_all as boolean) ?? false;
+		async (args) => {
+			const path = resolvePath(args.path, getCwd());
+			const oldStr = args.old_string;
+			const newStr = args.new_string;
+			const replaceAll = args.replace_all ?? false;
 			try {
 				if (!existsSync(path)) {
 					return textResult(`File not found: ${path}`, true);
@@ -335,21 +330,20 @@ export function createBuiltinTools(
 				);
 			}
 		},
-	};
+	);
 
 	// ── list_files ──
-	const listFilesTool: ToolDefinition = {
-		name: "list_files",
-		description:
-			'List files matching a glob pattern. Use to discover project structure and find relevant files before reading them. Examples: "src/**/*.ts", "**/*.test.ts", "*.json".',
-		inputSchema: {
+	const listFilesTool = tool(
+		"list_files",
+		'List files matching a glob pattern. Use to discover project structure and find relevant files before reading them. Examples: "src/**/*.ts", "**/*.test.ts", "*.json".',
+		{
 			pattern: z
 				.string()
 				.optional()
 				.describe('Glob pattern (e.g. "src/**/*.ts", "*.json"). Default: "*"'),
 		},
-		async handler(args) {
-			const pattern = (args.pattern as string) ?? "*";
+		async (args) => {
+			const pattern = args.pattern ?? "*";
 			try {
 				const glob = new Bun.Glob(pattern);
 				const files: string[] = [];
@@ -365,14 +359,13 @@ export function createBuiltinTools(
 				);
 			}
 		},
-	};
+	);
 
 	// ── search ──
-	const searchTool: ToolDefinition = {
-		name: "search",
-		description:
-			'A powerful regex search tool. ALWAYS use this for search tasks — NEVER invoke grep or rg via bash. Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+"). The path parameter accepts a directory or a single file. Filter files with glob parameter (e.g., "*.ts", "*.{ts,tsx}"). Output modes: "content" (default) shows matching lines with line numbers, "files_with_matches" shows only file paths (fast discovery), "count" shows match counts per file.',
-		inputSchema: {
+	const searchTool = tool(
+		"search",
+		'A powerful regex search tool. ALWAYS use this for search tasks — NEVER invoke grep or rg via bash. Supports full regex syntax (e.g., "log.*Error", "function\\s+\\w+"). The path parameter accepts a directory or a single file. Filter files with glob parameter (e.g., "*.ts", "*.{ts,tsx}"). Output modes: "content" (default) shows matching lines with line numbers, "files_with_matches" shows only file paths (fast discovery), "count" shows match counts per file.',
+		{
 			pattern: z
 				.string()
 				.describe("Regex pattern to search for (ripgrep syntax, not grep)"),
@@ -417,16 +410,16 @@ export function createBuiltinTools(
 					"Directories to exclude from search. Defaults to: node_modules, .git, dist, out, .worktrees, .cache, coverage, .next, build. Pass empty array to include all.",
 				),
 		},
-		async handler(args) {
-			const pattern = args.pattern as string;
-			const searchPath = (args.path as string) ?? ".";
-			const glob = args.glob as string | undefined;
-			const contextLines = args.context as number | undefined;
-			const outputMode = (args.output_mode as string) ?? "content";
-			const headLimit = Math.min((args.head_limit as number) ?? 50, 200);
-			const caseInsensitive = (args.case_insensitive as boolean) ?? false;
-			const excludedDirs = args.excluded_dirs as string[] | undefined;
-			const multiline = (args.multiline as boolean) ?? false;
+		async (args) => {
+			const pattern = args.pattern;
+			const searchPath = args.path ?? ".";
+			const glob = args.glob;
+			const contextLines = args.context;
+			const outputMode = args.output_mode ?? "content";
+			const headLimit = Math.min(args.head_limit ?? 50, 200);
+			const caseInsensitive = args.case_insensitive ?? false;
+			const excludedDirs = args.excluded_dirs;
+			const multiline = args.multiline ?? false;
 
 			try {
 				const result = await jsSearch({
@@ -449,7 +442,7 @@ export function createBuiltinTools(
 				);
 			}
 		},
-	};
+	);
 
 	return [
 		bashTool,

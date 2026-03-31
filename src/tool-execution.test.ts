@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
-import { executeTool } from "./tool-execution.ts";
 import { tool } from "./tool-definition.ts";
+import { executeTool } from "./tool-execution.ts";
 
 describe("executeTool Zod validation", () => {
 	test("rejects string 'false' for z.literal(false) field", async () => {
@@ -158,7 +158,7 @@ describe("executeTool Zod validation", () => {
 		expect(result.content).toContain("validation error");
 	});
 
-	test("skips validation for external MCP tools with jsonSchema", async () => {
+	test("skips validation for external MCP tools with empty inputSchema", async () => {
 		const handlers = new Map();
 		const externalTool = {
 			name: "mcp__external__search",
@@ -166,9 +166,7 @@ describe("executeTool Zod validation", () => {
 			inputSchema: {} as Record<string, never>,
 			jsonSchema: { type: "object", properties: { query: { type: "string" } } },
 			handler: async (args: Record<string, unknown>) => ({
-				content: [
-					{ type: "text" as const, text: `searched: ${args.query}` },
-				],
+				content: [{ type: "text" as const, text: `searched: ${args.query}` }],
 			}),
 		};
 		handlers.set("mcp__external__search", externalTool);

@@ -31,7 +31,6 @@ import {
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
-import { zodShapeToJsonSchema } from "./zod-schema.ts";
 
 /**
  * Get context window size for a model.
@@ -368,12 +367,10 @@ function createAnthropicAdapter(
 					for (const def of defs) {
 						const toolName = `mcp__${serverName}__${def.name}`;
 						mcpHandlers.set(toolName, def);
-						const jsonSchema =
-							def.jsonSchema ?? zodShapeToJsonSchema(def.inputSchema);
 						allTools.push({
 							name: toolName,
 							description: def.description,
-							input_schema: jsonSchema as Tool["input_schema"],
+							input_schema: def.jsonSchema as Tool["input_schema"],
 						});
 					}
 				}

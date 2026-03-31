@@ -24,7 +24,6 @@ import {
 import type { ToolDefinition } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
-import { zodShapeToJsonSchema } from "./zod-schema.ts";
 
 // ── Types ──
 
@@ -528,8 +527,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 							function: {
 								name: toolName,
 								description: def.description,
-								parameters:
-									def.jsonSchema ?? zodShapeToJsonSchema(def.inputSchema),
+								parameters: def.jsonSchema,
 							},
 						});
 					}

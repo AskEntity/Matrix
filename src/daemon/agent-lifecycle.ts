@@ -236,7 +236,7 @@ async function createAgentContext(
 	);
 
 	const mcpToolDefs: Record<string, ToolDefinition[]> = {
-		[MCP_SERVER_NAME]: [...builtinTools, ...toolDefs],
+		[MCP_SERVER_NAME]: [...(builtinTools as ToolDefinition[]), ...toolDefs],
 		...mcpManager.getToolDefs(),
 	};
 

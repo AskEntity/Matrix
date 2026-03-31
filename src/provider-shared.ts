@@ -12,7 +12,7 @@
  * - Budget management: see ./budget.ts
  * - Compaction logic: see ./compaction.ts
  * - Event converter walker: see ./event-converter.ts
- * - Zod-to-JSON-Schema: see ./zod-schema.ts
+ * - Zod-to-JSON-Schema: computed at tool creation time in tool-definition.ts
  */
 import type { AgentRequest } from "./agent-provider.ts";
 import { checkBudget, recordBudgetWarning } from "./budget.ts";

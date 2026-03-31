@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Event } from "./events.ts";
+import { tool } from "./tool-definition.ts";
 import { MessageQueue } from "./message-queue.ts";
 import {
 	clearContextWindowCache,
@@ -150,14 +151,9 @@ describe("OpenAIResponsesCompatibleProvider constructor", () => {
 				queue: queueWithPrompt("Do the thing"),
 				mcpToolDefs: {
 					mxd: [
-						{
-							name: "done",
-							description: "Signal completion",
-							inputSchema: {},
-							handler: async () => ({
-								content: [{ type: "text", text: "done ok" }],
-							}),
-						},
+						tool("done", "Signal completion", {}, async () => ({
+							content: [{ type: "text", text: "done ok" }],
+						})),
 					],
 				},
 			});
@@ -495,11 +491,14 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				queue: queueWithPrompt("Please finish", tmpDir),
 				mcpToolDefs: {
 					mxd: [
-						{
-							name: "done",
-							description: "Signal completion",
-							inputSchema: {},
-							handler: async (input: Record<string, unknown>) => ({
+						tool(
+							"done",
+							"Signal completion",
+							{
+								status: z.string(),
+								summary: z.string().optional(),
+							},
+							async (input) => ({
 								content: [
 									{
 										type: "text",
@@ -507,7 +506,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 									},
 								],
 							}),
-						},
+						),
 					],
 				},
 			});
@@ -531,7 +530,14 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 					type: "function",
 					name: "mcp__mxd__done",
 					description: "Signal completion",
-					parameters: { type: "object", properties: {} },
+					parameters: {
+						type: "object",
+						properties: {
+							status: { type: "string" },
+							summary: { type: "string" },
+						},
+						required: ["status"],
+					},
 				},
 			]);
 			expect(firstBody?.input).toEqual([
@@ -587,20 +593,20 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				queue: queueWithPrompt("Please inspect the schema"),
 				mcpToolDefs: {
 					mxd: [
-						{
-							name: "update_task",
-							description: "Update task",
-							inputSchema: {
+						tool(
+							"update_task",
+							"Update task",
+							{
 								taskId: z.string(),
 								draft: z.boolean().optional(),
 								old_description: z.string().optional(),
 								new_description: z.string().optional(),
 								parentId: z.string().optional(),
 							},
-							handler: async () => ({
+							async () => ({
 								content: [{ type: "text", text: "ok" }],
 							}),
-						},
+						),
 					],
 				},
 			});
@@ -739,14 +745,9 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 					"## Pending\n- Running sub tasks: none\n- Pending clarifications: none",
 				mcpToolDefs: {
 					mxd: [
-						{
-							name: "yield",
-							description: "Wait for more work",
-							inputSchema: {},
-							handler: async () => ({
-								content: [{ type: "text", text: "waiting" }],
-							}),
-						},
+						tool("yield", "Wait for more work", {}, async () => ({
+							content: [{ type: "text", text: "waiting" }],
+						})),
 					],
 				},
 			});
