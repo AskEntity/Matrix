@@ -9,6 +9,7 @@ export const MCP_CARD_BODY_TOOLS = new Set([
 	"yield",
 	"delete_task",
 	"get_tree",
+	"get_task",
 	"send_message",
 	"send_message_to_child", // backward compat (old JSONL)
 	"report_to_parent", // backward compat (old JSONL)
@@ -161,15 +162,32 @@ export function McpToolCardBody({
 			);
 		}
 		case "get_tree": {
+			const opts: string[] = [];
+			if (toolArgs?.format === "tree") opts.push("tree format");
+			if (toolArgs?.include_details) opts.push("detailed");
+			if (toolArgs?.include_closed) opts.push("with closed");
 			const formatted =
 				isOk && resultContent
 					? formatMcpToolResult(toolName, resultContent, t)
 					: null;
 			return (
 				<div className="mxd-mcp-body">
+					{opts.length > 0 && (
+						<div className="mxd-mcp-task-desc">{opts.join(", ")}</div>
+					)}
 					<div className="mxd-mcp-tree-summary">
 						{formatted ?? resultContent ?? ""}
 					</div>
+				</div>
+			);
+		}
+		case "get_task": {
+			const argTaskId = getArg(toolArgs, "taskId");
+			const title =
+				typeof resultJson?.title === "string" ? resultJson.title : null;
+			return (
+				<div className="mxd-mcp-body">
+					<div className="mxd-mcp-task-title">{title ?? argTaskId ?? "?"}</div>
 				</div>
 			);
 		}
@@ -214,6 +232,28 @@ export function McpToolCardBody({
 				return (
 					<div className="mxd-mcp-body">
 						<DiffView oldText={oldDesc} newText={newDesc} />
+					</div>
+				);
+			}
+			// Show changed fields summary
+			const fields: string[] = [];
+			if (toolArgs) {
+				if (toolArgs.status) fields.push(`status → ${toolArgs.status}`);
+				if (toolArgs.title) fields.push(`title: "${toolArgs.title}"`);
+				if (toolArgs.description) fields.push("description updated");
+				if (toolArgs.parentId) fields.push(`parent → ${toolArgs.parentId}`);
+				if (toolArgs.color) fields.push(`color → ${toolArgs.color}`);
+				if (toolArgs.draft !== undefined)
+					fields.push(`draft → ${toolArgs.draft}`);
+			}
+			if (fields.length > 0) {
+				return (
+					<div className="mxd-mcp-body">
+						{fields.map((f) => (
+							<div key={f} className="mxd-mcp-task-desc">
+								{f}
+							</div>
+						))}
 					</div>
 				);
 			}

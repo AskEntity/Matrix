@@ -22,6 +22,7 @@ import {
 	TOOL_EDIT_FILE,
 	TOOL_EXECUTE_TASKS,
 	TOOL_FORK_TASK_CONTEXT,
+	TOOL_GET_TASK,
 	TOOL_GET_TREE,
 	TOOL_LIST_FILES,
 	TOOL_LIST_PROJECTS,
@@ -226,29 +227,57 @@ export function getToolTitle(
 			if (resultContent) return "Resume from yield";
 			return "Yield";
 		}
-		case TOOL_GET_TREE:
-			return "Tree";
+		case TOOL_GET_TREE: {
+			const parts: string[] = [];
+			if (toolArgs?.format === "tree") parts.push("tree");
+			if (toolArgs?.include_details) parts.push("detailed");
+			if (toolArgs?.include_closed) parts.push("with closed");
+			return parts.length > 0 ? `Tree (${parts.join(", ")})` : "Tree";
+		}
+		case TOOL_GET_TASK: {
+			const taskId = getArg(toolArgs, "taskId");
+			if (taskId) {
+				const title = nodeMap?.get(taskId)?.title;
+				return `Task: ${title ?? taskId}`;
+			}
+			return "Get Task";
+		}
 		case TOOL_UPDATE_TASK: {
+			const changedFields: string[] = [];
+			if (toolArgs) {
+				if (toolArgs.status) changedFields.push(`status→${toolArgs.status}`);
+				if (toolArgs.title) changedFields.push("title");
+				if (toolArgs.description || toolArgs.old_description)
+					changedFields.push("description");
+				if (toolArgs.parentId) changedFields.push("parent");
+				if (toolArgs.color) changedFields.push("color");
+				if (toolArgs.draft !== undefined) changedFields.push("draft");
+			}
+			let resolvedTitle = "";
 			if (resultContent) {
 				try {
 					const json = JSON.parse(resultContent);
 					if (typeof json.title === "string") {
-						const t =
+						resolvedTitle =
 							json.title.length > 40
 								? `${json.title.slice(0, 40)}…`
 								: json.title;
-						return `Task Updated: ${t}`;
 					}
 				} catch {
 					/* ignore */
 				}
 			}
-			const taskId = getArg(toolArgs, "taskId");
-			if (taskId) {
-				const resolved = nodeMap?.get(taskId)?.title;
-				return `Task Updated: ${resolved ?? taskId}`;
+			if (!resolvedTitle) {
+				const taskId = getArg(toolArgs, "taskId");
+				if (taskId) {
+					resolvedTitle = nodeMap?.get(taskId)?.title ?? taskId;
+				}
 			}
-			return "Task Updated";
+			const suffix =
+				changedFields.length > 0 ? ` (${changedFields.join(", ")})` : "";
+			return resolvedTitle
+				? `Task Updated: ${resolvedTitle}${suffix}`
+				: `Task Updated${suffix}`;
 		}
 		case TOOL_SEND_MESSAGE:
 		case TOOL_SEND_MESSAGE_TO_CHILD: {
@@ -323,6 +352,7 @@ export function isTitleOnly(
 ): boolean {
 	switch (toolName) {
 		case TOOL_GET_TREE:
+		case TOOL_GET_TASK:
 		case TOOL_YIELD:
 		case TOOL_DELETE_TASK:
 		case TOOL_CLOSE_TASK:
@@ -377,6 +407,25 @@ export function summarizeToolResult(
 			if (json && typeof json.title === "string")
 				return `Reset task "${json.title}"`;
 			return null;
+		case "get_tree": {
+			if (json && Array.isArray(json.nodes)) {
+				const count = json.nodes.length;
+				return count === 0 ? "Empty tree" : `${count} tasks`;
+			}
+			return null;
+		}
+		case "get_task": {
+			if (json && typeof json.title === "string")
+				return `Task: "${json.title}"`;
+			return null;
+		}
+		case "update_task": {
+			if (json && typeof json.status === "string") {
+				const title = typeof json.title === "string" ? ` "${json.title}"` : "";
+				return `Status → ${json.status}${title}`;
+			}
+			return null;
+		}
 		case "reorder_tasks":
 			return "Reordered tasks";
 		case "list_projects":
