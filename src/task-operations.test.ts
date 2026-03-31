@@ -647,3 +647,131 @@ describe("reorderTasksOp", () => {
 		).rejects.toThrow("Task not found");
 	});
 });
+
+// ── Surgical description edit (MCP-layer logic) ──
+// The MCP update_task handler pre-processes old_description/new_description
+// into a final description before calling updateTaskOp. These tests validate
+// that pattern at the unit level.
+
+describe("surgical description edit via updateTaskOp", () => {
+	function surgicalReplace(
+		currentDesc: string,
+		oldDesc: string,
+		newDesc: string,
+	): { description: string } | { error: string } {
+		const idx = currentDesc.indexOf(oldDesc);
+		if (idx === -1) return { error: "old_description not found" };
+		if (currentDesc.indexOf(oldDesc, idx + 1) !== -1)
+			return { error: "old_description not unique" };
+		return { description: currentDesc.replace(oldDesc, newDesc) };
+	}
+
+	test("replaces substring in description", async () => {
+		const task = tracker.addChild(
+			tracker.rootNodeId,
+			"Task",
+			"Build the auth module and deploy",
+			{ editedBy: "agent" },
+		);
+
+		const result = surgicalReplace(
+			task.description,
+			"auth module",
+			"payment module",
+		);
+		expect("description" in result).toBe(true);
+		if ("description" in result) {
+			const updated = await updateTaskOp(
+				tracker,
+				task.id,
+				{ description: result.description },
+				"agent",
+				makeCallbacks(),
+			);
+			expect(updated.description).toBe(
+				"Build the payment module and deploy",
+			);
+		}
+	});
+
+	test("old_description not found returns error", () => {
+		const result = surgicalReplace(
+			"Build the auth module",
+			"payment module",
+			"billing module",
+		);
+		expect("error" in result).toBe(true);
+		if ("error" in result) {
+			expect(result.error).toContain("not found");
+		}
+	});
+
+	test("old_description not unique returns error", () => {
+		const result = surgicalReplace(
+			"Fix bug in auth. Fix bug in payment.",
+			"Fix bug",
+			"Resolve issue",
+		);
+		expect("error" in result).toBe(true);
+		if ("error" in result) {
+			expect(result.error).toContain("not unique");
+		}
+	});
+
+	test("successful replacement persists through save/load", async () => {
+		const task = tracker.addChild(
+			tracker.rootNodeId,
+			"Task",
+			"Phase 1: types\nPhase 2: implementation\nPhase 3: tests",
+			{ editedBy: "agent" },
+		);
+
+		const result = surgicalReplace(
+			task.description,
+			"Phase 2: implementation",
+			"Phase 2: implementation (DONE)",
+		);
+		expect("description" in result).toBe(true);
+		if ("description" in result) {
+			await updateTaskOp(
+				tracker,
+				task.id,
+				{ description: result.description },
+				"agent",
+				makeCallbacks(),
+			);
+		}
+
+		// Reload and verify
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load("main");
+		const reloaded = tracker2.get(task.id);
+		expect(reloaded?.description).toBe(
+			"Phase 1: types\nPhase 2: implementation (DONE)\nPhase 3: tests",
+		);
+	});
+
+	test("replaces only the first occurrence when unique", () => {
+		const result = surgicalReplace(
+			"The quick brown fox jumps over the lazy dog",
+			"brown fox",
+			"red fox",
+		);
+		expect("description" in result).toBe(true);
+		if ("description" in result) {
+			expect(result.description).toBe(
+				"The quick red fox jumps over the lazy dog",
+			);
+		}
+	});
+
+	test("empty old_description matches at start", () => {
+		// Empty string is found at index 0, and also at index 1, 2, etc.
+		// indexOf("", 1) !== -1 → not unique
+		const result = surgicalReplace("hello", "", "prefix-");
+		expect("error" in result).toBe(true);
+		if ("error" in result) {
+			expect(result.error).toContain("not unique");
+		}
+	});
+});
