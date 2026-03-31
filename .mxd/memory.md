@@ -504,12 +504,7 @@ Probe architecture quality by posing a hypothetical change and counting how many
 - **1 place** = architecture OK, truly unified codepath
 - **3+ places** = duplicate codepaths exist, refactor until it's a one-place change
 
-Example probes:
-- "Change `[HH:MM:SS]` to `[HH:MM]`" — should only touch `formatTimestamp`
-- "Add audit log to all message delivery" — should only touch `deliverMessage`
-- "Change a message format" — if formatted in one place, it's a one-line change
-
-If it can't be done in one place, the architecture has a problem. Architecture is disposable — tests are the stable anchor. AI-written architecture will be messy; accept this, constrain with tests + type system, don't expect architectural taste.
+If a hypothetical change can't be done in one place, the architecture has a problem. Architecture is disposable — tests are the stable anchor.
 
 ## Unified deliverMessage (March 2026)
 
