@@ -650,7 +650,16 @@ Event union type field names differ from what you might expect:
 - `assistant_text` event: field is `content` (not `text`)
 - Events have `taskId` (not `sessionId`)
 - Most Event variants do NOT have an `id` field — only `MessageEvent` has `id`
-
 ## Tool Display — Single Source
 
 `getToolTitle()` in `src/event-display.ts` is THE single tool title function. `{ emoji: true }` for UI contexts. `src/tools/executor.ts` deleted. `resolvePath()` in `definitions.ts`.
+
+## task-operations.ts — ONE Codepath Per Operation (March 2026)
+
+`src/task-operations.ts`: `createTaskOp`, `updateTaskOp`, `deleteTaskOp`, `closeTaskOp`, `resetTaskOp`, `reorderTasksOp`. MCP and REST are thin wrappers.
+
+Notification rules: parent chain walk = `editedBy === "user"` only. Target node = always. broadcastTree = always.
+
+REST is strict (all params required, no defaults). MCP adds convenience (default parentId, default budget, surgical description edit). Branch assignment is REST-only.
+
+PersistentTaskDef includes `persistent: "reset" | "continue"` in `.mxd/tasks/<id>.json`.

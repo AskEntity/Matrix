@@ -15,6 +15,8 @@ export interface PersistentTaskDef {
 	title: string;
 	description: string;
 	color?: string;
+	/** Persistent mode: "reset" (default) or "continue". */
+	persistent?: "reset" | "continue";
 }
 
 /**
@@ -98,6 +100,7 @@ export class TaskTracker {
 		const def: PersistentTaskDef = {
 			title: node.title,
 			description: node.description,
+			persistent: node.persistent as "reset" | "continue",
 		};
 		if (node.color) def.color = node.color;
 		const defPath = join(tasksDir, `${nodeId}.json`);
@@ -411,17 +414,18 @@ export class TaskTracker {
 
 			const existing = this.nodes.get(id);
 			if (existing) {
-				// Refresh title/description from the definition file
+				// Refresh title/description/persistent mode from the definition file
 				existing.title = def.title;
 				existing.description = def.description;
 				if (def.color !== undefined) existing.color = def.color;
+				if (def.persistent) existing.persistent = def.persistent;
 			} else {
 				// New persistent task — create a pending node under root
-				// Default to "reset" for tasks discovered from json files (backward compat with `persistent: true`)
+				// Use mode from def file, default to "reset" for backward compat
 				const now = new Date().toISOString();
 				const node: TaskNode = {
 					id,
-					persistent: "reset",
+					persistent: def.persistent ?? "reset",
 					title: def.title,
 					description: def.description,
 					status: "pending",
