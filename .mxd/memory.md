@@ -584,3 +584,7 @@ When testing the web UI via Chrome DevTools (take_snapshot, click, etc.), the br
 2. Run `bash` with `bun src/cli.ts auth <public_key_from_page>`
 3. The output is an encrypted token — paste it into the login page input
 4. Now Chrome DevTools can access the authenticated UI
+
+## Scroll Anchoring Fix (ActivityLog)
+
+MutationObserver must use `autoScrollRef.current`, not closure-captured `autoScroll`. Stale closure caused scroll-to-bottom even when user scrolled up. CSS `overflow-anchor: auto` on `.mxd-activity-log` for native browser anchoring. Safari fallback via IntersectionObserver.
