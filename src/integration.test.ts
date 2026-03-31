@@ -8570,9 +8570,7 @@ describe("deliverMessage: shouldResume ordering invariant", () => {
 		// Read JSONL — should have orchestration_started with resume=false
 		const rootNodeId = await getRootNodeId(ctx);
 		const events1 = readSessionEvents(ctx, rootNodeId);
-		const orch1 = events1.filter(
-			(e) => e.type === "orchestration_started",
-		);
+		const orch1 = events1.filter((e) => e.type === "orchestration_started");
 		expect(orch1).toHaveLength(1);
 		expect((orch1[0] as { resume: boolean }).resume).toBe(false);
 
@@ -8601,9 +8599,7 @@ describe("deliverMessage: shouldResume ordering invariant", () => {
 
 		// Read JSONL — should now have TWO orchestration_started events
 		const events2 = readSessionEvents(ctx, rootNodeId);
-		const orch2 = events2.filter(
-			(e) => e.type === "orchestration_started",
-		);
+		const orch2 = events2.filter((e) => e.type === "orchestration_started");
 		expect(orch2).toHaveLength(2);
 		// First was cold start
 		expect((orch2[0] as { resume: boolean }).resume).toBe(false);

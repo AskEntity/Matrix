@@ -3478,7 +3478,12 @@ describe("findUnconsumedMessages", () => {
 	});
 
 	test("finds unconsumed message", () => {
-		const body = { source: "user" as const, id: "msg-1", ts: 0, content: "hello" };
+		const body = {
+			source: "user" as const,
+			id: "msg-1",
+			ts: 0,
+			content: "hello",
+		};
 		const events: Event[] = [
 			{
 				type: "message",
@@ -3493,7 +3498,7 @@ describe("findUnconsumedMessages", () => {
 		expect(unconsumed[0]).toBe(body);
 	});
 
-	test("excludes messages with falsy id (id=\"\")", () => {
+	test('excludes messages with falsy id (id="")', () => {
 		const events: Event[] = [
 			{
 				type: "message",
@@ -3508,7 +3513,12 @@ describe("findUnconsumedMessages", () => {
 	});
 
 	test("returns multiple unconsumed messages in order", () => {
-		const body1 = { source: "user" as const, id: "m1", ts: 0, content: "first" };
+		const body1 = {
+			source: "user" as const,
+			id: "m1",
+			ts: 0,
+			content: "first",
+		};
 		const body2 = {
 			source: "task_message" as const,
 			id: "m2",

@@ -688,9 +688,7 @@ describe("surgical description edit via updateTaskOp", () => {
 				"agent",
 				makeCallbacks(),
 			);
-			expect(updated.description).toBe(
-				"Build the payment module and deploy",
-			);
+			expect(updated.description).toBe("Build the payment module and deploy");
 		}
 	});
 
