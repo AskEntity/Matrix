@@ -597,3 +597,20 @@ Root node gets `branch` set at tracker load time via `detectBranch()` in `getTra
 `WorktreeManager.create()` requires `baseBranch: string` (no fallback to HEAD). All callers look up parent node branch: `currentNode.branch` in orchestrator-tools, `parentNode.branch` in agent-lifecycle and tasks route.
 
 System prompt is branch-name-agnostic. No hardcoded "main" references. Agents only know "my branch" and "the task above merges me".
+
+
+## Persistent Tasks (March 2026)
+
+`TaskNode.persistent: boolean` — discriminates serialization + close behavior:
+- **Regular** (`persistent: false`): title/description in tree.json. close → "closed".
+- **Persistent** (`persistent: true`): title/description in `.mxd/tasks/<id>.json` (git-tracked). close → "pending".
+
+**Serialization**: `save()` strips title/description from persistent nodes. `load(defaultBranch, projectPath)` merges `.mxd/tasks/*.json` — new files create pending nodes under root, existing nodes get title/description refreshed.
+
+**Auto-commit**: `create_task` with `persistent: true` writes `.mxd/tasks/<id>.json` then auto-commits (`git add` + `git commit`). Without this, the dirty working tree blocks `isGitClean()` → worktree creation fails → child agent never launches.
+
+**Root only**: Only depth-0 agents can create persistent tasks.
+
+**Frontend**: 📌 icon in TaskTree for persistent nodes.
+
+**Type system**: `SerializedPersistentNode` / `SerializedRegularNode` / `SerializedTaskNode` union types exist for tree.json serialization but are not used at runtime. Runtime `TaskNode` is a flat interface with `persistent: boolean`.
