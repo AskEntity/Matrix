@@ -510,6 +510,10 @@ export function createOrchestratorTools(
 						};
 					}
 
+					// MCP convenience: apply default budget if not explicitly provided
+					const defaultBudgetUsd = deps.getDefaultBudgetUsd();
+					const budgetUsd = defaultBudgetUsd || undefined;
+
 					const node = await createTaskOp(
 						tracker,
 						{
@@ -519,12 +523,12 @@ export function createOrchestratorTools(
 							draft: args.draft,
 							color: args.color,
 							persistent: args.persistent,
+							budgetUsd,
 						},
 						"agent",
 						{
 							broadcastTree,
 							projectPath: getProjectPath(),
-							getDefaultBudgetUsd: deps.getDefaultBudgetUsd,
 						},
 					);
 
@@ -630,15 +634,91 @@ export function createOrchestratorTools(
 						}
 					}
 
+					// MCP-only: surgical description edit (old_description/new_description)
+					// Pre-process into a final `description` before calling shared function.
+					let finalDescription = args.description;
+					if (
+						args.old_description !== undefined ||
+						args.new_description !== undefined
+					) {
+						if (
+							args.old_description === undefined ||
+							args.new_description === undefined
+						) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: "Error: old_description and new_description must both be provided",
+									},
+								],
+								isError: true,
+							};
+						}
+						if (args.description !== undefined) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: "Error: cannot use description with old_description/new_description — use one or the other",
+									},
+								],
+								isError: true,
+							};
+						}
+						const existingNode = tracker.get(args.taskId);
+						if (!existingNode?.description) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: "Error: task has no description to edit",
+									},
+								],
+								isError: true,
+							};
+						}
+						const idx = existingNode.description.indexOf(args.old_description);
+						if (idx === -1) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: "Error: old_description not found in task description",
+									},
+								],
+								isError: true,
+							};
+						}
+						if (
+							existingNode.description.indexOf(
+								args.old_description,
+								idx + 1,
+							) !== -1
+						) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: "Error: old_description is not unique in task description — provide more context to make it unique",
+									},
+								],
+								isError: true,
+							};
+						}
+						finalDescription = existingNode.description.replace(
+							args.old_description,
+							args.new_description,
+						);
+					}
+
 					const node = await updateTaskOp(
 						tracker,
 						args.taskId,
 						{
 							status: args.status,
 							title: args.title,
-							description: args.description,
-							old_description: args.old_description,
-							new_description: args.new_description,
+							description: finalDescription,
 							draft: args.draft,
 							parentId: args.parentId,
 							color: args.color,

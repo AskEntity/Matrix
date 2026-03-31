@@ -651,3 +651,26 @@ Event union type field names differ from what you might expect:
 - Events have `taskId` (not `sessionId`)
 - Most Event variants do NOT have an `id` field — only `MessageEvent` has `id`
 - When writing test events for EventStore, use the exact Event type fields
+
+## task-operations.ts — Shared Task Operations (March 2026)
+
+ONE shared function per operation in `src/task-operations.ts`. Both MCP tool handlers and REST route handlers are thin wrappers.
+
+**Functions**: `createTaskOp`, `updateTaskOp`, `deleteTaskOp`, `closeTaskOp`, `resetTaskOp`, `reorderTasksOp`.
+
+**Notification rules** (codified in shared functions):
+- `notifyTreeChange` (parent chain walk): only when `editedBy === "user"`. Agents are IN the tree hierarchy.
+- `notifyTargetNode` (modified node itself): always, for both agent and user edits.
+- `broadcastTree` (SSE push): always.
+
+**REST API is strict**: all parameters required, no defaults, no implicit behavior. MCP tools add convenience (default parentId, default budget, surgical description edit).
+
+**REST POST /tasks requires explicit parentId** — returns 400 if missing. MCP defaults to `currentTaskId`.
+
+**Surgical description edit** (old_description/new_description): MCP-only pre-processing. Resolves to final `description` string before calling shared `updateTaskOp`.
+
+**Branch assignment**: REST-only (`tracker.assignBranch()`). Not in shared function.
+
+**PersistentTaskDef** now includes `persistent: "reset" | "continue"` field. Stored in `.mxd/tasks/<id>.json` alongside title/description/color.
+
+**Tests**: `src/task-operations.test.ts` — 33 unit tests covering all shared functions.

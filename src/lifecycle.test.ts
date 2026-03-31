@@ -224,20 +224,27 @@ async function createProject(
 	return (await res.json()) as Project;
 }
 
-/** Create a task under a project. */
+/** Create a task under a project. Defaults parentId to rootNodeId if not provided. */
 async function createTask(
 	app: ReturnType<typeof createApp>["app"],
 	projectId: string,
 	title: string,
 	opts?: { parentId?: string; description?: string; status?: string },
 ): Promise<TaskNode> {
+	let parentId = opts?.parentId;
+	if (!parentId) {
+		// Get rootNodeId from task tree
+		const tasksRes = await app.request(`/projects/${projectId}/tasks`);
+		const tasksBody = (await tasksRes.json()) as { rootNodeId: string };
+		parentId = tasksBody.rootNodeId;
+	}
 	const res = await app.request(`/projects/${projectId}/tasks`, {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({
 			title,
 			description: opts?.description ?? "",
-			parentId: opts?.parentId,
+			parentId,
 			status: opts?.status,
 		}),
 	});

@@ -273,11 +273,22 @@ describe("daemon stats", () => {
 		});
 		const project = (await projRes.json()) as Project;
 
+		// Get the auto-created root node ID
+		const tasksRes = await app.request(`/projects/${project.id}/tasks`);
+		const tasksBody = (await tasksRes.json()) as {
+			rootNodeId: string;
+		};
+		const statsRootNodeId = tasksBody.rootNodeId;
+
 		// Create root task (pending)
 		const rootRes = await app.request(`/projects/${project.id}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Root", description: "" }),
+			body: JSON.stringify({
+				title: "Root",
+				description: "",
+				parentId: statsRootNodeId,
+			}),
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
@@ -571,6 +582,7 @@ describe("daemon tasks API", () => {
 	let app: ReturnType<typeof createApp>["app"];
 	let getTracker: ReturnType<typeof createApp>["getTracker"];
 	let projectId: string;
+	let rootNodeId: string;
 
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-tasks-"));
@@ -588,6 +600,9 @@ describe("daemon tasks API", () => {
 		});
 		const project = (await res.json()) as Project;
 		projectId = project.id;
+		// Get root node ID for task creation
+		const tracker = await getTracker(projectId);
+		rootNodeId = tracker.rootNodeId;
 	});
 
 	afterEach(async () => {
@@ -595,18 +610,32 @@ describe("daemon tasks API", () => {
 		await rm(dataDir, { recursive: true });
 	});
 
-	test("POST /tasks creates task under root by default", async () => {
+	test("POST /tasks requires parentId", async () => {
 		const res = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ title: "Chat App", description: "Build it" }),
 		});
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("parentId");
+	});
+
+	test("POST /tasks creates task with explicit parentId", async () => {
+		const res = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Chat App",
+				description: "Build it",
+				parentId: rootNodeId,
+			}),
+		});
 		expect(res.status).toBe(201);
 		const node = (await res.json()) as TaskNode;
 		expect(node.title).toBe("Chat App");
 		expect(node.status).toBe("pending");
-		// Tasks default to being children of the auto-created root node
-		expect(node.parentId).toBeTruthy();
+		expect(node.parentId).toBe(rootNodeId);
 	});
 
 	test("POST /tasks creates task with budgetUsd", async () => {
@@ -617,6 +646,7 @@ describe("daemon tasks API", () => {
 				title: "Budgeted Task",
 				description: "Has a budget",
 				budgetUsd: 0.5,
+				parentId: rootNodeId,
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -632,6 +662,7 @@ describe("daemon tasks API", () => {
 			body: JSON.stringify({
 				title: "No Budget",
 				description: "No budget set",
+				parentId: rootNodeId,
 			}),
 		});
 		expect(res.status).toBe(201);
@@ -643,7 +674,11 @@ describe("daemon tasks API", () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Root", description: "" }),
+			body: JSON.stringify({
+				title: "Root",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
@@ -665,7 +700,11 @@ describe("daemon tasks API", () => {
 		await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "App", description: "" }),
+			body: JSON.stringify({
+				title: "App",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 
 		const res = await app.request(`/projects/${projectId}/tasks`);
@@ -684,7 +723,11 @@ describe("daemon tasks API", () => {
 		await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Child", description: "" }),
+			body: JSON.stringify({
+				title: "Child",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 
 		// GET /tasks should return nodes with rootNodeId always set
@@ -702,7 +745,11 @@ describe("daemon tasks API", () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "App", description: "" }),
+			body: JSON.stringify({
+				title: "App",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
@@ -727,7 +774,11 @@ describe("daemon tasks API", () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Original", description: "Old desc" }),
+			body: JSON.stringify({
+				title: "Original",
+				description: "Old desc",
+				parentId: rootNodeId,
+			}),
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
@@ -752,7 +803,11 @@ describe("daemon tasks API", () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Task", description: "Has desc" }),
+			body: JSON.stringify({
+				title: "Task",
+				description: "Has desc",
+				parentId: rootNodeId,
+			}),
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
@@ -775,14 +830,22 @@ describe("daemon tasks API", () => {
 		const p1Res = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Parent 1", description: "" }),
+			body: JSON.stringify({
+				title: "Parent 1",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const p1 = (await p1Res.json()) as TaskNode;
 
 		const p2Res = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Parent 2", description: "" }),
+			body: JSON.stringify({
+				title: "Parent 2",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const p2 = (await p2Res.json()) as TaskNode;
 
@@ -825,7 +888,11 @@ describe("daemon tasks API", () => {
 		const parentRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Parent", description: "" }),
+			body: JSON.stringify({
+				title: "Parent",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const parent = (await parentRes.json()) as TaskNode;
 
@@ -858,7 +925,11 @@ describe("daemon tasks API", () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "App", description: "" }),
+			body: JSON.stringify({
+				title: "App",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
@@ -879,7 +950,11 @@ describe("daemon tasks API", () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Parent", description: "" }),
+			body: JSON.stringify({
+				title: "Parent",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
@@ -924,7 +999,11 @@ describe("daemon tasks API", () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "App", description: "" }),
+			body: JSON.stringify({
+				title: "App",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
@@ -953,7 +1032,11 @@ describe("daemon tasks API", () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "App2", description: "" }),
+			body: JSON.stringify({
+				title: "App2",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
@@ -1037,12 +1120,18 @@ describe("daemon tasks API", () => {
 			body: JSON.stringify({ path: join(tempDir, "cont-wt-app") }),
 		});
 		const project = (await projRes.json()) as Project;
+		const localTracker = await localGetTracker(project.id);
+		const localRootId = localTracker.rootNodeId;
 
 		// Create a task
 		const taskRes = await localApp.request(`/projects/${project.id}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Cont task", description: "desc" }),
+			body: JSON.stringify({
+				title: "Cont task",
+				description: "desc",
+				parentId: localRootId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
@@ -1092,7 +1181,11 @@ describe("daemon tasks API", () => {
 		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "NoLog", description: "" }),
+			body: JSON.stringify({
+				title: "NoLog",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const root = (await rootRes.json()) as TaskNode;
 
@@ -1129,11 +1222,17 @@ describe("daemon tasks API", () => {
 			body: JSON.stringify({ path: projPath }),
 		});
 		const project = (await projRes.json()) as Project;
+		const localTracker2 = await localGetTracker(project.id);
+		const localRootId2 = localTracker2.rootNodeId;
 
 		const taskRes = await localApp.request(`/projects/${project.id}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "LoggedTask", description: "" }),
+			body: JSON.stringify({
+				title: "LoggedTask",
+				description: "",
+				parentId: localRootId2,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
@@ -1172,7 +1271,11 @@ describe("daemon tasks API", () => {
 		const parentRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Parent", description: "" }),
+			body: JSON.stringify({
+				title: "Parent",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const parent = (await parentRes.json()) as TaskNode;
 
@@ -1232,7 +1335,11 @@ describe("daemon tasks API", () => {
 		const parentRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Parent", description: "" }),
+			body: JSON.stringify({
+				title: "Parent",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const parent = (await parentRes.json()) as TaskNode;
 
@@ -1561,6 +1668,7 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 	let app: ReturnType<typeof createApp>["app"];
 	let projectId: string;
 	let taskId: string;
+	let rootNodeId: string;
 
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-taskev-"));
@@ -1576,11 +1684,17 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 		});
 		const project = (await projRes.json()) as Project;
 		projectId = project.id;
+		const tasksRes = await app.request(`/projects/${projectId}/tasks`);
+		rootNodeId = ((await tasksRes.json()) as { rootNodeId: string }).rootNodeId;
 
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Test Task", description: "" }),
+			body: JSON.stringify({
+				title: "Test Task",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 		taskId = task.id;
@@ -1669,11 +1783,16 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	let projectId: string;
 	let taskId: string;
 	let taskQueue: MessageQueue;
+	let rootNodeId: string;
 
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-taskmsg-"));
 		dataDir = await mkdtemp(join(tmpdir(), "mxd-taskmsgd-"));
-		const { app: localApp, pm: localPm } = createApp({
+		const {
+			app: localApp,
+			pm: localPm,
+			getTracker,
+		} = createApp({
 			dataDir,
 			agentProvider: mockProvider,
 		});
@@ -1686,11 +1805,17 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		});
 		const project = (await projRes.json()) as Project;
 		projectId = project.id;
+		const tracker = await getTracker(projectId);
+		rootNodeId = tracker.rootNodeId;
 
 		const taskRes = await localApp.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Test task", description: "" }),
+			body: JSON.stringify({
+				title: "Test task",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 		taskId = task.id;
@@ -3018,6 +3143,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 	let app: ReturnType<typeof createApp>["app"];
 	let projectId: string;
 	let getTracker: ReturnType<typeof createApp>["getTracker"];
+	let rootNodeId: string;
 
 	beforeEach(async () => {
 		tempDir = await mkdtemp(join(tmpdir(), "mxd-continue-"));
@@ -3034,6 +3160,8 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		});
 		const project = (await res.json()) as Project;
 		projectId = project.id;
+		const tracker = await getTracker(projectId);
+		rootNodeId = tracker.rootNodeId;
 
 		// Activate the .example hook so worktree creation works in tests
 		const hookDir = join(tempDir, "cont-proj", ".mxd", "hooks");
@@ -3081,7 +3209,11 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Pending task", description: "" }),
+			body: JSON.stringify({
+				title: "Pending task",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 		expect(task.status).toBe("pending");
@@ -3099,7 +3231,11 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Passed task", description: "" }),
+			body: JSON.stringify({
+				title: "Passed task",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
@@ -3122,7 +3258,11 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Active task", description: "" }),
+			body: JSON.stringify({
+				title: "Active task",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
@@ -3145,7 +3285,11 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Failed task", description: "Do stuff" }),
+			body: JSON.stringify({
+				title: "Failed task",
+				description: "Do stuff",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
@@ -3168,7 +3312,11 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Failed task", description: "Do stuff" }),
+			body: JSON.stringify({
+				title: "Failed task",
+				description: "Do stuff",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
@@ -3191,7 +3339,11 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Msg task", description: "" }),
+			body: JSON.stringify({
+				title: "Msg task",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
@@ -3218,7 +3370,11 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "WT task", description: "desc" }),
+			body: JSON.stringify({
+				title: "WT task",
+				description: "desc",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
@@ -3257,7 +3413,11 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "No body", description: "" }),
+			body: JSON.stringify({
+				title: "No body",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
@@ -3281,7 +3441,11 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Cleanup task", description: "desc" }),
+			body: JSON.stringify({
+				title: "Cleanup task",
+				description: "desc",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
@@ -3320,6 +3484,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 			body: JSON.stringify({
 				title: "Passed WT task",
 				description: "finished work",
+				parentId: rootNodeId,
 			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
@@ -3359,7 +3524,11 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Passed msg task", description: "" }),
+			body: JSON.stringify({
+				title: "Passed msg task",
+				description: "",
+				parentId: rootNodeId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 
@@ -3447,11 +3616,17 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 			body: JSON.stringify({ path: join(tempDir, "child-sess-proj") }),
 		});
 		const project = (await projRes.json()) as Project;
+		const emitTracker = await localGetTracker(project.id);
+		const emitRootId = emitTracker.rootNodeId;
 
 		const taskRes = await localApp.request(`/projects/${project.id}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ title: "Child task", description: "desc" }),
+			body: JSON.stringify({
+				title: "Child task",
+				description: "desc",
+				parentId: emitRootId,
+			}),
 		});
 		const task = (await taskRes.json()) as TaskNode;
 

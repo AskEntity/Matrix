@@ -9,11 +9,13 @@ import {
 } from "../../queue-message-factory.ts";
 import type { SystemPrompt } from "../../system-prompts.ts";
 import {
-	buildTaskPrompt,
-	cleanupTaskResources,
-	slugify,
-} from "../../task-utils.ts";
-import type { TaskStatus } from "../../types.ts";
+	createTaskOp,
+	deleteTaskOp,
+	reorderTasksOp,
+	TaskOperationError,
+	updateTaskOp,
+} from "../../task-operations.ts";
+import { buildTaskPrompt, slugify } from "../../task-utils.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
 	deliverMessage,
@@ -139,24 +141,28 @@ export function registerTaskRoutes(
 		if (!body.title) {
 			return c.json({ error: "title is required" }, 400);
 		}
+		if (!body.parentId) {
+			return c.json({ error: "parentId is required" }, 400);
+		}
 
 		const tracker = await getTracker(ctx, project.id);
-		const opts: { budgetUsd?: number; editedBy: "user" } = { editedBy: "user" };
-		if (body.budgetUsd !== undefined) opts.budgetUsd = body.budgetUsd;
 		try {
-			// Default to root node as parent if no parentId specified
-			const effectiveParentId = body.parentId ?? tracker.rootNodeId;
-			const node = effectiveParentId
-				? tracker.addChild(
-						effectiveParentId,
-						body.title,
-						body.description ?? "",
-						opts,
-					)
-				: tracker.addTask(body.title, body.description ?? "", opts);
-			await tracker.save();
-			broadcastTreeUpdate(ctx, project.id, tracker);
-			notifyTreeChange(ctx, project, "created", node.id, node.title);
+			const node = await createTaskOp(
+				tracker,
+				{
+					title: body.title,
+					description: body.description ?? "",
+					parentId: body.parentId,
+					budgetUsd: body.budgetUsd,
+				},
+				"user",
+				{
+					broadcastTree: () => broadcastTreeUpdate(ctx, project.id, tracker),
+					notifyTreeChange: (action, nodeId, title) =>
+						notifyTreeChange(ctx, project, action, nodeId, title),
+					projectPath: project.path,
+				},
+			);
 			return c.json(node, 201);
 		} catch (e) {
 			const message = e instanceof Error ? e.message : "Unknown error";
@@ -171,12 +177,8 @@ export function registerTaskRoutes(
 		}
 		const tracker = await getTracker(ctx, project.id);
 		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
-		if (!node) {
-			return c.json({ error: "Task not found" }, 404);
-		}
 		const body = await c.req.json<{
-			status?: TaskStatus;
+			status?: string;
 			branch?: string;
 			title?: string;
 			description?: string;
@@ -184,56 +186,57 @@ export function registerTaskRoutes(
 			parentId?: string;
 			color?: string | null;
 		}>();
-		if (body.parentId !== undefined) {
-			try {
-				tracker.reparent(node.id, body.parentId);
-			} catch (e) {
-				const message = e instanceof Error ? e.message : "Unknown error";
-				return c.json({ error: message }, 400);
-			}
+
+		const node = tracker.get(nodeId);
+		if (!node) {
+			return c.json({ error: "Task not found" }, 404);
 		}
-		if (body.status !== undefined) {
-			// Persistent tasks cannot be closed via REST — same guard as close_task MCP tool
-			if (body.status === "closed" && node.persistent) {
-				return c.json(
-					{
-						error:
-							"Cannot set persistent task to closed. Use close_task which resets to pending.",
+
+		try {
+			// REST-only: branch assignment (agents don't manually set branches)
+			if (body.branch !== undefined) {
+				tracker.assignBranch(nodeId, body.branch);
+			}
+
+			const node = await updateTaskOp(
+				tracker,
+				nodeId,
+				{
+					status: body.status as
+						| "draft"
+						| "pending"
+						| "in_progress"
+						| "passed"
+						| "failed"
+						| "closed"
+						| undefined,
+					title: body.title,
+					description: body.description,
+					draft: body.draft,
+					parentId: body.parentId,
+					color: body.color,
+				},
+				"user",
+				{
+					broadcastTree: () => broadcastTreeUpdate(ctx, project.id, tracker),
+					notifyTreeChange: (action, nId, title) =>
+						notifyTreeChange(ctx, project, action, nId, title),
+					notifyTargetNode: (action, nId, title) => {
+						const msg = createTreeChange(action, nId, title);
+						deliverMessage(ctx, project, nId, msg, { quiet: true });
 					},
-					400,
-				);
+					projectPath: project.path,
+				},
+			);
+
+			return c.json(node);
+		} catch (e) {
+			if (e instanceof TaskOperationError) {
+				return c.json({ error: e.message }, 400);
 			}
-			tracker.updateStatus(nodeId, body.status, "user");
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 400);
 		}
-		if (body.branch !== undefined) {
-			tracker.assignBranch(nodeId, body.branch);
-		}
-		if (body.title !== undefined) {
-			tracker.updateTitle(node.id, body.title, "user");
-		}
-		if (body.description !== undefined) {
-			tracker.updateDescription(node.id, body.description, "user");
-		}
-		if (body.draft !== undefined) {
-			tracker.updateStatus(node.id, body.draft ? "draft" : "pending", "user");
-		}
-		if (body.color !== undefined) {
-			tracker.updateColor(node.id, body.color, "user");
-		}
-
-		// For persistent nodes, write updated definition to .mxd/tasks/<id>.json
-		if (
-			body.title !== undefined ||
-			body.description !== undefined ||
-			body.color !== undefined
-		) {
-			tracker.savePersistentDef(nodeId, project.path);
-		}
-
-		await tracker.save();
-		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyTreeChange(ctx, project, "updated", nodeId, node.title);
-		return c.json(tracker.get(nodeId));
 	});
 
 	app.patch("/projects/:id/tasks/:nodeId/reorder", async (c) => {
@@ -252,17 +255,16 @@ export function registerTaskRoutes(
 			return c.json({ error: "children must be an array of task IDs" }, 400);
 		}
 		try {
-			tracker.reorderChildren(nodeId, body.children);
+			await reorderTasksOp(tracker, nodeId, body.children, "user", {
+				broadcastTree: () => broadcastTreeUpdate(ctx, project.id, tracker),
+				notifyTreeChange: (action, nId, title) =>
+					notifyTreeChange(ctx, project, action, nId, title),
+			});
+			return c.json({ ok: true });
 		} catch (e) {
-			return c.json(
-				{ error: e instanceof Error ? e.message : "Unknown error" },
-				400,
-			);
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 400);
 		}
-		await tracker.save();
-		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyTreeChange(ctx, project, "reordered", nodeId, node.title);
-		return c.json({ ok: true });
 	});
 
 	app.post("/projects/:id/tasks/:nodeId/continue", async (c) => {
@@ -425,25 +427,26 @@ export function registerTaskRoutes(
 		}
 		const tracker = await getTracker(ctx, project.id);
 		const nodeId = c.req.param("nodeId");
-		const node = tracker.get(nodeId);
-		if (!node) {
-			return c.json({ error: "Task not found" }, 404);
+
+		try {
+			const eventStore = getEventStore(ctx, project.id);
+			const wtRoot = join(project.path, ".worktrees");
+			const wm = new WorktreeManager(project.path, wtRoot);
+			await deleteTaskOp(tracker, nodeId, "user", {
+				broadcastTree: () => broadcastTreeUpdate(ctx, project.id, tracker),
+				notifyTreeChange: (action, nId, title) =>
+					notifyTreeChange(ctx, project, action, nId, title),
+				removeWorktree: (id, slug) => wm.remove(id, slug),
+				clearEventStore: (id) => eventStore.clear(id),
+			});
+			return c.json({ ok: true });
+		} catch (e) {
+			if (e instanceof TaskOperationError) {
+				return c.json({ error: e.message }, 404);
+			}
+			const message = e instanceof Error ? e.message : "Unknown error";
+			return c.json({ error: message }, 500);
 		}
-
-		// Clean up all resources for this node and all descendants
-		const eventStore = getEventStore(ctx, project.id);
-		const wtRoot = join(project.path, ".worktrees");
-		const wm = new WorktreeManager(project.path, wtRoot);
-		await cleanupTaskResources(tracker, nodeId, {
-			removeWorktree: (id, slug) => wm.remove(id, slug),
-			clearEventStore: (id) => eventStore.clear(id),
-		});
-
-		tracker.remove(nodeId);
-		await tracker.save();
-		broadcastTreeUpdate(ctx, project.id, tracker);
-		notifyTreeChange(ctx, project, "deleted", nodeId, node.title);
-		return c.json({ ok: true });
 	});
 
 	// Git log for a task branch
