@@ -53,18 +53,22 @@ export class WorktreeManager {
 	async create(
 		taskId: string,
 		slug: string,
-		baseBranch?: string,
+		baseBranch: string,
 	): Promise<WorktreeInfo> {
 		await this.ensureWorktreeConfigEnabled();
 
 		const branch = this.branchName(taskId, slug);
 		const wtPath = resolve(this.worktreeRoot, `${taskId}-${slug}`);
 
-		// Determine the base: explicit branch, or current HEAD
-		const base = baseBranch ?? "HEAD";
-
 		// Create new branch + worktree in one command
-		const proc = this.git(["worktree", "add", "-b", branch, wtPath, base]);
+		const proc = this.git([
+			"worktree",
+			"add",
+			"-b",
+			branch,
+			wtPath,
+			baseBranch,
+		]);
 		const exitCode = await proc.exited;
 		if (exitCode !== 0) {
 			const stderr = await new Response(proc.stderr).text();

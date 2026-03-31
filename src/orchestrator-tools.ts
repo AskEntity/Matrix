@@ -922,11 +922,21 @@ export function createOrchestratorTools(
 								isError: true,
 							};
 						}
-						const baseBranch = currentNode?.branch ?? undefined;
+						if (!currentNode?.branch) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: "Error: Cannot create worktree — current task has no branch assigned.",
+									},
+								],
+								isError: true,
+							};
+						}
 						const slug = slugify(node.title);
 						const wtRoot = join(repoPath, ".worktrees");
 						const wm = new WorktreeManager(repoPath, wtRoot);
-						const wt = await wm.create(node.id, slug, baseBranch);
+						const wt = await wm.create(node.id, slug, currentNode.branch);
 						tracker.assignWorktree(node.id, wt.branch, wt.path);
 					}
 

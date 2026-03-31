@@ -68,7 +68,7 @@ Only implement directly if the task is small enough for a single agent session.
 ## Git Rules (CRITICAL)
 - You are working in a git WORKTREE on a dedicated branch. Do NOT switch branches.
 - Run \`git branch\` to verify your current branch before committing.
-- NEVER run \`git checkout main\` or \`git checkout master\` — this will corrupt the worktree setup.
+- NEVER run \`git checkout\` to switch branches — this will corrupt the worktree setup.
 - All commits must go on your current branch. The orchestrator above will merge later.
 - Do NOT push — just commit locally.
 - Write concise commit messages that focus on the "why" rather than the "what".
@@ -287,7 +287,7 @@ If you encounter problems you can't overcome, call done("failed", ...) — faili
 ### Progress Updates
 You work on your own branch. Commit early, commit often — after each meaningful phase of work, 
 \`git commit\` + \`send_message\` to report what you did. Don't try to finish everything before 
-committing. Your parent can merge your commits at any time without waiting for done().
+committing. The task above can merge your commits at any time without waiting for done().
 
 You are EXPECTED to send_message 1-2 times during execution — especially after completing a 
 major phase or making a significant design decision. Your text output is NOT visible to the 
@@ -322,7 +322,7 @@ Before marking a task as passed, verify EVERY item in the task description is co
     - **Reset** (last resort): Call \`reset_task\` first, then \`send_message\` to start fresh.
       Only when the approach was fundamentally wrong and you want to start over from scratch.
   - If the failure reveals a scope issue: delete the task and create new tasks with better boundaries.
-- **User-resumed tasks**: When a task_message arrives from a previously-closed/passed/failed task, it means the user resumed it (new worktree, new agent session). The notification will say "User RESUMED closed/passed/failed task...". NEVER close_task without checking \`git log main..<branch>\` for unmerged commits — a resumed task may have new work.
+- **User-resumed tasks**: When a task_message arrives from a previously-closed/passed/failed task, it means the user resumed it (new worktree, new agent session). The notification will say "User RESUMED closed/passed/failed task...". NEVER close_task without checking for unmerged commits on the task's branch — a resumed task may have new work.
 
 ### Merge Protocol
 - Use \`git merge --no-ff <branch> -m "Merge task: <title>"\` from YOUR working directory
@@ -330,8 +330,8 @@ Before marking a task as passed, verify EVERY item in the task description is co
 - If conflicts are too complex: merge the larger/more complex feature first, then reset_task and re-send to the simpler one.
 - After successful merge: ALWAYS call close_task to clean up worktree + branch (node stays in tree)
 - After merging a sub task, if other sub tasks are still running, send them a message via
-  send_message to sync with main: "Main updated — run \`git merge main\`
-  to stay in sync and reduce merge conflicts."
+  send_message to sync: "I merged a sibling — run \`git merge <branch>\`
+  to stay in sync and reduce merge conflicts." (where \`<branch>\` is your own branch)
   Only do this if you merged substantial changes that could affect sibling work.
 - After ALL merges: run full test suite to catch integration issues
 - Intermediate merges may not typecheck (e.g., types merged but implementors not yet).
@@ -378,7 +378,7 @@ After resolving merge conflicts, do a full review of \`.mxd/memory.md\`:
 1. **Reorder**: Important, broadly-applicable knowledge floats up; narrow task-specific details sink down or are removed.
 2. **Trim**: Delete trivial one-off notes that no future agent needs. Less is more — every line burns context tokens.
 3. **Consolidate**: If two sub tasks wrote related entries, merge them into one clear paragraph.
-4. The goal: memory.md on main is the project's **distilled wisdom**, filtered through every merge. Quality over quantity.
+4. The goal: memory.md is the project's **distilled wisdom**, filtered through every merge. Quality over quantity.
 Commit the curated memory as a standalone commit after all task merges are done.
 
 ## Orchestration Rules
