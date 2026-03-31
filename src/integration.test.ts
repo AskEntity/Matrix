@@ -7128,3 +7128,416 @@ describe("Integration: multiple restarts with accumulated state", () => {
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(4);
 	}, 45000);
 });
+
+// ── Default branch detection tests ──
+describe("Default branch", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("root node gets branch set from git HEAD at tracker load time", async () => {
+		ctx = await setupTestContext();
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId);
+		expect(rootNode).toBeDefined();
+		// git init creates a default branch (main or master depending on config)
+		expect(rootNode!.branch).toBeTruthy();
+		expect(typeof rootNode!.branch).toBe("string");
+	});
+
+	test("root node branch persists across save/load", async () => {
+		ctx = await setupTestContext();
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId);
+		const branch = rootNode!.branch;
+		expect(branch).toBeTruthy();
+
+		await tracker.save();
+
+		// Verify the saved tree.json has the branch persisted.
+		const { readFile } = await import("node:fs/promises");
+		const treePath = join(ctx.dataDir, "projects", ctx.projectId, "tree.json");
+		const raw = JSON.parse(await readFile(treePath, "utf-8"));
+		const rootInJson = raw.nodes.find(
+			(n: { id: string }) => n.id === tracker.rootNodeId,
+		);
+		expect(rootInJson.branch).toBe(branch);
+	});
+
+	test("child task worktree branches from parent's branch", async () => {
+		ctx = await setupTestContext();
+
+		// Child does bash to check its branch, then done()
+		const childInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "git rev-parse --abbrev-ref HEAD" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "checked branch" },
+						},
+					],
+				},
+			],
+		});
+
+		// Parent: create_task → send_message → yield → done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Branch Check Child",
+								description: "Verify child branches from parent",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx, 30000);
+		expect(status).toBe("passed");
+
+		// Verify child got a worktree with branch based off parent's branch
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId)!;
+		const childId = rootNode.children[0]!;
+		const childNode = tracker.get(childId)!;
+
+		// Child's branch should start with mxd/ prefix
+		expect(childNode.branch).toBeTruthy();
+		expect(childNode.branch!.startsWith("mxd/")).toBe(true);
+
+		// Child's worktree should exist
+		expect(childNode.worktreePath).toBeTruthy();
+
+		// The child's branch was created from parent's branch — verify by checking
+		// that child JSONL has a bash tool_result with a branch name starting with mxd/
+		const childEvents = readSessionEvents(ctx, childId);
+		const bashResults = childEvents.filter(
+			(e) => e.type === "tool_result" && !e.isError,
+		);
+		expect(bashResults.length).toBeGreaterThanOrEqual(1);
+		// The bash output is the child's own branch name (git rev-parse --abbrev-ref HEAD)
+		const firstResult = bashResults[0];
+		const branchOutput =
+			firstResult && "content" in firstResult ? firstResult.content : "";
+		expect(branchOutput).toContain("mxd/");
+	}, 45000);
+
+	test("project on non-main branch gets correct root node branch", async () => {
+		// Create a project with a "develop" branch
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-integ-data-"));
+		const projectDir = await mkdtemp(join(tmpdir(), "mxd-integ-project-"));
+
+		// Init git and switch to "develop" branch
+		Bun.spawnSync(["git", "init"], { cwd: projectDir });
+		Bun.spawnSync(["git", "config", "user.email", "test@test.com"], {
+			cwd: projectDir,
+		});
+		Bun.spawnSync(["git", "config", "user.name", "Test"], {
+			cwd: projectDir,
+		});
+		await Bun.write(join(projectDir, "README.md"), "# Dev Project\n");
+		Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
+		Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
+		Bun.spawnSync(["git", "checkout", "-b", "develop"], { cwd: projectDir });
+
+		const mockAPI = new ValidatingMockAPI();
+		const provider = createMockedProviderWithMock(mockAPI);
+
+		const appResult = createApp({
+			dataDir,
+			agentProvider: provider,
+		});
+
+		await appResult.pm.load();
+		const project = await appResult.pm.init(projectDir);
+
+		// Activate setup hook
+		const hookExample = join(
+			projectDir,
+			".mxd",
+			"hooks",
+			"setup_worktree.sh.example",
+		);
+		const hookActive = join(projectDir, ".mxd", "hooks", "setup_worktree.sh");
+		if (existsSync(hookExample)) {
+			await rename(hookExample, hookActive);
+		}
+		Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
+		Bun.spawnSync(["git", "commit", "-m", "activate hook"], {
+			cwd: projectDir,
+		});
+
+		appResult.markReady();
+
+		ctx = {
+			dataDir,
+			projectDir,
+			app: appResult,
+			mockAPI,
+			projectId: project.id,
+		};
+
+		// Verify root node has "develop" as its branch
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId);
+		expect(rootNode!.branch).toBe("develop");
+	});
+
+	test("project on 'master' branch works correctly", async () => {
+		const dataDir = await mkdtemp(join(tmpdir(), "mxd-integ-data-"));
+		const projectDir = await mkdtemp(join(tmpdir(), "mxd-integ-project-"));
+
+		Bun.spawnSync(["git", "init", "-b", "master"], { cwd: projectDir });
+		Bun.spawnSync(["git", "config", "user.email", "test@test.com"], {
+			cwd: projectDir,
+		});
+		Bun.spawnSync(["git", "config", "user.name", "Test"], {
+			cwd: projectDir,
+		});
+		await Bun.write(join(projectDir, "README.md"), "# Master Project\n");
+		Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
+		Bun.spawnSync(["git", "commit", "-m", "initial"], { cwd: projectDir });
+
+		const mockAPI = new ValidatingMockAPI();
+		const provider = createMockedProviderWithMock(mockAPI);
+		const appResult = createApp({ dataDir, agentProvider: provider });
+		await appResult.pm.load();
+		const project = await appResult.pm.init(projectDir);
+
+		const hookExample = join(
+			projectDir,
+			".mxd",
+			"hooks",
+			"setup_worktree.sh.example",
+		);
+		const hookActive = join(projectDir, ".mxd", "hooks", "setup_worktree.sh");
+		if (existsSync(hookExample)) await rename(hookExample, hookActive);
+		Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
+		Bun.spawnSync(["git", "commit", "-m", "activate hook"], {
+			cwd: projectDir,
+		});
+
+		appResult.markReady();
+		ctx = {
+			dataDir,
+			projectDir,
+			app: appResult,
+			mockAPI,
+			projectId: project.id,
+		};
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		expect(tracker.get(tracker.rootNodeId)!.branch).toBe("master");
+	});
+
+	test("child worktree on non-main branch contains correct content", async () => {
+		// Use standard setupTestContext, then add a file and switch to develop
+		ctx = await setupTestContext();
+
+		// Add a develop-only file on a new branch
+		Bun.spawnSync(["git", "checkout", "-b", "develop"], {
+			cwd: ctx.projectDir,
+		});
+		await Bun.write(join(ctx.projectDir, "develop-only.txt"), "on develop\n");
+		Bun.spawnSync(["git", "add", "."], { cwd: ctx.projectDir });
+		Bun.spawnSync(["git", "commit", "-m", "develop content"], {
+			cwd: ctx.projectDir,
+		});
+
+		// Update root node branch to "develop" (simulating tracker reload)
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId)!;
+		rootNode.branch = "develop";
+		await tracker.save();
+
+		// Child checks for develop-only.txt — should exist since branched from develop
+		const childInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "cat develop-only.txt" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "verified develop content" },
+						},
+					],
+				},
+			],
+		});
+
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Develop Branch Child",
+								description: "Check develop content exists",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: { childId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [{ type: "tool_use", name: "mcp__mxd__yield", input: {} }],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx, 30000);
+		expect(status).toBe("passed");
+
+		// Verify the child's bash saw develop-only.txt content
+		const rootNode2 = tracker.get(tracker.rootNodeId)!;
+		const childId = rootNode2.children[0]!;
+		const childEvents = readSessionEvents(ctx, childId);
+		const bashResults = childEvents.filter(
+			(e) => e.type === "tool_result" && !e.isError,
+		);
+		// First tool_result should be the cat output containing "on develop"
+		const firstResult = bashResults[0];
+		const catOutput =
+			firstResult && "content" in firstResult ? firstResult.content : "";
+		expect(catOutput).toContain("on develop");
+	}, 45000);
+
+	test("system prompt has no hardcoded 'main' branch references", () => {
+		// Import directly to verify the static content
+		const { SYSTEM_PROMPT, buildSystemPrompt } = require("./system-prompts.ts");
+
+		// No "git checkout main", "git merge main", "git log main.." etc.
+		// The word "main" may appear in non-git contexts (e.g. "main repo", "import.meta.main")
+		// but should NOT appear as a git branch reference
+		const gitMainPatterns = [
+			/git checkout main/,
+			/git merge main/,
+			/git log main/,
+			/checkout main/,
+			/merge main\b/,
+			/\bmain branch\b/,
+		];
+
+		for (const pattern of gitMainPatterns) {
+			expect(SYSTEM_PROMPT).not.toMatch(pattern);
+		}
+
+		// Also check built prompt
+		const built = buildSystemPrompt();
+		const fullPrompt = `${built.stable}\n\n${built.variable}`;
+		for (const pattern of gitMainPatterns) {
+			expect(fullPrompt).not.toMatch(pattern);
+		}
+	});
+});

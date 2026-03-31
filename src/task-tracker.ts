@@ -15,8 +15,10 @@ export class TaskTracker {
 
 	constructor(private readonly treePath: string) {}
 
-	/** Load task tree from disk. Creates root node for fresh projects. */
-	async load(): Promise<void> {
+	/** Load task tree from disk. Creates root node for fresh projects.
+	 * @param defaultBranch — branch name for root node (fresh projects, or backfill for old ones).
+	 */
+	async load(defaultBranch?: string): Promise<void> {
 		if (existsSync(this.treePath)) {
 			const raw = await readFile(this.treePath, "utf-8");
 			const data = JSON.parse(raw) as {
@@ -30,9 +32,14 @@ export class TaskTracker {
 				this.nodes.set(node.id, node);
 			}
 			this._rootNodeId = data.rootNodeId;
+			// Backfill root node branch for old projects
+			const root = this.nodes.get(this._rootNodeId);
+			if (root && !root.branch && defaultBranch) {
+				root.branch = defaultBranch;
+			}
 		} else {
 			// Fresh project — create root node
-			this.createRootNode();
+			this.createRootNode(defaultBranch);
 		}
 	}
 
@@ -55,8 +62,9 @@ export class TaskTracker {
 	}
 
 	/** Create root node for a fresh project. */
-	private createRootNode(): void {
+	private createRootNode(branch?: string): void {
 		const node = this.createNode("Orchestrator", "", null);
+		if (branch) node.branch = branch;
 		this._rootNodeId = node.id;
 	}
 

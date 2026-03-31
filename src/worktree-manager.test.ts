@@ -44,11 +44,15 @@ describe("WorktreeManager", () => {
 	let repoDir: string;
 	let wtRoot: string;
 	let mgr: WorktreeManager;
+	let defaultBranch: string;
 
 	beforeEach(async () => {
 		repoDir = await mkdtemp(join(tmpdir(), "mxd-wt-repo-"));
 		wtRoot = join(repoDir, ".worktrees");
 		await initRepo(repoDir);
+		defaultBranch = (
+			await exec(["git", "rev-parse", "--abbrev-ref", "HEAD"], repoDir)
+		).trim();
 		mgr = new WorktreeManager(repoDir, wtRoot);
 	});
 
@@ -59,7 +63,7 @@ describe("WorktreeManager", () => {
 
 	test("create makes a worktree with a new branch", async () => {
 		const taskId = "abcdef12-3456-7890-abcd-ef1234567890";
-		const info = await mgr.create(taskId, "setup");
+		const info = await mgr.create(taskId, "setup", defaultBranch);
 
 		expect(info.branch).toBe("mxd/abcdef12-3456-7890-abcd-ef1234567890/setup");
 		expect(existsSync(info.path)).toBe(true);
@@ -68,7 +72,7 @@ describe("WorktreeManager", () => {
 
 	test("create enables extensions.worktreeConfig", async () => {
 		const taskId = "abcdef12-3456-7890-abcd-ef1234567890";
-		await mgr.create(taskId, "setup");
+		await mgr.create(taskId, "setup", defaultBranch);
 
 		const value = (
 			await exec(
@@ -81,7 +85,7 @@ describe("WorktreeManager", () => {
 
 	test("create disables hooks per-worktree", async () => {
 		const taskId = "abcdef12-3456-7890-abcd-ef1234567890";
-		const info = await mgr.create(taskId, "setup");
+		const info = await mgr.create(taskId, "setup", defaultBranch);
 
 		// Check that core.hooksPath is set to /dev/null in the worktree
 		const hooksPath = (
@@ -96,9 +100,7 @@ describe("WorktreeManager", () => {
 		await writeFile(join(repoDir, "feature.txt"), "feature\n");
 		await exec(["git", "add", "-A"], repoDir);
 		await exec(["git", "commit", "-m", "feature commit"], repoDir);
-		await exec(["git", "checkout", "main"], repoDir).catch(() =>
-			exec(["git", "checkout", "master"], repoDir),
-		);
+		await exec(["git", "checkout", defaultBranch], repoDir);
 
 		const taskId = "11111111-2222-3333-4444-555555555555";
 		const info = await mgr.create(taskId, "from-feat", "feature");
@@ -109,7 +111,7 @@ describe("WorktreeManager", () => {
 
 	test("remove cleans up worktree and branch", async () => {
 		const taskId = "bbbbbbbb-1111-2222-3333-444444444444";
-		const info = await mgr.create(taskId, "cleanup");
+		const info = await mgr.create(taskId, "cleanup", defaultBranch);
 		expect(existsSync(info.path)).toBe(true);
 
 		await mgr.remove(taskId, "cleanup");
@@ -126,8 +128,8 @@ describe("WorktreeManager", () => {
 	test("list returns managed worktrees", async () => {
 		const id1 = "aaaaaaaa-1111-2222-3333-444444444444";
 		const id2 = "cccccccc-1111-2222-3333-444444444444";
-		await mgr.create(id1, "alpha");
-		await mgr.create(id2, "beta");
+		await mgr.create(id1, "alpha", defaultBranch);
+		await mgr.create(id2, "beta", defaultBranch);
 
 		const list = await mgr.list();
 		expect(list).toHaveLength(2);
@@ -139,7 +141,7 @@ describe("WorktreeManager", () => {
 
 	test("merge integrates task branch into target", async () => {
 		const taskId = "dddddddd-1111-2222-3333-444444444444";
-		const info = await mgr.create(taskId, "merge-me");
+		const info = await mgr.create(taskId, "merge-me", defaultBranch);
 
 		// Make a change in the worktree
 		await writeFile(join(info.path, "new-file.txt"), "hello\n");
@@ -156,7 +158,7 @@ describe("WorktreeManager", () => {
 
 	test("merge returns false on conflict", async () => {
 		const taskId = "eeeeeeee-1111-2222-3333-444444444444";
-		const info = await mgr.create(taskId, "conflict");
+		const info = await mgr.create(taskId, "conflict", defaultBranch);
 
 		// Modify same file in both places
 		await writeFile(join(repoDir, "README.md"), "main change\n");
@@ -177,8 +179,8 @@ describe("WorktreeManager", () => {
 	test("cleanup removes all worktrees", async () => {
 		const id1 = "ffffffff-1111-2222-3333-444444444444";
 		const id2 = "00000000-1111-2222-3333-444444444444";
-		await mgr.create(id1, "one");
-		await mgr.create(id2, "two");
+		await mgr.create(id1, "one", defaultBranch);
+		await mgr.create(id2, "two", defaultBranch);
 
 		await mgr.cleanup();
 
@@ -197,7 +199,7 @@ describe("WorktreeManager", () => {
 		await addSetupHook(repoDir, '#!/bin/bash\ntouch "$1/setup-ran.marker"\n');
 
 		const taskId = "aabbccdd-1111-2222-3333-444444444444";
-		const info = await mgr.create(taskId, "with-hook");
+		const info = await mgr.create(taskId, "with-hook", defaultBranch);
 
 		// The hook should have created the marker file
 		expect(existsSync(join(info.path, "setup-ran.marker"))).toBe(true);
@@ -209,7 +211,7 @@ describe("WorktreeManager", () => {
 		await exec(["git", "commit", "-m", "remove hook"], repoDir);
 
 		const taskId = "11223344-1111-2222-3333-444444444444";
-		await expect(mgr.create(taskId, "no-hook")).rejects.toThrow(
+		await expect(mgr.create(taskId, "no-hook", defaultBranch)).rejects.toThrow(
 			"Missing .mxd/hooks/setup_worktree.sh",
 		);
 
@@ -226,7 +228,7 @@ describe("WorktreeManager", () => {
 		);
 
 		const taskId = "55667788-1111-2222-3333-444444444444";
-		await expect(mgr.create(taskId, "bad-hook")).rejects.toThrow(
+		await expect(mgr.create(taskId, "bad-hook", defaultBranch)).rejects.toThrow(
 			"Setup hook failed",
 		);
 

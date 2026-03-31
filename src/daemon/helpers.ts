@@ -61,6 +61,25 @@ export function collectDescendants(
 	return result;
 }
 
+/** Detect the current branch of a git repo. Returns undefined if not a git repo. */
+async function detectBranch(projectPath: string): Promise<string | undefined> {
+	try {
+		const proc = Bun.spawn(["git", "rev-parse", "--abbrev-ref", "HEAD"], {
+			cwd: projectPath,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		const exitCode = await proc.exited;
+		if (exitCode === 0) {
+			const branch = (await new Response(proc.stdout).text()).trim();
+			if (branch && branch !== "HEAD") return branch;
+		}
+	} catch {
+		// Not a git repo or git not available
+	}
+	return undefined;
+}
+
 /** Get or create a TaskTracker for a project. */
 export async function getTracker(
 	ctx: DaemonContext,
@@ -75,7 +94,11 @@ export async function getTracker(
 			"tree.json",
 		);
 		tracker = new TaskTracker(treePath);
-		await tracker.load();
+		const project = ctx.pm.get(projectId);
+		const defaultBranch = project
+			? await detectBranch(project.path)
+			: undefined;
+		await tracker.load(defaultBranch);
 		ctx.trackers.set(projectId, tracker);
 	}
 	return tracker;

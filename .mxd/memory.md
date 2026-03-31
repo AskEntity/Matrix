@@ -588,3 +588,12 @@ When testing the web UI via Chrome DevTools (take_snapshot, click, etc.), the br
 ## Scroll Anchoring Fix (ActivityLog)
 
 MutationObserver must use `autoScrollRef.current`, not closure-captured `autoScroll`. Stale closure caused scroll-to-bottom even when user scrolled up. CSS `overflow-anchor: auto` on `.mxd-activity-log` for native browser anchoring. Safari fallback via IntersectionObserver.
+
+
+## Default Branch Detection (March 2026)
+
+Root node gets `branch` set at tracker load time via `detectBranch()` in `getTracker()`. Fresh projects: branch passed to `TaskTracker.load(defaultBranch)` → `createRootNode(branch)`. Old projects: backfilled if `root.branch` is null.
+
+`WorktreeManager.create()` requires `baseBranch: string` (no fallback to HEAD). All callers look up parent node branch: `currentNode.branch` in orchestrator-tools, `parentNode.branch` in agent-lifecycle and tasks route.
+
+System prompt is branch-name-agnostic. No hardcoded "main" references. Agents only know "my branch" and "the task above merges me".

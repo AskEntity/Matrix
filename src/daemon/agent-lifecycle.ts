@@ -608,9 +608,16 @@ export async function ensureChildAgentRunning(
 
 	// Create worktree if the task doesn't have one yet
 	if (!node.worktreePath) {
+		const parentNode = node.parentId ? tracker.get(node.parentId) : null;
+		const baseBranch = parentNode?.branch;
+		if (!baseBranch) {
+			throw new Error(
+				`Cannot create worktree for task ${nodeId} — parent has no branch assigned.`,
+			);
+		}
 		const wtRoot = join(project.path, ".worktrees");
 		const wm = new WorktreeManager(project.path, wtRoot);
-		const wt = await wm.create(node.id, slugify(node.title));
+		const wt = await wm.create(node.id, slugify(node.title), baseBranch);
 		tracker.assignWorktree(node.id, wt.branch, wt.path);
 	}
 

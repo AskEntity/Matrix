@@ -326,15 +326,23 @@ export function registerTaskRoutes(
 			return c.json(tracker.get(nodeId));
 		}
 
-		// Passed/closed task with no worktree: re-create worktree from main and launch agent
+		// Passed/closed task with no worktree: re-create worktree and launch agent
 		if (
 			(node.status === "passed" || node.status === "closed") &&
 			!node.worktreePath
 		) {
 			try {
+				const parentNode = node.parentId ? tracker.get(node.parentId) : null;
+				const baseBranch = parentNode?.branch;
+				if (!baseBranch) {
+					return c.json(
+						{ error: "Cannot create worktree — parent has no branch assigned" },
+						400,
+					);
+				}
 				const wtRoot = join(project.path, ".worktrees");
 				const wm = new WorktreeManager(project.path, wtRoot);
-				const wt = await wm.create(nodeId, slugify(node.title));
+				const wt = await wm.create(nodeId, slugify(node.title), baseBranch);
 				tracker.assignWorktree(nodeId, wt.branch, wt.path);
 				tracker.updateStatus(nodeId, "in_progress");
 				await tracker.save();
@@ -550,9 +558,7 @@ export function registerTaskRoutes(
 		const isColdStart = !eventStore.has(nodeId);
 		let msg: QueueMessage;
 		if (isColdStart) {
-			const memory = readProjectMemory(
-				node?.worktreePath ?? project.path,
-			);
+			const memory = readProjectMemory(node?.worktreePath ?? project.path);
 			const isRoot = nodeId === tracker.rootNodeId;
 			if (isRoot) {
 				// Root: memory.md + working dir
