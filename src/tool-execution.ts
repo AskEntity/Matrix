@@ -7,6 +7,34 @@ import type { QueueMessage } from "./message-queue.ts";
 import type { PendingState, ToolResult } from "./shared-types.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
 
+function stripEmptyStringOptionals(value: unknown): unknown {
+	if (Array.isArray(value)) {
+		return value.map(stripEmptyStringOptionals);
+	}
+	if (value && typeof value === "object") {
+		return Object.fromEntries(
+			Object.entries(value).flatMap(([key, nested]) => {
+				const cleaned = stripEmptyStringOptionals(nested);
+				return cleaned === "" ? [] : [[key, cleaned]];
+			}),
+		);
+	}
+	return value;
+}
+
+function normalizeToolInput(
+	input: Record<string, unknown>,
+): Record<string, unknown> {
+	const cleaned = stripEmptyStringOptionals(input);
+	return cleaned && typeof cleaned === "object" && !Array.isArray(cleaned)
+		? (cleaned as Record<string, unknown>)
+		: {};
+}
+
+export const __testOnly = {
+	normalizeToolInput,
+};
+
 /** Maximum number of outer retries when callAPI fails after exhausting its own retries. */
 export const MAX_OUTER_RETRIES = 3;
 
@@ -67,8 +95,10 @@ export async function executeTool(
 		};
 	}
 
+	const normalizedInput = normalizeToolInput(input);
+
 	try {
-		const mcpResult = await mcpHandler.handler(input, { toolCallId });
+		const mcpResult = await mcpHandler.handler(normalizedInput, { toolCallId });
 		const parts = Array.isArray(mcpResult.content) ? mcpResult.content : [];
 		const textParts: string[] = [];
 		const mcpImages: Array<{
