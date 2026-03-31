@@ -103,7 +103,7 @@ Root node stores branch at init. `baseBranch` required on worktree create (no fa
 - **Git worktrees**: `extensions.worktreeConfig` required. `core.hooksPath` absolute.
 - **Biome**: Typecheck BEFORE lint. No `!important`. No duplicate CSS properties.
 - **noUncheckedIndexedAccess**: Array index returns `T | undefined`.
-- **Daemon reload**: LaunchAgent (dev.matrix.daemon), not `bun --watch`. Commits don't auto-restart.
+- **Daemon reload**: Commits don't auto-restart the daemon. Must manually restart after code changes.
 - **Concurrent ULID**: Use full `ulid()` (26 chars) — sliced ULIDs collide within same millisecond.
 - **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
@@ -115,10 +115,6 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_k
 ## CLI Installation
 
 `mxd` CLI is globally installed via `bun link`. Binary at `~/.bun/bin/mxd` → symlink to `src/cli.ts`. package.json has `"bin": { "mxd": "src/cli.ts" }`, cli.ts has `#!/usr/bin/env bun` shebang. After `bun link`, use `mxd` directly (not `bun run src/cli.ts`).
-
-## Self-Bootstrap: Web Auth for Chrome DevTools
-
-When testing via Chrome DevTools, take snapshot of login page → run `mxd auth <key>` → paste output → authenticated.
 
 ## Integration Test Framework
 
@@ -157,11 +153,4 @@ Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Archite
 - Prefix violation after double restart (Restart N) — disabled in test.
 - Flaky: `Fork from closed agent`, `BG5` — timing-dependent.
 
-## mxd-docs
 
-VitePress at matrix-docs project. Build with npm (not bun). Deploy via wrangler pages.
-
-## Competitive Landscape (2026-03)
-
-Key competitors: Claude Code Agent Teams, OpenClaw, Cursor 2.0, OpenAI Codex App, Devin.
-Matrix unique: recursive task tree, cross-project messaging, compaction + fork, persistent quality agents.
