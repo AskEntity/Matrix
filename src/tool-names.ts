@@ -43,6 +43,7 @@ export const TOOL_LIST_FILES = mcpToolName("list_files");
 export const TOOL_SEARCH = mcpToolName("search");
 
 export const TOOL_GET_TREE = mcpToolName("get_tree");
+export const TOOL_GET_TASK = mcpToolName("get_task");
 export const TOOL_CREATE_TASK = mcpToolName("create_task");
 export const TOOL_UPDATE_TASK = mcpToolName("update_task");
 export const TOOL_DELETE_TASK = mcpToolName("delete_task");

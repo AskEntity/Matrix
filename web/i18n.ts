@@ -268,6 +268,7 @@ const en: Translations = {
 
 	// Tool names (MCP)
 	"tools.mcp__mxd__get_tree": "Get Tree",
+	"tools.mcp__mxd__get_task": "Get Task",
 	"tools.mcp__mxd__create_task": "Create Task",
 	"tools.mcp__mxd__update_task": "Update Task",
 	"tools.mcp__mxd__execute_tasks": "Execute Tasks",
@@ -548,6 +549,7 @@ const zh: Translations = {
 
 	// Tool names (MCP)
 	"tools.mcp__mxd__get_tree": "查看任务树",
+	"tools.mcp__mxd__get_task": "查看任务",
 	"tools.mcp__mxd__create_task": "创建任务",
 	"tools.mcp__mxd__update_task": "更新任务",
 	"tools.mcp__mxd__execute_tasks": "执行任务",
