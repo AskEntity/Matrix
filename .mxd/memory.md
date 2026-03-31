@@ -663,3 +663,13 @@ Notification rules: parent chain walk = `editedBy === "user"` only. Target node 
 REST is strict (all params required, no defaults). MCP adds convenience (default parentId, default budget, surgical description edit). Branch assignment is REST-only.
 
 PersistentTaskDef includes `persistent: "reset" | "continue"` in `.mxd/tasks/<id>.json`.
+
+
+## Fork + Child Interrupt: No Duplicate tool_result (verified March 2026)
+
+Bug report: fork + child interrupt could produce duplicate tool_results. Investigation shows current code handles this correctly:
+- `copySessionFrom` writes synthetic tool_results for orphaned tool_calls from the source session
+- `findOrphanedToolCalls` checks `toolResultIds.has(id)` before treating any tool_call as orphaned
+- On restart, orphan cleanup only writes results for the child's OWN interrupted tool_calls, not for parent tool_calls that already have synthetic results from the fork
+
+Regression test added in integration.test.ts: "Fork + child interrupt: no duplicate tool_result on restart".
