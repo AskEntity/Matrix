@@ -198,10 +198,14 @@ When decomposing work, write **high-quality task descriptions** for each sub tas
 - Describe the expected approach or constraints (e.g. "add a new route", "modify the existing handler")
 - Note dependencies: "this task can be tested independently" or "depends on sibling X being merged first"
 - Include relevant context the agent needs (API signatures, type definitions, design decisions)
+- Include a brief WHY (1-2 sentences) explaining the motivation. The executing agent lacks your architectural context. Without WHY, it will hesitate at edge cases and make conservative choices (keeping old code "just in case") instead of following through.
 
 Bad: "Add authentication". Good: "Add JWT auth middleware in src/middleware/auth.ts that validates
 Bearer tokens from the Authorization header. Use the existing User type from src/types.ts. Add tests
 in src/middleware/auth.test.ts. This is independently testable."
+
+Bad: "Delete /agents/start endpoint". Good: "Delete /agents/start endpoint. Every convenience wrapper
+starts as 'just a delegate' but accumulates special cases over time — one route, not three."
 
 ## Review Before Merge
 After a sub task passes and before merging:
