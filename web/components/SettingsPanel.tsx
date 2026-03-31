@@ -12,6 +12,9 @@ interface AuthGroup {
 	anthropicApiKey?: string;
 	claudeOauthToken?: string;
 	openaiApiKey?: string;
+	openaiAccessToken?: string;
+	openaiRefreshToken?: string;
+	openaiAccountId?: string;
 	openaiBaseUrl?: string;
 }
 
@@ -312,6 +315,15 @@ function AuthGroupEditor({
 		group.claudeOauthToken ?? "",
 	);
 	const [openaiApiKey, setOpenaiApiKey] = useState(group.openaiApiKey ?? "");
+	const [openaiAccessToken, setOpenaiAccessToken] = useState(
+		group.openaiAccessToken ?? "",
+	);
+	const [openaiRefreshToken, setOpenaiRefreshToken] = useState(
+		group.openaiRefreshToken ?? "",
+	);
+	const [openaiAccountId, setOpenaiAccountId] = useState(
+		group.openaiAccountId ?? "",
+	);
 	const [openaiBaseUrl, setOpenaiBaseUrl] = useState(group.openaiBaseUrl ?? "");
 
 	const handleSave = () => {
@@ -321,6 +333,9 @@ function AuthGroupEditor({
 			if (claudeOauthToken) g.claudeOauthToken = claudeOauthToken;
 		} else {
 			if (openaiApiKey) g.openaiApiKey = openaiApiKey;
+			if (openaiAccessToken) g.openaiAccessToken = openaiAccessToken;
+			if (openaiRefreshToken) g.openaiRefreshToken = openaiRefreshToken;
+			if (openaiAccountId) g.openaiAccountId = openaiAccountId;
 			if (openaiBaseUrl) g.openaiBaseUrl = openaiBaseUrl;
 		}
 		onSave(editName.trim() || name, g);
@@ -389,6 +404,42 @@ function AuthGroupEditor({
 							placeholder="sk-..."
 							value={openaiApiKey}
 							onChange={(e) => setOpenaiApiKey(e.target.value)}
+						/>
+					</label>
+					<label className="mxd-settings-field">
+						<span className="mxd-settings-label">
+							{t("settings.openaiAccessToken")}
+						</span>
+						<input
+							type="password"
+							className="mxd-settings-input"
+							placeholder={t("settings.optionalFallback")}
+							value={openaiAccessToken}
+							onChange={(e) => setOpenaiAccessToken(e.target.value)}
+						/>
+					</label>
+					<label className="mxd-settings-field">
+						<span className="mxd-settings-label">
+							{t("settings.openaiRefreshToken")}
+						</span>
+						<input
+							type="password"
+							className="mxd-settings-input"
+							placeholder={t("settings.optionalFallback")}
+							value={openaiRefreshToken}
+							onChange={(e) => setOpenaiRefreshToken(e.target.value)}
+						/>
+					</label>
+					<label className="mxd-settings-field">
+						<span className="mxd-settings-label">
+							{t("settings.openaiAccountId")}
+						</span>
+						<input
+							type="text"
+							className="mxd-settings-input"
+							placeholder={t("settings.optionalFallback")}
+							value={openaiAccountId}
+							onChange={(e) => setOpenaiAccountId(e.target.value)}
 						/>
 					</label>
 					<label className="mxd-settings-field">
@@ -463,7 +514,12 @@ function AuthGroupsSection({
 
 	const maskedKey = (group: AuthGroup): string => {
 		const key =
-			group.anthropicApiKey || group.claudeOauthToken || group.openaiApiKey;
+			group.anthropicApiKey ||
+			group.claudeOauthToken ||
+			group.openaiApiKey ||
+			group.openaiAccessToken ||
+			group.openaiRefreshToken ||
+			group.openaiAccountId;
 		if (!key) return "—";
 		return `${key.slice(0, 6)}…${key.slice(-4)}`;
 	};

@@ -12,7 +12,7 @@ import {
 	resolveConfig,
 } from "../config.ts";
 import { EventStore } from "../event-store.ts";
-import { OpenAICompatibleProvider } from "../openai-compatible-provider.ts";
+import { OpenAIResponsesCompatibleProvider } from "../openai-responses-compatible-provider.ts";
 import { TaskTracker } from "../task-tracker.ts";
 import type { TaskNode } from "../types.ts";
 import type { DaemonContext } from "./context.ts";
@@ -28,8 +28,11 @@ function createProviderFromAuth(
 			oauthToken: authGroup.claudeOauthToken,
 		});
 	}
-	return new OpenAICompatibleProvider(model, {
+	return new OpenAIResponsesCompatibleProvider(model, {
 		apiKey: authGroup.openaiApiKey,
+		accessToken: authGroup.openaiAccessToken,
+		refreshToken: authGroup.openaiRefreshToken,
+		accountId: authGroup.openaiAccountId,
 		baseUrl: authGroup.openaiBaseUrl,
 	});
 }

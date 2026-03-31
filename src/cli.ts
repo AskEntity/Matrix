@@ -792,6 +792,9 @@ function printResolvedConfig(cfg: MatrixConfig): void {
 			if (group.anthropicApiKey) keys.push("ANTHROPIC_API_KEY");
 			if (group.claudeOauthToken) keys.push("CLAUDE_CODE_OAUTH_TOKEN");
 			if (group.openaiApiKey) keys.push("OPENAI_API_KEY");
+			if (group.openaiAccessToken) keys.push("OPENAI_ACCESS_TOKEN");
+			if (group.openaiRefreshToken) keys.push("OPENAI_REFRESH_TOKEN");
+			if (group.openaiAccountId) keys.push("OPENAI_ACCOUNT_ID");
 			if (group.openaiBaseUrl) keys.push(`base=${group.openaiBaseUrl}`);
 			console.log(
 				`    ${name}${marker}: provider=${group.provider} [${keys.join(", ")}]`,
@@ -935,7 +938,9 @@ async function handleConfig(args: string[]): Promise<void> {
 		printResolvedConfig(resolved);
 		console.log("");
 		console.log("  Use: mxd config set <key> <value> [--global|--project]");
-		console.log("       mxd config auth add <name> --provider <p> --key <k>");
+		console.log(
+			"       mxd config auth add <name> --provider <p> [--key <k> | --access-token <t>]",
+		);
 		console.log("       mxd config auth list");
 	} else {
 		console.error(
@@ -956,6 +961,9 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 		let provider: "anthropic" | "openai" = "anthropic";
 		let apiKey: string | undefined;
 		let oauthToken: string | undefined;
+		let accessToken: string | undefined;
+		let refreshToken: string | undefined;
+		let accountId: string | undefined;
 		let baseUrl: string | undefined;
 		const isProject = args.includes("--project");
 
@@ -974,6 +982,12 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 				apiKey = args[++i] as string;
 			} else if (arg === "--oauth-token" && i + 1 < args.length) {
 				oauthToken = args[++i] as string;
+			} else if (arg === "--access-token" && i + 1 < args.length) {
+				accessToken = args[++i] as string;
+			} else if (arg === "--refresh-token" && i + 1 < args.length) {
+				refreshToken = args[++i] as string;
+			} else if (arg === "--account-id" && i + 1 < args.length) {
+				accountId = args[++i] as string;
 			} else if (arg === "--base-url" && i + 1 < args.length) {
 				baseUrl = args[++i] as string;
 			}
@@ -991,9 +1005,14 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 			}
 		} else {
 			if (apiKey) group.openaiApiKey = apiKey;
+			if (accessToken) group.openaiAccessToken = accessToken;
+			if (refreshToken) group.openaiRefreshToken = refreshToken;
+			if (accountId) group.openaiAccountId = accountId;
 			if (baseUrl) group.openaiBaseUrl = baseUrl;
-			if (!apiKey) {
-				console.error("OpenAI auth requires --key <api-key>");
+			if (!apiKey && !accessToken) {
+				console.error(
+					"OpenAI auth requires --key <api-key> or --access-token <token>",
+				);
 				process.exit(1);
 			}
 		}
@@ -1044,6 +1063,15 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 			if (group.openaiApiKey) {
 				maskedKeys.push(`key=${group.openaiApiKey.slice(0, 10)}...`);
 			}
+			if (group.openaiAccessToken) {
+				maskedKeys.push("access=***");
+			}
+			if (group.openaiRefreshToken) {
+				maskedKeys.push("refresh=***");
+			}
+			if (group.openaiAccountId) {
+				maskedKeys.push(`account=${group.openaiAccountId.slice(0, 6)}...`);
+			}
 			if (group.openaiBaseUrl) {
 				maskedKeys.push(`base=${group.openaiBaseUrl}`);
 			}
@@ -1080,7 +1108,7 @@ async function handleConfigAuth(args: string[]): Promise<void> {
 	} else {
 		console.error("Usage:");
 		console.error(
-			"  mxd config auth add <name> --provider <anthropic|openai> --key <key> [--base-url <url>]",
+			"  mxd config auth add <name> --provider <anthropic|openai> [--key <key> | --access-token <token>] [--refresh-token <token>] [--account-id <id>] [--base-url <url>]",
 		);
 		console.error("  mxd config auth list");
 		console.error("  mxd config auth remove <name> [--global|--project]");
@@ -1549,7 +1577,7 @@ switch (command) {
 			"    config set <key> <value> [--global|--project]  Set a config value",
 		);
 		console.log(
-			"    config auth add <name>   Add auth group (--provider, --key)",
+			"    config auth add <name>   Add auth group (--provider, --key/--access-token)",
 		);
 		console.log("    config auth list         List auth groups");
 		console.log("    config auth remove <name>  Remove auth group");

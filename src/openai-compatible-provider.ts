@@ -865,7 +865,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 export class OpenAICompatibleProvider implements AgentProvider {
 	readonly name = "openai";
 	private baseUrl: string;
-	private apiKey: string;
+	private authToken: string;
 	private model: string;
 
 	constructor(model?: string, opts?: { apiKey?: string; baseUrl?: string }) {
@@ -874,10 +874,10 @@ export class OpenAICompatibleProvider implements AgentProvider {
 			process.env.OPENAI_BASE_URL ??
 			process.env.OPENAI_API_BASE ??
 			"https://api.openai.com/v1";
-		this.apiKey = opts?.apiKey ?? process.env.OPENAI_API_KEY ?? "";
-		if (!this.apiKey) {
+		this.authToken = opts?.apiKey ?? process.env.OPENAI_API_KEY ?? "";
+		if (!this.authToken) {
 			console.warn(
-				"OpenAICompatibleProvider: no API key configured. Calls will fail.",
+				"OpenAICompatibleProvider: no OpenAI credential configured. Calls will fail.",
 			);
 			// Don't throw — let it fail gracefully on first API call
 		}
@@ -955,7 +955,7 @@ export class OpenAICompatibleProvider implements AgentProvider {
 		sessionId: string,
 		queue?: MessageQueue,
 	): AsyncGenerator<Event, AgentResult> {
-		const adapter = createOpenAIAdapter(this.baseUrl, this.apiKey);
+		const adapter = createOpenAIAdapter(this.baseUrl, this.authToken);
 		const effectiveRequest = {
 			...request,
 			model: request.model ?? this.model,

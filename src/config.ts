@@ -7,6 +7,9 @@ export interface AuthGroup {
 	anthropicApiKey?: string;
 	claudeOauthToken?: string;
 	openaiApiKey?: string;
+	openaiAccessToken?: string;
+	openaiRefreshToken?: string;
+	openaiAccountId?: string;
 	openaiBaseUrl?: string;
 }
 

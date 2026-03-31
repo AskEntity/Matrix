@@ -179,7 +179,7 @@ describe("OpenAICompatibleProvider constructor", () => {
 		try {
 			expect(() => new OpenAICompatibleProvider()).not.toThrow();
 			expect(warnSpy).toHaveBeenCalledWith(
-				expect.stringContaining("no API key configured"),
+				expect.stringContaining("no OpenAI credential configured"),
 			);
 		} finally {
 			process.env.OPENAI_API_KEY = saved;
@@ -195,6 +195,24 @@ describe("OpenAICompatibleProvider constructor", () => {
 			expect(provider.name).toBe("openai");
 		} finally {
 			process.env.OPENAI_API_KEY = saved;
+		}
+	});
+
+	test("accepts access token via constructor apiKey slot", () => {
+		const saved = process.env.OPENAI_API_KEY;
+		delete process.env.OPENAI_API_KEY;
+		const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			expect(
+				() =>
+					new OpenAICompatibleProvider("gpt-4o-mini", {
+						apiKey: "eyJhbGciOiJIUzI1NiJ9.payload.sig",
+					}),
+			).not.toThrow();
+			expect(warnSpy).not.toHaveBeenCalled();
+		} finally {
+			process.env.OPENAI_API_KEY = saved;
+			warnSpy.mockRestore();
 		}
 	});
 });

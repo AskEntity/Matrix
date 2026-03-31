@@ -163,6 +163,25 @@ describe("resolveAuthGroup", () => {
 		});
 	});
 
+	test("preserves OpenAI OAuth-style tokens", () => {
+		const cfg: MatrixConfig = {
+			authGroups: {
+				openai: {
+					provider: "openai",
+					openaiAccessToken: "eyJhbGciOiJIUzI1NiJ9.payload.sig",
+					openaiRefreshToken: "refresh-token",
+					openaiAccountId: "account_123",
+				},
+			},
+		};
+		expect(resolveAuthGroup(cfg, "openai")).toEqual({
+			provider: "openai",
+			openaiAccessToken: "eyJhbGciOiJIUzI1NiJ9.payload.sig",
+			openaiRefreshToken: "refresh-token",
+			openaiAccountId: "account_123",
+		});
+	});
+
 	test("resolves default when no name given", () => {
 		const group = resolveAuthGroup(config);
 		expect(group?.provider).toBe("anthropic");

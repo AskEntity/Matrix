@@ -55,7 +55,7 @@ export { executeTool, isTransientAPIError } from "./tool-execution.ts";
 
 // ── Constants ──
 
-const DEFAULT_MAX_TOKENS = 16384;
+const DEFAULT_MAX_TOKENS = 128000;
 
 // ── Implicit yield (end_turn with queue) ──
 
