@@ -4678,6 +4678,107 @@ describe("Integration: tree operations", () => {
 		expect(node!.status).toBe("pending");
 		expect(node!.parentId).toBe(tracker2.rootNodeId);
 	}, 15000);
+
+	test("TREE7: update_task writes to .mxd/tasks/<id>.json for persistent tasks", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					// Turn 1: Create a persistent task
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Original Title",
+								description: "Original description",
+								persistent: true,
+							},
+						},
+					],
+				},
+				{
+					// Turn 2: Update the persistent task's title and description
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "Original Title",
+							capture: {
+								taskId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__update_task",
+							input: {
+								taskId: "$taskId",
+								title: "Updated Title",
+								description: "Updated description after change",
+							},
+						},
+					],
+				},
+				{
+					// Turn 3: Done
+					assert: [{ block: 0, type: "tool_result", notContains: "Error" }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "updated persistent task",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Get the child task ID
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId)!;
+		const childId = rootNode.children[0]!;
+
+		// Verify in-memory state has the updated values
+		const childNode = tracker.get(childId)!;
+		expect(childNode.persistent).toBe(true);
+		expect(childNode.title).toBe("Updated Title");
+		expect(childNode.description).toBe("Updated description after change");
+
+		// Verify .mxd/tasks/<id>.json has the updated values
+		const { readFile: readFileAsync } = await import("node:fs/promises");
+		const defPath = join(ctx.projectDir, ".mxd", "tasks", `${childId}.json`);
+		expect(existsSync(defPath)).toBe(true);
+		const def = JSON.parse(await readFileAsync(defPath, "utf-8"));
+		expect(def.title).toBe("Updated Title");
+		expect(def.description).toBe("Updated description after change");
+
+		// === RESTART: the real test — does the update survive? ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+
+		// After restart, load should read from .mxd/tasks/<id>.json
+		const tracker2 = await ctx.app.getTracker(ctx.projectId);
+		const nodeAfterRestart = tracker2.get(childId)!;
+		expect(nodeAfterRestart.persistent).toBe(true);
+		expect(nodeAfterRestart.title).toBe("Updated Title");
+		expect(nodeAfterRestart.description).toBe(
+			"Updated description after change",
+		);
+	}, 25000);
 });
 
 // ── File operation tests ──

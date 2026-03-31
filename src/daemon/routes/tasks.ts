@@ -207,6 +207,16 @@ export function registerTaskRoutes(
 		if (body.color !== undefined) {
 			tracker.updateColor(node.id, body.color, "user");
 		}
+
+		// For persistent nodes, write updated definition to .mxd/tasks/<id>.json
+		if (
+			body.title !== undefined ||
+			body.description !== undefined ||
+			body.color !== undefined
+		) {
+			tracker.savePersistentDef(nodeId, project.path);
+		}
+
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
 		notifyTreeChange(ctx, project, "updated", nodeId, node.title);
@@ -410,37 +420,22 @@ export function registerTaskRoutes(
 		// Clean up all resources for this node and all descendants
 		const nodesToRemove = collectDescendants(tracker, nodeId);
 		const eventStore = getEventStore(ctx, project.id);
+		const wtRoot = join(project.path, ".worktrees");
+		const wm = new WorktreeManager(project.path, wtRoot);
 
 		for (const n of nodesToRemove) {
 			// Close running agent session + queue
-			const activeQueue = n.session?.queue;
-			if (activeQueue) {
+			if (n.session?.queue) {
+				n.session.queue.close();
 				n.session = undefined;
-				activeQueue.close();
 			}
 
 			// Remove worktree + branch
-			if (n.worktreePath) {
+			if (n.worktreePath && n.branch) {
 				try {
-					const proc = Bun.spawn(
-						["git", "worktree", "remove", "--force", n.worktreePath],
-						{ cwd: project.path, stdout: "pipe", stderr: "pipe" },
-					);
-					await proc.exited;
+					await wm.remove(n.id, slugify(n.title));
 				} catch {
 					/* worktree may already be gone */
-				}
-				if (n.branch) {
-					try {
-						const proc = Bun.spawn(["git", "branch", "-D", n.branch], {
-							cwd: project.path,
-							stdout: "pipe",
-							stderr: "pipe",
-						});
-						await proc.exited;
-					} catch {
-						/* branch may already be gone */
-					}
 				}
 			}
 

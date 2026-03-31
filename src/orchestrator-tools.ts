@@ -6,7 +6,7 @@
  * (create_task, update_task, send_message, yield, done, etc.).
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Event } from "./events.ts";
@@ -525,29 +525,7 @@ export function createOrchestratorTools(
 
 					// Write persistent task definition to .mxd/tasks/<id>.json and commit
 					if (args.persistent) {
-						const projectPath = getProjectPath();
-						const tasksDir = join(projectPath, ".mxd", "tasks");
-						mkdirSync(tasksDir, { recursive: true });
-						const def: { title: string; description: string; color?: string } =
-							{
-								title: args.title,
-								description: args.description,
-							};
-						if (args.color) def.color = resolveColor(args.color);
-						const defPath = join(tasksDir, `${node.id}.json`);
-						writeFileSync(defPath, JSON.stringify(def, null, "\t"));
-						// Auto-commit so the working tree stays clean for worktree creation
-						const addProc = Bun.spawnSync(["git", "add", defPath], {
-							cwd: projectPath,
-							stdout: "pipe",
-							stderr: "pipe",
-						});
-						if (addProc.exitCode === 0) {
-							Bun.spawnSync(
-								["git", "commit", "-m", `Add persistent task: ${args.title}`],
-								{ cwd: projectPath, stdout: "pipe", stderr: "pipe" },
-							);
-						}
+						tracker.savePersistentDef(node.id, getProjectPath());
 					}
 
 					await tracker.save();
@@ -751,6 +729,19 @@ export function createOrchestratorTools(
 							"agent",
 						);
 					}
+					// For persistent nodes, write updated definition to .mxd/tasks/<id>.json
+					{
+						const titleOrDescChanged =
+							args.title !== undefined ||
+							args.description !== undefined ||
+							(args.old_description !== undefined &&
+								args.new_description !== undefined) ||
+							args.color !== undefined;
+						if (titleOrDescChanged) {
+							tracker.savePersistentDef(args.taskId, getProjectPath());
+						}
+					}
+
 					await tracker.save();
 					broadcastTree();
 
@@ -1169,26 +1160,33 @@ export function createOrchestratorTools(
 				}
 
 				try {
-					// Close running agent if active
-					const deleteNode = tracker.get(args.taskId);
-					const activeQueueDelete = deleteNode?.session?.queue;
-					if (activeQueueDelete) {
-						deleteNode.session = undefined;
-						activeQueueDelete.close();
+					// Clean up all resources for this node and all descendants
+					const descendantIds = getDescendantIds(tracker, args.taskId);
+					const allIds = [args.taskId, ...descendantIds];
+					const wtRoot = join(repoPath, ".worktrees");
+					const wm = new WorktreeManager(repoPath, wtRoot);
+
+					for (const id of allIds) {
+						const n = tracker.get(id);
+						if (!n) continue;
+
+						// Close running agent session + queue
+						if (n.session?.queue) {
+							n.session.queue.close();
+							n.session = undefined;
+						}
+
+						// Remove worktree + branch
+						if (n.worktreePath && n.branch) {
+							const slug = slugify(n.title);
+							await wm.remove(n.id, slug);
+						}
+
+						// Delete event JSONL files
+						deps.clearEventStore(n.id);
 					}
 
-					// Clean up worktree + branch if they exist
-					if (node.worktreePath && node.branch) {
-						const slug = slugify(node.title);
-						const wtRoot = join(repoPath, ".worktrees");
-						const wm = new WorktreeManager(repoPath, wtRoot);
-						await wm.remove(node.id, slug);
-					}
-
-					// Delete event JSONL files
-					deps.clearEventStore(node.id);
-
-					// Remove node from tree
+					// Remove node from tree (recursively removes descendants from Map)
 					tracker.remove(node.id);
 					await tracker.save();
 					broadcastTree();
