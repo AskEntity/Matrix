@@ -8117,9 +8117,7 @@ describe("Integration: stopTask lifecycle", () => {
 		const events = readSessionEvents(ctx, rootNodeId);
 		const yieldCalls = events.filter(
 			(e) =>
-				e.type === "tool_call" &&
-				"tool" in e &&
-				e.tool === "mcp__mxd__yield",
+				e.type === "tool_call" && "tool" in e && e.tool === "mcp__mxd__yield",
 		);
 		expect(yieldCalls.length).toBe(1);
 

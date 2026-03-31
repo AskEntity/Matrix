@@ -600,36 +600,33 @@ describe("Persistent task close modes", () => {
 		const events: Event[] = [
 			{
 				type: "session_config",
-				id: `evt-${nodeId}-1`,
-				sessionId: nodeId,
 				tools: [],
 				systemStable: "stable",
 				systemVariable: "variable",
+				taskId: nodeId,
 				ts: Date.now(),
 			},
 			{
 				type: "assistant_text",
-				id: `evt-${nodeId}-2`,
-				sessionId: nodeId,
-				text: "I will help you with this task.",
+				content: "I will help you with this task.",
+				taskId: nodeId,
 				ts: Date.now(),
 			},
 			{
 				type: "tool_call",
-				id: `evt-${nodeId}-3`,
-				sessionId: nodeId,
 				toolCallId: `tc-${nodeId}-1`,
-				toolName: "mcp__mxd__bash",
+				tool: "mcp__mxd__bash",
 				input: { command: "echo test" },
+				taskId: nodeId,
 				ts: Date.now(),
 			},
 			{
 				type: "tool_result",
-				id: `evt-${nodeId}-4`,
-				sessionId: nodeId,
 				toolCallId: `tc-${nodeId}-1`,
+				tool: "mcp__mxd__bash",
 				content: "test\n",
 				isError: false,
+				taskId: nodeId,
 				ts: Date.now(),
 			},
 		];
@@ -638,9 +635,14 @@ describe("Persistent task close modes", () => {
 
 	test("'continue' mode: close resets status to pending, JSONL preserved", async () => {
 		const rootId = tracker.rootNodeId;
-		const task = tracker.addChild(rootId, "Continue task", "runs with context", {
-			persistent: "continue",
-		});
+		const task = tracker.addChild(
+			rootId,
+			"Continue task",
+			"runs with context",
+			{
+				persistent: "continue",
+			},
+		);
 		tracker.updateStatus(task.id, "passed");
 
 		// Simulate agent generating JSONL events
@@ -665,9 +667,14 @@ describe("Persistent task close modes", () => {
 
 	test("'reset' mode: close resets status to pending, JSONL deleted", async () => {
 		const rootId = tracker.rootNodeId;
-		const task = tracker.addChild(rootId, "Reset task", "clean start each cycle", {
-			persistent: "reset",
-		});
+		const task = tracker.addChild(
+			rootId,
+			"Reset task",
+			"clean start each cycle",
+			{
+				persistent: "reset",
+			},
+		);
 		tracker.updateStatus(task.id, "passed");
 
 		// Simulate agent generating JSONL events
@@ -724,9 +731,13 @@ describe("Persistent task close modes", () => {
 		for (const t of [continueTask, resetTask, regularTask]) {
 			tracker.updateStatus(t.id, "passed");
 		}
-		simulateCloseTask(tracker.get(continueTask.id), (id) => eventStore.clear(id));
+		simulateCloseTask(tracker.get(continueTask.id), (id) =>
+			eventStore.clear(id),
+		);
 		simulateCloseTask(tracker.get(resetTask.id), (id) => eventStore.clear(id));
-		simulateCloseTask(tracker.get(regularTask.id), (id) => eventStore.clear(id));
+		simulateCloseTask(tracker.get(regularTask.id), (id) =>
+			eventStore.clear(id),
+		);
 		await tracker.save();
 
 		// Reload
@@ -760,7 +771,7 @@ describe("Persistent task close modes", () => {
 		expect(eventsAfter.length).toBe(eventsBefore.length);
 		for (let i = 0; i < eventsBefore.length; i++) {
 			expect(eventsAfter[i]!.type).toBe(eventsBefore[i]!.type);
-			expect(eventsAfter[i]!.id).toBe(eventsBefore[i]!.id);
+			expect(eventsAfter[i]!.ts).toBe(eventsBefore[i]!.ts);
 		}
 	});
 
