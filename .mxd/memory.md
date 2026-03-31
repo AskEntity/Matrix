@@ -624,3 +624,20 @@ No-op if node is not persistent.
 `cleanupTaskResources(tracker, nodeId, deps)` in task-utils.ts — single codepath for deleting a task and all its descendants. Closes agent queues, removes worktrees via `deps.removeWorktree`, clears JSONL via `deps.clearEventStore`. Both MCP `delete_task` and REST `DELETE /tasks/:nodeId` call this.
 
 `savePersistentDef(nodeId, projectPath)` on TaskTracker — writes `.mxd/tasks/<id>.json` + git auto-commit. Called by create_task, update_task (MCP), and REST PATCH. No-op if node is not persistent.
+
+
+## Persistent Task Modes (March 2026)
+
+`TaskNode.persistent: false | "reset" | "continue"` — replaces old `boolean`.
+
+- `false` (default): regular task. close = closed.
+- `"reset"`: close resets to pending + deletes session JSONL. Clean start each cycle. For quality agents.
+- `"continue"`: close resets to pending + keeps session JSONL. Resumes with context. For domain experts.
+
+Both "reset" and "continue" store definition in `.mxd/tasks/<id>.json` (git-tracked).
+
+**Migration**: `load()` converts `true` → `"reset"`, `undefined/null` → `false`. `.mxd/tasks/*.json` files don't store the persistent mode — only title/description/color.
+
+**Truthy check still works**: `if (node.persistent)` is truthy for both `"reset"` and `"continue"`, falsy for `false`. Used in save() (strip title/desc), savePersistentDef() (no-op guard), frontend (📌 icon).
+
+**REST PATCH fix**: `body.status`/`body.branch`/`body.title` now use `!== undefined` instead of truthy checks. Empty string values are now correctly applied. Also blocks `{status: "closed"}` on persistent tasks.
