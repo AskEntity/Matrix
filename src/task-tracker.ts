@@ -1,8 +1,15 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { TaskNode, TaskStatus } from "./types.ts";
 import { ulid } from "./ulid.ts";
+
+/** Shape of a persistent task definition file (.mxd/tasks/<id>.json). */
+export interface PersistentTaskDef {
+	title: string;
+	description: string;
+	color?: string;
+}
 
 /**
  * Manages the task tree for a project.
@@ -17,8 +24,9 @@ export class TaskTracker {
 
 	/** Load task tree from disk. Creates root node for fresh projects.
 	 * @param defaultBranch — branch name for root node (fresh projects, or backfill for old ones).
+	 * @param projectPath — repo root path. When provided, scans `.mxd/tasks/` for persistent task definitions.
 	 */
-	async load(defaultBranch?: string): Promise<void> {
+	async load(defaultBranch?: string, projectPath?: string): Promise<void> {
 		if (existsSync(this.treePath)) {
 			const raw = await readFile(this.treePath, "utf-8");
 			const data = JSON.parse(raw) as {
@@ -29,6 +37,7 @@ export class TaskTracker {
 				// Backfill defaults for fields that became required
 				node.costUsd ??= 0;
 				node.editedBy ??= "agent";
+				node.persistent ??= false;
 				this.nodes.set(node.id, node);
 			}
 			this._rootNodeId = data.rootNodeId;
@@ -41,17 +50,28 @@ export class TaskTracker {
 			// Fresh project — create root node
 			this.createRootNode(defaultBranch);
 		}
+
+		// Merge persistent task definitions from .mxd/tasks/
+		if (projectPath) {
+			this.mergePersistentTasks(projectPath);
+		}
 	}
 
-	/** Persist task tree to disk. Strips runtime-only `session` field. */
+	/** Persist task tree to disk. Strips runtime-only `session` field.
+	 *  For persistent nodes, title/description are NOT written (they live in .mxd/tasks/<id>.json). */
 	async save(): Promise<void> {
 		const dir = dirname(this.treePath);
 		await mkdir(dir, { recursive: true });
 		const data = {
 			rootNodeId: this._rootNodeId,
-			nodes: Array.from(this.nodes.values()).map(
-				({ session: _session, ...rest }) => rest,
-			),
+			nodes: Array.from(this.nodes.values()).map((node) => {
+				const { session: _session, title, description, ...rest } = node;
+				if (rest.persistent) {
+					// Persistent nodes: strip title/description (source of truth is .mxd/tasks/<id>.json)
+					return rest;
+				}
+				return { ...rest, title, description };
+			}),
 		};
 		await writeFile(this.treePath, JSON.stringify(data, null, "\t"), "utf-8");
 	}
@@ -72,7 +92,13 @@ export class TaskTracker {
 	addTask(
 		title: string,
 		description: string,
-		opts?: { budgetUsd?: number; draft?: boolean; editedBy?: "user" | "agent" },
+		opts?: {
+			budgetUsd?: number;
+			draft?: boolean;
+			editedBy?: "user" | "agent";
+			persistent?: boolean;
+			id?: string;
+		},
 	): TaskNode {
 		return this.createNode(title, description, null, opts);
 	}
@@ -82,7 +108,13 @@ export class TaskTracker {
 		parentId: string,
 		title: string,
 		description: string,
-		opts?: { budgetUsd?: number; draft?: boolean; editedBy?: "user" | "agent" },
+		opts?: {
+			budgetUsd?: number;
+			draft?: boolean;
+			editedBy?: "user" | "agent";
+			persistent?: boolean;
+			id?: string;
+		},
 	): TaskNode {
 		const parent = this.nodes.get(parentId);
 		if (!parent) {
@@ -311,15 +343,83 @@ export class TaskTracker {
 		node.updatedAt = new Date().toISOString();
 	}
 
+	/**
+	 * Scan `.mxd/tasks/` for persistent task definition files and merge into the tree.
+	 * - Existing persistent nodes get title/description refreshed from their json file.
+	 * - New json files (no tree entry) create a pending node under root.
+	 */
+	private mergePersistentTasks(projectPath: string): void {
+		const tasksDir = join(projectPath, ".mxd", "tasks");
+		if (!existsSync(tasksDir)) return;
+
+		let entries: string[];
+		try {
+			entries = readdirSync(tasksDir).filter((f) => f.endsWith(".json"));
+		} catch {
+			return;
+		}
+
+		for (const filename of entries) {
+			const id = filename.replace(/\.json$/, "");
+			let def: PersistentTaskDef;
+			try {
+				const raw = readFileSync(join(tasksDir, filename), "utf-8");
+				def = JSON.parse(raw) as PersistentTaskDef;
+			} catch {
+				continue; // Skip malformed files
+			}
+
+			const existing = this.nodes.get(id);
+			if (existing) {
+				// Refresh title/description from the definition file
+				existing.title = def.title;
+				existing.description = def.description;
+				if (def.color !== undefined) existing.color = def.color;
+			} else {
+				// New persistent task — create a pending node under root
+				const now = new Date().toISOString();
+				const node: TaskNode = {
+					id,
+					persistent: true,
+					title: def.title,
+					description: def.description,
+					status: "pending",
+					branch: null,
+					parentId: this._rootNodeId,
+					children: [],
+					worktreePath: null,
+					costUsd: 0,
+					editedBy: "agent",
+					...(def.color ? { color: def.color } : {}),
+					createdAt: now,
+					updatedAt: now,
+				};
+				this.nodes.set(id, node);
+				// Add to root's children
+				const root = this.nodes.get(this._rootNodeId);
+				if (root) {
+					root.children.push(id);
+				}
+			}
+		}
+	}
+
 	private createNode(
 		title: string,
 		description: string,
 		parentId: string | null,
-		opts?: { budgetUsd?: number; draft?: boolean; editedBy?: "user" | "agent" },
+		opts?: {
+			budgetUsd?: number;
+			draft?: boolean;
+			editedBy?: "user" | "agent";
+			persistent?: boolean;
+			id?: string;
+		},
 	): TaskNode {
 		const now = new Date().toISOString();
 		const node: TaskNode = {
-			id: ulid(),
+			id: opts?.id ?? ulid(),
+			persistent: opts?.persistent ?? false,
 			title,
 			description,
 			status: opts?.draft ? "draft" : "pending",

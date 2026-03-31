@@ -575,6 +575,11 @@ function TaskNodeView({
 					)}
 
 					<span className="mxd-task-title">{node.title}</span>
+					{node.persistent && (
+						<span className="mxd-task-persistent-icon" title="Persistent task">
+							📌
+						</span>
+					)}
 					{node.status === "draft" && (
 						<span className="mxd-task-draft-badge">draft</span>
 					)}

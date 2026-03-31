@@ -4369,6 +4369,315 @@ describe("Integration: tree operations", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("passed");
 	}, 20000);
+
+	test("TREE4: persistent task — create writes .mxd/tasks/<id>.json, close resets to pending", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					// Create a persistent task
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Test Mutation Agent",
+								description: "Run mutation tests periodically",
+								color: "#a371f7",
+								persistent: true,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "Test Mutation Agent",
+							capture: {
+								taskId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					// Close the persistent task — should reset to pending
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__close_task",
+							input: { taskId: "$taskId" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "pending",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "persistent task lifecycle verified",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Verify .mxd/tasks/<id>.json was created in the project dir
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId);
+		const childId = rootNode?.children?.[0];
+		expect(childId).toBeDefined();
+
+		const taskDefPath = join(
+			ctx.projectDir,
+			".mxd",
+			"tasks",
+			`${childId}.json`,
+		);
+		expect(existsSync(taskDefPath)).toBe(true);
+		const def = JSON.parse(await Bun.file(taskDefPath).text());
+		expect(def.title).toBe("Test Mutation Agent");
+		expect(def.description).toBe("Run mutation tests periodically");
+		expect(def.color).toBe("#a371f7");
+
+		// Verify the task node is persistent and reset to pending (not closed)
+		const childNode = tracker.get(childId!);
+		expect(childNode?.persistent).toBe(true);
+		expect(childNode?.status).toBe("pending");
+		expect(childNode?.title).toBe("Test Mutation Agent");
+
+		// Verify tree.json doesn't contain title/description for persistent node
+		const { readFile: readFileAsync } = await import("node:fs/promises");
+		const treePath = join(ctx.dataDir, "projects", ctx.projectId, "tree.json");
+		const treeData = JSON.parse(await readFileAsync(treePath, "utf-8"));
+		const serializedNode = treeData.nodes.find(
+			(n: { id: string }) => n.id === childId,
+		);
+		expect(serializedNode.persistent).toBe(true);
+		expect(serializedNode.title).toBeUndefined();
+		expect(serializedNode.description).toBeUndefined();
+	}, 25000);
+
+	test("TREE5: persistent task — full lifecycle: create → launch child → done → close (pending)", async () => {
+		ctx = await setupTestContext();
+
+		// Child instruction: simple done
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "persistent child done" },
+				},
+			],
+		});
+
+		// Parent: create persistent task → send_message → yield → close_task → done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Persistent Runner",
+								description: "A persistent task that runs periodically",
+								persistent: true,
+								color: "purple",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "Persistent Runner",
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Run it",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__close_task",
+							input: { taskId: "$childId" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "pending",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "persistent task lifecycle complete",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx, 45000);
+		expect(status).toBe("passed");
+
+		// Verify the persistent child
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId)!;
+		const childId = rootNode.children[0]!;
+		const childNode = tracker.get(childId)!;
+
+		// Status is pending (not closed) because it's persistent
+		expect(childNode.status).toBe("pending");
+		expect(childNode.persistent).toBe(true);
+		expect(childNode.title).toBe("Persistent Runner");
+
+		// Worktree and branch cleaned up
+		expect(childNode.worktreePath).toBeNull();
+		expect(childNode.branch).toBeNull();
+
+		// .mxd/tasks/<id>.json exists in repo
+		const taskDefPath = join(
+			ctx.projectDir,
+			".mxd",
+			"tasks",
+			`${childId}.json`,
+		);
+		expect(existsSync(taskDefPath)).toBe(true);
+
+		// tree.json doesn't have title/description for the persistent node
+		const { readFile: readFileAsync } = await import("node:fs/promises");
+		const treePath = join(ctx.dataDir, "projects", ctx.projectId, "tree.json");
+		const treeData = JSON.parse(await readFileAsync(treePath, "utf-8"));
+		const serialized = treeData.nodes.find(
+			(n: { id: string }) => n.id === childId,
+		);
+		expect(serialized.persistent).toBe(true);
+		expect(serialized.title).toBeUndefined();
+		expect(serialized.description).toBeUndefined();
+	}, 60000);
+
+	test("TREE6: persistent task definition survives daemon restart", async () => {
+		ctx = await setupTestContext();
+
+		// Manually create a persistent task definition file
+		const { mkdir: mkdirAsync, writeFile: writeFileAsync } = await import(
+			"node:fs/promises"
+		);
+		const tasksDir = join(ctx.projectDir, ".mxd", "tasks");
+		await mkdirAsync(tasksDir, { recursive: true });
+		const persistentId = "01AAABBBCCCDDDEEEFF";
+		await writeFileAsync(
+			join(tasksDir, `${persistentId}.json`),
+			JSON.stringify({
+				title: "Quality Gate",
+				description: "Run quality checks before merge",
+			}),
+		);
+
+		// Git commit so it survives
+		Bun.spawnSync(["git", "add", ".mxd/tasks/"], { cwd: ctx.projectDir });
+		Bun.spawnSync(["git", "commit", "-m", "add persistent task def"], {
+			cwd: ctx.projectDir,
+		});
+
+		// Force re-create app to pick up the new persistent task file
+		ctx.app = (
+			await (async () => {
+				await ctx.app.shutdown();
+				await new Promise((r) => setTimeout(r, 50));
+				const provider = createMockedProviderWithMock(ctx.mockAPI);
+				const appResult = createApp({
+					dataDir: ctx.dataDir,
+					agentProvider: provider,
+				});
+				await appResult.pm.load();
+				appResult.markReady();
+				return { app: appResult };
+			})()
+		).app;
+
+		const tracker2 = await ctx.app.getTracker(ctx.projectId);
+		const node = tracker2.get(persistentId);
+		expect(node).toBeDefined();
+		expect(node!.persistent).toBe(true);
+		expect(node!.title).toBe("Quality Gate");
+		expect(node!.description).toBe("Run quality checks before merge");
+		expect(node!.status).toBe("pending");
+		expect(node!.parentId).toBe(tracker2.rootNodeId);
+	}, 15000);
 });
 
 // ── File operation tests ──

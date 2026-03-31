@@ -30,6 +30,13 @@ export interface TaskSession {
 /** A node in the task tree. Each node maps 1:1 to an agent and a git branch. */
 export interface TaskNode {
 	id: string;
+	/**
+	 * Whether this task is persistent. Default false.
+	 * - Persistent tasks: title/description stored in `.mxd/tasks/<id>.json` (git-tracked),
+	 *   NOT in tree.json. close_task resets to "pending" instead of "closed".
+	 * - Regular tasks: title/description stored in tree.json.
+	 */
+	persistent: boolean;
 	title: string;
 	description: string;
 	status: TaskStatus;
@@ -54,6 +61,27 @@ export interface TaskNode {
 	 */
 	session?: TaskSession;
 }
+
+/**
+ * Serialized form of a persistent task node in tree.json.
+ * Title/description are omitted — they live in `.mxd/tasks/<id>.json`.
+ */
+export type SerializedPersistentNode = Omit<
+	Omit<TaskNode, "title" | "description" | "session">,
+	"persistent"
+> & { persistent: true };
+
+/**
+ * Serialized form of a regular task node in tree.json.
+ */
+export type SerializedRegularNode = Omit<TaskNode, "session" | "persistent"> & {
+	persistent: false;
+};
+
+/** Discriminated union for tree.json serialization. */
+export type SerializedTaskNode =
+	| SerializedRegularNode
+	| SerializedPersistentNode;
 
 /**
  * Why the provider loop exited.
