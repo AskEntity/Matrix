@@ -7401,6 +7401,196 @@ describe("Integration: child restart scenarios", () => {
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
 		expect(tracker2.get(childId)?.status).toBe("passed");
 	}, 60000);
+
+	test("CHILD_RESTART3: Parent yielding + daemon restart + child completes multi-step work + parent receives task_complete", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Child: 3-turn workflow
+		// Turn 1: bash echo (will be interrupted by crash)
+		// Turn 2 (after restart): second bash producing output
+		// Turn 3: done(passed) with summary referencing earlier work
+		const childInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Starting multi-step work." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Resumed, doing real work now." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "echo STEP_TWO_COMPLETE" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "STEP_TWO_COMPLETE",
+							isError: false,
+						},
+					],
+					blocks: [
+						{ type: "text", text: "All steps done." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "completed multi-step after restart",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		// Parent: create → send → yield → (wake from task_complete) → done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Multi-Step Child",
+								description: "Child doing multi-step work across restart",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Begin work",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// After restart, parent wakes from yield with task_complete
+					blocks: [
+						{ type: "text", text: "Child completed after restart." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "parent received task_complete post-restart",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for child to start its bash (parent 3 API calls + child 1 = 4)
+		const start = Date.now();
+		while (Date.now() - start < 15000) {
+			if (ctx.mockAPI.getRequestCount() >= 4) break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(4);
+		await new Promise((r) => setTimeout(r, 300));
+
+		// Capture child ID and pre-restart state
+		const tracker1 = await ctx.app.getTracker(ctx.projectId);
+		const rootNode1 = tracker1.get(tracker1.rootNodeId);
+		const childId = rootNode1!.children![0]!;
+		expect(tracker1.get(childId)?.status).toBe("in_progress");
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+
+		// === CRASH ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// autoResumeProjects should:
+		// - Parent: yielding → bypass to queue.wait (no API call)
+		// - Child: interrupted → resume message + runChildAgentInBackground
+		// Child resumes → orphan bash result → turn 2 (echo) → turn 3 (done)
+		// done() delivers task_complete to parent
+		// Parent wakes from yield → turn 4 (done)
+
+		const status = await waitForDone(ctx, 30000);
+		expect(status).toBe("passed");
+
+		// Verify child completed successfully
+		const tracker2 = await ctx.app.getTracker(ctx.projectId);
+		const childNode = tracker2.get(childId);
+		expect(childNode?.status).toBe("passed");
+
+		// Verify post-restart API calls happened (child 2 turns + parent 1 turn = at least 3 more)
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+
+		// Verify child JSONL has all 3 bash calls (1 interrupted + 1 real + done)
+		const childEvents = readSessionEvents(ctx, childId);
+		const childBashCalls = childEvents.filter(
+			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__bash",
+		);
+		expect(childBashCalls.length).toBe(2);
+
+		const childDoneCalls = childEvents.filter(
+			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__done",
+		);
+		expect(childDoneCalls.length).toBe(1);
+
+		// Verify parent JSONL has yield and done
+		const rootNodeId = tracker2.rootNodeId;
+		const parentEvents = readSessionEvents(ctx, rootNodeId);
+		const parentYieldCalls = parentEvents.filter(
+			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__yield",
+		);
+		expect(parentYieldCalls.length).toBe(1);
+
+		const parentDoneCalls = parentEvents.filter(
+			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__done",
+		);
+		expect(parentDoneCalls.length).toBe(1);
+	}, 60000);
 });
 
 // ── Triple restart test ──
