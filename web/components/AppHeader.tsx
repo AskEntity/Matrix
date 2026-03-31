@@ -172,7 +172,7 @@ export const AppHeader = memo(function AppHeader({
 					<>
 						{projects.length > 0 && (
 							<select
-								className="mxd-select"
+								className="mxd-select mxd-project-select"
 								value={projectId}
 								onChange={(e) => onProjectChange(e.target.value)}
 							>
