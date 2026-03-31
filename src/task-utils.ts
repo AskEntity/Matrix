@@ -184,3 +184,43 @@ export function findParentQueue(
 
 	return undefined;
 }
+
+/**
+ * Clean up all resources for a task and its descendants:
+ * close agent queues, remove worktrees/branches, clear JSONL event stores.
+ * Both MCP delete_task and REST DELETE call this — single codepath.
+ */
+export async function cleanupTaskResources(
+	tracker: TaskTracker,
+	nodeId: string,
+	deps: {
+		removeWorktree: (taskId: string, slug: string) => Promise<void>;
+		clearEventStore: (nodeId: string) => void;
+	},
+): Promise<void> {
+	const descendantIds = getDescendantIds(tracker, nodeId);
+	const allIds = [nodeId, ...descendantIds];
+
+	for (const id of allIds) {
+		const n = tracker.get(id);
+		if (!n) continue;
+
+		// Close running agent session + queue
+		if (n.session?.queue) {
+			n.session.queue.close();
+			n.session = undefined;
+		}
+
+		// Remove worktree + branch
+		if (n.worktreePath && n.branch) {
+			try {
+				await deps.removeWorktree(n.id, slugify(n.title));
+			} catch {
+				/* worktree may already be gone */
+			}
+		}
+
+		// Delete event JSONL files
+		deps.clearEventStore(n.id);
+	}
+}

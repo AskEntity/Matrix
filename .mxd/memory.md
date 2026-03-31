@@ -622,3 +622,10 @@ No-op if node is not persistent.
 **Also fixed**: MCP `delete_task` was not cleaning up descendant worktrees/JSONL (only cleaned the target node). REST DELETE did this correctly. Now both iterate all descendants.
 
 **Anti-pattern caught**: REST and MCP having independent implementations of the same operation. Always centralize in TaskTracker or a shared helper.
+
+
+## cleanupTaskResources (March 2026)
+
+`cleanupTaskResources(tracker, nodeId, deps)` in task-utils.ts — single codepath for deleting a task and all its descendants. Closes agent queues, removes worktrees via `deps.removeWorktree`, clears JSONL via `deps.clearEventStore`. Both MCP `delete_task` and REST `DELETE /tasks/:nodeId` call this.
+
+`savePersistentDef(nodeId, projectPath)` on TaskTracker — writes `.mxd/tasks/<id>.json` + git auto-commit. Called by create_task, update_task (MCP), and REST PATCH. No-op if node is not persistent.
