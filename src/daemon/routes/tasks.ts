@@ -8,7 +8,11 @@ import {
 	createUserMessageForwarded,
 } from "../../queue-message-factory.ts";
 import type { SystemPrompt } from "../../system-prompts.ts";
-import { buildTaskPrompt, slugify } from "../../task-utils.ts";
+import {
+	buildTaskPrompt,
+	cleanupTaskResources,
+	slugify,
+} from "../../task-utils.ts";
 import type { TaskStatus } from "../../types.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
@@ -19,7 +23,6 @@ import {
 import type { DaemonContext } from "../context.ts";
 import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
 import {
-	collectDescendants,
 	getEventStore,
 	getTracker,
 	readProjectMemory,
@@ -418,30 +421,13 @@ export function registerTaskRoutes(
 		}
 
 		// Clean up all resources for this node and all descendants
-		const nodesToRemove = collectDescendants(tracker, nodeId);
 		const eventStore = getEventStore(ctx, project.id);
 		const wtRoot = join(project.path, ".worktrees");
 		const wm = new WorktreeManager(project.path, wtRoot);
-
-		for (const n of nodesToRemove) {
-			// Close running agent session + queue
-			if (n.session?.queue) {
-				n.session.queue.close();
-				n.session = undefined;
-			}
-
-			// Remove worktree + branch
-			if (n.worktreePath && n.branch) {
-				try {
-					await wm.remove(n.id, slugify(n.title));
-				} catch {
-					/* worktree may already be gone */
-				}
-			}
-
-			// Delete event JSONL files
-			eventStore.clear(n.id);
-		}
+		await cleanupTaskResources(tracker, nodeId, {
+			removeWorktree: (id, slug) => wm.remove(id, slug),
+			clearEventStore: (id) => eventStore.clear(id),
+		});
 
 		tracker.remove(nodeId);
 		await tracker.save();

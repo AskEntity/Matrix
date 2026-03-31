@@ -23,6 +23,7 @@ import type { PendingState } from "./shared-types.ts";
 import type { TaskTracker } from "./task-tracker.ts";
 import {
 	buildTaskPrompt,
+	cleanupTaskResources,
 	findParentQueue,
 	formatQueueMessage,
 	getDescendantIds,
@@ -1160,31 +1161,12 @@ export function createOrchestratorTools(
 				}
 
 				try {
-					// Clean up all resources for this node and all descendants
-					const descendantIds = getDescendantIds(tracker, args.taskId);
-					const allIds = [args.taskId, ...descendantIds];
 					const wtRoot = join(repoPath, ".worktrees");
 					const wm = new WorktreeManager(repoPath, wtRoot);
-
-					for (const id of allIds) {
-						const n = tracker.get(id);
-						if (!n) continue;
-
-						// Close running agent session + queue
-						if (n.session?.queue) {
-							n.session.queue.close();
-							n.session = undefined;
-						}
-
-						// Remove worktree + branch
-						if (n.worktreePath && n.branch) {
-							const slug = slugify(n.title);
-							await wm.remove(n.id, slug);
-						}
-
-						// Delete event JSONL files
-						deps.clearEventStore(n.id);
-					}
+					await cleanupTaskResources(tracker, args.taskId, {
+						removeWorktree: (id, slug) => wm.remove(id, slug),
+						clearEventStore: deps.clearEventStore,
+					});
 
 					// Remove node from tree (recursively removes descendants from Map)
 					tracker.remove(node.id);
