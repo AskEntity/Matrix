@@ -641,3 +641,13 @@ Both "reset" and "continue" store definition in `.mxd/tasks/<id>.json` (git-trac
 **Truthy check still works**: `if (node.persistent)` is truthy for both `"reset"` and `"continue"`, falsy for `false`. Used in save() (strip title/desc), savePersistentDef() (no-op guard), frontend (📌 icon).
 
 **REST PATCH fix**: `body.status`/`body.branch`/`body.title` now use `!== undefined` instead of truthy checks. Empty string values are now correctly applied. Also blocks `{status: "closed"}` on persistent tasks.
+
+
+## Tool Display Unification (March 2026)
+
+`getToolTitle()` in `src/event-display.ts` is THE single tool title function. Accepts `ToolTitleOptions { emoji?: boolean }` — pass `{ emoji: true }` for UI contexts that want visual prefixes (⌕, ✎, →, ⏸, etc.).
+
+`web/components/tools/utils.ts` re-exports `getToolTitle`, `isTitleOnly`, `summarizeToolResult`, `getArg`, `basename`, `formatToolArgs` from event-display.ts. Only unique web-specific functions remain: `getEntryText`, `getToolName`, `formatArgs`, `bashBgExcludeKeys`.
+
+`src/tools/executor.ts` deleted — was old tool dispatch path. `resolvePath()` moved to `definitions.ts`. Tests use a local `executeTool` wrapper around `createBuiltinTools()`.
+
