@@ -4385,7 +4385,7 @@ describe("Integration: tree operations", () => {
 								title: "Test Mutation Agent",
 								description: "Run mutation tests periodically",
 								color: "#a371f7",
-								persistent: true,
+								persistent: "reset",
 							},
 						},
 					],
@@ -4460,18 +4460,18 @@ describe("Integration: tree operations", () => {
 
 		// Verify the task node is persistent and reset to pending (not closed)
 		const childNode = tracker.get(childId!);
-		expect(childNode?.persistent).toBe(true);
+		expect(childNode?.persistent).toBe("reset");
 		expect(childNode?.status).toBe("pending");
 		expect(childNode?.title).toBe("Test Mutation Agent");
 
-		// Verify tree.json doesn't contain title/description for persistent node
+		// Verify tree.json doesn't contain title/description for persistent node (TREE4)
 		const { readFile: readFileAsync } = await import("node:fs/promises");
 		const treePath = join(ctx.dataDir, "projects", ctx.projectId, "tree.json");
 		const treeData = JSON.parse(await readFileAsync(treePath, "utf-8"));
 		const serializedNode = treeData.nodes.find(
 			(n: { id: string }) => n.id === childId,
 		);
-		expect(serializedNode.persistent).toBe(true);
+		expect(serializedNode.persistent).toBe("reset");
 		expect(serializedNode.title).toBeUndefined();
 		expect(serializedNode.description).toBeUndefined();
 	}, 25000);
@@ -4501,7 +4501,7 @@ describe("Integration: tree operations", () => {
 							input: {
 								title: "Persistent Runner",
 								description: "A persistent task that runs periodically",
-								persistent: true,
+								persistent: "reset",
 								color: "purple",
 							},
 						},
@@ -4601,7 +4601,7 @@ describe("Integration: tree operations", () => {
 
 		// Status is pending (not closed) because it's persistent
 		expect(childNode.status).toBe("pending");
-		expect(childNode.persistent).toBe(true);
+		expect(childNode.persistent).toBe("reset");
 		expect(childNode.title).toBe("Persistent Runner");
 
 		// Worktree and branch cleaned up
@@ -4624,7 +4624,7 @@ describe("Integration: tree operations", () => {
 		const serialized = treeData.nodes.find(
 			(n: { id: string }) => n.id === childId,
 		);
-		expect(serialized.persistent).toBe(true);
+		expect(serialized.persistent).toBe("reset");
 		expect(serialized.title).toBeUndefined();
 		expect(serialized.description).toBeUndefined();
 	}, 60000);
@@ -4672,7 +4672,7 @@ describe("Integration: tree operations", () => {
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
 		const node = tracker2.get(persistentId);
 		expect(node).toBeDefined();
-		expect(node!.persistent).toBe(true);
+		expect(node!.persistent).toBe("reset");
 		expect(node!.title).toBe("Quality Gate");
 		expect(node!.description).toBe("Run quality checks before merge");
 		expect(node!.status).toBe("pending");
@@ -4693,7 +4693,7 @@ describe("Integration: tree operations", () => {
 							input: {
 								title: "Original Title",
 								description: "Original description",
-								persistent: true,
+								persistent: "reset",
 							},
 						},
 					],
@@ -4753,7 +4753,7 @@ describe("Integration: tree operations", () => {
 
 		// Verify in-memory state has the updated values
 		const childNode = tracker.get(childId)!;
-		expect(childNode.persistent).toBe(true);
+		expect(childNode.persistent).toBe("reset");
 		expect(childNode.title).toBe("Updated Title");
 		expect(childNode.description).toBe("Updated description after change");
 
@@ -4773,7 +4773,7 @@ describe("Integration: tree operations", () => {
 		// After restart, load should read from .mxd/tasks/<id>.json
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
 		const nodeAfterRestart = tracker2.get(childId)!;
-		expect(nodeAfterRestart.persistent).toBe(true);
+		expect(nodeAfterRestart.persistent).toBe("reset");
 		expect(nodeAfterRestart.title).toBe("Updated Title");
 		expect(nodeAfterRestart.description).toBe(
 			"Updated description after change",
