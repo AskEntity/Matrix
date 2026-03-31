@@ -429,6 +429,20 @@ export function useAgent(projectId: string) {
 		[projectId],
 	);
 
+	const stopTask = useCallback(
+		async (taskId: string) => {
+			const res = await authFetch(api.taskStop(projectId, taskId), {
+				method: "POST",
+			});
+			if (!res.ok) {
+				// 404 means agent already stopped — not an error
+				if (res.status === 404) return;
+				throw new Error((await res.json()).error);
+			}
+		},
+		[projectId],
+	);
+
 	const clearTaskSession = useCallback(
 		async (taskId: string) => {
 			const res = await authFetch(api.taskSessionsClear(projectId, taskId), {
@@ -502,6 +516,7 @@ export function useAgent(projectId: string) {
 		checkStatus,
 		continueTask,
 		deleteTask,
+		stopTask,
 		clearTaskSession,
 		sendMessageToTask,
 		reorderTasks,

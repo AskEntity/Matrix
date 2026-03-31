@@ -46,14 +46,14 @@ export const TaskDetail = memo(function TaskDetail({
 	projectId,
 	isActive,
 	onDelete,
-	onPause,
+	onStop,
 	onClearSession,
 }: {
 	node: TaskNode;
 	projectId: string;
 	isActive?: boolean;
 	onDelete: () => void;
-	onPause?: () => void;
+	onStop?: () => void;
 	onClearSession?: () => void;
 }) {
 	const { t } = useLocale();
@@ -298,14 +298,14 @@ export const TaskDetail = memo(function TaskDetail({
 			</div>
 
 			<div className="mxd-detail-actions">
-				{isRunning && onPause && (
+				{isRunning && onStop && (
 					<button
 						type="button"
 						className="mxd-btn mxd-btn-warning mxd-btn-sm"
-						onClick={onPause}
+						onClick={onStop}
 					>
 						<IconPause size={12} />
-						{t("detail.pause")}
+						{t("detail.stop")}
 					</button>
 				)}
 				{!isRunning &&

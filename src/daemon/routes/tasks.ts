@@ -15,6 +15,7 @@ import {
 	deliverMessage,
 	handleInjectMessage,
 	runChildAgentInBackground,
+	stopTask,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
 import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
@@ -586,6 +587,25 @@ export function registerTaskRoutes(
 		);
 
 		return c.json({ ok: true, taskId: nodeId });
+	});
+
+	// Stop a running agent for a specific task
+	app.post("/projects/:id/tasks/:nodeId/stop", async (c) => {
+		const project = ctx.pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const nodeId = c.req.param("nodeId");
+		const tracker = await getTracker(ctx, project.id);
+		const node = tracker.get(nodeId);
+		if (!node) {
+			return c.json({ error: "Task not found" }, 404);
+		}
+		const stopped = await stopTask(ctx, project.id, nodeId);
+		if (!stopped) {
+			return c.json({ error: "No running agent for this task" }, 404);
+		}
+		return c.json({ ok: true });
 	});
 
 	// Clear session (JSONL events) for a single task

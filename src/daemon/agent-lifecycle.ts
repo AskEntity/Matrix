@@ -441,6 +441,53 @@ export async function stopAgent(
 }
 
 /**
+ * Stop a single task's agent. Closes its queue, cleans up session state,
+ * and writes orphaned tool results. Unlike stopAgent() which stops the entire
+ * project (root + all children), this only stops the specified task.
+ *
+ * The task stays in_progress — it was interrupted, not failed.
+ * Can be resumed by sending a new message.
+ */
+export async function stopTask(
+	ctx: DaemonContext,
+	projectId: string,
+	nodeId: string,
+): Promise<boolean> {
+	const tracker = ctx.trackers.get(projectId);
+	if (!tracker) return false;
+
+	const node = tracker.get(nodeId);
+	if (!node) return false;
+
+	const queue = node.session?.queue;
+	if (!queue && !node.session) return false;
+
+	// Close queue and clean up session
+	if (node.session) {
+		cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
+		node.session = undefined;
+	}
+	if (queue) {
+		queue.close();
+	}
+
+	await tracker.save();
+	broadcastTreeUpdate(ctx, projectId, tracker);
+
+	// Write orphaned tool results so resume doesn't hit API 400
+	const eventStore = getEventStore(ctx, projectId);
+	await writeOrphanedToolResults(eventStore, nodeId);
+
+	emitEvent(ctx, projectId, {
+		type: "agent_stopped",
+		taskId: nodeId,
+		ts: Date.now(),
+	});
+
+	return true;
+}
+
+/**
  * Unified message delivery: try direct queue delivery, persist + launch if no running agent.
  *
  * This is the SINGLE path for delivering a message to any task (child or root).

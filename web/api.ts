@@ -56,6 +56,7 @@ export const api = {
 	taskContinue: (id: string, nodeId: string) => taskUrl(id, nodeId, "continue"),
 	taskMessage: (id: string, nodeId: string) => taskUrl(id, nodeId, "message"),
 	taskEvents: (id: string, nodeId: string) => taskUrl(id, nodeId, "events"),
+	taskStop: (id: string, nodeId: string) => taskUrl(id, nodeId, "stop"),
 	taskSessionsClear: (id: string, nodeId: string) =>
 		taskUrl(id, nodeId, "sessions", "clear"),
 	taskFork: (id: string, nodeId: string) => taskUrl(id, nodeId, "fork"),
