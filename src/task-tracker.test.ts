@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { EventStore } from "./event-store.ts";
+import type { Event } from "./events.ts";
 import { TaskTracker } from "./task-tracker.ts";
 
 describe("TaskTracker", () => {
@@ -547,5 +549,278 @@ describe("TaskTracker", () => {
 
 		// Duplicates
 		expect(() => tracker.reorderChildren(parent.id, [c1.id, c1.id])).toThrow();
+	});
+});
+
+describe("Persistent task close modes", () => {
+	let tempDir: string;
+	let tracker: TaskTracker;
+	let sessionsDir: string;
+	let eventStore: EventStore;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-persistent-"));
+		tracker = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker.load();
+		sessionsDir = join(tempDir, "sessions");
+		eventStore = new EventStore(sessionsDir);
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+	});
+
+	/**
+	 * Simulate what close_task MCP tool does:
+	 * - Persistent "reset": clear JSONL, set status to pending
+	 * - Persistent "continue": keep JSONL, set status to pending
+	 * - Regular: set status to closed
+	 */
+	function simulateCloseTask(
+		node: ReturnType<typeof tracker.get>,
+		clearEventStoreFn: (id: string) => void,
+	) {
+		if (!node) throw new Error("Node not found");
+		// Simulate worktree removal
+		node.worktreePath = null;
+		node.branch = null;
+
+		if (node.persistent) {
+			if (node.persistent === "reset") {
+				clearEventStoreFn(node.id);
+			}
+			// "continue" mode keeps JSONL
+			tracker.updateStatus(node.id, "pending");
+		} else {
+			tracker.updateStatus(node.id, "closed");
+		}
+	}
+
+	function writeTestEvents(nodeId: string) {
+		const events: Event[] = [
+			{
+				type: "session_config",
+				tools: [],
+				systemStable: "stable",
+				systemVariable: "variable",
+				taskId: nodeId,
+				ts: Date.now(),
+			},
+			{
+				type: "assistant_text",
+				content: "I will help you with this task.",
+				taskId: nodeId,
+				ts: Date.now(),
+			},
+			{
+				type: "tool_call",
+				toolCallId: `tc-${nodeId}-1`,
+				tool: "mcp__mxd__bash",
+				input: { command: "echo test" },
+				taskId: nodeId,
+				ts: Date.now(),
+			},
+			{
+				type: "tool_result",
+				toolCallId: `tc-${nodeId}-1`,
+				tool: "mcp__mxd__bash",
+				content: "test\n",
+				isError: false,
+				taskId: nodeId,
+				ts: Date.now(),
+			},
+		];
+		eventStore.appendBatch(nodeId, events);
+	}
+
+	test("'continue' mode: close resets status to pending, JSONL preserved", async () => {
+		const rootId = tracker.rootNodeId;
+		const task = tracker.addChild(
+			rootId,
+			"Continue task",
+			"runs with context",
+			{
+				persistent: "continue",
+			},
+		);
+		tracker.updateStatus(task.id, "passed");
+
+		// Simulate agent generating JSONL events
+		writeTestEvents(task.id);
+		await eventStore.flush();
+		expect(eventStore.has(task.id)).toBe(true);
+		const eventsBefore = eventStore.read(task.id);
+		expect(eventsBefore.length).toBe(4);
+
+		// Close the task
+		simulateCloseTask(tracker.get(task.id), (id) => eventStore.clear(id));
+		await tracker.save();
+
+		// Status should be pending, NOT closed
+		expect(tracker.get(task.id)!.status).toBe("pending");
+
+		// JSONL should be preserved
+		expect(eventStore.has(task.id)).toBe(true);
+		const eventsAfter = eventStore.read(task.id);
+		expect(eventsAfter.length).toBe(4);
+	});
+
+	test("'reset' mode: close resets status to pending, JSONL deleted", async () => {
+		const rootId = tracker.rootNodeId;
+		const task = tracker.addChild(
+			rootId,
+			"Reset task",
+			"clean start each cycle",
+			{
+				persistent: "reset",
+			},
+		);
+		tracker.updateStatus(task.id, "passed");
+
+		// Simulate agent generating JSONL events
+		writeTestEvents(task.id);
+		await eventStore.flush();
+		expect(eventStore.has(task.id)).toBe(true);
+
+		// Close the task
+		simulateCloseTask(tracker.get(task.id), (id) => eventStore.clear(id));
+		await tracker.save();
+
+		// Status should be pending, NOT closed
+		expect(tracker.get(task.id)!.status).toBe("pending");
+
+		// JSONL should be deleted
+		expect(eventStore.has(task.id)).toBe(false);
+	});
+
+	test("regular task: close sets status to closed", async () => {
+		const rootId = tracker.rootNodeId;
+		const task = tracker.addChild(rootId, "Regular task", "one-off work");
+		tracker.updateStatus(task.id, "passed");
+
+		writeTestEvents(task.id);
+		await eventStore.flush();
+		expect(eventStore.has(task.id)).toBe(true);
+
+		simulateCloseTask(tracker.get(task.id), (id) => eventStore.clear(id));
+		await tracker.save();
+
+		// Regular task goes to "closed", NOT pending
+		expect(tracker.get(task.id)!.status).toBe("closed");
+
+		// JSONL is NOT cleared by close for regular tasks
+		expect(eventStore.has(task.id)).toBe(true);
+	});
+
+	test("persistent status survives save/load cycle", async () => {
+		const rootId = tracker.rootNodeId;
+		const continueTask = tracker.addChild(rootId, "C", "desc", {
+			persistent: "continue",
+		});
+		const resetTask = tracker.addChild(rootId, "R", "desc", {
+			persistent: "reset",
+		});
+		const regularTask = tracker.addChild(rootId, "Reg", "desc");
+
+		// All start as pending
+		expect(continueTask.status).toBe("pending");
+		expect(resetTask.status).toBe("pending");
+		expect(regularTask.status).toBe("pending");
+
+		// Mark as passed, then close
+		for (const t of [continueTask, resetTask, regularTask]) {
+			tracker.updateStatus(t.id, "passed");
+		}
+		simulateCloseTask(tracker.get(continueTask.id), (id) =>
+			eventStore.clear(id),
+		);
+		simulateCloseTask(tracker.get(resetTask.id), (id) => eventStore.clear(id));
+		simulateCloseTask(tracker.get(regularTask.id), (id) =>
+			eventStore.clear(id),
+		);
+		await tracker.save();
+
+		// Reload
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+
+		expect(tracker2.get(continueTask.id)!.status).toBe("pending");
+		expect(tracker2.get(continueTask.id)!.persistent).toBe("continue");
+		expect(tracker2.get(resetTask.id)!.status).toBe("pending");
+		expect(tracker2.get(resetTask.id)!.persistent).toBe("reset");
+		expect(tracker2.get(regularTask.id)!.status).toBe("closed");
+		expect(tracker2.get(regularTask.id)!.persistent).toBe(false);
+	});
+
+	test("'continue' mode: JSONL content is identical after close", async () => {
+		const rootId = tracker.rootNodeId;
+		const task = tracker.addChild(rootId, "Continue verify", "desc", {
+			persistent: "continue",
+		});
+		tracker.updateStatus(task.id, "passed");
+
+		writeTestEvents(task.id);
+		await eventStore.flush();
+		const eventsBefore = eventStore.read(task.id);
+
+		simulateCloseTask(tracker.get(task.id), (id) => eventStore.clear(id));
+
+		const eventsAfter = eventStore.read(task.id);
+
+		// Events must be exactly the same — not just count, but content
+		expect(eventsAfter.length).toBe(eventsBefore.length);
+		for (let i = 0; i < eventsBefore.length; i++) {
+			expect(eventsAfter[i]!.type).toBe(eventsBefore[i]!.type);
+			expect(eventsAfter[i]!.ts).toBe(eventsBefore[i]!.ts);
+		}
+	});
+
+	test("closing then reopening: 'continue' mode resumes from JSONL", async () => {
+		const rootId = tracker.rootNodeId;
+		const task = tracker.addChild(rootId, "Resume test", "desc", {
+			persistent: "continue",
+		});
+
+		// Simulate first run
+		tracker.updateStatus(task.id, "in_progress");
+		writeTestEvents(task.id);
+		await eventStore.flush();
+
+		// Pass and close
+		tracker.updateStatus(task.id, "passed");
+		simulateCloseTask(tracker.get(task.id), (id) => eventStore.clear(id));
+		expect(tracker.get(task.id)!.status).toBe("pending");
+
+		// "Reopen" — set back to in_progress
+		tracker.updateStatus(task.id, "in_progress");
+
+		// JSONL is still there — agent can resume from existing context
+		expect(eventStore.has(task.id)).toBe(true);
+		const events = eventStore.read(task.id);
+		expect(events.length).toBe(4);
+		expect(events[0]!.type).toBe("session_config");
+	});
+
+	test("closing then reopening: 'reset' mode starts fresh", async () => {
+		const rootId = tracker.rootNodeId;
+		const task = tracker.addChild(rootId, "Fresh start test", "desc", {
+			persistent: "reset",
+		});
+
+		// Simulate first run
+		tracker.updateStatus(task.id, "in_progress");
+		writeTestEvents(task.id);
+		await eventStore.flush();
+
+		// Pass and close
+		tracker.updateStatus(task.id, "passed");
+		simulateCloseTask(tracker.get(task.id), (id) => eventStore.clear(id));
+		expect(tracker.get(task.id)!.status).toBe("pending");
+
+		// "Reopen" — set back to in_progress
+		tracker.updateStatus(task.id, "in_progress");
+
+		// JSONL is gone — agent starts fresh
+		expect(eventStore.has(task.id)).toBe(false);
 	});
 });

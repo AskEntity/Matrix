@@ -641,3 +641,13 @@ Both "reset" and "continue" store definition in `.mxd/tasks/<id>.json` (git-trac
 **Truthy check still works**: `if (node.persistent)` is truthy for both `"reset"` and `"continue"`, falsy for `false`. Used in save() (strip title/desc), savePersistentDef() (no-op guard), frontend (📌 icon).
 
 **REST PATCH fix**: `body.status`/`body.branch`/`body.title` now use `!== undefined` instead of truthy checks. Empty string values are now correctly applied. Also blocks `{status: "closed"}` on persistent tasks.
+
+
+## Event Type Field Names (test gotcha)
+
+Event union type field names differ from what you might expect:
+- `tool_call` event: field is `tool` (not `toolName`)
+- `assistant_text` event: field is `content` (not `text`)
+- Events have `taskId` (not `sessionId`)
+- Most Event variants do NOT have an `id` field — only `MessageEvent` has `id`
+- When writing test events for EventStore, use the exact Event type fields
