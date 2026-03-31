@@ -309,17 +309,9 @@ Two indicators of test quality — applies to ALL code, not just Matrix:
 
 **System prompt boundary**: The system prompt is used by ALL projects, not just Matrix. Test quality principles in the system prompt must be general software engineering advice. Matrix-specific details (mock DSL, JSONL, EventStore, specific file paths) belong in memory.md only.
 
-## Mutation Testing Results (March 2025)
-
-15 mutations tested. 11 caught, 3 gaps fixed, 1 production bug found.
-
-**Gaps fixed**: M1 (yield no-op content assert), M2 (done+bash request count), M12 (Restart M for bg orphan cleanup).
-
-**Production bug found**: Synthetic bg_complete with `id: ""` → converter materializes as immediate user message → consecutive user messages → API 400 on resume. Fix needed: bg_complete should have proper ULID and follow two-phase message lifecycle.
-
 ## Synthetic Event IDs
 
-All synthetic events written to JSONL must have proper ULID ids (never `id: ""`). Falsy id causes the event converter to materialize the event as an immediate user message instead of following the two-phase lifecycle. This applies to `findOrphanedBackgroundProcesses` and any future code that generates synthetic message events.
+All synthetic events written to JSONL must have proper ULID ids (never `id: ""`). Falsy id causes the event converter to materialize the event as an immediate user message instead of following the two-phase lifecycle.
 
 
 ## Outer API Retry (provider-shared.ts)
