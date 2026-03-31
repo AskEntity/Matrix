@@ -1,0 +1,6 @@
+{
+	"title": "Test: non-persistent task semantics",
+	"description": "Temporary verification task to confirm MCP create_task with persistent=false creates a regular non-persistent task.",
+	"persistent": "false",
+	"color": "#768390"
+}
