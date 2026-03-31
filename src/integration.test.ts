@@ -7951,3 +7951,205 @@ describe("Default branch", () => {
 		}
 	});
 });
+
+// ── stopTask integration tests ──
+
+describe("Integration: stopTask lifecycle", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("stopTask during bash: stop → orphan cleanup → resume succeeds", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: start a long-running bash command
+		// Turn 2: after resume (interrupted bash result), call done
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running a long command." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					// After stop+resume, agent sees the interrupted bash and new message
+					blocks: [
+						{ type: "text", text: "Bash was interrupted by stop, finishing." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "handled stop during bash",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for bash to start executing
+		const start = Date.now();
+		while (ctx.mockAPI.getRequestCount() < 1 && Date.now() - start < 5000) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBe(1);
+		// Give bash a moment to actually start
+		await new Promise((r) => setTimeout(r, 200));
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+
+		// Verify agent is running
+		const nodeBefore = tracker.get(rootNodeId)!;
+		expect(nodeBefore.session).toBeTruthy();
+		expect(nodeBefore.status).toBe("in_progress");
+
+		// === STOP via REST endpoint ===
+		const stopResp = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${rootNodeId}/stop`,
+			{ method: "POST" },
+		);
+		expect(stopResp.status).toBe(200);
+		const stopBody = (await stopResp.json()) as { ok: boolean };
+		expect(stopBody.ok).toBe(true);
+
+		// Wait for stop to fully complete
+		await new Promise((r) => setTimeout(r, 200));
+
+		// Verify: session cleared
+		const nodeAfterStop = tracker.get(rootNodeId)!;
+		expect(nodeAfterStop.session).toBeUndefined();
+
+		// Verify: status is still in_progress (NOT failed)
+		expect(nodeAfterStop.status).toBe("in_progress");
+
+		// Verify: JSONL has orphaned tool_results written for the interrupted bash
+		const events = readSessionEvents(ctx, rootNodeId);
+		const toolResults = events.filter((e) => e.type === "tool_result");
+		const errorResults = toolResults.filter(
+			(e) => "isError" in e && e.isError === true,
+		);
+		expect(errorResults.length).toBeGreaterThanOrEqual(1);
+
+		// Verify: the original tool_call for bash is in JSONL
+		const toolCalls = events.filter((e) => e.type === "tool_call");
+		const bashCall = toolCalls.find(
+			(e) => "tool" in e && e.tool === "mcp__mxd__bash",
+		);
+		expect(bashCall).toBeDefined();
+
+		const preResumeRequests = ctx.mockAPI.getRequestCount();
+
+		// === RESUME: send a message to wake the agent ===
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Continue after stop." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "recovered from stop" },
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Verify new API calls were made for the resume
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preResumeRequests);
+	}, 30000);
+
+	test("stopTask during yield: stop → resume succeeds", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: agent yields
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Waiting for input." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__yield",
+					input: {},
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for agent to enter yield state
+		await waitForIdle(ctx);
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+
+		// Verify agent is running (in yield)
+		expect(tracker.get(rootNodeId)!.session).toBeTruthy();
+		expect(tracker.get(rootNodeId)!.status).toBe("in_progress");
+
+		// === STOP ===
+		const stopResp = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${rootNodeId}/stop`,
+			{ method: "POST" },
+		);
+		expect(stopResp.status).toBe(200);
+
+		await new Promise((r) => setTimeout(r, 200));
+
+		// Session cleared, status stays in_progress
+		expect(tracker.get(rootNodeId)!.session).toBeUndefined();
+		expect(tracker.get(rootNodeId)!.status).toBe("in_progress");
+
+		// JSONL should have the yield tool_call (no orphan result for yield - it's excluded)
+		const events = readSessionEvents(ctx, rootNodeId);
+		const yieldCalls = events.filter(
+			(e) =>
+				e.type === "tool_call" &&
+				"tool" in e &&
+				e.tool === "mcp__mxd__yield",
+		);
+		expect(yieldCalls.length).toBe(1);
+
+		// === RESUME ===
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Done after stop." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "resumed after yield stop" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+	}, 30000);
+
+	test("stopTask on non-running agent returns 404", async () => {
+		ctx = await setupTestContext();
+
+		const rootNodeId = await getRootNodeId(ctx);
+
+		// No agent is running, so stop should return 404
+		const stopResp = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${rootNodeId}/stop`,
+			{ method: "POST" },
+		);
+		expect(stopResp.status).toBe(404);
+	}, 10000);
+});
