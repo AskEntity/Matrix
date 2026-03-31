@@ -70,7 +70,6 @@ export async function createTaskOp(
 	editedBy: "agent" | "user",
 	callbacks: TreeChangeCallbacks & {
 		broadcastTree: () => void;
-		getDefaultBudgetUsd?: () => number | undefined;
 		projectPath: string;
 	},
 ): Promise<TaskNode> {
@@ -80,11 +79,8 @@ export async function createTaskOp(
 		editedBy: "user" | "agent";
 		persistent?: false | "reset" | "continue";
 	} = { editedBy };
-	const defaultBudget = callbacks.getDefaultBudgetUsd?.();
 	if (opts.budgetUsd !== undefined) {
 		createOpts.budgetUsd = opts.budgetUsd;
-	} else if (defaultBudget) {
-		createOpts.budgetUsd = defaultBudget;
 	}
 	if (opts.draft) createOpts.draft = true;
 	if (opts.persistent) createOpts.persistent = opts.persistent;
@@ -118,13 +114,11 @@ export async function createTaskOp(
 export interface UpdateTaskOpts {
 	status?: TaskStatus;
 	title?: string;
+	/** Final description. MCP pre-processes old_description/new_description into this. */
 	description?: string;
-	old_description?: string;
-	new_description?: string;
 	draft?: boolean;
 	parentId?: string;
 	color?: string | null;
-	branch?: string;
 }
 
 export async function updateTaskOp(
@@ -152,53 +146,9 @@ export async function updateTaskOp(
 		}
 		tracker.updateStatus(nodeId, updates.status, editedBy);
 	}
-	if (updates.branch !== undefined) {
-		tracker.assignBranch(nodeId, updates.branch);
-	}
 	if (updates.title !== undefined) {
 		tracker.updateTitle(nodeId, updates.title, editedBy);
 	}
-
-	// Surgical description edit (old_description → new_description)
-	if (
-		updates.old_description !== undefined ||
-		updates.new_description !== undefined
-	) {
-		if (
-			updates.old_description === undefined ||
-			updates.new_description === undefined
-		) {
-			throw new TaskOperationError(
-				"old_description and new_description must both be provided",
-			);
-		}
-		if (updates.description !== undefined) {
-			throw new TaskOperationError(
-				"cannot use description with old_description/new_description — use one or the other",
-			);
-		}
-		const current = tracker.get(nodeId);
-		if (!current?.description) {
-			throw new TaskOperationError("task has no description to edit");
-		}
-		const idx = current.description.indexOf(updates.old_description);
-		if (idx === -1) {
-			throw new TaskOperationError(
-				"old_description not found in task description",
-			);
-		}
-		if (current.description.indexOf(updates.old_description, idx + 1) !== -1) {
-			throw new TaskOperationError(
-				"old_description is not unique in task description — provide more context to make it unique",
-			);
-		}
-		const updated = current.description.replace(
-			updates.old_description,
-			updates.new_description,
-		);
-		tracker.updateDescription(nodeId, updated, editedBy);
-	}
-
 	if (updates.description !== undefined) {
 		tracker.updateDescription(nodeId, updates.description, editedBy);
 	}
@@ -217,8 +167,6 @@ export async function updateTaskOp(
 	const titleOrDescChanged =
 		updates.title !== undefined ||
 		updates.description !== undefined ||
-		(updates.old_description !== undefined &&
-			updates.new_description !== undefined) ||
 		updates.color !== undefined;
 	if (titleOrDescChanged) {
 		tracker.savePersistentDef(nodeId, callbacks.projectPath);
@@ -228,11 +176,7 @@ export async function updateTaskOp(
 	callbacks.broadcastTree();
 
 	// Notifications for title/description changes
-	const descriptionChanged =
-		updates.description !== undefined ||
-		(updates.old_description !== undefined &&
-			updates.new_description !== undefined);
-	if (updates.title !== undefined || descriptionChanged) {
+	if (updates.title !== undefined || updates.description !== undefined) {
 		const updatedNode = tracker.get(nodeId);
 		// Notify the modified node itself — always (both agent and user edits)
 		callbacks.notifyTargetNode?.("updated", nodeId, updatedNode?.title);
