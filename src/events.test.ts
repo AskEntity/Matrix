@@ -2,11 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
 import {
 	type Event,
+	findOrphanedBackgroundProcesses,
+	findOrphanedToolCalls,
+	findUnconsumedMessages,
 	formatEventForAI,
+	hasPendingYield,
 	isPersistedByEmitEvent,
 	queueMessageToEvent,
 } from "./events.ts";
 import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
+import { TOOL_YIELD } from "./tool-names.ts";
 
 describe("queueMessageToEvent", () => {
 	test("converts user message — body is the QueueMessage directly", () => {
@@ -3272,5 +3277,603 @@ describe("isPersistedByEmitEvent", () => {
 			const result = isPersistedByEmitEvent(event);
 			expect(typeof result).toBe("boolean");
 		}
+	});
+});
+
+// ── Pure function tests: restart safety ──
+
+describe("findOrphanedToolCalls", () => {
+	test("returns empty when no tool_calls exist", () => {
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", id: "u1", ts: 0, content: "hello" },
+				taskId: "t1",
+				ts: 1000,
+			},
+			{ type: "assistant_text", content: "hi", taskId: "t1", ts: 1001 },
+		];
+		expect(findOrphanedToolCalls(events, "t1")).toEqual([]);
+	});
+
+	test("returns empty when all tool_calls have matching results", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "ls" },
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: "bash",
+				toolCallId: "tc1",
+				content: "file.ts",
+				isError: false,
+				taskId: "t1",
+				ts: 1001,
+			},
+		];
+		expect(findOrphanedToolCalls(events, "t1")).toEqual([]);
+	});
+
+	test("detects orphaned tool_call without result", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "ls" },
+				taskId: "t1",
+				ts: 1000,
+			},
+		];
+		const orphans = findOrphanedToolCalls(events, "t1");
+		expect(orphans).toHaveLength(1);
+		expect(orphans[0]?.type).toBe("tool_result");
+		expect((orphans[0] as { toolCallId: string }).toolCallId).toBe("tc1");
+		expect((orphans[0] as { isError: boolean }).isError).toBe(true);
+		expect((orphans[0] as { content: string }).content).toContain(
+			"interrupted by daemon restart",
+		);
+		expect((orphans[0] as { taskId: string }).taskId).toBe("t1");
+	});
+
+	test("skips yield tool_calls — they are handled by loop-level pause", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield",
+				input: {},
+				taskId: "t1",
+				ts: 1000,
+			},
+		];
+		expect(findOrphanedToolCalls(events, "t1")).toEqual([]);
+	});
+
+	test("multiple tool_calls with partial results — only orphans returned", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "echo a" },
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: "read_file",
+				toolCallId: "tc2",
+				input: { path: "x.ts" },
+				taskId: "t1",
+				ts: 1001,
+			},
+			{
+				type: "tool_call",
+				tool: "search",
+				toolCallId: "tc3",
+				input: { pattern: "foo" },
+				taskId: "t1",
+				ts: 1002,
+			},
+			{
+				type: "tool_result",
+				tool: "bash",
+				toolCallId: "tc1",
+				content: "a",
+				isError: false,
+				taskId: "t1",
+				ts: 1003,
+			},
+			// tc2 and tc3 have no results
+		];
+		const orphans = findOrphanedToolCalls(events, "t1");
+		expect(orphans).toHaveLength(2);
+		const orphanIds = orphans.map(
+			(o) => (o as { toolCallId: string }).toolCallId,
+		);
+		expect(orphanIds).toContain("tc2");
+		expect(orphanIds).toContain("tc3");
+	});
+
+	test("yield tool_call with result is not an orphan", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield",
+				input: {},
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield",
+				content: "resumed",
+				isError: false,
+				taskId: "t1",
+				ts: 1001,
+			},
+		];
+		expect(findOrphanedToolCalls(events, "t1")).toEqual([]);
+	});
+
+	test("mixed yield + non-yield orphans — only non-yield reported", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "long-running" },
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield",
+				input: {},
+				taskId: "t1",
+				ts: 1001,
+			},
+		];
+		const orphans = findOrphanedToolCalls(events, "t1");
+		expect(orphans).toHaveLength(1);
+		expect((orphans[0] as { toolCallId: string }).toolCallId).toBe("tc1");
+	});
+});
+
+describe("findUnconsumedMessages", () => {
+	test("returns empty when no message events exist", () => {
+		const events: Event[] = [
+			{ type: "assistant_text", content: "hi", taskId: "t1", ts: 1000 },
+		];
+		expect(findUnconsumedMessages(events)).toEqual([]);
+	});
+
+	test("returns empty when all messages are consumed", () => {
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "msg-1",
+				body: { source: "user", id: "msg-1", ts: 0, content: "hello" },
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["msg-1"],
+				taskId: "t1",
+				ts: 1001,
+			},
+		];
+		expect(findUnconsumedMessages(events)).toEqual([]);
+	});
+
+	test("finds unconsumed message", () => {
+		const body = {
+			source: "user" as const,
+			id: "msg-1",
+			ts: 0,
+			content: "hello",
+		};
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "msg-1",
+				body,
+				taskId: "t1",
+				ts: 1000,
+			},
+		];
+		const unconsumed = findUnconsumedMessages(events);
+		expect(unconsumed).toHaveLength(1);
+		expect(unconsumed[0]).toBe(body);
+	});
+
+	test('excludes messages with falsy id (id="")', () => {
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", id: "uid", ts: 0, content: "initial prompt" },
+				taskId: "t1",
+				ts: 1000,
+			},
+		];
+		// id="" is falsy — should NOT be returned as unconsumed
+		expect(findUnconsumedMessages(events)).toEqual([]);
+	});
+
+	test("returns multiple unconsumed messages in order", () => {
+		const body1 = {
+			source: "user" as const,
+			id: "m1",
+			ts: 0,
+			content: "first",
+		};
+		const body2 = {
+			source: "task_message" as const,
+			id: "m2",
+			ts: 100,
+			fromTaskId: "p1",
+			fromTitle: "Parent",
+			content: "second",
+		};
+		const events: Event[] = [
+			{ type: "message", id: "m1", body: body1, taskId: "t1", ts: 1000 },
+			{ type: "message", id: "m2", body: body2, taskId: "t1", ts: 1100 },
+			{
+				type: "messages_consumed",
+				messageIds: ["m1"],
+				taskId: "t1",
+				ts: 1200,
+			},
+		];
+		const unconsumed = findUnconsumedMessages(events);
+		expect(unconsumed).toHaveLength(1);
+		expect(unconsumed[0]).toBe(body2);
+	});
+
+	test("handles all-consumed input correctly", () => {
+		const events: Event[] = [
+			{
+				type: "message",
+				id: "m1",
+				body: { source: "user", id: "m1", ts: 0, content: "a" },
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "message",
+				id: "m2",
+				body: { source: "user", id: "m2", ts: 0, content: "b" },
+				taskId: "t1",
+				ts: 1100,
+			},
+			{
+				type: "messages_consumed",
+				messageIds: ["m1", "m2"],
+				taskId: "t1",
+				ts: 1200,
+			},
+		];
+		expect(findUnconsumedMessages(events)).toEqual([]);
+	});
+
+	test("handles empty input", () => {
+		expect(findUnconsumedMessages([])).toEqual([]);
+	});
+});
+
+describe("hasPendingYield", () => {
+	test("returns false for empty events", () => {
+		expect(hasPendingYield([])).toBe(false);
+	});
+
+	test("returns true when last tool_call is yield with no result", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield",
+				input: {},
+				taskId: "t1",
+				ts: 1000,
+			},
+		];
+		expect(hasPendingYield(events)).toBe(true);
+	});
+
+	test("returns false when last tool_call is yield with result", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield",
+				input: {},
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield",
+				content: "resumed",
+				isError: false,
+				taskId: "t1",
+				ts: 1001,
+			},
+		];
+		expect(hasPendingYield(events)).toBe(false);
+	});
+
+	test("returns false when last tool_call is not yield", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "ls" },
+				taskId: "t1",
+				ts: 1000,
+			},
+		];
+		expect(hasPendingYield(events)).toBe(false);
+	});
+
+	test("returns false when no tool_calls exist", () => {
+		const events: Event[] = [
+			{ type: "assistant_text", content: "hello", taskId: "t1", ts: 1000 },
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", id: "u1", ts: 0, content: "hi" },
+				taskId: "t1",
+				ts: 1001,
+			},
+		];
+		expect(hasPendingYield(events)).toBe(false);
+	});
+
+	test("reverse search — first tool_call resolved, last is pending yield", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "ls" },
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: "bash",
+				toolCallId: "tc1",
+				content: "ok",
+				isError: false,
+				taskId: "t1",
+				ts: 1001,
+			},
+			{ type: "assistant_text", content: "yielding", taskId: "t1", ts: 1002 },
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield",
+				input: {},
+				taskId: "t1",
+				ts: 1003,
+			},
+		];
+		expect(hasPendingYield(events)).toBe(true);
+	});
+
+	test("reverse search — last tool_call is bash (not yield), even with earlier yield", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield",
+				input: {},
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield",
+				content: "resumed",
+				isError: false,
+				taskId: "t1",
+				ts: 1001,
+			},
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc-bash",
+				input: { command: "echo" },
+				taskId: "t1",
+				ts: 1002,
+			},
+		];
+		// Last tool_call is bash, not yield
+		expect(hasPendingYield(events)).toBe(false);
+	});
+});
+
+describe("findOrphanedBackgroundProcesses", () => {
+	test("returns empty when no background processes exist", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc1",
+				input: { command: "echo" },
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: "bash",
+				toolCallId: "tc1",
+				content: "ok",
+				isError: false,
+				taskId: "t1",
+				ts: 1001,
+			},
+		];
+		expect(findOrphanedBackgroundProcesses(events, "t1")).toEqual([]);
+	});
+
+	test("detects orphaned background process (started but not completed)", () => {
+		const events: Event[] = [
+			{
+				type: "tool_result",
+				tool: "bash",
+				toolCallId: "tc1",
+				content: "Process moved to background",
+				isError: false,
+				backgroundId: "bg-abc",
+				backgroundCommand: "sleep 100",
+				taskId: "t1",
+				ts: 1000,
+			},
+		];
+		const orphans = findOrphanedBackgroundProcesses(events, "t1");
+		expect(orphans).toHaveLength(1);
+		expect(orphans[0]?.type).toBe("message");
+		const body = (orphans[0] as { body: { source: string; commandId: string } })
+			.body;
+		expect(body.source).toBe("background_complete");
+		expect(body.commandId).toBe("bg-abc");
+	});
+
+	test("returns empty when background process has matching completion", () => {
+		const events: Event[] = [
+			{
+				type: "tool_result",
+				tool: "bash",
+				toolCallId: "tc1",
+				content: "bg started",
+				isError: false,
+				backgroundId: "bg-1",
+				backgroundCommand: "sleep 10",
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "message",
+				id: "msg-bg",
+				body: {
+					source: "background_complete",
+					id: "msg-bg",
+					ts: 2000,
+					commandId: "bg-1",
+					command: "sleep 10",
+					exitCode: 0,
+					durationMs: 10000,
+					stdout: "done",
+					stderr: "",
+				},
+				taskId: "t1",
+				ts: 2000,
+			},
+		];
+		expect(findOrphanedBackgroundProcesses(events, "t1")).toEqual([]);
+	});
+
+	test("multiple bg processes — only orphaned ones returned", () => {
+		const events: Event[] = [
+			{
+				type: "tool_result",
+				tool: "bash",
+				toolCallId: "tc1",
+				content: "bg1",
+				isError: false,
+				backgroundId: "bg-1",
+				backgroundCommand: "cmd1",
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: "bash",
+				toolCallId: "tc2",
+				content: "bg2",
+				isError: false,
+				backgroundId: "bg-2",
+				backgroundCommand: "cmd2",
+				taskId: "t1",
+				ts: 1001,
+			},
+			{
+				type: "message",
+				id: "msg-bg1",
+				body: {
+					source: "background_complete",
+					id: "msg-bg1",
+					ts: 2000,
+					commandId: "bg-1",
+					command: "cmd1",
+					exitCode: 0,
+					durationMs: 500,
+					stdout: "",
+					stderr: "",
+				},
+				taskId: "t1",
+				ts: 2000,
+			},
+			// bg-2 has NO completion
+		];
+		const orphans = findOrphanedBackgroundProcesses(events, "t1");
+		expect(orphans).toHaveLength(1);
+		const body = (orphans[0] as { body: { commandId: string } }).body;
+		expect(body.commandId).toBe("bg-2");
+	});
+
+	test("orphan completion event has correct structure", () => {
+		const events: Event[] = [
+			{
+				type: "tool_result",
+				tool: "bash",
+				toolCallId: "tc1",
+				content: "bg started",
+				isError: false,
+				backgroundId: "bg-xyz",
+				backgroundCommand: "webpack build",
+				taskId: "t1",
+				ts: 5000,
+			},
+		];
+		const orphans = findOrphanedBackgroundProcesses(events, "t1");
+		expect(orphans).toHaveLength(1);
+		const orphan = orphans[0] as {
+			type: string;
+			id: string;
+			taskId: string;
+			body: {
+				source: string;
+				id: string;
+				commandId: string;
+				command: string;
+				exitCode: null;
+				stderr: string;
+			};
+		};
+		expect(orphan.type).toBe("message");
+		expect(orphan.taskId).toBe("t1");
+		expect(orphan.id).toBeTruthy(); // Should have a ULID id
+		expect(orphan.body.source).toBe("background_complete");
+		expect(orphan.body.commandId).toBe("bg-xyz");
+		expect(orphan.body.command).toBe("webpack build");
+		expect(orphan.body.exitCode).toBeNull();
+		expect(orphan.body.stderr).toContain("interrupted by daemon restart");
 	});
 });

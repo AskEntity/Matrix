@@ -8538,3 +8538,76 @@ describe("Integration: stopTask lifecycle", () => {
 		expect(tracker2.get(childId)?.status).toBe("passed");
 	}, 60000);
 });
+
+// ── deliverMessage shouldResume ordering ──
+
+describe("deliverMessage: shouldResume ordering invariant", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("first message → cold start (resume=false), restart + second message → resume=true", async () => {
+		ctx = await setupTestContext();
+
+		// First run: agent calls done immediately
+		const instruction1 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Got it." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "first run complete" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction1);
+		const status1 = await waitForDone(ctx);
+		expect(status1).toBe("passed");
+
+		// Read JSONL — should have orchestration_started with resume=false
+		const rootNodeId = await getRootNodeId(ctx);
+		const events1 = readSessionEvents(ctx, rootNodeId);
+		const orch1 = events1.filter((e) => e.type === "orchestration_started");
+		expect(orch1).toHaveLength(1);
+		expect((orch1[0] as { resume: boolean }).resume).toBe(false);
+
+		// === RESTART: agent stops, in-memory state is lost ===
+		await ctx.app.shutdown();
+		ctx.app = await recreateApp(ctx);
+
+		// Now send a second message — agent should resume (not cold start)
+		// because JSONL already exists for this node.
+		// The key invariant: shouldResume is checked BEFORE emitEvent writes
+		// the new message → shouldResume = true (JSONL exists from first run).
+		const instruction2 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Resuming after restart." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "second run complete" },
+				},
+			],
+		});
+
+		await sendMessage(ctx, instruction2);
+		const status2 = await waitForDone(ctx);
+		expect(status2).toBe("passed");
+
+		// Read JSONL — should now have TWO orchestration_started events
+		const events2 = readSessionEvents(ctx, rootNodeId);
+		const orch2 = events2.filter((e) => e.type === "orchestration_started");
+		expect(orch2).toHaveLength(2);
+		// First was cold start
+		expect((orch2[0] as { resume: boolean }).resume).toBe(false);
+		// Second was resume — this proves shouldResume was correctly
+		// evaluated BEFORE the message was written to JSONL.
+		// If shouldResume were checked AFTER emitEvent, a fresh node
+		// would incorrectly get resume=true (because its own message
+		// just populated the JSONL).
+		expect((orch2[1] as { resume: boolean }).resume).toBe(true);
+	}, 30000);
+});
