@@ -192,13 +192,23 @@ export function registerTaskRoutes(
 				return c.json({ error: message }, 400);
 			}
 		}
-		if (body.status) {
+		if (body.status !== undefined) {
+			// Persistent tasks cannot be closed via REST — same guard as close_task MCP tool
+			if (body.status === "closed" && node.persistent) {
+				return c.json(
+					{
+						error:
+							"Cannot set persistent task to closed. Use close_task which resets to pending.",
+					},
+					400,
+				);
+			}
 			tracker.updateStatus(nodeId, body.status, "user");
 		}
-		if (body.branch) {
+		if (body.branch !== undefined) {
 			tracker.assignBranch(nodeId, body.branch);
 		}
-		if (body.title) {
+		if (body.title !== undefined) {
 			tracker.updateTitle(node.id, body.title, "user");
 		}
 		if (body.description !== undefined) {

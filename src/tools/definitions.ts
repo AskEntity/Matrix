@@ -15,6 +15,7 @@ import { jsSearch } from "./search.ts";
 export type GetSessionFn = (sessionId: string) => TaskSession | undefined;
 
 import { resolvePath } from "./executor.ts";
+
 export { resolvePath };
 
 /**

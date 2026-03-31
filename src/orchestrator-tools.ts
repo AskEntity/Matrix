@@ -459,11 +459,13 @@ export function createOrchestratorTools(
 							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
 					),
 				persistent: z
-					.boolean()
+					.union([z.literal(false), z.literal("reset"), z.literal("continue")])
 					.optional()
 					.describe(
 						"If true, creates a persistent task. Definition stored in .mxd/tasks/<id>.json (git-tracked). " +
-							"close_task resets to pending instead of closed. Only root orchestrator can create persistent tasks.",
+							"close_task resets to pending instead of closed. Only root orchestrator can create persistent tasks. " +
+							"'reset': clean start each cycle (session JSONL deleted on close). " +
+							"'continue': resumes with context (session JSONL kept on close).",
 					),
 			},
 			async (args) => {
@@ -506,12 +508,12 @@ export function createOrchestratorTools(
 						budgetUsd?: number;
 						draft?: boolean;
 						editedBy: "agent";
-						persistent?: boolean;
+						persistent?: false | "reset" | "continue";
 					} = { editedBy: "agent" };
 					const defaultBudgetUsd = deps.getDefaultBudgetUsd();
 					if (defaultBudgetUsd) opts.budgetUsd = defaultBudgetUsd;
 					if (args.draft) opts.draft = true;
-					if (args.persistent) opts.persistent = true;
+					if (args.persistent) opts.persistent = args.persistent;
 					const node = effectiveParentId
 						? tracker.addChild(
 								effectiveParentId,
@@ -1056,7 +1058,9 @@ export function createOrchestratorTools(
 			"Clean up a task's worktree and branch to reclaim disk space. " +
 				"Node and session are preserved — status set to 'closed'. " +
 				"Call this AFTER you have already merged the task's branch yourself. " +
-				"Use for merged tasks or deferred tasks where you want to free resources.",
+				"Use for merged tasks or deferred tasks where you want to free resources. " +
+				"For persistent tasks: 'reset' mode clears session JSONL (clean start next cycle), " +
+				"'continue' mode keeps session JSONL (resumes with context). Both reset status to pending.",
 			{
 				taskId: z.string().describe("ID of the task to close"),
 			},
@@ -1099,8 +1103,16 @@ export function createOrchestratorTools(
 					}
 
 					// Persistent tasks reset to pending on close; regular tasks go to closed.
-					const newStatus = node.persistent ? "pending" : "closed";
-					tracker.updateStatus(node.id, newStatus);
+					if (node.persistent) {
+						// "reset" mode: clear session JSONL for a clean start each cycle
+						if (node.persistent === "reset") {
+							deps.clearEventStore(node.id);
+						}
+						// "continue" mode: keep session JSONL for resuming with context
+						tracker.updateStatus(node.id, "pending");
+					} else {
+						tracker.updateStatus(node.id, "closed");
+					}
 					await tracker.save();
 					broadcastTree();
 
@@ -1114,7 +1126,7 @@ export function createOrchestratorTools(
 										taskId: node.id,
 										title: node.title,
 										...(node.persistent
-											? { persistent: true, resetTo: "pending" }
+											? { persistent: node.persistent, resetTo: "pending" }
 											: {}),
 									},
 									null,

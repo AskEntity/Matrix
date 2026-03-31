@@ -398,18 +398,37 @@ describe("TaskTracker", () => {
 		expect(tracker2.get(task.id)?.persistent).toBe(false);
 	});
 
+	test("persistent: true migrated to 'reset' on load from old tree.json", async () => {
+		const task = tracker.addTask("Old persistent", "desc");
+		await tracker.save();
+
+		// Manually set persistent: true (old format) in saved file
+		const raw = await readFile(join(tempDir, "tree.json"), "utf-8");
+		const data = JSON.parse(raw);
+		const savedNode = data.nodes.find((n: { id: string }) => n.id === task.id);
+		savedNode.persistent = true;
+		await writeFile(
+			join(tempDir, "tree.json"),
+			JSON.stringify(data, null, "\t"),
+		);
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+		expect(tracker2.get(task.id)?.persistent).toBe("reset");
+	});
+
 	test("persistent nodes have title/description stripped from tree.json on save", async () => {
 		const rootId = tracker.rootNodeId;
 		const task = tracker.addChild(rootId, "Persistent task", "my desc", {
-			persistent: true,
+			persistent: "reset",
 		});
-		expect(task.persistent).toBe(true);
+		expect(task.persistent).toBe("reset");
 		await tracker.save();
 
 		const raw = await readFile(join(tempDir, "tree.json"), "utf-8");
 		const data = JSON.parse(raw);
 		const saved = data.nodes.find((n: { id: string }) => n.id === task.id);
-		expect(saved.persistent).toBe(true);
+		expect(saved.persistent).toBe("reset");
 		expect(saved.title).toBeUndefined();
 		expect(saved.description).toBeUndefined();
 	});
@@ -452,7 +471,7 @@ describe("TaskTracker", () => {
 
 		const node = tracker2.get(taskId);
 		expect(node).toBeDefined();
-		expect(node!.persistent).toBe(true);
+		expect(node!.persistent).toBe("reset");
 		expect(node!.title).toBe("Test Agent");
 		expect(node!.description).toBe("Run tests periodically");
 		expect(node!.color).toBe("#a371f7");
@@ -490,7 +509,7 @@ describe("TaskTracker", () => {
 			"placeholder",
 			"placeholder",
 			{
-				persistent: true,
+				persistent: "reset",
 				id: taskId,
 			},
 		);

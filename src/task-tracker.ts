@@ -43,7 +43,12 @@ export class TaskTracker {
 				// Backfill defaults for fields that became required
 				node.costUsd ??= 0;
 				node.editedBy ??= "agent";
-				node.persistent ??= false;
+				// Migrate: undefined → false, true → "reset"
+				if (node.persistent === undefined || node.persistent === null) {
+					node.persistent = false;
+				} else if ((node.persistent as unknown) === true) {
+					node.persistent = "reset";
+				}
 				this.nodes.set(node.id, node);
 			}
 			this._rootNodeId = data.rootNodeId;
@@ -131,7 +136,7 @@ export class TaskTracker {
 			budgetUsd?: number;
 			draft?: boolean;
 			editedBy?: "user" | "agent";
-			persistent?: boolean;
+			persistent?: false | "reset" | "continue";
 			id?: string;
 		},
 	): TaskNode {
@@ -147,7 +152,7 @@ export class TaskTracker {
 			budgetUsd?: number;
 			draft?: boolean;
 			editedBy?: "user" | "agent";
-			persistent?: boolean;
+			persistent?: false | "reset" | "continue";
 			id?: string;
 		},
 	): TaskNode {
@@ -412,10 +417,11 @@ export class TaskTracker {
 				if (def.color !== undefined) existing.color = def.color;
 			} else {
 				// New persistent task — create a pending node under root
+				// Default to "reset" for tasks discovered from json files (backward compat with `persistent: true`)
 				const now = new Date().toISOString();
 				const node: TaskNode = {
 					id,
-					persistent: true,
+					persistent: "reset",
 					title: def.title,
 					description: def.description,
 					status: "pending",
@@ -447,7 +453,7 @@ export class TaskTracker {
 			budgetUsd?: number;
 			draft?: boolean;
 			editedBy?: "user" | "agent";
-			persistent?: boolean;
+			persistent?: false | "reset" | "continue";
 			id?: string;
 		},
 	): TaskNode {

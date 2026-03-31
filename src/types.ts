@@ -31,12 +31,13 @@ export interface TaskSession {
 export interface TaskNode {
 	id: string;
 	/**
-	 * Whether this task is persistent. Default false.
-	 * - Persistent tasks: title/description stored in `.mxd/tasks/<id>.json` (git-tracked),
-	 *   NOT in tree.json. close_task resets to "pending" instead of "closed".
-	 * - Regular tasks: title/description stored in tree.json.
+	 * Persistent task mode. Default false.
+	 * - `false`: regular task. close = closed.
+	 * - `"reset"`: close resets to pending + deletes session JSONL. Clean start each cycle.
+	 * - `"continue"`: close resets to pending + keeps session JSONL. Resumes with context.
+	 * Both "reset" and "continue" store definition in `.mxd/tasks/<id>.json` (git-tracked).
 	 */
-	persistent: boolean;
+	persistent: false | "reset" | "continue";
 	title: string;
 	description: string;
 	status: TaskStatus;
@@ -69,7 +70,7 @@ export interface TaskNode {
 export type SerializedPersistentNode = Omit<
 	Omit<TaskNode, "title" | "description" | "session">,
 	"persistent"
-> & { persistent: true };
+> & { persistent: "reset" | "continue" };
 
 /**
  * Serialized form of a regular task node in tree.json.
