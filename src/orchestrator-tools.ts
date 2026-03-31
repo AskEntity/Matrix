@@ -523,9 +523,10 @@ export function createOrchestratorTools(
 						tracker.updateColor(node.id, resolveColor(args.color), "agent");
 					}
 
-					// Write persistent task definition to .mxd/tasks/<id>.json
+					// Write persistent task definition to .mxd/tasks/<id>.json and commit
 					if (args.persistent) {
-						const tasksDir = join(getProjectPath(), ".mxd", "tasks");
+						const projectPath = getProjectPath();
+						const tasksDir = join(projectPath, ".mxd", "tasks");
 						mkdirSync(tasksDir, { recursive: true });
 						const def: { title: string; description: string; color?: string } =
 							{
@@ -533,10 +534,20 @@ export function createOrchestratorTools(
 								description: args.description,
 							};
 						if (args.color) def.color = resolveColor(args.color);
-						writeFileSync(
-							join(tasksDir, `${node.id}.json`),
-							JSON.stringify(def, null, "\t"),
-						);
+						const defPath = join(tasksDir, `${node.id}.json`);
+						writeFileSync(defPath, JSON.stringify(def, null, "\t"));
+						// Auto-commit so the working tree stays clean for worktree creation
+						const addProc = Bun.spawnSync(["git", "add", defPath], {
+							cwd: projectPath,
+							stdout: "pipe",
+							stderr: "pipe",
+						});
+						if (addProc.exitCode === 0) {
+							Bun.spawnSync(
+								["git", "commit", "-m", `Add persistent task: ${args.title}`],
+								{ cwd: projectPath, stdout: "pipe", stderr: "pipe" },
+							);
+						}
 					}
 
 					await tracker.save();

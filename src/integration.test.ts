@@ -4476,7 +4476,160 @@ describe("Integration: tree operations", () => {
 		expect(serializedNode.description).toBeUndefined();
 	}, 25000);
 
-	test("TREE5: persistent task definition survives daemon restart", async () => {
+	test("TREE5: persistent task — full lifecycle: create → launch child → done → close (pending)", async () => {
+		ctx = await setupTestContext();
+
+		// Child instruction: simple done
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "persistent child done" },
+				},
+			],
+		});
+
+		// Parent: create persistent task → send_message → yield → close_task → done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Persistent Runner",
+								description: "A persistent task that runs periodically",
+								persistent: true,
+								color: "purple",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "Persistent Runner",
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Run it",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__close_task",
+							input: { taskId: "$childId" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "pending",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "persistent task lifecycle complete",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx, 45000);
+		expect(status).toBe("passed");
+
+		// Verify the persistent child
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId)!;
+		const childId = rootNode.children[0]!;
+		const childNode = tracker.get(childId)!;
+
+		// Status is pending (not closed) because it's persistent
+		expect(childNode.status).toBe("pending");
+		expect(childNode.persistent).toBe(true);
+		expect(childNode.title).toBe("Persistent Runner");
+
+		// Worktree and branch cleaned up
+		expect(childNode.worktreePath).toBeNull();
+		expect(childNode.branch).toBeNull();
+
+		// .mxd/tasks/<id>.json exists in repo
+		const taskDefPath = join(
+			ctx.projectDir,
+			".mxd",
+			"tasks",
+			`${childId}.json`,
+		);
+		expect(existsSync(taskDefPath)).toBe(true);
+
+		// tree.json doesn't have title/description for the persistent node
+		const { readFile: readFileAsync } = await import("node:fs/promises");
+		const treePath = join(ctx.dataDir, "projects", ctx.projectId, "tree.json");
+		const treeData = JSON.parse(await readFileAsync(treePath, "utf-8"));
+		const serialized = treeData.nodes.find(
+			(n: { id: string }) => n.id === childId,
+		);
+		expect(serialized.persistent).toBe(true);
+		expect(serialized.title).toBeUndefined();
+		expect(serialized.description).toBeUndefined();
+	}, 60000);
+
+	test("TREE6: persistent task definition survives daemon restart", async () => {
 		ctx = await setupTestContext();
 
 		// Manually create a persistent task definition file
