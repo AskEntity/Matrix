@@ -11,7 +11,7 @@ export function IconHexagon({ size = 16 }: { size?: number }) {
 			strokeLinecap="round"
 			strokeLinejoin="round"
 		>
-			<polygon points="11 2 21 7 21 17 11 22 1 17 1 7" />
+			<polygon points="12 2 22 7 22 17 12 22 2 17 2 7" />
 		</svg>
 	);
 }
