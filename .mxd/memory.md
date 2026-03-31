@@ -576,3 +576,11 @@ Resume messages from autoResumeProjects must be written to JSONL (via deliverMes
 **Upward send_message**: Now goes through `deliverMessage(parentId, msg, {quiet: true})` — persists to parent's JSONL for crash safety. Previously used direct `parentQueue.enqueue()` which was lost on crash.
 
 **Root vs child launch**: genuinely different, NOT duplicated. Root has project-level session tracking (`ctx.activeSessions`), `provider.startSession()`, cost aggregation. Child uses `runChildCore()` with done() detection.
+
+## Self-Bootstrap: Web Auth for Chrome DevTools
+
+When testing the web UI via Chrome DevTools (take_snapshot, click, etc.), the browser may show the Matrix auth/login page. To authenticate:
+1. Take a snapshot of the login page to see the public key
+2. Run `bash` with `bun src/cli.ts auth <public_key_from_page>`
+3. The output is an encrypted token — paste it into the login page input
+4. Now Chrome DevTools can access the authenticated UI
