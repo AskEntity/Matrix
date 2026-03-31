@@ -1,4 +1,10 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { TaskNode, TaskStatus } from "./types.ts";
@@ -74,6 +80,35 @@ export class TaskTracker {
 			}),
 		};
 		await writeFile(this.treePath, JSON.stringify(data, null, "\t"), "utf-8");
+	}
+
+	/** Write a persistent node's title/description/color to .mxd/tasks/<id>.json and auto-commit.
+	 *  No-op if the node is not persistent. */
+	savePersistentDef(nodeId: string, projectPath: string): void {
+		const node = this.nodes.get(nodeId);
+		if (!node?.persistent) return;
+
+		const tasksDir = join(projectPath, ".mxd", "tasks");
+		mkdirSync(tasksDir, { recursive: true });
+		const def: PersistentTaskDef = {
+			title: node.title,
+			description: node.description,
+		};
+		if (node.color) def.color = node.color;
+		const defPath = join(tasksDir, `${nodeId}.json`);
+		writeFileSync(defPath, JSON.stringify(def, null, "\t"));
+		// Auto-commit so the working tree stays clean for worktree creation
+		const addProc = Bun.spawnSync(["git", "add", defPath], {
+			cwd: projectPath,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		if (addProc.exitCode === 0) {
+			Bun.spawnSync(
+				["git", "commit", "-m", `Update persistent task: ${node.title}`],
+				{ cwd: projectPath, stdout: "pipe", stderr: "pipe" },
+			);
+		}
 	}
 
 	/** Root node ID. Always present after load(). */

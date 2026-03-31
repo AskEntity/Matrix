@@ -606,3 +606,19 @@ System prompt is branch-name-agnostic. No hardcoded "main" references. Agents on
 **Frontend**: 📌 icon in TaskTree for persistent nodes.
 
 **Type system**: `SerializedPersistentNode` / `SerializedRegularNode` / `SerializedTaskNode` union types exist for tree.json serialization but are not used at runtime. Runtime `TaskNode` is a flat interface with `persistent: boolean`.
+
+
+## Persistent Task Update Fix (March 2026)
+
+**Bug**: `update_task` (both MCP tool and REST PATCH) updated in-memory node but never wrote to `.mxd/tasks/<id>.json`. On daemon restart, `load()` read from the json file and got the OLD values.
+
+**Fix**: `TaskTracker.savePersistentDef(nodeId, projectPath)` — centralized method that writes title/description/color to `.mxd/tasks/<id>.json` + git auto-commit. Called by:
+- `create_task` MCP tool (on creation)
+- `update_task` MCP tool (on title/description/color change)
+- REST PATCH `/tasks/:nodeId` (on title/description/color change)
+
+No-op if node is not persistent.
+
+**Also fixed**: MCP `delete_task` was not cleaning up descendant worktrees/JSONL (only cleaned the target node). REST DELETE did this correctly. Now both iterate all descendants.
+
+**Anti-pattern caught**: REST and MCP having independent implementations of the same operation. Always centralize in TaskTracker or a shared helper.
