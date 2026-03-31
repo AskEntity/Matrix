@@ -112,9 +112,13 @@ Root node stores branch at init. `baseBranch` required on worktree create (no fa
 
 Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_key>` → encrypted JWT → paste to browser. CLI auto-auth via `signCLIToken()`. Web session in localStorage (`mxd-jwt`).
 
+## CLI Installation
+
+`mxd` CLI is globally installed via `bun link`. Binary at `~/.bun/bin/mxd` → symlink to `src/cli.ts`. package.json has `"bin": { "mxd": "src/cli.ts" }`, cli.ts has `#!/usr/bin/env bun` shebang. After `bun link`, use `mxd` directly (not `bun run src/cli.ts`).
+
 ## Self-Bootstrap: Web Auth for Chrome DevTools
 
-When testing via Chrome DevTools, take snapshot of login page → run `bun src/cli.ts auth <key>` → paste output → authenticated.
+When testing via Chrome DevTools, take snapshot of login page → run `mxd auth <key>` → paste output → authenticated.
 
 ## Integration Test Framework
 
