@@ -373,6 +373,144 @@ describe("TaskTracker", () => {
 		expect(parent.children).toEqual([child.id]);
 	});
 
+	test("persistent field defaults to false on new nodes", () => {
+		const task = tracker.addTask("Regular task", "desc");
+		expect(task.persistent).toBe(false);
+	});
+
+	test("persistent field backfilled to false on load from old tree.json", async () => {
+		const task = tracker.addTask("Old task", "desc");
+		await tracker.save();
+
+		// Manually strip persistent from saved file
+		const raw = await readFile(join(tempDir, "tree.json"), "utf-8");
+		const data = JSON.parse(raw);
+		for (const node of data.nodes) {
+			delete node.persistent;
+		}
+		await writeFile(
+			join(tempDir, "tree.json"),
+			JSON.stringify(data, null, "\t"),
+		);
+
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load();
+		expect(tracker2.get(task.id)?.persistent).toBe(false);
+	});
+
+	test("persistent nodes have title/description stripped from tree.json on save", async () => {
+		const rootId = tracker.rootNodeId;
+		const task = tracker.addChild(rootId, "Persistent task", "my desc", {
+			persistent: true,
+		});
+		expect(task.persistent).toBe(true);
+		await tracker.save();
+
+		const raw = await readFile(join(tempDir, "tree.json"), "utf-8");
+		const data = JSON.parse(raw);
+		const saved = data.nodes.find((n: { id: string }) => n.id === task.id);
+		expect(saved.persistent).toBe(true);
+		expect(saved.title).toBeUndefined();
+		expect(saved.description).toBeUndefined();
+	});
+
+	test("regular nodes have title/description preserved in tree.json on save", async () => {
+		const rootId = tracker.rootNodeId;
+		const task = tracker.addChild(rootId, "Regular task", "my desc");
+		await tracker.save();
+
+		const raw = await readFile(join(tempDir, "tree.json"), "utf-8");
+		const data = JSON.parse(raw);
+		const saved = data.nodes.find((n: { id: string }) => n.id === task.id);
+		expect(saved.persistent).toBe(false);
+		expect(saved.title).toBe("Regular task");
+		expect(saved.description).toBe("my desc");
+	});
+
+	test("persistent tasks loaded from .mxd/tasks/ directory", async () => {
+		// Create a .mxd/tasks/ directory with a task definition
+		const { mkdir: mkdirAsync, writeFile: writeFileAsync } = await import(
+			"node:fs/promises"
+		);
+		const projectDir = await mkdtemp(join(tmpdir(), "mxd-project-"));
+		const tasksDir = join(projectDir, ".mxd", "tasks");
+		await mkdirAsync(tasksDir, { recursive: true });
+
+		const taskId = "01TESTPERSISTENT1234";
+		await writeFileAsync(
+			join(tasksDir, `${taskId}.json`),
+			JSON.stringify({
+				title: "Test Agent",
+				description: "Run tests periodically",
+				color: "#a371f7",
+			}),
+		);
+
+		// Load tracker with project path — persistent task should be created
+		const tracker2 = new TaskTracker(join(tempDir, "tree2.json"));
+		await tracker2.load(undefined, projectDir);
+
+		const node = tracker2.get(taskId);
+		expect(node).toBeDefined();
+		expect(node!.persistent).toBe(true);
+		expect(node!.title).toBe("Test Agent");
+		expect(node!.description).toBe("Run tests periodically");
+		expect(node!.color).toBe("#a371f7");
+		expect(node!.status).toBe("pending");
+		expect(node!.parentId).toBe(tracker2.rootNodeId);
+
+		// Verify root has it as child
+		const root = tracker2.get(tracker2.rootNodeId)!;
+		expect(root.children).toContain(taskId);
+
+		await rm(projectDir, { recursive: true });
+	});
+
+	test("persistent tasks merge with existing tree.json entries", async () => {
+		const { mkdir: mkdirAsync, writeFile: writeFileAsync } = await import(
+			"node:fs/promises"
+		);
+		const projectDir = await mkdtemp(join(tmpdir(), "mxd-project-"));
+		const tasksDir = join(projectDir, ".mxd", "tasks");
+		await mkdirAsync(tasksDir, { recursive: true });
+
+		const taskId = "01TESTMERGE12345678";
+		await writeFileAsync(
+			join(tasksDir, `${taskId}.json`),
+			JSON.stringify({
+				title: "Updated Title",
+				description: "Updated description",
+			}),
+		);
+
+		// Create tree.json with existing persistent node (stale title/description are stripped)
+		const rootId = tracker.rootNodeId;
+		const existingNode = tracker.addChild(
+			rootId,
+			"placeholder",
+			"placeholder",
+			{
+				persistent: true,
+				id: taskId,
+			},
+		);
+		tracker.updateStatus(existingNode.id, "passed");
+		existingNode.costUsd = 1.5;
+		await tracker.save();
+
+		// Reload with project path — title/description refreshed from json file
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load(undefined, projectDir);
+
+		const node = tracker2.get(taskId)!;
+		expect(node.title).toBe("Updated Title");
+		expect(node.description).toBe("Updated description");
+		expect(node.status).toBe("passed"); // Status preserved from tree.json
+		expect(node.costUsd).toBe(1.5); // Cost preserved from tree.json
+
+		await rm(projectDir, { recursive: true });
+	});
+
 	test("reorderChildren throws for mismatched children", () => {
 		const parent = tracker.addTask("App", "desc");
 		const c1 = tracker.addChild(parent.id, "A", "a");

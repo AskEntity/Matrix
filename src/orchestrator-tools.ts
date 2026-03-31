@@ -6,7 +6,7 @@
  * (create_task, update_task, send_message, yield, done, etc.).
  */
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Event } from "./events.ts";
@@ -457,11 +457,31 @@ export function createOrchestratorTools(
 						"Optional color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex like '#ff5733'). " +
 							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
 					),
+				persistent: z
+					.boolean()
+					.optional()
+					.describe(
+						"If true, creates a persistent task. Definition stored in .mxd/tasks/<id>.json (git-tracked). " +
+							"close_task resets to pending instead of closed. Only root orchestrator can create persistent tasks.",
+					),
 			},
 			async (args) => {
 				try {
 					// Auto-parent: if no parentId provided, default to current agent's task
 					const effectiveParentId = args.parentId ?? currentTaskId ?? undefined;
+
+					// Persistent tasks can only be created by root orchestrator
+					if (args.persistent && getDepth() > 0) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: "Error: Only the root orchestrator can create persistent tasks.",
+								},
+							],
+							isError: true,
+						};
+					}
 
 					// Scope validation: agents can only create tasks under themselves or their descendants
 					if (
@@ -485,10 +505,12 @@ export function createOrchestratorTools(
 						budgetUsd?: number;
 						draft?: boolean;
 						editedBy: "agent";
+						persistent?: boolean;
 					} = { editedBy: "agent" };
 					const defaultBudgetUsd = deps.getDefaultBudgetUsd();
 					if (defaultBudgetUsd) opts.budgetUsd = defaultBudgetUsd;
 					if (args.draft) opts.draft = true;
+					if (args.persistent) opts.persistent = true;
 					const node = effectiveParentId
 						? tracker.addChild(
 								effectiveParentId,
@@ -500,6 +522,23 @@ export function createOrchestratorTools(
 					if (args.color) {
 						tracker.updateColor(node.id, resolveColor(args.color), "agent");
 					}
+
+					// Write persistent task definition to .mxd/tasks/<id>.json
+					if (args.persistent) {
+						const tasksDir = join(getProjectPath(), ".mxd", "tasks");
+						mkdirSync(tasksDir, { recursive: true });
+						const def: { title: string; description: string; color?: string } =
+							{
+								title: args.title,
+								description: args.description,
+							};
+						if (args.color) def.color = resolveColor(args.color);
+						writeFileSync(
+							join(tasksDir, `${node.id}.json`),
+							JSON.stringify(def, null, "\t"),
+						);
+					}
+
 					await tracker.save();
 					broadcastTree();
 					return {
@@ -1056,7 +1095,9 @@ export function createOrchestratorTools(
 						node.updatedAt = new Date().toISOString();
 					}
 
-					tracker.updateStatus(node.id, "closed");
+					// Persistent tasks reset to pending on close; regular tasks go to closed.
+					const newStatus = node.persistent ? "pending" : "closed";
+					tracker.updateStatus(node.id, newStatus);
 					await tracker.save();
 					broadcastTree();
 
@@ -1069,6 +1110,9 @@ export function createOrchestratorTools(
 										closed: true,
 										taskId: node.id,
 										title: node.title,
+										...(node.persistent
+											? { persistent: true, resetTo: "pending" }
+											: {}),
 									},
 									null,
 									2,

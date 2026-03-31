@@ -98,7 +98,7 @@ export async function getTracker(
 		const defaultBranch = project
 			? await detectBranch(project.path)
 			: undefined;
-		await tracker.load(defaultBranch);
+		await tracker.load(defaultBranch, project?.path);
 		ctx.trackers.set(projectId, tracker);
 	}
 	return tracker;

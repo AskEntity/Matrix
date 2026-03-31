@@ -12,6 +12,7 @@ import type { TaskNode } from "./types.ts";
 
 function makeNode(overrides: Partial<TaskNode> & { id: string }): TaskNode {
 	return {
+		persistent: false,
 		title: "Test Task",
 		description: "A test description",
 		status: "pending",
