@@ -11,6 +11,7 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import type { Event } from "./events.ts";
 import { MessageQueue } from "./message-queue.ts";
 import {
@@ -543,6 +544,84 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 							text: expect.stringContaining("Please finish"),
 						},
 					],
+				},
+			]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("serializes optional booleans and strings in tool schema for Responses", async () => {
+		const originalFetch = globalThis.fetch;
+		const requests: Array<Record<string, unknown>> = [];
+		globalThis.fetch = mock(
+			async (_url: string | URL | Request, init?: RequestInit) => {
+				requests.push(JSON.parse(String(init?.body ?? "{}")));
+				return sseResponse([
+					{
+						event: "response.created",
+						data: { response: { id: "resp-1", status: "in_progress" } },
+					},
+					{
+						event: "response.completed",
+						data: {
+							response: {
+								id: "resp-1",
+								status: "completed",
+								usage: { input_tokens: 3, output_tokens: 2 },
+							},
+						},
+					},
+				]);
+			},
+		) as unknown as typeof fetch;
+
+		try {
+			const provider = new OpenAIResponsesCompatibleProvider("gpt-4.1-mini", {
+				apiKey: "test-key",
+				baseUrl: "https://api.example.com/v1",
+			});
+			await provider.execute({
+				cwd: process.cwd(),
+				systemPrompt: { stable: "Stable prompt", variable: "Variable prompt" },
+				queue: queueWithPrompt("Please inspect the schema"),
+				mcpToolDefs: {
+					mxd: [
+						{
+							name: "update_task",
+							description: "Update task",
+							inputSchema: {
+								taskId: z.string(),
+								draft: z.boolean().optional(),
+								old_description: z.string().optional(),
+								new_description: z.string().optional(),
+								parentId: z.string().optional(),
+							},
+							handler: async () => ({
+								content: [{ type: "text", text: "ok" }],
+							}),
+						},
+					],
+				},
+			});
+
+			expect(requests).toHaveLength(1);
+			expect(requests[0]?.tools).toEqual([
+				{
+					type: "function",
+					name: "mcp__mxd__update_task",
+					description: "Update task",
+					parameters: {
+						type: "object",
+						properties: {
+							taskId: { type: "string" },
+							draft: { type: "boolean" },
+							old_description: { type: "string" },
+							new_description: { type: "string" },
+							parentId: { type: "string" },
+						},
+						required: ["taskId"],
+					},
 				},
 			]);
 		} finally {

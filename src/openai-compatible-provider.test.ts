@@ -11,6 +11,7 @@ import {
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 import { MessageQueue } from "./message-queue.ts";
 import {
 	clearContextWindowCache,
@@ -495,6 +496,93 @@ describe("runLoop integration", () => {
 			});
 			expect(result.exitReason).not.toBe("done_failed");
 			expect(result.output).toBe("All done!");
+		} finally {
+			clearContextWindowCache();
+			process.env.OPENAI_API_KEY = originalKey ?? "";
+			if (originalBase) {
+				process.env.OPENAI_BASE_URL = originalBase;
+			} else {
+				delete process.env.OPENAI_BASE_URL;
+			}
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("serializes optional booleans and strings in tool schema for chat completions", async () => {
+		const originalKey = process.env.OPENAI_API_KEY;
+		const originalBase = process.env.OPENAI_BASE_URL;
+		const originalFetch = globalThis.fetch;
+
+		process.env.OPENAI_API_KEY = "test-key";
+		process.env.OPENAI_BASE_URL = "http://localhost:9999";
+
+		const requestBodies: Array<Record<string, unknown>> = [];
+		globalThis.fetch = mock(
+			async (url: string | URL | Request, init?: RequestInit) => {
+				const urlStr =
+					typeof url === "string"
+						? url
+						: url instanceof URL
+							? url.toString()
+							: url.url;
+				if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
+					return createOpenAIModelsResponse();
+				}
+				requestBodies.push(JSON.parse(String(init?.body ?? "{}")));
+				return createOpenAIChatResponse({
+					content: "All done!",
+					finishReason: "stop",
+				});
+			},
+		) as unknown as typeof fetch;
+
+		try {
+			const provider = new OpenAICompatibleProvider("gpt-4o");
+			await provider.execute({
+				cwd: tmpDir,
+				systemPrompt: { stable: "You are helpful.", variable: "" },
+				queue: queueWithPrompt("Say hello", tmpDir),
+				mcpToolDefs: {
+					mxd: [
+						{
+							name: "update_task",
+							description: "Update task",
+							inputSchema: {
+								taskId: z.string(),
+								draft: z.boolean().optional(),
+								old_description: z.string().optional(),
+								new_description: z.string().optional(),
+								parentId: z.string().optional(),
+							},
+							handler: async () => ({
+								content: [{ type: "text", text: "ok" }],
+							}),
+						},
+					],
+				},
+			});
+
+			expect(requestBodies).toHaveLength(1);
+			expect(requestBodies[0]?.tools).toEqual([
+				{
+					type: "function",
+					function: {
+						name: "mcp__mxd__update_task",
+						description: "Update task",
+						parameters: {
+							type: "object",
+							properties: {
+								taskId: { type: "string" },
+								draft: { type: "boolean" },
+								old_description: { type: "string" },
+								new_description: { type: "string" },
+								parentId: { type: "string" },
+							},
+							required: ["taskId"],
+						},
+					},
+				},
+			]);
 		} finally {
 			clearContextWindowCache();
 			process.env.OPENAI_API_KEY = originalKey ?? "";
