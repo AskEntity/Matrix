@@ -1,6 +1,6 @@
 # Matrix
 
-Self-bootstrapping autonomous AI programming system. One developer, team-quality output.
+One developer, team-quality code — powered by multi-agent AI.
 
 **[Documentation →](https://matrix.dev)**
 
