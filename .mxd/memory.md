@@ -116,6 +116,10 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_k
 
 `mxd` CLI is globally installed via `bun link`. Binary at `~/.bun/bin/mxd` → symlink to `src/cli.ts`. package.json has `"bin": { "mxd": "src/cli.ts" }`, cli.ts has `#!/usr/bin/env bun` shebang. After `bun link`, use `mxd` directly (not `bun run src/cli.ts`).
 
+## Self-Bootstrap: Web Auth for Chrome DevTools
+
+When testing via Chrome DevTools, take snapshot of login page → run `mxd auth <key>` → paste output → authenticated.
+
 ## Integration Test Framework
 
 - `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation (rejects unknown API fields).
