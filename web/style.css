@@ -1680,6 +1680,7 @@ select {
 	display: flex;
 	gap: 4px;
 	margin-top: 6px;
+	overflow-x: auto;
 }
 
 .mxd-user-image-thumb {
