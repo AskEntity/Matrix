@@ -1,6 +1,0 @@
-{
-	"title": "Bug: MCP create_task/close_task persistence handling may coerce tasks into persistent",
-	"description": "Investigate suspected MCP compatibility bug where task persistence handling is wrong — user reports tasks seem to all become persistent unexpectedly.\n\nObserved suspicion:\n- After recent task operations, tasks appear to become persistent in unexpected ways\n- Could be similar to the optional-parameter serialization issue seen with update_task\n- Might involve create_task / close_task / task JSON persistence fields being coerced incorrectly by the MCP layer\n\nInvestigate:\n1. Whether MCP tool calls are serializing `persistent` incorrectly (e.g. empty string, false/string coercion)\n2. Whether create_task defaults differ between MCP and REST paths\n3. Whether close_task response/behavior is confusing regular vs persistent tasks\n4. Whether task JSON files are being written for non-persistent tasks unexpectedly\n\nWhy:\nIf MCP compatibility makes regular tasks become persistent, orchestration becomes very confusing and task lifecycle semantics break.",
-	"persistent": "false",
-	"color": "#f85149"
-}

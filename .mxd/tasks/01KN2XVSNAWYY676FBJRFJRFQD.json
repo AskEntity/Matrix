@@ -1,6 +1,0 @@
-{
-	"title": "Bug: MCP update_task treats empty-string optional params as provided",
-	"description": "Investigate MCP compatibility issue where update_task appears to treat empty-string optional params (e.g. old_description/new_description/parentId) as provided instead of omitted, causing mutual-exclusion or reparent validation errors.\n\nObserved symptom:\n- Attempting to call update_task with a new description failed with errors like:\n  - \"cannot use description with old_description/new_description\"\n  - \"Cannot reparent under : not your task or descendant\"\n- This suggests the MCP layer or request parser serializes empty strings and backend validation treats them as set.\n\nNeed to determine whether the bug is in:\n1. MCP client/tool serialization\n2. server-side schema parsing/defaulting\n3. update_task operation wrapper\n\nWhy:\nThis is exactly the kind of MCP compatibility rough edge that can break agent orchestration and makes tool behavior differ from expectations.",
-	"persistent": "false",
-	"color": "#f85149"
-}

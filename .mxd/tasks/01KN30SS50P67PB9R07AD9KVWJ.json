@@ -1,6 +1,0 @@
-{
-	"title": "Test: create task persistence repro after normalization",
-	"description": "Temporary repro task created on user request to verify whether creating a new task still persists unexpectedly after the empty-string normalization fix. No implementation work. We will inspect whether this task is erroneously written to .mxd/tasks when created as non-persistent/default semantics, then clean it up.",
-	"persistent": "false",
-	"color": "#768390"
-}

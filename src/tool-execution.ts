@@ -3,37 +3,10 @@
  * executeTool() is the single path for ALL tools (built-in + orchestrator + external MCP).
  * isTransientAPIError() is provider-agnostic — used by the outer retry in the run loop.
  */
+import { z } from "zod";
 import type { QueueMessage } from "./message-queue.ts";
 import type { PendingState, ToolResult } from "./shared-types.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
-
-function stripEmptyStringOptionals(value: unknown): unknown {
-	if (Array.isArray(value)) {
-		return value.map(stripEmptyStringOptionals);
-	}
-	if (value && typeof value === "object") {
-		return Object.fromEntries(
-			Object.entries(value).flatMap(([key, nested]) => {
-				const cleaned = stripEmptyStringOptionals(nested);
-				return cleaned === "" ? [] : [[key, cleaned]];
-			}),
-		);
-	}
-	return value;
-}
-
-function normalizeToolInput(
-	input: Record<string, unknown>,
-): Record<string, unknown> {
-	const cleaned = stripEmptyStringOptionals(input);
-	return cleaned && typeof cleaned === "object" && !Array.isArray(cleaned)
-		? (cleaned as Record<string, unknown>)
-		: {};
-}
-
-export const __testOnly = {
-	normalizeToolInput,
-};
 
 /** Maximum number of outer retries when callAPI fails after exhausting its own retries. */
 export const MAX_OUTER_RETRIES = 3;
@@ -95,10 +68,25 @@ export async function executeTool(
 		};
 	}
 
-	const normalizedInput = normalizeToolInput(input);
+	// Validate input against Zod schema for built-in tools (not external MCP tools).
+	// External MCP tools have jsonSchema set and an empty inputSchema — skip validation for those.
+	let validatedInput = input;
+	if (!mcpHandler.jsonSchema && Object.keys(mcpHandler.inputSchema).length > 0) {
+		const result = z.object(mcpHandler.inputSchema).safeParse(input);
+		if (!result.success) {
+			const issues = result.error.issues
+				.map((i) => `${i.path.join(".")}: ${i.message}`)
+				.join("; ");
+			return {
+				content: `Tool input validation error (${toolName}): ${issues}`,
+				isError: true,
+			};
+		}
+		validatedInput = result.data as Record<string, unknown>;
+	}
 
 	try {
-		const mcpResult = await mcpHandler.handler(normalizedInput, { toolCallId });
+		const mcpResult = await mcpHandler.handler(validatedInput, { toolCallId });
 		const parts = Array.isArray(mcpResult.content) ? mcpResult.content : [];
 		const textParts: string[] = [];
 		const mcpImages: Array<{

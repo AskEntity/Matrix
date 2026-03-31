@@ -1,6 +1,0 @@
-{
-	"title": "Test: omitted persistent field",
-	"description": "Temporary verification task to confirm omitting persistent creates a regular non-persistent task.",
-	"persistent": "false",
-	"color": "#768390"
-}
