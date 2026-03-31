@@ -129,11 +129,11 @@ When testing via Chrome DevTools, take snapshot of login page → run `mxd auth 
 
 ## Test-is-Golden Philosophy
 
-Test is golden. Not spec, not architecture. Bottom-up: write tests → find simplest architecture that passes them. Architecture is disposable. Reject spec-driven development.
+Test is golden. Not spec, not architecture. Bottom-up: write tests → find simplest architecture that passes them. Architecture is replaceable long-term (tests anchor it), improved short-term via mutation testing. Reject spec-driven development.
 
 ## Architecture Quality: Feature Mutation Test
 
-Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Architecture is disposable — tests are the stable anchor.
+Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Architecture improves through mutation testing short-term; remains replaceable long-term because tests hold.
 
 ## ⚠️ AI Agent Laziness Patterns
 

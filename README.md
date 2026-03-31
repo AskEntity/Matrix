@@ -15,7 +15,7 @@ Matrix is a multi-agent orchestration system for AI-assisted software developmen
 - **Cross-Project Communication** — Agents in different projects talk to each other in real-time.
 - **Context Compaction + Forking** — Agents work on arbitrarily long tasks and transfer knowledge efficiently.
 - **Persistent Memory** — `.mxd/memory.md` survives across sessions and compactions.
-- **Test-is-Golden** — Tests are the single source of truth. Architecture is disposable.
+- **Test-is-Golden** — Tests are the single source of truth. Architecture improves through mutation testing, and remains replaceable long-term because tests hold.
 - **Self-Bootstrapping** — Matrix develops itself using itself.
 
 ## Quick Start

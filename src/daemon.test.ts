@@ -329,7 +329,7 @@ describe("daemon stats", () => {
 		const statsRes = await app.request("/stats");
 		const stats = (await statsRes.json()) as StatsResponse;
 		expect(stats.projectCount).toBe(1);
-		expect(stats.taskCounts.pending).toBe(2); // Child2 + auto-created Orchestrator root
+		expect(stats.taskCounts.pending).toBe(4); // Child2 + Orchestrator root + 2 quality task templates
 		expect(stats.taskCounts.in_progress).toBe(1); // Root
 		expect(stats.taskCounts.passed).toBe(1); // Child1
 		expect(stats.taskCounts.failed).toBe(0);
@@ -713,8 +713,8 @@ describe("daemon tasks API", () => {
 			nodes: TaskNode[];
 			rootNodeId?: string | null;
 		};
-		// Root node + the newly created "App" task
-		expect(body.nodes).toHaveLength(2);
+		// Root node + "App" task + 2 quality task templates
+		expect(body.nodes).toHaveLength(4);
 		expect(body.nodes.some((n) => n.title === "App")).toBe(true);
 	});
 
@@ -943,7 +943,7 @@ describe("daemon tasks API", () => {
 		const body = (await getRes.json()) as {
 			nodes: TaskNode[];
 		};
-		expect(body.nodes).toHaveLength(1); // auto-created root node remains
+		expect(body.nodes).toHaveLength(3); // root node + 2 quality task templates
 	});
 
 	test("DELETE /tasks/:nodeId closes running agent queues", async () => {
