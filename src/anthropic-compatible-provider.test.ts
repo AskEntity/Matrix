@@ -27,12 +27,13 @@ import { MessageQueue } from "./message-queue.ts";
 import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import { attachMockSession, mockOrchestratorDeps } from "./test-utils.ts";
+import type { ToolDefinition } from "./tool-definition.ts";
 import { listBackgroundProcesses } from "./tools/background.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
+import { createBuiltinTools } from "./tools/definitions.ts";
 import {
 	cleanupSessionBackgroundProcesses,
 	executeBashWithTimeout,
-	executeTool,
 	getBackgroundStatus,
 	jsSearch,
 	killBackgroundProcess,
@@ -41,6 +42,73 @@ import {
 } from "./tools/index.ts";
 import type { AgentResult } from "./types.ts";
 import { zodShapeToJsonSchema } from "./zod-schema.ts";
+
+/**
+ * Test-only executeTool wrapper. Creates builtin tools with the given cwd
+ * and dispatches to the matching handler. Mirrors the old executor.ts API
+ * for backward-compatible tests.
+ */
+async function executeTool(
+	name: string,
+	input: Record<string, unknown>,
+	cwd: string,
+	fallbackCwd?: string,
+	sessionId?: string,
+	queue?: MessageQueue,
+	toolCallId?: string,
+	getSession?: (sid: string) => import("./types.ts").TaskSession | undefined,
+): Promise<{
+	content: string;
+	isError: boolean;
+	cwd?: string;
+	backgroundId?: string;
+	backgroundCommand?: string;
+	isImage?: boolean;
+	imageData?: string;
+	mediaType?: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+}> {
+	const currentCwd = cwd;
+	const tools = createBuiltinTools(
+		(sid: string) => getSession?.(sid),
+		sessionId ?? "test",
+		() => currentCwd,
+		() => fallbackCwd,
+		() => queue,
+	);
+	// biome-ignore lint/suspicious/noExplicitAny: test helper
+	const toolMap = new Map<string, ToolDefinition<any>>();
+	for (const t of tools) {
+		toolMap.set(t.name, t);
+	}
+	const handler = toolMap.get(name);
+	if (!handler) {
+		return { content: `Unknown tool: ${name}`, isError: true };
+	}
+	const result = await handler.handler(input, { toolCallId });
+	// Extract text content from MCP Array format
+	const parts = Array.isArray(result.content) ? result.content : [];
+	const textParts: string[] = [];
+	for (const c of parts as Array<Record<string, unknown>>) {
+		if (c.type === "text") textParts.push(c.text as string);
+	}
+	// Extra fields (isImage, imageData, mediaType, cwd, etc.) are on the result object directly
+	const r = result as Record<string, unknown>;
+	return {
+		content: textParts.join("\n"),
+		isError: (result.isError as boolean) ?? false,
+		cwd: r.cwd as string | undefined,
+		backgroundId: r.backgroundId as string | undefined,
+		backgroundCommand: r.backgroundCommand as string | undefined,
+		isImage: r.isImage as boolean | undefined,
+		imageData: r.imageData as string | undefined,
+		mediaType: r.mediaType as
+			| "image/jpeg"
+			| "image/png"
+			| "image/gif"
+			| "image/webp"
+			| undefined,
+	};
+}
 
 /** Create a MessageQueue pre-loaded with a user message (for tests). */
 function queueWithPrompt(content: string, cwd?: string): MessageQueue {

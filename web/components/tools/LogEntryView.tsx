@@ -19,11 +19,11 @@ import { ToolResultImages } from "./ToolResultImages.tsx";
 import {
 	bashBgExcludeKeys,
 	formatArgs,
-	formatMcpToolResult,
 	getEntryText,
-	getToolCardTitle,
 	getToolName,
-	isTitleOnlyCard,
+	getToolTitle,
+	isTitleOnly,
+	summarizeToolResult,
 } from "./utils.ts";
 
 /** Outer wrapper: timestamp + badge + card */
@@ -207,7 +207,9 @@ export const LogEntryView = memo(function LogEntryView({
 				taskId={getLogTaskId(entry)}
 			>
 				<Card
-					title={getToolCardTitle(toolName, toolArgs, null, nodeMap)}
+					title={getToolTitle(toolName, toolArgs, null, nodeMap, {
+						emoji: true,
+					})}
 					className={`mxd-tool-card-pending mxd-tool-card-loading ${isBuiltin ? "mxd-tool-card-mcp" : ""}`}
 					defaultExpanded={!!argsStr}
 					collapsible={!!argsStr}
@@ -251,13 +253,11 @@ export const LogEntryView = memo(function LogEntryView({
 		const content = entry.content;
 		const isErr = entry.isError;
 		const isOk = !isErr;
-		const mcpFormatted = isOk
-			? formatMcpToolResult(toolName, content, t)
-			: null;
+		const mcpFormatted = isOk ? summarizeToolResult(toolName, content) : null;
 		const isBuiltin = isBuiltinTool(toolName);
 		const statusClass = isErr ? "mxd-tool-card-err" : "mxd-tool-card-ok";
 		const hasImages = entry.images && entry.images.length > 0;
-		const hasBody = (content && !isTitleOnlyCard(toolName)) || hasImages;
+		const hasBody = (content && !isTitleOnly(toolName)) || hasImages;
 
 		return (
 			<LogEntryWrapper
@@ -266,7 +266,9 @@ export const LogEntryView = memo(function LogEntryView({
 				taskId={getLogTaskId(entry)}
 			>
 				<Card
-					title={getToolCardTitle(toolName, undefined, content, nodeMap)}
+					title={getToolTitle(toolName, undefined, content, nodeMap, {
+						emoji: true,
+					})}
 					className={`${statusClass} ${isBuiltin ? "mxd-tool-card-mcp" : ""}`}
 					collapsible={!!hasBody}
 					defaultExpanded={!!hasBody}
@@ -280,7 +282,7 @@ export const LogEntryView = memo(function LogEntryView({
 				>
 					{hasBody ? (
 						<>
-							{content && !isTitleOnlyCard(toolName) && (
+							{content && !isTitleOnly(toolName) && (
 								<div className="mxd-tool-card-body">
 									<div className="mxd-tool-card-result">
 										{mcpFormatted ?? content}
