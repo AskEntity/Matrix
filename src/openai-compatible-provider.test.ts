@@ -12,7 +12,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { tool } from "./tool-definition.ts";
 import { MessageQueue } from "./message-queue.ts";
 import {
 	clearContextWindowCache,
@@ -21,6 +20,7 @@ import {
 	getModelPricing,
 	OpenAICompatibleProvider,
 } from "./openai-compatible-provider.ts";
+import { tool } from "./tool-definition.ts";
 
 /** Create a MessageQueue pre-loaded with a user message (for tests). */
 function queueWithPrompt(content: string, cwd?: string): MessageQueue {
@@ -1470,20 +1470,15 @@ describe("Event deterministic verification (OpenAI)", () => {
 					queue: queueWithPrompt("Try something", testDir),
 					mcpToolDefs: {
 						mxd: [
-							tool(
-								"done",
-								"Signal completion",
-								{},
-								async () => ({
-									isError: true,
-									content: [
-										{
-											type: "text",
-											text: "Error: command failed",
-										},
-									],
-								}),
-							),
+							tool("done", "Signal completion", {}, async () => ({
+								isError: true,
+								content: [
+									{
+										type: "text",
+										text: "Error: command failed",
+									},
+								],
+							})),
 						],
 					},
 				});

@@ -3,11 +3,11 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Anthropic from "@anthropic-ai/sdk";
-import { z } from "zod";
 import type {
 	MessageParam,
 	TextBlockParam,
 } from "@anthropic-ai/sdk/resources/messages/messages";
+import { z } from "zod";
 import {
 	AnthropicCompatibleProvider,
 	addMessagesCacheControl,
@@ -1686,18 +1686,14 @@ describe("tool() jsonSchema generation", () => {
 			"test tool",
 			{
 				persistent: z
-					.union([
-						z.literal(false),
-						z.literal("reset"),
-						z.literal("continue"),
-					])
+					.union([z.literal(false), z.literal("reset"), z.literal("continue")])
 					.optional()
 					.describe("Persistent mode"),
 			},
 			async () => ({ content: [{ type: "text", text: "ok" }] }),
 		);
-		const props = (def.jsonSchema as Record<string, unknown>).properties as
-			Record<string, unknown>;
+		const props = (def.jsonSchema as Record<string, unknown>)
+			.properties as Record<string, unknown>;
 		expect(props?.persistent).toEqual({
 			description: "Persistent mode",
 			anyOf: [
@@ -2550,20 +2546,15 @@ describe("Event deterministic verification", () => {
 			queue: queueWithPrompt("Try something", testDir),
 			mcpToolDefs: {
 				mxd: [
-					tool(
-						"done",
-						"Signal completion",
-						{},
-						async () => ({
-							isError: true,
-							content: [
-								{
-									type: "text",
-									text: "Error: command failed with exit code 1",
-								},
-							],
-						}),
-					),
+					tool("done", "Signal completion", {}, async () => ({
+						isError: true,
+						content: [
+							{
+								type: "text",
+								text: "Error: command failed with exit code 1",
+							},
+						],
+					})),
 				],
 			},
 		});

@@ -13,7 +13,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Event } from "./events.ts";
-import { tool } from "./tool-definition.ts";
 import { MessageQueue } from "./message-queue.ts";
 import {
 	clearContextWindowCache,
@@ -23,6 +22,7 @@ import {
 	getModelPricing,
 	OpenAIResponsesCompatibleProvider,
 } from "./openai-responses-compatible-provider.ts";
+import { tool } from "./tool-definition.ts";
 
 function queueWithPrompt(content: string, cwd?: string): MessageQueue {
 	const q = new MessageQueue();
