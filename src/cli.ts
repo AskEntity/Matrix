@@ -307,22 +307,29 @@ async function handleDelete(args: string[]): Promise<void> {
 	console.log(`Deleted task: ${title}`);
 }
 
-/** Send a message to the root agent and return the projectId. Shared by run/orchestrate/send. */
-async function sendToRoot(projectId: string, message: string): Promise<void> {
-	// Resolve root node ID from task tree
-	const tasksRes = await api(`/projects/${projectId}/tasks`);
-	if (!tasksRes.ok) {
-		console.error("Error: could not fetch task tree");
-		process.exit(1);
-	}
-	const tasks = (await tasksRes.json()) as { rootNodeId?: string | null };
-	const rootNodeId = tasks.rootNodeId;
-	if (!rootNodeId) {
-		console.error("Error: no root node found. Run `mxd init` first.");
-		process.exit(1);
+/** Send a message to a task (or root if no taskId). */
+async function sendMessage(
+	projectId: string,
+	message: string,
+	taskId?: string,
+): Promise<void> {
+	let targetId = taskId;
+	if (!targetId) {
+		// Resolve root node ID from task tree
+		const tasksRes = await api(`/projects/${projectId}/tasks`);
+		if (!tasksRes.ok) {
+			console.error("Error: could not fetch task tree");
+			process.exit(1);
+		}
+		const tasks = (await tasksRes.json()) as { rootNodeId?: string | null };
+		targetId = tasks.rootNodeId ?? undefined;
+		if (!targetId) {
+			console.error("Error: no root node found. Run `mxd init` first.");
+			process.exit(1);
+		}
 	}
 
-	const res = await api(`/projects/${projectId}/tasks/${rootNodeId}/message`, {
+	const res = await api(`/projects/${projectId}/tasks/${targetId}/message`, {
 		method: "POST",
 		body: JSON.stringify({ content: message }),
 	});
@@ -332,60 +339,6 @@ async function sendToRoot(projectId: string, message: string): Promise<void> {
 		console.error(`Error: ${err.error}`);
 		process.exit(1);
 	}
-}
-
-async function handleRun(args: string[]): Promise<void> {
-	const filteredArgs: string[] = [];
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
-		if (arg === "--model" && i + 1 < args.length) {
-			i++; // skip model value (config is set separately)
-		} else if (arg === "--child-model" && i + 1 < args.length) {
-			i++;
-		} else if (arg) {
-			filteredArgs.push(arg);
-		}
-	}
-	const prompt = filteredArgs.join(" ");
-	if (!prompt) {
-		console.error("Usage: mxd run <prompt>");
-		process.exit(1);
-	}
-
-	const projectId = await resolveCurrentProject();
-	if (!projectId) return;
-
-	await sendToRoot(projectId, prompt);
-	console.log("Agent started. Watching activity (Ctrl+C to detach)...\n");
-	await watchProject(projectId);
-}
-
-async function handleOrchestrate(args: string[]): Promise<void> {
-	const filteredArgs: string[] = [];
-	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
-		if (arg === "--model" && i + 1 < args.length) {
-			i++;
-		} else if (arg === "--child-model" && i + 1 < args.length) {
-			i++;
-		} else if (arg) {
-			filteredArgs.push(arg);
-		}
-	}
-	const goal = filteredArgs.join(" ");
-
-	if (!goal) {
-		console.error("Usage: mxd orchestrate <goal>");
-		process.exit(1);
-	}
-
-	const projectId = await resolveCurrentProject();
-	if (!projectId) return;
-
-	await sendToRoot(projectId, goal);
-	console.log("Orchestration started.");
-	console.log("Watching agent activity (Ctrl+C to detach)...\n");
-	await watchProject(projectId);
 }
 
 async function handleStop(): Promise<void> {
@@ -400,7 +353,7 @@ async function handleStop(): Promise<void> {
 	}
 	console.log("Agent stopped.");
 	console.log(
-		"Tip: Session history is preserved on disk. Restart the daemon and resume with: mxd orchestrate --resume",
+		"Tip: Session history is preserved on disk. Send a message to resume.",
 	);
 }
 
@@ -558,38 +511,6 @@ async function resolveCurrentProject(): Promise<string | null> {
 	}
 
 	return match.id;
-}
-
-async function handleContinue(args: string[]): Promise<void> {
-	const taskId = args[0];
-	if (!taskId) {
-		console.error("Usage: mxd continue <taskId> [message]");
-		process.exit(1);
-	}
-
-	const message = args.slice(1).join(" ") || undefined;
-
-	const projectId = await resolveCurrentProject();
-	if (!projectId) return;
-
-	const body: Record<string, unknown> = {};
-	if (message) body.message = message;
-
-	const res = await api(`/projects/${projectId}/tasks/${taskId}/continue`, {
-		method: "POST",
-		body: JSON.stringify(body),
-	});
-
-	if (!res.ok) {
-		const err = (await res.json()) as { error: string };
-		console.error(`Error: ${err.error}`);
-		process.exit(1);
-	}
-
-	const node = (await res.json()) as { title: string; status: string };
-	console.log(`Continued: ${node.title} -> ${node.status}`);
-	console.log("Watching activity (Ctrl+C to detach)...\n");
-	await watchProject(projectId);
 }
 
 /** Watch a project's agent activity via SSE. Resolves never (runs until Ctrl+C). */
@@ -827,20 +748,6 @@ async function handleAgent(args: string[]): Promise<void> {
 	} else {
 		console.log("Agent is IDLE");
 	}
-}
-
-async function handleSend(args: string[]): Promise<void> {
-	const message = args.join(" ");
-	if (!message) {
-		console.error("Usage: mxd send <message>");
-		process.exit(1);
-	}
-
-	const projectId = await resolveCurrentProject();
-	if (!projectId) return;
-
-	await sendToRoot(projectId, message);
-	console.log("Message sent.");
 }
 
 const KNOWN_CONFIG_KEYS = [
@@ -1500,24 +1407,9 @@ switch (command) {
 	case "del":
 		await handleDelete(args);
 		break;
-	case "run":
-		await handleRun(args);
-		break;
-	case "orchestrate":
-	case "orch":
-		await handleOrchestrate(args);
-		break;
-	case "continue":
-	case "cont":
-		await handleContinue(args);
-		break;
 	case "watch":
 	case "w":
 		await handleWatch();
-		break;
-	case "send":
-	case "msg":
-		await handleSend(args);
 		break;
 	case "stop":
 		await handleStop();
@@ -1560,11 +1452,21 @@ switch (command) {
 	case "daemon":
 		await handleDaemon(args);
 		break;
-	default:
+	case "help":
+	case "--help":
+	case "-h":
+	case undefined:
 		console.log(`Matrix v${VERSION}`);
 		console.log("");
 		console.log("USAGE");
+		console.log("  mxd <message>              Send message to agent (default)");
 		console.log("  mxd <command> [options]");
+		console.log("");
+		console.log("FLAGS (for messages)");
+		console.log("  -p <id>                    Project ID (default: from cwd)");
+		console.log("  -t <id>                    Task ID (default: root node)");
+		console.log("  --model <model>            Model override");
+		console.log("  --child-model <model>      Child model override");
 		console.log("");
 		console.log("COMMANDS");
 		console.log("  Project");
@@ -1575,16 +1477,8 @@ switch (command) {
 		);
 		console.log("");
 		console.log("  Agent");
-		console.log(
-			"    orchestrate <goal>       Start orchestration (auto-watches)",
-		);
-		console.log(
-			"    orchestrate --resume     Resume from saved session history",
-		);
-		console.log("    continue <taskId> [msg]  Continue a failed task");
 		console.log("    stop                     Stop running agent");
 		console.log("    agent [id]               Check if an agent is running");
-		console.log("    send <msg>               Send message to running agent");
 		console.log("");
 		console.log("  Tasks");
 		console.log("    status [id]              Show task tree");
@@ -1616,9 +1510,6 @@ switch (command) {
 			"    config set <key> <value> [--global|--project]  Set a config value",
 		);
 		console.log(
-			"    config unset <key> [--global|--project]        Remove a config value",
-		);
-		console.log(
 			"    config auth add <name>   Add auth group (--provider, --key)",
 		);
 		console.log("    config auth list         List auth groups");
@@ -1633,16 +1524,53 @@ switch (command) {
 		console.log("    health                   Check daemon health");
 		console.log("    version                  Show version");
 		console.log("");
-		console.log("QUICK START");
+		console.log("EXAMPLES");
+		console.log("  mxd 'build feature X'               # Send to root agent");
 		console.log(
-			"  mxd daemon install                  # Install and start daemon",
+			"  mxd -t abc123 'try a different approach'  # Send to specific task",
 		);
 		console.log(
-			"  mxd init .                          # Register current directory",
-		);
-		console.log("  mxd orchestrate 'build feature X'   # Start agent");
-		console.log(
-			"  mxd watch                           # Watch in separate terminal",
+			"  mxd -p myproj 'fix the bug'         # Specify project explicitly",
 		);
 		break;
+	default: {
+		// Default: treat all args as a message to send
+		let projectId: string | undefined;
+		let taskId: string | undefined;
+		const messageArgs: string[] = [];
+
+		// Re-parse from original argv (command is the first arg, already in args)
+		const allArgs = [command, ...args];
+		for (let i = 0; i < allArgs.length; i++) {
+			const arg = allArgs[i];
+			if (arg === "-p" && i + 1 < allArgs.length) {
+				projectId = allArgs[++i];
+			} else if (arg === "-t" && i + 1 < allArgs.length) {
+				taskId = allArgs[++i];
+			} else if (arg === "--model" && i + 1 < allArgs.length) {
+				i++; // skip model value (config is set separately)
+			} else if (arg === "--child-model" && i + 1 < allArgs.length) {
+				i++; // skip child-model value
+			} else if (arg) {
+				messageArgs.push(arg);
+			}
+		}
+
+		const message = messageArgs.join(" ");
+		if (!message) {
+			console.error("No message provided. Run `mxd --help` for usage.");
+			process.exit(1);
+		}
+
+		if (!projectId) {
+			const resolved = await resolveCurrentProject();
+			if (!resolved) process.exit(1);
+			projectId = resolved;
+		}
+
+		await sendMessage(projectId, message, taskId);
+		console.log("Message sent. Watching activity (Ctrl+C to detach)...\n");
+		await watchProject(projectId);
+		break;
+	}
 }
