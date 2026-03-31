@@ -34,7 +34,6 @@ export const api = {
 	clarifications: (id: string) => projectUrl(id, "clarifications"),
 	agent: (id: string) => projectUrl(id, "agent"),
 	agentStatus: (id: string) => projectUrl(id, "agent", "status"),
-	orchestrate: (id: string) => projectUrl(id, "orchestrate", "agent"),
 	stop: (id: string) => projectUrl(id, "stop"),
 	compact: (id: string) => projectUrl(id, "compact"),
 	clarify: (id: string) => projectUrl(id, "clarify"),
@@ -56,6 +55,7 @@ export const api = {
 	taskContinue: (id: string, nodeId: string) => taskUrl(id, nodeId, "continue"),
 	taskMessage: (id: string, nodeId: string) => taskUrl(id, nodeId, "message"),
 	taskEvents: (id: string, nodeId: string) => taskUrl(id, nodeId, "events"),
+	taskStop: (id: string, nodeId: string) => taskUrl(id, nodeId, "stop"),
 	taskSessionsClear: (id: string, nodeId: string) =>
 		taskUrl(id, nodeId, "sessions", "clear"),
 	taskFork: (id: string, nodeId: string) => taskUrl(id, nodeId, "fork"),

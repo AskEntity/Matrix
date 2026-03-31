@@ -241,6 +241,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		checkStatus,
 		compact,
 		deleteTask,
+		stopTask,
 		clearTaskSession,
 		sendMessageToTask,
 		reorderTasks,
@@ -580,7 +581,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		handleClearSessions,
 		handleClearRootSession,
 		handleDeleteTask,
-		handlePauseTask,
+		handleStopTask,
 		handleClearTaskSession,
 		handleAddProject,
 		handleDeleteProject,
@@ -624,6 +625,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				compact,
 				sendMessageToTask,
 				deleteTask,
+				stopTask,
 				clearTaskSession,
 				initProject,
 				deleteProject,
@@ -648,6 +650,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			compact,
 			sendMessageToTask,
 			deleteTask,
+			stopTask,
 			clearTaskSession,
 			initProject,
 			deleteProject,
@@ -993,7 +996,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									projectId={projectId}
 									isActive={activeAgents.has(selectedNode.id)}
 									onDelete={handleDeleteTask}
-									onPause={handlePauseTask}
+									onStop={handleStopTask}
 									onClearSession={handleClearTaskSession}
 								/>
 							) : (

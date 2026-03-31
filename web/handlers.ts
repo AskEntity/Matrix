@@ -65,6 +65,7 @@ interface ActionHandlerDeps {
 		images?: { base64: string; mediaType: string }[],
 	) => Promise<void>;
 	deleteTask: (taskId: string) => Promise<void>;
+	stopTask: (taskId: string) => Promise<void>;
 	clearTaskSession: (taskId: string) => Promise<void>;
 	initProject: (path: string) => Promise<{ id: string }>;
 	deleteProject: (id: string) => Promise<void>;
@@ -107,6 +108,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		compact,
 		sendMessageToTask,
 		deleteTask,
+		stopTask,
 		clearTaskSession,
 		initProject,
 		deleteProject,
@@ -310,13 +312,10 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		}
 	}
 
-	async function handlePauseTask() {
+	async function handleStopTask() {
 		if (!selectedTaskId) return;
 		try {
-			await sendMessageToTask(
-				selectedTaskId,
-				"PAUSED by user. Please call yield() and wait for further instructions before continuing.",
-			);
+			await stopTask(selectedTaskId);
 		} catch (err) {
 			addLog({
 				type: "error",
@@ -468,7 +467,7 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		handleClearSessions,
 		handleClearRootSession,
 		handleDeleteTask,
-		handlePauseTask,
+		handleStopTask,
 		handleClearTaskSession,
 		handleAddProject,
 		handleDeleteProject,

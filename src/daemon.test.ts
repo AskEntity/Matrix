@@ -84,6 +84,23 @@ function createMockProvider(
 
 const mockProvider = createMockProvider();
 
+/** Helper: get root node ID for a project, then send a message to start the agent. */
+async function startRootAgent(
+	app: {
+		request: (url: string, init?: RequestInit) => Response | Promise<Response>;
+	},
+	projectId: string,
+	prompt: string,
+): Promise<Response> {
+	const tasksRes = await app.request(`/projects/${projectId}/tasks`);
+	const { rootNodeId } = (await tasksRes.json()) as { rootNodeId: string };
+	return app.request(`/projects/${projectId}/tasks/${rootNodeId}/message`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ content: prompt }),
+	});
+}
+
 describe("daemon health", () => {
 	test("GET /health returns ok with version and uptime", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-health-"));
@@ -1685,11 +1702,12 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 
 	test("persists message when no queue registered for task", async () => {
-		const { app, pm } = createApp({
+		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
 		});
 		await pm.load();
+		markReady();
 		const res = await app.request(
 			`/projects/${projectId}/tasks/${taskId}/message`,
 			{
@@ -1710,12 +1728,14 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		const {
 			app,
 			pm,
+			markReady,
 			getTracker: gt,
 		} = createApp({
 			dataDir,
 			agentProvider: mockProvider,
 		});
 		await pm.load();
+		markReady();
 
 		// Attach session to simulate a running agent
 		taskQueue = new MessageQueue();
@@ -1746,11 +1766,12 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 
 	test("returns 400 when content is missing", async () => {
-		const { app, pm } = createApp({
+		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
 		});
 		await pm.load();
+		markReady();
 
 		const res = await app.request(
 			`/projects/${projectId}/tasks/${taskId}/message`,
@@ -1764,11 +1785,12 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	});
 
 	test("returns 404 for unknown project", async () => {
-		const { app, pm } = createApp({
+		const { app, pm, markReady } = createApp({
 			dataDir,
 			agentProvider: mockProvider,
 		});
 		await pm.load();
+		markReady();
 
 		const res = await app.request(
 			`/projects/nonexistent/tasks/${taskId}/message`,
@@ -1785,12 +1807,14 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		const {
 			app,
 			pm,
+			markReady,
 			getTracker: gt,
 		} = createApp({
 			dataDir,
 			agentProvider: mockProvider,
 		});
 		await pm.load();
+		markReady();
 
 		taskQueue = new MessageQueue();
 		taskQueue.close();
@@ -1832,6 +1856,7 @@ describe("POST /projects/:id/tasks/:nodeId/message (root node)", () => {
 		app = result.app;
 		getTracker = result.getTracker;
 		await result.pm.load();
+		result.markReady();
 
 		const projRes = await app.request("/projects", {
 			method: "POST",
@@ -2031,13 +2056,10 @@ describe("POST /projects/:id/clarify", () => {
 		});
 		const project = (await projRes.json()) as Project;
 
-		const orchRes = await localApp.request(
-			`/projects/${project.id}/orchestrate/agent`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: "test clarify routing" }),
-			},
+		const orchRes = await startRootAgent(
+			localApp,
+			project.id,
+			"test clarify routing",
 		);
 		expect(orchRes.status).toBe(200);
 		await new Promise((r) => setTimeout(r, 100));
@@ -2137,13 +2159,10 @@ describe("POST /projects/:id/clarify", () => {
 		});
 		const project = (await projRes.json()) as Project;
 
-		const orchRes = await localApp.request(
-			`/projects/${project.id}/orchestrate/agent`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: "test child clarify routing" }),
-			},
+		const orchRes = await startRootAgent(
+			localApp,
+			project.id,
+			"test child clarify routing",
 		);
 		expect(orchRes.status).toBe(200);
 		await new Promise((r) => setTimeout(r, 100));
@@ -2272,13 +2291,10 @@ describe("POST /projects/:id/clarify", () => {
 		});
 		const project = (await projRes.json()) as Project;
 
-		const orchRes = await localApp.request(
-			`/projects/${project.id}/orchestrate/agent`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: "test closed queue" }),
-			},
+		const orchRes = await startRootAgent(
+			localApp,
+			project.id,
+			"test closed queue",
 		);
 		expect(orchRes.status).toBe(200);
 		await new Promise((r) => setTimeout(r, 100));
@@ -2326,8 +2342,8 @@ describe("POST /projects/:id/clarify", () => {
 	});
 });
 
-describe("daemon orchestrate/agent API", () => {
-	test("POST /orchestrate/agent invokes agent with MCP tools", async () => {
+describe("task message API — agent launch", () => {
+	test("POST /tasks/:nodeId/message invokes agent with MCP tools", async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "mxd-orchagent-"));
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-oadata-"));
 
@@ -2395,16 +2411,8 @@ describe("daemon orchestrate/agent API", () => {
 		});
 		const project = (await projectRes.json()) as Project;
 
-		const res = await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "Build a todo app" }),
-		});
+		const res = await startRootAgent(app, project.id, "Build a todo app");
 		expect(res.status).toBe(200);
-
-		const body = (await res.json()) as { status: string; projectId: string };
-		expect(body.status).toBe("running");
-		expect(body.projectId).toBe(project.id);
 
 		// Wait briefly for the background agent to complete
 		await new Promise((r) => setTimeout(r, 100));
@@ -2414,7 +2422,7 @@ describe("daemon orchestrate/agent API", () => {
 		await rm(dataDir, { recursive: true });
 	});
 
-	test("POST /orchestrate/agent requires prompt", async () => {
+	test("POST /tasks/:nodeId/message requires content", async () => {
 		const tempDir = await mkdtemp(join(tmpdir(), "mxd-oa2-"));
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-oa2d-"));
 
@@ -2432,18 +2440,23 @@ describe("daemon orchestrate/agent API", () => {
 		});
 		const project = (await projectRes.json()) as Project;
 
-		const res = await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({}),
-		});
+		const tasksRes = await app.request(`/projects/${project.id}/tasks`);
+		const { rootNodeId } = (await tasksRes.json()) as { rootNodeId: string };
+		const res = await app.request(
+			`/projects/${project.id}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			},
+		);
 		expect(res.status).toBe(400);
 
 		await rm(tempDir, { recursive: true });
 		await rm(dataDir, { recursive: true });
 	});
 
-	test("POST /orchestrate/agent returns 404 for unknown project", async () => {
+	test("POST /tasks/:nodeId/message returns 404 for unknown project", async () => {
 		const dataDir = await mkdtemp(join(tmpdir(), "mxd-oa3d-"));
 		const { app, pm, markReady } = createApp({
 			dataDir,
@@ -2452,10 +2465,10 @@ describe("daemon orchestrate/agent API", () => {
 		await pm.load();
 		markReady();
 
-		const res = await app.request("/projects/nonexistent/orchestrate/agent", {
+		const res = await app.request("/projects/nonexistent/tasks/fake/message", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
+			body: JSON.stringify({ content: "test" }),
 		});
 		expect(res.status).toBe(404);
 
@@ -2761,14 +2774,7 @@ describe("POST /projects/:id/stop", () => {
 		const project = (await projRes.json()) as Project;
 
 		// Start an agent
-		const orchRes = await localApp.request(
-			`/projects/${project.id}/orchestrate/agent`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: "do something" }),
-			},
-		);
+		const orchRes = await startRootAgent(localApp, project.id, "do something");
 		expect(orchRes.status).toBe(200);
 		await new Promise((r) => setTimeout(r, 100));
 
@@ -2836,7 +2842,7 @@ describe("POST /projects/:id/stop", () => {
 	});
 });
 
-describe("POST /projects/:id/orchestrate/agent", () => {
+describe("POST /projects/:id/tasks/:nodeId/message — root agent", () => {
 	let tempDir: string;
 	let dataDir: string;
 	let app: ReturnType<typeof createApp>["app"];
@@ -2865,48 +2871,38 @@ describe("POST /projects/:id/orchestrate/agent", () => {
 	});
 
 	test("returns 404 for unknown project", async () => {
-		const res = await app.request("/projects/unknown/orchestrate/agent", {
+		const res = await app.request("/projects/unknown/tasks/fake/message", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
+			body: JSON.stringify({ content: "test" }),
 		});
 		expect(res.status).toBe(404);
 	});
 
-	test("returns 400 when prompt is missing", async () => {
-		const res = await app.request(`/projects/${projectId}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({}),
-		});
+	test("returns 400 when content is missing", async () => {
+		const tasksRes = await app.request(`/projects/${projectId}/tasks`);
+		const { rootNodeId } = (await tasksRes.json()) as { rootNodeId: string };
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${rootNodeId}/message`,
+			{
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			},
+		);
 		expect(res.status).toBe(400);
 	});
 
-	test("returns running status for valid request", async () => {
-		const res = await app.request(`/projects/${projectId}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "do something" }),
-		});
+	test("returns ok for valid request", async () => {
+		const res = await startRootAgent(app, projectId, "do something");
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as { status: string; projectId: string };
-		expect(body.status).toBe("running");
-		expect(body.projectId).toBe(projectId);
+		const body = (await res.json()) as { ok: boolean };
+		expect(body.ok).toBe(true);
 	});
 
-	test("enqueues message when agent already running instead of 409", async () => {
-		// Start once
-		await app.request(`/projects/${projectId}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "first run" }),
-		});
-		// Try again immediately — agent is still active, prompt is enqueued as user message
-		const res = await app.request(`/projects/${projectId}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "second run" }),
-		});
+	test("enqueues message when agent already running instead of error", async () => {
+		await startRootAgent(app, projectId, "first run");
+		const res = await startRootAgent(app, projectId, "second run");
 		expect(res.status).toBe(200);
 	});
 });
@@ -3948,14 +3944,7 @@ describe("POST /projects/:id/restart", () => {
 		const proj = (await projRes.json()) as Project;
 
 		// Start orchestration
-		const startRes = await app.request(
-			`/projects/${proj.id}/orchestrate/agent`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: "test" }),
-			},
-		);
+		const startRes = await startRootAgent(app, proj.id, "test");
 		expect(startRes.status).toBe(200);
 
 		// Wait briefly for agent to start
@@ -4042,11 +4031,7 @@ describe("POST /projects/:id/restart", () => {
 		const proj = (await projRes.json()) as Project;
 
 		// Start orchestration
-		await app.request(`/projects/${proj.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
-		});
+		await startRootAgent(app, proj.id, "test");
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
 		// Fire two restarts concurrently — second should fail with 409
@@ -4126,11 +4111,7 @@ describe("POST /projects/:id/restart", () => {
 		const proj = (await projRes.json()) as Project;
 
 		// Start orchestration
-		await app.request(`/projects/${proj.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
-		});
+		await startRootAgent(app, proj.id, "test");
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		expect(sessionCount).toBe(1);
 
@@ -4141,25 +4122,14 @@ describe("POST /projects/:id/restart", () => {
 		expect(stopRes.status).toBe(200);
 
 		// Immediately start a new agent
-		const startRes = await app.request(
-			`/projects/${proj.id}/orchestrate/agent`,
-			{
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: "test 2" }),
-			},
-		);
+		const startRes = await startRootAgent(app, proj.id, "test 2");
 		expect(startRes.status).toBe(200);
 
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		expect(sessionCount).toBe(2);
 
 		// Trying to start again enqueues the message (no longer 409)
-		const dupRes = await app.request(`/projects/${proj.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test 3" }),
-		});
+		const dupRes = await startRootAgent(app, proj.id, "test 3");
 		expect(dupRes.status).toBe(200);
 		// Still only 2 sessions launched (not 3 — the third prompt was enqueued, not a new session)
 		expect(sessionCount).toBe(2);
@@ -4236,11 +4206,7 @@ describe("POST /projects/:id/restart", () => {
 		const proj = (await projRes.json()) as Project;
 
 		// Start orchestration — session 1
-		await app.request(`/projects/${proj.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
-		});
+		await startRootAgent(app, proj.id, "test");
 		await new Promise((resolve) => setTimeout(resolve, 100));
 		expect(sessionCount).toBe(1);
 
@@ -4339,11 +4305,7 @@ describe("POST /projects/:id/restart", () => {
 		const proj = (await projRes.json()) as Project;
 
 		// Start orchestration
-		await app.request(`/projects/${proj.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
-		});
+		await startRootAgent(app, proj.id, "test");
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
 		// Restart
@@ -4374,12 +4336,14 @@ describe("POST /projects/:id/restart", () => {
 		const proj = (await projRes.json()) as Project;
 
 		// Should return 503 before markReady
+		const tasksRes = await app.request(`/projects/${proj.id}/tasks`);
+		const { rootNodeId } = (await tasksRes.json()) as { rootNodeId: string };
 		const startRes = await app.request(
-			`/projects/${proj.id}/orchestrate/agent`,
+			`/projects/${proj.id}/tasks/${rootNodeId}/message`,
 			{
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: "test" }),
+				body: JSON.stringify({ content: "test" }),
 			},
 		);
 		expect(startRes.status).toBe(503);
@@ -4465,11 +4429,7 @@ describe("lifecycle edge cases", () => {
 		const project = (await projRes.json()) as Project;
 
 		// Start agent
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
-		});
+		await startRootAgent(app, project.id, "test");
 		await new Promise((r) => setTimeout(r, 100));
 
 		// Stop the agent
@@ -4547,11 +4507,7 @@ describe("lifecycle edge cases", () => {
 		const project = (await projRes.json()) as Project;
 
 		// Start agent
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
-		});
+		await startRootAgent(app, project.id, "test");
 		await new Promise((r) => setTimeout(r, 100));
 
 		// Clear sessions while running — should stop agent and succeed
@@ -4628,11 +4584,7 @@ describe("lifecycle edge cases", () => {
 		const project = (await projRes.json()) as Project;
 
 		// Start agent
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
-		});
+		await startRootAgent(app, project.id, "test");
 		await new Promise((r) => setTimeout(r, 100));
 
 		// Delete the project — should stop the agent first
@@ -4686,11 +4638,7 @@ describe("lifecycle edge cases", () => {
 		const project = (await projRes.json()) as Project;
 
 		// Start and stop agent to create root node + tasks
-		await app.request(`/projects/${project.id}/orchestrate/agent`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt: "test" }),
-		});
+		await startRootAgent(app, project.id, "test");
 		await new Promise((r) => setTimeout(r, 100));
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
 		await new Promise((r) => setTimeout(r, 100));
