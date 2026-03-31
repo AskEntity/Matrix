@@ -204,9 +204,13 @@ async function createAgentContext(
 			project.id,
 			opts.currentTaskId,
 			{
-				deliverMessage: async (nodeId: string, message: QueueMessage) => {
-					await deliverMessage(ctx, project, nodeId, message);
-				},
+				deliverMessage: async (
+						nodeId: string,
+						message: QueueMessage,
+						opts?: { quiet?: boolean },
+					) => {
+						await deliverMessage(ctx, project, nodeId, message, opts);
+					},
 				injectMessageToProject:
 					opts.depth === 0 && opts.orchestratorSystemPrompt
 						? async (projectId: string, message: string) => {

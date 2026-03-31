@@ -109,8 +109,13 @@ export interface OrchestratorToolsDeps {
  * Passed as a parameter to avoid the cycle: orchestrator-tools.ts ↔ agent-lifecycle.ts.
  */
 export interface LifecycleDeps {
-	/** Deliver a message to a task: persist → enqueue (if running) → launch (if not). */
-	deliverMessage: (nodeId: string, message: QueueMessage) => Promise<void>;
+	/** Deliver a message to a task: persist → enqueue (if running) → launch (if not).
+	 *  quiet: skip auto-launch when agent is not running (used for upward messages). */
+	deliverMessage: (
+		nodeId: string,
+		message: QueueMessage,
+		opts?: { quiet?: boolean },
+	) => Promise<void>;
 	/**
 	 * Inject a message into another project, auto-launching agent if needed.
 	 * Only needed at depth 0 for cross-project messaging.
@@ -826,10 +831,7 @@ export function createOrchestratorTools(
 
 				// ── Upward message (like old report_to_parent) ──
 				if (isUpward) {
-					const parentQueue = currentTaskId
-						? findParentQueue(tracker, currentTaskId)?.queue
-						: undefined;
-					if (!parentQueue) {
+					if (!currentNode?.parentId) {
 						return {
 							content: [
 								{
@@ -841,16 +843,34 @@ export function createOrchestratorTools(
 					}
 
 					const taskTitle = currentNode?.title ?? "unknown";
+					const parentId = currentNode.parentId;
 
 					try {
-						parentQueue.enqueue(
-							createTaskMessage(
-								currentTaskId ?? "unknown",
-								taskTitle,
-								args.message,
-								{ title: args.title, requestReply: args.requestReply },
-							),
+						const queueMessage = createTaskMessage(
+							currentTaskId ?? "unknown",
+							taskTitle,
+							args.message,
+							{ title: args.title, requestReply: args.requestReply },
 						);
+
+						if (lifecycleDeps?.deliverMessage) {
+							// deliverMessage handles JSONL persistence + queue delivery.
+							// quiet: true — don't auto-launch a stopped parent.
+							await lifecycleDeps.deliverMessage(parentId, queueMessage, {
+								quiet: true,
+							});
+						} else {
+							// Fallback for non-daemon contexts (tests without full daemon):
+							// direct queue delivery only
+							const parentQueue = findParentQueue(
+								tracker,
+								currentTaskId ?? "",
+							)?.queue;
+							if (parentQueue) {
+								parentQueue.enqueue(queueMessage);
+							}
+						}
+
 						return {
 							content: [
 								{
