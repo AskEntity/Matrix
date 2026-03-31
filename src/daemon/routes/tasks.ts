@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { Hono } from "hono";
-import type { QueueImage } from "../../message-queue.ts";
+import type { QueueImage, QueueMessage } from "../../message-queue.ts";
 import {
 	createTaskMessage,
 	createTreeChange,
@@ -13,7 +13,6 @@ import type { TaskStatus } from "../../types.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
 	deliverMessage,
-	handleInjectMessage,
 	runChildAgentInBackground,
 	stopTask,
 } from "../agent-lifecycle.ts";
@@ -521,9 +520,7 @@ export function registerTaskRoutes(
 		return c.json({ events, hasOlderEvents: false });
 	});
 
-	// THE single message endpoint for all tasks (root and child).
-	// Root nodes delegate to handleInjectMessage (auto-launch, cold-start header, resume detection).
-	// Child nodes use direct delivery with two-phase lifecycle.
+	// THE single message endpoint for all tasks — root and child, one code path.
 	app.post("/projects/:id/tasks/:nodeId/message", async (c) => {
 		if (!ctx.startupReady) {
 			return c.json({ error: "Server starting up, please wait..." }, 503);
@@ -538,56 +535,71 @@ export function registerTaskRoutes(
 			message?: string;
 			images?: QueueImage[];
 		}>();
-		// Accept both "content" and "message" field names
 		const content = body.content ?? body.message;
 		if (!content) {
 			return c.json({ error: "content is required" }, 400);
 		}
 
 		const tracker = await getTracker(ctx, project.id);
-		const isRoot = nodeId === tracker.rootNodeId;
+		const node = tracker.get(nodeId);
+		const statusBeforeDelivery = node?.status;
+		const eventStore = getEventStore(ctx, project.id);
 
-		if (isRoot || !tracker.rootNodeId) {
-			// Root node — delegate to handleInjectMessage which handles
-			// auto-launch, cold-start header, resume detection, and images.
-			const result = await handleInjectMessage(
-				ctx,
-				project.id,
-				content,
-				body.images,
-				orchestratorSystemPrompt,
+		// Cold-start header: include memory.md context on first message to any node.
+		// Resume agents already have context from their JSONL session.
+		const isColdStart = !eventStore.has(nodeId);
+		let msg: QueueMessage;
+		if (isColdStart) {
+			const memory = readProjectMemory(
+				node?.worktreePath ?? project.path,
 			);
-			if (!result.ok) {
-				return c.json({ error: result.error }, (result.status as 404) ?? 500);
+			const isRoot = nodeId === tracker.rootNodeId;
+			if (isRoot) {
+				// Root: memory.md + working dir
+				const header = memory
+					? `Working directory: ${project.path}\n\n# .mxd/memory.md (Preloaded, do not read again)\n${memory}`
+					: `Working directory: ${project.path}`;
+				msg = createUserMessage(content, {
+					images: body.images,
+					header,
+				});
+			} else {
+				// Child: task description + memory + siblings
+				const header = buildTaskPrompt(
+					node ?? {
+						id: nodeId,
+						title: nodeId,
+						description: "",
+						parentId: null,
+					},
+					tracker,
+					memory,
+				);
+				msg = createUserMessage(content, {
+					images: body.images,
+					header,
+				});
 			}
-			return c.json({ ok: true, taskId: nodeId });
+		} else {
+			msg = createUserMessage(content, { images: body.images });
 		}
 
-		// Child node — direct delivery with two-phase lifecycle
-		const node = tracker.get(nodeId);
-		const taskTitle = node?.title ?? nodeId;
-		const statusBeforeDelivery = node?.status;
-
-		// Phase 1 of two-phase lifecycle: write + broadcast message at send time.
-		// Frontend derives pending state from message events without matching messages_consumed.
-		// CRITICAL: body must include `id` so findUnconsumedMessages can track it
-		// for dedup against the persistent queue copy. Without it, the message gets
-		// loaded from BOTH JSONL (unconsumed) and persistent queue on resume → duplication.
-		const msg = createUserMessage(content, {
-			images: body.images,
+		// Single delivery path: JSONL persistence + queue delivery + auto-launch.
+		await deliverMessage(ctx, project, nodeId, msg, {
+			orchestratorSystemPrompt,
 		});
-		// deliverMessage is the SOLE path — handles JSONL write + queue delivery.
-		await deliverMessage(ctx, project, nodeId, msg);
 
-		// Notify parent chain that user sent a message to this task (REST-only)
-		await notifyParentChain(
-			ctx,
-			project,
-			nodeId,
-			taskTitle,
-			content,
-			statusBeforeDelivery,
-		);
+		// Notify parent chain for non-root nodes (user sending to child task)
+		if (node?.parentId) {
+			await notifyParentChain(
+				ctx,
+				project,
+				nodeId,
+				node.title ?? nodeId,
+				content,
+				statusBeforeDelivery,
+			);
+		}
 
 		return c.json({ ok: true, taskId: nodeId });
 	});

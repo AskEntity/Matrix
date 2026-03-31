@@ -522,9 +522,14 @@ export async function deliverMessage(
 	project: { id: string; path: string },
 	nodeId: string,
 	message: QueueMessage,
-	opts?: { quiet?: boolean },
+	opts?: { quiet?: boolean; orchestratorSystemPrompt?: SystemPrompt },
 ): Promise<"enqueued" | "persisted"> {
 	const tracker = await getTracker(ctx, project.id);
+	const eventStore = getEventStore(ctx, project.id);
+
+	// Check resume state BEFORE writing the message — the event we're about
+	// to write shouldn't influence the fresh-vs-resume decision.
+	const shouldResume = eventStore.has(nodeId);
 
 	// Step 1: ALWAYS write to JSONL (SSE broadcast + persistence).
 	// This ensures findUnconsumedMessages can recover it on restart.
@@ -548,14 +553,13 @@ export async function deliverMessage(
 	}
 
 	// Step 3: Agent not running — flush JSONL.
-	const eventStore = getEventStore(ctx, project.id);
 	await eventStore.flushSession(nodeId);
 
-	// Step 4: Auto-launch for children (unless quiet).
-	// Root launch requires caller-specific logic (orchestratorSystemPrompt, resume).
+	// Step 4: Auto-launch (unless quiet).
 	if (!opts?.quiet) {
 		const node = tracker.get(nodeId);
 		if (node?.parentId) {
+			// Child node — launch in background
 			ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
 				emitEvent(ctx, project.id, {
 					type: "error",
@@ -564,6 +568,17 @@ export async function deliverMessage(
 					ts: Date.now(),
 				});
 			});
+		} else if (
+			opts?.orchestratorSystemPrompt &&
+			!ctx.restartingProjects.has(project.id)
+		) {
+			// Root node — launch foreground session
+			await launchAgent(
+				ctx,
+				project,
+				{ resume: shouldResume },
+				opts.orchestratorSystemPrompt,
+			);
 		}
 	}
 
@@ -1094,11 +1109,7 @@ export async function launchAgent(
 
 /**
  * Inject a user message into the root agent (running or stopped).
- * Single code path for all root message delivery:
- * - Emits JSONL event (two-phase lifecycle)
- * - Delivers to queue (if running) or persists to disk
- * - Auto-launches/resumes agent when not running
- * - Handles cold-start header (memory.md) vs resume
+ * Thin wrapper over deliverMessage that handles cold-start header.
  *
  * Used by POST /tasks/:nodeId/message (root branch) and cross-project messaging.
  */
@@ -1118,34 +1129,17 @@ export async function handleInjectMessage(
 	const rootNodeId = tracker.rootNodeId;
 	const eventStore = getEventStore(ctx, projectId);
 
-	// Check resume BEFORE writing message (the event we're about to write
-	// shouldn't influence the fresh-vs-resume decision)
-	const shouldResume = eventStore.has(rootNodeId);
-
 	// Only include header (memory.md + working dir) on true cold start.
 	// Resume agents already have context from their JSONL session.
-	let msg: QueueMessage;
-	if (shouldResume) {
-		msg = createUserMessage(message, { images });
-	} else {
-		msg = prepareAgentMessage(project.path, rootNodeId, message, images).msg;
-	}
-	// deliverMessage is the SOLE path for message persistence + delivery.
-	const result = await deliverMessage(ctx, project, rootNodeId, msg);
+	const shouldResume = eventStore.has(rootNodeId);
+	const msg = shouldResume
+		? createUserMessage(message, { images })
+		: prepareAgentMessage(project.path, rootNodeId, message, images).msg;
 
-	if (result === "enqueued") {
-		return { ok: true };
-	}
-
-	// Message was persisted (agent not running) — auto-launch/resume.
-	if (orchestratorSystemPrompt && !ctx.restartingProjects.has(projectId)) {
-		await launchAgent(
-			ctx,
-			project,
-			{ resume: shouldResume },
-			orchestratorSystemPrompt,
-		);
-	}
+	// deliverMessage handles JSONL, queue delivery, and auto-launch (root + child).
+	await deliverMessage(ctx, project, rootNodeId, msg, {
+		orchestratorSystemPrompt,
+	});
 
 	return { ok: true };
 }
