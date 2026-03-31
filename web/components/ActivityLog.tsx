@@ -54,6 +54,8 @@ export const ActivityLog = memo(function ActivityLog({
 	const lastEventTimeRef = useRef(Date.now());
 	const entriesRef = useRef(entries);
 	entriesRef.current = entries;
+	const autoScrollRef = useRef(autoScroll);
+	autoScrollRef.current = autoScroll;
 	const [showThinking, setShowThinking] = useState(false);
 
 	// Lazy rendering: only render the last `renderCount` entries from `visible`.
@@ -114,14 +116,13 @@ export const ActivityLog = memo(function ActivityLog({
 		if (!sentinel || !container) return;
 
 		const observer = new IntersectionObserver(
-			(entries) => {
-				const entry = entries[0];
+			(ioEntries) => {
+				const entry = ioEntries[0];
 				if (!entry?.isIntersecting) return;
 
-				// Save scroll position relative to bottom before adding entries
-				const scrollBottom = container.scrollHeight - container.scrollTop;
-
 				setRenderCount((prev) => {
+					// Save scroll position relative to bottom before adding entries
+					const scrollBottom = container.scrollHeight - container.scrollTop;
 					const next = prev + RENDER_BATCH;
 					// After React renders the new entries, restore scroll position
 					requestAnimationFrame(() => {
@@ -173,7 +174,7 @@ export const ActivityLog = memo(function ActivityLog({
 		const el = logRef.current;
 		if (!el) return;
 		const observer = new MutationObserver(() => {
-			if (autoScroll) {
+			if (autoScrollRef.current) {
 				requestAnimationFrame(scrollToBottom);
 			}
 		});
@@ -183,7 +184,7 @@ export const ActivityLog = memo(function ActivityLog({
 			characterData: true,
 		});
 		return () => observer.disconnect();
-	}, [autoScroll, scrollToBottom]);
+	}, [scrollToBottom]);
 
 	const handleScroll = useCallback(() => {
 		const el = logRef.current;

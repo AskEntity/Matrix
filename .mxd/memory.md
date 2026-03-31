@@ -576,3 +576,12 @@ Resume messages from autoResumeProjects must be written to JSONL (via deliverMes
 **Upward send_message**: Now goes through `deliverMessage(parentId, msg, {quiet: true})` — persists to parent's JSONL for crash safety. Previously used direct `parentQueue.enqueue()` which was lost on crash.
 
 **Root vs child launch**: genuinely different, NOT duplicated. Root has project-level session tracking (`ctx.activeSessions`), `provider.startSession()`, cost aggregation. Child uses `runChildCore()` with done() detection.
+
+
+## Scroll Anchoring Fix (ActivityLog)
+
+**Bug**: MutationObserver in ActivityLog captured `autoScroll` via effect closure. When user scrolled up (`autoScroll = false`), there was a race window between the scroll event setting `autoScroll = false` and the effect re-creating the MutationObserver — during that window, DOM mutations (text_delta content growth, new entries) triggered `scrollToBottom` with the stale `autoScroll = true`.
+
+**Fix**: Use `autoScrollRef.current` in MutationObserver callback instead of closure-captured `autoScroll`. Removed `autoScroll` from effect dependencies so observer is created once, not recreated on every scroll.
+
+**CSS defense**: Added `overflow-anchor: auto` on `.mxd-activity-log` (Chrome/Firefox/Edge native scroll anchoring). Set `overflow-anchor: none` on sentinel/load-more elements to prevent browser anchoring on structural elements. Safari does NOT support `overflow-anchor` — manual scroll restoration in IntersectionObserver remains as fallback.

@@ -1456,7 +1456,17 @@ select {
 .mxd-activity-log {
 	flex: 1;
 	overflow-y: auto;
+	overflow-anchor: auto;
 	padding: 8px 0;
+}
+
+/* Prevent the sentinel and load-more indicator from being used as scroll anchors.
+   Without this, content added above the viewport via lazy loading causes scroll jumps
+   because the browser tries to anchor on these elements instead of real content. */
+.mxd-lazy-sentinel,
+.mxd-lazy-more-indicator,
+.mxd-load-older-bar {
+	overflow-anchor: none;
 }
 
 .mxd-load-older-bar {
