@@ -158,3 +158,10 @@ Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Archite
 - Flaky: `Fork from closed agent`, `BG5` — timing-dependent.
 
 
+
+- Responses provider tests: initial user queue content includes the formatted header (working directory/timestamps), so assert with stringContaining for prompt text rather than exact raw content.
+- Responses provider max_output_tokens currently follows context window sizing in provider loop tests (e.g. 128000 for gpt-4o-mini/gpt-4.1-mini here), not a small fixed cap.
+- Provider-level yield tests are reliable for asserting streamed text/tool_call behavior and first-request formatting; full post-yield resume behavior is better covered at higher integration layers.
+
+- Responses integration harness note: OpenAIResponsesCompatibleProvider does not accept an injected fetch in its constructor; isolated full-stack tests must mock globalThis.fetch around createApp/provider construction and restore it in teardown.
+- Responses integration harness note: the first /responses call may be followed quickly by additional calls from the provider loop; assert request-shape and tool round-trip from captured request history rather than assuming a single request per scenario.
