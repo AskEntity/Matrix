@@ -377,9 +377,13 @@ export function createOrchestratorTools(
 				if (!include_closed) {
 					nodes = nodes.filter((n) => n.status !== "closed");
 				}
+				const visibleIds = new Set(nodes.map((n) => n.id));
+				const filterChildren = (children: string[]) =>
+					children.filter((id) => visibleIds.has(id));
 				const result = include_details
 					? nodes.map(({ session: _session, ...rest }) => ({
 							...rest,
+							children: filterChildren(rest.children),
 							// Mark calling agent's node so it can discover its position
 							...(rest.id === currentTaskId ? { you: true } : {}),
 						}))
@@ -387,7 +391,7 @@ export function createOrchestratorTools(
 							id: n.id,
 							title: n.title + (n.id === currentTaskId ? " (you)" : ""),
 							status: n.status,
-							children: n.children,
+							children: filterChildren(n.children),
 							parentId: n.parentId,
 						}));
 				return {
