@@ -12,12 +12,7 @@ import type {
 	PendingClarification,
 	SSEClient,
 } from "./daemon/context.ts";
-import { emitEvent } from "./daemon/event-system.ts";
-import {
-	getEventStore,
-	getTracker,
-	readProjectMemory,
-} from "./daemon/helpers.ts";
+import { getEventStore, getTracker } from "./daemon/helpers.ts";
 import { registerAgentRoutes } from "./daemon/routes/agent.ts";
 import {
 	createAuthMiddleware,
@@ -27,10 +22,8 @@ import { registerConfigRoutes } from "./daemon/routes/config.ts";
 import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
-import { hasPendingYield } from "./events.ts";
 
 import { ProjectManager } from "./project-manager.ts";
-import { createUserMessage } from "./queue-message-factory.ts";
 import { buildSystemPrompt } from "./system-prompts.ts";
 import type {
 	HealthResponse,
@@ -234,13 +227,17 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	/** Auto-resume agents that were running before daemon restart.
 	 *
-	 * Each agent is evaluated independently by its JSONL state:
-	 * - Yielding (hasPendingYield) → launch with provider loop bypass (zero API call,
-	 *   goes straight to queue.wait). Agent only wakes when a message arrives.
-	 * - Interrupted (has orphan non-yield tool_call) → write orphan tool_result, normal resume.
-	 * - Done (status passed/failed/closed) → skip, already finished.
+	 * Simply finds all in_progress nodes with JSONL sessions and launches them
+	 * via runAgentForNode. No resume messages, no root/child split, no
+	 * yielding/interrupted distinction.
 	 *
-	 * Root and children are resumed independently — no more "mark children failed, resume root".
+	 * The three resume states handle themselves inside the provider loop:
+	 * - Explicit yield (JSONL ends with yield tool_call): pendingYieldToolCall
+	 *   bypasses initial drain → queue.wait → zero API call until message arrives
+	 * - Implicit yield (JSONL ends with assistant_text): pendingImplicitYieldResume
+	 *   bypasses initial drain → handleImplicitYield → zero API call until message
+	 * - Interrupted (JSONL has orphaned tool_calls): buildSessionRepair adds
+	 *   tool_results → messages end with user content → skip initial drain → API call
 	 */
 	async function autoResumeProjects(): Promise<void> {
 		const projects = ctx.pm.list();
@@ -255,98 +252,25 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 			if (inProgressNodes.length === 0) continue;
 
-			// All JSONL repair (orphaned tool_calls, duplicate tool_results, bg orphans)
-			// happens inside runAgentForNode before the provider loop starts.
-
-			// Phase 2: Classify each in_progress node and resume accordingly.
-			const rootNodeId = tracker.rootNodeId;
 			for (const node of inProgressNodes) {
-				const nodeEvents = eventStore.readActive(node.id);
-				const isYielding = hasPendingYield(nodeEvents);
-				const isRoot = node.id === rootNodeId;
+				const isRoot = node.id === tracker.rootNodeId;
 
-				if (isRoot) {
-					if (isYielding) {
-						// Yielding root: launch with provider loop bypass.
-						// Provider loop detects pendingYieldToolCall from JSONL and
-						// goes straight to queue.wait() — zero API call.
-						// No resume message needed — agent will wake when a message arrives
-						// (user message, child task_complete, cross-project, etc.)
-						console.log(
-							`Auto-resuming ${project.name} root (yielding — bypass to queue.wait)`,
-						);
-						tracker.updateStatus(rootNodeId, "in_progress");
-						runAgentForNode(ctx, project, tracker, rootNodeId, {
-							orchestratorSystemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
-						}).catch((e) => {
-							console.error(
-								`[autoResume] Failed to resume root ${rootNodeId}:`,
-								e,
-							);
-						});
-					} else {
-						// Interrupted root: normal resume with context message.
-						console.log(
-							`Auto-resuming ${project.name} root (interrupted — normal resume)`,
-						);
-						const resumeMemory = readProjectMemory(project.path);
-						const resumeHeader = resumeMemory
-							? `Working directory: ${project.path}\n\n# .mxd/memory.md (Preloaded, do not read again)\n${resumeMemory}`
-							: `Working directory: ${project.path}`;
-						const resumeMsg = createUserMessage(
-							`Continue where you left off. The daemon restarted (${GIT_HASH}).\n\nCheck the task tree and proceed.`,
-							{ header: resumeHeader },
-						);
-						// Write to JSONL — findUnconsumedMessages recovers it on launch.
-						emitEvent(ctx, project.id, {
-							type: "message",
-							id: resumeMsg.id,
-							taskId: rootNodeId,
-							body: resumeMsg,
-							ts: resumeMsg.ts,
-						});
-						tracker.updateStatus(rootNodeId, "in_progress");
-						runAgentForNode(ctx, project, tracker, rootNodeId, {
-							orchestratorSystemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
-						}).catch((e) => {
-							console.error(
-								`[autoResume] Failed to resume root ${rootNodeId}:`,
-								e instanceof Error ? e.message : e,
-							);
-						});
-					}
-				} else {
-					// Child agent: resume via runChildAgentInBackground.
-					// It handles its own orphan cleanup, event loading, and resume detection.
-					// Yielding children: provider loop detects pendingYieldToolCall from JSONL.
-					if (node.worktreePath) {
-						console.log(
-							`Auto-resuming ${project.name} child ${node.id} (${isYielding ? "yielding" : "interrupted"})`,
-						);
-						// Interrupted children need a resume message — the provider's
-						// initial drain blocks on queue.wait() and won't proceed without one.
-						// Yielding children bypass the drain, so no message needed.
-						if (!isYielding) {
-							const childResumeMsg = createUserMessage(
-								`The daemon restarted (${GIT_HASH}). Continue where you left off.`,
-							);
-							// Write to JSONL — findUnconsumedMessages recovers it on launch.
-							emitEvent(ctx, project.id, {
-								type: "message",
-								id: childResumeMsg.id,
-								taskId: node.id,
-								body: childResumeMsg,
-								ts: childResumeMsg.ts,
-							});
-						}
-						runAgentForNode(ctx, project, tracker, node.id).catch((e) => {
-							console.error(
-								`[autoResume] Failed to resume child ${node.id}:`,
-								e,
-							);
-						});
-					}
-				}
+				// Skip child nodes without worktrees — they can't run
+				if (!isRoot && !node.worktreePath) continue;
+
+				console.log(`Auto-resuming ${project.name} node ${node.id}`);
+
+				runAgentForNode(ctx, project, tracker, node.id, {
+					orchestratorSystemPrompt: isRoot
+						? ORCHESTRATOR_SYSTEM_PROMPT
+						: undefined,
+					resume: true,
+				}).catch((e) => {
+					console.error(
+						`[autoResume] Failed to resume ${node.id}:`,
+						e instanceof Error ? e.message : e,
+					);
+				});
 			}
 		}
 	}

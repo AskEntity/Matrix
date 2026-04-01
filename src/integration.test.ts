@@ -3807,6 +3807,79 @@ describe("Integration: autoResume with mixed agent states", () => {
 	}, 30000);
 });
 
+describe("Integration: implicit yield restart", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("LC10: implicit yield (end_turn) → restart → bypass → message → done (zero wasted API calls)", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Turn 1: end_turn (no tool calls) → enters implicit yield
+		// Turn 2 (after restart + message): agent wakes, calls done
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [{ type: "text", text: "Nothing to do, ending turn." }],
+					stop_reason: "end_turn",
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Got a message after restart." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "survived implicit yield restart",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+		expect(preRestartRequests).toBe(1);
+
+		// Crash
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// Restart
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Implicit yield root should have been launched but NO new API calls yet
+		// (provider loop detects pendingImplicitYieldResume → bypass to handleImplicitYield)
+		await new Promise((r) => setTimeout(r, 200));
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests);
+
+		// Send message to wake agent
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Wake up from implicit yield." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "implicit yield restart ok" },
+				},
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+		// Should have made exactly 1 new API call (the one after implicit yield resolved)
+		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests + 1);
+	}, 30000);
+});
+
 // ── Background process lifecycle tests ──
 
 describe("Integration: background process lifecycle", () => {

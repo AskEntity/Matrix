@@ -295,3 +295,13 @@ In-memory `messages[]` (provider format) and JSONL events are two independent da
 - read_file image path in `src/tools/definitions.ts` checks dimensions before base64 encoding. Rejects >8000px per dimension with error text + magick resize command.
 - Unknown formats (GIF, WebP) pass through — `getImageDimensions` returns null, no blocking.
 - This prevents the "agent permanently bricked" scenario where oversized pixel images get stored in JSONL and Anthropic API rejects on every resume.
+
+## autoResumeProjects Simplification (2026-04-01)
+
+- autoResumeProjects no longer injects resume messages. It simply finds all in_progress nodes with JSONL sessions and calls runAgentForNode for each.
+- Provider loop handles all three resume states via JSONL shape detection:
+  - **Explicit yield** (pendingYieldToolCall): bypass to queue.wait
+  - **Implicit yield** (pendingImplicitYieldResume): detected via `hasPendingImplicitYield()` — last provider content event is assistant_text. Bypass to handleImplicitYield → queue.wait
+  - **Interrupted** (messages end with user content from repair): non-blocking queue drain (pick up unconsumed messages) then go straight to API call. No blocking wait.
+- `hasPendingImplicitYield()` in events.ts: walks backwards through events, returns true if last provider content event (assistant_text/tool_call/tool_result) is assistant_text.
+- Key fix for interrupted agents: non-blocking drain (`queue.drain()`) instead of blocking wait (`queue.wait()`). This picks up unconsumed messages already in queue (from findUnconsumedMessages) without hanging on empty queue.
