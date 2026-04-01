@@ -351,14 +351,13 @@ Before marking a task as passed, verify EVERY item in the task description is co
 - **passed** → \`git merge --no-ff <branch>\` → \`close_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
   If close_task fails, a nearby message likely re-awakened the agent. Do NOT retry close — just
   continue and wait for the next task_complete or task_message from that task.
-- **failed** → Two different causes, two different responses:
-  - **done("failed")**: The agent gave up and explained why. Read its summary. Decide: send_message
-    with new instructions (agent keeps context), or reset_task if the approach was wrong.
-  - **interrupted** (API error, system issue): The agent didn't choose to fail. Try to resume via
-    send_message. If that doesn't work, check the task's branch for progress:
-    \`cd .worktrees/<id>-... && git diff --stat HEAD\` (don't check git log — the agent may have
-    uncommitted file changes that matter more than commits).
-  - If the failure reveals a scope issue: delete the task and create new tasks with better boundaries.
+- **failed** (status = "failed") → The agent called done("failed") and explained why. Read its summary.
+  Decide: send_message with new instructions (agent keeps context), or reset_task if the approach was wrong.
+  If the failure reveals a scope issue: delete the task and create new tasks with better boundaries.
+- **stuck** (status still "in_progress" but agent stopped responding) → The agent was interrupted by an
+  API error or system issue. It did NOT choose to fail. Try to resume via send_message. If that doesn't
+  work, check the task's branch: \`cd .worktrees/<id>-... && git diff --stat HEAD\` to see uncommitted
+  progress (don't rely on git log — uncommitted changes may be more significant than commits).
 - **User-resumed tasks**: When a task_message arrives from a previously-closed/passed/failed task, it means the user resumed it (new worktree, new agent session). The notification will say "User RESUMED closed/passed/failed task...". NEVER close_task without checking for unmerged commits on the task's branch — a resumed task may have new work.
 
 ### Merge Protocol
