@@ -313,6 +313,7 @@ export const TaskTree = memo(function TaskTree({
 	const { t } = useLocale();
 	const isOrchestratorSelected =
 		!selectedTaskId || selectedTaskId === rootNodeId;
+	const hasTextFilter = taskFilter.trim().length > 0;
 	const filteredRoots = matchingIds
 		? roots.filter((r) => matchingIds.has(r.id))
 		: roots;
@@ -394,6 +395,7 @@ export const TaskTree = memo(function TaskTree({
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}
 						matchingIds={matchingIds}
+						hasTextFilter={hasTextFilter}
 						dragState={dragState}
 						dropIndicator={dropIndicator}
 						reparentTargetId={reparentTargetId}
@@ -456,6 +458,7 @@ function TaskNodeView({
 	collapsed,
 	toggleCollapse,
 	matchingIds,
+	hasTextFilter,
 	dragState,
 	dropIndicator,
 	reparentTargetId,
@@ -477,6 +480,7 @@ function TaskNodeView({
 	collapsed: Set<string>;
 	toggleCollapse: (id: string) => void;
 	matchingIds: Set<string> | null;
+	hasTextFilter: boolean;
 	dragState: DragState | null;
 	dropIndicator: DropIndicator | null;
 	reparentTargetId: string | null;
@@ -505,8 +509,9 @@ function TaskNodeView({
 		? allChildren.filter((c) => matchingIds.has(c.id))
 		: allChildren;
 	const hasChildren = children.length > 0;
-	// When filter is active, force-expand all ancestor nodes
-	const isCollapsed = matchingIds ? false : collapsed.has(node.id);
+	// When text filter is active, force-expand all ancestor nodes so matches are visible.
+	// When only hiding completed (no text filter), allow normal collapse behavior.
+	const isCollapsed = hasTextFilter ? false : collapsed.has(node.id);
 
 	const isDragging = dragState?.dragId === node.id;
 	const isReparentTarget = reparentTargetId === node.id;
@@ -605,6 +610,7 @@ function TaskNodeView({
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}
 						matchingIds={matchingIds}
+						hasTextFilter={hasTextFilter}
 						dragState={dragState}
 						dropIndicator={dropIndicator}
 						reparentTargetId={reparentTargetId}
