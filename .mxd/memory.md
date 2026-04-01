@@ -310,3 +310,14 @@ In-memory `messages[]` (provider format) and JSONL events are two independent da
 
 - After stopTask/stopAgent, old runAgentForNode settles async. catch/finally now check `sessionWasReplaced` (finalNode.session !== ownSession). If replaced, suppress error events and agent_stopped — the explicit stop already emitted its own.
 - Secondary: foreground bash not killed on abort (needs AbortSignal support in executeBashWithTimeout — larger change, not fixed).
+
+## Persistent Task Write-Back
+
+`savePersistentDef(nodeId, projectPath)` on TaskTracker writes `{ title, description, color, persistent }` to `.mxd/tasks/<id>.json` and auto-commits via git. Called from:
+- `createTaskOp` when `opts.persistent` is set
+- `updateTaskOp` when title, description, or color changes (via `titleOrDescChanged` guard)
+- No-op for non-persistent tasks (`node.persistent === false`)
+
+`save()` strips title/description from tree.json for persistent nodes. On `load(branch, projectPath)`, `mergePersistentTasks` re-reads `.mxd/tasks/*.json` to repopulate them. This is the source-of-truth split: definition file owns content, tree.json owns runtime state.
+
+Note: `persistent` mode itself is NOT updateable via update_task MCP tool or REST — only set at creation time. So the write-back condition only needs to cover title/description/color.
