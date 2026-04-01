@@ -198,3 +198,10 @@ The `handlers.ts` `createActionHandlers` now receives `setTokenUsage`, `setPendi
 ## UI Event Fetching: Per-Session, Not Per-Project
 
 The UI must fetch events per-session (using `api.taskEvents(projectId, sessionId)`) not per-project (`api.events(projectId)`). Forked sessions contain copies of parent events with the parent taskId; merging all sessions causes stale content to appear above the compaction line on refresh. The viewed session is `selectedTaskId ?? rootNodeId` — tracked via a ref for stable callbacks.
+
+## UI Event Handler Test Patterns
+- `makeDeps()` creates mock EventHandlerDeps; override `setLogs` with a mock that tracks `capturedLogs` for assertions.
+- `processEventBatch` REPLACES all logs (calls `setLogs(entries)` directly); `handleEvent` APPENDS via `setLogs(prev => [...prev, ...entries])`.
+- `assistant_text` uses `replace_text` update which scans backwards for the last `assistant_text` entry with matching taskId — it REPLACES that entry, not appends. A non-`assistant_text` entry with the same taskId breaks the backward scan.
+- ActivityLog filtering can be tested without React by extracting the filter logic: root view shows entries with matching rootNodeId or no taskId; child view shows only exact taskId match.
+

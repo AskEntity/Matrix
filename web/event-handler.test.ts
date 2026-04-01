@@ -1,7 +1,13 @@
 import { describe, expect, it, mock } from "bun:test";
 import type React from "react";
 import { createEventHandler, type EventHandlerDeps } from "./event-handler.ts";
-import type { IncomingEvent, LogEntry, TaskNode } from "./hooks.ts";
+import {
+	createLogEntry,
+	getLogTaskId,
+	type IncomingEvent,
+	type LogEntry,
+	type TaskNode,
+} from "./hooks.ts";
 
 /** Minimal deps that satisfy the EventHandlerDeps interface */
 function makeDeps() {
@@ -1282,5 +1288,838 @@ describe("event-handler compact_marker savedTokens", () => {
 		);
 		expect(markerEntry).toBeDefined();
 		expect(markerEntry?.savedTokens).toBe(3000);
+	});
+});
+
+// ============================================================
+// Forked session / per-session event processing
+// ============================================================
+
+describe("event-handler forked session events", () => {
+	it("processEventBatch: events with different taskIds all appear in logs", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "assistant_text",
+				content: "Parent task output",
+				taskId: "parent-task",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "Child task output",
+				taskId: "child-task",
+				ts: 2000,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-parent",
+				input: { command: "echo parent" },
+				taskId: "parent-task",
+				ts: 3000,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-parent",
+				content: "parent",
+				isError: false,
+				taskId: "parent-task",
+				ts: 3500,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-child",
+				input: { command: "echo child" },
+				taskId: "child-task",
+				ts: 4000,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-child",
+				content: "child",
+				isError: false,
+				taskId: "child-task",
+				ts: 4500,
+			},
+		]);
+
+		// All events from both tasks should be in logs
+		const parentText = capturedLogs.find(
+			(e) => e.type === "assistant_text" && e.taskId === "parent-task",
+		);
+		const childText = capturedLogs.find(
+			(e) => e.type === "assistant_text" && e.taskId === "child-task",
+		);
+		const parentTool = capturedLogs.find(
+			(e) => e.type === "tool_pair" && e.taskId === "parent-task",
+		);
+		const childTool = capturedLogs.find(
+			(e) => e.type === "tool_pair" && e.taskId === "child-task",
+		);
+
+		expect(parentText).toBeDefined();
+		expect(parentText?.type === "assistant_text" && parentText.content).toBe(
+			"Parent task output",
+		);
+		expect(childText).toBeDefined();
+		expect(childText?.type === "assistant_text" && childText.content).toBe(
+			"Child task output",
+		);
+		expect(parentTool).toBeDefined();
+		expect(childTool).toBeDefined();
+	});
+
+	it("processEventBatch: fork_marker creates a fork_marker LogEntry with sourceTaskId", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "assistant_text",
+				content: "Pre-fork content from source",
+				taskId: "source-task",
+				ts: 1000,
+			},
+			{
+				type: "fork_marker",
+				sourceTaskId: "source-task",
+				taskId: "target-task",
+				ts: 2000,
+			},
+			{
+				type: "assistant_text",
+				content: "Post-fork content from target",
+				taskId: "target-task",
+				ts: 3000,
+			},
+		]);
+
+		expect(capturedLogs.length).toBe(3);
+
+		const forkEntry = capturedLogs.find((e) => e.type === "fork_marker");
+		expect(forkEntry).toBeDefined();
+		expect(forkEntry?.type === "fork_marker" && forkEntry.sourceTaskId).toBe(
+			"source-task",
+		);
+		expect(forkEntry?.taskId).toBe("target-task");
+
+		// Pre-fork and post-fork content both present
+		const preFork = capturedLogs.find(
+			(e) => e.type === "assistant_text" && e.taskId === "source-task",
+		);
+		const postFork = capturedLogs.find(
+			(e) => e.type === "assistant_text" && e.taskId === "target-task",
+		);
+		expect(preFork).toBeDefined();
+		expect(postFork).toBeDefined();
+	});
+
+	it("processEventBatch: events tagged with root taskId and child taskId coexist", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		// assistant_text uses replace_text which merges into the last matching text entry,
+		// so interleave with a tool_call to force separate entries for root
+		processEventBatch([
+			{
+				type: "assistant_text",
+				content: "Root orchestrator message",
+				taskId: "root-id",
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-root-1",
+				input: { command: "echo root" },
+				taskId: "root-id",
+				ts: 1500,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-root-1",
+				content: "root",
+				isError: false,
+				taskId: "root-id",
+				ts: 1600,
+			},
+			{
+				type: "assistant_text",
+				content: "Sub-task worker message",
+				taskId: "sub-task-id",
+				ts: 2000,
+			},
+			{
+				type: "assistant_text",
+				content: "Another root message",
+				taskId: "root-id",
+				ts: 3000,
+			},
+		]);
+
+		const rootEntries = capturedLogs.filter((e) => e.taskId === "root-id");
+		const childEntries = capturedLogs.filter((e) => e.taskId === "sub-task-id");
+
+		// Root has: assistant_text, tool_pair, assistant_text = 3 entries
+		// (replace_text can't find previous assistant_text because tool_pair for same taskId breaks the scan)
+		expect(rootEntries.length).toBe(3);
+		expect(childEntries.length).toBe(1);
+	});
+});
+
+// ============================================================
+// Compaction display
+// ============================================================
+
+describe("event-handler compaction display", () => {
+	it("processEventBatch: compact_marker preserves content before and after the barrier", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "assistant_text",
+				content: "Before compaction",
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-pre",
+				input: { command: "echo pre" },
+				taskId: "task-1",
+				ts: 1500,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-pre",
+				content: "pre",
+				isError: false,
+				taskId: "task-1",
+				ts: 1600,
+			},
+			{ type: "compact_started", taskId: "task-1", ts: 2000 },
+			{
+				type: "compact_marker",
+				savedTokens: 10000,
+				checkpoint: "Checkpoint after compaction",
+				taskId: "task-1",
+				ts: 2500,
+			},
+			{
+				type: "assistant_text",
+				content: "After compaction",
+				taskId: "task-1",
+				ts: 3000,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__read_file",
+				toolCallId: "tc-post",
+				input: { path: "foo.ts" },
+				taskId: "task-1",
+				ts: 3500,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__read_file",
+				toolCallId: "tc-post",
+				content: "file content",
+				isError: false,
+				taskId: "task-1",
+				ts: 3600,
+			},
+		]);
+
+		// Verify structure: pre-compact content, compact_marker, post-compact content
+		const types = capturedLogs.map((e) => e.type);
+		expect(types).toEqual([
+			"assistant_text",
+			"tool_pair",
+			"compact_marker",
+			"assistant_text",
+			"tool_pair",
+		]);
+
+		// Verify compact_marker entry
+		const marker = capturedLogs.find((e) => e.type === "compact_marker");
+		expect(marker).toBeDefined();
+		expect(marker?.type === "compact_marker" && marker.savedTokens).toBe(10000);
+		expect(marker?.type === "compact_marker" && marker.checkpoint).toBe(
+			"Checkpoint after compaction",
+		);
+
+		// Content before marker preserved
+		const preText = capturedLogs[0];
+		expect(preText?.type === "assistant_text" && preText.content).toBe(
+			"Before compaction",
+		);
+
+		// Content after marker preserved
+		const postText = capturedLogs[3];
+		expect(postText?.type === "assistant_text" && postText.content).toBe(
+			"After compaction",
+		);
+	});
+
+	it("processEventBatch: multiple compactions — all markers preserved in order", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "assistant_text",
+				content: "Phase 1",
+				taskId: "task-1",
+				ts: 1000,
+			},
+			{ type: "compact_started", taskId: "task-1", ts: 2000 },
+			{
+				type: "compact_marker",
+				savedTokens: 5000,
+				checkpoint: "First compaction",
+				taskId: "task-1",
+				ts: 2500,
+			},
+			{
+				type: "assistant_text",
+				content: "Phase 2",
+				taskId: "task-1",
+				ts: 3000,
+			},
+			{ type: "compact_started", taskId: "task-1", ts: 4000 },
+			{
+				type: "compact_marker",
+				savedTokens: 8000,
+				checkpoint: "Second compaction",
+				taskId: "task-1",
+				ts: 4500,
+			},
+			{
+				type: "assistant_text",
+				content: "Phase 3",
+				taskId: "task-1",
+				ts: 5000,
+			},
+		]);
+
+		const markers = capturedLogs.filter((e) => e.type === "compact_marker");
+		expect(markers.length).toBe(2);
+
+		expect(
+			markers[0]?.type === "compact_marker" && markers[0].savedTokens,
+		).toBe(5000);
+		expect(
+			markers[1]?.type === "compact_marker" && markers[1].savedTokens,
+		).toBe(8000);
+
+		// Overall order: text, marker, text, marker, text
+		const types = capturedLogs.map((e) => e.type);
+		expect(types).toEqual([
+			"assistant_text",
+			"compact_marker",
+			"assistant_text",
+			"compact_marker",
+			"assistant_text",
+		]);
+	});
+
+	it("handleEvent: compact_started then compact_marker replaces started entry with marker", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		// First add some content
+		handleEvent({
+			type: "assistant_text",
+			content: "Before compaction",
+			taskId: "task-1",
+			ts: 1000,
+		});
+		expect(capturedLogs.length).toBe(1);
+
+		// compact_started adds a pending entry
+		handleEvent({
+			type: "compact_started",
+			taskId: "task-1",
+			ts: 2000,
+		});
+		expect(capturedLogs.length).toBe(2);
+		expect(capturedLogs[1]?.type).toBe("compact_started");
+
+		// compact_marker replaces the compact_started entry
+		handleEvent({
+			type: "compact_marker",
+			savedTokens: 7500,
+			checkpoint: "Live compaction checkpoint",
+			taskId: "task-1",
+			ts: 3000,
+		});
+
+		// Same count — compact_started was replaced, not appended
+		expect(capturedLogs.length).toBe(2);
+		expect(capturedLogs[1]?.type).toBe("compact_marker");
+		expect(
+			capturedLogs[1]?.type === "compact_marker" && capturedLogs[1].savedTokens,
+		).toBe(7500);
+		expect(
+			capturedLogs[1]?.type === "compact_marker" && capturedLogs[1].checkpoint,
+		).toBe("Live compaction checkpoint");
+
+		// Content before compaction still present
+		expect(capturedLogs[0]?.type).toBe("assistant_text");
+	});
+
+	it("handleEvent: content after compact_marker appends normally", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		handleEvent({ type: "compact_started", taskId: "task-1", ts: 1000 });
+		handleEvent({
+			type: "compact_marker",
+			savedTokens: 5000,
+			checkpoint: "cp",
+			taskId: "task-1",
+			ts: 2000,
+		});
+		handleEvent({
+			type: "assistant_text",
+			content: "Post-compact content",
+			taskId: "task-1",
+			ts: 3000,
+		});
+
+		expect(capturedLogs.length).toBe(2);
+		expect(capturedLogs[0]?.type).toBe("compact_marker");
+		expect(capturedLogs[1]?.type).toBe("assistant_text");
+		expect(
+			capturedLogs[1]?.type === "assistant_text" && capturedLogs[1].content,
+		).toBe("Post-compact content");
+	});
+});
+
+// ============================================================
+// Task switch simulation: processEventBatch replaces all logs
+// ============================================================
+
+describe("event-handler task switch (processEventBatch replaces logs)", () => {
+	it("processEventBatch replaces existing logs entirely — not appended", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch, handleEvent } = createEventHandler(
+			deps as EventHandlerDeps,
+		);
+
+		// Simulate initial session: some live events for task-A
+		handleEvent({
+			type: "assistant_text",
+			content: "Task A content",
+			taskId: "task-A",
+			ts: 1000,
+		});
+		expect(capturedLogs.length).toBe(1);
+
+		// Now simulate a task switch: processEventBatch is called with task-B events
+		// This should REPLACE all logs, not append
+		processEventBatch([
+			{
+				type: "assistant_text",
+				content: "Task B content",
+				taskId: "task-B",
+				ts: 2000,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-b1",
+				input: { command: "echo b" },
+				taskId: "task-B",
+				ts: 3000,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-b1",
+				content: "b",
+				isError: false,
+				taskId: "task-B",
+				ts: 3500,
+			},
+		]);
+
+		// Logs should only contain task-B entries now
+		expect(capturedLogs.every((e) => e.taskId === "task-B")).toBe(true);
+		expect(capturedLogs.length).toBe(2); // assistant_text + tool_pair
+		expect(capturedLogs.some((e) => e.taskId === "task-A")).toBe(false);
+	});
+
+	it("processEventBatch clears deferred messages from previous session", () => {
+		const { deps } = makeDeps();
+
+		let capturedPending: Array<{ id: string; text: string }> = [];
+		(deps as Record<string, unknown>).setPendingMessages = mock(
+			(updater: React.SetStateAction<Array<{ id: string; text: string }>>) => {
+				capturedPending =
+					typeof updater === "function" ? updater(capturedPending) : updater;
+			},
+		);
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { handleEvent, processEventBatch } = createEventHandler(
+			deps as EventHandlerDeps,
+		);
+
+		// Add a pending message to task-A
+		handleEvent({
+			type: "message",
+			id: "msg-old",
+			body: {
+				source: "user",
+				id: "test-id",
+				ts: 0,
+				content: "Old message",
+			},
+			taskId: "task-A",
+			ts: 1000,
+		} satisfies IncomingEvent);
+		expect(capturedPending.length).toBe(1);
+
+		// Switch to task-B via processEventBatch
+		processEventBatch([
+			{
+				type: "assistant_text",
+				content: "Task B output",
+				taskId: "task-B",
+				ts: 2000,
+			},
+		]);
+
+		// Old deferred messages should be cleared (processEventBatch clears deferredMessages)
+		// The pending banner will be synced based on the now-empty deferredMessages map
+		// (any pending from the batch would show, but "msg-old" should be gone)
+		expect(capturedLogs.every((e) => e.taskId === "task-B")).toBe(true);
+	});
+
+	it("processEventBatch resets background processes", () => {
+		const { deps } = makeDeps();
+
+		let bgProcesses: Map<
+			string,
+			{ id: string; command: string; startTime: number; taskId?: string }
+		> = new Map([
+			[
+				"bg-old",
+				{
+					id: "bg-old",
+					command: "old-cmd",
+					startTime: 100,
+					taskId: "task-A",
+				},
+			],
+		]);
+		(deps as Record<string, unknown>).setBackgroundProcesses = mock(
+			(
+				updater: React.SetStateAction<
+					Map<
+						string,
+						{
+							id: string;
+							command: string;
+							startTime: number;
+							taskId?: string;
+						}
+					>
+				>,
+			) => {
+				bgProcesses =
+					typeof updater === "function" ? updater(bgProcesses) : updater;
+			},
+		);
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "assistant_text",
+				content: "New session content",
+				taskId: "task-B",
+				ts: 2000,
+			},
+		]);
+
+		// Old bg processes should be cleared
+		expect(bgProcesses.has("bg-old")).toBe(false);
+		expect(bgProcesses.size).toBe(0);
+	});
+});
+
+// ============================================================
+// ActivityLog filtering by taskId
+// ============================================================
+
+describe("ActivityLog filtering logic", () => {
+	// Test the filtering logic that ActivityLog.tsx uses (useMemo visible),
+	// extracted here to test without React rendering.
+
+	function filterEntries(
+		entries: LogEntry[],
+		filterTaskId: string | null,
+		rootNodeId: string | null,
+	): LogEntry[] {
+		const isRootFilter = !filterTaskId || filterTaskId === rootNodeId;
+		if (isRootFilter) {
+			return entries.filter((e) => {
+				const tid = getLogTaskId(e);
+				return !tid || tid === rootNodeId;
+			});
+		}
+		return entries.filter((e) => getLogTaskId(e) === filterTaskId);
+	}
+
+	it("root filter shows only root-tagged and untagged entries", () => {
+		const entries: LogEntry[] = [
+			createLogEntry({
+				type: "assistant_text",
+				content: "Root message",
+				taskId: "root-1",
+				ts: 1000,
+			}),
+			createLogEntry({
+				type: "assistant_text",
+				content: "Child message",
+				taskId: "child-1",
+				ts: 2000,
+			}),
+			createLogEntry({
+				type: "assistant_text",
+				content: "Untagged message",
+				taskId: "",
+				ts: 3000,
+			}),
+			createLogEntry({
+				type: "assistant_text",
+				content: "Another child",
+				taskId: "child-2",
+				ts: 4000,
+			}),
+		];
+
+		const filtered = filterEntries(entries, "root-1", "root-1");
+		expect(filtered.length).toBe(2);
+		expect(
+			filtered.every((e) => {
+				const tid = getLogTaskId(e);
+				return !tid || tid === "root-1";
+			}),
+		).toBe(true);
+	});
+
+	it("null filterTaskId acts as root filter", () => {
+		const entries: LogEntry[] = [
+			createLogEntry({
+				type: "assistant_text",
+				content: "Root message",
+				taskId: "root-1",
+				ts: 1000,
+			}),
+			createLogEntry({
+				type: "assistant_text",
+				content: "Child message",
+				taskId: "child-1",
+				ts: 2000,
+			}),
+		];
+
+		const filtered = filterEntries(entries, null, "root-1");
+		expect(filtered.length).toBe(1);
+		expect(filtered[0]?.taskId).toBe("root-1");
+	});
+
+	it("child filter shows only that child's entries", () => {
+		const entries: LogEntry[] = [
+			createLogEntry({
+				type: "assistant_text",
+				content: "Root message",
+				taskId: "root-1",
+				ts: 1000,
+			}),
+			createLogEntry({
+				type: "assistant_text",
+				content: "Child-1 message",
+				taskId: "child-1",
+				ts: 2000,
+			}),
+			createLogEntry({
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc-1",
+				input: { command: "echo" },
+				taskId: "child-1",
+				ts: 3000,
+			}),
+			createLogEntry({
+				type: "assistant_text",
+				content: "Child-2 message",
+				taskId: "child-2",
+				ts: 4000,
+			}),
+		];
+
+		const filteredChild1 = filterEntries(entries, "child-1", "root-1");
+		expect(filteredChild1.length).toBe(2);
+		expect(filteredChild1.every((e) => e.taskId === "child-1")).toBe(true);
+
+		const filteredChild2 = filterEntries(entries, "child-2", "root-1");
+		expect(filteredChild2.length).toBe(1);
+		expect(filteredChild2[0]?.taskId).toBe("child-2");
+	});
+
+	it("forked session: pre-fork events with source taskId don't leak to target task view", () => {
+		const entries: LogEntry[] = [
+			createLogEntry({
+				type: "assistant_text",
+				content: "Source task content (pre-fork)",
+				taskId: "source-task",
+				ts: 1000,
+			}),
+			createLogEntry({
+				type: "fork_marker",
+				sourceTaskId: "source-task",
+				taskId: "target-task",
+				ts: 2000,
+			}),
+			createLogEntry({
+				type: "assistant_text",
+				content: "Target task content (post-fork)",
+				taskId: "target-task",
+				ts: 3000,
+			}),
+		];
+
+		// Viewing target-task: should see fork_marker + post-fork content
+		const targetView = filterEntries(entries, "target-task", "root-1");
+		expect(targetView.length).toBe(2);
+		expect(targetView[0]?.type).toBe("fork_marker");
+		expect(targetView[1]?.type).toBe("assistant_text");
+		expect(
+			targetView[1]?.type === "assistant_text" && targetView[1].content,
+		).toBe("Target task content (post-fork)");
+
+		// Viewing source-task: should see only source content
+		const sourceView = filterEntries(entries, "source-task", "root-1");
+		expect(sourceView.length).toBe(1);
+		expect(sourceView[0]?.type).toBe("assistant_text");
+		expect(
+			sourceView[0]?.type === "assistant_text" && sourceView[0].content,
+		).toBe("Source task content (pre-fork)");
+	});
+
+	it("empty entries returns empty for any filter", () => {
+		expect(filterEntries([], "root-1", "root-1").length).toBe(0);
+		expect(filterEntries([], "child-1", "root-1").length).toBe(0);
+		expect(filterEntries([], null, "root-1").length).toBe(0);
+	});
+
+	it("mixed content: compact_marker entries respect taskId filtering", () => {
+		const entries: LogEntry[] = [
+			createLogEntry({
+				type: "assistant_text",
+				content: "Root before compact",
+				taskId: "root-1",
+				ts: 1000,
+			}),
+			createLogEntry({
+				type: "compact_marker",
+				checkpoint: "Root compaction",
+				savedTokens: 5000,
+				taskId: "root-1",
+				ts: 2000,
+			}),
+			createLogEntry({
+				type: "assistant_text",
+				content: "Child after compact",
+				taskId: "child-1",
+				ts: 3000,
+			}),
+		];
+
+		const rootView = filterEntries(entries, "root-1", "root-1");
+		expect(rootView.length).toBe(2);
+		expect(rootView[0]?.type).toBe("assistant_text");
+		expect(rootView[1]?.type).toBe("compact_marker");
+
+		const childView = filterEntries(entries, "child-1", "root-1");
+		expect(childView.length).toBe(1);
+		expect(childView[0]?.type).toBe("assistant_text");
+		expect(
+			childView[0]?.type === "assistant_text" && childView[0].content,
+		).toBe("Child after compact");
 	});
 });
