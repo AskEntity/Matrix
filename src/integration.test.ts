@@ -454,7 +454,9 @@ describe("Integration: full stack with mock API", () => {
 
 		// Still active (in implicit yield)
 		const implicitTracker = await ctx.app.getTracker(ctx.projectId);
-		expect(implicitTracker.get(implicitTracker.rootNodeId)?.session).toBeTruthy();
+		expect(
+			implicitTracker.get(implicitTracker.rootNodeId)?.session,
+		).toBeTruthy();
 
 		// Wake with done
 		const wakeInstruction = JSON.stringify({

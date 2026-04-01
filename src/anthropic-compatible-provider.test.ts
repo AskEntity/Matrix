@@ -2405,11 +2405,12 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
+		const testQueue = queueWithPrompt("Do the task", testDir);
 		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
-			queue: queueWithPrompt("Do the task", testDir),
+			queue: testQueue,
 			mcpToolDefs: {
 				mxd: [
 					tool(
@@ -2439,7 +2440,7 @@ describe("Event deterministic verification", () => {
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					await session.return(undefined as never);
+					testQueue.close();
 				}
 				result = await session.next();
 			}
@@ -2541,11 +2542,12 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
+		const testQueue = queueWithPrompt("Try something", testDir);
 		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
-			queue: queueWithPrompt("Try something", testDir),
+			queue: testQueue,
 			mcpToolDefs: {
 				mxd: [
 					tool("done", "Signal completion", {}, async () => ({
@@ -2568,7 +2570,7 @@ describe("Event deterministic verification", () => {
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					await session.return(undefined as never);
+					testQueue.close();
 				}
 				result = await session.next();
 			}
@@ -2624,8 +2626,8 @@ describe("Event deterministic verification", () => {
 						content: "Here is a new instruction",
 					});
 				} else {
-					// Second idle: stop the session
-					await session.return(undefined as never);
+					// Second idle: stop the session by closing the queue
+					queue.close();
 				}
 			}
 		};
@@ -2771,11 +2773,12 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
+		const testQueue = queueWithPrompt("Run three tools", testDir);
 		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
-			queue: queueWithPrompt("Run three tools", testDir),
+			queue: testQueue,
 			mcpToolDefs: {
 				test: [
 					tool("tool_a", "Tool A", {}, async () => ({
@@ -2798,7 +2801,7 @@ describe("Event deterministic verification", () => {
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					await session.return(undefined as never);
+					testQueue.close();
 				}
 				result = await session.next();
 			}
@@ -3055,12 +3058,12 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
-		const queue = queueWithPrompt("Do task", testDir);
+		const testQueue = queueWithPrompt("Do task", testDir);
 		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
-			queue,
+			queue: testQueue,
 			mcpToolDefs: {
 				mxd: [
 					tool(
@@ -3072,7 +3075,7 @@ describe("Event deterministic verification", () => {
 						},
 						async (input) => {
 							// During tool execution, enqueue a message to simulate cancellation point
-							queue.enqueue({
+							testQueue.enqueue({
 								source: "user",
 								id: "test-id",
 								ts: 0,
@@ -3099,7 +3102,7 @@ describe("Event deterministic verification", () => {
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					await session.return(undefined as never);
+					testQueue.close();
 				}
 				result = await session.next();
 			}

@@ -858,7 +858,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 			})();
 
 			await new Promise((resolve) => setTimeout(resolve, 0));
-			await session.return(undefined as never);
+			queue.close();
 			const finalResult = await consumePromise;
 			expect(finalResult.exitReason).toBe("interrupted");
 			expect(

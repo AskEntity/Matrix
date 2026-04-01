@@ -16,13 +16,13 @@ import {
 	updateTaskOp,
 } from "../../task-operations.ts";
 import { buildTaskPrompt, slugify } from "../../task-utils.ts";
+import { cleanupSessionBackgroundProcesses } from "../../tools/index.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
 	deliverMessage,
 	runChildAgentInBackground,
 	stopTask,
 } from "../agent-lifecycle.ts";
-import { cleanupSessionBackgroundProcesses } from "../../tools/index.ts";
 import type { DaemonContext } from "../context.ts";
 import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
 import {

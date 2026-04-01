@@ -355,10 +355,11 @@ describe("runLoop integration", () => {
 
 		try {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
+			const testQueue = queueWithPrompt("Do something", tmpDir);
 			const session = provider.stream({
 				cwd: tmpDir,
 				systemPrompt: { stable: "You are a helpful agent.", variable: "" },
-				queue: queueWithPrompt("Do something", tmpDir),
+				queue: testQueue,
 				mcpToolDefs: {
 					mxd: [
 						tool(
@@ -395,7 +396,7 @@ describe("runLoop integration", () => {
 						result.value.type === "status" &&
 						(result.value as { message: string }).message.includes("idle state")
 					) {
-						await session.return(undefined as never);
+						testQueue.close();
 					}
 					result = await session.next();
 				}
@@ -907,11 +908,12 @@ describe("Event recording via emit callback", () => {
 				emittedEvents.push(event);
 			};
 			const provider = new OpenAICompatibleProvider("gpt-4o");
+			const testQueue = queueWithPrompt("Do something", tmpDir);
 			const session = provider.stream({
 				cwd: tmpDir,
 				systemPrompt: { stable: "You are a helpful agent.", variable: "" },
 				emit,
-				queue: queueWithPrompt("Do something", tmpDir),
+				queue: testQueue,
 				mcpToolDefs: {
 					mxd: [
 						tool(
@@ -941,7 +943,7 @@ describe("Event recording via emit callback", () => {
 						result.value.type === "status" &&
 						(result.value as { message: string }).message.includes("idle state")
 					) {
-						await session.return(undefined as never);
+						testQueue.close();
 					}
 					result = await session.next();
 				}
@@ -1219,11 +1221,12 @@ describe("Event deterministic verification (OpenAI)", () => {
 			}) as unknown as typeof fetch,
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
+				const testQueue = queueWithPrompt("Do the task", testDir);
 				const session = provider.stream({
 					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
-					queue: queueWithPrompt("Do the task", testDir),
+					queue: testQueue,
 					mcpToolDefs: {
 						mxd: [
 							tool(
@@ -1255,7 +1258,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 								"idle state",
 							)
 						) {
-							await session.return(undefined as never);
+							testQueue.close();
 						}
 						result = await session.next();
 					}
@@ -1324,7 +1327,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 						content: "New instruction for you",
 					});
 				} else {
-					await session.return(undefined as never);
+					queue.close();
 				}
 			}
 		};
@@ -1463,11 +1466,12 @@ describe("Event deterministic verification (OpenAI)", () => {
 			}) as unknown as typeof fetch,
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
+				const testQueue = queueWithPrompt("Try something", testDir);
 				const session = provider.stream({
 					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
-					queue: queueWithPrompt("Try something", testDir),
+					queue: testQueue,
 					mcpToolDefs: {
 						mxd: [
 							tool("done", "Signal completion", {}, async () => ({
@@ -1492,7 +1496,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 								"idle state",
 							)
 						) {
-							await session.return(undefined as never);
+							testQueue.close();
 						}
 						result = await session.next();
 					}
@@ -1562,11 +1566,12 @@ describe("Event deterministic verification (OpenAI)", () => {
 			}) as unknown as typeof fetch,
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
+				const testQueue = queueWithPrompt("Run three tools", testDir);
 				const session = provider.stream({
 					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
-					queue: queueWithPrompt("Run three tools", testDir),
+					queue: testQueue,
 					mcpToolDefs: {
 						test: [
 							tool("tool_a", "Tool A", {}, async () => ({
@@ -1591,7 +1596,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 								"idle state",
 							)
 						) {
-							await session.return(undefined as never);
+							testQueue.close();
 						}
 						result = await session.next();
 					}
