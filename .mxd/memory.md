@@ -172,3 +172,15 @@ Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Archite
 - For Responses provider payload tests, assert the exact tool shape in the captured request body (including strict: false) rather than only the schema, because compatibility bugs show up at the wire format boundary.
 
 - UI live state fix: tree_updated now clears in-memory log/pending/older-history state for sessions that become pending with no session object, so reset_task and persistent close(reset) immediately match a fresh reload without waiting for event refetch.
+
+## UI Derived State Reset Consistency
+
+When switching projects, tasks, adding projects, or creating tasks, ALL derived state must be reset. The complete list of state that needs clearing:
+- `logs`, `tokenUsage`, `pendingMessages`, `pendingClarifications`, `backgroundProcesses`, `activeAgents`, `olderEventsAvailable`
+- `lastTurns`, `lastInputTokens`, `lastCacheCreationTokens`, `lastCacheReadTokens`, `lastOutputTokens`
+- `selectedTaskId`, `rootNodeId`, `targetNodeId` (where applicable)
+
+The `handlers.ts` `createActionHandlers` now receives `setTokenUsage`, `setPendingMessages`, `setBackgroundProcesses`, `setActiveAgents`, `setOlderEventsAvailable` so that `handleAddProject` and `handleDeleteProject` can reset all state.
+
+`handleCreateTask` now selects the newly created task by reading the response body `{ id }` from the POST /tasks endpoint.
+

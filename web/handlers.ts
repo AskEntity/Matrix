@@ -55,6 +55,42 @@ interface ActionHandlerDeps {
 	setShowAddProject: React.Dispatch<React.SetStateAction<boolean>>;
 	setShowSettings: React.Dispatch<React.SetStateAction<boolean>>;
 	setIsCreatingTask: React.Dispatch<React.SetStateAction<boolean>>;
+	setTokenUsage: React.Dispatch<
+		React.SetStateAction<
+			Record<
+				string,
+				{ inputTokens: number; contextWindow: number; estimated?: boolean }
+			>
+		>
+	>;
+	setPendingMessages: React.Dispatch<
+		React.SetStateAction<
+			{
+				id: string;
+				taskId: string | null;
+				text: string;
+				timestamp: number;
+				images?: Array<{ base64: string; mediaType: string }>;
+			}[]
+		>
+	>;
+	setBackgroundProcesses: React.Dispatch<
+		React.SetStateAction<
+			Map<
+				string,
+				{
+					id: string;
+					command: string;
+					startTime: number;
+					taskId?: string;
+				}
+			>
+		>
+	>;
+	setActiveAgents: React.Dispatch<React.SetStateAction<Set<string>>>;
+	setOlderEventsAvailable: React.Dispatch<
+		React.SetStateAction<Map<string, { hasOlder: boolean; oldestTs: number }>>
+	>;
 
 	start: (opts: { prompt: string }) => Promise<void>;
 	stop: () => Promise<void>;
@@ -103,6 +139,11 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		setShowAddProject,
 		setShowSettings,
 		setIsCreatingTask,
+		setTokenUsage,
+		setPendingMessages,
+		setBackgroundProcesses,
+		setActiveAgents,
+		setOlderEventsAvailable,
 		start,
 		stop,
 		compact,
@@ -374,6 +415,17 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setSelectedTaskId(null);
 			setRootNodeId(null);
 			setLogs([]);
+			setTokenUsage({});
+			setPendingMessages([]);
+			setPendingClarifications([]);
+			setBackgroundProcesses(new Map());
+			setActiveAgents(new Set());
+			setOlderEventsAvailable(new Map());
+			setLastTurns(null);
+			setLastInputTokens(null);
+			setLastCacheCreationTokens(null);
+			setLastCacheReadTokens(null);
+			setLastOutputTokens(null);
 			setNewProjectPath("");
 			setShowAddProject(false);
 		} catch (err) {
@@ -401,6 +453,17 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setSelectedTaskId(null);
 			setRootNodeId(null);
 			setLogs([]);
+			setTokenUsage({});
+			setPendingMessages([]);
+			setPendingClarifications([]);
+			setBackgroundProcesses(new Map());
+			setActiveAgents(new Set());
+			setOlderEventsAvailable(new Map());
+			setLastTurns(null);
+			setLastInputTokens(null);
+			setLastCacheCreationTokens(null);
+			setLastCacheReadTokens(null);
+			setLastOutputTokens(null);
 		} catch (err) {
 			addLog({
 				type: "error",
@@ -429,6 +492,8 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			});
 			if (!res.ok)
 				throw new Error(((await res.json()) as { error: string }).error);
+			const newNode = (await res.json()) as { id: string };
+			setSelectedTaskId(newNode.id);
 			await refreshTasks();
 		} catch (err) {
 			addLog({
