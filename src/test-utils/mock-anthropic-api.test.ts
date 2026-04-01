@@ -22,9 +22,7 @@ describe("ValidatingMockAPI", () => {
 
 	describe("request validation", () => {
 		test("rejects empty messages", () => {
-			expect(() => createStream({ messages: [] })).toThrow(
-				MockValidationError,
-			);
+			expect(() => createStream({ messages: [] })).toThrow(MockValidationError);
 		});
 
 		test("rejects first message not user", () => {

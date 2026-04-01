@@ -45,3 +45,4 @@ test-project-*
 .test-event-store/
 *.pem
 *.key
+.mxd/artifacts/
