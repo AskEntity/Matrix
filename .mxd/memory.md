@@ -226,3 +226,7 @@ Feature: provider loop auto-recovers from 400 invalid_request_error (e.g. oversi
 - `enableAutoRecovery` on `AgentRequest` (default: not set). Production daemon sets `ctx.config.enableAutoRecovery ?? true`. Tests set `enableAutoRecovery: false` via `DaemonConfig` to avoid masking bugs.
 - Only attempts once per session (`autoRecoveryAttempted` flag). Second 400 throws normally.
 - Recovery builds Anthropic-format tool_result blocks with `is_error: true` + text explanation. Must match tool_use IDs in the preceding assistant message to satisfy API validation.
+
+## UI Lifecycle Entry Collapse
+
+`processEventBatch` collapses consecutive lifecycle-only entries (session resumed / agent stopped) with no meaningful content between them, keeping only the last one per run. `agent_stopped` now renders as "⏹ Agent stopped" lifecycle LogEntry. The collapse uses `isMeaningfulEntry()` — lifecycle entries are not meaningful; all other types (including task_started) are.

@@ -658,7 +658,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 			case "agent_stopped":
 				return {
-					entries: [],
+					entries: [
+						createLogEntry({
+							type: "lifecycle",
+							content: "⏹ Agent stopped",
+							taskId: msg.taskId,
+							ts: msg.ts,
+						}),
+					],
 					updates: [],
 					sideEffects: () => {
 						if (msg.taskId) {
@@ -1026,8 +1033,52 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			}
 		}
 
+		// Collapse consecutive session lifecycle entries (resumed/stopped) with no
+		// meaningful content between them. Keep only the last one in each run.
+		entries = collapseLifecycleEntries(entries);
+
 		setLogs(entries);
 		for (const fn of deferredSideEffects) fn();
+	}
+
+	/** Entry types that count as "meaningful content" — NOT lifecycle noise. */
+	function isMeaningfulEntry(e: LogEntry): boolean {
+		// lifecycle entries (session resumed, agent stopped) are not meaningful
+		if (e.type === "lifecycle") return false;
+		// task_started is a lifecycle marker but meaningful — it's the task launch
+		// All other types are meaningful content
+		return true;
+	}
+
+	/**
+	 * Scan entries and collapse runs of consecutive lifecycle-only entries
+	 * (session resumed / agent stopped) into just the last one in each run.
+	 */
+	function collapseLifecycleEntries(entries: LogEntry[]): LogEntry[] {
+		if (entries.length === 0) return entries;
+
+		const result: LogEntry[] = [];
+		let lastLifecycleIdx = -1; // index in result of last lifecycle entry in current run
+
+		for (const entry of entries) {
+			if (!isMeaningfulEntry(entry)) {
+				// This is a lifecycle entry
+				if (lastLifecycleIdx >= 0) {
+					// Replace the previous lifecycle entry in the current run
+					result[lastLifecycleIdx] = entry;
+				} else {
+					// Start a new lifecycle run
+					lastLifecycleIdx = result.length;
+					result.push(entry);
+				}
+			} else {
+				// Meaningful content — break any lifecycle run
+				lastLifecycleIdx = -1;
+				result.push(entry);
+			}
+		}
+
+		return result;
 	}
 
 	// --- Main handler ---
