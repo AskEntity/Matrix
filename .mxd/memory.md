@@ -192,3 +192,5 @@ The `handlers.ts` `createActionHandlers` now receives `setTokenUsage`, `setPendi
 - Chat and Responses providers share near-identical event converter callbacks, buildToolResultsMessage, buildImplicitYieldMessage, computeCost — candidate for dedup.
 - Responses `streamResponsesAPI` reads SSE events from response body manually (no SDK). Anthropic uses SDK streaming helpers.
 
+
+- Responses provider `streamResponsesAPI` now has inner retry (5 attempts, exponential backoff) matching Anthropic provider. Retries 429/500/502/503/529, throws immediately on 400/401/403/404. `retryDelayMs` param for fast tests. Export `streamResponsesAPI` for direct unit testing to avoid outer retry loop interference from `runProviderLoop`.
