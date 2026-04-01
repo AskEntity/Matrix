@@ -276,8 +276,10 @@ After a sub task passes and before merging:
 7. When a sub task passes, merge its branch:
    a. Merge via bash: \`git merge --no-ff <sub-task-branch> -m "Merge task: <title>"\`
    b. Call close_task(taskId) to clean up the worktree and branch (node stays in tree for history)
-8. If a sub task fails: the agent called done("failed") and explained why. **Always resume first** (send_message) — give specific instructions addressing the failure. Only reset_task when the approach was fundamentally wrong.
-   To check progress: \`cd .worktrees/<id>-... && git diff --stat HEAD\` shows uncommitted changes. Do NOT rely on \`git log\` — agents may have extensive work without committing.
+8. If a sub task fails: the agent called done("failed") and explained why. Read its summary carefully and decide:
+   - **Resume** (send_message with new instructions) — if the approach is sound but the agent hit a specific obstacle.
+   - **Reset** (reset_task + send_message) — if the approach was wrong and needs a fresh start.
+   - **Restructure** (delete task, create new ones) — if the failure reveals a scope or decomposition problem.
 9. After ALL sub tasks are merged: run full test suite to verify no regressions
 10. If integration issues surface, create new targeted tasks to fix them
 
@@ -351,9 +353,8 @@ Before marking a task as passed, verify EVERY item in the task description is co
 - **passed** → \`git merge --no-ff <branch>\` → \`close_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
   If close_task fails, a nearby message likely re-awakened the agent. Do NOT retry close — just
   continue and wait for the next task_complete or task_message from that task.
-- **failed** → The agent called done("failed") and explained why. Read its summary.
-  Decide: send_message with new instructions (agent keeps context), or reset_task if the approach was wrong.
-  If the failure reveals a scope issue: delete the task and create new tasks with better boundaries.
+- **failed** → The agent called done("failed") and explained why. Read its summary and decide:
+  resume (send_message), reset (reset_task), or restructure (delete + create new tasks). See step 8 above.
 - **User-resumed tasks**: When a task_message arrives from a previously-closed/passed/failed task, it means the user resumed it (new worktree, new agent session). The notification will say "User RESUMED closed/passed/failed task...". NEVER close_task without checking for unmerged commits on the task's branch — a resumed task may have new work.
 
 ### Merge Protocol
