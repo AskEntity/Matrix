@@ -972,7 +972,7 @@ describe("daemon tasks API", () => {
 		// Attach session to simulate a running agent
 		const childQueue = new MessageQueue();
 		const tracker = await getTracker(projectId);
-		const childNode = tracker.get(child.id)!;
+		const childNode = tracker.get(child.id) as TaskNode;
 		attachMockSession(childNode, childQueue);
 
 		// Delete the parent — should cascade and close child queue
@@ -1865,7 +1865,7 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		// Attach session to simulate a running agent
 		taskQueue = new MessageQueue();
 		const tracker = await gt(projectId);
-		const taskNode = tracker.get(taskId)!;
+		const taskNode = tracker.get(taskId) as TaskNode;
 		attachMockSession(taskNode, taskQueue);
 
 		const res = await app.request(
@@ -1944,7 +1944,7 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		taskQueue = new MessageQueue();
 		taskQueue.close();
 		const tracker = await gt(projectId);
-		const taskNode = tracker.get(taskId)!;
+		const taskNode = tracker.get(taskId) as TaskNode;
 		attachMockSession(taskNode, taskQueue);
 
 		const res = await app.request(
@@ -2310,7 +2310,7 @@ describe("POST /projects/:id/clarify", () => {
 
 		// Attach session to simulate a running child agent
 		const childQueue = new MessageQueue();
-		const childNode = tracker.get(child.id)!;
+		const childNode = tracker.get(child.id) as TaskNode;
 		attachMockSession(childNode, childQueue);
 
 		try {
@@ -2440,7 +2440,7 @@ describe("POST /projects/:id/clarify", () => {
 
 		const closedQueue = new MessageQueue();
 		closedQueue.close();
-		const childNode = tracker.get(child.id)!;
+		const childNode = tracker.get(child.id) as TaskNode;
 		attachMockSession(childNode, closedQueue);
 
 		try {
@@ -2925,7 +2925,7 @@ describe("POST /projects/:id/stop", () => {
 
 		// Attach session to simulate a running child agent
 		const childQueue = new MessageQueue();
-		const childNode = tracker.get(child.id)!;
+		const childNode = tracker.get(child.id) as TaskNode;
 		attachMockSession(childNode, childQueue);
 
 		// Verify queue is open

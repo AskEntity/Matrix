@@ -187,9 +187,10 @@ describe("executeTool Zod validation", () => {
 		expect(result.content).toBe("ok");
 		// Zod strips unknown keys by default — handler should only receive schema-defined keys
 		expect(capturedArgs).not.toBeNull();
-		expect(capturedArgs!).toEqual({ title: "test" });
-		expect(capturedArgs!).not.toHaveProperty("unknownField");
-		expect(capturedArgs!).not.toHaveProperty("extra");
+		const args = capturedArgs as unknown as Record<string, unknown>;
+		expect(args).toEqual({ title: "test" });
+		expect(args).not.toHaveProperty("unknownField");
+		expect(args).not.toHaveProperty("extra");
 	});
 
 	test("skips validation for external MCP tools with empty inputSchema", async () => {

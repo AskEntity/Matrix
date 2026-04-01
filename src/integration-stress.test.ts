@@ -294,7 +294,7 @@ describe("Stress: compaction + restart", () => {
 			compactMarker,
 			...postCompactEvents,
 		];
-		const content = allEvents.map((e) => JSON.stringify(e)).join("\n") + "\n";
+		const content = `${allEvents.map((e) => JSON.stringify(e)).join("\n")}\n`;
 		writeFileSync(join(tmpDir, "compact-test.events.jsonl"), content);
 
 		// readActive should only return post-compact events
@@ -320,7 +320,7 @@ describe("Stress: compaction + restart", () => {
 		const fromMarker = store.readFromLastCompactMarker("compact-test");
 		expect(fromMarker.hasOlderEvents).toBe(true);
 		expect(fromMarker.events.length).toBe(postCompactEvents.length + 1); // +1 for marker
-		expect(fromMarker.events[0]!.type).toBe("compact_marker");
+		expect(fromMarker.events[0]?.type).toBe("compact_marker");
 
 		Bun.spawnSync(["rm", "-rf", tmpDir]);
 	});
@@ -625,7 +625,7 @@ describe("Stress: multi-child coordination", () => {
 		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode?.children?.length).toBe(3);
 
-		for (const childId of rootNode!.children!) {
+		for (const childId of rootNode?.children ?? []) {
 			const childNode = tracker.get(childId);
 			expect(childNode?.status).toBe("passed");
 		}
@@ -1035,7 +1035,7 @@ describe("Stress: fork + restart", () => {
 		// Verify fork child completed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
-		const childId = rootNode!.children![0]!;
+		const childId = rootNode?.children?.[0] as string;
 		const childNode = tracker.get(childId);
 		expect(childNode?.status).toBe("passed");
 
@@ -1083,8 +1083,8 @@ describe("Stress: JSONL corruption recovery", () => {
 		// Read should skip malformed lines and return valid events
 		const events = store.read("corrupt-session");
 		expect(events.length).toBe(2);
-		expect(events[0]!.type).toBe("assistant_text");
-		expect(events[1]!.type).toBe("assistant_text");
+		expect(events[0]?.type).toBe("assistant_text");
+		expect(events[1]?.type).toBe("assistant_text");
 
 		// Cleanup
 		Bun.spawnSync(["rm", "-rf", tmpDir]);
@@ -1111,7 +1111,7 @@ describe("Stress: JSONL corruption recovery", () => {
 
 		const events = store.read("truncated");
 		expect(events.length).toBe(1); // Only the valid event
-		expect(events[0]!.type).toBe("tool_call");
+		expect(events[0]?.type).toBe("tool_call");
 
 		Bun.spawnSync(["rm", "-rf", tmpDir]);
 	});
@@ -1176,7 +1176,7 @@ describe("Stress: JSONL corruption recovery", () => {
 		// readActive should return events after compact_marker, skipping corrupt line
 		const active = store.readActive("active");
 		expect(active.length).toBe(1);
-		expect(active[0]!.type).toBe("assistant_text");
+		expect(active[0]?.type).toBe("assistant_text");
 		expect((active[0] as unknown as { content: string }).content).toBe("new");
 
 		Bun.spawnSync(["rm", "-rf", tmpDir]);
@@ -1701,7 +1701,7 @@ describe("Stress: child restart edge cases", () => {
 		// Verify child also passed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
-		const childId = rootNode!.children![0]!;
+		const childId = rootNode?.children?.[0] as string;
 		expect(tracker.get(childId)?.status).toBe("passed");
 	}, 60000);
 });

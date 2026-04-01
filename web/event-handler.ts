@@ -468,7 +468,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					],
 					sideEffects: msg.backgroundId
 						? () => {
-								const bgId = msg.backgroundId!;
+								const bgId = msg.backgroundId as string;
 								setBackgroundProcesses((prev) => {
 									const next = new Map(prev);
 									next.set(bgId, {

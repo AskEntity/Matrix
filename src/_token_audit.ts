@@ -44,7 +44,7 @@ const events: Event[] = lines.map((l) => JSON.parse(l));
 
 let lastCompact = -1;
 for (let i = 0; i < events.length; i++) {
-	if (events[i]!.type === "compact_marker") lastCompact = i;
+	if (events[i]?.type === "compact_marker") lastCompact = i;
 }
 const activeEvents = events.slice(lastCompact + 1);
 let messages = eventsToAnthropicMessages(activeEvents) as MessageParam[];
@@ -52,12 +52,13 @@ let messages = eventsToAnthropicMessages(activeEvents) as MessageParam[];
 // Trim trailing orphan: if last message is assistant with tool_use, remove it
 // (current session still running, last tool_call has no result yet)
 while (messages.length > 0) {
-	const last = messages[messages.length - 1]!;
+	const last = messages[messages.length - 1];
+	if (!last) break;
 	if (last.role === "assistant") {
 		const content = last.content;
 		if (
 			Array.isArray(content) &&
-			content.some((b: any) => b.type === "tool_use")
+			content.some((b: { type: string }) => b.type === "tool_use")
 		) {
 			messages = messages.slice(0, -1);
 			continue;
@@ -91,8 +92,8 @@ try {
 	console.log(`\n=== Token growth over conversation ===`);
 	const validSlicePoints: number[] = [];
 	for (let i = 1; i <= messages.length; i++) {
-		const msg = messages[i - 1]!;
-		if (msg.role === "user") {
+		const msg = messages[i - 1];
+		if (msg?.role === "user") {
 			validSlicePoints.push(i);
 		}
 	}
@@ -122,7 +123,8 @@ try {
 	// Analyze large messages
 	console.log(`\n=== Messages > 5000 chars ===`);
 	for (let i = 0; i < messages.length; i++) {
-		const msg = messages[i]!;
+		const msg = messages[i];
+		if (!msg) continue;
 		let chars = 0;
 		const parts: string[] = [];
 

@@ -1094,7 +1094,7 @@ describe("streamResponsesAPI inner retry", () => {
 		const errorEvents = events.filter((e) => e.type === "error");
 		expect(errorEvents.length).toBe(1);
 		expect(
-			errorEvents[0]!.type === "error" && errorEvents[0]!.message,
+			errorEvents[0]?.type === "error" && errorEvents[0]?.message,
 		).toContain("retry 1/4");
 	});
 

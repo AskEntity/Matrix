@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { EventStore } from "./event-store.ts";
 import type { Event } from "./events.ts";
 import { TaskTracker } from "./task-tracker.ts";
+import type { TaskNode } from "./types.ts";
 
 describe("TaskTracker", () => {
 	let tempDir: string;
@@ -284,7 +285,7 @@ describe("TaskTracker", () => {
 		// Root node is created automatically when tracker loads with no tree.json
 		const rootId = tracker.rootNodeId;
 		expect(rootId).toBeTruthy();
-		const root = tracker.get(rootId)!;
+		const root = tracker.get(rootId) as TaskNode;
 		expect(root.title).toBe("Orchestrator");
 		expect(root.parentId).toBeNull();
 		expect(root.status).toBe("pending");
@@ -473,15 +474,15 @@ describe("TaskTracker", () => {
 
 		const node = tracker2.get(taskId);
 		expect(node).toBeDefined();
-		expect(node!.persistent).toBe("reset");
-		expect(node!.title).toBe("Test Agent");
-		expect(node!.description).toBe("Run tests periodically");
-		expect(node!.color).toBe("#a371f7");
-		expect(node!.status).toBe("pending");
-		expect(node!.parentId).toBe(tracker2.rootNodeId);
+		expect(node?.persistent).toBe("reset");
+		expect(node?.title).toBe("Test Agent");
+		expect(node?.description).toBe("Run tests periodically");
+		expect(node?.color).toBe("#a371f7");
+		expect(node?.status).toBe("pending");
+		expect(node?.parentId).toBe(tracker2.rootNodeId);
 
 		// Verify root has it as child
-		const root = tracker2.get(tracker2.rootNodeId)!;
+		const root = tracker2.get(tracker2.rootNodeId) as TaskNode;
 		expect(root.children).toContain(taskId);
 
 		await rm(projectDir, { recursive: true });
@@ -523,7 +524,7 @@ describe("TaskTracker", () => {
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load(undefined, projectDir);
 
-		const node = tracker2.get(taskId)!;
+		const node = tracker2.get(taskId) as TaskNode;
 		expect(node.title).toBe("Updated Title");
 		expect(node.description).toBe("Updated description");
 		expect(node.status).toBe("passed"); // Status preserved from tree.json
@@ -657,7 +658,7 @@ describe("Persistent task close modes", () => {
 		await tracker.save();
 
 		// Status should be pending, NOT closed
-		expect(tracker.get(task.id)!.status).toBe("pending");
+		expect(tracker.get(task.id)?.status).toBe("pending");
 
 		// JSONL should be preserved
 		expect(eventStore.has(task.id)).toBe(true);
@@ -687,7 +688,7 @@ describe("Persistent task close modes", () => {
 		await tracker.save();
 
 		// Status should be pending, NOT closed
-		expect(tracker.get(task.id)!.status).toBe("pending");
+		expect(tracker.get(task.id)?.status).toBe("pending");
 
 		// JSONL should be deleted
 		expect(eventStore.has(task.id)).toBe(false);
@@ -706,7 +707,7 @@ describe("Persistent task close modes", () => {
 		await tracker.save();
 
 		// Regular task goes to "closed", NOT pending
-		expect(tracker.get(task.id)!.status).toBe("closed");
+		expect(tracker.get(task.id)?.status).toBe("closed");
 
 		// JSONL is NOT cleared by close for regular tasks
 		expect(eventStore.has(task.id)).toBe(true);
@@ -744,12 +745,12 @@ describe("Persistent task close modes", () => {
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
 
-		expect(tracker2.get(continueTask.id)!.status).toBe("pending");
-		expect(tracker2.get(continueTask.id)!.persistent).toBe("continue");
-		expect(tracker2.get(resetTask.id)!.status).toBe("pending");
-		expect(tracker2.get(resetTask.id)!.persistent).toBe("reset");
-		expect(tracker2.get(regularTask.id)!.status).toBe("closed");
-		expect(tracker2.get(regularTask.id)!.persistent).toBe(false);
+		expect(tracker2.get(continueTask.id)?.status).toBe("pending");
+		expect(tracker2.get(continueTask.id)?.persistent).toBe("continue");
+		expect(tracker2.get(resetTask.id)?.status).toBe("pending");
+		expect(tracker2.get(resetTask.id)?.persistent).toBe("reset");
+		expect(tracker2.get(regularTask.id)?.status).toBe("closed");
+		expect(tracker2.get(regularTask.id)?.persistent).toBe(false);
 	});
 
 	test("'continue' mode: JSONL content is identical after close", async () => {
@@ -770,8 +771,8 @@ describe("Persistent task close modes", () => {
 		// Events must be exactly the same — not just count, but content
 		expect(eventsAfter.length).toBe(eventsBefore.length);
 		for (let i = 0; i < eventsBefore.length; i++) {
-			expect(eventsAfter[i]!.type).toBe(eventsBefore[i]!.type);
-			expect(eventsAfter[i]!.ts).toBe(eventsBefore[i]!.ts);
+			expect(eventsAfter[i]?.type).toBe(eventsBefore[i]?.type);
+			expect(eventsAfter[i]?.ts).toBe(eventsBefore[i]?.ts);
 		}
 	});
 
@@ -789,7 +790,7 @@ describe("Persistent task close modes", () => {
 		// Pass and close
 		tracker.updateStatus(task.id, "passed");
 		simulateCloseTask(tracker.get(task.id), (id) => eventStore.clear(id));
-		expect(tracker.get(task.id)!.status).toBe("pending");
+		expect(tracker.get(task.id)?.status).toBe("pending");
 
 		// "Reopen" — set back to in_progress
 		tracker.updateStatus(task.id, "in_progress");
@@ -798,7 +799,7 @@ describe("Persistent task close modes", () => {
 		expect(eventStore.has(task.id)).toBe(true);
 		const events = eventStore.read(task.id);
 		expect(events.length).toBe(4);
-		expect(events[0]!.type).toBe("session_config");
+		expect(events[0]?.type).toBe("session_config");
 	});
 
 	test("closing then reopening: 'reset' mode starts fresh", async () => {
@@ -815,7 +816,7 @@ describe("Persistent task close modes", () => {
 		// Pass and close
 		tracker.updateStatus(task.id, "passed");
 		simulateCloseTask(tracker.get(task.id), (id) => eventStore.clear(id));
-		expect(tracker.get(task.id)!.status).toBe("pending");
+		expect(tracker.get(task.id)?.status).toBe("pending");
 
 		// "Reopen" — set back to in_progress
 		tracker.updateStatus(task.id, "in_progress");
