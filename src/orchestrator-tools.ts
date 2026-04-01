@@ -470,8 +470,8 @@ export function createOrchestratorTools(
 					.describe(
 						"If true, creates a persistent task. Definition stored in .mxd/tasks/<id>.json (git-tracked). " +
 							"close_task resets to pending instead of closed. Only root orchestrator can create persistent tasks. " +
-							"'reset': clean start each cycle (session JSONL deleted on close). " +
-							"'continue': resumes with context (session JSONL kept on close).",
+							"'reset': clean start each cycle (session history deleted on close). " +
+							"'continue': resumes with context (session history kept on close).",
 					),
 			},
 			async (args) => {

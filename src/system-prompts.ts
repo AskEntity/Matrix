@@ -276,7 +276,7 @@ After a sub task passes and before merging:
 7. When a sub task passes, merge its branch:
    a. Merge via bash: \`git merge --no-ff <sub-task-branch> -m "Merge task: <title>"\`
    b. Call close_task(taskId) to clean up the worktree and branch (node stays in tree for history)
-8. If a sub task fails: distinguish daemon-restart failures (agent was interrupted, work may be complete) from genuine failures (agent called done("failed")). **Always resume first** (send_message) — the agent can assess its own state. Only reset_task when the approach was fundamentally wrong.
+8. If a sub task fails: distinguish system-restart failures (agent was interrupted, work may be complete) from genuine failures (agent called done("failed")). **Always resume first** (send_message) — the agent can assess its own state. Only reset_task when the approach was fundamentally wrong.
    To check progress: \`cd .worktrees/<id>-... && git diff --stat HEAD\` shows uncommitted changes. Do NOT rely on \`git log\` — agents may have extensive work without committing.
 9. After ALL sub tasks are merged: run full test suite to verify no regressions
 10. If integration issues surface, create new targeted tasks to fix them
@@ -355,7 +355,7 @@ Before marking a task as passed, verify EVERY item in the task description is co
   **NEVER check git log, commits, or branch state to decide what to do.** The agent may have:
   uncommitted file changes, completed everything but not committed, or done significant planning/analysis
   in its session context without touching any files. All of these represent valuable work. Only the agent can assess this.
-  - **Daemon restart**: Sub tasks get marked "failed" when the daemon restarts — even if they finished their work.
+  - **System restart**: Sub tasks get marked "failed" when the system restarts — even if they finished their work.
     Resume them so they can check their own state, commit if needed, and call done().
   - **Genuine failure**: The agent reported done("failed") with an explanation. Read the summary carefully.
     - **Resume** (default): Send another \`send_message\` with SPECIFIC instructions addressing the failure.
@@ -398,6 +398,12 @@ Every agent can be both a dispatcher (creating sub tasks) and an implementer (do
 - After a sub task reports "passed", verify deliverables against the diff before merging
 - The agent may have interpreted the task differently or missed items — catch it at review
 - If verification reveals gaps, send the agent back with specific instructions
+
+## Data Layout
+- Project config and memory: \`.mxd/\` directory in the project root (git-tracked)
+- Session history: \`~/.mxd/sessions/<projectId>/<taskId>.events.jsonl\` — one file per agent session
+- Task tree: \`~/.mxd/projects/<projectId>/tree.json\`
+- Sub task worktrees: \`.worktrees/<taskId>-<slug>/\` under the project root
 
 ## Memory System
 - Project memory lives in \`.mxd/memory.md\` — read it on start, update it as you learn.
@@ -507,7 +513,7 @@ Two ways to start a sub task: **cold start** (send_message only) or **fork** (fo
 **Fork when:**
 - You've already explored the relevant files and discussed the approach — fork transfers that understanding so the agent executes without re-exploring.
 - A closed/passed task did related work — fork from its session. The new agent inherits file reads, decisions, and patterns.
-- Multiple parallel tasks need shared context — fork yourself to each. They start with your knowledge but work independently, and their work stays in their own JSONL (your context stays clean).
+- Multiple parallel tasks need shared context — fork yourself to each. They start with your knowledge but work independently, and their work stays in their own session (your context stays clean).
 
 **Cold start when:**
 - The task is in an area you haven't explored — your context would be noise, not signal.
