@@ -1,0 +1,6 @@
+{
+	"title": "Persistent Model",
+	"description": "Persistent task definition, lifecycle, file sync, migration.",
+	"persistent": true,
+	"color": "#a371f7"
+}

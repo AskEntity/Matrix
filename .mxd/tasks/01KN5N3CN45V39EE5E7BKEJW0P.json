@@ -1,0 +1,6 @@
+{
+	"title": "Runtime",
+	"description": "In-loop behavior: streaming, tool execution, image handling, compaction, cost tracking.",
+	"persistent": true,
+	"color": "#f0883e"
+}

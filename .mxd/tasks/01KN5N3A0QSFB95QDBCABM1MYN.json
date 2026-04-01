@@ -1,0 +1,6 @@
+{
+	"title": "Lifecycle",
+	"description": "Agent start, stop, resume, restart, JSONL repair, orphan detection, session management.",
+	"persistent": true,
+	"color": "#f0883e"
+}
