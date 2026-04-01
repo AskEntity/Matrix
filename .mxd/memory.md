@@ -194,3 +194,7 @@ The `handlers.ts` `createActionHandlers` now receives `setTokenUsage`, `setPendi
 
 
 - Responses provider `streamResponsesAPI` now has inner retry (5 attempts, exponential backoff) matching Anthropic provider. Retries 429/500/502/503/529, throws immediately on 400/401/403/404. `retryDelayMs` param for fast tests. Export `streamResponsesAPI` for direct unit testing to avoid outer retry loop interference from `runProviderLoop`.
+
+## UI Event Fetching: Per-Session, Not Per-Project
+
+The UI must fetch events per-session (using `api.taskEvents(projectId, sessionId)`) not per-project (`api.events(projectId)`). Forked sessions contain copies of parent events with the parent taskId; merging all sessions causes stale content to appear above the compaction line on refresh. The viewed session is `selectedTaskId ?? rootNodeId` — tracked via a ref for stable callbacks.
