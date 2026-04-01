@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { z } from "zod";
+import { getImageDimensions } from "../image-dimensions.ts";
 import type { MessageQueue } from "../message-queue.ts";
 import { tool } from "../tool-definition.ts";
 import type { TaskSession } from "../types.ts";
@@ -206,6 +207,20 @@ export function createBuiltinTools(
 			if (imageMediaType) {
 				try {
 					const data = readFileSync(path);
+
+					// Check pixel dimensions before encoding to base64
+					const MAX_DIMENSION = 8000;
+					const dims = getImageDimensions(data);
+					if (
+						dims &&
+						(dims.width > MAX_DIMENSION || dims.height > MAX_DIMENSION)
+					) {
+						return textResult(
+							`Image too large (${dims.width}x${dims.height} pixels, max ${MAX_DIMENSION}px per dimension). Consider resizing with: magick ${basename(path)} -resize ${MAX_DIMENSION}x${MAX_DIMENSION}\\> resized_${basename(path)}`,
+							true,
+						);
+					}
+
 					const base64 = data.toString("base64");
 					return {
 						content: [

@@ -288,3 +288,10 @@ In-memory `messages[]` (provider format) and JSONL events are two independent da
 - `emitWithTask` in `runAgentForNode` intercepts text_delta (append) and assistant_text (clear). Also cleared in the finally block.
 - Batch events endpoints (GET /tasks/:nodeId/events and GET /events) inject a synthetic `assistant_text` event with `partial: true` at the end of the response when streaming is active.
 - The `createApp` return type now includes `ctx` for test access.
+
+## Image Pixel Dimension Guard
+
+- `getImageDimensions(buffer)` in `src/image-dimensions.ts`: parses PNG (bytes 16-23 IHDR) and JPEG (scan for SOF0/SOF1/SOF2 markers) headers. Returns `{width, height} | null`.
+- read_file image path in `src/tools/definitions.ts` checks dimensions before base64 encoding. Rejects >8000px per dimension with error text + magick resize command.
+- Unknown formats (GIF, WebP) pass through — `getImageDimensions` returns null, no blocking.
+- This prevents the "agent permanently bricked" scenario where oversized pixel images get stored in JSONL and Anthropic API rejects on every resume.
