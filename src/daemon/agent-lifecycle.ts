@@ -498,14 +498,18 @@ export async function deliverMessage(
 		ts: message.ts,
 	});
 
-	// Step 2: Try direct queue delivery if agent is running
-	const queue = tracker.get(nodeId)?.session?.queue;
-	if (queue) {
-		try {
-			queue.enqueue(message);
-			return "enqueued";
-		} catch {
-			// Queue was closed — fall through to persist/launch
+	// Step 2: Try direct queue delivery if agent is running AND fully initialized.
+	// Skip if launch lock is held — the agent is still reading JSONL events.
+	// Our message is already in JSONL (step 1) and will be recovered by findUnconsumedMessages.
+	if (!ctx.launchingNodes.has(nodeId)) {
+		const queue = tracker.get(nodeId)?.session?.queue;
+		if (queue) {
+			try {
+				queue.enqueue(message);
+				return "enqueued";
+			} catch {
+				// Queue was closed — fall through to persist/launch
+			}
 		}
 	}
 
@@ -682,15 +686,21 @@ export async function runAgentForNode(
 			currentTaskId: nodeId,
 			depth,
 			mcpManager,
-			orchestratorSystemPrompt: isRoot ? opts?.orchestratorSystemPrompt : undefined,
+			orchestratorSystemPrompt: isRoot
+				? opts?.orchestratorSystemPrompt
+				: undefined,
 			getSession,
 		});
 
 		// Priority: API param > resolved config
 		const effectiveModel = opts?.model ?? agentCtx.effectiveCfg.model;
 
-		// Read active events for resume and fix orphaned tool_calls
+		// Flush pending JSONL writes before reading — ensures messages persisted by
+		// concurrent deliverMessage calls (during the lock window) are on disk.
 		const eventStore = getEventStore(ctx, project.id);
+		await eventStore.flushSession(nodeId);
+
+		// Read active events for resume and fix orphaned tool_calls
 		let activeEvents = eventStore.has(nodeId)
 			? eventStore.readActive(nodeId)
 			: [];
@@ -725,21 +735,11 @@ export async function runAgentForNode(
 			}
 		}
 
-		// Release launch lock. Messages arriving after this point will find
-		// node.session.queue and enqueue directly.
+		// Release launch lock. deliverMessage skips direct queue delivery while
+		// lock is held, so messages written during the lock window are in JSONL
+		// and were recovered above by findUnconsumedMessages.
+		// After lock release, messages go directly to the queue via deliverMessage.
 		ctx.launchingNodes.delete(nodeId);
-
-		// Flush and re-scan: pick up any messages persisted to JSONL during the lock window.
-		// These were written by deliverMessage but couldn't be enqueued (no session yet).
-		await eventStore.flushSession(nodeId);
-		const postLockEvents = eventStore.readActive(nodeId);
-		const lateMessages = findUnconsumedMessages(postLockEvents);
-		for (const msg of lateMessages) {
-			// Only enqueue messages we haven't already recovered above
-			if (!activeEvents.some((e) => e.type === "message" && "id" in e && e.id === msg.id)) {
-				childQueue.enqueue(msg);
-			}
-		}
 
 		// Build emit callback: emitEvent with taskId injected
 		const emitWithTask = (event: Event) => {
@@ -759,9 +759,7 @@ export async function runAgentForNode(
 
 		// Resolve system prompt: use stored session_config on resume, fresh on start.
 		const isResume = activeEvents.length > 0;
-		const storedConfig = isResume
-			? findSessionConfig(activeEvents)
-			: undefined;
+		const storedConfig = isResume ? findSessionConfig(activeEvents) : undefined;
 		let systemPrompt: SystemPrompt;
 		if (storedConfig) {
 			// Resume: use frozen system prompt from JSONL for cache stability

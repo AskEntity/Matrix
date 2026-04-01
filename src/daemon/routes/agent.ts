@@ -166,10 +166,16 @@ export function registerAgentRoutes(
 			// Relaunch with resume to pick up new config — fire-and-forget
 			const restartTracker2 = await getTracker(ctx, project.id);
 			restartTracker2.updateStatus(restartTracker2.rootNodeId, "in_progress");
-			runAgentForNode(ctx, project, restartTracker2, restartTracker2.rootNodeId, {
-				orchestratorSystemPrompt,
-				resume: true,
-			}).catch((e) => {
+			runAgentForNode(
+				ctx,
+				project,
+				restartTracker2,
+				restartTracker2.rootNodeId,
+				{
+					orchestratorSystemPrompt,
+					resume: true,
+				},
+			).catch((e) => {
 				console.error(`[restart] Failed to relaunch:`, e);
 			});
 			return c.json({ ok: true });

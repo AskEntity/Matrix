@@ -361,14 +361,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								ts: childResumeMsg.ts,
 							});
 						}
-						runAgentForNode(ctx, project, tracker, node.id).catch(
-							(e) => {
-								console.error(
-									`[autoResume] Failed to resume child ${node.id}:`,
-									e,
-								);
-							},
-						);
+						runAgentForNode(ctx, project, tracker, node.id).catch((e) => {
+							console.error(
+								`[autoResume] Failed to resume child ${node.id}:`,
+								e,
+							);
+						});
 					}
 				}
 			}
