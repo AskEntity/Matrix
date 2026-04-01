@@ -6,8 +6,7 @@ import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
 import {
-	launchAgent,
-	runChildAgentInBackground,
+	runAgentForNode,
 	stopAgent,
 	writeOrphanedToolResults,
 } from "./daemon/agent-lifecycle.ts";
@@ -297,12 +296,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						console.log(
 							`Auto-resuming ${project.name} root (yielding — bypass to queue.wait)`,
 						);
-						await launchAgent(
-							ctx,
-							project,
-							{ resume: true },
-							ORCHESTRATOR_SYSTEM_PROMPT,
-						);
+						tracker.updateStatus(rootNodeId, "in_progress");
+						runAgentForNode(ctx, project, tracker, rootNodeId, {
+							orchestratorSystemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
+						}).catch((e) => {
+							console.error(
+								`[autoResume] Failed to resume root ${rootNodeId}:`,
+								e,
+							);
+						});
 					} else {
 						// Interrupted root: normal resume with context message.
 						console.log(
@@ -324,12 +326,16 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							body: resumeMsg,
 							ts: resumeMsg.ts,
 						});
-						await launchAgent(
-							ctx,
-							project,
-							{ resume: true },
-							ORCHESTRATOR_SYSTEM_PROMPT,
-						);
+						// Root uses same launch path as child — fire-and-forget
+						tracker.updateStatus(rootNodeId, "in_progress");
+						runAgentForNode(ctx, project, tracker, rootNodeId, {
+							orchestratorSystemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
+						}).catch((e) => {
+							console.error(
+								`[autoResume] Failed to resume root ${rootNodeId}:`,
+								e,
+							);
+						});
 					}
 				} else {
 					// Child agent: resume via runChildAgentInBackground.
@@ -355,7 +361,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								ts: childResumeMsg.ts,
 							});
 						}
-						runChildAgentInBackground(ctx, project, tracker, node.id).catch(
+						runAgentForNode(ctx, project, tracker, node.id).catch(
 							(e) => {
 								console.error(
 									`[autoResume] Failed to resume child ${node.id}:`,

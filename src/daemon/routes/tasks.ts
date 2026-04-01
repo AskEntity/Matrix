@@ -20,7 +20,7 @@ import { cleanupSessionBackgroundProcesses } from "../../tools/index.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
 	deliverMessage,
-	runChildAgentInBackground,
+	runAgentForNode,
 	stopTask,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
@@ -347,7 +347,7 @@ export function registerTaskRoutes(
 			});
 
 			// Run async — return immediately so UI updates
-			runChildAgentInBackground(ctx, project, tracker, nodeId, body.model);
+			runAgentForNode(ctx, project, tracker, nodeId, { model: body.model });
 
 			return c.json(tracker.get(nodeId));
 		}
@@ -403,7 +403,7 @@ export function registerTaskRoutes(
 					ts: continueMsg2.ts,
 				});
 
-				runChildAgentInBackground(ctx, project, tracker, nodeId, body.model);
+				runAgentForNode(ctx, project, tracker, nodeId, { model: body.model });
 
 				return c.json(tracker.get(nodeId));
 			} catch (e) {
