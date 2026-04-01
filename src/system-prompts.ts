@@ -276,7 +276,7 @@ After a sub task passes and before merging:
 7. When a sub task passes, merge its branch:
    a. Merge via bash: \`git merge --no-ff <sub-task-branch> -m "Merge task: <title>"\`
    b. Call close_task(taskId) to clean up the worktree and branch (node stays in tree for history)
-8. If a sub task fails: distinguish system-restart failures (agent was interrupted, work may be complete) from genuine failures (agent called done("failed")). **Always resume first** (send_message) — the agent can assess its own state. Only reset_task when the approach was fundamentally wrong.
+8. If a sub task fails: it means the agent called done("failed") or hit an unrecoverable error. **Always resume first** (send_message) — the agent can assess its own state. Only reset_task when the approach was fundamentally wrong.
    To check progress: \`cd .worktrees/<id>-... && git diff --stat HEAD\` shows uncommitted changes. Do NOT rely on \`git log\` — agents may have extensive work without committing.
 9. After ALL sub tasks are merged: run full test suite to verify no regressions
 10. If integration issues surface, create new targeted tasks to fix them
@@ -351,18 +351,13 @@ Before marking a task as passed, verify EVERY item in the task description is co
 - **passed** → \`git merge --no-ff <branch>\` → \`close_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
   If close_task fails, a nearby message likely re-awakened the agent. Do NOT retry close — just
   continue and wait for the next task_complete or task_message from that task.
-- **failed** → **Always resume first.** Send \`send_message\` immediately — the agent knows its own state.
-  **NEVER check git log, commits, or branch state to decide what to do.** The agent may have:
-  uncommitted file changes, completed everything but not committed, or done significant planning/analysis
-  in its session context without touching any files. All of these represent valuable work. Only the agent can assess this.
-  - **System restart**: Sub tasks get marked "failed" when the system restarts — even if they finished their work.
-    Resume them so they can check their own state, commit if needed, and call done().
-  - **Genuine failure**: The agent reported done("failed") with an explanation. Read the summary carefully.
-    - **Resume** (default): Send another \`send_message\` with SPECIFIC instructions addressing the failure.
-      Don't just say "try again" — explain what went wrong and how to fix it. The agent keeps its progress.
-    - **Reset** (last resort): Call \`reset_task\` first, then \`send_message\` to start fresh.
-      Only when the approach was fundamentally wrong and you want to start over from scratch.
+- **failed** → **Always resume first.** Send \`send_message\` with SPECIFIC instructions addressing the failure.
+  Read the done("failed") summary carefully — the agent explained what went wrong.
+  Don't just say "try again" — explain what to do differently. The agent keeps its session context.
+  - **Resume** (default): \`send_message\` with new instructions. Agent continues from where it stopped.
+  - **Reset** (last resort): \`reset_task\` first, then \`send_message\`. Only when the approach was fundamentally wrong.
   - If the failure reveals a scope issue: delete the task and create new tasks with better boundaries.
+  - System restarts do NOT cause failures — agents are automatically resumed. A failed task is a genuine failure.
 - **User-resumed tasks**: When a task_message arrives from a previously-closed/passed/failed task, it means the user resumed it (new worktree, new agent session). The notification will say "User RESUMED closed/passed/failed task...". NEVER close_task without checking for unmerged commits on the task's branch — a resumed task may have new work.
 
 ### Merge Protocol
