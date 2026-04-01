@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { eventsToAnthropicMessages } from "./anthropic-compatible-provider.ts";
 import {
 	type Event,
+	buildSessionRepair,
 	findOrphanedBackgroundProcesses,
-	findOrphanedToolCalls,
 	findUnconsumedMessages,
 	formatEventForAI,
 	hasPendingYield,
@@ -3540,171 +3540,81 @@ describe("isPersistedByEmitEvent", () => {
 
 // ── Pure function tests: restart safety ──
 
-describe("findOrphanedToolCalls", () => {
-	test("returns empty when no tool_calls exist", () => {
+describe("buildSessionRepair", () => {
+	test("returns null when session is clean", () => {
 		const events: Event[] = [
-			{
-				type: "message",
-				id: "",
-				body: { source: "user", id: "u1", ts: 0, content: "hello" },
-				taskId: "t1",
-				ts: 1000,
-			},
-			{ type: "assistant_text", content: "hi", taskId: "t1", ts: 1001 },
+			{ type: "tool_call", tool: "bash", toolCallId: "tc1", input: {}, taskId: "t1", ts: 1000 },
+			{ type: "tool_result", tool: "bash", toolCallId: "tc1", content: "ok", isError: false, taskId: "t1", ts: 1001 },
 		];
-		expect(findOrphanedToolCalls(events, "t1")).toEqual([]);
+		expect(buildSessionRepair(events, "t1")).toBeNull();
 	});
 
-	test("returns empty when all tool_calls have matching results", () => {
+	test("appends interrupted result for orphaned tool_call (no truncation)", () => {
 		const events: Event[] = [
-			{
-				type: "tool_call",
-				tool: "bash",
-				toolCallId: "tc1",
-				input: { command: "ls" },
-				taskId: "t1",
-				ts: 1000,
-			},
-			{
-				type: "tool_result",
-				tool: "bash",
-				toolCallId: "tc1",
-				content: "file.ts",
-				isError: false,
-				taskId: "t1",
-				ts: 1001,
-			},
+			{ type: "tool_call", tool: "bash", toolCallId: "tc1", input: {}, taskId: "t1", ts: 1000 },
 		];
-		expect(findOrphanedToolCalls(events, "t1")).toEqual([]);
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).not.toBeNull();
+		expect(repair?.truncateAfterIndex).toBe(events.length - 1); // no truncation
+		expect(repair?.appendEvents.length).toBe(1);
+		expect(repair?.appendEvents[0]?.type).toBe("tool_result");
+		expect((repair?.appendEvents[0] as { toolCallId: string }).toolCallId).toBe("tc1");
+		expect((repair?.appendEvents[0] as { isError: boolean }).isError).toBe(true);
 	});
 
-	test("detects orphaned tool_call without result", () => {
+	test("skips yield tool_calls", () => {
 		const events: Event[] = [
-			{
-				type: "tool_call",
-				tool: "bash",
-				toolCallId: "tc1",
-				input: { command: "ls" },
-				taskId: "t1",
-				ts: 1000,
-			},
+			{ type: "tool_call", tool: TOOL_YIELD, toolCallId: "tc-yield", input: {}, taskId: "t1", ts: 1000 },
 		];
-		const orphans = findOrphanedToolCalls(events, "t1");
-		expect(orphans).toHaveLength(1);
-		expect(orphans[0]?.type).toBe("tool_result");
-		expect((orphans[0] as { toolCallId: string }).toolCallId).toBe("tc1");
-		expect((orphans[0] as { isError: boolean }).isError).toBe(true);
-		expect((orphans[0] as { content: string }).content).toContain(
-			"interrupted by daemon restart",
-		);
-		expect((orphans[0] as { taskId: string }).taskId).toBe("t1");
+		expect(buildSessionRepair(events, "t1")).toBeNull();
 	});
 
-	test("skips yield tool_calls — they are handled by loop-level pause", () => {
+	test("truncates from first duplicate tool_result", () => {
 		const events: Event[] = [
-			{
-				type: "tool_call",
-				tool: TOOL_YIELD,
-				toolCallId: "tc-yield",
-				input: {},
-				taskId: "t1",
-				ts: 1000,
-			},
+			{ type: "tool_call", tool: "bash", toolCallId: "tc1", input: {}, taskId: "t1", ts: 1000 },
+			{ type: "tool_result", tool: "bash", toolCallId: "tc1", content: "ok", isError: false, taskId: "t1", ts: 1001 },
+			{ type: "tool_result", tool: "bash", toolCallId: "tc1", content: "DUPLICATE", isError: true, taskId: "t1", ts: 1002 },
 		];
-		expect(findOrphanedToolCalls(events, "t1")).toEqual([]);
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).not.toBeNull();
+		expect(repair?.truncateAfterIndex).toBe(1); // keep events 0-1, truncate event 2
+		// Status message should be appended
+		const statusMsg = repair?.appendEvents.find((e) => e.type === "message");
+		expect(statusMsg).toBeDefined();
 	});
 
-	test("multiple tool_calls with partial results — only orphans returned", () => {
+	test("preserves unconsumed messages from truncated region", () => {
 		const events: Event[] = [
-			{
-				type: "tool_call",
-				tool: "bash",
-				toolCallId: "tc1",
-				input: { command: "echo a" },
-				taskId: "t1",
-				ts: 1000,
-			},
-			{
-				type: "tool_call",
-				tool: "read_file",
-				toolCallId: "tc2",
-				input: { path: "x.ts" },
-				taskId: "t1",
-				ts: 1001,
-			},
-			{
-				type: "tool_call",
-				tool: "search",
-				toolCallId: "tc3",
-				input: { pattern: "foo" },
-				taskId: "t1",
-				ts: 1002,
-			},
-			{
-				type: "tool_result",
-				tool: "bash",
-				toolCallId: "tc1",
-				content: "a",
-				isError: false,
-				taskId: "t1",
-				ts: 1003,
-			},
-			// tc2 and tc3 have no results
+			{ type: "tool_call", tool: "bash", toolCallId: "tc1", input: {}, taskId: "t1", ts: 1000 },
+			{ type: "tool_result", tool: "bash", toolCallId: "tc1", content: "ok", isError: false, taskId: "t1", ts: 1001 },
+			{ type: "tool_result", tool: "bash", toolCallId: "tc1", content: "DUPLICATE", isError: true, taskId: "t1", ts: 1002 },
+			{ type: "message", id: "msg-1", body: { source: "user", id: "msg-1", ts: 1003, content: "hello" }, taskId: "t1", ts: 1003 },
 		];
-		const orphans = findOrphanedToolCalls(events, "t1");
-		expect(orphans).toHaveLength(2);
-		const orphanIds = orphans.map(
-			(o) => (o as { toolCallId: string }).toolCallId,
-		);
-		expect(orphanIds).toContain("tc2");
-		expect(orphanIds).toContain("tc3");
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).not.toBeNull();
+		// The message from the truncated region should be preserved
+		const preservedMsgs = repair?.appendEvents.filter((e) => e.type === "message" && e.id === "msg-1");
+		expect(preservedMsgs?.length).toBe(1);
 	});
 
-	test("yield tool_call with result is not an orphan", () => {
+	test("handles orphan created by truncation (tool_call kept, result truncated)", () => {
 		const events: Event[] = [
-			{
-				type: "tool_call",
-				tool: TOOL_YIELD,
-				toolCallId: "tc-yield",
-				input: {},
-				taskId: "t1",
-				ts: 1000,
-			},
-			{
-				type: "tool_result",
-				tool: TOOL_YIELD,
-				toolCallId: "tc-yield",
-				content: "resumed",
-				isError: false,
-				taskId: "t1",
-				ts: 1001,
-			},
+			{ type: "assistant_text", content: "Turn 1", taskId: "t1", ts: 1000 },
+			{ type: "tool_call", tool: "bash", toolCallId: "tc1", input: {}, taskId: "t1", ts: 1001 },
+			{ type: "tool_result", tool: "bash", toolCallId: "tc1", content: "ok", isError: false, taskId: "t1", ts: 1002 },
+			{ type: "assistant_text", content: "Turn 2", taskId: "t1", ts: 1003 },
+			{ type: "tool_call", tool: "bash", toolCallId: "tc2", input: {}, taskId: "t1", ts: 1004 },
+			{ type: "tool_result", tool: "bash", toolCallId: "tc2", content: "ok", isError: false, taskId: "t1", ts: 1005 },
+			// Duplicate for tc1 after tc2's result
+			{ type: "tool_result", tool: "bash", toolCallId: "tc1", content: "DUPLICATE", isError: true, taskId: "t1", ts: 1006 },
 		];
-		expect(findOrphanedToolCalls(events, "t1")).toEqual([]);
-	});
-
-	test("mixed yield + non-yield orphans — only non-yield reported", () => {
-		const events: Event[] = [
-			{
-				type: "tool_call",
-				tool: "bash",
-				toolCallId: "tc1",
-				input: { command: "long-running" },
-				taskId: "t1",
-				ts: 1000,
-			},
-			{
-				type: "tool_call",
-				tool: TOOL_YIELD,
-				toolCallId: "tc-yield",
-				input: {},
-				taskId: "t1",
-				ts: 1001,
-			},
-		];
-		const orphans = findOrphanedToolCalls(events, "t1");
-		expect(orphans).toHaveLength(1);
-		expect((orphans[0] as { toolCallId: string }).toolCallId).toBe("tc1");
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).not.toBeNull();
+		// Truncate before the duplicate (index 6), keeping 0-5
+		expect(repair?.truncateAfterIndex).toBe(5);
+		// No orphans in kept region (tc1 and tc2 both have results in 0-5)
+		const interruptedResults = repair?.appendEvents.filter((e) => e.type === "tool_result");
+		expect(interruptedResults?.length).toBe(0);
 	});
 });
 

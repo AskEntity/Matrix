@@ -63,7 +63,6 @@ async function setupTestContext(): Promise<TestContext> {
 	const appResult = createApp({
 		dataDir,
 		agentProvider: provider,
-		enableAutoRecovery: false,
 	});
 
 	await appResult.pm.load();
@@ -655,13 +654,11 @@ describe("Integration: full stack with mock API", () => {
  */
 async function recreateApp(
 	ctx: TestContext,
-	opts?: { enableAutoRecovery?: boolean },
 ): Promise<ReturnType<typeof createApp>> {
 	const provider = createMockedProviderWithMock(ctx.mockAPI);
 	const newApp = createApp({
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
-		enableAutoRecovery: opts?.enableAutoRecovery ?? false,
 	});
 	await newApp.pm.load();
 	newApp.markReady();
@@ -2333,119 +2330,7 @@ describe("Integration: auto-recovery from API 400", () => {
 		if (ctx) await teardownTestContext(ctx);
 	});
 
-	test("auto-recovery: 400 on resume rolls back broken turn and retries", async () => {
-		// Setup with auto-recovery ENABLED
-		const dataDir = await mkdtemp(join(tmpdir(), "mxd-integ-data-"));
-		const projectDir = await mkdtemp(join(tmpdir(), "mxd-integ-project-"));
-		Bun.spawnSync(["git", "init"], { cwd: projectDir });
-		Bun.spawnSync(["git", "config", "user.email", "test@test.com"], {
-			cwd: projectDir,
-		});
-		Bun.spawnSync(["git", "config", "user.name", "Test"], {
-			cwd: projectDir,
-		});
-		await Bun.write(join(projectDir, "README.md"), "# Test\n");
-		Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
-		Bun.spawnSync(["git", "commit", "-m", "init"], { cwd: projectDir });
-
-		const mockAPI = new ValidatingMockAPI();
-		const provider = createMockedProviderWithMock(mockAPI);
-		const appResult = createApp({
-			dataDir,
-			agentProvider: provider,
-			enableAutoRecovery: true,
-		});
-		await appResult.pm.load();
-		const project = await appResult.pm.init(projectDir);
-		const tasksDir = join(projectDir, ".mxd", "tasks");
-		if (existsSync(tasksDir)) rmSync(tasksDir, { recursive: true });
-		const hookExample = join(
-			projectDir,
-			".mxd",
-			"hooks",
-			"setup_worktree.sh.example",
-		);
-		const hookActive = join(projectDir, ".mxd", "hooks", "setup_worktree.sh");
-		if (existsSync(hookExample)) await rename(hookExample, hookActive);
-		Bun.spawnSync(["git", "add", "."], { cwd: projectDir });
-		Bun.spawnSync(["git", "commit", "-m", "hooks"], { cwd: projectDir });
-		appResult.markReady();
-
-		ctx = {
-			dataDir,
-			projectDir,
-			app: appResult,
-			mockAPI,
-			projectId: project.id,
-		};
-
-		// Turn 1: agent does something successful (echo)
-		// Turn 2: this is the "broken" turn — inject 400 on the API call
-		//         auto-recovery should roll back and retry
-		// Turn 3 (after recovery): agent sees recovery message, calls done
-		const instruction = JSON.stringify({
-			turns: [
-				{
-					blocks: [
-						{ type: "text", text: "Doing initial work." },
-						{
-							type: "tool_use",
-							name: "mcp__mxd__bash",
-							input: { command: "echo INITIAL_SUCCESS" },
-						},
-					],
-				},
-				{
-					// This turn's API call will get a 400 (injected).
-					// After recovery rolls back, the retry will hit this turn.
-					blocks: [
-						{ type: "text", text: "Recovered from 400." },
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: {
-								status: "passed",
-								summary: "auto-recovery worked",
-							},
-						},
-					],
-				},
-			],
-		});
-
-		// Inject 400 on the 2nd API call (after first successful turn)
-		mockAPI.injectError({
-			onRequest: 2,
-			error: "invalid_request_error",
-			count: 1,
-		});
-
-		const resp = await startAgent(ctx, instruction);
-		expect(resp.status).toBe(200);
-
-		// Agent should recover: 1st call succeeds, 2nd fails with 400,
-		// recovery rolls back, retry succeeds, agent calls done
-		const status = await waitForDone(ctx, 15000);
-		expect(status).toBe("passed");
-
-		// Verify: at least 3 API calls (1 success + 1 failed + 1 recovery retry)
-		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(3);
-
-		// Verify: recovery error event was emitted
-		const rootNodeId = await getRootNodeId(ctx);
-		const events = readSessionEvents(ctx, rootNodeId);
-		const recoveryErrors = events.filter(
-			(e) =>
-				e.type === "error" &&
-				"message" in e &&
-				typeof e.message === "string" &&
-				e.message.includes("Auto-recovery"),
-		);
-		expect(recoveryErrors.length).toBe(1);
-	}, 20000);
-
-	test("auto-recovery disabled: 400 crashes the agent", async () => {
-		// Use default test context (auto-recovery OFF)
+	test("400 crashes the agent — repair fixes JSONL on next launch", async () => {
 		ctx = await setupTestContext();
 
 		const instruction = JSON.stringify({
@@ -6011,10 +5896,10 @@ describe("Integration: fork prefix consistency", () => {
 			forkResults[0]?.type === "tool_result" && forkResults[0]?.isError,
 		).toBe(false);
 
-		// findOrphanedToolCalls should find NOTHING in the child's events
-		const { findOrphanedToolCalls } = await import("./events.ts");
-		const orphans = findOrphanedToolCalls(childEvents, childNodeId);
-		expect(orphans.length).toBe(0);
+		// buildSessionRepair should find no problems in the child's events
+		const { buildSessionRepair } = await import("./events.ts");
+		const repair = buildSessionRepair(childEvents, childNodeId);
+		expect(repair).toBeNull();
 
 		// Fork's own tool_call should be in the child's events (copySessionFrom
 		// should flush pending writes before reading). And it should have a
@@ -6238,10 +6123,10 @@ describe("Integration: fork prefix consistency", () => {
 			}
 		}
 
-		// No orphans in child B's events
-		const { findOrphanedToolCalls } = await import("./events.ts");
-		const orphans = findOrphanedToolCalls(childBEvents, childBId);
-		expect(orphans.length).toBe(0);
+		// No problems in child B's events
+		const { buildSessionRepair } = await import("./events.ts");
+		const repair = buildSessionRepair(childBEvents, childBId);
+		expect(repair).toBeNull();
 	}, 45000);
 
 	test("Fork + other tools in same turn: fork returns error", async () => {
@@ -8706,8 +8591,8 @@ describe("Integration: stopTask lifecycle", () => {
 		expect(bashCall).toBeDefined();
 
 		// NOTE: orphan tool_results are NOT written during stopTask — they're deferred
-		// to resume time to avoid racing with the provider loop's async tool_result emission.
-		// The orphan will be written when launchAgent runs findOrphanedToolCalls on resume.
+		// to resume time (buildSessionRepair in runAgentForNode) to avoid racing
+		// with the provider loop's async tool_result emission.
 
 		const preResumeRequests = ctx.mockAPI.getRequestCount();
 

@@ -5,7 +5,6 @@ import {
 	buildSessionRepair,
 	type Event,
 	findOrphanedBackgroundProcesses,
-	findOrphanedToolCalls,
 	findUnconsumedMessages,
 	hasPendingYield,
 	type SessionConfigEvent,
@@ -327,32 +326,6 @@ export async function runChildCore(
 }
 
 // ---------------------------------------------------------------------------
-
-/**
- * Write synthetic tool_result events for any unpaired tool_call in JSONL.
- * Called during stopAgent to prevent orphaned tool_use errors on resume.
- * Delegates to findOrphanedToolCalls (events.ts) for detection — single codepath
- * for orphan rules (yield skip, etc.).
- */
-export async function writeOrphanedToolResults(
-	eventStore: import("../event-store.ts").EventStore,
-	sessionId: string,
-): Promise<void> {
-	if (!eventStore.has(sessionId)) return;
-
-	const events = eventStore.readActive(sessionId);
-	if (events.length === 0) return;
-
-	const orphans = findOrphanedToolCalls(events, sessionId);
-	if (orphans.length === 0) return;
-
-	console.warn(
-		`[writeOrphanedToolResults] Writing ${orphans.length} orphan(s) for ${sessionId}`,
-	);
-
-	// Await to ensure write completes before process.exit during shutdown
-	await eventStore.appendBatch(sessionId, orphans);
-}
 
 /**
  * Stop a running agent and clean up all associated state.
@@ -708,9 +681,8 @@ export async function runAgentForNode(
 		if (activeEvents.length > 0) {
 			// JSONL repair: truncate-and-rebuild if session has problems
 			// (duplicate tool_results, orphaned tool_calls, etc.)
-			// This replaces the old findOrphanedToolCalls + writeOrphanedToolResults
-			// approach and also handles the case where auto-recovery previously
-			// only fixed in-memory messages but left JSONL poisoned.
+			// Handles both daemon restart orphans and accumulated poison
+			// from previous sessions where auto-recovery only fixed memory.
 			const repair = buildSessionRepair(activeEvents, nodeId);
 			if (repair) {
 				const needsTruncation =
@@ -818,7 +790,7 @@ export async function runAgentForNode(
 			buildYieldPendingSection: agentCtx.buildYieldPendingSection,
 			getSession,
 			isOrchestrator: isRoot,
-			enableAutoRecovery: ctx.config.enableAutoRecovery ?? true,
+
 			signal: abortController.signal,
 			queue: childQueue,
 		};

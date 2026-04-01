@@ -385,54 +385,6 @@ export function formatPendingSection(pending: PendingState): string {
  */
 
 /**
- * Scan events for orphaned tool_call events (no matching tool_result).
- * Returns synthetic tool_result events that should be persisted to JSONL.
- * Call this BEFORE eventsToAnthropicMessages/eventsToOpenAIMessages on resume
- * to fix orphans once and persist the fix.
- */
-export function findOrphanedToolCalls(
-	events: Event[],
-	taskId: string,
-): Event[] {
-	// Build sets of tool_call IDs and tool_result IDs
-	const toolCallIds = new Map<string, string>(); // id → tool name
-	const toolResultIds = new Set<string>();
-	for (const e of events) {
-		if (e.type === "tool_call") {
-			toolCallIds.set(e.toolCallId, e.tool);
-		} else if (e.type === "tool_result") {
-			toolResultIds.add(e.toolCallId);
-		}
-	}
-	// Find tool_calls without matching tool_results
-	const orphans: Event[] = [];
-	for (const [id, tool] of toolCallIds) {
-		if (!toolResultIds.has(id)) {
-			// Skip yield tool_calls — they're handled by the provider loop's
-			// loop-level pause mechanism. The yield result is generated at resume time
-			// when messages arrive, not as a synthetic orphan fix.
-			if (tool === TOOL_YIELD) {
-				continue;
-			}
-			console.warn(
-				`[findOrphanedToolCalls] Orphaned tool_call: ${id} (${tool})`,
-			);
-			orphans.push({
-				type: "tool_result" as const,
-				tool,
-				toolCallId: id,
-				content:
-					"Tool execution was interrupted by daemon restart. Results were lost.",
-				isError: true,
-				taskId,
-				ts: Date.now(),
-			});
-		}
-	}
-	return orphans;
-}
-
-/**
  * Find message events that were persisted to JSONL but never consumed.
  * A message is "unconsumed" if it has a non-empty `id` and no `messages_consumed`
  * event references that id. This happens when a message arrives while a tool is
