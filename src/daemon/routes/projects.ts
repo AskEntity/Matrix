@@ -107,6 +107,18 @@ export function registerProjectRoutes(app: Hono, ctx: DaemonContext) {
 				}
 			}
 		}
+		// Inject partial streaming text for any actively streaming sessions
+		for (const [nodeId, partialText] of ctx.streamingText) {
+			if (partialText) {
+				all.push({
+					type: "assistant_text",
+					content: partialText,
+					taskId: nodeId,
+					ts: Date.now(),
+					partial: true,
+				});
+			}
+		}
 		all.sort((a, b) => ((a.ts as number) ?? 0) - ((b.ts as number) ?? 0));
 		return c.json({ events: all, hasOlderEvents });
 	});

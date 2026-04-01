@@ -77,6 +77,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		sseClients: new Set<SSEClient>(),
 		pendingClarifications: new Map<string, PendingClarification[]>(),
 		eventStores: new Map(),
+		streamingText: new Map(),
 		requestCount: 0,
 		startupReady: false,
 		globalConfig: config.initialConfig ?? {},
@@ -371,6 +372,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 	return {
 		app,
+		ctx,
 		pm: ctx.pm,
 		dataDir: config.dataDir,
 		sseClients: ctx.sseClients,

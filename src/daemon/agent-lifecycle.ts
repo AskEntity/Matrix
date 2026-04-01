@@ -730,9 +730,16 @@ export async function runAgentForNode(
 		// After lock release, messages go directly to the queue via deliverMessage.
 		ctx.launchingNodes.delete(nodeId);
 
-		// Build emit callback: emitEvent with taskId injected
+		// Build emit callback: emitEvent with taskId injected + streaming text tracking
 		const emitWithTask = (event: Event) => {
 			const withTaskId = { ...event, taskId: nodeId };
+			// Track streaming text for partial injection into batch events API
+			if (event.type === "text_delta") {
+				const existing = ctx.streamingText.get(nodeId) ?? "";
+				ctx.streamingText.set(nodeId, existing + event.content);
+			} else if (event.type === "assistant_text") {
+				ctx.streamingText.delete(nodeId);
+			}
 			emitEvent(ctx, project.id, withTaskId as Event);
 		};
 
@@ -888,6 +895,8 @@ export async function runAgentForNode(
 	} finally {
 		// Ensure launch lock is released (covers error path before session established)
 		ctx.launchingNodes.delete(nodeId);
+		// Clean up streaming text accumulator
+		ctx.streamingText.delete(nodeId);
 		// Clean up session: background processes + detach from node.
 		// Only clear if this is still OUR session — a replacement agent
 		// may have already set a new session on the node.
