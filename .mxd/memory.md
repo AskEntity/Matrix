@@ -259,3 +259,15 @@ In-memory `messages[]` (provider format) and JSONL events are two independent da
 **Planned fix**: JSONL truncate-and-rebuild (see task description). Recovery must modify JSONL, not messages. Truncate after last good assistant turn, rebuild interrupted tool_results, inject status message.
 
 
+
+## JSONL Repair: truncate-and-rebuild (2026-04-01)
+
+- `buildSessionRepair()` in events.ts: single function for all JSONL repair
+- Two strategies based on problem type:
+  - **Orphan only** (tool_call without result): append interrupted results, no truncation. Same as old findOrphanedToolCalls but through buildSessionRepair.
+  - **Duplicate results** (>1 result for same tool_call): truncate from first duplicate, re-append unconsumed messages from truncated region + status message
+- `EventStore.truncateAfterLine(sessionId, lineIndex)`: rewrites file keeping lines 0..lineIndex
+- Repair runs in runAgentForNode before provider loop starts (not in autoResumeProjects)
+- bg orphan detection (findOrphanedBackgroundProcesses) still runs in runAgentForNode after repair
+- autoResumeProjects only classifies and launches — no JSONL repair
+- Key design: orphan-only strategy does NOT inject status message (would interfere with mock turn sequence and resume messages from autoResumeProjects). Only duplicate strategy injects status message.

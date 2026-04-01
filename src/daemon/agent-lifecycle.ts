@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
 import { DEFAULT_MODEL } from "../config.ts";
 import {
+	buildSessionRepair,
 	type Event,
 	findOrphanedBackgroundProcesses,
 	findOrphanedToolCalls,
@@ -700,15 +701,31 @@ export async function runAgentForNode(
 		const eventStore = getEventStore(ctx, project.id);
 		await eventStore.flushSession(nodeId);
 
-		// Read active events for resume and fix orphaned tool_calls
+		// Read active events for resume and repair JSONL if needed
 		let activeEvents = eventStore.has(nodeId)
 			? eventStore.readActive(nodeId)
 			: [];
 		if (activeEvents.length > 0) {
-			const orphanFixes = findOrphanedToolCalls(activeEvents, nodeId);
-			if (orphanFixes.length > 0) {
-				await eventStore.appendBatch(nodeId, orphanFixes);
-				activeEvents = [...activeEvents, ...orphanFixes];
+			// JSONL repair: truncate-and-rebuild if session has problems
+			// (duplicate tool_results, orphaned tool_calls, etc.)
+			// This replaces the old findOrphanedToolCalls + writeOrphanedToolResults
+			// approach and also handles the case where auto-recovery previously
+			// only fixed in-memory messages but left JSONL poisoned.
+			const repair = buildSessionRepair(activeEvents, nodeId);
+			if (repair) {
+				const needsTruncation =
+					repair.truncateAfterIndex < activeEvents.length - 1;
+				console.warn(
+					`[runAgentForNode] Repairing session ${nodeId}: ${needsTruncation ? `truncate after index ${repair.truncateAfterIndex}` : "append only"}, ${repair.appendEvents.length} events to add`,
+				);
+				if (needsTruncation) {
+					await eventStore.truncateAfterLine(nodeId, repair.truncateAfterIndex);
+				}
+				if (repair.appendEvents.length > 0) {
+					await eventStore.appendBatch(nodeId, repair.appendEvents);
+				}
+				// Re-read events after repair
+				activeEvents = eventStore.readActive(nodeId);
 			}
 
 			// Write synthetic background_complete for bg processes killed by restart.
@@ -728,7 +745,7 @@ export async function runAgentForNode(
 				}
 			}
 
-			// Recover unconsumed messages (same issue as root — see launchAgent)
+			// Recover unconsumed messages
 			const unconsumed = findUnconsumedMessages(activeEvents);
 			for (const msg of unconsumed) {
 				childQueue.enqueue(msg);
