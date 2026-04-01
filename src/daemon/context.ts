@@ -28,12 +28,7 @@ export interface DaemonConfig {
 	agentProvider?: AgentProvider;
 	initialConfig?: MatrixConfig;
 	globalConfigPath?: string;
-	/**
-	 * Enable auto-recovery from API 400 invalid_request_error.
-	 * When true, the provider loop rolls back broken turns instead of crashing.
-	 * Default: true (production). Tests should set false to avoid masking bugs.
-	 */
-	enableAutoRecovery?: boolean;
+
 }
 
 /**

@@ -59,14 +59,7 @@ export interface AgentRequest {
 	 * Returns the pending section text (e.g. "## Pending\n- Running sub tasks: ...").
 	 */
 	buildYieldPendingSection?: () => string;
-	/**
-	 * Enable auto-recovery from API 400 invalid_request_error.
-	 * When true, the provider loop will attempt to recover by rolling back
-	 * to the last successful turn instead of crashing.
-	 * Default: false (tests should not use this to avoid masking real bugs).
-	 * Production daemon sets this to true.
-	 */
-	enableAutoRecovery?: boolean;
+
 }
 
 /**
