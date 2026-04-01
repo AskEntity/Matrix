@@ -59,7 +59,6 @@ export interface AgentRequest {
 	 * Returns the pending section text (e.g. "## Pending\n- Running sub tasks: ...").
 	 */
 	buildYieldPendingSection?: () => string;
-
 }
 
 /**
