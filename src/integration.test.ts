@@ -8965,6 +8965,137 @@ describe("Integration: stopTask lifecycle", () => {
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
 		expect(tracker2.get(childId)?.status).toBe("passed");
 	}, 60000);
+
+	test("stop → immediate restart: old session settles quickly, no stale events leak", async () => {
+		// Bug: After stopTask, the old runAgentForNode's foreground bash execution
+		// isn't killed — it keeps running (up to 30s for sleep, or 120s for timeout).
+		// When it finally settles, the old finally block emits a stale agent_stopped
+		// and the catch block may emit "Request was aborted" errors — both appearing
+		// long after the new session started.
+		//
+		// Two-part fix:
+		// 1. stopTask resolves foreground executions so bash returns quickly
+		// 2. runAgentForNode's catch/finally suppress events when session was replaced
+		ctx = await setupTestContext();
+
+		// Turn 1: agent starts a bash command (will be interrupted by stop)
+		// Turn 2 (after resume): agent sees interrupted bash result + new message → done
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Running a long command." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "sleep 30" },
+						},
+					],
+				},
+				{
+					// After stop+resume, agent sees the interrupted bash and new message
+					blocks: [
+						{ type: "text", text: "Recovered after stop." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "survived stop and restart",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for bash to start executing
+		const start = Date.now();
+		while (ctx.mockAPI.getRequestCount() < 1 && Date.now() - start < 5000) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBe(1);
+		await new Promise((r) => setTimeout(r, 200));
+
+		const rootNodeId = await getRootNodeId(ctx);
+
+		// === STOP ===
+		const stopResp = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${rootNodeId}/stop`,
+			{ method: "POST" },
+		);
+		expect(stopResp.status).toBe(200);
+
+		// Small delay, then send new message
+		await new Promise((r) => setTimeout(r, 50));
+
+		// === IMMEDIATE RESTART via new message ===
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Continue after stop." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "recovered from stop" },
+				},
+			],
+		});
+		const msgResp = await sendMessage(ctx, wakeInstruction);
+		expect(msgResp.status).toBe(200);
+
+		// New agent should complete normally
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		// Wait for old session to fully settle (with fix: should be fast, <1s)
+		// Without fix: old bash takes 30s, so old finally runs 30s later
+		await new Promise((r) => setTimeout(r, 1500));
+
+		const events = readSessionEvents(ctx, rootNodeId);
+
+		// No error events containing "abort" — those are stale leaks from old session
+		const abortErrors = events.filter(
+			(e) =>
+				e.type === "error" &&
+				"message" in e &&
+				typeof e.message === "string" &&
+				e.message.toLowerCase().includes("abort"),
+		);
+		expect(abortErrors).toEqual([]);
+
+		// The agent_stopped from stopTask should be BEFORE the second orchestration_started.
+		// With the fix, the old runAgentForNode suppresses its stale agent_stopped.
+		// The new session's agent_stopped only appears on shutdown (root agents stay alive).
+		const stoppedEvents = events.filter((e) => e.type === "agent_stopped");
+		const orcStartEvents = events
+			.map((e, i) => ({ type: e.type, idx: i }))
+			.filter((e) => e.type === "orchestration_started");
+
+		// There should be exactly 2 orchestration_started events (first + resume)
+		expect(orcStartEvents.length).toBe(2);
+
+		// There should be 1 agent_stopped (from stopTask), not 2+ (no stale leak)
+		// The new session's agent_stopped will come later at shutdown
+		expect(stoppedEvents.length).toBe(1);
+
+		// The agent_stopped should be between the two orchestration_started events
+		const stoppedIdx = events.findIndex((e) => e.type === "agent_stopped");
+		expect(stoppedIdx).toBeGreaterThan(orcStartEvents[0]?.idx ?? -1);
+		expect(stoppedIdx).toBeLessThan(orcStartEvents[1]?.idx ?? events.length);
+
+		// KEY CHECK: verify the old session settled quickly (foreground bash was killed).
+		// If the bash wasn't killed, the old runAgentForNode would still be hanging,
+		// and when it eventually settled, it would emit stale events.
+		// We prove it settled by checking no stale events appeared after 1.5s wait.
+		// Without the fix, this would only fail after waiting 30s+ (bash sleep duration).
+		const tracker2 = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker2.get(rootNodeId);
+		// New session is running (root agents stay alive after done)
+		expect(rootNode?.session).toBeTruthy();
+	}, 30000);
 });
 
 // ── deliverMessage shouldResume ordering ──

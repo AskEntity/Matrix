@@ -305,3 +305,8 @@ In-memory `messages[]` (provider format) and JSONL events are two independent da
   - **Interrupted** (messages end with user content from repair): non-blocking queue drain (pick up unconsumed messages) then go straight to API call. No blocking wait.
 - `hasPendingImplicitYield()` in events.ts: walks backwards through events, returns true if last provider content event (assistant_text/tool_call/tool_result) is assistant_text.
 - Key fix for interrupted agents: non-blocking drain (`queue.drain()`) instead of blocking wait (`queue.wait()`). This picks up unconsumed messages already in queue (from findUnconsumedMessages) without hanging on empty queue.
+
+## Abort Signal Leak Fix (2026-04-01)
+
+- After stopTask/stopAgent, old runAgentForNode settles async. catch/finally now check `sessionWasReplaced` (finalNode.session !== ownSession). If replaced, suppress error events and agent_stopped — the explicit stop already emitted its own.
+- Secondary: foreground bash not killed on abort (needs AbortSignal support in executeBashWithTimeout — larger change, not fixed).
