@@ -518,6 +518,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setBackgroundProcesses(new Map());
 				setActiveAgents(new Set());
 				setOlderEventsAvailable(new Map());
+				setLastTurns(null);
+				setLastInputTokens(null);
+				setLastCacheCreationTokens(null);
+				setLastCacheReadTokens(null);
+				setLastOutputTokens(null);
 			} else if (ht && ht !== selectedTaskId) {
 				setSelectedTaskId(ht);
 			} else if (!ht && selectedTaskId !== rootNodeId) {
@@ -621,6 +626,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setShowAddProject,
 				setShowSettings,
 				setIsCreatingTask,
+				setTokenUsage,
+				setPendingMessages,
+				setBackgroundProcesses,
+				setActiveAgents,
+				setOlderEventsAvailable,
 				start,
 				stop,
 				compact,
@@ -657,6 +667,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			deleteProject,
 			refreshTasks,
 			t,
+			setActiveAgents,
 		],
 	);
 
@@ -674,6 +685,11 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			setBackgroundProcesses(new Map());
 			setActiveAgents(new Set());
 			setOlderEventsAvailable(new Map());
+			setLastTurns(null);
+			setLastInputTokens(null);
+			setLastCacheCreationTokens(null);
+			setLastCacheReadTokens(null);
+			setLastOutputTokens(null);
 		},
 		[setActiveAgents],
 	);
