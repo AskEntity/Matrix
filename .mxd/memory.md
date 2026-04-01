@@ -199,9 +199,9 @@ The `handlers.ts` `createActionHandlers` now receives `setTokenUsage`, `setPendi
 
 The UI must fetch events per-session (using `api.taskEvents(projectId, sessionId)`) not per-project (`api.events(projectId)`). Forked sessions contain copies of parent events with the parent taskId; merging all sessions causes stale content to appear above the compaction line on refresh. The viewed session is `selectedTaskId ?? rootNodeId` — tracked via a ref for stable callbacks.
 
-## Invariant Test Patterns
+## UI Event Handler Test Patterns
+- `makeDeps()` creates mock EventHandlerDeps; override `setLogs` with a mock that tracks `capturedLogs` for assertions.
+- `processEventBatch` REPLACES all logs (calls `setLogs(entries)` directly); `handleEvent` APPENDS via `setLogs(prev => [...prev, ...entries])`.
+- `assistant_text` uses `replace_text` update which scans backwards for the last `assistant_text` entry with matching taskId — it REPLACES that entry, not appends. A non-`assistant_text` entry with the same taskId breaks the backward scan.
+- ActivityLog filtering can be tested without React by extracting the filter logic: root view shows entries with matching rootNodeId or no taskId; child view shows only exact taskId match.
 
-- Integration tests accessing the task tree use `app.getTracker(projectId)` then `tracker.rootNodeId` — there is no `/tree` HTTP endpoint.
-- EventStore uses nodeId as session identifier. `eventStore.read(nodeId)` returns only that session file.
-- `readFromLastCompactMarker` uses `Math.max(lastCompact, lastFork)` as barrier — whichever comes last wins.
-- `copySessionFrom` only copies post-compact events from source, adds synthetic tool_results for orphaned tool_calls, and appends fork_marker. All synthetic events get the target taskId.
