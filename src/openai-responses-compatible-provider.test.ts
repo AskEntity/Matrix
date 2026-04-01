@@ -530,6 +530,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 					type: "function",
 					name: "mcp__mxd__done",
 					description: "Signal completion",
+					strict: false,
 					parameters: {
 						type: "object",
 						properties: {
@@ -617,6 +618,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 					type: "function",
 					name: "mcp__mxd__update_task",
 					description: "Update task",
+					strict: false,
 					parameters: {
 						type: "object",
 						properties: {

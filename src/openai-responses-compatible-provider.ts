@@ -49,6 +49,7 @@ interface ResponsesTool {
 	type: "function";
 	name: string;
 	description: string;
+	strict: false;
 	parameters: Record<string, unknown>;
 }
 
@@ -734,6 +735,7 @@ function createOpenAIResponsesAdapter(
 							type: "function",
 							name: toolName,
 							description: def.description,
+							strict: false,
 							parameters: def.jsonSchema,
 						});
 					}

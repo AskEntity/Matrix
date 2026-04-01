@@ -167,3 +167,6 @@ Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Archite
 - Responses integration harness note: the first /responses call may be followed quickly by additional calls from the provider loop; assert request-shape and tool round-trip from captured request history rather than assuming a single request per scenario.
 
 - **Tool input Zod validation**: `executeTool` validates all built-in tool inputs against their Zod schema before calling handlers. Rejects invalid types (e.g. string `"false"` for `z.literal(false)`) with a clear error message back to the model. External MCP tools (identified by `jsonSchema` property) skip validation since their `inputSchema` is an empty placeholder. This is the correct fix for model-side type corruption — reject at the schema boundary, don't coerce downstream.
+
+- OpenAI Responses provider function tool definitions now include strict: false in the outgoing tools payload; keep chat-completions/OpenAI provider unchanged unless intentionally expanding the experiment.
+- For Responses provider payload tests, assert the exact tool shape in the captured request body (including strict: false) rather than only the schema, because compatibility bugs show up at the wire format boundary.
