@@ -1374,7 +1374,14 @@ export class ValidatingMockAPI {
 			}
 			sourceMessages = fallback.messages;
 		}
-		const childMessages = this.requestHistory[childFirstIdx]!.messages;
+		const childMessages = this.requestHistory[childFirstIdx]?.messages as
+			| typeof sourceMessages
+			| undefined;
+		if (!childMessages) {
+			throw new MockValidationError(
+				`validateForkPrefix: no child request found at index ${childFirstIdx}`,
+			);
+		}
 
 		// The child should have the source's messages as a prefix, followed by the
 		// fork tool_result (with "You are the CHILD") and any additional messages.
@@ -1450,7 +1457,7 @@ export function createMockedProviderWithMock(
 			countTokens: async () => ({ input_tokens: 100 }),
 		},
 	};
-	(provider as any).client = mockClient;
+	(provider as unknown as { client: typeof mockClient }).client = mockClient;
 
 	// Fast outer retry delay for tests (100ms instead of 30s+)
 	provider.outerRetryDelayMs = () => 100;

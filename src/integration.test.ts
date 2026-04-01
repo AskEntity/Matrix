@@ -21,6 +21,7 @@ import {
 	createMockedProviderWithMock,
 	ValidatingMockAPI,
 } from "./test-utils/mock-anthropic-api.ts";
+import type { TaskNode } from "./types.ts";
 
 // ── Test infrastructure ──
 
@@ -1462,7 +1463,8 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		expect(postRestartReq).toBeDefined();
 
 		// Collect all text from user messages in the post-restart request
-		const allUserText = postRestartReq!.messages
+		const req = postRestartReq as (typeof history)[0];
+		const allUserText = req.messages
 			.filter((m) => m.role === "user")
 			.map((m) => getTextContent(m))
 			.join(" ");
@@ -1543,7 +1545,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 		// Collect ALL text from ALL user messages in the post-restart request
 		const allUserTexts: string[] = [];
-		for (const msg of postRestartReq!.messages) {
+		for (const msg of postRestartReq?.messages ?? []) {
 			if (msg.role === "user") {
 				const text = getTextContent(msg);
 				if (text) allUserTexts.push(text);
@@ -1854,7 +1856,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const history = ctx.mockAPI.getRequestHistory();
 		const postRestartReq = history[history.length - 1];
 		expect(postRestartReq).toBeDefined();
-		const allUserText = postRestartReq!.messages
+		const allUserText = postRestartReq?.messages
 			.filter((m) => m.role === "user")
 			.map((m) => getTextContent(m))
 			.join(" ");
@@ -2122,7 +2124,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		).toContain("daemon restart");
 
 		// Verify the synthetic bg_complete has a proper ULID id (not empty string)
-		const bgCompleteEvent = bgCompleteEvents[0]!;
+		const bgCompleteEvent = bgCompleteEvents[0] as (typeof bgCompleteEvents)[0];
 		expect(bgCompleteEvent.type).toBe("message");
 		if (bgCompleteEvent.type === "message") {
 			expect(bgCompleteEvent.id).toBeTruthy();
@@ -2607,13 +2609,13 @@ describe("Integration: yield wakeup assertions", () => {
 		// which creates a user message with text blocks (one per queue message)
 		const req2 = ctx.mockAPI.getRequestHistory()[1];
 		expect(req2).toBeDefined();
-		const lastMsg = req2!.messages[req2!.messages.length - 1];
+		const lastMsg = req2?.messages[req2?.messages.length - 1];
 		expect(lastMsg?.role).toBe("user");
 
 		// The content should be text blocks (not tool_result, since no tool was involved)
-		if (Array.isArray(lastMsg!.content)) {
+		if (Array.isArray(lastMsg?.content)) {
 			const textBlocks = (
-				lastMsg!.content as Array<{ type: string; text?: string }>
+				lastMsg?.content as Array<{ type: string; text?: string }>
 			).filter((b) => b.type === "text");
 			expect(textBlocks.length).toBeGreaterThanOrEqual(1);
 			// At least one text block should contain our instruction
@@ -2621,7 +2623,7 @@ describe("Integration: yield wakeup assertions", () => {
 			expect(allText).toContain(wakeInstruction);
 		} else {
 			// String content — should contain our instruction
-			expect(lastMsg!.content as string).toContain(wakeInstruction);
+			expect(lastMsg?.content as string).toContain(wakeInstruction);
 		}
 
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
@@ -2925,7 +2927,7 @@ describe("Integration: parent-child lifecycle", () => {
 		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode?.children?.length).toBeGreaterThanOrEqual(1);
 
-		const childId = rootNode!.children![0]!;
+		const childId = rootNode?.children?.[0] as string;
 		const childNode = tracker.get(childId);
 		expect(childNode?.status).toBe("passed");
 		expect(childNode?.title).toBe("Test Child Task");
@@ -3040,7 +3042,7 @@ describe("Integration: parent-child lifecycle", () => {
 		// Verify child is in failed state
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
-		const childId = rootNode!.children![0]!;
+		const childId = rootNode?.children?.[0] as string;
 		const childNode = tracker.get(childId);
 		expect(childNode?.status).toBe("failed");
 	}, 45000);
@@ -3239,7 +3241,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 		expect(rootNode?.status).toBe("in_progress");
 
 		if (rootNode?.children && rootNode.children.length > 0) {
-			const childId = rootNode.children[0]!;
+			const childId = rootNode.children[0] as string;
 			const childNode = tracker.get(childId);
 			expect(childNode?.status).toBe("in_progress");
 		}
@@ -4062,11 +4064,11 @@ describe("Integration: background process lifecycle", () => {
 		expect(session).toBeDefined();
 
 		// The foreground execution map has entries like `${sessionId}:${execId}`
-		const fgMap = session!.foregroundExecutions;
+		const fgMap = session?.foregroundExecutions as Map<string, unknown>;
 		expect(fgMap.size).toBeGreaterThanOrEqual(1);
 
 		// Get the first (and only) foreground execution key
-		const fgKey = [...fgMap.keys()][0]!;
+		const fgKey = [...fgMap.keys()][0] as string;
 		// fgKey format: `${sessionId}:${execId}` — extract execId
 		const execId = fgKey.split(":").slice(1).join(":");
 
@@ -4192,7 +4194,7 @@ describe("Integration: tree operations", () => {
 		const rootNode = tracker.get(tracker.rootNodeId);
 		const childId = rootNode?.children?.[0];
 		expect(childId).toBeDefined();
-		const childNode = tracker.get(childId!);
+		const childNode = tracker.get(childId as string);
 		expect(childNode?.title).toBe("Updated Tree Task");
 		expect(childNode?.status).toBe("closed");
 	}, 25000);
@@ -4312,7 +4314,7 @@ describe("Integration: tree operations", () => {
 		expect(children.length).toBe(3);
 
 		// Third task (Gamma) should now be first
-		const firstChild = tracker.get(children[0]!);
+		const firstChild = tracker.get(children[0] as string);
 		expect(firstChild?.title).toBe("Task Gamma");
 	}, 25000);
 
@@ -4465,7 +4467,7 @@ describe("Integration: tree operations", () => {
 		expect(def.color).toBe("#a371f7");
 
 		// Verify the task node is persistent and reset to pending (not closed)
-		const childNode = tracker.get(childId!);
+		const childNode = tracker.get(childId as string);
 		expect(childNode?.persistent).toBe("reset");
 		expect(childNode?.status).toBe("pending");
 		expect(childNode?.title).toBe("Test Mutation Agent");
@@ -4601,9 +4603,9 @@ describe("Integration: tree operations", () => {
 
 		// Verify the persistent child
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId)!;
-		const childId = rootNode.children[0]!;
-		const childNode = tracker.get(childId)!;
+		const rootNode = tracker.get(tracker.rootNodeId) as TaskNode;
+		const childId = rootNode.children[0] as string;
+		const childNode = tracker.get(childId) as TaskNode;
 
 		// Status is pending (not closed) because it's persistent
 		expect(childNode.status).toBe("pending");
@@ -4678,11 +4680,11 @@ describe("Integration: tree operations", () => {
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
 		const node = tracker2.get(persistentId);
 		expect(node).toBeDefined();
-		expect(node!.persistent).toBe("reset");
-		expect(node!.title).toBe("Quality Gate");
-		expect(node!.description).toBe("Run quality checks before merge");
-		expect(node!.status).toBe("pending");
-		expect(node!.parentId).toBe(tracker2.rootNodeId);
+		expect(node?.persistent).toBe("reset");
+		expect(node?.title).toBe("Quality Gate");
+		expect(node?.description).toBe("Run quality checks before merge");
+		expect(node?.status).toBe("pending");
+		expect(node?.parentId).toBe(tracker2.rootNodeId);
 	}, 15000);
 
 	test("TREE7: update_task writes to .mxd/tasks/<id>.json for persistent tasks", async () => {
@@ -4754,11 +4756,11 @@ describe("Integration: tree operations", () => {
 
 		// Get the child task ID
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId)!;
-		const childId = rootNode.children[0]!;
+		const rootNode = tracker.get(tracker.rootNodeId) as TaskNode;
+		const childId = rootNode.children[0] as string;
 
 		// Verify in-memory state has the updated values
-		const childNode = tracker.get(childId)!;
+		const childNode = tracker.get(childId) as TaskNode;
 		expect(childNode.persistent).toBe("reset");
 		expect(childNode.title).toBe("Updated Title");
 		expect(childNode.description).toBe("Updated description after change");
@@ -4778,7 +4780,7 @@ describe("Integration: tree operations", () => {
 
 		// After restart, load should read from .mxd/tasks/<id>.json
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
-		const nodeAfterRestart = tracker2.get(childId)!;
+		const nodeAfterRestart = tracker2.get(childId) as TaskNode;
 		expect(nodeAfterRestart.persistent).toBe("reset");
 		expect(nodeAfterRestart.title).toBe("Updated Title");
 		expect(nodeAfterRestart.description).toBe(
@@ -5376,8 +5378,14 @@ describe("Integration: fork prefix consistency", () => {
 		});
 		expect(forkRequestIdx).toBeGreaterThanOrEqual(0);
 
-		const preForkMsgs = parentRequests[forkRequestIdx]!.messages;
-		const childFirstMsgs = childRequests[0]!.messages;
+		const preForkMsgs = parentRequests[forkRequestIdx]?.messages as Array<{
+			role: string;
+			content: unknown;
+		}>;
+		const childFirstMsgs = childRequests[0]?.messages as Array<{
+			role: string;
+			content: unknown;
+		}>;
 
 		// Prefix match: everything except the fork tool_result diverges
 		let prefixMatchCount = 0;
@@ -5396,7 +5404,8 @@ describe("Integration: fork prefix consistency", () => {
 
 		// Verify JSONL has fork_marker
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const childNodeId = tracker.get(tracker.rootNodeId)!.children![0]!;
+		const childNodeId = tracker.get(tracker.rootNodeId)
+			?.children?.[0] as string;
 		expect(
 			readSessionEvents(ctx, childNodeId).some((e) => e.type === "fork_marker"),
 		).toBe(true);
@@ -5513,7 +5522,7 @@ describe("Integration: fork prefix consistency", () => {
 		// Get child's JSONL events
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
-		const childNodeId = rootNode!.children![0]!;
+		const childNodeId = rootNode?.children?.[0] as string;
 		const childEvents = readSessionEvents(ctx, childNodeId);
 
 		const forkIdx = childEvents.findIndex((e) => e.type === "fork_marker");
@@ -5542,7 +5551,7 @@ describe("Integration: fork prefix consistency", () => {
 		);
 		expect(forkResults.length).toBe(1);
 		expect(
-			forkResults[0]!.type === "tool_result" && forkResults[0]!.isError,
+			forkResults[0]?.type === "tool_result" && forkResults[0]?.isError,
 		).toBe(false);
 
 		// findOrphanedToolCalls should find NOTHING in the child's events
@@ -5739,8 +5748,8 @@ describe("Integration: fork prefix consistency", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
 		// Children: A and B in order
-		expect(rootNode!.children!.length).toBe(2);
-		const childBId = rootNode!.children![1]!;
+		expect(rootNode?.children?.length).toBe(2);
+		const childBId = rootNode?.children?.[1] as string;
 		const childBNode = tracker.get(childBId);
 		expect(childBNode?.title).toBe("Child B");
 
@@ -5950,7 +5959,7 @@ describe("Integration: fork prefix consistency", () => {
 		// Use validateForkPrefix to check cross-conversation prefix consistency
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-		const childId = tracker.get(rootNodeId)!.children![0]!;
+		const childId = tracker.get(rootNodeId)?.children?.[0] as string;
 
 		const matchCount = ctx.mockAPI.validateForkPrefix(rootNodeId, childId);
 		// Pre-fork messages should all match (everything before the fork tool_result)
@@ -6063,7 +6072,7 @@ describe("Integration: message near done() race condition", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode?.children?.length).toBeGreaterThanOrEqual(1);
-		const childId = rootNode!.children![0]!;
+		const childId = rootNode?.children?.[0] as string;
 		const childNode = tracker.get(childId);
 		expect(childNode?.status).toBe("passed");
 
@@ -6128,7 +6137,8 @@ describe("Integration: message near done() race condition", () => {
 		expect(childResumedReq).toBeDefined();
 
 		// Count occurrences of the unique message across all user messages — MUST be exactly 1
-		const allUserText = childResumedReq!.messages
+		const resumedReq = childResumedReq as (typeof history)[0];
+		const allUserText = resumedReq.messages
 			.filter((m) => m.role === "user")
 			.map((m) => getTextContent(m))
 			.join("|||");
@@ -6179,10 +6189,10 @@ describe("Integration: session_config in JSONL", () => {
 			| undefined;
 		expect(config).toBeDefined();
 		// stable part should contain the SYSTEM_PROMPT content
-		expect(config!.systemStable.length).toBeGreaterThan(100);
-		expect(config!.systemStable).toContain("autonomous programming agent");
+		expect(config?.systemStable.length).toBeGreaterThan(100);
+		expect(config?.systemStable).toContain("autonomous programming agent");
 		// variable part should contain the date
-		expect(config!.systemVariable).toContain(
+		expect(config?.systemVariable).toContain(
 			new Date().toISOString().split("T")[0] as string,
 		);
 	}, 30000);
@@ -6252,8 +6262,8 @@ describe("Integration: session_config in JSONL", () => {
 		expect(history.length).toBeGreaterThanOrEqual(3);
 
 		// The resume request's system should match the first request's system
-		const firstReqSystem = history[0]!.system;
-		const resumeReq = history[history.length - 1]!;
+		const firstReqSystem = history[0]?.system;
+		const resumeReq = history[history.length - 1] as (typeof history)[0];
 		expect(resumeReq.system).toEqual(firstReqSystem);
 	}, 45000);
 
@@ -6348,7 +6358,7 @@ describe("Integration: session_config in JSONL", () => {
 		// Get child node ID
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootId = tracker.rootNodeId;
-		const childNodeId = tracker.get(rootId)!.children![0]!;
+		const childNodeId = tracker.get(rootId)?.children?.[0] as string;
 
 		// Parent JSONL should have session_config
 		const parentEvents = readSessionEvents(ctx, rootId);
@@ -6951,13 +6961,13 @@ describe("Integration: nested parent-child", () => {
 		expect(rootNode?.status).toBe("passed");
 		expect(rootNode?.children?.length).toBeGreaterThanOrEqual(1);
 
-		const childId = rootNode!.children![0]!;
+		const childId = rootNode?.children?.[0] as string;
 		const childNode = tracker.get(childId);
 		expect(childNode?.status).toBe("passed");
 		expect(childNode?.title).toBe("Child Task");
 		expect(childNode?.children?.length).toBeGreaterThanOrEqual(1);
 
-		const grandchildId = childNode!.children![0]!;
+		const grandchildId = childNode?.children?.[0] as string;
 		const grandchildNode = tracker.get(grandchildId);
 		expect(grandchildNode?.status).toBe("passed");
 		expect(grandchildNode?.title).toBe("Grandchild Task");
@@ -7130,11 +7140,11 @@ describe("Integration: nested parent-child", () => {
 		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode?.status).toBe("passed");
 
-		const childId = rootNode!.children![0]!;
+		const childId = rootNode?.children?.[0] as string;
 		const childNode = tracker.get(childId);
 		expect(childNode?.status).toBe("passed");
 
-		const grandchildId = childNode!.children![0]!;
+		const grandchildId = childNode?.children?.[0] as string;
 		const grandchildNode = tracker.get(grandchildId);
 		expect(grandchildNode?.status).toBe("failed");
 	}, 90000);
@@ -7256,7 +7266,7 @@ describe("Integration: child restart scenarios", () => {
 		// Get child ID before crash
 		const tracker1 = await ctx.app.getTracker(ctx.projectId);
 		const rootNode1 = tracker1.get(tracker1.rootNodeId);
-		const childId = rootNode1!.children![0]!;
+		const childId = rootNode1?.children?.[0] as string;
 
 		const preRestartRequests = ctx.mockAPI.getRequestCount();
 
@@ -7387,7 +7397,7 @@ describe("Integration: child restart scenarios", () => {
 
 		// Get child ID before crash
 		const tracker1 = await ctx.app.getTracker(ctx.projectId);
-		const childId = tracker1.get(tracker1.rootNodeId)!.children![0]!;
+		const childId = tracker1.get(tracker1.rootNodeId)?.children?.[0] as string;
 
 		await new Promise((r) => setTimeout(r, 300));
 
@@ -7541,7 +7551,7 @@ describe("Integration: child restart scenarios", () => {
 		// Capture child ID and pre-restart state
 		const tracker1 = await ctx.app.getTracker(ctx.projectId);
 		const rootNode1 = tracker1.get(tracker1.rootNodeId);
-		const childId = rootNode1!.children![0]!;
+		const childId = rootNode1?.children?.[0] as string;
 		expect(tracker1.get(childId)?.status).toBe("in_progress");
 
 		const preRestartRequests = ctx.mockAPI.getRequestCount();
@@ -7750,8 +7760,8 @@ describe("Default branch", () => {
 		const rootNode = tracker.get(tracker.rootNodeId);
 		expect(rootNode).toBeDefined();
 		// git init creates a default branch (main or master depending on config)
-		expect(rootNode!.branch).toBeTruthy();
-		expect(typeof rootNode!.branch).toBe("string");
+		expect(rootNode?.branch).toBeTruthy();
+		expect(typeof rootNode?.branch).toBe("string");
 	});
 
 	test("root node branch persists across save/load", async () => {
@@ -7759,7 +7769,7 @@ describe("Default branch", () => {
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
-		const branch = rootNode!.branch;
+		const branch = rootNode?.branch;
 		expect(branch).toBeTruthy();
 
 		await tracker.save();
@@ -7870,13 +7880,13 @@ describe("Default branch", () => {
 
 		// Verify child got a worktree with branch based off parent's branch
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId)!;
-		const childId = rootNode.children[0]!;
-		const childNode = tracker.get(childId)!;
+		const rootNode = tracker.get(tracker.rootNodeId) as TaskNode;
+		const childId = rootNode.children[0] as string;
+		const childNode = tracker.get(childId) as TaskNode;
 
 		// Child's branch should start with mxd/ prefix
 		expect(childNode.branch).toBeTruthy();
-		expect(childNode.branch!.startsWith("mxd/")).toBe(true);
+		expect(childNode.branch?.startsWith("mxd/")).toBe(true);
 
 		// Child's worktree should exist
 		expect(childNode.worktreePath).toBeTruthy();
@@ -7953,7 +7963,7 @@ describe("Default branch", () => {
 		// Verify root node has "develop" as its branch
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
-		expect(rootNode!.branch).toBe("develop");
+		expect(rootNode?.branch).toBe("develop");
 	});
 
 	test("project on 'master' branch works correctly", async () => {
@@ -8000,7 +8010,7 @@ describe("Default branch", () => {
 		};
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		expect(tracker.get(tracker.rootNodeId)!.branch).toBe("master");
+		expect(tracker.get(tracker.rootNodeId)?.branch).toBe("master");
 	});
 
 	test("child worktree on non-main branch contains correct content", async () => {
@@ -8019,7 +8029,7 @@ describe("Default branch", () => {
 
 		// Update root node branch to "develop" (simulating tracker reload)
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId)!;
+		const rootNode = tracker.get(tracker.rootNodeId) as TaskNode;
 		rootNode.branch = "develop";
 		await tracker.save();
 
@@ -8106,8 +8116,8 @@ describe("Default branch", () => {
 		expect(status).toBe("passed");
 
 		// Verify the child's bash saw develop-only.txt content
-		const rootNode2 = tracker.get(tracker.rootNodeId)!;
-		const childId = rootNode2.children[0]!;
+		const rootNode2 = tracker.get(tracker.rootNodeId) as TaskNode;
+		const childId = rootNode2.children[0] as string;
 		const childEvents = readSessionEvents(ctx, childId);
 		const bashResults = childEvents.filter(
 			(e) => e.type === "tool_result" && !e.isError,
@@ -8207,7 +8217,7 @@ describe("Integration: stopTask lifecycle", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 
 		// Verify agent is running
-		const nodeBefore = tracker.get(rootNodeId)!;
+		const nodeBefore = tracker.get(rootNodeId) as TaskNode;
 		expect(nodeBefore.session).toBeTruthy();
 		expect(nodeBefore.status).toBe("in_progress");
 
@@ -8224,7 +8234,7 @@ describe("Integration: stopTask lifecycle", () => {
 		await new Promise((r) => setTimeout(r, 200));
 
 		// Verify: session cleared
-		const nodeAfterStop = tracker.get(rootNodeId)!;
+		const nodeAfterStop = tracker.get(rootNodeId) as TaskNode;
 		expect(nodeAfterStop.session).toBeUndefined();
 
 		// Verify: status is still in_progress (NOT failed)
@@ -8293,8 +8303,8 @@ describe("Integration: stopTask lifecycle", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 
 		// Verify agent is running (in yield)
-		expect(tracker.get(rootNodeId)!.session).toBeTruthy();
-		expect(tracker.get(rootNodeId)!.status).toBe("in_progress");
+		expect(tracker.get(rootNodeId)?.session).toBeTruthy();
+		expect(tracker.get(rootNodeId)?.status).toBe("in_progress");
 
 		// === STOP ===
 		const stopResp = await ctx.app.app.request(
@@ -8306,8 +8316,8 @@ describe("Integration: stopTask lifecycle", () => {
 		await new Promise((r) => setTimeout(r, 200));
 
 		// Session cleared, status stays in_progress
-		expect(tracker.get(rootNodeId)!.session).toBeUndefined();
-		expect(tracker.get(rootNodeId)!.status).toBe("in_progress");
+		expect(tracker.get(rootNodeId)?.session).toBeUndefined();
+		expect(tracker.get(rootNodeId)?.status).toBe("in_progress");
 
 		// JSONL should have the yield tool_call (no orphan result for yield - it's excluded)
 		const events = readSessionEvents(ctx, rootNodeId);
@@ -8489,7 +8499,7 @@ describe("Integration: stopTask lifecycle", () => {
 		// Get child ID before crash
 		const tracker1 = await ctx.app.getTracker(ctx.projectId);
 		const rootNode1 = tracker1.get(tracker1.rootNodeId);
-		const childId = rootNode1!.children![0]!;
+		const childId = rootNode1?.children?.[0] as string;
 
 		// Verify child JSONL has fork_marker (fork was successful)
 		const precrashEvents = readSessionEvents(ctx, childId);

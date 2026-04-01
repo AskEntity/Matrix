@@ -291,7 +291,14 @@ export const LogEntryView = memo(function LogEntryView({
 							)}
 							{hasImages && (
 								<div className="mxd-tool-card-body">
-									<ToolResultImages images={entry.images!} />
+									<ToolResultImages
+										images={
+											entry.images as Array<{
+												mediaType: string;
+												base64: string;
+											}>
+										}
+									/>
 								</div>
 							)}
 						</>

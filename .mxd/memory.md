@@ -199,9 +199,10 @@ The `handlers.ts` `createActionHandlers` now receives `setTokenUsage`, `setPendi
 
 The UI must fetch events per-session (using `api.taskEvents(projectId, sessionId)`) not per-project (`api.events(projectId)`). Forked sessions contain copies of parent events with the parent taskId; merging all sessions causes stale content to appear above the compaction line on refresh. The viewed session is `selectedTaskId ?? rootNodeId` — tracked via a ref for stable callbacks.
 
-## UI Event Handler Test Patterns
-- `makeDeps()` creates mock EventHandlerDeps; override `setLogs` with a mock that tracks `capturedLogs` for assertions.
-- `processEventBatch` REPLACES all logs (calls `setLogs(entries)` directly); `handleEvent` APPENDS via `setLogs(prev => [...prev, ...entries])`.
-- `assistant_text` uses `replace_text` update which scans backwards for the last `assistant_text` entry with matching taskId — it REPLACES that entry, not appends. A non-`assistant_text` entry with the same taskId breaks the backward scan.
-- ActivityLog filtering can be tested without React by extracting the filter logic: root view shows entries with matching rootNodeId or no taskId; child view shows only exact taskId match.
+## Biome Lint Fix Patterns
 
+- `noNonNullAssertion`: Replace `x!` with `x?.` for property access, `x as Type` for variable assignment, or extract + guard. In tests, `as TaskNode` / `as string` is the cleanest.
+- `noNonNullAssertedOptionalChain`: Never mix `?.` and `!` (e.g. `x?.y!`). Use `x?.y ?? fallback` or `x?.y as Type`.
+- `noExplicitAny`: Replace `any` with `Event`, `{ type: string }`, `unknown`, or specific interface.
+- `useTemplate`: Replace `a + b` with template literals. Biome auto-fix handles most but marks them "unsafe".
+- `biome check --write --unsafe` auto-fixes ~50% of `noNonNullAssertion` but creates `noNonNullAssertedOptionalChain` errors from `x!.y!` → `x?.y!`. Must manually fix those after.

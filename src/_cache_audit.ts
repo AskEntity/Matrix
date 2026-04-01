@@ -48,7 +48,8 @@ const files = readdirSync(sessionDir)
 function trimOrphanTail(msgs: MessageParam[]): MessageParam[] {
 	let result = [...msgs];
 	while (result.length > 0) {
-		const last = result[result.length - 1]!;
+		const last = result[result.length - 1];
+		if (!last) break;
 		if (last.role === "assistant") {
 			const content = last.content;
 			if (
@@ -62,7 +63,7 @@ function trimOrphanTail(msgs: MessageParam[]): MessageParam[] {
 		break;
 	}
 	// Ensure last message is user (API requirement)
-	while (result.length > 0 && result[result.length - 1]!.role !== "user") {
+	while (result.length > 0 && result[result.length - 1]?.role !== "user") {
 		result = result.slice(0, -1);
 	}
 	return result;
@@ -76,7 +77,7 @@ for (const file of files) {
 
 	let lastCompact = -1;
 	for (let i = 0; i < events.length; i++) {
-		if (events[i]!.type === "compact_marker") lastCompact = i;
+		if (events[i]?.type === "compact_marker") lastCompact = i;
 	}
 	const activeEvents = events.slice(lastCompact + 1);
 	const rawMessages = eventsToAnthropicMessages(activeEvents) as MessageParam[];
@@ -123,7 +124,7 @@ for (const file of files) {
 			toolResultChars + toolUseChars + textChars + userStringChars;
 
 		console.log(
-			`${file.sid.slice(0, 22).padEnd(22)} ${String(messages.length).padStart(4)} msgs  ${String(result.input_tokens.toLocaleString()).padStart(9)} tok  ${String((file.size / 1024).toFixed(0) + "KB").padStart(7)}  tr=${((toolResultChars / totalChars) * 100).toFixed(0)}% tu=${((toolUseChars / totalChars) * 100).toFixed(0)}% txt=${((textChars / totalChars) * 100).toFixed(0)}% usr=${((userStringChars / totalChars) * 100).toFixed(0)}%`,
+			`${file.sid.slice(0, 22).padEnd(22)} ${String(messages.length).padStart(4)} msgs  ${String(result.input_tokens.toLocaleString()).padStart(9)} tok  ${String(`${(file.size / 1024).toFixed(0)}KB`).padStart(7)}  tr=${((toolResultChars / totalChars) * 100).toFixed(0)}% tu=${((toolUseChars / totalChars) * 100).toFixed(0)}% txt=${((textChars / totalChars) * 100).toFixed(0)}% usr=${((userStringChars / totalChars) * 100).toFixed(0)}%`,
 		);
 	} catch (e: unknown) {
 		const err = e as Error;

@@ -47,7 +47,7 @@ export const api = {
 		projectUrl(id, "background", bgId, "kill"),
 
 	eventsOlder: (id: string, query: string) =>
-		projectUrl(id, "events", "older") + `?${query}`,
+		`${projectUrl(id, "events", "older")}?${query}`,
 
 	// Task-level
 	tasks: (id: string) => projectUrl(id, "tasks"),
