@@ -1,0 +1,6 @@
+{
+	"title": "Task System Design",
+	"description": "持续的任务系统设计讨论和演进。Task tree 的核心设计是对的（parent-child、worktree 隔离、merge protocol），但需要打磨到真正流动起来。\n\n## 开放问题\n\n### 深度不够\nAgent 很少超过 2 层。树是扁的，root 变成巨大的扁平任务管理器。System prompt 说 \"keep shallow\" 直接抑制了深度。需要让多层成为自然行为而不是例外。\n\n### 角色缺失（Pinned Tasks）\n没有领域负责人。所有事都经过 root。理想：root 管 3-5 个领域负责人，任务自然流向对的人。Pinned task = persistent continue + 子任务挂下面 + UI 置顶。不需要新概念，是已有能力的组合。\n\n### 进度不可见（Partial Completion）\nTask status 只有 passed/failed，没有\"完成了一部分\"的语义。yield + send_message + incremental merge 已经是 partial completion 的机制，但 UI 没有表达。用户看不出 in_progress 的任务做到哪了。\n\n### 组织不便（Folder/Grouping）\n只有 tree，没有纯组织容器。靠 emoji draft tasks 当 folder hack。Pinned task + children 可能就是答案 —— 不需要独立的 folder 概念。\n\n### 流动不自然\n任务不会自动流向对的人。用户说\"修个 bug\"，root 应该判断领域，转给对应负责人。需要 pinned agents 作为前提。\n\n### Persistent Task 同步\n.mxd/tasks/*.json 是 source of truth 但和 runtime 不同步。方向：subscribe to repo，双向同步。\n\n### Agent 间实时对话（Meeting Mode）\n当前通信是 async parent-mediated。Meeting = 直连 streaming channel。深层 agent 间需要直接沟通。",
+	"persistent": "continue",
+	"color": "#a371f7"
+}
