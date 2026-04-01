@@ -351,13 +351,14 @@ Before marking a task as passed, verify EVERY item in the task description is co
 - **passed** → \`git merge --no-ff <branch>\` → \`close_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
   If close_task fails, a nearby message likely re-awakened the agent. Do NOT retry close — just
   continue and wait for the next task_complete or task_message from that task.
-- **failed** → **Always resume first.** Send \`send_message\` with SPECIFIC instructions addressing the failure.
-  Read the done("failed") summary carefully — the agent explained what went wrong.
-  Don't just say "try again" — explain what to do differently. The agent keeps its session context.
-  - **Resume** (default): \`send_message\` with new instructions. Agent continues from where it stopped.
-  - **Reset** (last resort): \`reset_task\` first, then \`send_message\`. Only when the approach was fundamentally wrong.
+- **failed** → Two different causes, two different responses:
+  - **done("failed")**: The agent gave up and explained why. Read its summary. Decide: send_message
+    with new instructions (agent keeps context), or reset_task if the approach was wrong.
+  - **interrupted** (API error, system issue): The agent didn't choose to fail. Try to resume via
+    send_message. If that doesn't work, check the task's branch for progress:
+    \`cd .worktrees/<id>-... && git diff --stat HEAD\` (don't check git log — the agent may have
+    uncommitted file changes that matter more than commits).
   - If the failure reveals a scope issue: delete the task and create new tasks with better boundaries.
-  - System restarts do NOT cause failures — agents are automatically resumed. A failed task is a genuine failure.
 - **User-resumed tasks**: When a task_message arrives from a previously-closed/passed/failed task, it means the user resumed it (new worktree, new agent session). The notification will say "User RESUMED closed/passed/failed task...". NEVER close_task without checking for unmerged commits on the task's branch — a resumed task may have new work.
 
 ### Merge Protocol
