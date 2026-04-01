@@ -529,7 +529,8 @@ export async function deliverMessage(
 			});
 		} else if (
 			opts?.orchestratorSystemPrompt &&
-			!ctx.restartingProjects.has(project.id)
+			!ctx.restartingProjects.has(project.id) &&
+			!ctx.launchingNodes.has(nodeId)
 		) {
 			// Root node — same launch path as child
 			tracker.updateStatus(nodeId, "in_progress");
@@ -566,8 +567,9 @@ export async function ensureChildAgentRunning(
 	const node = tracker.get(nodeId);
 	if (!node) return;
 
-	// Guard: if agent is already running, do nothing (message was already enqueued by deliverMessage)
-	if (node.session != null) {
+	// Guard: if agent is already running or being launched, do nothing.
+	// Message was already enqueued to JSONL by deliverMessage — the agent picks it up.
+	if (node.session != null || ctx.launchingNodes.has(nodeId)) {
 		return;
 	}
 
@@ -641,6 +643,12 @@ export async function runAgentForNode(
 	const isRoot = !node.parentId;
 	const agentCwd = isRoot ? project.path : (node.worktreePath as string);
 	if (!agentCwd) return;
+
+	// Launch lock: prevent duplicate launches when messages arrive before session is established.
+	if (node.session != null || ctx.launchingNodes.has(nodeId)) {
+		return;
+	}
+	ctx.launchingNodes.add(nodeId);
 
 	const mcpManager = new McpClientManager();
 	let ownSession: TaskSession | undefined;
@@ -717,6 +725,22 @@ export async function runAgentForNode(
 			}
 		}
 
+		// Release launch lock. Messages arriving after this point will find
+		// node.session.queue and enqueue directly.
+		ctx.launchingNodes.delete(nodeId);
+
+		// Flush and re-scan: pick up any messages persisted to JSONL during the lock window.
+		// These were written by deliverMessage but couldn't be enqueued (no session yet).
+		await eventStore.flushSession(nodeId);
+		const postLockEvents = eventStore.readActive(nodeId);
+		const lateMessages = findUnconsumedMessages(postLockEvents);
+		for (const msg of lateMessages) {
+			// Only enqueue messages we haven't already recovered above
+			if (!activeEvents.some((e) => e.type === "message" && "id" in e && e.id === msg.id)) {
+				childQueue.enqueue(msg);
+			}
+		}
+
 		// Build emit callback: emitEvent with taskId injected
 		const emitWithTask = (event: Event) => {
 			const withTaskId = { ...event, taskId: nodeId };
@@ -765,29 +789,44 @@ export async function runAgentForNode(
 				? buildSystemPrompt({ selfBootstrap: true })
 				: buildSystemPrompt();
 
-		const agentResult = await runChildCore({
-			provider: agentCtx.provider,
-			tracker,
-			taskId: nodeId,
+		const sessionRequest: AgentRequest = {
+			cwd: agentCwd,
+			projectPath: isRoot ? project.path : undefined,
+			emit: emitWithTask,
+			activeEvents,
+			systemPrompt,
+			refreshSystemPrompt,
+			resumeSessionId: nodeId,
+			model: effectiveModel,
+			mcpToolDefs: agentCtx.mcpToolDefs,
+			hasRunningChildren: agentCtx.hasRunningChildren,
+			buildYieldPendingSection: agentCtx.buildYieldPendingSection,
+			getSession,
+			isOrchestrator: isRoot,
+			enableAutoRecovery: ctx.config.enableAutoRecovery ?? true,
+			signal: abortController.signal,
 			queue: childQueue,
-			sessionRequest: {
-				cwd: agentCwd,
-				projectPath: isRoot ? project.path : undefined,
-				emit: emitWithTask,
-				activeEvents,
-				systemPrompt,
-				refreshSystemPrompt,
-				resumeSessionId: nodeId,
-				model: effectiveModel,
-				mcpToolDefs: agentCtx.mcpToolDefs,
-				hasRunningChildren: agentCtx.hasRunningChildren,
-				buildYieldPendingSection: agentCtx.buildYieldPendingSection,
-				getSession,
-				isOrchestrator: isRoot,
-				enableAutoRecovery: ctx.config.enableAutoRecovery ?? true,
-				signal: abortController.signal,
-			},
-		});
+		};
+
+		// Root agents: stream directly — done() enters idle-yield, session stays alive.
+		// Child agents: runChildCore adds done() detection — queue close on done.
+		let agentResult: AgentResult;
+		if (isRoot) {
+			const stream = agentCtx.provider.stream(sessionRequest);
+			let result = await stream.next();
+			while (!result.done) {
+				result = await stream.next();
+			}
+			agentResult = result.value;
+		} else {
+			agentResult = await runChildCore({
+				provider: agentCtx.provider,
+				tracker,
+				taskId: nodeId,
+				queue: childQueue,
+				sessionRequest,
+			});
+		}
 
 		// --- Post-completion logic (unified for both MCP and daemon paths) ---
 
@@ -860,6 +899,8 @@ export async function runAgentForNode(
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} finally {
+		// Ensure launch lock is released (covers error path before session established)
+		ctx.launchingNodes.delete(nodeId);
 		// Clean up session: background processes + detach from node.
 		// Only clear if this is still OUR session — a replacement agent
 		// may have already set a new session on the node.

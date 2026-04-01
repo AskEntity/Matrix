@@ -77,6 +77,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		pm: new ProjectManager(config.dataDir),
 		trackers: new Map(),
 		restartingProjects: new Set(),
+		launchingNodes: new Set(),
 		sseClients: new Set<SSEClient>(),
 		pendingClarifications: new Map<string, PendingClarification[]>(),
 		eventStores: new Map(),
@@ -326,14 +327,13 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							body: resumeMsg,
 							ts: resumeMsg.ts,
 						});
-						// Root uses same launch path as child — fire-and-forget
 						tracker.updateStatus(rootNodeId, "in_progress");
 						runAgentForNode(ctx, project, tracker, rootNodeId, {
 							orchestratorSystemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
 						}).catch((e) => {
 							console.error(
 								`[autoResume] Failed to resume root ${rootNodeId}:`,
-								e,
+								e instanceof Error ? e.message : e,
 							);
 						});
 					}

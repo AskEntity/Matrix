@@ -41,6 +41,7 @@ export function mockDaemonContext(opts: {
 		pm,
 		trackers,
 		restartingProjects: new Set(),
+		launchingNodes: new Set(),
 		sseClients: new Set(),
 		pendingClarifications: new Map(),
 		eventStores: new Map(),
