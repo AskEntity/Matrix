@@ -305,8 +305,14 @@ export async function runChildCore(
 				"tool" in event &&
 				event.tool === TOOL_DONE
 			) {
-				const nodeStatus = tracker.get(taskId)?.status;
-				if (nodeStatus === "passed" || nodeStatus === "failed") {
+				const node = tracker.get(taskId);
+				// For persistent tasks, done() doesn't change status — detect by tool name alone.
+				// For regular tasks, check status changed to passed/failed.
+				if (
+					node?.persistent ||
+					node?.status === "passed" ||
+					node?.status === "failed"
+				) {
 					childQueue.close();
 					// Drain remaining events until the generator exits
 					result = await stream.next();

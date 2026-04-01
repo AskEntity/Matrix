@@ -1678,17 +1678,14 @@ describe("tool() jsonSchema generation", () => {
 		]);
 	});
 
-	test("handles union of literal types (persistent field)", async () => {
+	test("handles boolean type (persistent field)", async () => {
 		const { z } = await import("zod");
 		const { tool: toolFactory } = await import("./tool-definition.ts");
 		const def = toolFactory(
 			"test",
 			"test tool",
 			{
-				persistent: z
-					.union([z.literal(false), z.literal("reset"), z.literal("continue")])
-					.optional()
-					.describe("Persistent mode"),
+				persistent: z.boolean().optional().describe("Persistent mode"),
 			},
 			async () => ({ content: [{ type: "text", text: "ok" }] }),
 		);
@@ -1696,11 +1693,7 @@ describe("tool() jsonSchema generation", () => {
 			.properties as Record<string, unknown>;
 		expect(props?.persistent).toEqual({
 			description: "Persistent mode",
-			anyOf: [
-				{ type: "boolean", const: false },
-				{ type: "string", const: "reset" },
-				{ type: "string", const: "continue" },
-			],
+			type: "boolean",
 		});
 	});
 });

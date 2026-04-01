@@ -249,7 +249,7 @@ describe("updateTaskOp", () => {
 	test("rejects closing persistent tasks", async () => {
 		const task = tracker.addChild(tracker.rootNodeId, "Persistent", "", {
 			editedBy: "agent",
-			persistent: "reset",
+			persistent: true,
 		});
 
 		await expect(
@@ -260,7 +260,7 @@ describe("updateTaskOp", () => {
 				"user",
 				makeCallbacks(),
 			),
-		).rejects.toThrow("Cannot set persistent task to closed");
+		).rejects.toThrow("Cannot close persistent task");
 	});
 
 	test("reparents task", async () => {
@@ -482,42 +482,18 @@ describe("closeTaskOp", () => {
 		expect(node?.status).toBe("closed");
 	});
 
-	test("closes persistent 'reset' task — resets to pending, clears events", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Reset", "", {
+	test("rejects closing persistent task", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Persistent", "", {
 			editedBy: "agent",
-			persistent: "reset",
+			persistent: true,
 		});
 
-		const cleared: string[] = [];
-		const result = await closeTaskOp(tracker, task.id, {
-			...makeCallbacks(),
-			clearEventStore: (id: string) => cleared.push(id),
-		});
-
-		expect(result.persistent).toBe("reset");
-		expect(result.resetTo).toBe("pending");
-		const node = tracker.get(task.id);
-		expect(node?.status).toBe("pending");
-		expect(cleared).toContain(task.id);
-	});
-
-	test("closes persistent 'continue' task — resets to pending, keeps events", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Continue", "", {
-			editedBy: "agent",
-			persistent: "continue",
-		});
-
-		const cleared: string[] = [];
-		const result = await closeTaskOp(tracker, task.id, {
-			...makeCallbacks(),
-			clearEventStore: (id: string) => cleared.push(id),
-		});
-
-		expect(result.persistent).toBe("continue");
-		expect(result.resetTo).toBe("pending");
-		const node = tracker.get(task.id);
-		expect(node?.status).toBe("pending");
-		expect(cleared).toHaveLength(0); // Events NOT cleared
+		await expect(
+			closeTaskOp(tracker, task.id, {
+				...makeCallbacks(),
+				clearEventStore: () => {},
+			}),
+		).rejects.toThrow("Cannot close persistent task");
 	});
 
 	test("rejects closing in_progress task", async () => {
@@ -587,6 +563,17 @@ describe("resetTaskOp", () => {
 		});
 
 		expect(cleared).toContain(task.id);
+	});
+
+	test("rejects resetting persistent task", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Persistent", "", {
+			editedBy: "agent",
+			persistent: true,
+		});
+
+		await expect(
+			resetTaskOp(tracker, task.id, makeCallbacks()),
+		).rejects.toThrow("Cannot reset persistent task");
 	});
 
 	test("throws for nonexistent task", async () => {
@@ -800,7 +787,7 @@ describe("persistent task write-back", () => {
 			tracker.rootNodeId,
 			"Original Title",
 			"Some description",
-			{ editedBy: "agent", persistent: "reset" },
+			{ editedBy: "agent", persistent: true },
 		);
 
 		await updateTaskOp(
@@ -814,7 +801,7 @@ describe("persistent task write-back", () => {
 		const def = readDefFile(task.id);
 		expect(def.title).toBe("Updated Title");
 		expect(def.description).toBe("Some description");
-		expect(def.persistent).toBe("reset");
+		expect(def.persistent).toBe(true);
 	});
 
 	test("update persistent task description → file updated", async () => {
@@ -822,7 +809,7 @@ describe("persistent task write-back", () => {
 			tracker.rootNodeId,
 			"My Task",
 			"Old description",
-			{ editedBy: "agent", persistent: "continue" },
+			{ editedBy: "agent", persistent: true },
 		);
 
 		await updateTaskOp(
@@ -836,13 +823,13 @@ describe("persistent task write-back", () => {
 		const def = readDefFile(task.id);
 		expect(def.title).toBe("My Task");
 		expect(def.description).toBe("New description");
-		expect(def.persistent).toBe("continue");
+		expect(def.persistent).toBe(true);
 	});
 
 	test("update persistent task color → file updated with color", async () => {
 		const task = tracker.addChild(tracker.rootNodeId, "Colored Task", "desc", {
 			editedBy: "agent",
-			persistent: "reset",
+			persistent: true,
 		});
 
 		await updateTaskOp(
@@ -876,7 +863,7 @@ describe("persistent task write-back", () => {
 	test("status-only update on persistent task → no file write", async () => {
 		const task = tracker.addChild(tracker.rootNodeId, "Persistent", "desc", {
 			editedBy: "agent",
-			persistent: "reset",
+			persistent: true,
 		});
 
 		await updateTaskOp(
@@ -896,7 +883,7 @@ describe("persistent task write-back", () => {
 			tracker.rootNodeId,
 			"Initial Title",
 			"Initial desc",
-			{ editedBy: "agent", persistent: "reset" },
+			{ editedBy: "agent", persistent: true },
 		);
 
 		await updateTaskOp(
@@ -919,7 +906,7 @@ describe("persistent task write-back", () => {
 		const reloaded = tracker2.get(task.id);
 		expect(reloaded?.title).toBe("Round-trip Title");
 		expect(reloaded?.description).toBe("Round-trip desc");
-		expect(reloaded?.persistent).toBe("reset");
+		expect(reloaded?.persistent).toBe(true);
 	});
 
 	test("createTaskOp with persistent flag writes definition file", async () => {
@@ -929,7 +916,7 @@ describe("persistent task write-back", () => {
 				title: "Created Persistent",
 				description: "Created desc",
 				parentId: tracker.rootNodeId,
-				persistent: "continue",
+				persistent: true,
 				color: "blue",
 			},
 			"user",
@@ -939,14 +926,14 @@ describe("persistent task write-back", () => {
 		const def = readDefFile(task.id);
 		expect(def.title).toBe("Created Persistent");
 		expect(def.description).toBe("Created desc");
-		expect(def.persistent).toBe("continue");
+		expect(def.persistent).toBe(true);
 		expect(def.color).toBe("#388bfd");
 	});
 
 	test("clearing color on persistent task removes it from file", async () => {
 		const task = tracker.addChild(tracker.rootNodeId, "Colored", "desc", {
 			editedBy: "agent",
-			persistent: "reset",
+			persistent: true,
 		});
 		tracker.updateColor(task.id, "#ff0000");
 

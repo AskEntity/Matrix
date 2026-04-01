@@ -381,19 +381,28 @@ export function createOrchestratorTools(
 				const filterChildren = (children: string[]) =>
 					children.filter((id) => visibleIds.has(id));
 				const result = include_details
-					? nodes.map(({ session: _session, ...rest }) => ({
-							...rest,
-							children: filterChildren(rest.children),
-							// Mark calling agent's node so it can discover its position
-							...(rest.id === currentTaskId ? { you: true } : {}),
-						}))
-					: nodes.map((n) => ({
-							id: n.id,
-							title: n.title + (n.id === currentTaskId ? " (you)" : ""),
-							status: n.status,
-							children: filterChildren(n.children),
-							parentId: n.parentId,
-						}));
+					? nodes.map(({ session: _session, ...rest }) => {
+							const node: Record<string, unknown> = {
+								...rest,
+								children: filterChildren(rest.children),
+								// Mark calling agent's node so it can discover its position
+								...(rest.id === currentTaskId ? { you: true } : {}),
+							};
+							// Persistent tasks have no lifecycle status
+							if (rest.persistent) delete node.status;
+							return node;
+						})
+					: nodes.map((n) => {
+							const node: Record<string, unknown> = {
+								id: n.id,
+								title: n.title + (n.id === currentTaskId ? " (you)" : ""),
+								children: filterChildren(n.children),
+								parentId: n.parentId,
+							};
+							// Only include status for non-persistent tasks
+							if (!n.persistent) node.status = n.status;
+							return node;
+						});
 				return {
 					content: [
 						{
@@ -469,13 +478,12 @@ export function createOrchestratorTools(
 							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
 					),
 				persistent: z
-					.union([z.literal(false), z.literal("reset"), z.literal("continue")])
+					.boolean()
 					.optional()
 					.describe(
 						"If true, creates a persistent task. Definition stored in .mxd/tasks/<id>.json (git-tracked). " +
-							"close_task resets to pending instead of closed. Only root orchestrator can create persistent tasks. " +
-							"'reset': clean start each cycle (session history deleted on close). " +
-							"'continue': resumes with context (session history kept on close).",
+							"Persistent tasks cannot be closed or reset. done() preserves session. " +
+							"Only root orchestrator can create persistent tasks.",
 					),
 			},
 			async (args) => {
@@ -603,6 +611,13 @@ export function createOrchestratorTools(
 						"Color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex). " +
 							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
 					),
+				persistent: z
+					.boolean()
+					.optional()
+					.describe(
+						"Set persistent mode. true = persistent task (definition in .mxd/tasks/<id>.json). " +
+							"false = regular task. Only root orchestrator can set persistent.",
+					),
 			},
 			async (args) => {
 				try {
@@ -716,6 +731,19 @@ export function createOrchestratorTools(
 						);
 					}
 
+					// Persistent mode can only be changed by root orchestrator
+					if (args.persistent !== undefined && getDepth() > 0) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: "Error: Only the root orchestrator can change persistent mode.",
+								},
+							],
+							isError: true,
+						};
+					}
+
 					const node = await updateTaskOp(
 						tracker,
 						args.taskId,
@@ -726,6 +754,7 @@ export function createOrchestratorTools(
 							draft: args.draft,
 							parentId: args.parentId,
 							color: args.color,
+							persistent: args.persistent,
 						},
 						"agent",
 						{
@@ -1037,8 +1066,7 @@ export function createOrchestratorTools(
 				"Node and session are preserved — status set to 'closed'. " +
 				"Call this AFTER you have already merged the task's branch yourself. " +
 				"Use for merged tasks or deferred tasks where you want to free resources. " +
-				"For persistent tasks: 'reset' mode clears session JSONL (clean start next cycle), " +
-				"'continue' mode keeps session JSONL (resumes with context). Both reset status to pending.",
+				"Cannot close persistent tasks.",
 			{
 				taskId: z.string().describe("ID of the task to close"),
 			},
@@ -1544,12 +1572,15 @@ export function createOrchestratorTools(
 					),
 			},
 			async (args) => {
-				// Update task status in the tree
+				// Update task status in the tree (skip for persistent tasks — they have no lifecycle)
 				if (currentTaskId) {
-					tracker.updateStatus(
-						currentTaskId,
-						args.status === "passed" ? "passed" : "failed",
-					);
+					const currentNode = tracker.get(currentTaskId);
+					if (!currentNode?.persistent) {
+						tracker.updateStatus(
+							currentTaskId,
+							args.status === "passed" ? "passed" : "failed",
+						);
+					}
 					await tracker.save();
 					broadcastTree();
 				}

@@ -237,7 +237,7 @@ export class ProjectManager {
 				"The task above will decide what to act on.\n\n" +
 				"Focus on code that matters — conditional branches, error handling, return values. " +
 				"Don't waste time on trivial mutations.",
-			persistent: "reset",
+			persistent: true,
 			color: "purple",
 		};
 
@@ -258,7 +258,7 @@ export class ProjectManager {
 				"The goal is to discover duplicate codepaths, missing abstractions, and tight coupling " +
 				"by seeing how the codebase responds to hypothetical changes. " +
 				"A well-architected system needs 1-2 file changes for most features. 5+ means something is wrong.",
-			persistent: "reset",
+			persistent: true,
 			color: "purple",
 		};
 

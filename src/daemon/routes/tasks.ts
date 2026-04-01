@@ -184,6 +184,7 @@ export function registerTaskRoutes(
 			title?: string;
 			description?: string;
 			draft?: boolean;
+			persistent?: boolean;
 			parentId?: string;
 			color?: string | null;
 		}>();
@@ -216,6 +217,7 @@ export function registerTaskRoutes(
 					draft: body.draft,
 					parentId: body.parentId,
 					color: body.color,
+					persistent: body.persistent,
 				},
 				"user",
 				{

@@ -100,7 +100,7 @@ describe("ProjectManager", () => {
 				"Quality: Test Mutation",
 			]);
 			for (const task of tasks) {
-				expect(task.persistent).toBe("reset");
+				expect(task.persistent).toBe(true);
 				expect(task.description).toBeTruthy();
 			}
 		});

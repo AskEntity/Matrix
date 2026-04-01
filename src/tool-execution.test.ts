@@ -13,13 +13,7 @@ describe("executeTool Zod validation", () => {
 				"Create a task",
 				{
 					title: z.string(),
-					persistent: z
-						.union([
-							z.literal(false),
-							z.literal("reset"),
-							z.literal("continue"),
-						])
-						.optional(),
+					persistent: z.boolean().optional(),
 				},
 				async () => ({
 					content: [{ type: "text" as const, text: "ok" }],
@@ -46,13 +40,7 @@ describe("executeTool Zod validation", () => {
 				"Create a task",
 				{
 					title: z.string(),
-					persistent: z
-						.union([
-							z.literal(false),
-							z.literal("reset"),
-							z.literal("continue"),
-						])
-						.optional(),
+					persistent: z.boolean().optional(),
 				},
 				async () => ({
 					content: [{ type: "text" as const, text: "ok" }],
@@ -69,7 +57,7 @@ describe("executeTool Zod validation", () => {
 		expect(result.content).toBe("ok");
 	});
 
-	test("accepts valid string enum value 'reset'", async () => {
+	test("accepts boolean true for persistent field", async () => {
 		const handlers = new Map();
 		handlers.set(
 			"create_task",
@@ -78,13 +66,7 @@ describe("executeTool Zod validation", () => {
 				"Create a task",
 				{
 					title: z.string(),
-					persistent: z
-						.union([
-							z.literal(false),
-							z.literal("reset"),
-							z.literal("continue"),
-						])
-						.optional(),
+					persistent: z.boolean().optional(),
 				},
 				async () => ({
 					content: [{ type: "text" as const, text: "ok" }],
@@ -94,7 +76,7 @@ describe("executeTool Zod validation", () => {
 
 		const result = await executeTool(
 			"create_task",
-			{ title: "test", persistent: "reset" },
+			{ title: "test", persistent: true },
 			handlers,
 		);
 		expect(result.isError).toBeFalsy();
@@ -110,13 +92,7 @@ describe("executeTool Zod validation", () => {
 				"Create a task",
 				{
 					title: z.string(),
-					persistent: z
-						.union([
-							z.literal(false),
-							z.literal("reset"),
-							z.literal("continue"),
-						])
-						.optional(),
+					persistent: z.boolean().optional(),
 				},
 				async () => ({
 					content: [{ type: "text" as const, text: "ok" }],

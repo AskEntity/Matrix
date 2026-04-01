@@ -298,8 +298,8 @@ describe("daemon stats", () => {
 		const statsRes = await app.request("/stats");
 		const stats = (await statsRes.json()) as StatsResponse;
 		expect(stats.projectCount).toBe(1);
-		expect(stats.taskCounts.pending).toBe(4); // Child2 + Orchestrator root + 2 quality task templates
-		expect(stats.taskCounts.in_progress).toBe(1); // Root
+		expect(stats.taskCounts.pending).toBe(2); // Child2 + Orchestrator root
+		expect(stats.taskCounts.in_progress).toBe(3); // Root + 2 persistent quality task templates
 		expect(stats.taskCounts.passed).toBe(1); // Child1
 		expect(stats.taskCounts.failed).toBe(0);
 
