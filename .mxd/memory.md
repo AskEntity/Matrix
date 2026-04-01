@@ -183,3 +183,12 @@ The `handlers.ts` `createActionHandlers` now receives `setTokenUsage`, `setPendi
 
 `handleCreateTask` now selects the newly created task by reading the response body `{ id }` from the POST /tasks endpoint.
 
+
+## OpenAI Provider Parity Audit (2026-04-01)
+
+- Chat Completions provider (`OpenAICompatibleProvider`) is dead code — not wired into production. `createProviderFromAuth` in daemon/helpers.ts always creates Responses provider for OpenAI auth.
+- Responses provider has 3 critical gaps vs Anthropic: (1) zero inner retry in callAPI, (2) no done() reminder injection, (3) no tool-use system prompt nudge.
+- Integration tests: 95 Anthropic, 3 Responses, 0 Chat Completions. Recommended: parameterize existing tests with provider factory + shared MockAPI interface.
+- Chat and Responses providers share near-identical event converter callbacks, buildToolResultsMessage, buildImplicitYieldMessage, computeCost — candidate for dedup.
+- Responses `streamResponsesAPI` reads SSE events from response body manually (no SDK). Anthropic uses SDK streaming helpers.
+
