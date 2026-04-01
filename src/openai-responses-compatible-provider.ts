@@ -1032,6 +1032,21 @@ function createOpenAIResponsesAdapter(
 			};
 		},
 
+		validateImage(base64: string, _mediaType: string) {
+			// OpenAI rejects images where decoded byte size exceeds 20MB.
+			// Use actual Buffer decode for exact byte count — no estimation.
+			const MAX_BYTES = 20_971_520; // 20MB
+			const byteLength = Buffer.from(base64, "base64").byteLength;
+			if (byteLength > MAX_BYTES) {
+				const sizeMB = (byteLength / 1_048_576).toFixed(1);
+				return {
+					ok: false as const,
+					reason: `image size (${sizeMB} MB) exceeds OpenAI API limit (20.0 MB)`,
+				};
+			}
+			return { ok: true as const };
+		},
+
 		computeCost(
 			model: string,
 			totalInputTokens: number,

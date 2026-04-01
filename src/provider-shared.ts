@@ -139,6 +139,152 @@ function collectToolResultImages(exec: ToolResult): EventImageData[] {
 	return images;
 }
 
+// ── Image validation helpers ──
+
+const IMAGE_REJECTED_PREFIX = "[Image rejected: ";
+const IMAGE_REJECTED_SUFFIX =
+	". Use bash to resize: `magick <file> -resize 4000x4000\\> <file>`]";
+
+/**
+ * Validate a single image against the provider's limits.
+ * Returns the rejection reason text, or null if the image is acceptable.
+ */
+function checkImage(
+	adapter: ProviderAdapter,
+	base64: string,
+	mediaType: string,
+): string | null {
+	if (!adapter.validateImage) return null;
+	const result = adapter.validateImage(base64, mediaType);
+	if (result.ok) return null;
+	return `${IMAGE_REJECTED_PREFIX}${result.reason}${IMAGE_REJECTED_SUFFIX}`;
+}
+
+/**
+ * Filter oversized images from tool execution results before they reach provider code.
+ * Replaces oversized images with error text in-place on the ToolResult objects.
+ */
+export function filterExecResultImages(
+	adapter: ProviderAdapter,
+	execResults: ToolResult[],
+): void {
+	if (!adapter.validateImage) return;
+	for (const exec of execResults) {
+		// Direct image result (e.g. from read_file on an image)
+		if (exec.isImage && exec.imageData && exec.mediaType) {
+			const rejection = checkImage(adapter, exec.imageData, exec.mediaType);
+			if (rejection) {
+				exec.content = rejection;
+				exec.isImage = false;
+				exec.imageData = undefined;
+				exec.mediaType = undefined;
+			}
+		}
+		// MCP images (from external MCP tools)
+		if (exec.mcpImages?.length) {
+			exec.mcpImages = exec.mcpImages.filter((img) => {
+				const data = img.base64 ?? img.data ?? "";
+				const rejection = checkImage(adapter, data, img.mediaType);
+				if (rejection) {
+					// Append rejection text to the tool result content
+					exec.content = exec.content
+						? `${exec.content}\n${rejection}`
+						: rejection;
+					return false; // Remove this image
+				}
+				return true; // Keep this image
+			});
+		}
+	}
+}
+
+/**
+ * Filter oversized images from queue messages before they reach provider code.
+ * Replaces oversized images with error text in-place on user QueueMessages.
+ */
+export function filterQueueMessageImages(
+	adapter: ProviderAdapter,
+	msgs: QueueMessage[],
+): void {
+	if (!adapter.validateImage) return;
+	for (const msg of msgs) {
+		if (msg.source === "user" && msg.images?.length) {
+			msg.images = msg.images.filter((img) => {
+				const rejection = checkImage(adapter, img.base64, img.mediaType);
+				if (rejection) {
+					msg.content = msg.content
+						? `${msg.content}\n${rejection}`
+						: rejection;
+					return false;
+				}
+				return true;
+			});
+			if (msg.images.length === 0) {
+				msg.images = undefined;
+			}
+		}
+	}
+}
+
+/**
+ * Filter oversized images from JSONL events before resume reconstruction.
+ * Returns a new events array with oversized images stripped from tool_result
+ * and message events, replaced with error text.
+ */
+export function filterEventImages(
+	adapter: ProviderAdapter,
+	events: Event[],
+): Event[] {
+	if (!adapter.validateImage) return events;
+	return events.map((event) => {
+		if (event.type === "tool_result" && event.images?.length) {
+			const filteredImages: EventImageData[] = [];
+			let content = event.content;
+			for (const img of event.images) {
+				const rejection = checkImage(adapter, img.base64, img.mediaType);
+				if (rejection) {
+					content = content ? `${content}\n${rejection}` : rejection;
+				} else {
+					filteredImages.push(img);
+				}
+			}
+			if (filteredImages.length !== event.images.length) {
+				return {
+					...event,
+					content,
+					images: filteredImages.length > 0 ? filteredImages : undefined,
+				};
+			}
+		}
+		if (event.type === "message" && event.body.source === "user") {
+			const userBody = event.body;
+			if (userBody.images?.length) {
+				const filteredImages: Array<{ base64: string; mediaType: string }> = [];
+				let content = userBody.content;
+				for (const img of userBody.images) {
+					const rejection = checkImage(adapter, img.base64, img.mediaType);
+					if (rejection) {
+						content = content ? `${content}\n${rejection}` : rejection;
+					} else {
+						filteredImages.push(img);
+					}
+				}
+				if (filteredImages.length !== userBody.images.length) {
+					return {
+						...event,
+						body: {
+							...userBody,
+							content,
+							images: filteredImages.length > 0 ? filteredImages : undefined,
+						},
+					};
+				}
+			}
+		}
+		return event;
+	});
+}
+
 /**
  * Build tool_result events for emission.
  * Returns the events array with tool_result events, cancellation queue events,
@@ -373,6 +519,18 @@ export interface ProviderAdapter {
 	): number;
 
 	/**
+	 * Validate an image before it's sent to the API.
+	 * Called for every image in tool results, queue messages, and resume events.
+	 * Return { ok: true } to accept, { ok: false, reason } to reject.
+	 * Rejected images are replaced with error text — never sent to the API.
+	 * Optional — if not provided, all images are accepted.
+	 */
+	validateImage?(
+		base64: string,
+		mediaType: string,
+	): { ok: true } | { ok: false; reason: string };
+
+	/**
 	 * Get the delay (in ms) before the outer retry of a failed API call.
 	 * Called when callAPI throws after exhausting its own internal retries.
 	 * Optional — defaults to exponential backoff (30s, 60s, 120s).
@@ -462,9 +620,11 @@ export async function* runProviderLoop(
 	const activeEvents = request.activeEvents ?? [];
 	const isResume = activeEvents.length > 0;
 
-	// Reconstruct messages from active events on resume, or start fresh
+	// Reconstruct messages from active events on resume, or start fresh.
+	// Filter oversized images from events before conversion — prevents poison
+	// images from JSONL entering the API request on resume.
 	const messages: unknown[] = isResume
-		? adapter.convertEventsToMessages(activeEvents)
+		? adapter.convertEventsToMessages(filterEventImages(adapter, activeEvents))
 		: [];
 
 	// Detect pending yield from JSONL: if last tool_call is yield with no matching result,
@@ -653,6 +813,9 @@ export async function* runProviderLoop(
 				pendingYieldToolCall = null;
 				continue;
 			}
+
+			// Filter oversized images from queue messages before yield tool_result
+			filterQueueMessageImages(adapter, yieldResult.nonCompact);
 
 			// Build yield tool_result with pending section + queue messages as additional
 			// text blocks in the same user message. Headers (memory.md + working dir) are
@@ -1099,6 +1262,9 @@ export async function* runProviderLoop(
 				continue;
 			}
 
+			// Filter oversized images from queue messages before implicit yield
+			filterQueueMessageImages(adapter, yieldResult.nonCompact);
+
 			// Inject messages as a new user turn and continue the loop.
 			// Headers extracted to message level (defense-in-depth — headers shouldn't
 			// be present during running sessions, but strip them if they are).
@@ -1224,6 +1390,11 @@ export async function* runProviderLoop(
 				}
 			}
 		}
+
+		// Filter oversized images from tool results and queue messages before
+		// they reach provider code — prevents API 400 from oversized images.
+		filterExecResultImages(adapter, execResults);
+		filterQueueMessageImages(adapter, cancellationQueueMsgs);
 
 		// Build tool result messages (provider-specific format) and push to history
 		const toolResultMsgs = adapter.buildToolResultsMessage({
