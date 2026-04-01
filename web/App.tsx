@@ -224,6 +224,12 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [loadingOlderEvents, setLoadingOlderEvents] = useState(false);
 	const contentPanelRef = useRef<HTMLElement>(null);
 
+	// The currently viewed session = selectedTaskId ?? rootNodeId.
+	// Kept as a ref so callbacks (handleReconnect) don't need to re-create on every selection change.
+	const viewedSessionRef = useRef<string | null>(null);
+	const viewedSessionId = selectedTaskId ?? rootNodeId;
+	viewedSessionRef.current = viewedSessionId;
+
 	const {
 		nodes,
 		refresh: refreshTasks,
@@ -433,8 +439,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	// Pending messages are derived from JSONL events (no separate endpoint).
 	const handleReconnect = useCallback(() => {
 		if (!projectId) return;
-		// Re-fetch events with compact barrier — processEventBatch derives pending state from JSONL events
-		authFetch(api.events(projectId, "after=compact"))
+		const sessionId = viewedSessionRef.current;
+		if (!sessionId) return;
+		// Re-fetch events for the viewed session with compact barrier
+		authFetch(api.taskEvents(projectId, sessionId, "after=compact"))
 			.then((r) => r.json())
 			.then(processEventResponse)
 			.catch((e) =>
@@ -477,25 +485,26 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		if (first) setProjectId(first.id);
 	}, [projects, projectId]);
 
-	// Fetch event history from JSONL EventStore on project change (compact barrier optimization)
+	// Fetch event history for the viewed session (compact barrier optimization).
+	// Re-fires on project change AND task selection change so each session's events are fetched independently.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: processEventResponse is stable (wraps useMemo'd processEventBatch)
 	useEffect(() => {
-		if (!projectId) return;
+		if (!projectId || !viewedSessionId) return;
 		let cancelled = false;
 		setOlderEventsAvailable(new Map());
-		authFetch(api.events(projectId, "after=compact"))
+		authFetch(api.taskEvents(projectId, viewedSessionId, "after=compact"))
 			.then((r) => r.json())
 			.then((data: { events?: IncomingEvent[]; hasOlderEvents?: boolean }) => {
 				if (cancelled) return;
 				processEventResponse(data);
 			})
 			.catch((e) =>
-				console.warn("[App] Failed to fetch events for project:", e),
+				console.warn("[App] Failed to fetch events for session:", e),
 			);
 		return () => {
 			cancelled = true;
 		};
-	}, [projectId]);
+	}, [projectId, viewedSessionId]);
 
 	// ── Hash routing sync ────────────────────────────────────────────────────
 
@@ -752,9 +761,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					hasMore?: boolean;
 				};
 				if (data.events && data.events.length > 0) {
-					// Re-fetch all events to get a complete picture, then re-process.
+					// Re-fetch all events for this session to get a complete picture, then re-process.
 					// Simpler than trying to prepend and re-process.
-					const fullRes = await authFetch(api.events(projectId));
+					const fullRes = await authFetch(api.taskEvents(projectId, sessionId));
 					const fullData = (await fullRes.json()) as {
 						events?: IncomingEvent[];
 					};
