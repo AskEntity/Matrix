@@ -29,20 +29,11 @@ export interface TaskSession {
 	foregroundExecutions: Map<string, { resolve: () => void; command: string }>;
 }
 
-/** A node in the task tree. Each node maps 1:1 to an agent and a git branch. */
-export interface TaskNode {
+/** Shared fields for all task nodes. */
+interface BaseTaskNode {
 	id: string;
-	/**
-	 * Persistent task mode. Default false.
-	 * - `false`: regular task. close = closed.
-	 * - `"reset"`: close resets to pending + deletes session JSONL. Clean start each cycle.
-	 * - `"continue"`: close resets to pending + keeps session JSONL. Resumes with context.
-	 * Both "reset" and "continue" store definition in `.mxd/tasks/<id>.json` (git-tracked).
-	 */
-	persistent: false | "reset" | "continue";
 	title: string;
 	description: string;
-	status: TaskStatus;
 	branch: string | null;
 	parentId: string | null;
 	children: string[];
@@ -65,21 +56,38 @@ export interface TaskNode {
 	session?: TaskSession;
 }
 
+/** Regular task node with full lifecycle. */
+export interface RegularTaskNode extends BaseTaskNode {
+	persistent: false;
+	status: TaskStatus;
+}
+
+/**
+ * Persistent task node. Always in_progress internally.
+ * Definition stored in `.mxd/tasks/<id>.json` (git-tracked).
+ * close_task/reset_task are rejected. done() doesn't change status. Session preserved.
+ */
+export interface PersistentTaskNode extends BaseTaskNode {
+	persistent: true;
+	status: "in_progress";
+}
+
+/** A node in the task tree. Each node maps 1:1 to an agent and a git branch. */
+export type TaskNode = RegularTaskNode | PersistentTaskNode;
+
 /**
  * Serialized form of a persistent task node in tree.json.
  * Title/description are omitted — they live in `.mxd/tasks/<id>.json`.
  */
 export type SerializedPersistentNode = Omit<
-	Omit<TaskNode, "title" | "description" | "session">,
-	"persistent"
-> & { persistent: "reset" | "continue" };
+	PersistentTaskNode,
+	"title" | "description" | "session"
+>;
 
 /**
  * Serialized form of a regular task node in tree.json.
  */
-export type SerializedRegularNode = Omit<TaskNode, "session" | "persistent"> & {
-	persistent: false;
-};
+export type SerializedRegularNode = Omit<RegularTaskNode, "session">;
 
 /** Discriminated union for tree.json serialization. */
 export type SerializedTaskNode =

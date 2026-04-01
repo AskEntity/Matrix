@@ -25,7 +25,7 @@ function makeNode(overrides: Partial<TaskNode> & { id: string }): TaskNode {
 		createdAt: new Date().toISOString(),
 		updatedAt: new Date().toISOString(),
 		...overrides,
-	};
+	} as TaskNode;
 }
 
 describe("slugify", () => {

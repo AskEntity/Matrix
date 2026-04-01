@@ -81,12 +81,15 @@ Phase 1: `message` event persisted → frontend defers. Phase 2: `messages_consu
 
 ## Persistent Tasks
 
-`persistent: false | "reset" | "continue"` on TaskNode.
-- `false`: regular. close = closed.
-- `"reset"`: close → pending + clear session JSONL. Clean start each cycle.
-- `"continue"`: close → pending + keep session JSONL. Resume with context.
+`persistent: boolean` on TaskNode (discriminated union: `RegularTaskNode | PersistentTaskNode`).
+- `false`: regular task. Full lifecycle (pending → in_progress → passed/failed/closed).
+- `true`: persistent task. Always `status: "in_progress"` internally. No lifecycle states.
+  - `close_task` rejected. `reset_task` rejected. `done()` skips status update.
+  - `done()` still fires `task_complete` to parent. Session preserved.
+  - `get_tree` omits status for persistent nodes.
+  - Changeable via `update_task(persistent: true/false)`.
 
-Definition in `.mxd/tasks/<id>.json` (git-tracked): title, description, color, persistent mode. tree.json stores runtime state only. Two quality agents: Test Mutation + Architecture Mutation.
+Definition in `.mxd/tasks/<id>.json` (git-tracked): title, description, color, persistent. tree.json stores runtime state only. Two quality agents: Test Mutation + Architecture Mutation.
 
 ## Default Branch
 
@@ -320,11 +323,11 @@ In-memory `messages[]` (provider format) and JSONL events are two independent da
 
 `save()` strips title/description from tree.json for persistent nodes. On `load(branch, projectPath)`, `mergePersistentTasks` re-reads `.mxd/tasks/*.json` to repopulate them. This is the source-of-truth split: definition file owns content, tree.json owns runtime state.
 
-Note: `persistent` mode itself is NOT updateable via update_task MCP tool or REST — only set at creation time. So the write-back condition only needs to cover title/description/color.
+Note: `persistent` mode IS updateable via update_task MCP tool and REST PATCH. false→true creates def file + sets status to in_progress. true→false deletes def file.
 
 ## Persistent Task Domain Structure
 
-Four top-level persistent continue domains:
+Four top-level persistent domains:
 - **Design Philosophy** 🟣 — ITA, anti-patterns, system prompt (sub-domain)
 - **Task System Design** 🟣 — depth, pinned tasks, meeting mode, partial completion, flow
 - **Agent Loop Lifecycle** 🟠 — launch, provider loop, yield/resume, stop/restart, JSONL repair, image validation, OpenAI provider parity
@@ -340,4 +343,4 @@ Same for CLI: if a new feature adds a CLI flag, that's the feature's scope. CLI 
 
 **NEVER delete a task with children.** `delete_task` cascades — deletes all descendants AND their session JSONL files. This is now enforced in code (returns 400 "Cannot delete task with children"). Always reparent children first.
 
-**To change persistent mode**: cannot update via update_task. Must write `.mxd/tasks/<id>.json` directly or delete+recreate (only for leaf nodes). Draft task exists to make persistent mode updatable via update_task.
+**To change persistent mode**: use `update_task` with `persistent: true/false`. false→true creates `.mxd/tasks/<id>.json` and sets status to in_progress. true→false deletes the def file.

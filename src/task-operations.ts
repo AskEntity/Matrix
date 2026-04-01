@@ -60,7 +60,7 @@ export interface CreateTaskOpts {
 	parentId?: string;
 	draft?: boolean;
 	color?: string;
-	persistent?: false | "reset" | "continue";
+	persistent?: boolean;
 	budgetUsd?: number;
 }
 
@@ -77,7 +77,7 @@ export async function createTaskOp(
 		budgetUsd?: number;
 		draft?: boolean;
 		editedBy: "user" | "agent";
-		persistent?: false | "reset" | "continue";
+		persistent?: boolean;
 	} = { editedBy };
 	if (opts.budgetUsd !== undefined) {
 		createOpts.budgetUsd = opts.budgetUsd;
@@ -119,6 +119,8 @@ export interface UpdateTaskOpts {
 	draft?: boolean;
 	parentId?: string;
 	color?: string | null;
+	/** Change persistent mode. false→true: create .mxd/tasks/<id>.json. true→false: delete it. */
+	persistent?: boolean;
 }
 
 export async function updateTaskOp(
@@ -140,9 +142,7 @@ export async function updateTaskOp(
 	if (updates.status !== undefined) {
 		// Persistent tasks cannot be set to "closed" directly
 		if (updates.status === "closed" && node.persistent) {
-			throw new TaskOperationError(
-				"Cannot set persistent task to closed. Use close_task which resets to pending.",
-			);
+			throw new TaskOperationError("Cannot close persistent task.");
 		}
 		tracker.updateStatus(nodeId, updates.status, editedBy);
 	}
@@ -161,6 +161,26 @@ export async function updateTaskOp(
 			updates.color ? resolveColor(updates.color) : null,
 			editedBy,
 		);
+	}
+
+	// Handle persistent mode change
+	if (updates.persistent !== undefined) {
+		const currentNode = tracker.get(nodeId);
+		if (currentNode) {
+			const wasPersistent = currentNode.persistent;
+			if (updates.persistent && !wasPersistent) {
+				// false → true: make persistent, create .mxd/tasks/<id>.json
+				(currentNode as { persistent: boolean }).persistent = true;
+				currentNode.status = "in_progress";
+				currentNode.updatedAt = new Date().toISOString();
+				tracker.savePersistentDef(nodeId, callbacks.projectPath);
+			} else if (!updates.persistent && wasPersistent) {
+				// true → false: make regular, delete .mxd/tasks/<id>.json
+				(currentNode as { persistent: boolean }).persistent = false;
+				currentNode.updatedAt = new Date().toISOString();
+				tracker.deletePersistentDef(nodeId, callbacks.projectPath);
+			}
+		}
 	}
 
 	// Write persistent json if title/description/color changed
@@ -236,8 +256,6 @@ export async function deleteTaskOp(
 export interface CloseTaskResult {
 	taskId: string;
 	title: string;
-	persistent?: "reset" | "continue";
-	resetTo?: "pending";
 }
 
 export async function closeTaskOp(
@@ -251,6 +269,10 @@ export async function closeTaskOp(
 ): Promise<CloseTaskResult> {
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
+
+	if (node.persistent) {
+		throw new TaskOperationError("Cannot close persistent task");
+	}
 
 	if (node.status === "in_progress") {
 		throw new TaskOperationError(
@@ -270,30 +292,15 @@ export async function closeTaskOp(
 		node.updatedAt = new Date().toISOString();
 	}
 
-	// Persistent tasks reset to pending on close; regular tasks go to closed.
-	if (node.persistent) {
-		// "reset" mode: clear session JSONL for a clean start each cycle
-		if (node.persistent === "reset") {
-			callbacks.clearEventStore(node.id);
-		}
-		// "continue" mode: keep session JSONL for resuming with context
-		tracker.updateStatus(node.id, "pending");
-	} else {
-		tracker.updateStatus(node.id, "closed");
-	}
+	tracker.updateStatus(node.id, "closed");
 
 	await tracker.save();
 	callbacks.broadcastTree();
 
-	const result: CloseTaskResult = {
+	return {
 		taskId: node.id,
 		title: node.title,
 	};
-	if (node.persistent) {
-		result.persistent = node.persistent;
-		result.resetTo = "pending";
-	}
-	return result;
 }
 
 // ── resetTask ──
@@ -309,6 +316,10 @@ export async function resetTaskOp(
 ): Promise<{ taskId: string; title: string }> {
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
+
+	if (node.persistent) {
+		throw new TaskOperationError("Cannot reset persistent task");
+	}
 
 	// Close running agent if active
 	if (node.session?.queue) {

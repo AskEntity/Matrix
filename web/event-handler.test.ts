@@ -1124,7 +1124,7 @@ describe("event-handler live session clearing", () => {
 					worktreePath: null,
 					session: undefined,
 					color: undefined,
-					persistent: "reset",
+					persistent: false,
 				},
 				{
 					id: "other-task",

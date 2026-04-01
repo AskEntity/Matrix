@@ -3,6 +3,7 @@ import {
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	unlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -15,8 +16,8 @@ export interface PersistentTaskDef {
 	title: string;
 	description: string;
 	color?: string;
-	/** Persistent mode: "reset" (default) or "continue". */
-	persistent?: "reset" | "continue";
+	/** Persistent flag. true = persistent task. */
+	persistent?: boolean | "reset" | "continue";
 }
 
 /**
@@ -39,19 +40,29 @@ export class TaskTracker {
 			const raw = await readFile(this.treePath, "utf-8");
 			const data = JSON.parse(raw) as {
 				rootNodeId: string;
-				nodes: TaskNode[];
+				// Raw nodes from disk may have old persistent format
+				nodes: Array<
+					Omit<TaskNode, "persistent"> & {
+						persistent?: boolean | "reset" | "continue" | null;
+					}
+				>;
 			};
 			for (const node of data.nodes) {
 				// Backfill defaults for fields that became required
 				node.costUsd ??= 0;
 				node.editedBy ??= "agent";
-				// Migrate: undefined → false, true → "reset"
-				if (node.persistent === undefined || node.persistent === null) {
-					node.persistent = false;
-				} else if ((node.persistent as unknown) === true) {
-					node.persistent = "reset";
+				// Migrate: undefined/null → false, "reset"/"continue" → true
+				const p = node.persistent;
+				if (p === undefined || p === null || p === false) {
+					(node as unknown as TaskNode).persistent = false;
+				} else if (p === "reset" || p === "continue" || p === true) {
+					(node as unknown as TaskNode).persistent = true;
+					// Persistent tasks always have status "in_progress" internally
+					node.status = "in_progress";
+				} else {
+					(node as unknown as TaskNode).persistent = false;
 				}
-				this.nodes.set(node.id, node);
+				this.nodes.set(node.id, node as unknown as TaskNode);
 			}
 			this._rootNodeId = data.rootNodeId;
 			// Backfill root node branch for old projects
@@ -100,7 +111,7 @@ export class TaskTracker {
 		const def: PersistentTaskDef = {
 			title: node.title,
 			description: node.description,
-			persistent: node.persistent as "reset" | "continue",
+			persistent: true,
 		};
 		if (node.color) def.color = node.color;
 		const defPath = join(tasksDir, `${nodeId}.json`);
@@ -114,6 +125,32 @@ export class TaskTracker {
 		if (addProc.exitCode === 0) {
 			Bun.spawnSync(
 				["git", "commit", "-m", `Update persistent task: ${node.title}`],
+				{ cwd: projectPath, stdout: "pipe", stderr: "pipe" },
+			);
+		}
+	}
+
+	/** Delete a persistent task's .mxd/tasks/<id>.json and auto-commit.
+	 *  No-op if the file doesn't exist. */
+	deletePersistentDef(nodeId: string, projectPath: string): void {
+		const defPath = join(projectPath, ".mxd", "tasks", `${nodeId}.json`);
+		if (!existsSync(defPath)) return;
+
+		unlinkSync(defPath);
+		const addProc = Bun.spawnSync(["git", "add", defPath], {
+			cwd: projectPath,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		if (addProc.exitCode === 0) {
+			const node = this.nodes.get(nodeId);
+			Bun.spawnSync(
+				[
+					"git",
+					"commit",
+					"-m",
+					`Remove persistent task: ${node?.title ?? nodeId}`,
+				],
 				{ cwd: projectPath, stdout: "pipe", stderr: "pipe" },
 			);
 		}
@@ -139,7 +176,7 @@ export class TaskTracker {
 			budgetUsd?: number;
 			draft?: boolean;
 			editedBy?: "user" | "agent";
-			persistent?: false | "reset" | "continue";
+			persistent?: boolean;
 			id?: string;
 		},
 	): TaskNode {
@@ -155,7 +192,7 @@ export class TaskTracker {
 			budgetUsd?: number;
 			draft?: boolean;
 			editedBy?: "user" | "agent";
-			persistent?: false | "reset" | "continue";
+			persistent?: boolean;
 			id?: string;
 		},
 	): TaskNode {
@@ -414,21 +451,22 @@ export class TaskTracker {
 
 			const existing = this.nodes.get(id);
 			if (existing) {
-				// Refresh title/description/persistent mode from the definition file
+				// Refresh title/description from the definition file
 				existing.title = def.title;
 				existing.description = def.description;
 				if (def.color !== undefined) existing.color = def.color;
-				if (def.persistent) existing.persistent = def.persistent;
+				// Ensure persistent flag and status are correct
+				(existing as { persistent: boolean }).persistent = true;
+				existing.status = "in_progress";
 			} else {
-				// New persistent task — create a pending node under root
-				// Use mode from def file, default to "reset" for backward compat
+				// New persistent task — always in_progress internally
 				const now = new Date().toISOString();
 				const node: TaskNode = {
 					id,
-					persistent: def.persistent ?? "reset",
+					persistent: true,
 					title: def.title,
 					description: def.description,
-					status: "pending",
+					status: "in_progress",
 					branch: null,
 					parentId: this._rootNodeId,
 					children: [],
@@ -457,27 +495,34 @@ export class TaskTracker {
 			budgetUsd?: number;
 			draft?: boolean;
 			editedBy?: "user" | "agent";
-			persistent?: false | "reset" | "continue";
+			persistent?: boolean;
 			id?: string;
 		},
 	): TaskNode {
 		const now = new Date().toISOString();
-		const node: TaskNode = {
+		const isPersistent = opts?.persistent === true;
+		const status = isPersistent
+			? "in_progress"
+			: opts?.draft
+				? "draft"
+				: "pending";
+		const base = {
 			id: opts?.id ?? ulid(),
-			persistent: opts?.persistent ?? false,
 			title,
 			description,
-			status: opts?.draft ? "draft" : "pending",
-			branch: null,
+			branch: null as string | null,
 			parentId,
-			children: [],
-			worktreePath: null,
+			children: [] as string[],
+			worktreePath: null as string | null,
 			costUsd: 0,
-			editedBy: opts?.editedBy ?? "agent",
+			editedBy: (opts?.editedBy ?? "agent") as "user" | "agent",
 			...(opts?.budgetUsd !== undefined ? { budgetUsd: opts.budgetUsd } : {}),
 			createdAt: now,
 			updatedAt: now,
 		};
+		const node: TaskNode = isPersistent
+			? { ...base, persistent: true, status: "in_progress" }
+			: { ...base, persistent: false, status };
 		this.nodes.set(node.id, node);
 		return node;
 	}
