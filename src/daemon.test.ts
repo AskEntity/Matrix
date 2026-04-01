@@ -1724,6 +1724,188 @@ describe("GET /projects/:id/tasks/:nodeId/events", () => {
 	});
 });
 
+describe("streaming text injection in batch events", () => {
+	let tempDir: string;
+	let dataDir: string;
+	let app: ReturnType<typeof createApp>["app"];
+	let ctx: ReturnType<typeof createApp>["ctx"];
+	let projectId: string;
+	let taskId: string;
+	let rootNodeId: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-stream-"));
+		dataDir = await mkdtemp(join(tmpdir(), "mxd-streamd-"));
+		const result = createApp({ dataDir, agentProvider: mockProvider });
+		app = result.app;
+		ctx = result.ctx;
+		await result.pm.load();
+
+		const projRes = await app.request("/projects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ path: tempDir }),
+		});
+		const project = (await projRes.json()) as Project;
+		projectId = project.id;
+		const tasksRes = await app.request(`/projects/${projectId}/tasks`);
+		rootNodeId = ((await tasksRes.json()) as { rootNodeId: string }).rootNodeId;
+
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Test Task",
+				description: "",
+				parentId: rootNodeId,
+			}),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+		taskId = task.id;
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+		await rm(dataDir, { recursive: true });
+	});
+
+	test("streaming in progress → GET task events → partial text at end", async () => {
+		// Write some JSONL events first
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const events: Event[] = [
+			{
+				type: "assistant_text",
+				content: "previous response",
+				taskId: taskId,
+				ts: 1000,
+			},
+		];
+		await eventStore.appendBatch(taskId, events);
+
+		// Simulate active streaming by setting streamingText directly
+		ctx.streamingText.set(taskId, "Hello, I am currently strea");
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/events`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		// Should have the persisted event + the synthetic partial
+		expect(body.events.length).toBe(2);
+		expect(body.events[0]?.type).toBe("assistant_text");
+		expect(body.events[0]?.content).toBe("previous response");
+		expect(body.events[1]?.type).toBe("assistant_text");
+		expect(body.events[1]?.content).toBe("Hello, I am currently strea");
+		expect(body.events[1]?.partial).toBe(true);
+	});
+
+	test("streaming in progress → GET task events with ?after=compact → partial text at end", async () => {
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const events: Event[] = [
+			{
+				type: "compact_marker",
+				checkpoint: "cp",
+				savedTokens: 3000,
+				taskId: taskId,
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "post-compact text",
+				taskId: taskId,
+				ts: 2000,
+			},
+		];
+		await eventStore.appendBatch(taskId, events);
+
+		ctx.streamingText.set(taskId, "partial streaming content");
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/events?after=compact`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		// compact_marker + assistant_text + synthetic partial
+		expect(body.events.length).toBe(3);
+		expect(body.events[2]?.type).toBe("assistant_text");
+		expect(body.events[2]?.content).toBe("partial streaming content");
+		expect(body.events[2]?.partial).toBe(true);
+	});
+
+	test("streaming complete → GET task events → no synthetic text", async () => {
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const events: Event[] = [
+			{
+				type: "assistant_text",
+				content: "final response",
+				taskId: taskId,
+				ts: 1000,
+			},
+		];
+		await eventStore.appendBatch(taskId, events);
+
+		// No streaming text set — response completed
+
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/events`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		expect(body.events.length).toBe(1);
+		expect(body.events[0]?.type).toBe("assistant_text");
+		expect(body.events[0]?.content).toBe("final response");
+		expect(body.events[0]?.partial).toBeUndefined();
+	});
+
+	test("no streaming → GET task events → no partial text", async () => {
+		// No events, no streaming text
+		const res = await app.request(
+			`/projects/${projectId}/tasks/${taskId}/events`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		expect(body.events.length).toBe(0);
+	});
+
+	test("streaming text in project-level events endpoint", async () => {
+		const eventStore = new EventStore(join(dataDir, "sessions", projectId));
+		const events: Event[] = [
+			{
+				type: "assistant_text",
+				content: "existing",
+				taskId: taskId,
+				ts: 1000,
+			},
+		];
+		await eventStore.appendBatch(taskId, events);
+
+		ctx.streamingText.set(taskId, "partial from project");
+
+		const res = await app.request(`/projects/${projectId}/events`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			events: Record<string, unknown>[];
+			hasOlderEvents: boolean;
+		};
+		// Should contain persisted event + synthetic partial
+		const partials = body.events.filter((e) => e.partial === true);
+		expect(partials.length).toBe(1);
+		expect(partials[0]?.content).toBe("partial from project");
+	});
+});
+
 describe("POST /projects/:id/tasks/:nodeId/message", () => {
 	let tempDir: string;
 	let dataDir: string;

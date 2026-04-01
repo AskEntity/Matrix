@@ -48,6 +48,13 @@ export interface DaemonContext {
 	readonly pendingClarifications: Map<string, PendingClarification[]>;
 	readonly eventStores: Map<string, EventStore>;
 
+	/**
+	 * Accumulated streaming text per session (nodeId → partial text).
+	 * Updated on each text_delta, cleared when assistant_text is emitted (response complete).
+	 * Used to inject partial assistant_text into batch events API responses.
+	 */
+	readonly streamingText: Map<string, string>;
+
 	/** Mutable counters/flags */
 	requestCount: number;
 	startupReady: boolean;

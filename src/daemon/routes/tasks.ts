@@ -506,13 +506,28 @@ export function registerTaskRoutes(
 		const eventStore = getEventStore(ctx, project.id);
 		const afterCompact = c.req.query("after") === "compact";
 
+		// Helper: append synthetic partial assistant_text if actively streaming
+		const appendPartialText = (events: Record<string, unknown>[]) => {
+			const partialText = ctx.streamingText.get(nodeId);
+			if (partialText) {
+				events.push({
+					type: "assistant_text",
+					content: partialText,
+					taskId: nodeId,
+					ts: Date.now(),
+					partial: true,
+				});
+			}
+			return events;
+		};
+
 		if (afterCompact) {
 			const result = eventStore.readFromLastCompactMarker(nodeId);
 			const events = result.events.map((e) =>
 				stripEventForUI(e as unknown as Record<string, unknown>),
 			);
 			return c.json({
-				events,
+				events: appendPartialText(events),
 				hasOlderEvents: result.hasOlderEvents,
 			});
 		}
@@ -520,7 +535,7 @@ export function registerTaskRoutes(
 		const events = eventStore
 			.read(nodeId)
 			.map((e) => stripEventForUI(e as unknown as Record<string, unknown>));
-		return c.json({ events, hasOlderEvents: false });
+		return c.json({ events: appendPartialText(events), hasOlderEvents: false });
 	});
 
 	// THE single message endpoint for all tasks — root and child, one code path.
