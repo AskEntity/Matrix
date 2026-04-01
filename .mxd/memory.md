@@ -271,3 +271,13 @@ In-memory `messages[]` (provider format) and JSONL events are two independent da
 - bg orphan detection (findOrphanedBackgroundProcesses) still runs in runAgentForNode after repair
 - autoResumeProjects only classifies and launches — no JSONL repair
 - Key design: orphan-only strategy does NOT inject status message (would interfere with mock turn sequence and resume messages from autoResumeProjects). Only duplicate strategy injects status message.
+
+
+## Provider-Level Image Validation
+
+- `validateImage?` on `ProviderAdapter` — each provider checks decoded byte size via `Buffer.from(base64, "base64").byteLength`.
+- Anthropic limit: 5MB decoded (5_242_880 bytes). OpenAI limit: 20MB decoded (20_971_520 bytes).
+- Three filter functions in provider-shared.ts: `filterExecResultImages`, `filterQueueMessageImages`, `filterEventImages`.
+- Called at 4 points in `runProviderLoop`: (1) before `buildToolResultsMessage`, (2) before yield resume `buildToolResultsMessage`, (3) before implicit yield `buildImplicitYieldMessage`, (4) on `activeEvents` before `convertEventsToMessages` (resume).
+- Rejected images replaced with error text including resize instructions. Image fields cleared on ToolResult; images removed from QueueMessage/Event arrays.
+- Important: validate decoded byte size, NOT base64 string length. Base64 inflates ~33%, so string length check gives wrong results.
