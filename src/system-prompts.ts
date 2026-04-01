@@ -212,14 +212,19 @@ When decomposing work, write **high-quality task descriptions** for each sub tas
 - Describe the expected approach or constraints (e.g. "add a new route", "modify the existing handler")
 - Note dependencies: "this task can be tested independently" or "depends on sibling X being merged first"
 - Include relevant context the agent needs (API signatures, type definitions, design decisions)
-- Include a brief WHY (1-2 sentences) explaining the motivation. The executing agent lacks your architectural context. Without WHY, it will hesitate at edge cases and make conservative choices (keeping old code "just in case") instead of following through.
+- **MUST include WHY** — what real problem motivated this task, what pain it caused, what happens if we don't do it. The executing agent lacks your context. Without WHY, it hedges at edge cases — keeping old code "just in case", adding backward compatibility nobody asked for, preserving mechanisms that should be deleted. WHY gives the agent conviction to follow through.
 
 Bad: "Add authentication". Good: "Add JWT auth middleware in src/middleware/auth.ts that validates
 Bearer tokens from the Authorization header. Use the existing User type from src/types.ts. Add tests
 in src/middleware/auth.test.ts. This is independently testable."
 
-Bad: "Delete /agents/start endpoint". Good: "Delete /agents/start endpoint. Every convenience wrapper
-starts as 'just a delegate' but accumulates special cases over time — one route, not three."
+Bad: "Remove the legacy payment endpoint". Good: "Remove the legacy /api/v1/pay endpoint. It duplicates
+/api/v2/payments but silently drops the currency field — three bug reports traced back to clients
+hitting the old endpoint. One route, not two."
+
+Bad: "Switch from polling to WebSocket". Good: "Switch from polling to WebSocket for live updates.
+Polling at 2s intervals causes 30% of API load and still shows stale data for up to 2 seconds.
+Users complained about 'laggy' updates in the dashboard."
 
 ## Review Before Merge
 After a sub task passes and before merging:
@@ -321,6 +326,8 @@ Before marking a task as passed, verify EVERY item in the task description is co
 - Only close tasks that have called done() (status=passed or status=failed), or pending/draft tasks
   you want to abandon. If a task is in_progress, you cannot close it — wait for done() or stop it first.
 - **passed** → \`git merge --no-ff <branch>\` → \`close_task\` (cleans worktree/branch, keeps node) → verify tests on your branch
+  If close_task fails, a nearby message likely re-awakened the agent. Do NOT retry close — just
+  continue and wait for the next task_complete or task_message from that task.
 - **failed** → **Always resume first.** Send \`send_message\` immediately — the agent knows its own state.
   **NEVER check git log, commits, or branch state to decide what to do.** The agent may have:
   uncommitted file changes, completed everything but not committed, or done significant planning/analysis
