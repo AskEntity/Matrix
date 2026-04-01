@@ -57,6 +57,9 @@ type UpdateOp =
 export interface EventHandlerDeps {
 	updateFromWS: (nodes: TaskNode[]) => void;
 	setRootNodeId: React.Dispatch<React.SetStateAction<string | null>>;
+	setOlderEventsAvailable?: React.Dispatch<
+		React.SetStateAction<Map<string, { hasOlder: boolean; oldestTs: number }>>
+	>;
 	setActiveAgents: React.Dispatch<React.SetStateAction<Set<string>>>;
 	/** Re-check actual agent status from backend (GET /projects/:id/agent). */
 	checkAgentStatus: () => void;
@@ -114,6 +117,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 	const {
 		updateFromWS,
 		setRootNodeId,
+		setOlderEventsAvailable,
 		setActiveAgents,
 		checkAgentStatus,
 		setAgentProvider,
@@ -357,6 +361,32 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		setPendingMessages(pending);
 	}
 
+	function clearSessionState(clearedSessionIds: Set<string>): void {
+		if (clearedSessionIds.size === 0) return;
+
+		for (const [id, msg] of deferredMessages) {
+			if (msg.taskId && clearedSessionIds.has(msg.taskId)) {
+				deferredMessages.delete(id);
+			}
+		}
+		syncPendingBanner();
+
+		setLogs((prev) =>
+			prev.filter((entry) => {
+				const taskId = getLogTaskId(entry);
+				return !taskId || !clearedSessionIds.has(taskId);
+			}),
+		);
+
+		setOlderEventsAvailable?.((prev) => {
+			const next = new Map(prev);
+			for (const sessionId of clearedSessionIds) {
+				next.delete(sessionId);
+			}
+			return next;
+		});
+	}
+
 	/**
 	 * Single event → entries, in-place updates, and side effects.
 	 * THE unified event processor — used by both live SSE and batch processing.
@@ -371,6 +401,13 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					sideEffects: () => {
 						updateFromWS(msg.nodes);
 						if (msg.rootNodeId) setRootNodeId(msg.rootNodeId);
+
+						const clearedSessionIds = new Set(
+							msg.nodes
+								.filter((node) => node.status === "pending" && !node.session)
+								.map((node) => node.id),
+						);
+						clearSessionState(clearedSessionIds);
 					},
 				};
 

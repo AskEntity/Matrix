@@ -368,6 +368,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			createEventHandler({
 				updateFromWS,
 				setRootNodeId,
+				setOlderEventsAvailable,
 				setActiveAgents,
 				checkAgentStatus: checkStatus,
 				setAgentProvider,

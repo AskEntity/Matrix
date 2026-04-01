@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test";
 import type React from "react";
 import { createEventHandler, type EventHandlerDeps } from "./event-handler.ts";
-import type { IncomingEvent, LogEntry } from "./hooks.ts";
+import type { IncomingEvent, LogEntry, TaskNode } from "./hooks.ts";
 
 /** Minimal deps that satisfy the EventHandlerDeps interface */
 function makeDeps() {
@@ -1005,6 +1005,150 @@ describe("event-handler tool_pair creation", () => {
 			expect(capturedLogs[1].tool).toBe("mcp__mxd__read_file");
 			expect(capturedLogs[1].resultContent).toBe("content of b");
 		}
+	});
+});
+
+describe("event-handler live session clearing", () => {
+	it("handleEvent: tree_updated removes cleared task session records from logs, pending messages, and older-history state", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		let capturedPending: Array<{
+			id: string;
+			text: string;
+			taskId: string | null;
+			timestamp: number;
+		}> = [];
+		(deps as Record<string, unknown>).setPendingMessages = mock(
+			(
+				updater: React.SetStateAction<
+					Array<{
+						id: string;
+						text: string;
+						taskId: string | null;
+						timestamp: number;
+					}>
+				>,
+			) => {
+				capturedPending =
+					typeof updater === "function" ? updater(capturedPending) : updater;
+			},
+		);
+
+		let olderEvents = new Map<
+			string,
+			{ hasOlder: boolean; oldestTs: number }
+		>();
+		(deps as Record<string, unknown>).setOlderEventsAvailable = mock(
+			(
+				updater: React.SetStateAction<
+					Map<string, { hasOlder: boolean; oldestTs: number }>
+				>,
+			) => {
+				olderEvents =
+					typeof updater === "function" ? updater(olderEvents) : updater;
+			},
+		);
+
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		handleEvent({
+			type: "assistant_text",
+			content: "stale task output",
+			taskId: "task-reset",
+			ts: 1000,
+		} satisfies IncomingEvent);
+		handleEvent({
+			type: "message",
+			id: "pending-reset-msg",
+			body: {
+				source: "user",
+				id: "queue-msg",
+				ts: 0,
+				content: "pending task message",
+			},
+			taskId: "task-reset",
+			ts: 1100,
+		} satisfies IncomingEvent);
+		olderEvents = new Map([
+			["task-reset", { hasOlder: true, oldestTs: 900 }],
+			["other-task", { hasOlder: true, oldestTs: 800 }],
+		]);
+
+		handleEvent({
+			type: "tree_updated",
+			nodes: [
+				{
+					id: "root",
+					title: "Orchestrator",
+					description: "",
+					status: "in_progress",
+					parentId: null,
+					children: ["task-reset", "other-task"],
+					createdAt: "2026-04-01T00:00:00.000Z",
+					updatedAt: "2026-04-01T00:00:00.000Z",
+					costUsd: 0,
+					editedBy: "agent",
+					branch: null,
+					worktreePath: null,
+					session: undefined,
+					color: undefined,
+					persistent: false,
+				},
+				{
+					id: "task-reset",
+					title: "Reset task",
+					description: "",
+					status: "pending",
+					parentId: "root",
+					children: [],
+					createdAt: "2026-04-01T00:00:00.000Z",
+					updatedAt: "2026-04-01T00:00:00.000Z",
+					costUsd: 0,
+					editedBy: "agent",
+					branch: null,
+					worktreePath: null,
+					session: undefined,
+					color: undefined,
+					persistent: "reset",
+				},
+				{
+					id: "other-task",
+					title: "Other task",
+					description: "",
+					status: "in_progress",
+					parentId: "root",
+					children: [],
+					createdAt: "2026-04-01T00:00:00.000Z",
+					updatedAt: "2026-04-01T00:00:00.000Z",
+					costUsd: 0,
+					editedBy: "agent",
+					branch: null,
+					worktreePath: null,
+					session: {} as TaskNode["session"],
+					color: undefined,
+					persistent: false,
+				},
+			],
+			rootNodeId: "root",
+		} satisfies IncomingEvent);
+
+		expect(capturedLogs.some((entry) => entry.taskId === "task-reset")).toBe(
+			false,
+		);
+		expect(capturedPending.some((entry) => entry.taskId === "task-reset")).toBe(
+			false,
+		);
+		expect(olderEvents.has("task-reset")).toBe(false);
+		expect(olderEvents.has("other-task")).toBe(true);
 	});
 });
 
