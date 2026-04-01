@@ -438,6 +438,25 @@ export function hasPendingYield(events: Event[]): boolean {
 }
 
 /**
+ * Check if the session ended in implicit yield (end_turn — model stopped without tool calls).
+ * This happens when the daemon crashes while the agent is in handleImplicitYield,
+ * waiting for messages after an end_turn response.
+ *
+ * Detection: the last provider content event (assistant_text, tool_call, tool_result)
+ * is assistant_text, and no tool_call follows it. This means the model ended its turn
+ * naturally and the agent was waiting for new messages when it died.
+ */
+export function hasPendingImplicitYield(events: Event[]): boolean {
+	// Walk backwards to find the last provider content event
+	for (let i = events.length - 1; i >= 0; i--) {
+		const e = events[i] as Event;
+		if (e.type === "assistant_text") return true;
+		if (e.type === "tool_call" || e.type === "tool_result") return false;
+	}
+	return false;
+}
+
+/**
  * Find background processes that were started but never completed.
  * A background process is "orphaned" if a tool_result has a `backgroundId`
  * but no `message` event with `source: "background_complete"` and matching

@@ -21,7 +21,11 @@ import {
 	getCompactionThresholds,
 	processCompaction,
 } from "./compaction.ts";
-import { type Event, queueMessageToEvent } from "./events.ts";
+import {
+	type Event,
+	hasPendingImplicitYield,
+	queueMessageToEvent,
+} from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import {
 	drainQueueAtCancellationPoint,
@@ -631,6 +635,11 @@ export async function* runProviderLoop(
 	// the agent was in yield state when the daemon restarted. We restore this at loop level
 	// instead of writing a synthetic orphan result — yield is a loop-level pause, not a JS await.
 	let pendingYieldToolCall: { id: string; name: string } | null = null;
+	// Detect pending implicit yield from JSONL: last provider content event is assistant_text
+	// (no tool_call after it). The model ended its turn naturally (end_turn) and the agent
+	// was in handleImplicitYield waiting for messages when it died. On resume, bypass to
+	// handleImplicitYield → block on queue → buildImplicitYieldMessage → API call.
+	let pendingImplicitYieldResume = false;
 	if (isResume) {
 		const lastToolCall = [...activeEvents]
 			.reverse()
@@ -650,53 +659,83 @@ export async function* runProviderLoop(
 				};
 			}
 		}
+
+		// Check for implicit yield: last provider content event is assistant_text
+		if (!pendingYieldToolCall) {
+			pendingImplicitYieldResume = hasPendingImplicitYield(activeEvents);
+		}
 	}
 
-	// Drain the queue for messages — both fresh start and resume.
-	// Fresh start: first message has header with working dir + pre-loaded memory.
-	// Resume: message has header with fresh context (re-read memory from disk).
-	// Header is ALWAYS how context gets into the conversation — no special codepaths.
-	// Skip initial drain if resuming into yield — messages will be consumed by the yield handler.
-	if (queue && !pendingYieldToolCall) {
-		// Wait for at least one message in the queue
-		const firstMsg = await queue.wait();
-		const rest = queue.drain();
-		const allMsgs = [firstMsg, ...rest];
+	// Initial drain behavior depends on resume state:
+	//
+	// 1. Yield (explicit/implicit) — skip entirely. Messages consumed by yield handler.
+	// 2. Interrupted resume (messages end with user content from repair) — non-blocking drain.
+	//    Don't wait for messages, but pick up any unconsumed messages already in the queue
+	//    (e.g., messages persisted to JSONL before crash, recovered by findUnconsumedMessages).
+	// 3. Fresh start or resume without user-ending messages — blocking wait for first message.
+	//
+	const isYieldResume =
+		pendingYieldToolCall != null || pendingImplicitYieldResume;
+	const isInterruptedResume =
+		!isYieldResume &&
+		isResume &&
+		messages.length > 0 &&
+		(messages[messages.length - 1] as { role?: string })?.role === "user";
 
-		// Build user content from the queue message(s).
-		// All messages go through formatQueueMessage for consistent formatting
-		// (includes [HH:MM:SS] prefix) between live path and JSONL reconstruction.
-		const firstUserContent = allMsgs.map(formatQueueMessage).join("\n\n");
+	if (queue && !isYieldResume) {
+		let allMsgs: QueueMessage[];
 
-		// On resume from a crash during tool execution, the last reconstructed message
-		// may be a user message (tool_result). Appending another user message would
-		// violate the Anthropic API's strict role alternation. Instead, combine queue
-		// content into the existing last user message as additional text blocks.
-		const lastMsg = messages[messages.length - 1] as
-			| { role: string; content: unknown }
-			| undefined;
-		if (lastMsg && lastMsg.role === "user" && Array.isArray(lastMsg.content)) {
-			// Last message is a user message with content blocks (e.g., tool_results).
-			// Append queue text as additional text blocks.
-			(lastMsg.content as unknown[]).push({
-				type: "text",
-				text: firstUserContent,
-			});
-		} else if (
-			lastMsg &&
-			lastMsg.role === "user" &&
-			typeof lastMsg.content === "string"
-		) {
-			// Last message is a plain string user message — combine as string.
-			lastMsg.content = `${lastMsg.content}\n\n${firstUserContent}`;
+		if (isInterruptedResume) {
+			// Non-blocking drain: pick up any messages already in the queue
+			// (recovered from JSONL by findUnconsumedMessages). Don't wait.
+			allMsgs = queue.drain();
 		} else {
-			// Normal case: no prior user message, push new one.
-			messages.push({ role: "user" as const, content: firstUserContent });
+			// Blocking wait: fresh start needs first message (with header).
+			const firstMsg = await queue.wait();
+			const rest = queue.drain();
+			allMsgs = [firstMsg, ...rest];
 		}
 
-		// Record queue events for the consumed messages
-		if (emit) {
-			recordQueueEvents(emit, allMsgs);
+		if (allMsgs.length > 0) {
+			// Build user content from the queue message(s).
+			// All messages go through formatQueueMessage for consistent formatting
+			// (includes [HH:MM:SS] prefix) between live path and JSONL reconstruction.
+			const firstUserContent = allMsgs.map(formatQueueMessage).join("\n\n");
+
+			// On resume from a crash during tool execution, the last reconstructed message
+			// may be a user message (tool_result). Appending another user message would
+			// violate the Anthropic API's strict role alternation. Instead, combine queue
+			// content into the existing last user message as additional text blocks.
+			const lastMsg = messages[messages.length - 1] as
+				| { role: string; content: unknown }
+				| undefined;
+			if (
+				lastMsg &&
+				lastMsg.role === "user" &&
+				Array.isArray(lastMsg.content)
+			) {
+				// Last message is a user message with content blocks (e.g., tool_results).
+				// Append queue text as additional text blocks.
+				(lastMsg.content as unknown[]).push({
+					type: "text",
+					text: firstUserContent,
+				});
+			} else if (
+				lastMsg &&
+				lastMsg.role === "user" &&
+				typeof lastMsg.content === "string"
+			) {
+				// Last message is a plain string user message — combine as string.
+				lastMsg.content = `${lastMsg.content}\n\n${firstUserContent}`;
+			} else {
+				// Normal case: no prior user message, push new one.
+				messages.push({ role: "user" as const, content: firstUserContent });
+			}
+
+			// Record queue events for the consumed messages
+			if (emit) {
+				recordQueueEvents(emit, allMsgs);
+			}
 		}
 	}
 
@@ -739,6 +778,67 @@ export async function* runProviderLoop(
 	}
 
 	while (true) {
+		// ── Handle pending implicit yield resume (end_turn on JSONL) ──
+		// The model ended its turn naturally before daemon crash. On resume, bypass to
+		// handleImplicitYield → block on queue → buildImplicitYieldMessage → API call.
+		// No tool_result to write (no tool_call to pair with).
+		if (pendingImplicitYieldResume && queue) {
+			pendingImplicitYieldResume = false;
+
+			const yieldResult = await handleImplicitYield(queue, emit);
+
+			if (yieldResult === null) {
+				// Queue closed — exit (stop/reset during implicit yield = interrupted)
+				const cost = adapter.computeCost(
+					model,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				);
+				const exitReason = doneExitReason ?? "interrupted";
+				const buildResult = adapter.buildResult ?? defaultBuildResult;
+				return buildResult({
+					exitReason,
+					output: lastText,
+					costUsd: cost,
+					turns,
+					sessionId,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				});
+			}
+
+			if (yieldResult.manualCompactRequested) {
+				manualCompactRequested = true;
+			}
+			if (yieldResult.compactOnly) {
+				// No tool_result to write — this is implicit yield (no tool_call to pair)
+				continue;
+			}
+
+			// Filter oversized images from queue messages
+			filterQueueMessageImages(adapter, yieldResult.nonCompact);
+
+			// Build user message from queue content and push to conversation
+			const endTurnFormatted = formatQueueMessagesWithHeaders(
+				yieldResult.nonCompact,
+			);
+			const implicitYieldMsg = adapter.buildImplicitYieldMessage(
+				endTurnFormatted,
+				yieldResult.nonCompact,
+			);
+			messages.push(implicitYieldMsg);
+
+			// Emit queue events and messages_consumed
+			if (emit) {
+				recordQueueEvents(emit, yieldResult.nonCompact);
+			}
+			continue;
+		}
+
 		// ── Handle pending yield (loop-level pause) ──
 		// This fires when: (a) resuming from JSONL where last event was yield tool_call,
 		// or (b) yield was detected in tool execution and deferred to loop level.
