@@ -1782,7 +1782,28 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 		).toThrow("Queue closed");
 	});
 
-	test("DELETE /tasks/:id closes sessions for all descendants", async () => {
+	test("DELETE /tasks/:id rejects when task has children", async () => {
+		const { app, pm, markReady } = createApp({
+			dataDir,
+			agentProvider: createInstantProvider(),
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+		const parent = await createTask(app, project.id, "Parent");
+		await createTask(app, project.id, "Child", { parentId: parent.id });
+
+		const res = await app.request(
+			`/projects/${project.id}/tasks/${parent.id}`,
+			{ method: "DELETE" },
+		);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("Cannot delete task with children");
+	});
+
+	test("DELETE /tasks/:id closes session on leaf task", async () => {
 		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,
 			agentProvider: createInstantProvider(),
@@ -1791,36 +1812,19 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 		markReady();
 
 		const project = await createProject(app, projectDir);
-		const parent = await createTask(app, project.id, "Parent to delete");
-		const child = await createTask(app, project.id, "Child of parent", {
-			parentId: parent.id,
-		});
+		const task = await createTask(app, project.id, "Leaf task");
 
-		// Attach sessions for both
 		const tracker = await getTracker(project.id);
-		const parentQueue = new MessageQueue();
-		const childQueue = new MessageQueue();
-		attachMockSession(tracker.get(parent.id) as TaskNode, parentQueue);
-		attachMockSession(tracker.get(child.id) as TaskNode, childQueue);
+		const taskQueue = new MessageQueue();
+		attachMockSession(tracker.get(task.id) as TaskNode, taskQueue);
 
-		// Delete the parent (should cascade to children)
-		const res = await app.request(
-			`/projects/${project.id}/tasks/${parent.id}`,
-			{ method: "DELETE" },
-		);
+		const res = await app.request(`/projects/${project.id}/tasks/${task.id}`, {
+			method: "DELETE",
+		});
 		expect(res.status).toBe(200);
 
-		// Both should be closed
 		expect(() =>
-			parentQueue.enqueue({
-				source: "user",
-				id: "test-id",
-				ts: 0,
-				content: "test",
-			}),
-		).toThrow("Queue closed");
-		expect(() =>
-			childQueue.enqueue({
+			taskQueue.enqueue({
 				source: "user",
 				id: "test-id",
 				ts: 0,

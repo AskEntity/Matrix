@@ -443,7 +443,8 @@ export function registerTaskRoutes(
 			return c.json({ ok: true });
 		} catch (e) {
 			if (e instanceof TaskOperationError) {
-				return c.json({ error: e.message }, 404);
+				const status = e.message.includes("not found") ? 404 : 400;
+				return c.json({ error: e.message }, status);
 			}
 			const message = e instanceof Error ? e.message : "Unknown error";
 			return c.json({ error: message }, 500);

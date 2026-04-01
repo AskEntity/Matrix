@@ -1,0 +1,6 @@
+{
+	"title": "Web UI",
+	"description": "React web application — activity log, task tree sidebar, SSE event handling, dark theme, visual polish.",
+	"persistent": "continue",
+	"color": "#388bfd"
+}

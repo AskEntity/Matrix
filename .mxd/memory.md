@@ -321,3 +321,23 @@ In-memory `messages[]` (provider format) and JSONL events are two independent da
 `save()` strips title/description from tree.json for persistent nodes. On `load(branch, projectPath)`, `mergePersistentTasks` re-reads `.mxd/tasks/*.json` to repopulate them. This is the source-of-truth split: definition file owns content, tree.json owns runtime state.
 
 Note: `persistent` mode itself is NOT updateable via update_task MCP tool or REST — only set at creation time. So the write-back condition only needs to cover title/description/color.
+
+## Persistent Task Domain Structure
+
+Four top-level persistent continue domains:
+- **Design Philosophy** 🟣 — ITA, anti-patterns, system prompt (sub-domain)
+- **Task System Design** 🟣 — depth, pinned tasks, meeting mode, partial completion, flow
+- **Agent Loop Lifecycle** 🟠 — launch, provider loop, yield/resume, stop/restart, JSONL repair, image validation, OpenAI provider parity
+- **Frontend** 🔵 — user-facing interaction layer (compiler-sense "frontend", not web-frontend)
+  - **Web UI** 🔵 — web-level concerns: SSE connection robustness, event handler state consistency, dark theme/IDE quality, responsive layout, task tree interaction design
+  - **CLI** 🔵 — mxd command interface
+
+**Key boundary**: Web UI owns "web engineering" problems — SSE, layout, interaction, visual polish. It does NOT own every change that touches a web file. If a tool feature task modifies a frontend card to display new data, that's the tool task's scope. Web UI only owns problems that are about the web layer itself.
+
+Same for CLI: if a new feature adds a CLI flag, that's the feature's scope. CLI owns CLI-level concerns — argument parsing design, output formatting, auth flow.
+
+## ⚠️ delete_task Safety
+
+**NEVER delete a task with children.** `delete_task` cascades — deletes all descendants AND their session JSONL files. This is now enforced in code (returns 400 "Cannot delete task with children"). Always reparent children first.
+
+**To change persistent mode**: cannot update via update_task. Must write `.mxd/tasks/<id>.json` directly or delete+recreate (only for leaf nodes). Draft task exists to make persistent mode updatable via update_task.

@@ -1,0 +1,6 @@
+{
+	"title": "Agent Loop Lifecycle",
+	"description": "单个 agent 的完整生命周期：launch → provider loop → API call → streaming → tool execution → yield/resume → stop → restart recovery。\n\n这个领域覆盖一个 agent 从创建到销毁过程中所有的行为和边界情况。\n\n## 核心子系统\n- **Launch**: runAgentForNode, worktree creation, session setup\n- **Provider loop**: callAPI, streaming, retry, abort handling\n- **Tool execution**: executeTool, bash, read_file, MCP tools\n- **Yield/Resume**: explicit yield, implicit yield, queue.wait\n- **Stop/Restart**: stopTask, abort signal, session replacement\n- **JSONL repair**: buildSessionRepair, orphan detection, truncate-and-rebuild\n- **Image handling**: validation at read_file and provider level\n- **Recovery**: API 400 recovery, duplicate tool_result prevention",
+	"persistent": "continue",
+	"color": "#f0883e"
+}

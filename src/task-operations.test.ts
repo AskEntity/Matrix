@@ -399,22 +399,32 @@ describe("updateTaskOp", () => {
 // ── deleteTaskOp ──
 
 describe("deleteTaskOp", () => {
-	test("deletes task and descendants", async () => {
+	test("rejects delete when task has children", async () => {
 		const parent = tracker.addChild(tracker.rootNodeId, "Parent", "", {
 			editedBy: "agent",
 		});
 		tracker.addChild(parent.id, "Child", "", { editedBy: "agent" });
 
+		await expect(
+			deleteTaskOp(tracker, parent.id, "user", makeCallbacks()),
+		).rejects.toThrow("Cannot delete task with children");
+	});
+
+	test("deletes leaf task", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Leaf", "", {
+			editedBy: "agent",
+		});
+
 		const result = await deleteTaskOp(
 			tracker,
-			parent.id,
+			task.id,
 			"user",
 			makeCallbacks(),
 		);
 
-		expect(result.taskId).toBe(parent.id);
-		expect(result.title).toBe("Parent");
-		expect(tracker.get(parent.id)).toBeUndefined();
+		expect(result.taskId).toBe(task.id);
+		expect(result.title).toBe("Leaf");
+		expect(tracker.get(task.id)).toBeUndefined();
 		expect(broadcastCount).toBe(1);
 	});
 
@@ -442,22 +452,18 @@ describe("deleteTaskOp", () => {
 		expect(notifyTreeChangeCalls).toHaveLength(0);
 	});
 
-	test("calls clearEventStore for descendants", async () => {
-		const parent = tracker.addChild(tracker.rootNodeId, "Parent", "", {
-			editedBy: "agent",
-		});
-		const child = tracker.addChild(parent.id, "Child", "", {
+	test("calls clearEventStore for deleted leaf task", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Leaf", "", {
 			editedBy: "agent",
 		});
 
 		const cleared: string[] = [];
-		await deleteTaskOp(tracker, parent.id, "user", {
+		await deleteTaskOp(tracker, task.id, "user", {
 			...makeCallbacks(),
 			clearEventStore: (id: string) => cleared.push(id),
 		});
 
-		expect(cleared).toContain(parent.id);
-		expect(cleared).toContain(child.id);
+		expect(cleared).toContain(task.id);
 	});
 });
 

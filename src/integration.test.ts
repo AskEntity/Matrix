@@ -4189,9 +4189,10 @@ describe("Integration: background process lifecycle", () => {
 	test("BG5: bg completes during foreground tool execution", async () => {
 		ctx = await setupTestContext();
 
-		// Turn 1: start bg (fast: sleep 0.5) + foreground (slow: sleep 2)
+		// Turn 1: start bg (fast: sleep 3) + foreground (slow: sleep 6)
 		// bg_complete arrives while foreground is running → delivered as queue message
 		// Turn 2: should have foreground tool_result + bg_complete text block
+		// Wide timing gap to avoid flakiness on loaded systems
 		const instruction = JSON.stringify({
 			turns: [
 				{
@@ -4200,14 +4201,14 @@ describe("Integration: background process lifecycle", () => {
 							type: "tool_use",
 							name: "mcp__mxd__bash",
 							input: {
-								command: "sleep 0.5 && echo BG_DONE_FIVE",
+								command: "sleep 3 && echo BG_DONE_FIVE",
 								run_in_background: true,
 							},
 						},
 						{
 							type: "tool_use",
 							name: "mcp__mxd__bash",
-							input: { command: "sleep 2 && echo FG_DONE_FIVE" },
+							input: { command: "sleep 6 && echo FG_DONE_FIVE" },
 						},
 					],
 				},

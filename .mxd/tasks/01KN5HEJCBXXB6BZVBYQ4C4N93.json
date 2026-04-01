@@ -1,0 +1,6 @@
+{
+	"title": "System Prompt",
+	"description": "Ongoing evolution of the agent system prompt. The prompt defines agent behavior across all projects — it's the most leveraged piece of text in the system.\n\n## Principles\n- For ALL projects, not just Matrix — no internal terminology (JSONL, daemon, provider loop)\n- Agent doesn't know system internals — document message formats so agents can distinguish sources\n- Failure model: only done(passed) and done(failed) — no interrupted/stuck visible to agents\n\n## Recent Changes\n- WHY requirement strengthened to MUST level\n- Message format documentation (XML tags vs plain text)\n- Message source response rules\n- Data layout section added\n- Internal terminology removed\n- \"Always resume first\" → deliberate decision-making\n- Last-minute report anti-pattern: \"done() IS your final report\"\n- Generic examples replacing Matrix-specific ones\n\n## Open Areas\n- Prompt reorder: /tmp/prompt-reordered.txt generated with new chapter structure, user reviewing\n- Depth encouragement: currently says \"keep shallow 2-3 levels\" — suppresses natural depth\n- Draft task emphasis: \"capture ideas immediately\" philosophy\n- Pinned agent patterns: how to instruct agents about domain owners",
+	"persistent": "continue",
+	"color": "#3fb950"
+}

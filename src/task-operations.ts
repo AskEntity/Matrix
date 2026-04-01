@@ -206,6 +206,11 @@ export async function deleteTaskOp(
 ): Promise<{ taskId: string; title: string }> {
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
+	if (node.children.length > 0) {
+		throw new TaskOperationError(
+			`Cannot delete task with children. Reparent or delete children first.`,
+		);
+	}
 
 	const title = node.title;
 

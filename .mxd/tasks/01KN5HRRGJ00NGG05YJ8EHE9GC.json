@@ -1,0 +1,6 @@
+{
+	"title": "Frontend",
+	"description": "User-facing interaction layer — everything the user sees and touches. \"Frontend\" in the compiler sense: the input/output boundary, not \"web frontend\".\n\nTwo sub-systems:\n- **Web UI**: React app, SSE event handling, task tree display, activity log, dark theme\n- **CLI**: mxd command, send-and-exit, auth flow\n\nBoth are thin wrappers over the same daemon API. Changes here should not require backend changes (and vice versa).",
+	"persistent": "continue",
+	"color": "#388bfd"
+}

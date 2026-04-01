@@ -915,8 +915,46 @@ describe("daemon tasks API", () => {
 		expect(body.nodes).toHaveLength(3); // root node + 2 quality task templates
 	});
 
-	test("DELETE /tasks/:nodeId closes running agent queues", async () => {
-		const rootRes = await app.request(`/projects/${projectId}/tasks`, {
+	test("DELETE /tasks/:nodeId closes running agent queue on leaf task", async () => {
+		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Running task",
+				description: "",
+				parentId: rootNodeId,
+			}),
+		});
+		const task = (await taskRes.json()) as TaskNode;
+
+		// Attach session to simulate a running agent
+		const taskQueue = new MessageQueue();
+		const tracker = await getTracker(projectId);
+		const taskNode = tracker.get(task.id) as TaskNode;
+		attachMockSession(taskNode, taskQueue);
+
+		// Delete the leaf task — should close its queue
+		const delRes = await app.request(
+			`/projects/${projectId}/tasks/${task.id}`,
+			{ method: "DELETE" },
+		);
+		expect(delRes.status).toBe(200);
+
+		// Queue should be closed
+		let closedAfterDelete = false;
+		try {
+			taskQueue.enqueue({ source: "compact", id: "test-id", ts: 0 });
+		} catch {
+			closedAfterDelete = true;
+		}
+		expect(closedAfterDelete).toBe(true);
+
+		// Session should be cleared
+		expect(taskNode.session).toBeUndefined();
+	});
+
+	test("DELETE /tasks/:nodeId rejects delete with children", async () => {
+		const parentRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
@@ -925,43 +963,23 @@ describe("daemon tasks API", () => {
 				parentId: rootNodeId,
 			}),
 		});
-		const root = (await rootRes.json()) as TaskNode;
+		const parent = (await parentRes.json()) as TaskNode;
 
-		const childRes = await app.request(`/projects/${projectId}/tasks`, {
+		await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
-				title: "Running child",
+				title: "Child",
 				description: "",
-				parentId: root.id,
+				parentId: parent.id,
 			}),
 		});
-		const child = (await childRes.json()) as TaskNode;
 
-		// Attach session to simulate a running agent
-		const childQueue = new MessageQueue();
-		const tracker = await getTracker(projectId);
-		const childNode = tracker.get(child.id) as TaskNode;
-		attachMockSession(childNode, childQueue);
-
-		// Delete the parent — should cascade and close child queue
 		const delRes = await app.request(
-			`/projects/${projectId}/tasks/${root.id}`,
+			`/projects/${projectId}/tasks/${parent.id}`,
 			{ method: "DELETE" },
 		);
-		expect(delRes.status).toBe(200);
-
-		// Queue should be closed
-		let closedAfterDelete = false;
-		try {
-			childQueue.enqueue({ source: "compact", id: "test-id", ts: 0 });
-		} catch {
-			closedAfterDelete = true;
-		}
-		expect(closedAfterDelete).toBe(true);
-
-		// Session should be cleared
-		expect(childNode.session).toBeUndefined();
+		expect(delRes.status).toBe(400);
 	});
 
 	test("POST /tasks/:nodeId/continue resets failed task to pending", async () => {
