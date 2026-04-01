@@ -170,3 +170,5 @@ Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Archite
 
 - OpenAI Responses provider function tool definitions now include strict: false in the outgoing tools payload; keep chat-completions/OpenAI provider unchanged unless intentionally expanding the experiment.
 - For Responses provider payload tests, assert the exact tool shape in the captured request body (including strict: false) rather than only the schema, because compatibility bugs show up at the wire format boundary.
+
+- UI live state fix: tree_updated now clears in-memory log/pending/older-history state for sessions that become pending with no session object, so reset_task and persistent close(reset) immediately match a fresh reload without waiting for event refetch.
