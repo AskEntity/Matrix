@@ -427,15 +427,12 @@ export async function stopAgent(
 		clarifications: [],
 	});
 
-	// Defense-in-depth: write synthetic tool_result for any unpaired tool_call at end of JSONL.
-	// This prevents orphaned tool_use errors on resume — the converter fix handles it too,
-	// but writing to JSONL is cleaner since it persists the fix.
-	if (tracker) {
-		const eventStore = getEventStore(ctx, projectId);
-		for (const node of tracker.allNodes()) {
-			await writeOrphanedToolResults(eventStore, node.id);
-		}
-	}
+	// NOTE: Do NOT write orphaned tool_results here. The provider loop may still be
+	// settling (e.g. bg process killed → completionPromise resolves → provider loop
+	// emits real tool_result). Writing synthetic orphans now races with those writes,
+	// producing duplicate tool_results → API 400 on resume.
+	// Orphan detection runs reliably at restart (autoResumeProjects / launchAgent)
+	// when the provider loop is guaranteed dead.
 
 	emitEvent(ctx, projectId, {
 		type: "agent_stopped",
@@ -478,9 +475,8 @@ export async function stopTask(
 	await tracker.save();
 	broadcastTreeUpdate(ctx, projectId, tracker);
 
-	// Write orphaned tool results so resume doesn't hit API 400
-	const eventStore = getEventStore(ctx, projectId);
-	await writeOrphanedToolResults(eventStore, nodeId);
+	// NOTE: Do NOT write orphaned tool_results here — same race as stopAgent.
+	// Orphan detection runs at restart when the provider loop is fully dead.
 
 	emitEvent(ctx, projectId, {
 		type: "agent_stopped",
