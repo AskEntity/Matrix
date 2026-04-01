@@ -6,23 +6,30 @@ import {
 
 describe("ValidatingMockAPI", () => {
 	let mock: ValidatingMockAPI;
+	let testSessionId: string;
 
 	beforeEach(() => {
 		mock = new ValidatingMockAPI();
+		testSessionId = `test-session-${Date.now()}`;
 	});
+
+	/** Wrapper that provides a default sessionId per test. Pass explicit sessionId as 2nd arg to override. */
+	const createStream = (
+		...args: Parameters<ValidatingMockAPI["createStream"]>
+	) => mock.createStream(args[0], args[1] ?? testSessionId);
 
 	// ── Validation ──
 
 	describe("request validation", () => {
 		test("rejects empty messages", () => {
-			expect(() => mock.createStream({ messages: [] })).toThrow(
+			expect(() => createStream({ messages: [] })).toThrow(
 				MockValidationError,
 			);
 		});
 
 		test("rejects first message not user", () => {
 			expect(() =>
-				mock.createStream({
+				createStream({
 					messages: [
 						{ role: "assistant", content: [{ type: "text", text: "hi" }] },
 					],
@@ -32,7 +39,7 @@ describe("ValidatingMockAPI", () => {
 
 		test("rejects consecutive same roles", () => {
 			expect(() =>
-				mock.createStream({
+				createStream({
 					messages: [
 						{ role: "user", content: "a" },
 						{ role: "user", content: "b" },
@@ -43,7 +50,7 @@ describe("ValidatingMockAPI", () => {
 
 		test("rejects empty string content", () => {
 			expect(() =>
-				mock.createStream({
+				createStream({
 					messages: [{ role: "user", content: "" }],
 				}),
 			).toThrow("empty string content");
@@ -51,7 +58,7 @@ describe("ValidatingMockAPI", () => {
 
 		test("rejects empty array content", () => {
 			expect(() =>
-				mock.createStream({
+				createStream({
 					messages: [{ role: "user", content: [] }],
 				}),
 			).toThrow("empty content array");
@@ -59,7 +66,7 @@ describe("ValidatingMockAPI", () => {
 
 		test("rejects missing tool_result for tool_use", () => {
 			expect(() =>
-				mock.createStream({
+				createStream({
 					messages: [
 						{ role: "user", content: "hi" },
 						{
@@ -76,7 +83,7 @@ describe("ValidatingMockAPI", () => {
 
 		test("rejects duplicate tool_result", () => {
 			expect(() =>
-				mock.createStream({
+				createStream({
 					messages: [
 						{ role: "user", content: "hi" },
 						{
@@ -103,7 +110,7 @@ describe("ValidatingMockAPI", () => {
 
 		test("rejects unexpected tool_result", () => {
 			expect(() =>
-				mock.createStream({
+				createStream({
 					messages: [
 						{ role: "user", content: "hi" },
 						{
@@ -129,14 +136,14 @@ describe("ValidatingMockAPI", () => {
 		});
 
 		test("accepts valid alternating messages", () => {
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [{ role: "user", content: "hello" }],
 			});
 			expect(stream).toBeDefined();
 		});
 
 		test("accepts valid tool_use/tool_result pair", () => {
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [
 					{ role: "user", content: "hi" },
 					{
@@ -173,7 +180,7 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [{ role: "user", content: instruction }],
 			});
 			const msg = await stream.finalMessage();
@@ -196,7 +203,7 @@ describe("ValidatingMockAPI", () => {
 				stop_reason: "end_turn",
 			});
 
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [{ role: "user", content: instruction }],
 			});
 			const msg = await stream.finalMessage();
@@ -204,7 +211,7 @@ describe("ValidatingMockAPI", () => {
 		});
 
 		test("default response for non-instruction text", async () => {
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [{ role: "user", content: "Just a regular message" }],
 			});
 			const msg = await stream.finalMessage();
@@ -243,7 +250,7 @@ describe("ValidatingMockAPI", () => {
 			});
 
 			// First call: gets turn 0
-			const stream1 = mock.createStream({
+			const stream1 = createStream({
 				messages: [{ role: "user", content: instruction }],
 			});
 			const msg1 = await stream1.finalMessage();
@@ -251,7 +258,7 @@ describe("ValidatingMockAPI", () => {
 			expect(mock.getPendingTurnCount()).toBe(1);
 
 			// Second call: gets turn 1 from queue (no new instruction needed)
-			const stream2 = mock.createStream({
+			const stream2 = createStream({
 				messages: [
 					{ role: "user", content: instruction },
 					{ role: "assistant", content: msg1.content },
@@ -277,7 +284,7 @@ describe("ValidatingMockAPI", () => {
 
 		test("default response when queue is empty", async () => {
 			// No instruction → default
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [{ role: "user", content: "no instruction here" }],
 			});
 			const msg = await stream.finalMessage();
@@ -296,7 +303,7 @@ describe("ValidatingMockAPI", () => {
 				blocks: [{ type: "text", text: "Hello" }],
 			});
 
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [{ role: "user", content: instruction }],
 			});
 
@@ -323,7 +330,7 @@ describe("ValidatingMockAPI", () => {
 				blocks: [{ type: "tool_use", name: "test_tool", input: { a: 1 } }],
 			});
 
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [{ role: "user", content: instruction }],
 			});
 
@@ -347,7 +354,7 @@ describe("ValidatingMockAPI", () => {
 
 	describe("compaction detection", () => {
 		test("detects compaction request from summarization keywords", async () => {
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [
 					{
 						role: "user",
@@ -367,8 +374,8 @@ describe("ValidatingMockAPI", () => {
 
 	describe("request tracking", () => {
 		test("records requests", () => {
-			mock.createStream({ messages: [{ role: "user", content: "a" }] });
-			mock.createStream({
+			createStream({ messages: [{ role: "user", content: "a" }] });
+			createStream({
 				messages: [
 					{ role: "user", content: "a" },
 					{ role: "assistant", content: [{ type: "text", text: "b" }] },
@@ -381,7 +388,7 @@ describe("ValidatingMockAPI", () => {
 		});
 
 		test("reset clears state", () => {
-			mock.createStream({ messages: [{ role: "user", content: "a" }] });
+			createStream({ messages: [{ role: "user", content: "a" }] });
 			mock.reset();
 			expect(mock.getRequestCount()).toBe(0);
 			expect(mock.getPendingTurnCount()).toBe(0);
@@ -396,7 +403,7 @@ describe("ValidatingMockAPI", () => {
 				blocks: [{ type: "text", text: "Found it" }],
 			});
 
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [
 					{ role: "user", content: "start" },
 					{
@@ -424,7 +431,7 @@ describe("ValidatingMockAPI", () => {
 			});
 			const wrappedText = `[15:42:00] ${instruction}`;
 
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [{ role: "user", content: wrappedText }],
 			});
 			const msg = await stream.finalMessage();
@@ -435,7 +442,7 @@ describe("ValidatingMockAPI", () => {
 		});
 
 		test("returns default when last user message has only tool_results", async () => {
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [
 					{ role: "user", content: "start" },
 					{
@@ -516,10 +523,10 @@ describe("ValidatingMockAPI", () => {
 			});
 
 			// First call: get turn 0
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
 			// Second call with tool_result containing expected text
-			const stream = mock.createStream(
+			const stream = createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "output: hello_world done" },
 				]),
@@ -545,10 +552,10 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
 			expect(() =>
-				mock.createStream(
+				createStream(
 					messagesWithToolResults(instruction, [
 						{ id: "tc_1", content: "wrong output" },
 					]),
@@ -571,9 +578,9 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
-			const stream = mock.createStream(
+			const stream = createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "success: all ok" },
 				]),
@@ -597,10 +604,10 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
 			expect(() =>
-				mock.createStream(
+				createStream(
 					messagesWithToolResults(instruction, [
 						{ id: "tc_1", content: "fatal error occurred" },
 					]),
@@ -623,9 +630,9 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
-			const stream = mock.createStream(
+			const stream = createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "command failed", is_error: true },
 				]),
@@ -652,10 +659,10 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
 			expect(() =>
-				mock.createStream(
+				createStream(
 					messagesWithToolResults(instruction, [
 						{ id: "tc_1", content: "ok", is_error: false },
 					]),
@@ -680,9 +687,9 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
-			const stream = mock.createStream(
+			const stream = createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "version: v1.2.3" },
 				]),
@@ -709,10 +716,10 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
 			expect(() =>
-				mock.createStream(
+				createStream(
 					messagesWithToolResults(instruction, [
 						{ id: "tc_1", content: "only one result" },
 					]),
@@ -747,9 +754,9 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
-			const stream = mock.createStream(
+			const stream = createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "output: hello" },
 					{ id: "tc_2", content: "output: world" },
@@ -777,10 +784,10 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
 			expect(() =>
-				mock.createStream(
+				createStream(
 					messagesWithToolResults(instruction, [
 						{ id: "tc_1", content: "hello world" },
 					]),
@@ -806,10 +813,10 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
 			// Build a user message with tool_result + text block
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [
 					{ role: "user" as const, content: instruction },
 					{
@@ -863,9 +870,9 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
-			const stream = mock.createStream(
+			const stream = createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "hello world" },
 				]),
@@ -889,10 +896,10 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
 			expect(() =>
-				mock.createStream({
+				createStream({
 					messages: [
 						{ role: "user" as const, content: instruction },
 						{
@@ -942,9 +949,9 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
-			const stream = mock.createStream(
+			const stream = createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "result" },
 				]),
@@ -971,10 +978,10 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
 			expect(() =>
-				mock.createStream(
+				createStream(
 					messagesWithToolResults(instruction, [
 						{ id: "tc_1", content: "only one" },
 					]),
@@ -1001,9 +1008,9 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
-			const stream = mock.createStream({
+			const stream = createStream({
 				messages: [
 					{ role: "user" as const, content: instruction },
 					{
@@ -1057,9 +1064,9 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
-			const stream = mock.createStream(
+			const stream = createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "anything" },
 				]),
@@ -1106,9 +1113,9 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
-			const stream = mock.createStream(
+			const stream = createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "Task ABC123 created successfully" },
 				]),
@@ -1143,10 +1150,10 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
 			expect(() =>
-				mock.createStream(
+				createStream(
 					messagesWithToolResults(instruction, [
 						{ id: "tc_1", content: "no id here" },
 					]),
@@ -1175,8 +1182,8 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
-			mock.createStream(
+			createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "the value=foobar here" },
 				]),
@@ -1211,9 +1218,9 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
-			const stream = mock.createStream(
+			const stream = createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "name=World" },
 				]),
@@ -1262,10 +1269,10 @@ describe("ValidatingMockAPI", () => {
 			});
 
 			// Turn 0
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream({ messages: [{ role: "user", content: instruction }] });
 
 			// Turn 1: capture id from tool_result
-			const stream1 = mock.createStream(
+			const stream1 = createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "id=XYZ789" },
 				]),
@@ -1277,7 +1284,7 @@ describe("ValidatingMockAPI", () => {
 			expect(toolUse.input.command).toBe("use XYZ789");
 
 			// Turn 2: variable persists
-			const stream2 = mock.createStream(
+			const stream2 = createStream(
 				messagesWithToolResults(instruction, [{ id: "tc_2", content: "ok" }]),
 			);
 			const msg2 = await stream2.finalMessage();
@@ -1308,8 +1315,8 @@ describe("ValidatingMockAPI", () => {
 				],
 			});
 
-			mock.createStream({ messages: [{ role: "user", content: instruction }] });
-			mock.createStream(
+			createStream({ messages: [{ role: "user", content: instruction }] });
+			createStream(
 				messagesWithToolResults(instruction, [
 					{ id: "tc_1", content: "hello" },
 				]),
