@@ -465,7 +465,8 @@ function historyToResponsesInput(
 	return messages.flatMap(historyMessageToResponsesInput);
 }
 
-async function* streamResponsesAPI(params: {
+/** @internal Exported for testing only. */
+export async function* streamResponsesAPI(params: {
 	endpoint: string;
 	authToken: string;
 	accountId?: string;
@@ -475,6 +476,8 @@ async function* streamResponsesAPI(params: {
 	instructions: string;
 	maxTokens: number;
 	signal?: AbortSignal;
+	/** Override retry delay for testing. Default: exponential backoff (1s, 2s, 4s...). */
+	retryDelayMs?: (attempt: number) => number;
 }): AsyncGenerator<Event, ResponsesResponse> {
 	const endpoint = resolveResponsesEndpoint(params.endpoint);
 	const codex = isCodexEndpoint(endpoint);
@@ -505,17 +508,39 @@ async function* streamResponsesAPI(params: {
 		headers["User-Agent"] = "matrix";
 	}
 
-	const response = await fetch(endpoint, {
-		method: "POST",
-		headers,
-		body: JSON.stringify(body),
-		...(params.signal ? { signal: params.signal } : {}),
-	});
-	if (!response.ok || !response.body) {
+	const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 529]);
+	const MAX_ATTEMPTS = 5;
+	let response: Response | undefined;
+	for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+		response = await fetch(endpoint, {
+			method: "POST",
+			headers,
+			body: JSON.stringify(body),
+			...(params.signal ? { signal: params.signal } : {}),
+		});
+		if (response.ok && response.body) break;
 		const errorText = await response.text();
-		throw new Error(
-			`OpenAI Responses API error (${response.status}): ${errorText}`,
-		);
+		if (
+			!RETRYABLE_STATUSES.has(response.status) ||
+			attempt >= MAX_ATTEMPTS - 1
+		) {
+			throw new Error(
+				`OpenAI Responses API error (${response.status}): ${errorText}`,
+			);
+		}
+		const delay = params.retryDelayMs
+			? params.retryDelayMs(attempt)
+			: Math.min(1000 * 2 ** attempt, 16000);
+		yield {
+			type: "error" as const,
+			taskId: "",
+			message: `OpenAI API error (retry ${attempt + 1}/${MAX_ATTEMPTS - 1}): ${response.status} ${errorText}`,
+			ts: Date.now(),
+		};
+		await new Promise((r) => setTimeout(r, delay));
+	}
+	if (!response?.ok || !response?.body) {
+		throw new Error("Failed to get API response after retries");
 	}
 
 	const reader = response.body.getReader();
@@ -700,6 +725,7 @@ function createOpenAIResponsesAdapter(
 	baseUrl: string,
 	authToken: string,
 	accountId?: string,
+	opts?: { retryDelayMs?: (attempt: number) => number },
 ): ProviderAdapter {
 	return {
 		async getContextWindow(model: string): Promise<number> {
@@ -757,6 +783,7 @@ function createOpenAIResponsesAdapter(
 				instructions,
 				maxTokens: params.maxTokens,
 				signal: params.signal,
+				retryDelayMs: opts?.retryDelayMs,
 			});
 		},
 
@@ -1030,6 +1057,8 @@ export class OpenAIResponsesCompatibleProvider implements AgentProvider {
 	private refreshToken: string;
 	private accountId?: string;
 	private model: string;
+	/** Override inner retry delay for testing. Production uses default (exponential backoff). */
+	retryDelayMs?: (attempt: number) => number;
 
 	constructor(
 		model?: string,
@@ -1130,6 +1159,7 @@ export class OpenAIResponsesCompatibleProvider implements AgentProvider {
 			this.baseUrl,
 			this.authToken,
 			this.accountId,
+			{ retryDelayMs: this.retryDelayMs },
 		);
 		const effectiveRequest = {
 			...request,
