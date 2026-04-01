@@ -244,6 +244,87 @@ describe("fetchContextWindowFromAPI", () => {
 			globalThis.fetch = originalFetch;
 		}
 	});
+
+	test("prefix match: requested model is base name, API returns versioned", async () => {
+		const originalFetch = globalThis.fetch;
+		const fetchSpy = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						data: [{ id: "gpt-4o-2024-08-06", context_length: 131072 }],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+		);
+		globalThis.fetch = fetchSpy as unknown as typeof fetch;
+		try {
+			const result = await fetchContextWindowFromAPI(
+				"https://api.example.com/v1",
+				"token",
+				"gpt-4o",
+			);
+			expect(result).toBe(131072);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("prefix match: requested model is versioned, API returns base", async () => {
+		const originalFetch = globalThis.fetch;
+		const fetchSpy = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						data: [{ id: "gpt-4o", context_length: 131072 }],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+		);
+		globalThis.fetch = fetchSpy as unknown as typeof fetch;
+		try {
+			const result = await fetchContextWindowFromAPI(
+				"https://api.example.com/v1",
+				"token",
+				"gpt-4o-2024-08-06",
+			);
+			expect(result).toBe(131072);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("prefix match: no match returns null", async () => {
+		const originalFetch = globalThis.fetch;
+		const fetchSpy = mock(
+			async () =>
+				new Response(
+					JSON.stringify({
+						data: [{ id: "gpt-4o", context_length: 131072 }],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+		);
+		globalThis.fetch = fetchSpy as unknown as typeof fetch;
+		try {
+			const result = await fetchContextWindowFromAPI(
+				"https://api.example.com/v1",
+				"token",
+				"claude-3",
+			);
+			expect(result).toBeNull();
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
 });
 
 describe("eventsToOpenAIResponsesMessages", () => {
@@ -805,6 +886,137 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 					],
 				},
 			]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("function_call_arguments.done supplies name/args when output_item.added omits them", async () => {
+		const originalFetch = globalThis.fetch;
+		globalThis.fetch = mock(async (url: string | URL | Request) => {
+			const urlStr =
+				typeof url === "string"
+					? url
+					: url instanceof URL
+						? url.toString()
+						: url.url;
+			if (urlStr.endsWith("/models")) {
+				return new Response(
+					JSON.stringify({
+						data: [{ id: "gpt-4.1-mini", context_length: 1047576 }],
+					}),
+					{ status: 200, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			return sseResponse([
+				{
+					event: "response.created",
+					data: { response: { id: "resp-1", status: "in_progress" } },
+				},
+				{
+					event: "response.output_item.added",
+					data: {
+						output_index: 0,
+						item: {
+							id: "fc-1",
+							type: "function_call",
+							call_id: "call-done",
+							name: "",
+							arguments: "",
+						},
+					},
+				},
+				{
+					event: "response.function_call_arguments.done",
+					data: {
+						output_index: 0,
+						item_id: "fc-1",
+						name: "mcp__mxd__done",
+						arguments: JSON.stringify({
+							status: "passed",
+							summary: "All good",
+						}),
+					},
+				},
+				{
+					event: "response.completed",
+					data: {
+						response: {
+							id: "resp-1",
+							status: "completed",
+							usage: { input_tokens: 100, output_tokens: 10 },
+						},
+					},
+				},
+			]);
+		}) as unknown as typeof fetch;
+
+		try {
+			const provider = new OpenAIResponsesCompatibleProvider("gpt-4.1-mini", {
+				apiKey: "test-key",
+				baseUrl: "https://api.example.com/v1",
+			});
+
+			// Collect events via stream() to verify tool_call shape
+			const seen: Event[] = [];
+			const queue = queueWithPrompt("Do the thing", tmpDir);
+			const execQueue = new MessageQueue();
+			for (const msg of queue.drain()) {
+				execQueue.enqueue(msg);
+			}
+			execQueue.onDrain = () => {
+				execQueue.onDrain = undefined;
+				execQueue.close();
+			};
+
+			const gen = provider.stream({
+				cwd: tmpDir,
+				systemPrompt: { stable: "Stable", variable: "Variable" },
+				queue: execQueue,
+				mcpToolDefs: {
+					mxd: [
+						tool(
+							"done",
+							"Signal completion",
+							{
+								status: z.string(),
+								summary: z.string().optional(),
+							},
+							async (input) => ({
+								content: [
+									{
+										type: "text",
+										text: `Task marked as ${input.status}`,
+									},
+								],
+							}),
+						),
+					],
+				},
+			});
+			let result = await gen.next();
+			while (!result.done) {
+				seen.push(result.value);
+				result = await gen.next();
+			}
+			const finalResult = result.value;
+
+			// done_passed proves name was correctly assembled from function_call_arguments.done
+			expect(finalResult.exitReason).toBe("done_passed");
+
+			// Verify the tool_call event has correct name and parsed input
+			const toolCallEvent = seen.find(
+				(e) => e.type === "tool_call" && e.toolCallId === "call-done",
+			);
+			expect(toolCallEvent).toBeDefined();
+			expect(toolCallEvent?.type).toBe("tool_call");
+			if (toolCallEvent?.type === "tool_call") {
+				expect(toolCallEvent.tool).toBe("mcp__mxd__done");
+				expect(toolCallEvent.input).toEqual({
+					status: "passed",
+					summary: "All good",
+				});
+			}
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
