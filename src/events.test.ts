@@ -761,6 +761,264 @@ describe("eventsToAnthropicMessages", () => {
 	});
 });
 
+describe("eventsToAnthropicMessages — thinking blocks", () => {
+	test("thinking block before text becomes thinking content block in assistant message", () => {
+		const events: Event[] = [
+			{
+				type: "thinking",
+				thinking: "Let me reason about this...",
+				signature: "sig123",
+				taskId: "test",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "Here is my answer.",
+				taskId: "test",
+				ts: 1001,
+			},
+		];
+		expect(eventsToAnthropicMessages(events)).toEqual([
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "thinking",
+						thinking: "Let me reason about this...",
+						signature: "sig123",
+					},
+					{ type: "text", text: "Here is my answer." },
+				],
+			},
+		]);
+	});
+
+	test("thinking block before tool_use is included in assistant message", () => {
+		const events: Event[] = [
+			{
+				type: "thinking",
+				thinking: "I should run a command.",
+				signature: "sig456",
+				taskId: "test",
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				input: { command: "echo hi" },
+				taskId: "test",
+				ts: 1001,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				content: "hi",
+				isError: false,
+				taskId: "test",
+				ts: 1002,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(2);
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: [
+				{
+					type: "thinking",
+					thinking: "I should run a command.",
+					signature: "sig456",
+				},
+				{
+					type: "tool_use",
+					id: "tc1",
+					name: "mcp__mxd__bash",
+					input: { command: "echo hi" },
+					caller: { type: "direct" },
+				},
+			],
+		});
+	});
+
+	test("thinking + text + tool_use all in one assistant turn", () => {
+		const events: Event[] = [
+			{
+				type: "thinking",
+				thinking: "Deep thought...",
+				signature: "sig789",
+				taskId: "test",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "I'll check something.",
+				taskId: "test",
+				ts: 1001,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc2",
+				input: { command: "ls" },
+				taskId: "test",
+				ts: 1002,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages[0]).toEqual({
+			role: "assistant",
+			content: [
+				{
+					type: "thinking",
+					thinking: "Deep thought...",
+					signature: "sig789",
+				},
+				{ type: "text", text: "I'll check something." },
+				{
+					type: "tool_use",
+					id: "tc2",
+					name: "mcp__mxd__bash",
+					input: { command: "ls" },
+					caller: { type: "direct" },
+				},
+			],
+		});
+	});
+
+	test("multi-turn with thinking blocks round-trips correctly", () => {
+		const events: Event[] = [
+			// User message
+			{
+				type: "message",
+				id: "",
+				body: { source: "user", id: "", ts: 1000, content: "Explain this" },
+				taskId: "test",
+				ts: 1000,
+			},
+			// Assistant turn 1 with thinking
+			{
+				type: "thinking",
+				thinking: "First, let me think...",
+				signature: "sig1",
+				taskId: "test",
+				ts: 1001,
+			},
+			{
+				type: "assistant_text",
+				content: "Let me check.",
+				taskId: "test",
+				ts: 1002,
+			},
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				input: { command: "cat file.txt" },
+				taskId: "test",
+				ts: 1003,
+			},
+			// Tool result
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				content: "file contents",
+				isError: false,
+				taskId: "test",
+				ts: 1004,
+			},
+			// Assistant turn 2 with thinking
+			{
+				type: "thinking",
+				thinking: "Now I understand...",
+				signature: "sig2",
+				taskId: "test",
+				ts: 1005,
+			},
+			{
+				type: "assistant_text",
+				content: "Here is the explanation.",
+				taskId: "test",
+				ts: 1006,
+			},
+		];
+		const messages = eventsToAnthropicMessages(events);
+		expect(messages).toHaveLength(4);
+		// User message
+		expect(messages[0]).toEqual({
+			role: "user",
+			content: "[00:00:01] Explain this",
+		});
+		// Assistant turn 1
+		expect(messages[1]).toEqual({
+			role: "assistant",
+			content: [
+				{
+					type: "thinking",
+					thinking: "First, let me think...",
+					signature: "sig1",
+				},
+				{ type: "text", text: "Let me check." },
+				{
+					type: "tool_use",
+					id: "tc1",
+					name: "mcp__mxd__bash",
+					input: { command: "cat file.txt" },
+					caller: { type: "direct" },
+				},
+			],
+		});
+		// Tool result
+		expect(messages[2]).toEqual({
+			role: "user",
+			content: [
+				{
+					type: "tool_result",
+					tool_use_id: "tc1",
+					content: "file contents",
+					is_error: false,
+				},
+			],
+		});
+		// Assistant turn 2
+		expect(messages[3]).toEqual({
+			role: "assistant",
+			content: [
+				{
+					type: "thinking",
+					thinking: "Now I understand...",
+					signature: "sig2",
+				},
+				{ type: "text", text: "Here is the explanation." },
+			],
+		});
+	});
+});
+
+describe("isPersistedByEmitEvent — thinking events", () => {
+	test("thinking is persisted", () => {
+		const event: Event = {
+			type: "thinking",
+			thinking: "test",
+			signature: "sig",
+			taskId: "test",
+			ts: 1000,
+		};
+		expect(isPersistedByEmitEvent(event)).toBe(true);
+	});
+
+	test("thinking_delta is ephemeral", () => {
+		const event: Event = {
+			type: "thinking_delta",
+			thinking: "test",
+			taskId: "test",
+			ts: 1000,
+		};
+		expect(isPersistedByEmitEvent(event)).toBe(false);
+	});
+});
+
 describe("eventsToOpenAIMessages", () => {
 	test("returns empty array for no events", () => {
 		expect(eventsToOpenAIMessages([])).toEqual([]);

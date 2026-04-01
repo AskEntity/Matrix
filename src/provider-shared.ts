@@ -912,9 +912,16 @@ export async function* runProviderLoop(
 
 				let apiStep = await apiGen.next();
 				while (!apiStep.done) {
-					// Forward text_delta events from streaming — emit for broadcast
+					// Forward streaming deltas — emit for broadcast
 					const streamEvent = apiStep.value;
-					if (streamEvent.type === "text_delta" && emit) {
+					if (streamEvent.type === "thinking_delta" && emit) {
+						emit({
+							type: "thinking_delta",
+							thinking: (streamEvent as Event & { thinking: string }).thinking,
+							taskId: "",
+							ts: Date.now(),
+						});
+					} else if (streamEvent.type === "text_delta" && emit) {
 						emit({
 							type: "text_delta",
 							content: streamEvent.content,

@@ -136,6 +136,26 @@ describe("resolveConfig", () => {
 		const result2 = resolveConfig(global, repo, { selfBootstrap: false });
 		expect(result2.selfBootstrap).toBe(false);
 	});
+
+	test("thinking config resolves with local > repo > global priority", () => {
+		const global: MatrixConfig = { thinking: { budgetTokens: 5000 } };
+		const repo: MatrixConfig = { thinking: { budgetTokens: 20000 } };
+		const local: MatrixConfig = {};
+
+		// repo wins over global when local is empty
+		const result = resolveConfig(global, repo, local);
+		expect(result.thinking).toEqual({ budgetTokens: 20000 });
+
+		// local wins over repo
+		const result2 = resolveConfig(global, repo, {
+			thinking: { budgetTokens: 50000 },
+		});
+		expect(result2.thinking).toEqual({ budgetTokens: 50000 });
+
+		// undefined when no layer specifies it
+		const result3 = resolveConfig({}, {}, {});
+		expect(result3.thinking).toBeUndefined();
+	});
 });
 
 describe("resolveAuthGroup", () => {

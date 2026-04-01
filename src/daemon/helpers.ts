@@ -17,15 +17,27 @@ import { TaskTracker } from "../task-tracker.ts";
 import type { TaskNode } from "../types.ts";
 import type { DaemonContext } from "./context.ts";
 
-/** Create an AgentProvider from an AuthGroup and model. */
+/** Default budget for extended thinking (tokens). */
+const DEFAULT_THINKING_BUDGET = 10_000;
+
+/** Create an AgentProvider from an AuthGroup, model, and optional thinking config. */
 function createProviderFromAuth(
 	authGroup: AuthGroup,
 	model?: string,
+	thinkingConfig?: MatrixConfig["thinking"],
 ): AgentProvider {
 	if (authGroup.provider === "anthropic") {
 		return new AnthropicCompatibleProvider(model, {
 			apiKey: authGroup.anthropicApiKey,
 			oauthToken: authGroup.claudeOauthToken,
+			...(thinkingConfig
+				? {
+						thinking: {
+							budgetTokens:
+								thinkingConfig.budgetTokens ?? DEFAULT_THINKING_BUDGET,
+						},
+					}
+				: {}),
 		});
 	}
 	return new OpenAIResponsesCompatibleProvider(model, {
@@ -47,7 +59,11 @@ function createProviderFromConfig(
 			"No auth group configured. Add an auth group in Settings > Global > Auth Groups and set defaultAuth.",
 		);
 	}
-	return createProviderFromAuth(authGroup, effectiveConfig.model);
+	return createProviderFromAuth(
+		authGroup,
+		effectiveConfig.model,
+		effectiveConfig.thinking,
+	);
 }
 
 /** Collect a node and all its descendants. */

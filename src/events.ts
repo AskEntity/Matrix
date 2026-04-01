@@ -76,7 +76,16 @@ export type Event =
 			taskId: string;
 			ts: number;
 	  }
+	// Thinking events — extended thinking (Anthropic)
+	| {
+			type: "thinking";
+			thinking: string;
+			signature: string;
+			taskId: string;
+			ts: number;
+	  }
 	// Ephemeral events — broadcast over WS but not persisted to JSONL
+	| { type: "thinking_delta"; thinking: string; taskId: string; ts: number }
 	| { type: "text_delta"; content: string; taskId: string; ts: number }
 	| {
 			type: "usage";
@@ -204,6 +213,7 @@ export type Event =
 export function isPersistedByEmitEvent(event: Event): boolean {
 	switch (event.type) {
 		// Ephemeral — broadcast only, never persisted
+		case "thinking_delta":
 		case "text_delta":
 		case "usage":
 		case "agent_idle":
@@ -213,6 +223,7 @@ export function isPersistedByEmitEvent(event: Event): boolean {
 			return false;
 
 		// Persisted — written to JSONL by emitEvent
+		case "thinking":
 		case "session_config":
 		case "message":
 		case "assistant_text":

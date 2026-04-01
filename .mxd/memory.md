@@ -207,13 +207,13 @@ The UI must fetch events per-session (using `api.taskEvents(projectId, sessionId
 - `useTemplate`: Replace `a + b` with template literals. Biome auto-fix handles most but marks them "unsafe".
 - `biome check --write --unsafe` auto-fixes ~50% of `noNonNullAssertion` but creates `noNonNullAssertedOptionalChain` errors from `x!.y!` → `x?.y!`. Must manually fix those after.
 
+## Extended Thinking (Anthropic)
 
-## Bug Fix: Duplicate tool_result after daemon restart during bg await
-
-**Root cause**: `stopAgent` and `stopTask` called `writeOrphanedToolResults` immediately after killing background processes. But the provider loop was still settling asynchronously — `cleanupSessionBackgroundProcesses` kills bg processes → `completionPromise` resolves → provider loop emits real `tool_result`. This races with `writeOrphanedToolResults` writing synthetic "interrupted" results → duplicate `tool_result` for same `toolCallId` → API 400.
-
-**Fix**: Removed `writeOrphanedToolResults` from `stopAgent` and `stopTask`. Orphan detection only runs at restart/resume time (in `daemon.ts` autoResumeProjects and `launchAgent`/`runChildAgentInBackground`) when the provider loop is guaranteed dead. No race.
-
-**Verified from real JSONL data** (matrix-docs project): `bg await` tool_call got both a synthetic "interrupted" result (ts=...520) and a real result from the provider loop (ts=...521, 1ms later). Confirmed the race condition.
-
-**BG5 flaky test**: Not the same root cause — it is a timing-dependent test about bg completing during foreground tool execution, unrelated to daemon restart.
+- Config: `thinking?: { budgetTokens?: number }` in MatrixConfig. Default budget: 10000.
+- Events: `thinking` (persisted, has thinking text + signature) and `thinking_delta` (ephemeral, streaming).
+- Provider: `AnthropicCompatibleProvider` constructor accepts `thinking?: { budgetTokens: number }` in opts. Passed via `createProviderFromAuth` from resolved config.
+- API: Adds `thinking: { type: "enabled", budget_tokens: N }` to Anthropic API create params when configured.
+- Streaming: `thinking_delta` events from SDK are buffered and yielded alongside `text_delta` events, throttled at 80ms intervals.
+- Event converter: `AssistantContent.items` now includes `{ type: "thinking"; thinking: string; signature: string }` items. Anthropic converter outputs `{ type: "thinking", thinking, signature }` blocks. OpenAI converters naturally skip them (filter by type).
+- JSONL round-trip: thinking events persist to JSONL → on resume, `walkEventsToMessages` groups them into assistant content → `eventsToAnthropicMessages` reconstructs `ThinkingBlockParam` blocks → API passes them back (auto-ignores old thinking, zero token cost).
+- Frontend: `thinking` events create log entries. `thinking_delta` is no-op. Full UI (collapsible display, streaming) is a follow-up task.
