@@ -553,6 +553,7 @@ describe("resetTaskOp", () => {
 		const queue = new MessageQueue();
 		task.session = {
 			queue,
+			abortController: new AbortController(),
 			cwd: "/tmp",
 			fallbackCwd: "/tmp",
 			depth: 1,

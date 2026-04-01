@@ -1946,6 +1946,7 @@ describe("done tool", () => {
 		// Attach session to the node so tools can find the queue
 		node.session = {
 			queue,
+			abortController: new AbortController(),
 			cwd: tempDir,
 			fallbackCwd: tempDir,
 			depth: 0,
@@ -2006,6 +2007,7 @@ describe("done tool", () => {
 		// Attach session to the node so tools can find the queue
 		node.session = {
 			queue,
+			abortController: new AbortController(),
 			cwd: tempDir,
 			fallbackCwd: tempDir,
 			depth: 0,
@@ -2403,11 +2405,12 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
-		const session = provider.startSession({
+		const testQueue = queueWithPrompt("Do the task", testDir);
+		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
-			queue: queueWithPrompt("Do the task", testDir),
+			queue: testQueue,
 			mcpToolDefs: {
 				mxd: [
 					tool(
@@ -2431,15 +2434,15 @@ describe("Event deterministic verification", () => {
 		});
 
 		const consumePromise = (async () => {
-			let result = await session.events.next();
+			let result = await session.next();
 			while (!result.done) {
 				if (
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					session.stop();
+					testQueue.close();
 				}
-				result = await session.events.next();
+				result = await session.next();
 			}
 			return result.value as AgentResult;
 		})();
@@ -2539,11 +2542,12 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
-		const session = provider.startSession({
+		const testQueue = queueWithPrompt("Try something", testDir);
+		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
-			queue: queueWithPrompt("Try something", testDir),
+			queue: testQueue,
 			mcpToolDefs: {
 				mxd: [
 					tool("done", "Signal completion", {}, async () => ({
@@ -2560,15 +2564,15 @@ describe("Event deterministic verification", () => {
 		});
 
 		const consumePromise = (async () => {
-			let result = await session.events.next();
+			let result = await session.next();
 			while (!result.done) {
 				if (
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					session.stop();
+					testQueue.close();
 				}
-				result = await session.events.next();
+				result = await session.next();
 			}
 			return result.value as AgentResult;
 		})();
@@ -2622,8 +2626,8 @@ describe("Event deterministic verification", () => {
 						content: "Here is a new instruction",
 					});
 				} else {
-					// Second idle: stop the session
-					session.stop();
+					// Second idle: stop the session by closing the queue
+					queue.close();
 				}
 			}
 		};
@@ -2652,7 +2656,7 @@ describe("Event deterministic verification", () => {
 		});
 
 		const queue = queueWithPrompt("Start working", testDir);
-		const session = provider.startSession({
+		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
@@ -2661,9 +2665,9 @@ describe("Event deterministic verification", () => {
 
 		// Drive the generator to completion — idle detection is in emit callback
 		const consumePromise = (async () => {
-			let result = await session.events.next();
+			let result = await session.next();
 			while (!result.done) {
-				result = await session.events.next();
+				result = await session.next();
 			}
 			return result.value as AgentResult;
 		})();
@@ -2769,11 +2773,12 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
-		const session = provider.startSession({
+		const testQueue = queueWithPrompt("Run three tools", testDir);
+		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
-			queue: queueWithPrompt("Run three tools", testDir),
+			queue: testQueue,
 			mcpToolDefs: {
 				test: [
 					tool("tool_a", "Tool A", {}, async () => ({
@@ -2790,15 +2795,15 @@ describe("Event deterministic verification", () => {
 		});
 
 		const consumePromise = (async () => {
-			let result = await session.events.next();
+			let result = await session.next();
 			while (!result.done) {
 				if (
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					session.stop();
+					testQueue.close();
 				}
-				result = await session.events.next();
+				result = await session.next();
 			}
 			return result.value as AgentResult;
 		})();
@@ -3053,12 +3058,12 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
-		const queue = queueWithPrompt("Do task", testDir);
-		const session = provider.startSession({
+		const testQueue = queueWithPrompt("Do task", testDir);
+		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
-			queue,
+			queue: testQueue,
 			mcpToolDefs: {
 				mxd: [
 					tool(
@@ -3070,7 +3075,7 @@ describe("Event deterministic verification", () => {
 						},
 						async (input) => {
 							// During tool execution, enqueue a message to simulate cancellation point
-							queue.enqueue({
+							testQueue.enqueue({
 								source: "user",
 								id: "test-id",
 								ts: 0,
@@ -3091,15 +3096,15 @@ describe("Event deterministic verification", () => {
 		});
 
 		const consumePromise = (async () => {
-			let result = await session.events.next();
+			let result = await session.next();
 			while (!result.done) {
 				if (
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					session.stop();
+					testQueue.close();
 				}
-				result = await session.events.next();
+				result = await session.next();
 			}
 			return result.value as AgentResult;
 		})();

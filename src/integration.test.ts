@@ -413,7 +413,8 @@ describe("Integration: full stack with mock API", () => {
 		await waitForIdle(ctx);
 
 		// Agent should still be active (in yield)
-		expect(ctx.app.activeSessions.has(ctx.projectId)).toBe(true);
+		const yieldTracker = await ctx.app.getTracker(ctx.projectId);
+		expect(yieldTracker.get(yieldTracker.rootNodeId)?.session).toBeTruthy();
 
 		// Wake from yield with done instruction
 		const wakeInstruction = JSON.stringify({
@@ -452,7 +453,10 @@ describe("Integration: full stack with mock API", () => {
 		await waitForIdle(ctx);
 
 		// Still active (in implicit yield)
-		expect(ctx.app.activeSessions.has(ctx.projectId)).toBe(true);
+		const implicitTracker = await ctx.app.getTracker(ctx.projectId);
+		expect(
+			implicitTracker.get(implicitTracker.rootNodeId)?.session,
+		).toBeTruthy();
 
 		// Wake with done
 		const wakeInstruction = JSON.stringify({
@@ -691,7 +695,10 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 		// Wait for agent to enter idle (yield) state
 		await waitForIdle(ctx);
-		expect(ctx.app.activeSessions.has(ctx.projectId)).toBe(true);
+		{
+			const t = await ctx.app.getTracker(ctx.projectId);
+			expect(t.get(t.rootNodeId)?.session).toBeTruthy();
+		}
 
 		const preRestartRequests = ctx.mockAPI.getRequestCount();
 		expect(preRestartRequests).toBe(1);
@@ -841,7 +848,10 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 		// Wait for agent to enter idle
 		await waitForIdle(ctx);
-		expect(ctx.app.activeSessions.has(ctx.projectId)).toBe(true);
+		{
+			const t = await ctx.app.getTracker(ctx.projectId);
+			expect(t.get(t.rootNodeId)?.session).toBeTruthy();
+		}
 
 		const preRestartRequests = ctx.mockAPI.getRequestCount();
 		expect(preRestartRequests).toBe(1);
@@ -1960,7 +1970,10 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 		// Wait for agent to enter idle (implicit yield)
 		await waitForIdle(ctx);
-		expect(ctx.app.activeSessions.has(ctx.projectId)).toBe(true);
+		{
+			const t = await ctx.app.getTracker(ctx.projectId);
+			expect(t.get(t.rootNodeId)?.session).toBeTruthy();
+		}
 
 		const preRestartRequests = ctx.mockAPI.getRequestCount();
 		expect(preRestartRequests).toBe(1);

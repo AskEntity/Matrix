@@ -1,4 +1,4 @@
-import type { AgentProvider, AgentSession } from "../agent-provider.ts";
+import type { AgentProvider } from "../agent-provider.ts";
 import type { MatrixConfig } from "../config.ts";
 import type { EventStore } from "../event-store.ts";
 import type { ProjectManager } from "../project-manager.ts";
@@ -45,8 +45,12 @@ export interface DaemonContext {
 	readonly pm: ProjectManager;
 	readonly trackers: Map<string, TaskTracker>;
 	readonly restartingProjects: Set<string>;
+	/**
+	 * Node IDs currently being launched (session setup in progress).
+	 * Prevents duplicate launches when messages arrive before the session is established.
+	 */
+	readonly launchingNodes: Set<string>;
 	readonly sseClients: Set<SSEClient>;
-	readonly activeSessions: Map<string, AgentSession>;
 	readonly pendingClarifications: Map<string, PendingClarification[]>;
 	readonly eventStores: Map<string, EventStore>;
 

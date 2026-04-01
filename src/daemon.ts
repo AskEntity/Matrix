@@ -4,11 +4,9 @@ import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
-import type { AgentSession } from "./agent-provider.ts";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
 import {
-	launchAgent,
-	runChildAgentInBackground,
+	runAgentForNode,
 	stopAgent,
 	writeOrphanedToolResults,
 } from "./daemon/agent-lifecycle.ts";
@@ -79,8 +77,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		pm: new ProjectManager(config.dataDir),
 		trackers: new Map(),
 		restartingProjects: new Set(),
+		launchingNodes: new Set(),
 		sseClients: new Set<SSEClient>(),
-		activeSessions: new Map<string, AgentSession>(),
 		pendingClarifications: new Map<string, PendingClarification[]>(),
 		eventStores: new Map(),
 		requestCount: 0,
@@ -299,12 +297,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						console.log(
 							`Auto-resuming ${project.name} root (yielding — bypass to queue.wait)`,
 						);
-						await launchAgent(
-							ctx,
-							project,
-							{ resume: true },
-							ORCHESTRATOR_SYSTEM_PROMPT,
-						);
+						tracker.updateStatus(rootNodeId, "in_progress");
+						runAgentForNode(ctx, project, tracker, rootNodeId, {
+							orchestratorSystemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
+						}).catch((e) => {
+							console.error(
+								`[autoResume] Failed to resume root ${rootNodeId}:`,
+								e,
+							);
+						});
 					} else {
 						// Interrupted root: normal resume with context message.
 						console.log(
@@ -326,12 +327,15 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							body: resumeMsg,
 							ts: resumeMsg.ts,
 						});
-						await launchAgent(
-							ctx,
-							project,
-							{ resume: true },
-							ORCHESTRATOR_SYSTEM_PROMPT,
-						);
+						tracker.updateStatus(rootNodeId, "in_progress");
+						runAgentForNode(ctx, project, tracker, rootNodeId, {
+							orchestratorSystemPrompt: ORCHESTRATOR_SYSTEM_PROMPT,
+						}).catch((e) => {
+							console.error(
+								`[autoResume] Failed to resume root ${rootNodeId}:`,
+								e instanceof Error ? e.message : e,
+							);
+						});
 					}
 				} else {
 					// Child agent: resume via runChildAgentInBackground.
@@ -357,14 +361,12 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 								ts: childResumeMsg.ts,
 							});
 						}
-						runChildAgentInBackground(ctx, project, tracker, node.id).catch(
-							(e) => {
-								console.error(
-									`[autoResume] Failed to resume child ${node.id}:`,
-									e,
-								);
-							},
-						);
+						runAgentForNode(ctx, project, tracker, node.id).catch((e) => {
+							console.error(
+								`[autoResume] Failed to resume child ${node.id}:`,
+								e,
+							);
+						});
 					}
 				}
 			}
@@ -374,9 +376,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	/** Graceful shutdown: stop all agents. */
 	async function shutdown(): Promise<void> {
 		// Stop all agents — their root nodes stay in_progress so they resume on next start
-		const projectIds = [...ctx.activeSessions.keys()];
-		for (const projectId of projectIds) {
-			await stopAgent(ctx, projectId);
+		for (const [projectId, tracker] of ctx.trackers) {
+			const rootNode = tracker.get(tracker.rootNodeId);
+			if (rootNode?.session) {
+				await stopAgent(ctx, projectId);
+			}
 		}
 	}
 
@@ -393,7 +397,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		pm: ctx.pm,
 		dataDir: config.dataDir,
 		sseClients: ctx.sseClients,
-		activeSessions: ctx.activeSessions,
 		autoResumeProjects,
 		shutdown,
 		getTracker: (projectId: string) => getTracker(ctx, projectId),

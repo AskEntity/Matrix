@@ -16,6 +16,8 @@ export type TaskStatus =
  */
 export interface TaskSession {
 	queue: MessageQueue;
+	/** Abort controller for cancelling in-flight API calls. */
+	abortController: AbortController;
 	/** Current working directory — mutable, updated by bash cd. */
 	cwd: string;
 	/** Project/worktree root — immutable fallback. */

@@ -355,10 +355,11 @@ describe("runLoop integration", () => {
 
 		try {
 			const provider = new OpenAICompatibleProvider("gpt-4o");
-			const session = provider.startSession({
+			const testQueue = queueWithPrompt("Do something", tmpDir);
+			const session = provider.stream({
 				cwd: tmpDir,
 				systemPrompt: { stable: "You are a helpful agent.", variable: "" },
-				queue: queueWithPrompt("Do something", tmpDir),
+				queue: testQueue,
 				mcpToolDefs: {
 					mxd: [
 						tool(
@@ -387,7 +388,7 @@ describe("runLoop integration", () => {
 			// (after done() tool is called and model responds with end_turn,
 			// the loop enters yield mode — we stop it to exit cleanly)
 			const consumePromise = (async () => {
-				let result = await session.events.next();
+				let result = await session.next();
 				while (!result.done) {
 					events.push(result.value);
 					// When the agent enters idle state, stop the session to exit the loop
@@ -395,9 +396,9 @@ describe("runLoop integration", () => {
 						result.value.type === "status" &&
 						(result.value as { message: string }).message.includes("idle state")
 					) {
-						session.stop();
+						testQueue.close();
 					}
-					result = await session.events.next();
+					result = await session.next();
 				}
 				return result.value as AgentResult;
 			})();
@@ -907,11 +908,12 @@ describe("Event recording via emit callback", () => {
 				emittedEvents.push(event);
 			};
 			const provider = new OpenAICompatibleProvider("gpt-4o");
-			const session = provider.startSession({
+			const testQueue = queueWithPrompt("Do something", tmpDir);
+			const session = provider.stream({
 				cwd: tmpDir,
 				systemPrompt: { stable: "You are a helpful agent.", variable: "" },
 				emit,
-				queue: queueWithPrompt("Do something", tmpDir),
+				queue: testQueue,
 				mcpToolDefs: {
 					mxd: [
 						tool(
@@ -935,15 +937,15 @@ describe("Event recording via emit callback", () => {
 			});
 
 			const consumePromise = (async () => {
-				let result = await session.events.next();
+				let result = await session.next();
 				while (!result.done) {
 					if (
 						result.value.type === "status" &&
 						(result.value as { message: string }).message.includes("idle state")
 					) {
-						session.stop();
+						testQueue.close();
 					}
-					result = await session.events.next();
+					result = await session.next();
 				}
 				return result.value as AgentResult;
 			})();
@@ -1219,11 +1221,12 @@ describe("Event deterministic verification (OpenAI)", () => {
 			}) as unknown as typeof fetch,
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
-				const session = provider.startSession({
+				const testQueue = queueWithPrompt("Do the task", testDir);
+				const session = provider.stream({
 					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
-					queue: queueWithPrompt("Do the task", testDir),
+					queue: testQueue,
 					mcpToolDefs: {
 						mxd: [
 							tool(
@@ -1247,7 +1250,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				});
 
 				const consumePromise = (async () => {
-					let result = await session.events.next();
+					let result = await session.next();
 					while (!result.done) {
 						if (
 							result.value.type === "status" &&
@@ -1255,9 +1258,9 @@ describe("Event deterministic verification (OpenAI)", () => {
 								"idle state",
 							)
 						) {
-							session.stop();
+							testQueue.close();
 						}
-						result = await session.events.next();
+						result = await session.next();
 					}
 					return result.value as AgentResult;
 				})();
@@ -1311,7 +1314,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 		// Detect idle state via emit callback — handleImplicitYield emits agent_idle
 		// synchronously before queue.wait(), so enqueuing here resolves the wait immediately.
 		let idleCount = 0;
-		let session: ReturnType<OpenAICompatibleProvider["startSession"]>;
+		let session: ReturnType<OpenAICompatibleProvider["stream"]>;
 		const emit = (event: Event) => {
 			emittedEvents.push(event);
 			if (event.type === "agent_idle") {
@@ -1324,7 +1327,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 						content: "New instruction for you",
 					});
 				} else {
-					session.stop();
+					queue.close();
 				}
 			}
 		};
@@ -1357,7 +1360,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 			async () => {
 				queue = queueWithPrompt("Start working", testDir);
 				const provider = new OpenAICompatibleProvider("gpt-4o");
-				session = provider.startSession({
+				session = provider.stream({
 					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
@@ -1366,9 +1369,9 @@ describe("Event deterministic verification (OpenAI)", () => {
 
 				// Drive the generator to completion — idle detection is in emit callback
 				const consumePromise = (async () => {
-					let result = await session.events.next();
+					let result = await session.next();
 					while (!result.done) {
-						result = await session.events.next();
+						result = await session.next();
 					}
 					return result.value as AgentResult;
 				})();
@@ -1463,11 +1466,12 @@ describe("Event deterministic verification (OpenAI)", () => {
 			}) as unknown as typeof fetch,
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
-				const session = provider.startSession({
+				const testQueue = queueWithPrompt("Try something", testDir);
+				const session = provider.stream({
 					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
-					queue: queueWithPrompt("Try something", testDir),
+					queue: testQueue,
 					mcpToolDefs: {
 						mxd: [
 							tool("done", "Signal completion", {}, async () => ({
@@ -1484,7 +1488,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				});
 
 				const consumePromise = (async () => {
-					let result = await session.events.next();
+					let result = await session.next();
 					while (!result.done) {
 						if (
 							result.value.type === "status" &&
@@ -1492,9 +1496,9 @@ describe("Event deterministic verification (OpenAI)", () => {
 								"idle state",
 							)
 						) {
-							session.stop();
+							testQueue.close();
 						}
-						result = await session.events.next();
+						result = await session.next();
 					}
 					return result.value as AgentResult;
 				})();
@@ -1562,11 +1566,12 @@ describe("Event deterministic verification (OpenAI)", () => {
 			}) as unknown as typeof fetch,
 			async () => {
 				const provider = new OpenAICompatibleProvider("gpt-4o");
-				const session = provider.startSession({
+				const testQueue = queueWithPrompt("Run three tools", testDir);
+				const session = provider.stream({
 					cwd: testDir,
 					systemPrompt: { stable: "You are helpful.", variable: "" },
 					emit,
-					queue: queueWithPrompt("Run three tools", testDir),
+					queue: testQueue,
 					mcpToolDefs: {
 						test: [
 							tool("tool_a", "Tool A", {}, async () => ({
@@ -1583,7 +1588,7 @@ describe("Event deterministic verification (OpenAI)", () => {
 				});
 
 				const consumePromise = (async () => {
-					let result = await session.events.next();
+					let result = await session.next();
 					while (!result.done) {
 						if (
 							result.value.type === "status" &&
@@ -1591,9 +1596,9 @@ describe("Event deterministic verification (OpenAI)", () => {
 								"idle state",
 							)
 						) {
-							session.stop();
+							testQueue.close();
 						}
-						result = await session.events.next();
+						result = await session.next();
 					}
 					return result.value as AgentResult;
 				})();

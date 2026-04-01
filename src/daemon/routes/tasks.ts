@@ -16,10 +16,11 @@ import {
 	updateTaskOp,
 } from "../../task-operations.ts";
 import { buildTaskPrompt, slugify } from "../../task-utils.ts";
+import { cleanupSessionBackgroundProcesses } from "../../tools/index.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
 	deliverMessage,
-	runChildAgentInBackground,
+	runAgentForNode,
 	stopTask,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
@@ -346,7 +347,7 @@ export function registerTaskRoutes(
 			});
 
 			// Run async — return immediately so UI updates
-			runChildAgentInBackground(ctx, project, tracker, nodeId, body.model);
+			runAgentForNode(ctx, project, tracker, nodeId, { model: body.model });
 
 			return c.json(tracker.get(nodeId));
 		}
@@ -402,7 +403,7 @@ export function registerTaskRoutes(
 					ts: continueMsg2.ts,
 				});
 
-				runChildAgentInBackground(ctx, project, tracker, nodeId, body.model);
+				runAgentForNode(ctx, project, tracker, nodeId, { model: body.model });
 
 				return c.json(tracker.get(nodeId));
 			} catch (e) {
@@ -637,19 +638,11 @@ export function registerTaskRoutes(
 		}
 
 		// Stop the agent if running for this task
-		const activeQueue = node.session?.queue;
-		if (activeQueue) {
+		if (node.session) {
+			node.session.queue.close();
+			node.session.abortController.abort();
+			cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
 			node.session = undefined;
-			activeQueue.close();
-		}
-
-		// If this is the root node, also stop the project's active session
-		if (nodeId === tracker.rootNodeId && ctx.activeSessions.has(project.id)) {
-			const session = ctx.activeSessions.get(project.id);
-			if (session) {
-				session.stop();
-				ctx.activeSessions.delete(project.id);
-			}
 		}
 
 		// Clear the JSONL events file for this task

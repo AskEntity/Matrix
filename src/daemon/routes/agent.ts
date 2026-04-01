@@ -9,7 +9,7 @@ import { cancelAwait, moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
 import {
 	handleClarifyResponse,
-	launchAgent,
+	runAgentForNode,
 	stopAgent,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
@@ -40,8 +40,11 @@ export function registerAgentRoutes(
 		);
 		const provider = getProjectProvider(ctx, effectiveCfg);
 		const model = effectiveCfg.model ?? DEFAULT_MODEL;
-		// Check if root agent is running via unified registry
-		const running = ctx.activeSessions.has(project.id);
+		// Check if root agent is running via tracker node session
+		const tracker = ctx.trackers.get(project.id);
+		const running = tracker
+			? tracker.get(tracker.rootNodeId)?.session != null
+			: false;
 		return c.json({
 			running,
 			provider: provider.name,
@@ -80,19 +83,24 @@ export function registerAgentRoutes(
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
-		if (!ctx.activeSessions.has(project.id)) {
-			// No active session — reset any orphaned in_progress root node
-			// so the UI can reconcile its running state.
+		{
 			const tracker = ctx.trackers.get(project.id);
-			if (tracker?.rootNodeId) {
-				const rootNode = tracker.get(tracker.rootNodeId);
-				if (rootNode && rootNode.status === "in_progress") {
-					tracker.updateStatus(tracker.rootNodeId, "failed");
-					await tracker.save();
-					broadcastTreeUpdate(ctx, project.id, tracker);
+			const rootSession = tracker
+				? tracker.get(tracker.rootNodeId)?.session
+				: undefined;
+			if (!rootSession) {
+				// No active session — reset any orphaned in_progress root node
+				// so the UI can reconcile its running state.
+				if (tracker?.rootNodeId) {
+					const rootNode = tracker.get(tracker.rootNodeId);
+					if (rootNode && rootNode.status === "in_progress") {
+						tracker.updateStatus(tracker.rootNodeId, "failed");
+						await tracker.save();
+						broadcastTreeUpdate(ctx, project.id, tracker);
+					}
 				}
+				return c.json({ error: "No active agent for this project" }, 404);
 			}
-			return c.json({ error: "No active agent for this project" }, 404);
 		}
 		await stopAgent(ctx, project.id);
 		return c.json({ ok: true });
@@ -125,8 +133,14 @@ export function registerAgentRoutes(
 		if (ctx.restartingProjects.has(project.id)) {
 			return c.json({ error: "Restart already in progress" }, 409);
 		}
-		if (!ctx.activeSessions.has(project.id)) {
-			return c.json({ error: "No active agent to restart" }, 404);
+		{
+			const restartTracker = ctx.trackers.get(project.id);
+			const rootRunning = restartTracker
+				? restartTracker.get(restartTracker.rootNodeId)?.session != null
+				: false;
+			if (!rootRunning) {
+				return c.json({ error: "No active agent to restart" }, 404);
+			}
 		}
 
 		ctx.restartingProjects.add(project.id);
@@ -149,13 +163,21 @@ export function registerAgentRoutes(
 				});
 			}
 
-			// Relaunch with resume to pick up new config
-			await launchAgent(
+			// Relaunch with resume to pick up new config — fire-and-forget
+			const restartTracker2 = await getTracker(ctx, project.id);
+			restartTracker2.updateStatus(restartTracker2.rootNodeId, "in_progress");
+			runAgentForNode(
 				ctx,
 				project,
-				{ resume: true },
-				orchestratorSystemPrompt,
-			);
+				restartTracker2,
+				restartTracker2.rootNodeId,
+				{
+					orchestratorSystemPrompt,
+					resume: true,
+				},
+			).catch((e) => {
+				console.error(`[restart] Failed to relaunch:`, e);
+			});
 			return c.json({ ok: true });
 		} finally {
 			ctx.restartingProjects.delete(project.id);
@@ -191,8 +213,14 @@ export function registerAgentRoutes(
 	app.post("/projects/:id/sessions/clear", async (c) => {
 		const project = ctx.pm.get(c.req.param("id"));
 		if (!project) return c.json({ error: "Project not found" }, 404);
-		if (ctx.activeSessions.has(project.id)) {
-			await stopAgent(ctx, project.id);
+		{
+			const clearTracker = ctx.trackers.get(project.id);
+			const rootRunning = clearTracker
+				? clearTracker.get(clearTracker.rootNodeId)?.session != null
+				: false;
+			if (rootRunning) {
+				await stopAgent(ctx, project.id);
+			}
 		}
 		const eventStore = getEventStore(ctx, project.id);
 		await eventStore.clearAll();

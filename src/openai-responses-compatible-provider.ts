@@ -1,8 +1,4 @@
-import type {
-	AgentProvider,
-	AgentRequest,
-	AgentSession,
-} from "./agent-provider.ts";
+import type { AgentProvider, AgentRequest } from "./agent-provider.ts";
 import {
 	type AssistantContent,
 	type AssistantToolCall,
@@ -1116,37 +1112,6 @@ export class OpenAIResponsesCompatibleProvider implements AgentProvider {
 			result = await gen.next();
 		}
 		return result.value;
-	}
-
-	startSession(request: AgentRequest): AgentSession {
-		const sessionId = request.resumeSessionId ?? ulid();
-		const queue = request.queue ?? new MessageQueue();
-		const abortController = new AbortController();
-		const self = this;
-
-		async function* eventStream(): AsyncGenerator<Event, AgentResult> {
-			const gen = self.runLoop(
-				{ ...request, signal: abortController.signal },
-				sessionId,
-				queue,
-			);
-			let result = await gen.next();
-			while (!result.done) {
-				yield result.value;
-				result = await gen.next();
-			}
-			return result.value;
-		}
-
-		return {
-			sessionId,
-			events: eventStream(),
-			queue,
-			stop() {
-				queue.close();
-				abortController.abort();
-			},
-		};
 	}
 
 	private async *runLoop(
