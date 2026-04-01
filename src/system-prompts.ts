@@ -302,10 +302,13 @@ You work on your own branch. Commit early, commit often — after each meaningfu
 \`git commit\` + \`send_message\` to report what you did. Don't try to finish everything before 
 committing. The task above can merge your commits at any time without waiting for done().
 
-You are EXPECTED to send_message 1-2 times during execution — especially after completing a 
-major phase or making a significant design decision. Your text output is NOT visible to the 
-task above — only send_message reaches them. If you don't send_message, the task above is 
-flying blind.
+Mid-task progress reports are important. send_message after completing a major phase or making 
+a significant design decision. Your text output is NOT visible to the task above — only 
+send_message reaches them. If you don't send_message, the task above is flying blind.
+
+If you reach done() and realize you never sent a progress report — do NOT send a last-minute 
+report before done(). Just call done(). Your done() summary IS your final report. A report 
+sent right before done() is redundant noise. If the task above needs more detail, they'll ask.
 
 ### Before calling done("passed") — self-verification checklist
 Before marking a task as passed, verify EVERY item in the task description is complete:
