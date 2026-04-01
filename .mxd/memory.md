@@ -230,3 +230,18 @@ Feature: provider loop auto-recovers from 400 invalid_request_error (e.g. oversi
 ## UI Lifecycle Entry Collapse
 
 `processEventBatch` collapses consecutive lifecycle-only entries (session resumed / agent stopped) with no meaningful content between them, keeping only the last one per run. `agent_stopped` now renders as "⏹ Agent stopped" lifecycle LogEntry. The collapse uses `isMeaningfulEntry()` — lifecycle entries are not meaningful; all other types (including task_started) are.
+
+
+## Agent Launch Path Refactor (2026-04-01)
+
+- Root and child agents now use the same launch function: `runAgentForNode` in `agent-lifecycle.ts`
+- Deleted: `launchAgent`, `consumeAgentEvents`, `startSession`, `AgentSession`, `activeSessions`
+- `TaskSession` now has `abortController: AbortController` — stopAgent/stopTask use it to cancel in-flight API calls (both root and child)
+- Root check: `tracker.get(tracker.rootNodeId)?.session != null` instead of `activeSessions.has(projectId)`
+- Root vs child differences in runAgentForNode parameterized via `RunAgentOpts`: orchestratorSystemPrompt, model, resume flag
+- Root streams directly (no done detection — stays alive for idle-yield); child uses runChildCore (done detection closes queue)
+- `launchingNodes: Set<string>` on DaemonContext prevents duplicate launches during async setup
+- During lock window: deliverMessage skips queue delivery (messages go to JSONL, recovered by findUnconsumedMessages)
+- JSONL flushed before event read in runAgentForNode to catch concurrent writes
+- Session identity check in finally block (`finalNode.session === ownSession`) prevents cleanup clobber when a replacement agent was launched
+
