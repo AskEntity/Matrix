@@ -583,12 +583,6 @@ function TaskNodeView({
 					{node.status === "draft" && (
 						<span className="mxd-task-draft-badge">draft</span>
 					)}
-					{node.branch && (
-						<span className="mxd-task-branch-tag" title={node.branch}>
-							{node.branch.replace("mxd/", "").split("/").slice(1).join("/") ||
-								node.branch.replace("mxd/", "")}
-						</span>
-					)}
 				</div>
 			</button>
 			{showIndicatorAfter && (

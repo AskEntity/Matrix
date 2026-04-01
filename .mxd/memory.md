@@ -15,10 +15,9 @@ Creating tasks is CHEAP. Executing must be DELIBERATE. When user discusses desig
 ## How to Run Tests
 
 ```bash
-bun test src/daemon.test.ts src/project-manager.test.ts src/task-tracker.test.ts src/worktree-manager.test.ts src/anthropic-compatible-provider.test.ts src/openai-compatible-provider.test.ts src/message-queue.test.ts src/agent-tools-helpers.test.ts src/config.test.ts src/events.test.ts src/event-store.test.ts src/lifecycle.test.ts src/budget.test.ts src/task-operations.test.ts
-bun test src/integration.test.ts src/integration-stress.test.ts
-bun run typecheck   # tsc --noEmit
-bun run check       # biome lint + format
+bun test              # ALL tests (unit + integration). Always use this.
+bun run typecheck     # tsc --noEmit
+bun run check         # biome lint + format
 ```
 
 ## Architecture Overview
