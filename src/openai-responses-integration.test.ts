@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,6 +38,12 @@ async function setupTestContext(): Promise<TestContext> {
 	const appResult = createApp({ dataDir, agentProvider: provider });
 	await appResult.pm.load();
 	const project = await appResult.pm.init(projectDir);
+
+	// Clean up quality task templates that interfere with test assumptions
+	const tasksDir = join(projectDir, ".mxd", "tasks");
+	if (existsSync(tasksDir)) {
+		rmSync(tasksDir, { recursive: true });
+	}
 
 	const hookExample = join(
 		projectDir,
