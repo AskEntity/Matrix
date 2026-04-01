@@ -783,6 +783,7 @@ export async function runChildAgentInBackground(
 				hasRunningChildren: agentCtx.hasRunningChildren,
 				buildYieldPendingSection: agentCtx.buildYieldPendingSection,
 				getSession,
+				enableAutoRecovery: ctx.config.enableAutoRecovery ?? true,
 			},
 		});
 
@@ -1015,6 +1016,7 @@ export async function launchAgent(
 		buildYieldPendingSection: agentCtx.buildYieldPendingSection,
 		getSession,
 		isOrchestrator: true,
+		enableAutoRecovery: ctx.config.enableAutoRecovery ?? true,
 	});
 
 	ctx.activeSessions.set(project.id, session);

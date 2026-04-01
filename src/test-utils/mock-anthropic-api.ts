@@ -716,7 +716,8 @@ export type InjectedErrorType =
 	| "rate_limit"
 	| "overloaded"
 	| "internal_server_error"
-	| "connection_error";
+	| "connection_error"
+	| "invalid_request_error";
 
 export interface ErrorInjection {
 	/** Which API call number to fail on (1-based). */
@@ -755,6 +756,11 @@ function makeInjectedError(errorType: InjectedErrorType): Error {
 			return new TransientAPIError(500, "Internal server error");
 		case "connection_error":
 			return new TransientAPIError(0, "Connection error: ECONNREFUSED");
+		case "invalid_request_error":
+			return new TransientAPIError(
+				400,
+				"messages: each tool_use must have a single result",
+			);
 	}
 }
 
