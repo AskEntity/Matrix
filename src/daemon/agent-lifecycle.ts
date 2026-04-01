@@ -152,7 +152,7 @@ async function createAgentContext(
 		effectiveCfg.mcpServers &&
 		Object.keys(effectiveCfg.mcpServers).length > 0
 	) {
-		await mcpManager.connectAll(effectiveCfg.mcpServers);
+		await mcpManager.connectAll(effectiveCfg.mcpServers, opts.projectPath);
 	}
 
 	const { toolDefs, hasRunningChildren, buildYieldPendingSection } =

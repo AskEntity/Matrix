@@ -23,10 +23,12 @@ interface McpServerHandle {
 async function startMcpServer(
 	name: string,
 	config: McpServerConfig,
+	defaultCwd?: string,
 ): Promise<McpServerHandle> {
 	const transport = new StdioClientTransport({
 		command: config.command,
 		args: config.args,
+		cwd: config.cwd ?? defaultCwd,
 		env: {
 			...(process.env as Record<string, string>),
 			...config.env,
@@ -59,11 +61,14 @@ export class McpClientManager {
 	private servers = new Map<string, McpServerHandle>();
 
 	/** Connect to all configured MCP servers and discover their tools. */
-	async connectAll(configs: Record<string, McpServerConfig>): Promise<void> {
+	async connectAll(
+		configs: Record<string, McpServerConfig>,
+		defaultCwd?: string,
+	): Promise<void> {
 		const entries = Object.entries(configs);
 		const results = await Promise.allSettled(
 			entries.map(async ([name, config]) => {
-				const handle = await startMcpServer(name, config);
+				const handle = await startMcpServer(name, config, defaultCwd);
 				this.servers.set(name, handle);
 				return { name, toolCount: handle.tools.length };
 			}),
