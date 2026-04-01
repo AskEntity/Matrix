@@ -206,3 +206,14 @@ The UI must fetch events per-session (using `api.taskEvents(projectId, sessionId
 - `noExplicitAny`: Replace `any` with `Event`, `{ type: string }`, `unknown`, or specific interface.
 - `useTemplate`: Replace `a + b` with template literals. Biome auto-fix handles most but marks them "unsafe".
 - `biome check --write --unsafe` auto-fixes ~50% of `noNonNullAssertion` but creates `noNonNullAssertedOptionalChain` errors from `x!.y!` → `x?.y!`. Must manually fix those after.
+
+## Extended Thinking (Anthropic)
+
+- Config: `thinking?: { budgetTokens?: number }` in MatrixConfig. Default budget: 10000.
+- Events: `thinking` (persisted, has thinking text + signature) and `thinking_delta` (ephemeral, streaming).
+- Provider: `AnthropicCompatibleProvider` constructor accepts `thinking?: { budgetTokens: number }` in opts. Passed via `createProviderFromAuth` from resolved config.
+- API: Adds `thinking: { type: "enabled", budget_tokens: N }` to Anthropic API create params when configured.
+- Streaming: `thinking_delta` events from SDK are buffered and yielded alongside `text_delta` events, throttled at 80ms intervals.
+- Event converter: `AssistantContent.items` now includes `{ type: "thinking"; thinking: string; signature: string }` items. Anthropic converter outputs `{ type: "thinking", thinking, signature }` blocks. OpenAI converters naturally skip them (filter by type).
+- JSONL round-trip: thinking events persist to JSONL → on resume, `walkEventsToMessages` groups them into assistant content → `eventsToAnthropicMessages` reconstructs `ThinkingBlockParam` blocks → API passes them back (auto-ignores old thinking, zero token cost).
+- Frontend: `thinking` events create log entries. `thinking_delta` is no-op. Full UI (collapsible display, streaming) is a follow-up task.

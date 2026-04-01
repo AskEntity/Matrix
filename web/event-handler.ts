@@ -502,6 +502,24 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				};
 			}
 
+			case "thinking": {
+				// Persisted thinking block — create a log entry showing the thinking content
+				return {
+					entries: [
+						createLogEntry({
+							...msg,
+							type: "thinking",
+						}),
+					],
+					updates: [],
+					sideEffects: NO_SIDE_EFFECTS,
+				};
+			}
+
+			case "thinking_delta":
+				// Ephemeral thinking streaming — no-op for now (UI display TBD)
+				return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };
+
 			case "assistant_text": {
 				if (!msg.content) {
 					return { entries: [], updates: [], sideEffects: NO_SIDE_EFFECTS };

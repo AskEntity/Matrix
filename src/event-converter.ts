@@ -23,11 +23,12 @@ export interface AssistantToolCall {
 	input: Record<string, unknown>;
 }
 
-/** Collected assistant content: ordered text blocks and tool calls. */
+/** Collected assistant content: ordered text blocks, tool calls, and thinking blocks. */
 export interface AssistantContent {
 	items: Array<
 		| { type: "text"; text: string }
 		| { type: "tool_call"; call: AssistantToolCall }
+		| { type: "thinking"; thinking: string; signature: string }
 	>;
 }
 
@@ -214,17 +215,25 @@ export function walkEventsToMessages(
 				i++;
 				break;
 
+			case "thinking":
 			case "assistant_text":
 			case "tool_call": {
 				const content: AssistantContent = {
 					items: [],
 				};
 
-				// Collect ALL consecutive assistant_text and tool_call events.
-				// They may be interleaved (text→tool→text→tool) but belong to the same turn.
+				// Collect ALL consecutive thinking, assistant_text and tool_call events.
+				// They may be interleaved (thinking→text→tool→text→tool) but belong to the same turn.
 				while (i < events.length) {
 					const cur = events[i] as Event;
-					if (cur.type === "assistant_text") {
+					if (cur.type === "thinking") {
+						content.items.push({
+							type: "thinking",
+							thinking: cur.thinking,
+							signature: cur.signature,
+						});
+						i++;
+					} else if (cur.type === "assistant_text") {
 						content.items.push({ type: "text", text: cur.content });
 						i++;
 					} else if (cur.type === "tool_call") {

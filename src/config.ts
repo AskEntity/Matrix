@@ -29,6 +29,11 @@ export interface WebAuthnConfig {
 	rpID?: string;
 }
 
+export interface ThinkingConfig {
+	/** Token budget for extended thinking. Minimum 1024. Default 10000. */
+	budgetTokens?: number;
+}
+
 export interface MatrixConfig {
 	authGroups?: Record<string, AuthGroup>;
 	defaultAuth?: string;
@@ -43,6 +48,8 @@ export interface MatrixConfig {
 	sessionKeep?: number;
 	selfBootstrap?: boolean;
 	auth?: WebAuthnConfig;
+	/** Extended thinking configuration for Anthropic models. */
+	thinking?: ThinkingConfig;
 }
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -129,6 +136,7 @@ export function resolveConfig(
 		"port",
 		"sessionKeep",
 		"selfBootstrap",
+		"thinking",
 	] as const;
 
 	for (const key of scalarKeys) {

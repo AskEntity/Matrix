@@ -194,9 +194,15 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 
 		onAssistantContent(content: AssistantContent): unknown {
 			const blocks: unknown[] = [];
-			// Use ordered items to preserve interleaved text/tool_call sequence
+			// Use ordered items to preserve interleaved thinking/text/tool_call sequence
 			for (const item of content.items) {
-				if (item.type === "text") {
+				if (item.type === "thinking") {
+					blocks.push({
+						type: "thinking",
+						thinking: item.thinking,
+						signature: item.signature,
+					});
+				} else if (item.type === "text") {
 					blocks.push({ type: "text", text: item.text });
 				} else {
 					blocks.push({
@@ -340,7 +346,10 @@ export function eventsToAnthropicMessages(events: Event[]): unknown[] {
 function createAnthropicAdapter(
 	client: Anthropic,
 	useOAuth: boolean,
-	opts?: { outerRetryDelayMs?: (attempt: number, error: unknown) => number },
+	opts?: {
+		outerRetryDelayMs?: (attempt: number, error: unknown) => number;
+		thinking?: { budgetTokens: number };
+	},
 ): ProviderAdapter {
 	return {
 		getContextWindow(model: string): number {
@@ -445,6 +454,14 @@ function createAnthropicAdapter(
 				system: systemBlocks,
 				messages: messagesWithCache,
 				tools: toolsWithCache,
+				...(opts?.thinking
+					? {
+							thinking: {
+								type: "enabled" as const,
+								budget_tokens: opts.thinking.budgetTokens,
+							},
+						}
+					: {}),
 			} as Parameters<typeof client.messages.stream>[0];
 
 			// Store sessionId on client object for test mock conversation keying.
@@ -463,30 +480,52 @@ function createAnthropicAdapter(
 							(client.beta.messages as any).stream(createParams, requestOpts)
 						: client.messages.stream(createParams, requestOpts);
 
-					// Stream text deltas to UI (throttled to ~12 yields/sec)
+					// Stream text and thinking deltas to UI (throttled to ~12 yields/sec)
 					let textBuffer = "";
+					let thinkingBuffer = "";
 					let lastFlushTime = Date.now();
 					const TEXT_FLUSH_INTERVAL = 80;
 
 					for await (const event of stream) {
-						if (
-							event.type === "content_block_delta" &&
-							(event.delta as { type?: string })?.type === "text_delta" &&
-							!params.isCompacting
-						) {
-							textBuffer += (event.delta as { text: string }).text;
+						if (event.type === "content_block_delta" && !params.isCompacting) {
+							const deltaType = (event.delta as { type?: string })?.type;
+							if (deltaType === "text_delta") {
+								textBuffer += (event.delta as { text: string }).text;
+							} else if (deltaType === "thinking_delta") {
+								thinkingBuffer += (event.delta as { thinking: string })
+									.thinking;
+							}
 							const now = Date.now();
 							if (now - lastFlushTime >= TEXT_FLUSH_INTERVAL) {
-								yield {
-									type: "text_delta" as const,
-									content: textBuffer,
-									taskId: "",
-									ts: Date.now(),
-								};
-								textBuffer = "";
+								if (thinkingBuffer) {
+									yield {
+										type: "thinking_delta" as const,
+										thinking: thinkingBuffer,
+										taskId: "",
+										ts: Date.now(),
+									};
+									thinkingBuffer = "";
+								}
+								if (textBuffer) {
+									yield {
+										type: "text_delta" as const,
+										content: textBuffer,
+										taskId: "",
+										ts: Date.now(),
+									};
+									textBuffer = "";
+								}
 								lastFlushTime = now;
 							}
 						}
+					}
+					if (thinkingBuffer) {
+						yield {
+							type: "thinking_delta" as const,
+							thinking: thinkingBuffer,
+							taskId: "",
+							ts: Date.now(),
+						};
 					}
 					if (textBuffer) {
 						yield {
@@ -585,7 +624,15 @@ function createAnthropicAdapter(
 			const msg = response as Anthropic.Messages.Message;
 			const events: Event[] = [];
 			for (const block of msg.content) {
-				if (block.type === "text") {
+				if (block.type === "thinking") {
+					events.push({
+						type: "thinking",
+						thinking: block.thinking,
+						signature: block.signature,
+						taskId: "",
+						ts: Date.now(),
+					});
+				} else if (block.type === "text") {
 					events.push({
 						type: "assistant_text",
 						content: block.text,
@@ -812,10 +859,19 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	private client: Anthropic;
 	private model: string;
 	private useOAuth: boolean;
+	/** Extended thinking configuration. */
+	private thinking?: { budgetTokens: number };
 	/** Override outer retry delay for testing. Production uses default (30s+ exponential). */
 	outerRetryDelayMs?: (attempt: number, error: unknown) => number;
 
-	constructor(model?: string, opts?: { apiKey?: string; oauthToken?: string }) {
+	constructor(
+		model?: string,
+		opts?: {
+			apiKey?: string;
+			oauthToken?: string;
+			thinking?: { budgetTokens: number };
+		},
+	) {
 		const apiKey = opts?.apiKey ?? process.env.ANTHROPIC_API_KEY;
 		const oauthToken = opts?.oauthToken ?? process.env.CLAUDE_CODE_OAUTH_TOKEN;
 		this.useOAuth = Boolean(oauthToken && !apiKey);
@@ -835,6 +891,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 			this.client = new Anthropic({ timeout });
 		}
 		this.model = model ?? DEFAULT_MODEL;
+		this.thinking = opts?.thinking;
 	}
 
 	async execute(request: AgentRequest): Promise<AgentResult> {
@@ -919,6 +976,7 @@ export class AnthropicCompatibleProvider implements AgentProvider {
 	): AsyncGenerator<Event, AgentResult> {
 		const adapter = createAnthropicAdapter(this.client, this.useOAuth, {
 			outerRetryDelayMs: this.outerRetryDelayMs,
+			thinking: this.thinking,
 		});
 		// Override the default model in the request
 		const effectiveRequest = {
