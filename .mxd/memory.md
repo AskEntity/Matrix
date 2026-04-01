@@ -245,3 +245,17 @@ Feature: provider loop auto-recovers from 400 invalid_request_error (e.g. oversi
 - JSONL flushed before event read in runAgentForNode to catch concurrent writes
 - Session identity check in finally block (`finalNode.session === ownSession`) prevents cleanup clobber when a replacement agent was launched
 
+
+## ⚠️ JSONL-Memory Consistency Gap (Critical Architecture Issue)
+
+**Root cause of docs project 400 loop and orchestrator image crash:**
+
+In-memory `messages[]` (provider format) and JSONL events are two independent data structures. Recovery/fixes that only modify `messages[]` don't persist — JSONL retains the poison. On restart, JSONL rebuilds messages with the poison still there → 400 → recovery → only fixes memory again → infinite loop.
+
+**Key insight**: "JSONL is golden" but the system doesn't fully live by it. `messages[]` should be derived from JSONL, never independently modified. Any "fix" that touches messages without touching JSONL is wrong by design.
+
+**Test gap**: All restart+prefix tests are single crash-restart scenarios. No test covers "poison event mid-JSONL → recovery only fixes memory → continue running → restart → poison still there". auto-recovery is disabled in all tests (`enableAutoRecovery: false`), so accumulated corruption path is completely untested.
+
+**Planned fix**: JSONL truncate-and-rebuild (see task description). Recovery must modify JSONL, not messages. Truncate after last good assistant turn, rebuild interrupted tool_results, inject status message.
+
+
