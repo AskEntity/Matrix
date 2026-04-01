@@ -1946,6 +1946,7 @@ describe("done tool", () => {
 		// Attach session to the node so tools can find the queue
 		node.session = {
 			queue,
+			abortController: new AbortController(),
 			cwd: tempDir,
 			fallbackCwd: tempDir,
 			depth: 0,
@@ -2006,6 +2007,7 @@ describe("done tool", () => {
 		// Attach session to the node so tools can find the queue
 		node.session = {
 			queue,
+			abortController: new AbortController(),
 			cwd: tempDir,
 			fallbackCwd: tempDir,
 			depth: 0,
@@ -2403,7 +2405,7 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
-		const session = provider.startSession({
+		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
@@ -2431,15 +2433,15 @@ describe("Event deterministic verification", () => {
 		});
 
 		const consumePromise = (async () => {
-			let result = await session.events.next();
+			let result = await session.next();
 			while (!result.done) {
 				if (
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					session.stop();
+					await session.return(undefined as never);
 				}
-				result = await session.events.next();
+				result = await session.next();
 			}
 			return result.value as AgentResult;
 		})();
@@ -2539,7 +2541,7 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
-		const session = provider.startSession({
+		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
@@ -2560,15 +2562,15 @@ describe("Event deterministic verification", () => {
 		});
 
 		const consumePromise = (async () => {
-			let result = await session.events.next();
+			let result = await session.next();
 			while (!result.done) {
 				if (
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					session.stop();
+					await session.return(undefined as never);
 				}
-				result = await session.events.next();
+				result = await session.next();
 			}
 			return result.value as AgentResult;
 		})();
@@ -2623,7 +2625,7 @@ describe("Event deterministic verification", () => {
 					});
 				} else {
 					// Second idle: stop the session
-					session.stop();
+					await session.return(undefined as never);
 				}
 			}
 		};
@@ -2652,7 +2654,7 @@ describe("Event deterministic verification", () => {
 		});
 
 		const queue = queueWithPrompt("Start working", testDir);
-		const session = provider.startSession({
+		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
@@ -2661,9 +2663,9 @@ describe("Event deterministic verification", () => {
 
 		// Drive the generator to completion — idle detection is in emit callback
 		const consumePromise = (async () => {
-			let result = await session.events.next();
+			let result = await session.next();
 			while (!result.done) {
-				result = await session.events.next();
+				result = await session.next();
 			}
 			return result.value as AgentResult;
 		})();
@@ -2769,7 +2771,7 @@ describe("Event deterministic verification", () => {
 			);
 		});
 
-		const session = provider.startSession({
+		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
@@ -2790,15 +2792,15 @@ describe("Event deterministic verification", () => {
 		});
 
 		const consumePromise = (async () => {
-			let result = await session.events.next();
+			let result = await session.next();
 			while (!result.done) {
 				if (
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					session.stop();
+					await session.return(undefined as never);
 				}
-				result = await session.events.next();
+				result = await session.next();
 			}
 			return result.value as AgentResult;
 		})();
@@ -3054,7 +3056,7 @@ describe("Event deterministic verification", () => {
 		});
 
 		const queue = queueWithPrompt("Do task", testDir);
-		const session = provider.startSession({
+		const session = provider.stream({
 			cwd: testDir,
 			systemPrompt: { stable: "You are helpful.", variable: "" },
 			emit,
@@ -3091,15 +3093,15 @@ describe("Event deterministic verification", () => {
 		});
 
 		const consumePromise = (async () => {
-			let result = await session.events.next();
+			let result = await session.next();
 			while (!result.done) {
 				if (
 					result.value.type === "status" &&
 					(result.value as { message: string }).message.includes("idle state")
 				) {
-					session.stop();
+					await session.return(undefined as never);
 				}
-				result = await session.events.next();
+				result = await session.next();
 			}
 			return result.value as AgentResult;
 		})();

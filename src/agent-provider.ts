@@ -26,7 +26,7 @@ export interface AgentRequest {
 	mcpToolDefs?: Record<string, ToolDefinition<any>[]>;
 	/** Claude model to use (e.g. 'claude-sonnet-4-6', 'claude-opus-4-6'). */
 	model?: string;
-	/** External MessageQueue — if provided, startSession uses this instead of creating a new one. */
+	/** External MessageQueue for message delivery. */
 	queue?: MessageQueue;
 	/** Callback to check if this agent has running children (for implicit yield on end_turn). */
 	hasRunningChildren?: () => boolean;
@@ -69,18 +69,6 @@ export interface AgentRequest {
 	enableAutoRecovery?: boolean;
 }
 
-/** Handle to a running agent session that supports message injection. */
-export interface AgentSession {
-	/** Unique session ID for this running agent. */
-	readonly sessionId: string;
-	/** Stream of events. Consume this to drive the session. */
-	events: AsyncGenerator<Event, AgentResult>;
-	/** Message queue for async event delivery (user messages, child completions, etc.) */
-	readonly queue: MessageQueue;
-	/** Stop the agent. */
-	stop(): void;
-}
-
 /**
  * Interface for agent execution backends.
  *
@@ -96,13 +84,7 @@ export interface AgentProvider {
 
 	/**
 	 * Execute a task with streaming events.
-	 * The last yielded value is always the final AgentResult.
+	 * The queue, abort signal, and session lifecycle are managed by the caller (daemon layer).
 	 */
 	stream(request: AgentRequest): AsyncGenerator<Event, AgentResult>;
-
-	/**
-	 * Start an interactive agent session that supports mid-execution message injection.
-	 * Returns a session handle with a queue and an event stream.
-	 */
-	startSession(request: AgentRequest): AgentSession;
 }

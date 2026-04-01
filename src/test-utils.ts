@@ -42,7 +42,6 @@ export function mockDaemonContext(opts: {
 		trackers,
 		restartingProjects: new Set(),
 		sseClients: new Set(),
-		activeSessions: new Map(),
 		pendingClarifications: new Map(),
 		eventStores: new Map(),
 		requestCount: 0,
@@ -104,6 +103,7 @@ export function attachMockSession(
 ): TaskSession {
 	const session: TaskSession = {
 		queue,
+		abortController: new AbortController(),
 		cwd: opts?.cwd ?? "/tmp/mock-cwd",
 		fallbackCwd: opts?.cwd ?? "/tmp/mock-cwd",
 		depth: opts?.depth ?? 0,

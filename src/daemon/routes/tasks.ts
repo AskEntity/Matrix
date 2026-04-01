@@ -22,6 +22,7 @@ import {
 	runChildAgentInBackground,
 	stopTask,
 } from "../agent-lifecycle.ts";
+import { cleanupSessionBackgroundProcesses } from "../../tools/index.ts";
 import type { DaemonContext } from "../context.ts";
 import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
 import {
@@ -637,19 +638,11 @@ export function registerTaskRoutes(
 		}
 
 		// Stop the agent if running for this task
-		const activeQueue = node.session?.queue;
-		if (activeQueue) {
+		if (node.session) {
+			node.session.queue.close();
+			node.session.abortController.abort();
+			cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
 			node.session = undefined;
-			activeQueue.close();
-		}
-
-		// If this is the root node, also stop the project's active session
-		if (nodeId === tracker.rootNodeId && ctx.activeSessions.has(project.id)) {
-			const session = ctx.activeSessions.get(project.id);
-			if (session) {
-				session.stop();
-				ctx.activeSessions.delete(project.id);
-			}
 		}
 
 		// Clear the JSONL events file for this task

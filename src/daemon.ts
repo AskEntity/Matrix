@@ -4,7 +4,6 @@ import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
-import type { AgentSession } from "./agent-provider.ts";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
 import {
 	launchAgent,
@@ -80,7 +79,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		trackers: new Map(),
 		restartingProjects: new Set(),
 		sseClients: new Set<SSEClient>(),
-		activeSessions: new Map<string, AgentSession>(),
 		pendingClarifications: new Map<string, PendingClarification[]>(),
 		eventStores: new Map(),
 		requestCount: 0,
@@ -374,9 +372,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	/** Graceful shutdown: stop all agents. */
 	async function shutdown(): Promise<void> {
 		// Stop all agents — their root nodes stay in_progress so they resume on next start
-		const projectIds = [...ctx.activeSessions.keys()];
-		for (const projectId of projectIds) {
-			await stopAgent(ctx, projectId);
+		for (const [projectId, tracker] of ctx.trackers) {
+			const rootNode = tracker.get(tracker.rootNodeId);
+			if (rootNode?.session) {
+				await stopAgent(ctx, projectId);
+			}
 		}
 	}
 
@@ -393,7 +393,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		pm: ctx.pm,
 		dataDir: config.dataDir,
 		sseClients: ctx.sseClients,
-		activeSessions: ctx.activeSessions,
 		autoResumeProjects,
 		shutdown,
 		getTracker: (projectId: string) => getTracker(ctx, projectId),

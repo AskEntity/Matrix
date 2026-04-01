@@ -196,7 +196,10 @@ async function createAgentContext(
 						id: p.id,
 						name: p.name,
 						path: p.path,
-						hasActiveAgent: ctx.activeSessions.has(p.id),
+						hasActiveAgent: (() => {
+							const t = ctx.trackers.get(p.id);
+							return t ? t.get(t.rootNodeId)?.session != null : false;
+						})(),
 					})),
 				getProject: (id) => ctx.pm.get(id),
 				getTracker: (projectId) => ctx.trackers.get(projectId),
@@ -374,50 +377,28 @@ export async function stopAgent(
 	ctx: DaemonContext,
 	projectId: string,
 ): Promise<void> {
-	const session = ctx.activeSessions.get(projectId);
-	if (!session) return;
-
 	const tracker = ctx.trackers.get(projectId);
+	if (!tracker) return;
 
-	session.stop();
-	ctx.activeSessions.delete(projectId);
+	const rootNodeId = tracker.rootNodeId;
+	const rootNode = tracker.get(rootNodeId);
 
-	// Cascade stop to ALL agents (root + children) via session on tracker nodes
-	if (tracker) {
-		const rootNodeId = tracker.rootNodeId;
-		// Close root session
-		const rootNode = tracker.get(rootNodeId);
-		const rootQueue = rootNode?.session?.queue;
-		if (rootQueue) {
-			if (rootNode?.session) {
-				cleanupSessionBackgroundProcesses(rootNode.session.backgroundProcesses);
-				rootNode.session = undefined;
-			}
-			rootQueue.close();
-		} else if (rootNode?.session) {
-			cleanupSessionBackgroundProcesses(rootNode.session.backgroundProcesses);
-			rootNode.session = undefined;
+	// Check if root agent is actually running
+	if (!rootNode?.session) return;
+
+	// Stop ALL agents (root + children) via session on tracker nodes.
+	// Each node's session has its own queue + abort controller.
+	for (const node of tracker.allNodes()) {
+		if (node.session) {
+			node.session.queue.close();
+			node.session.abortController.abort();
+			cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
+			node.session = undefined;
 		}
-		for (const node of tracker.allNodes()) {
-			if (node.status === "in_progress" && node.id !== rootNodeId) {
-				const childQueue = node.session?.queue;
-				if (childQueue) {
-					if (node.session) {
-						cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
-						node.session = undefined;
-					}
-					childQueue.close();
-				} else if (node.session) {
-					cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
-					node.session = undefined;
-				}
-				// Children stay in_progress — they were interrupted, not failed.
-				// autoResume will detect them from JSONL state on next restart.
-			}
-		}
-		await tracker.save();
-		broadcastTreeUpdate(ctx, projectId, tracker);
 	}
+
+	await tracker.save();
+	broadcastTreeUpdate(ctx, projectId, tracker);
 
 	// Clear pending clarifications
 	ctx.pendingClarifications.delete(projectId);
@@ -436,7 +417,7 @@ export async function stopAgent(
 
 	emitEvent(ctx, projectId, {
 		type: "agent_stopped",
-		taskId: tracker?.rootNodeId ?? "",
+		taskId: rootNodeId,
 		ts: Date.now(),
 	});
 }
@@ -460,17 +441,13 @@ export async function stopTask(
 	const node = tracker.get(nodeId);
 	if (!node) return false;
 
-	const queue = node.session?.queue;
-	if (!queue && !node.session) return false;
+	if (!node.session) return false;
 
-	// Close queue and clean up session
-	if (node.session) {
-		cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
-		node.session = undefined;
-	}
-	if (queue) {
-		queue.close();
-	}
+	// Close queue, abort in-flight API calls, and clean up session
+	node.session.queue.close();
+	node.session.abortController.abort();
+	cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
+	node.session = undefined;
 
 	await tracker.save();
 	broadcastTreeUpdate(ctx, projectId, tracker);
@@ -668,8 +645,10 @@ export async function runChildAgentInBackground(
 		const childQueue = new MessageQueue();
 
 		// Create and attach TaskSession to the node
+		const abortController = new AbortController();
 		const taskSession: TaskSession = {
 			queue: childQueue,
+			abortController,
 			cwd: node.worktreePath as string,
 			fallbackCwd: node.worktreePath as string,
 			depth,
@@ -784,6 +763,7 @@ export async function runChildAgentInBackground(
 				buildYieldPendingSection: agentCtx.buildYieldPendingSection,
 				getSession,
 				enableAutoRecovery: ctx.config.enableAutoRecovery ?? true,
+				signal: abortController.signal,
 			},
 		});
 
@@ -988,8 +968,10 @@ export async function launchAgent(
 	};
 
 	// Create and attach TaskSession to root node
+	const rootAbortController = new AbortController();
 	const rootTaskSession: TaskSession = {
 		queue,
+		abortController: rootAbortController,
 		cwd: project.path,
 		fallbackCwd: project.path,
 		depth: 0,
@@ -998,7 +980,7 @@ export async function launchAgent(
 	};
 	rootNode.session = rootTaskSession;
 
-	const session = agentCtx.provider.startSession({
+	const eventStream = agentCtx.provider.stream({
 		cwd: project.path,
 		projectPath: project.path,
 		emit: rootEmit,
@@ -1017,15 +999,14 @@ export async function launchAgent(
 		getSession,
 		isOrchestrator: true,
 		enableAutoRecovery: ctx.config.enableAutoRecovery ?? true,
+		signal: rootAbortController.signal,
 	});
-
-	ctx.activeSessions.set(project.id, session);
 
 	// Fire-and-forget: consume events in background
 	(async () => {
 		let caughtError = false;
 		try {
-			const finalResult = await consumeAgentEvents(session.events);
+			const finalResult = await consumeAgentEvents(eventStream);
 
 			// done() tool updates status directly in the tracker and delivers
 			// task_complete to the parent. That is the ONLY path for status change.
@@ -1080,29 +1061,25 @@ export async function launchAgent(
 					e,
 				);
 			}
-			session.stop();
-			// Only clean up if this session is still the active one.
-			// During restart, a new session replaces us — don't clobber it.
-			if (ctx.activeSessions.get(project.id) === session) {
-				ctx.activeSessions.delete(project.id);
-				// On error, broadcast agent_stopped so the UI knows to clear
-				// the running state. (Normal completions already broadcast
-				// orchestration_completed which handles this.)
-				if (caughtError) {
-					emitEvent(ctx, project.id, {
-						type: "agent_stopped",
-						taskId: rootNodeId,
-						ts: Date.now(),
-					});
-				}
-			}
 			// Clean up root session
 			const rootNodeFinal = tracker.get(rootNodeId);
 			if (rootNodeFinal?.session) {
+				rootNodeFinal.session.queue.close();
+				rootNodeFinal.session.abortController.abort();
 				cleanupSessionBackgroundProcesses(
 					rootNodeFinal.session.backgroundProcesses,
 				);
 				rootNodeFinal.session = undefined;
+			}
+			// On error, broadcast agent_stopped so the UI knows to clear
+			// the running state. (Normal completions already broadcast
+			// orchestration_completed which handles this.)
+			if (caughtError) {
+				emitEvent(ctx, project.id, {
+					type: "agent_stopped",
+					taskId: rootNodeId,
+					ts: Date.now(),
+				});
 			}
 			broadcastTreeUpdate(ctx, project.id, tracker);
 			await mcpManager.disconnectAll();

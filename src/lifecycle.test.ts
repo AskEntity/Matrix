@@ -38,28 +38,6 @@ function createInstantProvider(): AgentProvider {
 				sessionId: "mock-session",
 			};
 		},
-		startSession(req) {
-			const queue = req.queue ?? new MessageQueue();
-			// biome-ignore lint/correctness/useYield: mock session never streams
-			async function* events(): AsyncGenerator<Event, AgentResult> {
-				return {
-					exitReason: "interrupted" as const,
-					output: "",
-					costUsd: 0,
-					turns: 0,
-					sessionId: "mock-session",
-				};
-			}
-			return {
-				sessionId: "mock-session",
-				events: events(),
-				queue,
-
-				stop: () => {
-					queue.close();
-				},
-			};
-		},
 	};
 }
 
@@ -74,44 +52,23 @@ function createLongRunningProvider(): AgentProvider {
 			turns: 0,
 			sessionId: "mock-long-session",
 		}),
-		// biome-ignore lint/correctness/useYield: mock
-		stream: async function* () {
+		// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
+		stream: async function* (req) {
+			const queue = req.queue ?? new MessageQueue();
+			// Keep the session alive — drain messages until queue is closed
+			try {
+				while (true) {
+					await queue.wait();
+				}
+			} catch {
+				// Queue closed — exit cleanly
+			}
 			return {
 				exitReason: "interrupted" as const,
 				output: "",
 				costUsd: 0,
 				turns: 0,
 				sessionId: "mock-long-session",
-			};
-		},
-		startSession(req) {
-			const queue = req.queue ?? new MessageQueue();
-			// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
-			async function* events(): AsyncGenerator<Event, AgentResult> {
-				// Keep the session alive — drain messages until queue is closed
-				try {
-					while (true) {
-						await queue.wait();
-					}
-				} catch {
-					// Queue closed — exit cleanly
-				}
-				return {
-					exitReason: "interrupted" as const,
-					output: "",
-					costUsd: 0,
-					turns: 0,
-					sessionId: "mock-long-session",
-				};
-			}
-			return {
-				sessionId: "mock-long-session",
-				events: events(),
-				queue,
-
-				stop: () => {
-					queue.close();
-				},
 			};
 		},
 	};
@@ -135,55 +92,34 @@ function createRecordingProvider(): {
 			turns: 0,
 			sessionId: "mock-recording-session",
 		}),
-		// biome-ignore lint/correctness/useYield: mock
-		stream: async function* () {
+		// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
+		stream: async function* (req) {
+			const queue = req.queue ?? new MessageQueue();
+			// Drain any initial messages
+			for (const msg of queue.drain()) {
+				receivedMessages.push({
+					source: msg.source,
+					content: "content" in msg ? (msg.content as string) : undefined,
+				});
+			}
+			// Block on queue until closed
+			while (true) {
+				try {
+					const msg = await queue.wait();
+					receivedMessages.push({
+						source: msg.source,
+						content: "content" in msg ? (msg.content as string) : undefined,
+					});
+				} catch {
+					break; // Queue closed
+				}
+			}
 			return {
 				exitReason: "interrupted" as const,
 				output: "",
 				costUsd: 0,
 				turns: 0,
 				sessionId: "mock-recording-session",
-			};
-		},
-		startSession(req) {
-			const queue = req.queue ?? new MessageQueue();
-			// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
-			async function* events(): AsyncGenerator<Event, AgentResult> {
-				// Drain any initial messages
-				for (const msg of queue.drain()) {
-					receivedMessages.push({
-						source: msg.source,
-						content: "content" in msg ? (msg.content as string) : undefined,
-					});
-				}
-				// Block on queue until closed
-				while (true) {
-					try {
-						const msg = await queue.wait();
-						receivedMessages.push({
-							source: msg.source,
-							content: "content" in msg ? (msg.content as string) : undefined,
-						});
-					} catch {
-						break; // Queue closed
-					}
-				}
-				return {
-					exitReason: "interrupted" as const,
-					output: "",
-					costUsd: 0,
-					turns: 0,
-					sessionId: "mock-recording-session",
-				};
-			}
-			return {
-				sessionId: "mock-recording-session",
-				events: events(),
-				queue,
-
-				stop: () => {
-					queue.close();
-				},
 			};
 		},
 	};
@@ -2101,16 +2037,6 @@ describe("lifecycle: child completion notification paths", () => {
 					sessionId: "mock",
 				} as AgentResult;
 			},
-			startSession(req) {
-				const queue = req.queue ?? new MessageQueue();
-				return {
-					sessionId: "mock",
-					events: this.stream(req),
-					queue,
-
-					stop: () => queue.close(),
-				};
-			},
 		};
 
 		const eventLog: string[] = [];
@@ -2197,16 +2123,6 @@ describe("lifecycle: child completion notification paths", () => {
 					turns: 0,
 					sessionId: "mock",
 				} as AgentResult;
-			},
-			startSession(req) {
-				const queue = req.queue ?? new MessageQueue();
-				return {
-					sessionId: "mock",
-					events: this.stream(req),
-					queue,
-
-					stop: () => queue.close(),
-				};
 			},
 		};
 
@@ -2353,12 +2269,12 @@ describe("lifecycle: child completion notification paths", () => {
 
 /**
  * Mock provider that captures session requests for inspection.
- * Each call to startSession records the AgentRequest and keeps the
+ * Each call to stream records the AgentRequest and keeps the
  * session alive until the queue is closed.
  */
 function createCapturingProvider(): {
 	provider: AgentProvider;
-	/** All AgentRequests that were passed to startSession, in order. */
+	/** All AgentRequests that were passed to stream, in order. */
 	sessionRequests: AgentRequest[];
 	/** Queue messages drained from each session (indexed by session index). */
 	queueMessages: QueueMessage[][];
@@ -2374,49 +2290,28 @@ function createCapturingProvider(): {
 			turns: 0,
 			sessionId: "mock-capturing-session",
 		}),
-		// biome-ignore lint/correctness/useYield: mock
-		stream: async function* () {
+		// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
+		stream: async function* (req) {
+			sessionRequests.push(req);
+			const queue = req.queue ?? new MessageQueue();
+			const sessionIdx = sessionRequests.length - 1;
+			queueMessages[sessionIdx] = [];
+			try {
+				while (true) {
+					const msg = await queue.wait();
+					// Capture queue messages for test assertions
+					const msgs = queueMessages[sessionIdx];
+					if (msgs) msgs.push(msg);
+				}
+			} catch {
+				// Queue closed
+			}
 			return {
 				exitReason: "interrupted" as const,
 				output: "",
 				costUsd: 0,
 				turns: 0,
 				sessionId: "mock-capturing-session",
-			};
-		},
-		startSession(req) {
-			sessionRequests.push(req);
-			const queue = req.queue ?? new MessageQueue();
-			const sessionIdx = sessionRequests.length - 1;
-			queueMessages[sessionIdx] = [];
-			// biome-ignore lint/correctness/useYield: mock session blocks on queue.wait()
-			async function* events(): AsyncGenerator<Event, AgentResult> {
-				try {
-					while (true) {
-						const msg = await queue.wait();
-						// Capture queue messages for test assertions
-						const msgs = queueMessages[sessionIdx];
-						if (msgs) msgs.push(msg);
-					}
-				} catch {
-					// Queue closed
-				}
-				return {
-					exitReason: "interrupted" as const,
-					output: "",
-					costUsd: 0,
-					turns: 0,
-					sessionId: "mock-capturing-session",
-				};
-			}
-			return {
-				sessionId: req.resumeSessionId ?? "mock-capturing-session",
-				events: events(),
-				queue,
-
-				stop: () => {
-					queue.close();
-				},
 			};
 		},
 	};
@@ -2441,37 +2336,15 @@ function createInstantCapturingProvider(): {
 			turns: 0,
 			sessionId: "mock-instant-capturing-session",
 		}),
-		// biome-ignore lint/correctness/useYield: mock
-		stream: async function* () {
+		// biome-ignore lint/correctness/useYield: mock session exits immediately
+		stream: async function* (req) {
+			sessionRequests.push(req);
 			return {
 				exitReason: "interrupted" as const,
 				output: "",
 				costUsd: 0,
 				turns: 0,
 				sessionId: "mock-instant-capturing-session",
-			};
-		},
-		startSession(req) {
-			sessionRequests.push(req);
-			const queue = req.queue ?? new MessageQueue();
-			// biome-ignore lint/correctness/useYield: mock session exits immediately
-			async function* events(): AsyncGenerator<Event, AgentResult> {
-				return {
-					exitReason: "interrupted" as const,
-					output: "",
-					costUsd: 0,
-					turns: 0,
-					sessionId: "mock-instant-capturing-session",
-				};
-			}
-			return {
-				sessionId: req.resumeSessionId ?? "mock-instant-session",
-				events: events(),
-				queue,
-
-				stop: () => {
-					queue.close();
-				},
 			};
 		},
 	};
@@ -2771,7 +2644,7 @@ describe("lifecycle edge cases — session continuity", () => {
 		// launches should be limited. The first message triggers a launch;
 		// subsequent messages either persist or enqueue to the already-launching queue.
 		// With the capturing long-running provider, once the queue exists in
-		// activeSessions, subsequent messages enqueue instead of launching again.
+		// node.session, subsequent messages enqueue instead of launching again.
 		const launchCount = sessionRequests.length - 1; // subtract the initial setup launch
 		expect(launchCount).toBeGreaterThanOrEqual(1);
 		// With concurrent Promise.all, the exact number depends on race conditions,

@@ -821,7 +821,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				baseUrl: "https://api.example.com/v1/responses",
 			});
 			const queue = queueWithPrompt("Need status", tmpDir);
-			const session = provider.startSession({
+			const session = provider.stream({
 				cwd: tmpDir,
 				systemPrompt: { stable: "Stable", variable: "Variable" },
 				queue,
@@ -838,7 +838,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 
 			const seen: Event[] = [];
 			const consumePromise = (async () => {
-				let result = await session.events.next();
+				let result = await session.next();
 				while (!result.done) {
 					seen.push(result.value);
 					if (
@@ -852,13 +852,13 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 							content: "Resume after yield",
 						});
 					}
-					result = await session.events.next();
+					result = await session.next();
 				}
 				return result.value;
 			})();
 
 			await new Promise((resolve) => setTimeout(resolve, 0));
-			session.stop();
+			await session.return(undefined as never);
 			const finalResult = await consumePromise;
 			expect(finalResult.exitReason).toBe("interrupted");
 			expect(
