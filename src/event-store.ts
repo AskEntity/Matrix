@@ -4,6 +4,7 @@ import {
 	readdirSync,
 	readFileSync,
 	unlinkSync,
+	writeFileSync,
 } from "node:fs";
 import { appendFile, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -150,6 +151,31 @@ export class EventStore {
 	async flushSession(sessionId: string): Promise<void> {
 		const pending = this.writeQueues.get(sessionId);
 		if (pending) await pending;
+	}
+
+	/**
+	 * Truncate a session's JSONL file, keeping only lines 0..lineIndex (inclusive).
+	 * Everything after lineIndex is removed. Serialized per-session to prevent interleaving.
+	 * Flushes pending writes before truncating to ensure consistency.
+	 */
+	async truncateAfterLine(sessionId: string, lineIndex: number): Promise<void> {
+		// Flush first so we read the complete file
+		await this.flushSession(sessionId);
+
+		const p = this.path(sessionId);
+		if (!existsSync(p)) return;
+
+		const text = readFileSync(p, "utf-8");
+		const lines = text.split("\n");
+		// Remove trailing empty line from split
+		if (lines.length > 0 && lines[lines.length - 1] === "") {
+			lines.pop();
+		}
+
+		if (lineIndex >= lines.length - 1) return; // nothing to truncate
+
+		const kept = lines.slice(0, lineIndex + 1);
+		writeFileSync(p, `${kept.join("\n")}\n`);
 	}
 
 	/**

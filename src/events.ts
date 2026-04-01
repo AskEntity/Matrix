@@ -1,5 +1,8 @@
 import type { QueueMessage } from "./message-queue.ts";
-import { createBackgroundComplete } from "./queue-message-factory.ts";
+import {
+	createBackgroundComplete,
+	createUserMessage,
+} from "./queue-message-factory.ts";
 import type { EventImageData, PendingState } from "./shared-types.ts";
 import { TOOL_YIELD } from "./tool-names.ts";
 
@@ -544,4 +547,209 @@ export function findOrphanedBackgroundProcesses(
 		}
 	}
 	return orphans;
+}
+
+// ── JSONL Repair: truncate-and-rebuild ──
+
+/**
+ * Inspect a session's events and determine if repair is needed.
+ * Finds the last complete assistant turn (all tool_calls have exactly one
+ * valid tool_result, no duplicates). Everything after it is the "tail"
+ * that may contain poison (duplicate tool_results, orphaned calls, etc.).
+ *
+ * Returns null if no repair needed, otherwise returns:
+ * - truncateAfterIndex: line index to truncate after (keep lines 0..index inclusive)
+ * - appendEvents: events to append after truncation (interrupted tool_results + status message)
+ *
+ * This replaces findOrphanedToolCalls, findOrphanedBackgroundProcesses, and
+ * the in-memory auto-recovery in provider-shared.ts — a single mechanism for
+ * ALL JSONL repair scenarios (daemon restart, API 400, duplicate results).
+ */
+export function buildSessionRepair(
+	events: Event[],
+	taskId: string,
+	opts?: { reason?: string },
+): {
+	truncateAfterIndex: number;
+	appendEvents: Event[];
+} | null {
+	if (events.length === 0) return null;
+
+	// Collect tool_call → tool info and tool_result counts
+	const toolCallTools = new Map<string, string>(); // callId → tool name
+	const toolResultCounts = new Map<string, number>();
+	for (const e of events) {
+		if (e.type === "tool_call") {
+			toolCallTools.set(e.toolCallId, e.tool);
+		} else if (e.type === "tool_result") {
+			const count = toolResultCounts.get(e.toolCallId) ?? 0;
+			toolResultCounts.set(e.toolCallId, count + 1);
+		}
+	}
+
+	// Categorize problems
+	let hasDuplicates = false;
+	const orphanCallIds: string[] = [];
+	for (const [callId, tool] of toolCallTools) {
+		if (tool === TOOL_YIELD) continue;
+		const resultCount = toolResultCounts.get(callId) ?? 0;
+		if (resultCount > 1) hasDuplicates = true;
+		if (resultCount === 0) orphanCallIds.push(callId);
+	}
+
+	if (!hasDuplicates && orphanCallIds.length === 0) return null;
+
+	// Two different repair strategies:
+	//
+	// 1. ORPHAN only (0 results, no duplicates): APPEND missing results.
+	//    Same behavior as old findOrphanedToolCalls — just add the missing
+	//    tool_results at the end. No truncation needed.
+	//
+	// 2. DUPLICATE results: TRUNCATE from the first duplicate event onwards.
+	//    The duplicate is the "poison" that causes API 400. Everything after
+	//    it (including valid later turns) is lost. The orphan tool_calls
+	//    created by truncation get interrupted results appended.
+
+	if (!hasDuplicates) {
+		// Strategy 1: orphan-only — append interrupted results (no truncation).
+		// Same behavior as old findOrphanedToolCalls. No status message needed —
+		// the autoResumeProjects resume message already tells the agent what happened.
+		const appendEvents: Event[] = [];
+		const now = Date.now();
+		for (const callId of orphanCallIds) {
+			const tool = toolCallTools.get(callId) ?? "unknown";
+			appendEvents.push({
+				type: "tool_result" as const,
+				tool,
+				toolCallId: callId,
+				content:
+					"Tool execution was interrupted by daemon restart. Results were lost.",
+				isError: true,
+				taskId,
+				ts: now,
+			} as Event);
+		}
+
+		return {
+			truncateAfterIndex: events.length - 1, // no truncation — keep everything
+			appendEvents,
+		};
+	}
+
+	// Strategy 2: duplicate results — find first duplicate and truncate from there
+	const seenResults = new Set<string>();
+	let poisonIndex = -1;
+
+	for (let i = 0; i < events.length; i++) {
+		const e = events[i] as Event;
+		if (e.type === "tool_result") {
+			if (seenResults.has(e.toolCallId)) {
+				poisonIndex = i;
+				break;
+			}
+			seenResults.add(e.toolCallId);
+		}
+	}
+
+	if (poisonIndex === -1) return null; // shouldn't happen
+
+	// Truncate point: one event before the poison
+	let lastGoodIndex = poisonIndex - 1;
+	if (lastGoodIndex < 0) lastGoodIndex = 0;
+
+	// Everything after lastGoodIndex is the truncated region
+	const truncatedRegion = events.slice(lastGoodIndex + 1);
+
+	// Collect error messages from truncated region
+	const errorMessages: string[] = [];
+	for (const e of truncatedRegion) {
+		if (e.type === "error" && "message" in e && typeof e.message === "string") {
+			if (e.message.includes("400") || e.message.includes("Auto-recovery")) {
+				errorMessages.push(e.message);
+			}
+		}
+	}
+
+	// Build interrupted tool_results for orphaned tool_calls.
+	// Two sources of orphans:
+	// 1. Tool_calls in the KEPT region whose results were in the truncated region
+	//    (e.g., tool_call at index 8, result was at index 9 = the poison)
+	// 2. Tool_calls in the truncated region (later turns that got removed)
+	const appendEvents: Event[] = [];
+	const now = Date.now();
+
+	// Scan kept region for tool_calls whose results are being truncated
+	const keptEvents = events.slice(0, lastGoodIndex + 1);
+	const keptResultIds = new Set<string>();
+	for (const e of keptEvents) {
+		if (e.type === "tool_result") keptResultIds.add(e.toolCallId);
+	}
+	for (const e of keptEvents) {
+		if (
+			e.type === "tool_call" &&
+			e.tool !== TOOL_YIELD &&
+			!keptResultIds.has(e.toolCallId)
+		) {
+			appendEvents.push({
+				type: "tool_result" as const,
+				tool: e.tool,
+				toolCallId: e.toolCallId,
+				content: "interrupted, results unknown",
+				isError: true,
+				taskId,
+				ts: now,
+			} as Event);
+		}
+	}
+
+	// Tool_calls in the truncated region also need interrupted results
+	for (const e of truncatedRegion) {
+		if (e.type === "tool_call" && e.tool !== TOOL_YIELD) {
+			appendEvents.push({
+				type: "tool_result" as const,
+				tool: e.tool,
+				toolCallId: e.toolCallId,
+				content: "interrupted, results unknown",
+				isError: true,
+				taskId,
+				ts: now,
+			} as Event);
+		}
+	}
+
+	// Preserve unconsumed messages from the truncated region.
+	// These were delivered to JSONL but will be lost by truncation.
+	// Re-append them so findUnconsumedMessages can recover them.
+	// (messages_consumed entries for these are also truncated, so they
+	// become unconsumed again — exactly what we want.)
+	for (const e of truncatedRegion) {
+		if (e.type === "message" && e.id && e.body) {
+			appendEvents.push(e);
+		}
+	}
+
+	// Status message
+	let statusText: string;
+	if (errorMessages.length > 0) {
+		const uniqueErrors = [...new Set(errorMessages)].slice(0, 3);
+		statusText = `Session repaired. Tool execution encountered errors:\n${uniqueErrors.join("\n")}\n\nAffected tool results have been removed. Continue from where you left off.`;
+	} else {
+		statusText =
+			opts?.reason ??
+			"Session repaired. Duplicate tool results were removed. Continue from where you left off.";
+	}
+
+	const statusMsg = createUserMessage(statusText);
+	appendEvents.push({
+		type: "message" as const,
+		id: statusMsg.id,
+		taskId,
+		body: statusMsg,
+		ts: statusMsg.ts,
+	} as Event);
+
+	return {
+		truncateAfterIndex: lastGoodIndex,
+		appendEvents,
+	};
 }

@@ -5,11 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
-import {
-	runAgentForNode,
-	stopAgent,
-	writeOrphanedToolResults,
-} from "./daemon/agent-lifecycle.ts";
+import { runAgentForNode, stopAgent } from "./daemon/agent-lifecycle.ts";
 import type {
 	DaemonConfig,
 	DaemonContext,
@@ -31,7 +27,7 @@ import { registerConfigRoutes } from "./daemon/routes/config.ts";
 import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
-import { findOrphanedBackgroundProcesses, hasPendingYield } from "./events.ts";
+import { hasPendingYield } from "./events.ts";
 
 import { ProjectManager } from "./project-manager.ts";
 import { createUserMessage } from "./queue-message-factory.ts";
@@ -258,27 +254,8 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 			if (inProgressNodes.length === 0) continue;
 
-			// Phase 1: Write orphan tool_results and bg_complete for ALL nodes.
-			// This must happen before any agent is launched.
-			for (const node of tracker.allNodes()) {
-				await writeOrphanedToolResults(eventStore, node.id);
-
-				// Write synthetic background_complete for bg processes killed by restart.
-				// EXCEPT for yielding agents — writing events between yield tool_call
-				// and its tool_result breaks the converter → API 400.
-				const nodeEvents = eventStore.has(node.id)
-					? eventStore.readActive(node.id)
-					: [];
-				if (!hasPendingYield(nodeEvents)) {
-					const bgOrphans = findOrphanedBackgroundProcesses(
-						nodeEvents,
-						node.id,
-					);
-					if (bgOrphans.length > 0) {
-						await eventStore.appendBatch(node.id, bgOrphans);
-					}
-				}
-			}
+			// All JSONL repair (orphaned tool_calls, duplicate tool_results, bg orphans)
+			// happens inside runAgentForNode before the provider loop starts.
 
 			// Phase 2: Classify each in_progress node and resume accordingly.
 			const rootNodeId = tracker.rootNodeId;
