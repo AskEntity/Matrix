@@ -102,19 +102,25 @@ export class EventStore {
 	 * Read events from the last compact_marker onward (for UI activity log).
 	 * Returns the compact_marker itself plus all events after it.
 	 * Also indicates whether there are older events before the marker.
+	 *
+	 * For forked sessions, pre-fork events (copies of the parent's history) are
+	 * excluded: fork_marker acts as a barrier just like compact_marker. The barrier
+	 * used is whichever comes last — compact_marker or fork_marker.
 	 */
 	readFromLastCompactMarker(sessionId: string): {
 		events: Event[];
 		hasOlderEvents: boolean;
 	} {
 		const all = this.read(sessionId);
-		const lastMarker = all.findLastIndex((e) => e.type === "compact_marker");
-		if (lastMarker === -1) {
+		const lastCompact = all.findLastIndex((e) => e.type === "compact_marker");
+		const lastFork = all.findLastIndex((e) => e.type === "fork_marker");
+		const barrier = Math.max(lastCompact, lastFork);
+		if (barrier === -1) {
 			return { events: all, hasOlderEvents: false };
 		}
 		return {
-			events: all.slice(lastMarker),
-			hasOlderEvents: lastMarker > 0,
+			events: all.slice(barrier),
+			hasOlderEvents: barrier > 0,
 		};
 	}
 

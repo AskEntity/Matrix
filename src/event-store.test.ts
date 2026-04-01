@@ -390,6 +390,113 @@ describe("EventStore", () => {
 		expect(result.hasOlderEvents).toBe(false);
 	});
 
+	test("readFromLastCompactMarker skips pre-fork events in forked session", async () => {
+		const events: Event[] = [
+			// Pre-fork: copied from parent session (with parent's taskId)
+			{
+				type: "assistant_text",
+				content: "parent content",
+				taskId: "parent-id",
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc-1",
+				input: {},
+				taskId: "parent-id",
+				ts: 1001,
+			},
+			// Fork barrier
+			{
+				type: "fork_marker",
+				sourceTaskId: "parent-id",
+				taskId: "child-id",
+				ts: 2000,
+			},
+			// Post-fork: child's own events
+			{
+				type: "assistant_text",
+				content: "child content",
+				taskId: "child-id",
+				ts: 3000,
+			},
+		];
+		await store.appendBatch("forked", events);
+
+		const result = store.readFromLastCompactMarker("forked");
+		expect(result.hasOlderEvents).toBe(true);
+		expect(result.events).toEqual([
+			{
+				type: "fork_marker",
+				sourceTaskId: "parent-id",
+				taskId: "child-id",
+				ts: 2000,
+			},
+			{
+				type: "assistant_text",
+				content: "child content",
+				taskId: "child-id",
+				ts: 3000,
+			},
+		]);
+	});
+
+	test("readFromLastCompactMarker uses compact_marker when it comes after fork_marker", async () => {
+		const events: Event[] = [
+			{
+				type: "assistant_text",
+				content: "parent content",
+				taskId: "parent-id",
+				ts: 1000,
+			},
+			{
+				type: "fork_marker",
+				sourceTaskId: "parent-id",
+				taskId: "child-id",
+				ts: 2000,
+			},
+			{
+				type: "assistant_text",
+				content: "child early",
+				taskId: "child-id",
+				ts: 2500,
+			},
+			{
+				type: "compact_marker",
+				checkpoint: "child compacted",
+				savedTokens: 1000,
+				taskId: "child-id",
+				ts: 3000,
+			},
+			{
+				type: "assistant_text",
+				content: "child latest",
+				taskId: "child-id",
+				ts: 4000,
+			},
+		];
+		await store.appendBatch("forked-compact", events);
+
+		const result = store.readFromLastCompactMarker("forked-compact");
+		expect(result.hasOlderEvents).toBe(true);
+		expect(result.events).toEqual([
+			{
+				type: "compact_marker",
+				checkpoint: "child compacted",
+				savedTokens: 1000,
+				taskId: "child-id",
+				ts: 3000,
+			},
+			{
+				type: "assistant_text",
+				content: "child latest",
+				taskId: "child-id",
+				ts: 4000,
+			},
+		]);
+	});
+
 	// ── readBefore ───────────────────────────────────────────────────────
 
 	test("readBefore returns events before timestamp", async () => {
