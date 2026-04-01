@@ -281,3 +281,11 @@ In-memory `messages[]` (provider format) and JSONL events are two independent da
 - Called at 4 points in `runProviderLoop`: (1) before `buildToolResultsMessage`, (2) before yield resume `buildToolResultsMessage`, (3) before implicit yield `buildImplicitYieldMessage`, (4) on `activeEvents` before `convertEventsToMessages` (resume).
 - Rejected images replaced with error text including resize instructions. Image fields cleared on ToolResult; images removed from QueueMessage/Event arrays.
 - Important: validate decoded byte size, NOT base64 string length. Base64 inflates ~33%, so string length check gives wrong results.
+
+
+## Image Pixel Dimension Guard
+
+- `getImageDimensions(buffer)` in `src/image-dimensions.ts`: parses PNG (bytes 16-23 IHDR) and JPEG (scan for SOF0/SOF1/SOF2 markers) headers. Returns `{width, height} | null`.
+- read_file image path in `src/tools/definitions.ts` checks dimensions before base64 encoding. Rejects >8000px per dimension with error text + magick resize command.
+- Unknown formats (GIF, WebP) pass through — `getImageDimensions` returns null, no blocking.
+- This prevents the "agent permanently bricked" scenario where oversized pixel images get stored in JSONL and Anthropic API rejects on every resume.
