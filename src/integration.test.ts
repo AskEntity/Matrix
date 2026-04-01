@@ -2157,6 +2157,150 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const postRestartRequests = ctx.mockAPI.getRequestCount();
 		expect(postRestartRequests).toBeGreaterThan(2);
 	}, 30000);
+
+	test("Restart N: bg await during restart — no duplicate tool_result", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Scenario: bash → backgrounded → bg await → daemon restart while await is pending.
+		// Bug: stopAgent's writeOrphanedToolResults races with the provider loop's
+		// tool_result emission (cleanup kills bg → completionPromise resolves → provider
+		// loop emits real tool_result, while writeOrphanedToolResults writes synthetic one).
+		// Fix: don't write orphans during stopAgent — defer to restart.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					// Turn 1: bash with short foreground timeout → gets backgrounded
+					blocks: [
+						{ type: "text", text: "Starting bg build." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "sleep 30", foreground_timeout: 500 },
+						},
+					],
+				},
+				{
+					// Turn 2: bg await on the backgrounded process
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "Background ID",
+							capture: {
+								bgId: "regex:Background ID: (bg-[A-Z0-9]+)",
+							},
+						},
+					],
+					blocks: [
+						{ type: "text", text: "Awaiting bg process." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__background",
+							input: { action: "await", id: "$bgId" },
+						},
+					],
+				},
+				{
+					// Turn 3: after restart, agent sees interrupted result → done
+					blocks: [
+						{ type: "text", text: "Resumed after bg await crash." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "bg await restart survived",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for turn 2 to start (bg await is blocking)
+		const start = Date.now();
+		while (ctx.mockAPI.getRequestCount() < 2 && Date.now() - start < 10000) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		expect(ctx.mockAPI.getRequestCount()).toBe(2);
+		// Let bg await start executing
+		await new Promise((r) => setTimeout(r, 500));
+
+		const rootNodeId = await getRootNodeId(ctx);
+
+		// Verify bg was started (tool_result with backgroundId)
+		const preEvents = readSessionEvents(ctx, rootNodeId);
+		expect(
+			preEvents.some((e) => e.type === "tool_result" && e.backgroundId),
+		).toBe(true);
+
+		// Verify bg await tool_call exists but has no tool_result yet
+		const bgAwaitCalls = preEvents.filter(
+			(e) =>
+				e.type === "tool_call" &&
+				e.tool === "mcp__mxd__background" &&
+				(e.input as { action?: string }).action === "await",
+		);
+		expect(bgAwaitCalls.length).toBe(1);
+		const bgAwaitCallId = (bgAwaitCalls[0] as { toolCallId: string })
+			.toolCallId;
+		const bgAwaitResults = preEvents.filter(
+			(e) => e.type === "tool_result" && e.toolCallId === bgAwaitCallId,
+		);
+		expect(bgAwaitResults.length).toBe(0); // no result yet — still awaiting
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+
+		// === CRASH while bg await is pending ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 200));
+
+		// KEY CHECK: after shutdown, verify NO duplicate tool_results in JSONL
+		const postShutdownEvents = readSessionEvents(ctx, rootNodeId);
+		const toolResultsByCallId = new Map<string, number>();
+		for (const e of postShutdownEvents) {
+			if (e.type === "tool_result") {
+				const count = toolResultsByCallId.get(e.toolCallId) ?? 0;
+				toolResultsByCallId.set(e.toolCallId, count + 1);
+			}
+		}
+		for (const [callId, count] of toolResultsByCallId) {
+			if (count > 1) {
+				const tc = postShutdownEvents.find(
+					(e) => e.type === "tool_call" && e.toolCallId === callId,
+				);
+				const toolName = tc && tc.type === "tool_call" ? tc.tool : "unknown";
+				throw new Error(
+					`Duplicate tool_result for ${callId} (${toolName}): found ${count}`,
+				);
+			}
+		}
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// After restart: orphan detection should have written exactly ONE tool_result
+		// for the bg await (the one from restart, not from stopAgent)
+		const postRestartEvents = readSessionEvents(ctx, rootNodeId);
+		const bgAwaitResultsPost = postRestartEvents.filter(
+			(e) => e.type === "tool_result" && e.toolCallId === bgAwaitCallId,
+		);
+		expect(bgAwaitResultsPost.length).toBe(1);
+
+		// Send message to wake agent
+		const msgResp = await sendMessage(ctx, "Continue after bg await crash.");
+		expect(msgResp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("passed");
+
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+	}, 30000);
 });
 
 // ── Same-turn tool conflict tests ──
@@ -8240,20 +8384,17 @@ describe("Integration: stopTask lifecycle", () => {
 		// Verify: status is still in_progress (NOT failed)
 		expect(nodeAfterStop.status).toBe("in_progress");
 
-		// Verify: JSONL has orphaned tool_results written for the interrupted bash
-		const events = readSessionEvents(ctx, rootNodeId);
-		const toolResults = events.filter((e) => e.type === "tool_result");
-		const errorResults = toolResults.filter(
-			(e) => "isError" in e && e.isError === true,
-		);
-		expect(errorResults.length).toBeGreaterThanOrEqual(1);
-
 		// Verify: the original tool_call for bash is in JSONL
+		const events = readSessionEvents(ctx, rootNodeId);
 		const toolCalls = events.filter((e) => e.type === "tool_call");
 		const bashCall = toolCalls.find(
 			(e) => "tool" in e && e.tool === "mcp__mxd__bash",
 		);
 		expect(bashCall).toBeDefined();
+
+		// NOTE: orphan tool_results are NOT written during stopTask — they're deferred
+		// to resume time to avoid racing with the provider loop's async tool_result emission.
+		// The orphan will be written when launchAgent runs findOrphanedToolCalls on resume.
 
 		const preResumeRequests = ctx.mockAPI.getRequestCount();
 

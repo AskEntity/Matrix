@@ -206,3 +206,14 @@ The UI must fetch events per-session (using `api.taskEvents(projectId, sessionId
 - `noExplicitAny`: Replace `any` with `Event`, `{ type: string }`, `unknown`, or specific interface.
 - `useTemplate`: Replace `a + b` with template literals. Biome auto-fix handles most but marks them "unsafe".
 - `biome check --write --unsafe` auto-fixes ~50% of `noNonNullAssertion` but creates `noNonNullAssertedOptionalChain` errors from `x!.y!` → `x?.y!`. Must manually fix those after.
+
+
+## Bug Fix: Duplicate tool_result after daemon restart during bg await
+
+**Root cause**: `stopAgent` and `stopTask` called `writeOrphanedToolResults` immediately after killing background processes. But the provider loop was still settling asynchronously — `cleanupSessionBackgroundProcesses` kills bg processes → `completionPromise` resolves → provider loop emits real `tool_result`. This races with `writeOrphanedToolResults` writing synthetic "interrupted" results → duplicate `tool_result` for same `toolCallId` → API 400.
+
+**Fix**: Removed `writeOrphanedToolResults` from `stopAgent` and `stopTask`. Orphan detection only runs at restart/resume time (in `daemon.ts` autoResumeProjects and `launchAgent`/`runChildAgentInBackground`) when the provider loop is guaranteed dead. No race.
+
+**Verified from real JSONL data** (matrix-docs project): `bg await` tool_call got both a synthetic "interrupted" result (ts=...520) and a real result from the provider loop (ts=...521, 1ms later). Confirmed the race condition.
+
+**BG5 flaky test**: Not the same root cause — it is a timing-dependent test about bg completing during foreground tool execution, unrelated to daemon restart.
