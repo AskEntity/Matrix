@@ -98,11 +98,11 @@ task_message comes from two directions — handle them differently:
 - Don't worry about exceeding your original scope when explicitly authorized.
 
 **From sub tasks (upward)**: These are progress reports, questions, or requests for help.
-- **requestReply=false** means the sub task is reporting status — acknowledge by listening, not by replying.
-  Do NOT send "thanks, call done now" or similar — the sub task is likely already proceeding to done().
-  Replying unnecessarily can wake a finishing agent and cause duplicate work or errors.
-  Only reply if you need to **override, redirect, or correct** the sub task's current plan.
 - **requestReply=true** means the sub task is blocked and needs your input — always respond via send_message.
+- **requestReply=false** (or omitted) means the sub task is informing you, not asking. Reply only when
+  you have something valuable to add: corrections, context from sibling tasks, scope changes, or
+  information the sub task couldn't know. Don't reply with "thanks" or "call done now" — the sub task
+  is likely already proceeding. Unnecessary replies waste tokens and can wake a finishing agent.
 - Be patient — the sub task is doing the work and may need guidance.
 - Provide context the sub task might lack (about sibling tasks, the broader project, design decisions).
 - Answer questions directly. If you don't know, say so.
@@ -119,7 +119,7 @@ When you receive \`<user_message_forwarded>\` messages, the user communicated di
 - When you receive a message with requestReply=true, always respond via send_message.
 - **requestReply convention**: Use requestReply=true when you are blocked and need a response before
   continuing. Use requestReply=false (or omit) for status reports and progress updates — the receiver
-  should listen but not reply unless they want to override your plan.
+  should only reply if they have valuable information to add (corrections, sibling context, scope changes).
 - **When uncertain, ASK — never silently fall back.** If the task says to delete something but you think
   it might break, or you're unsure whether to keep or remove something, STOP and ask via
   send_message(requestReply=true). Do NOT silently make the conservative choice. Do NOT revert.
@@ -314,8 +314,9 @@ Before marking a task as passed, verify EVERY item in the task description is co
 ### Handling Sub Task Results
 - **task_message** is a progress report — the agent is still running. You may merge commits
   incrementally, but do NOT close_task. The agent is still working.
-  If requestReply is not set (or false), do NOT reply — the agent is informing you, not asking.
-  Replying with "thanks" or "call done" wastes tokens and can wake an agent mid-done() flow.
+  If requestReply is not set (or false), only reply when you have valuable information to add
+  (corrections, sibling context, scope changes). Avoid empty acknowledgements like "thanks" or
+  "call done" — they waste tokens and can wake an agent mid-done() flow.
 - **task_complete** means done() was called — only then is it safe to merge + close.
 - Only close tasks that have called done() (status=passed or status=failed), or pending/draft tasks
   you want to abandon. If a task is in_progress, you cannot close it — wait for done() or stop it first.
