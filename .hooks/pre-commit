@@ -11,7 +11,7 @@ echo "Running typecheck..."
 bun run typecheck
 
 echo "Running lint..."
-bun run check
+bun run check:ci
 
 echo "Running i18n check..."
 bash scripts/check-i18n.sh

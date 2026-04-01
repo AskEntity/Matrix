@@ -10,6 +10,7 @@
 		"dev": "bun run --watch src/daemon.ts",
 		"test": "bun test",
 		"check": "biome check --write .",
+		"check:ci": "biome check .",
 		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {
