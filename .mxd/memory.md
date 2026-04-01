@@ -281,3 +281,10 @@ In-memory `messages[]` (provider format) and JSONL events are two independent da
 - Called at 4 points in `runProviderLoop`: (1) before `buildToolResultsMessage`, (2) before yield resume `buildToolResultsMessage`, (3) before implicit yield `buildImplicitYieldMessage`, (4) on `activeEvents` before `convertEventsToMessages` (resume).
 - Rejected images replaced with error text including resize instructions. Image fields cleared on ToolResult; images removed from QueueMessage/Event arrays.
 - Important: validate decoded byte size, NOT base64 string length. Base64 inflates ~33%, so string length check gives wrong results.
+
+## Streaming Text Partial Injection
+
+- `ctx.streamingText: Map<string, string>` on DaemonContext tracks accumulated text_delta content per nodeId during active streaming.
+- `emitWithTask` in `runAgentForNode` intercepts text_delta (append) and assistant_text (clear). Also cleared in the finally block.
+- Batch events endpoints (GET /tasks/:nodeId/events and GET /events) inject a synthetic `assistant_text` event with `partial: true` at the end of the response when streaming is active.
+- The `createApp` return type now includes `ctx` for test access.
