@@ -2123,3 +2123,272 @@ describe("ActivityLog filtering logic", () => {
 		).toBe("Child after compact");
 	});
 });
+
+// ============================================================
+// agent_stopped rendering + start/stop collapse
+// ============================================================
+
+describe("event-handler agent_stopped and lifecycle collapse", () => {
+	it("processEvent: agent_stopped creates a lifecycle LogEntry", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater(capturedLogs);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const { handleEvent } = createEventHandler(deps as EventHandlerDeps);
+
+		handleEvent({
+			type: "agent_stopped",
+			taskId: "task-1",
+			ts: 1000,
+		});
+
+		expect(capturedLogs.length).toBe(1);
+		expect(capturedLogs[0]?.type).toBe("lifecycle");
+		if (capturedLogs[0]?.type === "lifecycle") {
+			expect(capturedLogs[0].content).toContain("stopped");
+			expect(capturedLogs[0].taskId).toBe("task-1");
+		}
+	});
+
+	it("processEventBatch: agent_stopped creates a lifecycle LogEntry", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "agent_stopped",
+				taskId: "task-1",
+				ts: 1000,
+			},
+		]);
+
+		expect(capturedLogs.length).toBe(1);
+		expect(capturedLogs[0]?.type).toBe("lifecycle");
+		if (capturedLogs[0]?.type === "lifecycle") {
+			expect(capturedLogs[0].content).toContain("stopped");
+		}
+	});
+
+	it("processEventBatch: collapses consecutive start/stop pairs with no content between them", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		// Simulate many daemon restarts — each produces orchestration_started(resume) + agent_stopped
+		processEventBatch([
+			{
+				type: "orchestration_started",
+				taskId: "task-1",
+				resume: true,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 1000,
+			},
+			{ type: "agent_stopped", taskId: "task-1", ts: 2000 },
+			{
+				type: "orchestration_started",
+				taskId: "task-1",
+				resume: true,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 3000,
+			},
+			{ type: "agent_stopped", taskId: "task-1", ts: 4000 },
+			{
+				type: "orchestration_started",
+				taskId: "task-1",
+				resume: true,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 5000,
+			},
+			{ type: "agent_stopped", taskId: "task-1", ts: 6000 },
+			{
+				type: "orchestration_started",
+				taskId: "task-1",
+				resume: true,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 7000,
+			},
+			// This last one is active — no agent_stopped after it
+			{
+				type: "assistant_text",
+				content: "Doing work now",
+				taskId: "task-1",
+				ts: 8000,
+			},
+		]);
+
+		// Should collapse the first 3 start/stop pairs and keep only the last resume entry
+		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
+		// Only the last "Session resumed" should remain (the one at ts=7000)
+		expect(lifecycleEntries.length).toBe(1);
+		expect(lifecycleEntries[0]?.content).toContain("resumed");
+
+		// The assistant_text should still be there
+		const textEntries = capturedLogs.filter((e) => e.type === "assistant_text");
+		expect(textEntries.length).toBe(1);
+	});
+
+	it("processEventBatch: preserves start/stop entries that have meaningful content between them", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "orchestration_started",
+				taskId: "task-1",
+				resume: true,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "First session work",
+				taskId: "task-1",
+				ts: 1500,
+			},
+			{ type: "agent_stopped", taskId: "task-1", ts: 2000 },
+			{
+				type: "orchestration_started",
+				taskId: "task-1",
+				resume: true,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 3000,
+			},
+			{
+				type: "assistant_text",
+				content: "Second session work",
+				taskId: "task-1",
+				ts: 3500,
+			},
+		]);
+
+		// Both "Session resumed" entries should be preserved because there's content between them
+		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
+		expect(lifecycleEntries.length).toBeGreaterThanOrEqual(2);
+	});
+
+	it("processEventBatch: collapse works across many empty cycles, keeps the very last resume", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		// 20 empty restart cycles
+		const events: IncomingEvent[] = [];
+		for (let i = 0; i < 20; i++) {
+			events.push({
+				type: "orchestration_started",
+				taskId: "task-1",
+				resume: true,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 1000 + i * 2000,
+			});
+			events.push({
+				type: "agent_stopped",
+				taskId: "task-1",
+				ts: 2000 + i * 2000,
+			});
+		}
+		// Final resume that's actually active
+		events.push({
+			type: "orchestration_started",
+			taskId: "task-1",
+			resume: true,
+			model: "claude-sonnet",
+			provider: "anthropic",
+			ts: 50000,
+		});
+
+		processEventBatch(events);
+
+		// Only the very last "Session resumed" should remain
+		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
+		expect(lifecycleEntries.length).toBe(1);
+		expect(lifecycleEntries[0]?.ts).toBe(50000);
+	});
+
+	it("processEventBatch: task_started entries are NOT collapsed (only session lifecycle events)", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((entries: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof entries === "function" ? entries([]) : entries;
+		});
+
+		const { processEventBatch } = createEventHandler(deps as EventHandlerDeps);
+
+		processEventBatch([
+			{
+				type: "task_started",
+				taskId: "task-1",
+				title: "My Task",
+				ts: 500,
+			},
+			{
+				type: "orchestration_started",
+				taskId: "task-1",
+				resume: true,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 1000,
+			},
+			{ type: "agent_stopped", taskId: "task-1", ts: 2000 },
+			{
+				type: "orchestration_started",
+				taskId: "task-1",
+				resume: true,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 3000,
+			},
+			{
+				type: "assistant_text",
+				content: "Working",
+				taskId: "task-1",
+				ts: 4000,
+			},
+		]);
+
+		// task_started should still be there
+		const taskStarted = capturedLogs.find((e) => e.type === "task_started");
+		expect(taskStarted).toBeDefined();
+
+		// The first empty start/stop pair should be collapsed, keeping only the last resume
+		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
+		expect(lifecycleEntries.length).toBe(1);
+	});
+});
