@@ -449,6 +449,7 @@ export async function* runProviderLoop(
 ): AsyncGenerator<Event, AgentResult> {
 	const model = request.model ?? "claude-sonnet-4-6"; // default overridden by provider
 	let cwd = request.cwd;
+	let autoRecoveryAttempted = false;
 
 	// ── Context window + compaction thresholds ──
 	const contextWindow = await adapter.getContextWindow(model);
@@ -928,6 +929,80 @@ export async function* runProviderLoop(
 				response = apiStep.value;
 				break; // Success — exit retry loop
 			} catch (e) {
+				// ── Auto-recovery from 400 invalid_request_error ──
+				// When JSONL is corrupted (oversized images, malformed content), the API
+				// returns 400. Instead of crashing permanently, replace the broken user
+				// message with safe synthetic tool_results + recovery text, then retry.
+				const errStatus = (e as { status?: number }).status;
+				if (
+					errStatus === 400 &&
+					request.enableAutoRecovery &&
+					!autoRecoveryAttempted
+				) {
+					autoRecoveryAttempted = true;
+					const errMsg = e instanceof Error ? e.message : String(e);
+
+					// Pop the last user message (the one with broken content).
+					// Then find tool_uses in the preceding assistant message to build
+					// safe synthetic tool_results.
+					if (messages.length > 0) {
+						const last = messages[messages.length - 1] as {
+							role?: string;
+						};
+						if (last?.role === "user") {
+							messages.pop();
+						}
+					}
+
+					// Find tool_use IDs from the preceding assistant message
+					const lastAssistant = messages[messages.length - 1] as {
+						role?: string;
+						content?: unknown[];
+					};
+					const toolUseIds: Array<{ id: string }> = [];
+					if (
+						lastAssistant?.role === "assistant" &&
+						Array.isArray(lastAssistant.content)
+					) {
+						for (const block of lastAssistant.content) {
+							const b = block as { type?: string; id?: string };
+							if (b.type === "tool_use" && b.id) {
+								toolUseIds.push({ id: b.id });
+							}
+						}
+					}
+
+					// Build replacement user message with safe tool_results + recovery text
+					const recoveryText = `Session auto-recovered. The previous API call failed with a format error:\n${errMsg}\n\nThe broken turn has been removed. Continue from where you left off.`;
+					const recoveryContent: unknown[] = toolUseIds.map((tu) => ({
+						type: "tool_result",
+						tool_use_id: tu.id,
+						content: [
+							{
+								type: "text",
+								text: "Content removed during auto-recovery (caused API format error).",
+							},
+						],
+						is_error: true,
+					}));
+					recoveryContent.push({ type: "text", text: recoveryText });
+
+					messages.push({ role: "user", content: recoveryContent });
+
+					// Emit recovery event
+					const recoveryEvt: Event = {
+						type: "error",
+						taskId: "",
+						message: `Auto-recovery: API 400 detected, rolling back broken turn. Error: ${errMsg}`,
+						ts: Date.now(),
+					};
+					emit?.(recoveryEvt);
+					yield recoveryEvt;
+
+					// Retry from outer loop — continue will re-enter the for loop
+					continue;
+				}
+
 				if (!isTransientAPIError(e) || outerAttempt >= MAX_OUTER_RETRIES) {
 					throw e; // Non-transient or retries exhausted — let it propagate
 				}

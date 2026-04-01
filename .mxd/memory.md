@@ -217,3 +217,12 @@ The UI must fetch events per-session (using `api.taskEvents(projectId, sessionId
 **Verified from real JSONL data** (matrix-docs project): `bg await` tool_call got both a synthetic "interrupted" result (ts=...520) and a real result from the provider loop (ts=...521, 1ms later). Confirmed the race condition.
 
 **BG5 flaky test**: Not the same root cause — it is a timing-dependent test about bg completing during foreground tool execution, unrelated to daemon restart.
+
+
+## Auto-Recovery from API 400
+
+Feature: provider loop auto-recovers from 400 invalid_request_error (e.g. oversized image in tool_result). On 400, pops the broken user message, replaces with safe synthetic tool_results (matching tool_use IDs from the preceding assistant message) + recovery text, then retries.
+
+- `enableAutoRecovery` on `AgentRequest` (default: not set). Production daemon sets `ctx.config.enableAutoRecovery ?? true`. Tests set `enableAutoRecovery: false` via `DaemonConfig` to avoid masking bugs.
+- Only attempts once per session (`autoRecoveryAttempted` flag). Second 400 throws normally.
+- Recovery builds Anthropic-format tool_result blocks with `is_error: true` + text explanation. Must match tool_use IDs in the preceding assistant message to satisfy API validation.

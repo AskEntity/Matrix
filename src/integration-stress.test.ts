@@ -54,6 +54,7 @@ async function setupTestContext(): Promise<TestContext> {
 	const appResult = createApp({
 		dataDir,
 		agentProvider: provider,
+		enableAutoRecovery: false,
 	});
 
 	await appResult.pm.load();
@@ -106,6 +107,7 @@ async function recreateApp(
 	const newApp = createApp({
 		dataDir: ctx.dataDir,
 		agentProvider: provider,
+		enableAutoRecovery: false,
 	});
 	await newApp.pm.load();
 	newApp.markReady();
