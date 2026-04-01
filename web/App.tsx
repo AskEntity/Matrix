@@ -390,6 +390,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				setLastOutputTokens,
 				setBackgroundProcesses,
 				t,
+				getViewedSessionId: () => viewedSessionRef.current,
 			}),
 		[
 			updateFromWS,

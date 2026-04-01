@@ -111,6 +111,8 @@ export interface EventHandlerDeps {
 		>
 	>;
 	t: (key: string, params?: Record<string, string>) => string;
+	/** Returns the currently viewed session ID (selectedTaskId ?? rootNodeId). Used to filter SSE events. */
+	getViewedSessionId?: () => string | null;
 }
 
 export function createEventHandler(deps: EventHandlerDeps) {
@@ -1087,6 +1089,13 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		// pending_clarifications: pass-through (still ephemeral/in-memory)
 		if (msg.type === "pending_clarifications") {
 			setPendingClarifications(msg.clarifications);
+			return;
+		}
+
+		// Filter SSE events by taskId — only process events for the currently viewed session.
+		// Global events (tree_updated, pending_clarifications) have no taskId and pass through.
+		const viewedId = deps.getViewedSessionId?.();
+		if (viewedId && "taskId" in msg && msg.taskId && msg.taskId !== viewedId) {
 			return;
 		}
 
