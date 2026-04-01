@@ -873,15 +873,22 @@ export async function runAgentForNode(
 		await tracker.save();
 		broadcastTreeUpdate(ctx, project.id, tracker);
 	} catch (e) {
-		// Error = interrupted. Status stays in_progress — agent is resumable.
-		// No task_complete to parent. Just emit error event so UI knows what happened.
-		const errorMsg = e instanceof Error ? e.message : String(e);
-		emitEvent(ctx, project.id, {
-			type: "error",
-			taskId: nodeId,
-			message: `Child agent error: ${errorMsg}`,
-			ts: Date.now(),
-		});
+		// Check if our session was replaced (stopTask/stopAgent already cleaned up).
+		// If so, suppress error events — they'd be stale leaks from an old session.
+		const replacedNode = tracker.get(nodeId);
+		const wasReplaced =
+			!replacedNode?.session || replacedNode.session !== ownSession;
+		if (!wasReplaced) {
+			// Error = interrupted. Status stays in_progress — agent is resumable.
+			// No task_complete to parent. Just emit error event so UI knows what happened.
+			const errorMsg = e instanceof Error ? e.message : String(e);
+			emitEvent(ctx, project.id, {
+				type: "error",
+				taskId: nodeId,
+				message: `Agent error: ${errorMsg}`,
+				ts: Date.now(),
+			});
+		}
 		await tracker.save();
 
 		broadcastTreeUpdate(ctx, project.id, tracker);
@@ -892,18 +899,25 @@ export async function runAgentForNode(
 		// Only clear if this is still OUR session — a replacement agent
 		// may have already set a new session on the node.
 		const finalNode = tracker.get(nodeId);
+		const sessionWasReplaced =
+			!finalNode?.session || finalNode.session !== ownSession;
 		if (finalNode?.session && finalNode.session === ownSession) {
 			cleanupSessionBackgroundProcesses(finalNode.session.backgroundProcesses);
 			finalNode.session = undefined;
 		}
 		await mcpManager.disconnectAll();
 
-		// Notify UI that this agent is no longer active
-		emitEvent(ctx, project.id, {
-			type: "agent_stopped",
-			taskId: nodeId,
-			ts: Date.now(),
-		});
+		// Only emit agent_stopped if this session wasn't replaced by a new one.
+		// When stopTask/stopAgent explicitly stops us, they already emitted
+		// agent_stopped. Emitting again would create a stale event that appears
+		// after the new session's orchestration_started.
+		if (!sessionWasReplaced) {
+			emitEvent(ctx, project.id, {
+				type: "agent_stopped",
+				taskId: nodeId,
+				ts: Date.now(),
+			});
+		}
 	}
 }
 

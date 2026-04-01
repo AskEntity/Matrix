@@ -281,3 +281,11 @@ In-memory `messages[]` (provider format) and JSONL events are two independent da
 - Called at 4 points in `runProviderLoop`: (1) before `buildToolResultsMessage`, (2) before yield resume `buildToolResultsMessage`, (3) before implicit yield `buildImplicitYieldMessage`, (4) on `activeEvents` before `convertEventsToMessages` (resume).
 - Rejected images replaced with error text including resize instructions. Image fields cleared on ToolResult; images removed from QueueMessage/Event arrays.
 - Important: validate decoded byte size, NOT base64 string length. Base64 inflates ~33%, so string length check gives wrong results.
+
+## Abort Signal Leak Fix (2026-04-01)
+
+**Root cause**: After `stopTask`/`stopAgent`, the old `runAgentForNode` keeps running async (provider loop settling, foreground bash completing). Its `catch` block emits error events and `finally` block emits `agent_stopped` unconditionally — even after a new session replaced it. These stale events appear at the wrong chronological position in the JSONL, after the new session's `orchestration_started`.
+
+**Fix**: `runAgentForNode` catch/finally check `sessionWasReplaced` (compares `finalNode.session !== ownSession`). If session was replaced (by stopTask → new launch), suppress error events and `agent_stopped` emission. The explicit stop already emitted its own `agent_stopped`.
+
+**Secondary issue (NOT fixed)**: Foreground bash processes aren't killed on abort. `stopTask` calls `abort()` and clears session, but bash `executeBashWithTimeout` races on `exitPromise`/`timeoutPromise`/`externalSignalPromise` — none react to AbortSignal. Resolving foreground executions via `fgMap` moves them to background instead of killing them, which breaks restart tests. A proper fix would need bash to accept AbortSignal and kill the subprocess, but that's a larger change.
