@@ -15,7 +15,7 @@ Creating tasks is CHEAP. Executing must be DELIBERATE. When user discusses desig
 ## How to Run Tests
 
 ```bash
-bun test              # ALL tests (unit + integration). Always use this.
+bun test              # ALL tests (unit + integration). ~1126 pass, 3 skip.
 bun run typecheck     # tsc --noEmit
 bun run check         # biome lint + format
 ```
@@ -28,7 +28,7 @@ Daemon (Hono: HTTP + SSE on :7433)
    CLI (mxd)     Web UI (React, bundled by Bun)
 ```
 
-- Two providers: `AnthropicCompatibleProvider`, `OpenAICompatibleProvider`. Shared `runProviderLoop` + `ProviderAdapter`.
+- Two providers: `AnthropicCompatibleProvider`, `OpenAIResponsesCompatibleProvider`. Shared `runProviderLoop` + `ProviderAdapter`.
 - Three-layer config: global > repo > local. Auth groups define provider+credentials.
 - Agent tree = Task tree. Each agent gets worktree + branch from parent's branch.
 - All mutable APIs fire-and-forget. Observe via SSE.
@@ -49,10 +49,13 @@ Nothing written to JSONL after yield tool_call except by provider loop. External
 `deliverMessage` is THE message delivery path: JSONL write → queue delivery → flush → auto-launch. `quiet: true` for notifications. No other code writes message events to JSONL.
 
 ### ONE Codepath Per Task Operation
-`src/task-operations.ts`: createTaskOp, updateTaskOp, deleteTaskOp, closeTaskOp, resetTaskOp, reorderTasksOp. MCP and REST are thin wrappers. Behavioral differences via explicit `if (editedBy === "user")`. REST is strict (all params required), MCP adds convenience.
+`src/task-operations.ts`: createTaskOp, updateTaskOp, deleteTaskOp, closeTaskOp, resetTaskOp, reorderTasksOp. MCP and REST are thin wrappers. Behavioral differences via explicit `if (editedBy === "user")`.
 
 ### Two-Phase Message Lifecycle
 Phase 1: `message` event persisted → frontend defers. Phase 2: `messages_consumed` → frontend materializes. `QueueMessage.ts` = `Event.ts` = timestamp in `[HH:MM:SS]` — all same value, set once at creation.
+
+### JSONL-Memory Consistency
+In-memory `messages[]` and JSONL events are two data structures. Recovery that only modifies `messages[]` doesn't persist — JSONL retains the poison. Any "fix" must touch JSONL, not just memory.
 
 ## Key Files
 
@@ -63,21 +66,36 @@ Phase 1: `message` event persisted → frontend defers. Phase 2: `messages_consu
 | src/queue-message-factory.ts | QueueMessage factories (enforce id/ts invariant) |
 | src/event-display.ts | Platform-agnostic tool display (single source) |
 | web/api.ts | Centralized API URL builder |
-| src/daemon/agent-lifecycle.ts | Agent launch, stop, deliverMessage, autoResume |
+| src/daemon/agent-lifecycle.ts | runAgentForNode, stop, deliverMessage, autoResume |
 | src/provider-shared.ts | Run loop, ProviderAdapter, yield/done handling |
-| src/events.ts | Event types, formatBodyForAI, orphan detection |
-| src/event-store.ts | JSONL EventStore |
+| src/events.ts | Event types, formatBodyForAI, buildSessionRepair |
+| src/event-store.ts | JSONL EventStore (with truncateAfterLine) |
 | src/event-converter.ts | walkEventsToMessages + EventConverterCallbacks |
 | src/task-tracker.ts | Task tree, persistent task loading from .mxd/tasks/ |
+| src/image-dimensions.ts | PNG/JPEG pixel dimension parsing |
 
 ## Agent Lifecycle
 
+- Root and child agents use the same launch function: `runAgentForNode` in `agent-lifecycle.ts`
 - `done()` → status update + `task_complete` to parent. Only path for completion.
 - `yield()` = loop-level pause. Provider intercepts before executeTool.
 - `end_turn` = implicit yield, never implicit done.
-- `stopTask()` = per-task real interrupt (close queue + abort signal).
-- On JSONL resume: pendingYieldToolCall → bypass to queue.wait (zero API call).
-- autoResumeProjects: yielding → bypass, interrupted → resume with message.
+- `stopTask()` = per-task real interrupt (close queue + abort signal via `TaskSession.abortController`).
+- `launchingNodes: Set<string>` prevents duplicate launches during async setup.
+- Session identity check in finally block prevents cleanup clobber when replacement agent launched.
+- On JSONL resume, three states detected from JSONL shape:
+  - **Explicit yield** (pendingYieldToolCall): bypass to queue.wait
+  - **Implicit yield** (hasPendingImplicitYield): bypass to queue.wait → handleImplicitYield
+  - **Interrupted** (orphaned tools repaired): non-blocking queue drain → API call
+- autoResumeProjects: finds all in_progress nodes with JSONL, calls runAgentForNode. No resume messages.
+
+## JSONL Repair
+
+`buildSessionRepair()` in events.ts handles all repair:
+- **Orphan only** (tool_call without result): append interrupted results, no truncation
+- **Duplicate results** (>1 result for same tool_call): truncate from first duplicate + status message
+- `EventStore.truncateAfterLine(sessionId, lineIndex)`: rewrites file keeping lines 0..lineIndex
+- Repair runs in runAgentForNode before provider loop starts
 
 ## Persistent Tasks
 
@@ -89,15 +107,42 @@ Phase 1: `message` event persisted → frontend defers. Phase 2: `messages_consu
   - `get_tree` omits status for persistent nodes.
   - Changeable via `update_task(persistent: true/false)`.
 
-Definition in `.mxd/tasks/<id>.json` (git-tracked): title, description, color, persistent. tree.json stores runtime state only. Two quality agents: Test Mutation + Architecture Mutation.
+Definition in `.mxd/tasks/<id>.json` (git-tracked): title, description, color, persistent. tree.json stores runtime state only. `savePersistentDef` auto-commits via git. Called from createTaskOp (when persistent set) and updateTaskOp (when title/description/color changes).
 
-## Default Branch
+Four top-level persistent domains:
+- **Design Philosophy** 🟣 — ITA, anti-patterns, system prompt (sub-domain)
+- **Task System Design** 🟣 — depth, pinned tasks, meeting mode, partial completion, flow
+- **Agent Loop** 🟠 — launch, provider loop, yield/resume, stop/restart, JSONL repair, image validation, OpenAI provider
+- **User Interaction** 🔵 — Web UI + CLI
 
-Root node stores branch at init. `baseBranch` required on worktree create (no fallback). Child worktrees branch from parent's branch. System prompt is branch-agnostic.
+## Image Handling
+
+- **Pixel dimension guard**: `getImageDimensions(buffer)` in `src/image-dimensions.ts` parses PNG/JPEG headers. read_file rejects >8000px per dimension.
+- **Provider-level byte size**: `validateImage?` on `ProviderAdapter`. Anthropic: 5MB decoded. OpenAI: 20MB decoded. Four filter points in `runProviderLoop`.
+- **Streaming text partial**: `ctx.streamingText: Map<string, string>` tracks text_delta. Batch events endpoint injects synthetic `assistant_text` with `partial: true`.
 
 ## Session Config + Cache
 
 `session_config` event at JSONL start: tools, systemStable, systemVariable. Frozen between compactions for cache stability. Anthropic cache: 3 breakpoints (tools, systemVariable, 2nd-to-last user message).
+
+## Default Branch
+
+Root node stores branch at init. `baseBranch` required on worktree create (no fallback). Child worktrees branch from parent's branch.
+
+## Auth
+
+Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_key>` → encrypted JWT → paste to browser. CLI auto-auth via `signCLIToken()`.
+
+## CLI Installation
+
+`mxd` CLI globally installed via `bun link`. package.json `"bin": { "mxd": "src/cli.ts" }`, cli.ts has `#!/usr/bin/env bun` shebang.
+
+## Integration Test Framework
+
+- `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation.
+- Mock DSL: `{"blocks": [...]}` or `{"turns": [...]}` with assert/capture.
+- `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
+- ~1126 tests (unit + integration). 3 skipped (E2E).
 
 ## Known Pitfalls
 
@@ -109,41 +154,34 @@ Root node stores branch at init. `baseBranch` required on worktree create (no fa
 - **Concurrent ULID**: Use full `ulid()` (26 chars) — sliced ULIDs collide within same millisecond.
 - **Provider queue close**: Check `queue.isClosed` after tool execution, `return` immediately.
 - **Never modify own JSONL from agent**: Current tool_call has no result yet → false orphan.
+- **Async JSONL writes**: `emitEvent` fire-and-forgets `eventStore.append()`. Flush before reading in tests.
+- **delete_task cascades**: Deletes all descendants AND session JSONL. Enforced: returns 400 with children. Use `update_task` to change persistent mode, not delete+recreate.
+- **Abort signal leak**: After stop, old runAgentForNode settles async. catch/finally check `sessionWasReplaced` to suppress stale error events.
 
-## Auth
+## Known Bugs (unfixed)
 
-Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_key>` → encrypted JWT → paste to browser. CLI auto-auth via `signCLIToken()`. Web session in localStorage (`mxd-jwt`).
+- Manual compaction during yield → consecutive user messages → API 400.
+- Prefix violation after double restart (Restart N) — disabled in test.
+- Flaky: `Fork from closed agent` — timing-dependent.
 
-## CLI Installation
+## OpenAI Provider
 
-`mxd` CLI is globally installed via `bun link`. Binary at `~/.bun/bin/mxd` → symlink to `src/cli.ts`. package.json has `"bin": { "mxd": "src/cli.ts" }`, cli.ts has `#!/usr/bin/env bun` shebang. After `bun link`, use `mxd` directly (not `bun run src/cli.ts`).
+- Chat Completions (`OpenAICompatibleProvider`) is dead code — not wired into production.
+- `createProviderFromAuth` always creates `OpenAIResponsesCompatibleProvider` for OpenAI auth.
+- Responses `streamResponsesAPI` has inner retry (5 attempts, exponential backoff) matching Anthropic. `retryDelayMs` param for fast tests.
+- Function tool definitions include `strict: false` in outgoing payload.
+- **Tool input Zod validation**: `executeTool` validates all built-in tool inputs against Zod schema. Rejects invalid types at schema boundary. External MCP tools (empty `inputSchema {}`) skip validation.
 
-## Self-Bootstrap: Web Auth for Chrome DevTools
+## Auto-Recovery from API 400
 
-When testing via Chrome DevTools, take snapshot of login page → run `mxd auth <key>` → paste output → authenticated.
+Provider loop auto-recovers from 400 invalid_request_error. On 400, pops broken user message, replaces with safe synthetic tool_results + recovery text, retries once (`autoRecoveryAttempted` flag). Production: `enableAutoRecovery ?? true`. Tests: `enableAutoRecovery: false`.
 
-## Integration Test Framework
+## UI Notes
 
-- `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation (rejects unknown API fields).
-- Mock DSL: `{"blocks": [...]}` or `{"turns": [...]}` with assert/capture.
-- `recreateApp()` simulates daemon restarts. Every restart test: crash → restart → resume → done().
-- ~808 tests total (713 unit + 95 integration).
-
-## Test-is-Golden Philosophy
-
-Test is golden. Not spec, not architecture. Bottom-up: write tests → find simplest architecture that passes them. Architecture is replaceable long-term (tests anchor it), improved short-term via mutation testing. Reject spec-driven development.
-
-## Architecture Quality: Feature Mutation Test
-
-Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Architecture improves through mutation testing short-term; remains replaceable long-term because tests hold.
-
-## ⚠️ AI Agent Laziness Patterns
-
-1. **Fear of large changes** — revert/fallback instead of executing.
-2. **Unnecessary fallbacks** — keep old path "just in case". Delete it.
-3. **Won't communicate** — text blocks invisible to parent. Use send_message.
-4. **Won't question architecture** — "why does this exist" > "how to make it work".
-5. **"Unify" = add third path** — delete until ONE remains.
+- Event fetching: per-session (`api.taskEvents(projectId, sessionId)`) not per-project. Forked sessions contain parent events — merging causes stale content.
+- Derived state reset: ALL state cleared on project/task switch (logs, tokenUsage, pendingMessages, etc.).
+- Lifecycle entry collapse: consecutive lifecycle-only entries collapsed, keeping last per run.
+- Agent status: `activeAgents` Set updated globally for agent_active/idle/stopped events, regardless of viewed session.
 
 ## User Preferences
 
@@ -153,199 +191,19 @@ Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Archite
 - Discuss architecture before executing.
 - "Delete until ONE remains" not "unify".
 
-## Known Bugs (unfixed)
+## Test-is-Golden / ITA Philosophy
 
-- Manual compaction during yield → consecutive user messages → API 400.
-- Prefix violation after double restart (Restart N) — disabled in test.
-- Flaky: `Fork from closed agent` — timing-dependent.
+Three layers: Intention → Test → Architecture. Three mutations guard each layer:
+- **Intention Mutation**: is this behavior what users actually want?
+- **Test Mutation**: do tests catch code changes?
+- **Architecture Mutation**: can the code evolve?
 
+Tests are the single source of truth. Bottom-up: write tests → find simplest architecture that passes them. Architecture is replaceable long-term, improved short-term. Reject spec-driven development.
 
+## ⚠️ AI Agent Laziness Patterns
 
-- Responses provider tests: initial user queue content includes the formatted header (working directory/timestamps), so assert with stringContaining for prompt text rather than exact raw content.
-- Responses provider max_output_tokens currently follows context window sizing in provider loop tests (e.g. 128000 for gpt-4o-mini/gpt-4.1-mini here), not a small fixed cap.
-- Provider-level yield tests are reliable for asserting streamed text/tool_call behavior and first-request formatting; full post-yield resume behavior is better covered at higher integration layers.
-
-- Responses integration harness note: OpenAIResponsesCompatibleProvider does not accept an injected fetch in its constructor; isolated full-stack tests must mock globalThis.fetch around createApp/provider construction and restore it in teardown.
-- Responses integration harness note: the first /responses call may be followed quickly by additional calls from the provider loop; assert request-shape and tool round-trip from captured request history rather than assuming a single request per scenario.
-
-- **Tool input Zod validation**: `executeTool` validates all built-in tool inputs against their Zod schema before calling handlers. Rejects invalid types (e.g. string `"false"` for `z.literal(false)`) with a clear error message back to the model. External MCP tools (identified by empty `inputSchema {}`) skip validation. This is the correct fix for model-side type corruption — reject at the schema boundary, don't coerce downstream.
-
-- OpenAI Responses provider function tool definitions now include strict: false in the outgoing tools payload; keep chat-completions/OpenAI provider unchanged unless intentionally expanding the experiment.
-- For Responses provider payload tests, assert the exact tool shape in the captured request body (including strict: false) rather than only the schema, because compatibility bugs show up at the wire format boundary.
-
-- UI live state fix: tree_updated now clears in-memory log/pending/older-history state for sessions that become pending with no session object, so reset_task and persistent close(reset) immediately match a fresh reload without waiting for event refetch.
-
-## UI Derived State Reset Consistency
-
-When switching projects, tasks, adding projects, or creating tasks, ALL derived state must be reset. The complete list of state that needs clearing:
-- `logs`, `tokenUsage`, `pendingMessages`, `pendingClarifications`, `backgroundProcesses`, `activeAgents`, `olderEventsAvailable`
-- `lastTurns`, `lastInputTokens`, `lastCacheCreationTokens`, `lastCacheReadTokens`, `lastOutputTokens`
-- `selectedTaskId`, `rootNodeId`, `targetNodeId` (where applicable)
-
-The `handlers.ts` `createActionHandlers` now receives `setTokenUsage`, `setPendingMessages`, `setBackgroundProcesses`, `setActiveAgents`, `setOlderEventsAvailable` so that `handleAddProject` and `handleDeleteProject` can reset all state.
-
-`handleCreateTask` now selects the newly created task by reading the response body `{ id }` from the POST /tasks endpoint.
-
-
-## OpenAI Provider Parity Audit (2026-04-01)
-
-- Chat Completions provider (`OpenAICompatibleProvider`) is dead code — not wired into production. `createProviderFromAuth` in daemon/helpers.ts always creates Responses provider for OpenAI auth.
-- Responses provider has 3 critical gaps vs Anthropic: (1) zero inner retry in callAPI, (2) no done() reminder injection, (3) no tool-use system prompt nudge.
-- Integration tests: 95 Anthropic, 3 Responses, 0 Chat Completions. Recommended: parameterize existing tests with provider factory + shared MockAPI interface.
-- Chat and Responses providers share near-identical event converter callbacks, buildToolResultsMessage, buildImplicitYieldMessage, computeCost — candidate for dedup.
-- Responses `streamResponsesAPI` reads SSE events from response body manually (no SDK). Anthropic uses SDK streaming helpers.
-
-
-- Responses provider `streamResponsesAPI` now has inner retry (5 attempts, exponential backoff) matching Anthropic provider. Retries 429/500/502/503/529, throws immediately on 400/401/403/404. `retryDelayMs` param for fast tests. Export `streamResponsesAPI` for direct unit testing to avoid outer retry loop interference from `runProviderLoop`.
-
-## UI Event Fetching: Per-Session, Not Per-Project
-
-The UI must fetch events per-session (using `api.taskEvents(projectId, sessionId)`) not per-project (`api.events(projectId)`). Forked sessions contain copies of parent events with the parent taskId; merging all sessions causes stale content to appear above the compaction line on refresh. The viewed session is `selectedTaskId ?? rootNodeId` — tracked via a ref for stable callbacks.
-
-## Biome Lint Fix Patterns
-
-- `noNonNullAssertion`: Replace `x!` with `x?.` for property access, `x as Type` for variable assignment, or extract + guard. In tests, `as TaskNode` / `as string` is the cleanest.
-- `noNonNullAssertedOptionalChain`: Never mix `?.` and `!` (e.g. `x?.y!`). Use `x?.y ?? fallback` or `x?.y as Type`.
-- `noExplicitAny`: Replace `any` with `Event`, `{ type: string }`, `unknown`, or specific interface.
-- `useTemplate`: Replace `a + b` with template literals. Biome auto-fix handles most but marks them "unsafe".
-- `biome check --write --unsafe` auto-fixes ~50% of `noNonNullAssertion` but creates `noNonNullAssertedOptionalChain` errors from `x!.y!` → `x?.y!`. Must manually fix those after.
-
-
-## Bug Fix: Duplicate tool_result after daemon restart during bg await
-
-**Root cause**: `stopAgent` and `stopTask` called `writeOrphanedToolResults` immediately after killing background processes. But the provider loop was still settling asynchronously — `cleanupSessionBackgroundProcesses` kills bg processes → `completionPromise` resolves → provider loop emits real `tool_result`. This races with `writeOrphanedToolResults` writing synthetic "interrupted" results → duplicate `tool_result` for same `toolCallId` → API 400.
-
-**Fix**: Removed `writeOrphanedToolResults` from `stopAgent` and `stopTask`. Orphan detection only runs at restart/resume time (in `daemon.ts` autoResumeProjects and `launchAgent`/`runChildAgentInBackground`) when the provider loop is guaranteed dead. No race.
-
-**Verified from real JSONL data** (matrix-docs project): `bg await` tool_call got both a synthetic "interrupted" result (ts=...520) and a real result from the provider loop (ts=...521, 1ms later). Confirmed the race condition.
-
-**BG5 flaky test**: Not the same root cause — it is a timing-dependent test about bg completing during foreground tool execution, unrelated to daemon restart.
-
-
-## Auto-Recovery from API 400
-
-Feature: provider loop auto-recovers from 400 invalid_request_error (e.g. oversized image in tool_result). On 400, pops the broken user message, replaces with safe synthetic tool_results (matching tool_use IDs from the preceding assistant message) + recovery text, then retries.
-
-- `enableAutoRecovery` on `AgentRequest` (default: not set). Production daemon sets `ctx.config.enableAutoRecovery ?? true`. Tests set `enableAutoRecovery: false` via `DaemonConfig` to avoid masking bugs.
-- Only attempts once per session (`autoRecoveryAttempted` flag). Second 400 throws normally.
-- Recovery builds Anthropic-format tool_result blocks with `is_error: true` + text explanation. Must match tool_use IDs in the preceding assistant message to satisfy API validation.
-
-## UI Lifecycle Entry Collapse
-
-`processEventBatch` collapses consecutive lifecycle-only entries (session resumed / agent stopped) with no meaningful content between them, keeping only the last one per run. `agent_stopped` now renders as "⏹ Agent stopped" lifecycle LogEntry. The collapse uses `isMeaningfulEntry()` — lifecycle entries are not meaningful; all other types (including task_started) are.
-
-
-## Agent Launch Path Refactor (2026-04-01)
-
-- Root and child agents now use the same launch function: `runAgentForNode` in `agent-lifecycle.ts`
-- Deleted: `launchAgent`, `consumeAgentEvents`, `startSession`, `AgentSession`, `activeSessions`
-- `TaskSession` now has `abortController: AbortController` — stopAgent/stopTask use it to cancel in-flight API calls (both root and child)
-- Root check: `tracker.get(tracker.rootNodeId)?.session != null` instead of `activeSessions.has(projectId)`
-- Root vs child differences in runAgentForNode parameterized via `RunAgentOpts`: orchestratorSystemPrompt, model, resume flag
-- Root streams directly (no done detection — stays alive for idle-yield); child uses runChildCore (done detection closes queue)
-- `launchingNodes: Set<string>` on DaemonContext prevents duplicate launches during async setup
-- During lock window: deliverMessage skips queue delivery (messages go to JSONL, recovered by findUnconsumedMessages)
-- JSONL flushed before event read in runAgentForNode to catch concurrent writes
-- Session identity check in finally block (`finalNode.session === ownSession`) prevents cleanup clobber when a replacement agent was launched
-
-
-## ⚠️ JSONL-Memory Consistency Gap (Critical Architecture Issue)
-
-**Root cause of docs project 400 loop and orchestrator image crash:**
-
-In-memory `messages[]` (provider format) and JSONL events are two independent data structures. Recovery/fixes that only modify `messages[]` don't persist — JSONL retains the poison. On restart, JSONL rebuilds messages with the poison still there → 400 → recovery → only fixes memory again → infinite loop.
-
-**Key insight**: "JSONL is golden" but the system doesn't fully live by it. `messages[]` should be derived from JSONL, never independently modified. Any "fix" that touches messages without touching JSONL is wrong by design.
-
-**Test gap**: All restart+prefix tests are single crash-restart scenarios. No test covers "poison event mid-JSONL → recovery only fixes memory → continue running → restart → poison still there". auto-recovery is disabled in all tests (`enableAutoRecovery: false`), so accumulated corruption path is completely untested.
-
-**Planned fix**: JSONL truncate-and-rebuild (see task description). Recovery must modify JSONL, not messages. Truncate after last good assistant turn, rebuild interrupted tool_results, inject status message.
-
-
-
-## JSONL Repair: truncate-and-rebuild (2026-04-01)
-
-- `buildSessionRepair()` in events.ts: single function for all JSONL repair
-- Two strategies based on problem type:
-  - **Orphan only** (tool_call without result): append interrupted results, no truncation. Same as old findOrphanedToolCalls but through buildSessionRepair.
-  - **Duplicate results** (>1 result for same tool_call): truncate from first duplicate, re-append unconsumed messages from truncated region + status message
-- `EventStore.truncateAfterLine(sessionId, lineIndex)`: rewrites file keeping lines 0..lineIndex
-- Repair runs in runAgentForNode before provider loop starts (not in autoResumeProjects)
-- bg orphan detection (findOrphanedBackgroundProcesses) still runs in runAgentForNode after repair
-- autoResumeProjects only classifies and launches — no JSONL repair
-- Key design: orphan-only strategy does NOT inject status message (would interfere with mock turn sequence and resume messages from autoResumeProjects). Only duplicate strategy injects status message.
-
-
-## Provider-Level Image Validation
-
-- `validateImage?` on `ProviderAdapter` — each provider checks decoded byte size via `Buffer.from(base64, "base64").byteLength`.
-- Anthropic limit: 5MB decoded (5_242_880 bytes). OpenAI limit: 20MB decoded (20_971_520 bytes).
-- Three filter functions in provider-shared.ts: `filterExecResultImages`, `filterQueueMessageImages`, `filterEventImages`.
-- Called at 4 points in `runProviderLoop`: (1) before `buildToolResultsMessage`, (2) before yield resume `buildToolResultsMessage`, (3) before implicit yield `buildImplicitYieldMessage`, (4) on `activeEvents` before `convertEventsToMessages` (resume).
-- Rejected images replaced with error text including resize instructions. Image fields cleared on ToolResult; images removed from QueueMessage/Event arrays.
-- Important: validate decoded byte size, NOT base64 string length. Base64 inflates ~33%, so string length check gives wrong results.
-
-## Streaming Text Partial Injection
-
-- `ctx.streamingText: Map<string, string>` on DaemonContext tracks accumulated text_delta content per nodeId during active streaming.
-- `emitWithTask` in `runAgentForNode` intercepts text_delta (append) and assistant_text (clear). Also cleared in the finally block.
-- Batch events endpoints (GET /tasks/:nodeId/events and GET /events) inject a synthetic `assistant_text` event with `partial: true` at the end of the response when streaming is active.
-- The `createApp` return type now includes `ctx` for test access.
-
-## Image Pixel Dimension Guard
-
-- `getImageDimensions(buffer)` in `src/image-dimensions.ts`: parses PNG (bytes 16-23 IHDR) and JPEG (scan for SOF0/SOF1/SOF2 markers) headers. Returns `{width, height} | null`.
-- read_file image path in `src/tools/definitions.ts` checks dimensions before base64 encoding. Rejects >8000px per dimension with error text + magick resize command.
-- Unknown formats (GIF, WebP) pass through — `getImageDimensions` returns null, no blocking.
-- This prevents the "agent permanently bricked" scenario where oversized pixel images get stored in JSONL and Anthropic API rejects on every resume.
-
-## autoResumeProjects Simplification (2026-04-01)
-
-- autoResumeProjects no longer injects resume messages. It simply finds all in_progress nodes with JSONL sessions and calls runAgentForNode for each.
-- Provider loop handles all three resume states via JSONL shape detection:
-  - **Explicit yield** (pendingYieldToolCall): bypass to queue.wait
-  - **Implicit yield** (pendingImplicitYieldResume): detected via `hasPendingImplicitYield()` — last provider content event is assistant_text. Bypass to handleImplicitYield → queue.wait
-  - **Interrupted** (messages end with user content from repair): non-blocking queue drain (pick up unconsumed messages) then go straight to API call. No blocking wait.
-- `hasPendingImplicitYield()` in events.ts: walks backwards through events, returns true if last provider content event (assistant_text/tool_call/tool_result) is assistant_text.
-- Key fix for interrupted agents: non-blocking drain (`queue.drain()`) instead of blocking wait (`queue.wait()`). This picks up unconsumed messages already in queue (from findUnconsumedMessages) without hanging on empty queue.
-
-## Abort Signal Leak Fix (2026-04-01)
-
-- After stopTask/stopAgent, old runAgentForNode settles async. catch/finally now check `sessionWasReplaced` (finalNode.session !== ownSession). If replaced, suppress error events and agent_stopped — the explicit stop already emitted its own.
-- Secondary: foreground bash not killed on abort (needs AbortSignal support in executeBashWithTimeout — larger change, not fixed).
-
-## Persistent Task Write-Back
-
-`savePersistentDef(nodeId, projectPath)` on TaskTracker writes `{ title, description, color, persistent }` to `.mxd/tasks/<id>.json` and auto-commits via git. Called from:
-- `createTaskOp` when `opts.persistent` is set
-- `updateTaskOp` when title, description, or color changes (via `titleOrDescChanged` guard)
-- No-op for non-persistent tasks (`node.persistent === false`)
-
-`save()` strips title/description from tree.json for persistent nodes. On `load(branch, projectPath)`, `mergePersistentTasks` re-reads `.mxd/tasks/*.json` to repopulate them. This is the source-of-truth split: definition file owns content, tree.json owns runtime state.
-
-Note: `persistent` mode IS updateable via update_task MCP tool and REST PATCH. false→true creates def file + sets status to in_progress. true→false deletes def file.
-
-## Persistent Task Domain Structure
-
-Four top-level persistent domains:
-- **Design Philosophy** 🟣 — ITA, anti-patterns, system prompt (sub-domain)
-- **Task System Design** 🟣 — depth, pinned tasks, meeting mode, partial completion, flow
-- **Agent Loop Lifecycle** 🟠 — launch, provider loop, yield/resume, stop/restart, JSONL repair, image validation, OpenAI provider parity
-- **Frontend** 🔵 — user-facing interaction layer (compiler-sense "frontend", not web-frontend)
-  - **Web UI** 🔵 — web-level concerns: SSE connection robustness, event handler state consistency, dark theme/IDE quality, responsive layout, task tree interaction design
-  - **CLI** 🔵 — mxd command interface
-
-**Key boundary**: Web UI owns "web engineering" problems — SSE, layout, interaction, visual polish. It does NOT own every change that touches a web file. If a tool feature task modifies a frontend card to display new data, that's the tool task's scope. Web UI only owns problems that are about the web layer itself.
-
-Same for CLI: if a new feature adds a CLI flag, that's the feature's scope. CLI owns CLI-level concerns — argument parsing design, output formatting, auth flow.
-
-## ⚠️ delete_task Safety
-
-**NEVER delete a task with children.** `delete_task` cascades — deletes all descendants AND their session JSONL files. This is now enforced in code (returns 400 "Cannot delete task with children"). Always reparent children first.
-
-**To change persistent mode**: use `update_task` with `persistent: true/false`. false→true creates `.mxd/tasks/<id>.json` and sets status to in_progress. true→false deletes the def file.
-
-
-## BG5 Flaky Test Root Cause (2026-04-02)
-
-Root cause was NOT timing — it was async JSONL writes. `emitEvent` calls `eventStore.append()` without awaiting (fire-and-forget). `waitForDone` checks tracker status (set synchronously in done() handler) and returns before all tool_result events are flushed to disk. Fix: `readSessionEvents` now flushes the daemon EventStore (`ctx.app.ctx.eventStores.get(projectId).flushSession(sessionId)`) before reading. This affected all tests that read JSONL after waitForDone, not just BG5 — BG5 was just the most timing-sensitive.
+1. **Fear of large changes** — revert/fallback instead of executing.
+2. **Unnecessary fallbacks** — keep old path "just in case". Delete it.
+3. **Won't communicate** — text blocks invisible to parent. Use send_message.
+4. **Won't question architecture** — "why does this exist" > "how to make it work".
+5. **"Unify" = add third path** — delete until ONE remains.
