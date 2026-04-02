@@ -259,7 +259,8 @@ Route by **domain**, not by **file**. Key principle: **whoever introduces a chan
 - `SessionConfigEvent.cacheTtl?: "1h"` — stored in session_config, inherited via fork.
 - Root + persistent = `"1h"`, regular children = `undefined` (5min default).
 - On resume, `cacheTtl` from stored session_config (not recomputed) — preserves fork inheritance.
-- ALL breakpoints (system, tools, messages) use consistent TTL. `extended-cache-ttl-2025-04-11` beta header per-request when 1h.
+- ALL breakpoints (system, tools, messages) use consistent TTL. Extended cache TTL (1h) is GA — no beta header needed.
+- **PITFALL**: Never add per-request `anthropic-beta` headers — they override client's `defaultHeaders` (including OAuth header `oauth-2025-04-20`), breaking OAuth mode.
 - `{type: "ephemeral"}` and `{type: "ephemeral", ttl: "1h"}` are DIFFERENT cache entries — TTL is part of prefix identity.
 - `AgentRequest.isOrchestrator` replaced with `cacheTtl?: "1h"`. Same on ProviderAdapter.callAPI.
 - Prefix validation: system+tools strict JSON compare; message breakpoint position can move but value must match; all other messages compared with cache_control included.
