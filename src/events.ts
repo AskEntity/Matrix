@@ -46,6 +46,13 @@ export interface SessionConfigEvent {
 	systemStable: string;
 	/** Role + date + selfBootstrap — per-agent, per-day. */
 	systemVariable: string;
+	/**
+	 * Cache TTL for message-level cache breakpoints.
+	 * Root + persistent tasks: "1h" (long-lived, stable conversations).
+	 * Regular children: undefined (default 5min ephemeral).
+	 * Inherited via fork (session_config copied to child JSONL).
+	 */
+	cacheTtl?: "1h";
 	taskId: string;
 	ts: number;
 }

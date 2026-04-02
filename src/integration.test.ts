@@ -6811,6 +6811,261 @@ describe("Integration: session_config in JSONL", () => {
 		expect(cc.systemStable).toBe(pc.systemStable);
 	}, 45000);
 
+	test("Root session_config has cacheTtl: '1h'", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "done" },
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		await waitForDone(ctx, 15000);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+		const events = await readSessionEvents(ctx, rootId);
+
+		const config = events.find((e) => e.type === "session_config") as
+			| { type: "session_config"; cacheTtl?: string }
+			| undefined;
+		expect(config).toBeDefined();
+		// Root gets 1h cache TTL
+		expect(config?.cacheTtl).toBe("1h");
+	}, 30000);
+
+	test("Regular child session_config has no cacheTtl (default 5min)", async () => {
+		ctx = await setupTestContext();
+
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "child done" },
+				},
+			],
+		});
+
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Regular Child",
+								description: "Non-persistent child task",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Go",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "parent done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+		await waitForDone(ctx, 30000);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+		const childId = tracker.get(rootId)?.children?.[0] as string;
+		expect(childId).toBeDefined();
+
+		// Child session_config should NOT have cacheTtl (defaults to 5min)
+		const childEvents = await readSessionEvents(ctx, childId);
+		const childConfig = childEvents.find((e) => e.type === "session_config") as
+			| { type: "session_config"; cacheTtl?: string }
+			| undefined;
+		expect(childConfig).toBeDefined();
+		expect(childConfig?.cacheTtl).toBeUndefined();
+	}, 45000);
+
+	test("Persistent task session_config has cacheTtl: '1h'", async () => {
+		ctx = await setupTestContext();
+
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "persistent done" },
+				},
+			],
+		});
+
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Persistent Runner",
+								description: "A persistent task",
+								persistent: true,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Go",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "parent done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+		await waitForDone(ctx, 30000);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+		const childId = tracker.get(rootId)?.children?.[0] as string;
+		expect(childId).toBeDefined();
+
+		// Persistent task session_config should have cacheTtl: "1h"
+		const childEvents = await readSessionEvents(ctx, childId);
+		const childConfig = childEvents.find((e) => e.type === "session_config") as
+			| { type: "session_config"; cacheTtl?: string }
+			| undefined;
+		expect(childConfig).toBeDefined();
+		expect(childConfig?.cacheTtl).toBe("1h");
+	}, 45000);
+
+	test("Root API requests use consistent 1h cache_control on system + tools", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "done" },
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		await waitForDone(ctx, 15000);
+
+		const history = ctx.mockAPI.getRequestHistory();
+		expect(history.length).toBeGreaterThanOrEqual(1);
+		const req = history[0] as (typeof history)[0];
+
+		// System prompt should have cache_control with ttl: "1h" (root gets 1h)
+		const systemBlocks = req.system as Array<{
+			cache_control?: { type: string; ttl?: string };
+		}>;
+		const cachedSystemBlocks = systemBlocks.filter((b) => b.cache_control);
+		expect(cachedSystemBlocks.length).toBeGreaterThan(0);
+		for (const block of cachedSystemBlocks) {
+			expect(block.cache_control).toEqual({
+				type: "ephemeral",
+				ttl: "1h",
+			});
+		}
+
+		// Tools should have cache_control with ttl: "1h" on the last tool
+		const tools = req.tools as Array<{
+			cache_control?: { type: string; ttl?: string };
+		}>;
+		if (tools.length > 0) {
+			const lastTool = tools[tools.length - 1];
+			expect(lastTool?.cache_control).toEqual({
+				type: "ephemeral",
+				ttl: "1h",
+			});
+		}
+	}, 30000);
+
 	test("get_tree marks calling agent's node with (you)", async () => {
 		ctx = await setupTestContext();
 

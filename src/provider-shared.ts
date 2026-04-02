@@ -452,8 +452,8 @@ export interface ProviderAdapter {
 		maxTokens: number;
 		signal?: AbortSignal;
 		isCompacting: boolean;
-		/** True for root orchestrator sessions (depth 0). Affects cache TTL strategy. */
-		isOrchestrator?: boolean;
+		/** Cache TTL for message-level cache breakpoints. "1h" for root + persistent. */
+		cacheTtl?: "1h";
 		/** Session ID for test mock conversation keying. */
 		sessionId?: string;
 	}): AsyncGenerator<Event, unknown>;
@@ -1157,6 +1157,7 @@ export async function* runProviderLoop(
 							tools: allTools,
 							systemStable: freshPrompt.stable,
 							systemVariable: freshPrompt.variable,
+							...(request.cacheTtl ? { cacheTtl: request.cacheTtl } : {}),
 							taskId: "",
 							ts: Date.now(),
 						} as Event;
@@ -1283,7 +1284,7 @@ export async function* runProviderLoop(
 					maxTokens: DEFAULT_MAX_TOKENS,
 					signal: request.signal,
 					isCompacting: compactionPending,
-					isOrchestrator: request.isOrchestrator,
+					cacheTtl: request.cacheTtl,
 					sessionId,
 				});
 
