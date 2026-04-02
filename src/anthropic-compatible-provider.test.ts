@@ -1840,30 +1840,30 @@ describe("done tool", () => {
 		return (doneTool as any).handler(args);
 	}
 
-	test("done(passed) updates task status to passed", async () => {
+	test("done(passed) closes queue and returns acknowledgment", async () => {
 		const node = tracker.addTask("Test Task Pass", "description");
 		tracker.updateStatus(node.id, "in_progress");
 		const result = await invokeDoneTool(node.id, {
 			status: "passed",
 			summary: "All tests pass",
 		});
+		// Phase 1: done() no longer updates status (Phase 2 does that in runAgentForNode)
 		const updated = tracker.get(node.id);
-		expect(updated?.status).toBe("passed");
-		expect(result.content[0].text).toContain("passed");
-		expect(result.content[0].text).toContain("Entering idle state");
+		expect(updated?.status).toBe("in_progress");
+		expect(result.content[0].text).toContain("Done acknowledged (passed)");
 	});
 
-	test("done(failed) updates task status to failed", async () => {
+	test("done(failed) closes queue and returns acknowledgment", async () => {
 		const node = tracker.addTask("Test Task Fail", "description");
 		tracker.updateStatus(node.id, "in_progress");
 		const result = await invokeDoneTool(node.id, {
 			status: "failed",
 			summary: "Cannot resolve type errors",
 		});
+		// Phase 1: done() no longer updates status (Phase 2 does that in runAgentForNode)
 		const updated = tracker.get(node.id);
-		expect(updated?.status).toBe("failed");
-		expect(result.content[0].text).toContain("failed");
-		expect(result.content[0].text).toContain("Entering idle state");
+		expect(updated?.status).toBe("in_progress");
+		expect(result.content[0].text).toContain("Done acknowledged (failed)");
 	});
 
 	test("hasRunningChildren returns false when no children", async () => {
@@ -1931,8 +1931,8 @@ describe("done tool", () => {
 		grandchildQueue.close();
 	});
 
-	test("done() with queue enters idle and returns wake messages", async () => {
-		const node = tracker.addTask("Test Done Idle", "description");
+	test("done() with queue closes queue immediately", async () => {
+		const node = tracker.addTask("Test Done Queue", "description");
 		tracker.updateStatus(node.id, "in_progress");
 		const queue = new MessageQueue();
 
@@ -1956,83 +1956,19 @@ describe("done tool", () => {
 		const doneTool = toolDefs.find((t) => t.name === "done");
 		if (!doneTool) throw new Error("done tool not found");
 
-		// Call done() — it will block on queue.wait()
+		// Phase 1: done() returns immediately (no blocking)
 		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		const donePromise = (doneTool as any).handler({
+		const result = await (doneTool as any).handler({
 			status: "passed",
 			summary: "All tests pass",
 		});
 
-		// Verify task status was updated immediately (before wake)
-		expect(tracker.get(node.id)?.status).toBe("passed");
-
-		// Send a wake message after a short delay
-		setTimeout(() => {
-			queue.enqueue({
-				source: "task_message",
-				id: "test-id",
-				ts: 0,
-				fromTaskId: "p1",
-				fromTitle: "Orchestrator",
-				content: "Resume with new instructions",
-			});
-		}, 10);
-
-		const result = await donePromise;
-		// Should contain the context prefix and pending section (queue messages are separate)
-		expect(result.content[0].text).toContain(
-			"You previously called done(passed)",
-		);
-		expect(result.content[0].text).toContain("## Pending");
-		// Queue messages are returned as formattedQueueMessages, not embedded in content
-		expect(result.formattedQueueMessages).toContain(
-			"Resume with new instructions",
-		);
-
-		queue.close();
-	});
-
-	test("done() with queue that closes returns fallback message", async () => {
-		const node = tracker.addTask("Test Done Close", "description");
-		tracker.updateStatus(node.id, "in_progress");
-		const queue = new MessageQueue();
-
-		// Attach session to the node so tools can find the queue
-		node.session = {
-			queue,
-			abortController: new AbortController(),
-			cwd: tempDir,
-			fallbackCwd: tempDir,
-			depth: 0,
-			backgroundProcesses: new Map(),
-			foregroundExecutions: new Map(),
-		};
-
-		const deps = mockOrchestratorDeps({
-			tracker,
-			projectId: "test-project",
-			projectPath: tempDir,
-		});
-		const { toolDefs } = createOrchestratorTools(deps, "test-project", node.id);
-		const doneTool = toolDefs.find((t) => t.name === "done");
-		if (!doneTool) throw new Error("done tool not found");
-
-		// Call done() — it will block on queue.wait()
-		// biome-ignore lint/suspicious/noExplicitAny: test helper
-		const donePromise = (doneTool as any).handler({
-			status: "failed",
-			summary: "Could not finish",
-		});
-
-		// Close the queue to simulate agent being stopped
-		setTimeout(() => {
-			queue.close();
-		}, 10);
-
-		const result = await donePromise;
-		// When queue closes, done() returns the fallback "Entering idle state" message
-		// (not an error — queue closure is normal shutdown)
-		expect(result.content[0].text).toContain("Entering idle state");
+		// Queue should be closed
+		expect(queue.isClosed).toBe(true);
+		// Status NOT updated by handler (Phase 2 does that)
+		expect(tracker.get(node.id)?.status).toBe("in_progress");
+		// Simple acknowledgment text
+		expect(result.content[0].text).toContain("Done acknowledged (passed)");
 	});
 });
 
@@ -2362,39 +2298,28 @@ describe("Event deterministic verification", () => {
 		});
 	});
 
-	test("tool calls: user → assistant + tool_use → tool_result → assistant", async () => {
+	test("tool calls: user → assistant + done tool_use → orphan (no tool_result)", async () => {
 		const testDir = join(tmpDir, "tool-calls");
 		const emittedEvents: Event[] = [];
 		const emit = (event: Event) => {
 			emittedEvents.push(event);
 		};
 
-		let callCount = 0;
 		const provider = createMockedProvider(() => {
-			callCount++;
-			if (callCount === 1) {
-				// First call: assistant calls a tool
-				return createMockStream(
-					buildAnthropicResponse({
-						text: "I'll check the files.",
-						toolUses: [
-							{
-								id: "tu_1",
-								name: "mcp__mxd__done",
-								input: { status: "passed", summary: "All done" },
-							},
-						],
-					}),
-					["I'll check the files."],
-				);
-			}
-			// Second call: after done() tool result, assistant responds with end_turn
+			// Assistant calls done — this is the only API call.
+			// done() is an intended orphan: no tool_result, loop exits immediately.
 			return createMockStream(
 				buildAnthropicResponse({
-					text: "Task completed.",
-					stopReason: "end_turn",
+					text: "I'll finish up.",
+					toolUses: [
+						{
+							id: "tu_1",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "All done" },
+						},
+					],
 				}),
-				["Task completed."],
+				["I'll finish up."],
 			);
 		});
 
@@ -2413,11 +2338,11 @@ describe("Event deterministic verification", () => {
 							status: z.string(),
 							summary: z.string().optional(),
 						},
-						async (input) => ({
+						async () => ({
 							content: [
 								{
 									type: "text",
-									text: `Task marked as ${input.status}. Entering idle state.`,
+									text: "Done acknowledged.",
 								},
 							],
 						}),
@@ -2426,27 +2351,22 @@ describe("Event deterministic verification", () => {
 			},
 		});
 
-		const consumePromise = (async () => {
-			let result = await session.next();
-			while (!result.done) {
-				if (
-					result.value.type === "status" &&
-					(result.value as { message: string }).message.includes("idle state")
-				) {
-					testQueue.close();
-				}
-				result = await session.next();
-			}
-			return result.value as AgentResult;
-		})();
+		// Consume all events — loop exits on done (no need to close queue manually)
+		let result = await session.next();
+		while (!result.done) {
+			result = await session.next();
+		}
+		const agentResult = result.value as AgentResult;
 
-		const agentResult = await consumePromise;
-		expect(agentResult.exitReason).not.toBe("done_failed");
+		// done() exits with done_passed
+		expect(agentResult.exitReason).toBe("done_passed");
+		expect(agentResult.doneSummary).toBe("All done");
 
 		const types = emittedEvents.map((e) => e.type);
 		expect(types).toContain("assistant_text");
 		expect(types).toContain("tool_call");
-		expect(types).toContain("tool_result");
+		// done() is an intended orphan — NO tool_result emitted
+		expect(types).not.toContain("tool_result");
 
 		// Verify tool_call details
 		const toolCall = emittedEvents.find((e) => e.type === "tool_call");
@@ -2454,51 +2374,6 @@ describe("Event deterministic verification", () => {
 			expect(toolCall.tool).toBe("mcp__mxd__done");
 			expect(toolCall.toolCallId).toBe("tu_1");
 		}
-
-		// Verify tool_result details
-		const toolResult = emittedEvents.find((e) => e.type === "tool_result");
-		if (toolResult?.type === "tool_result") {
-			expect(toolResult.toolCallId).toBe("tu_1");
-			expect(toolResult.content).toContain("Task marked as passed");
-		}
-
-		// Verify reconstruction — prepend user message event (in production, already in JSONL)
-		const userMsgEvent: Event = {
-			type: "message",
-			id: "test-prompt",
-			taskId: "",
-			body: {
-				source: "user",
-				id: "test-prompt",
-				ts: 0,
-				content: "Do the task",
-			},
-			ts: Date.now(),
-		};
-		const events = [userMsgEvent, ...emittedEvents];
-		const reconstructed = eventsToAnthropicMessages(events);
-		// Should have: user, assistant+tool_use, tool_result, assistant(end_turn text)
-		expect(reconstructed.length).toBeGreaterThanOrEqual(4);
-
-		// First msg: user
-		expect((reconstructed[0] as { role: string }).role).toBe("user");
-		// Second msg: assistant with text + tool_use
-		const assistantMsg = reconstructed[1] as {
-			role: string;
-			content: unknown[];
-		};
-		expect(assistantMsg.role).toBe("assistant");
-		expect(Array.isArray(assistantMsg.content)).toBe(true);
-		const toolUseBlock = (assistantMsg.content as Array<{ type: string }>).find(
-			(b) => b.type === "tool_use",
-		);
-		expect(toolUseBlock).toBeDefined();
-		// Third msg: user with tool_result
-		const toolResultMsg = reconstructed[2] as {
-			role: string;
-			content: unknown[];
-		};
-		expect(toolResultMsg.role).toBe("user");
 	});
 
 	test("error tool results: isError flag preserved in events", async () => {
@@ -3034,8 +2909,8 @@ describe("Event deterministic verification", () => {
 						toolUses: [
 							{
 								id: "tu_cp",
-								name: "mcp__mxd__done",
-								input: { status: "passed", summary: "Done" },
+								name: "mcp__mxd__bash",
+								input: { command: "echo hello" },
 							},
 						],
 					}),
@@ -3060,11 +2935,10 @@ describe("Event deterministic verification", () => {
 			mcpToolDefs: {
 				mxd: [
 					tool(
-						"done",
-						"Signal completion",
+						"bash",
+						"Run a command",
 						{
-							status: z.string(),
-							summary: z.string().optional(),
+							command: z.string(),
 						},
 						async (input) => {
 							// During tool execution, enqueue a message to simulate cancellation point
@@ -3078,7 +2952,7 @@ describe("Event deterministic verification", () => {
 								content: [
 									{
 										type: "text",
-										text: `Task marked as ${input.status}. Entering idle state.`,
+										text: `Ran: ${input.command}`,
 									},
 								],
 							};
@@ -3088,22 +2962,18 @@ describe("Event deterministic verification", () => {
 			},
 		});
 
-		const consumePromise = (async () => {
-			let result = await session.next();
-			while (!result.done) {
-				if (
-					result.value.type === "status" &&
-					(result.value as { message: string }).message.includes("idle state")
-				) {
-					testQueue.close();
-				}
-				result = await session.next();
+		// Consume until implicit yield (end_turn enters idle). Close queue then.
+		let result = await session.next();
+		while (!result.done) {
+			// Detect idle state — end_turn triggers handleImplicitYield
+			if (
+				result.value.type === "status" &&
+				(result.value as { message?: string }).message?.includes("idle")
+			) {
+				testQueue.close();
 			}
-			return result.value as AgentResult;
-		})();
-
-		const agentResult = await consumePromise;
-		expect(agentResult.exitReason).not.toBe("done_failed");
+			result = await session.next();
+		}
 
 		const events = emittedEvents;
 
@@ -3111,9 +2981,7 @@ describe("Event deterministic verification", () => {
 		const toolResult = events.find((e) => e.type === "tool_result");
 		expect(toolResult).toBeDefined();
 		if (toolResult?.type === "tool_result") {
-			expect(toolResult.content).toContain(
-				"Task marked as passed. Entering idle state.",
-			);
+			expect(toolResult.content).toContain("Ran: echo hello");
 			// Queue text is NOT embedded in tool_result.content anymore
 			expect(toolResult.content).not.toContain(
 				"[Messages received while you were working:]",

@@ -12,14 +12,11 @@ import { z } from "zod";
 import type { Event } from "./events.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import {
-	createClarifyResponse,
 	createCrossProjectMessage,
-	createTaskComplete,
 	createTaskMessage,
 	createTreeChange,
 } from "./queue-message-factory.ts";
 
-import type { PendingState } from "./shared-types.ts";
 import {
 	closeTaskOp,
 	createTaskOp,
@@ -32,7 +29,6 @@ import type { TaskTracker } from "./task-tracker.ts";
 import {
 	buildTaskPrompt,
 	findParentQueue,
-	formatQueueMessage,
 	getDescendantIds,
 	isDescendantOf,
 	slugify,
@@ -181,178 +177,6 @@ export function createOrchestratorTools(
 	/** Count of outstanding clarify() calls that have not yet received a clarify_response. */
 	let pendingClarifications = 0;
 
-	/**
-	 * Shared yield logic: wait for messages on the queue, handle compact signals,
-	 * clarify timeouts, emit idle/active events, and return formatted result.
-	 * Used by both yield() and done() tools.
-	 * Returns null if no queue is available.
-	 */
-	async function waitForQueueMessages(): Promise<{
-		content: Array<
-			| { type: "text"; text: string }
-			| { type: "image"; data: string; mimeType: string }
-		>;
-		isError?: boolean;
-		consumedMessageIds?: string[];
-		consumedQueueMessages?: QueueMessage[];
-		formattedQueueMessages?: string;
-		pending?: PendingState;
-	} | null> {
-		const queue = getQueue();
-		if (!queue) return null;
-		try {
-			let all: QueueMessage[];
-
-			while (true) {
-				if (currentTaskId) {
-					queue.idle = true;
-					emit({ type: "agent_idle", taskId: currentTaskId });
-				}
-
-				// Resolve clarifyTimeoutMs from config at call time (cheap, cached)
-				const clarifyTimeoutMs = deps.getClarifyTimeoutMs();
-				const timeoutMs =
-					pendingClarifications > 0 ? clarifyTimeoutMs : undefined;
-				const result = await queue.waitForMessage(timeoutMs);
-
-				if (result === "timeout") {
-					const timeoutMsg = `<clarify_timeout duration="${timeoutMs}ms">No response received. Proceed with your best judgement.</clarify_timeout>`;
-					emit({
-						type: "clarification_timeout",
-						taskId: currentTaskId ?? undefined,
-						timeoutMs,
-					});
-					const synthesized: QueueMessage[] = Array.from(
-						{ length: pendingClarifications },
-						() => createClarifyResponse(timeoutMsg),
-					);
-					pendingClarifications = 0;
-					all = [...synthesized, ...queue.drain()];
-				} else {
-					const rest = queue.drain();
-					all = [result, ...rest];
-					for (const msg of all) {
-						if (msg.source === "clarify_response") {
-							pendingClarifications = Math.max(0, pendingClarifications - 1);
-						}
-					}
-				}
-
-				const compactMsgs = all.filter((m) => m.source === "compact");
-				all = all.filter((m) => m.source !== "compact");
-				if (compactMsgs.length > 0) {
-					for (const cm of compactMsgs) {
-						queue.enqueue(cm);
-					}
-					break;
-				}
-				if (all.length > 0) break;
-			}
-
-			if (currentTaskId) {
-				queue.idle = false;
-				emit({ type: "agent_active", taskId: currentTaskId });
-			}
-
-			const formatted = all.map(formatQueueMessage).join("\n");
-
-			const completedIds = new Set(
-				all
-					.filter(
-						(m): m is Extract<QueueMessage, { source: "task_complete" }> =>
-							m.source === "task_complete",
-					)
-					.map((m) => m.taskId),
-			);
-			const myDescendants = currentTaskId
-				? getDescendantIds(tracker, currentTaskId)
-				: [];
-			const runningChildren = myDescendants.filter(
-				(id) => tracker.get(id)?.session != null && !completedIds.has(id),
-			);
-			// Build structured pending data
-			const runningChildrenData = runningChildren.map((id) => ({
-				id,
-				title: tracker.get(id)?.title ?? id,
-			}));
-			const pendingData = {
-				runningChildren: runningChildrenData,
-				pendingClarifications,
-			};
-
-			const runningChildrenText =
-				runningChildrenData.length > 0
-					? runningChildrenData.map((c) => `"${c.title}" (${c.id})`).join(", ")
-					: "none";
-			const clarifyText =
-				pendingClarifications > 0 ? String(pendingClarifications) : "none";
-			const pendingSection = [
-				"",
-				"## Pending",
-				`- Running sub tasks: ${runningChildrenText}`,
-				`- Pending clarifications: ${clarifyText}`,
-			].join("\n");
-
-			const imageBlocks: Array<{
-				type: "image";
-				data: string;
-				mimeType: string;
-			}> = [];
-			for (const msg of all) {
-				if (msg.source === "user" && msg.images) {
-					for (const img of msg.images) {
-						imageBlocks.push({
-							type: "image",
-							data: img.base64,
-							mimeType: img.mediaType,
-						});
-					}
-				}
-			}
-
-			// Separate user messages (already persisted at send time) from queue messages
-			// that need to flow through the provider's emit path for SSE broadcast + persistence.
-			const userConsumedIds: string[] = [];
-			const queueMessages: QueueMessage[] = [];
-			for (const msg of all) {
-				if (msg.source === "user" && msg.id) {
-					userConsumedIds.push(msg.id);
-				} else {
-					queueMessages.push(msg);
-				}
-			}
-
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: pendingSection.trimStart(),
-					},
-					...imageBlocks,
-				],
-				...(userConsumedIds.length > 0
-					? { consumedMessageIds: userConsumedIds }
-					: {}),
-				...(queueMessages.length > 0
-					? { consumedQueueMessages: queueMessages }
-					: {}),
-				...(formatted ? { formattedQueueMessages: formatted } : {}),
-				pending: pendingData,
-			};
-		} catch (e) {
-			const message = e instanceof Error ? e.message : "Unknown error";
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: `Queue error: ${message}`,
-					},
-				],
-				isError: true,
-			};
-		}
-	}
-
 	const toolDefs = [
 		tool(
 			"get_tree",
@@ -388,8 +212,9 @@ export function createOrchestratorTools(
 								// Mark calling agent's node so it can discover its position
 								...(rest.id === currentTaskId ? { you: true } : {}),
 							};
-							// Persistent tasks have no lifecycle status
-							if (rest.persistent) delete node.status;
+							// Persistent tasks: show status only when it's "verify" (awaiting parent review)
+							if (rest.persistent && rest.status !== "verify")
+								delete node.status;
 							return node;
 						})
 					: nodes.map((n) => {
@@ -399,8 +224,9 @@ export function createOrchestratorTools(
 								children: filterChildren(n.children),
 								parentId: n.parentId,
 							};
-							// Only include status for non-persistent tasks
-							if (!n.persistent) node.status = n.status;
+							// Show status for non-persistent tasks, or persistent tasks in "verify" state
+							if (!n.persistent || n.status === "verify")
+								node.status = n.status;
 							return node;
 						});
 				return {
@@ -1571,71 +1397,22 @@ export function createOrchestratorTools(
 						"Brief summary of what was accomplished (if passed) or what went wrong (if failed)",
 					),
 			},
-			async (args) => {
-				// Update task status in the tree (skip for persistent tasks — they have no lifecycle)
-				if (currentTaskId) {
-					const currentNode = tracker.get(currentTaskId);
-					if (!currentNode?.persistent) {
-						tracker.updateStatus(
-							currentTaskId,
-							args.status === "passed" ? "passed" : "failed",
-						);
-					}
-					await tracker.save();
-					broadcastTree();
-				}
-
-				// Deliver task_complete to parent via deliverMessage (child agents only).
-				// deliverMessage handles both paths: enqueue if parent is running, persist if not.
-				// runChildAgentInBackground skips delivery when done() was called.
-				const depth = getDepth();
-				if (currentTaskId && depth > 0 && lifecycleDeps?.deliverMessage) {
-					const node = tracker.get(currentTaskId);
-					if (node?.parentId) {
-						const completionMsg = createTaskComplete(
-							currentTaskId,
-							node.title ?? "unknown",
-							args.status === "passed",
-							args.summary,
-						);
-						lifecycleDeps
-							.deliverMessage(node.parentId, completionMsg)
-							.catch((e) => {
-								console.warn(
-									`[done] Failed to deliver task_complete to parent ${node.parentId}:`,
-									e,
-								);
-							});
-					}
-				}
-
-				// Close queue for child agents — unblocks waitForQueueMessages() below
-				// which will reject immediately since queue is closed.
-				// Root agents don't close here — they block on waitForQueueMessages() normally.
+			async (_args) => {
+				// Phase 1 of two-phase done(): just close the queue and return.
+				// Status update, parent notification, and done_notified happen in Phase 2
+				// (runAgentForNode, after the provider loop exits).
+				// done() tool_call stays as an orphan in JSONL (no tool_result emitted) —
+				// the provider loop detects done and skips tool_result emission, like yield().
 				const queue = getQueue();
-				if (depth > 0 && queue) {
+				if (queue) {
 					queue.close();
 				}
 
-				// Enter implicit yield — wait for wake messages (e.g. parent resume).
-				// This prevents the provider from making another API call after done(),
-				// which would waste tokens and create confusing behavior.
-				const wakeResult = await waitForQueueMessages();
-				if (wakeResult && !wakeResult.isError) {
-					// Prepend context so the agent knows it previously completed
-					const firstBlock = wakeResult.content[0];
-					if (firstBlock && firstBlock.type === "text") {
-						firstBlock.text = `You previously called done(${args.status}). New messages woke you up:\n\n${firstBlock.text}`;
-					}
-					return wakeResult;
-				}
-
-				// No queue, or queue closed (normal shutdown) — return immediately
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: `Task marked as ${args.status}. Entering idle state.`,
+							text: `Done acknowledged (${_args.status}).`,
 						},
 					],
 				};

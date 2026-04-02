@@ -470,10 +470,11 @@ describe("deleteTaskOp", () => {
 // ── closeTaskOp ──
 
 describe("closeTaskOp", () => {
-	test("closes regular task — sets status to closed", async () => {
+	test("closes passed regular task — sets status to closed", async () => {
 		const task = tracker.addChild(tracker.rootNodeId, "Task", "", {
 			editedBy: "agent",
 		});
+		tracker.updateStatus(task.id, "passed");
 
 		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
 
@@ -482,18 +483,57 @@ describe("closeTaskOp", () => {
 		expect(node?.status).toBe("closed");
 	});
 
-	test("rejects closing persistent task", async () => {
+	test("verify → closed for regular tasks", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Verified", "", {
+			editedBy: "agent",
+		});
+		tracker.updateStatus(task.id, "verify");
+
+		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
+
+		expect(result.taskId).toBe(task.id);
+		const node = tracker.get(task.id);
+		expect(node?.status).toBe("closed");
+	});
+
+	test("verify → pending for persistent tasks", async () => {
 		const task = tracker.addChild(tracker.rootNodeId, "Persistent", "", {
 			editedBy: "agent",
 			persistent: true,
 		});
+		tracker.updateStatus(task.id, "verify");
 
-		await expect(
-			closeTaskOp(tracker, task.id, {
-				...makeCallbacks(),
-				clearEventStore: () => {},
-			}),
-		).rejects.toThrow("Cannot close persistent task");
+		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
+
+		expect(result.taskId).toBe(task.id);
+		const node = tracker.get(task.id);
+		expect(node?.status).toBe("pending");
+	});
+
+	test("passed → closed (backward compat)", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Passed", "", {
+			editedBy: "agent",
+		});
+		tracker.updateStatus(task.id, "passed");
+
+		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
+
+		expect(result.taskId).toBe(task.id);
+		const node = tracker.get(task.id);
+		expect(node?.status).toBe("closed");
+	});
+
+	test("failed → closed (backward compat)", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Failed", "", {
+			editedBy: "agent",
+		});
+		tracker.updateStatus(task.id, "failed");
+
+		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
+
+		expect(result.taskId).toBe(task.id);
+		const node = tracker.get(task.id);
+		expect(node?.status).toBe("closed");
 	});
 
 	test("rejects closing in_progress task", async () => {
@@ -505,6 +545,28 @@ describe("closeTaskOp", () => {
 		await expect(
 			closeTaskOp(tracker, task.id, makeCallbacks()),
 		).rejects.toThrow("Cannot close a running task");
+	});
+
+	test("rejects closing pending task", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Pending", "", {
+			editedBy: "agent",
+		});
+		// Already pending by default
+
+		await expect(
+			closeTaskOp(tracker, task.id, makeCallbacks()),
+		).rejects.toThrow('Cannot close a task with status "pending"');
+	});
+
+	test("rejects closing draft task", async () => {
+		const task = tracker.addChild(tracker.rootNodeId, "Draft", "", {
+			editedBy: "agent",
+		});
+		tracker.updateStatus(task.id, "draft");
+
+		await expect(
+			closeTaskOp(tracker, task.id, makeCallbacks()),
+		).rejects.toThrow('Cannot close a task with status "draft"');
 	});
 
 	test("throws for nonexistent task", async () => {

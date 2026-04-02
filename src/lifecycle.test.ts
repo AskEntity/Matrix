@@ -2071,26 +2071,17 @@ describe("lifecycle: child completion notification paths", () => {
 					ts: Date.now(),
 				};
 
-				// Step 2: Agent calls done("passed") — handler updates tracker
-				tracker.updateStatus(childId, "passed");
-
-				// Step 3: done() handler calls closeQueue() directly
+				// Phase 1: done() handler just closes queue
 				queue.close();
 
-				// Step 4: done() handler calls waitForQueueMessages()
-				// which blocks on queue.wait() — rejects immediately since queue is closed
-				try {
-					await queue.wait();
-				} catch {
-					// Queue closed — exit cleanly
-				}
-
+				// Loop exits via queue.isClosed → return AgentResult with done exit reason
 				return {
-					exitReason: "interrupted" as const,
+					exitReason: "done_passed" as const,
 					output: "done",
 					costUsd: 0,
 					turns: 0,
 					sessionId: "mock",
+					doneSummary: "All tests pass",
 				} as AgentResult;
 			},
 		};
@@ -2122,9 +2113,10 @@ describe("lifecycle: child completion notification paths", () => {
 		const timeoutPromise = delay(3000).then(() => "timeout" as const);
 		const result = await Promise.race([corePromise, timeoutPromise]);
 
-		// closeQueue() directly unblocks done() — no deadlock
+		// Queue close exits the loop — no deadlock
 		expect(result).not.toBe("timeout");
-		expect(tracker.get(childId)?.status).toBe("passed");
+		// Status NOT updated by runChildCore (Phase 2 in runAgentForNode does that)
+		expect(tracker.get(childId)?.status).toBe("in_progress");
 
 		// Cleanup
 		parentNode.session = undefined;
@@ -2144,7 +2136,7 @@ describe("lifecycle: child completion notification paths", () => {
 		const childId = childNode.id;
 		tracker.updateStatus(childId, "in_progress");
 
-		// Provider that simulates done()=yield WITHOUT closeQueue()
+		// Provider that simulates a stream stuck on queue.wait() (no queue close)
 		const deadlockProvider: AgentProvider = {
 			name: "mock-deadlock",
 			execute: async () => ({
@@ -2162,8 +2154,6 @@ describe("lifecycle: child completion notification paths", () => {
 					taskId: "",
 					ts: Date.now(),
 				};
-
-				tracker.updateStatus(childId, "passed");
 
 				// No closeQueue() call — nobody closes the queue
 				// Block forever on queue.wait()

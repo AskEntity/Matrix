@@ -5,13 +5,18 @@ import Anthropic from "@anthropic-ai/sdk";
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 import { DEFAULT_MODEL, loadGlobalConfig, resolveAuthGroup } from "./config.ts";
-import { runAgentForNode, stopAgent } from "./daemon/agent-lifecycle.ts";
+import {
+	deliverMessage,
+	runAgentForNode,
+	stopAgent,
+} from "./daemon/agent-lifecycle.ts";
 import type {
 	DaemonConfig,
 	DaemonContext,
 	PendingClarification,
 	SSEClient,
 } from "./daemon/context.ts";
+import { broadcastTreeUpdate, emitEvent } from "./daemon/event-system.ts";
 import { getEventStore, getTracker } from "./daemon/helpers.ts";
 import { registerAgentRoutes } from "./daemon/routes/agent.ts";
 import {
@@ -23,8 +28,11 @@ import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
 
+import type { Event } from "./events.ts";
 import { ProjectManager } from "./project-manager.ts";
+import { createTaskComplete } from "./queue-message-factory.ts";
 import { buildSystemPrompt } from "./system-prompts.ts";
+import { TOOL_DONE } from "./tool-names.ts";
 import type {
 	HealthResponse,
 	StatsResponse,
@@ -56,6 +64,67 @@ const startTime = Date.now();
 const defaultConfig: DaemonConfig = {
 	dataDir: join(homedir(), ".mxd"),
 };
+
+/**
+ * Detect interrupted Phase 2 of two-phase done() from JSONL events.
+ *
+ * Returns null if no recovery needed.
+ * Returns { type: "needs_phase2", status, summary } if done tool_call exists without done_notified.
+ * Returns { type: "status_stale", status } if done_notified exists but node status wasn't saved.
+ */
+export function findInterruptedDonePhase2(events: Event[]):
+	| {
+			type: "needs_phase2";
+			status: "verify" | "failed";
+			summary: string;
+	  }
+	| {
+			type: "status_stale";
+			status: "verify" | "failed";
+	  }
+	| null {
+	// Find the last done tool_call (orphan — no tool_result follows it)
+	let lastDoneCall: (Event & { type: "tool_call" }) | null = null;
+	let lastDoneCallTs = 0;
+	const toolResultIds = new Set<string>();
+
+	for (const e of events) {
+		if (e.type === "tool_call" && e.tool === TOOL_DONE) {
+			lastDoneCall = e as Event & { type: "tool_call" };
+			lastDoneCallTs = e.ts;
+		}
+		if (e.type === "tool_result") {
+			toolResultIds.add(e.toolCallId);
+		}
+	}
+
+	if (!lastDoneCall) return null;
+
+	// If the done tool_call has a tool_result, it was a resumed done (not an orphan).
+	// The agent already processed it. No crash recovery needed.
+	if (toolResultIds.has(lastDoneCall.toolCallId)) return null;
+
+	// Check for done_notified after the done tool_call
+	const hasDoneNotified = events.some(
+		(e) => e.type === "done_notified" && e.ts >= lastDoneCallTs,
+	);
+
+	const doneInput = lastDoneCall.input as
+		| { status?: string; summary?: string }
+		| undefined;
+	const status =
+		doneInput?.status === "passed" ? ("verify" as const) : ("failed" as const);
+	const summary = doneInput?.summary ?? "";
+
+	if (!hasDoneNotified) {
+		// Phase 2 never completed — need to run it now
+		return { type: "needs_phase2", status, summary };
+	}
+
+	// done_notified exists — check if the node still has stale status.
+	// The caller checks node.status === "in_progress" to decide if status_stale applies.
+	return { type: "status_stale", status };
+}
 
 export function createApp(config: DaemonConfig = defaultConfig) {
 	const app = new Hono();
@@ -184,6 +253,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			draft: 0,
 			pending: 0,
 			in_progress: 0,
+			verify: 0,
 			passed: 0,
 			failed: 0,
 			closed: 0,
@@ -244,6 +314,76 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		for (const project of projects) {
 			const tracker = await getTracker(ctx, project.id);
 			const eventStore = getEventStore(ctx, project.id);
+
+			// ── Phase 2 crash recovery ──
+			// Check all nodes with JSONL sessions for interrupted Phase 2:
+			// - done tool_call exists without done_notified after it → complete Phase 2
+			// - done_notified exists but status still in_progress → fix status
+			const allNodes = tracker.allNodes();
+			for (const node of allNodes) {
+				if (!eventStore.has(node.id)) continue;
+
+				await eventStore.flushSession(node.id);
+				const events = eventStore.readActive(node.id);
+
+				const crashRecovery = findInterruptedDonePhase2(events);
+				if (!crashRecovery) continue;
+
+				if (crashRecovery.type === "needs_phase2") {
+					// done() was called but Phase 2 never completed (no done_notified)
+					const { status, summary } = crashRecovery;
+					console.log(
+						`[autoResume] Completing interrupted Phase 2 for ${node.id} (status=${status})`,
+					);
+					tracker.updateStatus(node.id, status);
+
+					// Deliver task_complete to parent (child agents only)
+					const isRoot = node.id === tracker.rootNodeId;
+					if (node.parentId && !isRoot) {
+						const completionMsg = createTaskComplete(
+							node.id,
+							node.title ?? "unknown",
+							status === "verify",
+							summary,
+						);
+						await deliverMessage(
+							ctx,
+							project,
+							node.parentId,
+							completionMsg,
+						).catch((e) => {
+							console.warn(
+								`[autoResume] Failed to deliver task_complete to parent ${node.parentId}:`,
+								e,
+							);
+						});
+					}
+
+					// Write done_notified marker
+					emitEvent(ctx, project.id, {
+						type: "done_notified",
+						taskId: node.id,
+						status,
+						summary,
+						ts: Date.now(),
+					});
+					await eventStore.flushSession(node.id);
+					await tracker.save();
+					broadcastTreeUpdate(ctx, project.id, tracker);
+				} else if (
+					crashRecovery.type === "status_stale" &&
+					node.status === "in_progress"
+				) {
+					// done_notified was written but status wasn't saved (crash between write and save)
+					const { status } = crashRecovery;
+					console.log(
+						`[autoResume] Fixing stale status for ${node.id} (→${status})`,
+					);
+					tracker.updateStatus(node.id, status);
+					await tracker.save();
+					broadcastTreeUpdate(ctx, project.id, tracker);
+				}
+			}
 
 			// Collect all in_progress nodes that have JSONL sessions
 			const inProgressNodes = tracker

@@ -15,7 +15,7 @@ Creating tasks is CHEAP. Executing must be DELIBERATE. When user discusses desig
 ## How to Run Tests
 
 ```bash
-bun test              # ALL tests (unit + integration). ~1126 pass, 3 skip.
+bun test              # ALL tests (unit + integration). ~1145 pass, 3 skip.
 bun run typecheck     # tsc --noEmit
 bun run check         # biome lint + format
 ```
@@ -77,17 +77,18 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 ## Agent Lifecycle
 
 - Root and child agents use the same launch function: `runAgentForNode` in `agent-lifecycle.ts`
-- `done()` → status update + `task_complete` to parent. Only path for completion.
+- `done()` = two-phase: Phase 1 (agent-side: close queue, loop exits) → Phase 2 (daemon-side: status→verify/failed, task_complete, done_notified marker). Intended orphan like yield — no tool_result written.
 - `yield()` = loop-level pause. Provider intercepts before executeTool.
 - `end_turn` = implicit yield, never implicit done.
 - `stopTask()` = per-task real interrupt (close queue + abort signal via `TaskSession.abortController`).
 - `launchingNodes: Set<string>` prevents duplicate launches during async setup.
 - Session identity check in finally block prevents cleanup clobber when replacement agent launched.
-- On JSONL resume, three states detected from JSONL shape:
+- On JSONL resume, four states detected from JSONL shape:
   - **Explicit yield** (pendingYieldToolCall): bypass to queue.wait
+  - **Done** (pendingDoneToolCall): wait for messages, write done tool_result with wake context
   - **Implicit yield** (hasPendingImplicitYield): bypass to queue.wait → handleImplicitYield
   - **Interrupted** (orphaned tools repaired): non-blocking queue drain → API call
-- autoResumeProjects: finds all in_progress nodes with JSONL, calls runAgentForNode. No resume messages.
+- autoResumeProjects: finds in_progress nodes with JSONL + crash recovery for interrupted Phase 2 (done without done_notified).
 
 ## JSONL Repair
 
@@ -100,11 +101,11 @@ In-memory `messages[]` and JSONL events are two data structures. Recovery that o
 ## Persistent Tasks
 
 `persistent: boolean` on TaskNode (discriminated union: `RegularTaskNode | PersistentTaskNode`).
-- `false`: regular task. Full lifecycle (pending → in_progress → passed/failed/closed).
-- `true`: persistent task. Always `status: "in_progress"` internally. No lifecycle states.
-  - `close_task` rejected. `reset_task` rejected. `done()` skips status update.
+- `false`: regular task. Full lifecycle (pending → in_progress → verify/failed → closed).
+- `true`: persistent task. Status: `"in_progress" | "verify" | "pending"`.
+  - `done()` → verify/failed (same as regular). `close_task` → verify→pending. `reset_task` rejected.
   - `done()` still fires `task_complete` to parent. Session preserved.
-  - `get_tree` omits status for persistent nodes.
+  - `get_tree` shows status when "verify", hides for in_progress/pending.
   - Changeable via `update_task(persistent: true/false)`.
 
 Definition in `.mxd/tasks/<id>.json` (git-tracked): title, description, color, persistent. tree.json stores runtime state only. `savePersistentDef` auto-commits via git. Called from createTaskOp (when persistent set) and updateTaskOp (when title/description/color changes).
@@ -142,7 +143,7 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_k
 - `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation.
 - Mock DSL: `{"blocks": [...]}` or `{"turns": [...]}` with assert/capture.
 - `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
-- ~1126 tests (unit + integration). 3 skipped (E2E).
+- ~1145 tests (unit + integration). 3 skipped (E2E).
 
 ## Known Pitfalls
 
@@ -219,3 +220,27 @@ Major rewrite: 286 insertions, 442 deletions (net -156 lines). 10 chapters + clo
 - Three Mutations chapter: test, architecture, intention.
 - "ASK — NEVER SILENTLY FALL BACK" elevated to boldest statement in prompt.
 - Adversarial testing with vivid example (PIN + top up scenario).
+
+
+## Two-Phase done() Lifecycle (2026-04-02)
+
+### Design
+- **Phase 1** (agent-side): done() handler closes queue + returns. No status update, no parent notification. Intended orphan like yield — no tool_result written to JSONL. Provider loop detects done, sets doneExitReason + doneSummary, exits.
+- **Phase 2** (daemon-side, in runAgentForNode): After loop exits with done exit reason, updates status (verify/failed), delivers task_complete to parent, writes `done_notified` crash-safe marker to JSONL.
+- **Crash recovery**: `findInterruptedDonePhase2` in daemon.ts detects orphaned TOOL_DONE without done_notified → completes Phase 2 on restart. Also fixes stale status (done_notified exists but status still in_progress).
+
+### Status Changes
+- "verify" added to TaskStatus: `done("passed")` → verify, `done("failed")` → failed.
+- closeTaskOp: verify→closed (regular), verify→pending (persistent). Rejects in_progress/pending/draft.
+- PersistentTaskNode status: `"in_progress" | "verify" | "pending"`.
+- buildSessionRepair: TOOL_DONE skipped alongside TOOL_YIELD (not treated as orphans).
+- AgentResult.doneSummary carries summary from done() handler through to Phase 2.
+
+### Done Resume from JSONL
+When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provider loop waits for wake messages, writes synthetic tool_result with "You previously called done()" context.
+
+### Key Pitfalls
+- waitForDone test helper must check "verify" in addition to "passed"/"failed".
+- Root agents no longer block in waitForQueueMessages after done() — loop exits immediately.
+- Background processes may be killed by cleanup before completing after done().
+- closeTaskOp now rejects pending/draft status — tests must set passed/verify before close_task.
