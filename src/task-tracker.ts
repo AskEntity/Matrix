@@ -115,7 +115,7 @@ export class TaskTracker {
 		};
 		if (node.color) def.color = node.color;
 		const defPath = join(tasksDir, `${nodeId}.json`);
-		writeFileSync(defPath, JSON.stringify(def, null, "\t"));
+		writeFileSync(defPath, `${JSON.stringify(def, null, "\t")}\n`);
 		// Auto-commit so the working tree stays clean for worktree creation
 		const addProc = Bun.spawnSync(["git", "add", defPath], {
 			cwd: projectPath,

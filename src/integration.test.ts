@@ -192,9 +192,16 @@ async function sendMessage(
 
 /**
  * Read JSONL events for a session from the event store.
+ * Flushes pending writes from the daemon's EventStore first to avoid race conditions
+ * where async JSONL writes haven't completed yet.
  * Path: {dataDir}/sessions/{projectId}/{sessionId}.events.jsonl
  */
-function readSessionEvents(ctx: TestContext, sessionId: string) {
+async function readSessionEvents(ctx: TestContext, sessionId: string) {
+	// Flush the daemon's EventStore to ensure all pending writes are on disk
+	const daemonStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+	if (daemonStore) {
+		await daemonStore.flushSession(sessionId);
+	}
 	const store = new EventStore(join(ctx.dataDir, "sessions", ctx.projectId));
 	return store.read(sessionId);
 }
@@ -321,7 +328,7 @@ describe("Integration: full stack with mock API", () => {
 
 		// Verify JSONL persistence
 		const rootNodeId = await getRootNodeId(ctx);
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 		expect(events.length).toBeGreaterThan(0);
 
 		const eventTypes = events.map((e) => e.type);
@@ -515,7 +522,7 @@ describe("Integration: full stack with mock API", () => {
 		await waitForDone(ctx);
 
 		const rootNodeId = await getRootNodeId(ctx);
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 
 		const persistedTypes = events.map((e) => e.type);
 
@@ -822,7 +829,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 		// Verify JSONL has the orphan tool_result for bash
 		const rootNodeId = await getRootNodeId(ctx);
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 		const toolResults = events.filter((e) => e.type === "tool_result");
 		// At least one tool_result should be the interrupted bash (isError: true)
 		const errorResults = toolResults.filter(
@@ -1627,7 +1634,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 		// Verify a background process was started — check JSONL for tool_result with backgroundId
 		const rootNodeId = await getRootNodeId(ctx);
-		const preRestartEvents = readSessionEvents(ctx, rootNodeId);
+		const preRestartEvents = await readSessionEvents(ctx, rootNodeId);
 		const bgToolResults = preRestartEvents.filter(
 			(e) => e.type === "tool_result" && "backgroundId" in e && e.backgroundId,
 		);
@@ -1660,7 +1667,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		// bg_complete should NOT be in JSONL for yielding agents (it goes to queue instead)
 		// This is the key: writing bg_complete to JSONL between yield tool_call and its
 		// tool_result breaks the converter → API 400.
-		const postRestartEvents = readSessionEvents(ctx, rootNodeId);
+		const postRestartEvents = await readSessionEvents(ctx, rootNodeId);
 		const bgCompleteInJSONL = postRestartEvents.filter(
 			(e) =>
 				e.type === "message" &&
@@ -1788,7 +1795,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 		// Verify JSONL: should have 2 tool_results for the 2 bash commands
 		const rootNodeId = await getRootNodeId(ctx);
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 		const toolResults = events.filter((e) => e.type === "tool_result");
 		// At least 2 tool_results: echo (normal) + sleep (orphan/interrupted)
 		expect(toolResults.length).toBeGreaterThanOrEqual(2);
@@ -1941,7 +1948,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 		// Verify JSONL has the orphan tool_result(s)
 		const rootNodeId = await getRootNodeId(ctx);
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 		const errorResults = events.filter(
 			(e) => e.type === "tool_result" && "isError" in e && e.isError === true,
 		);
@@ -2097,7 +2104,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const rootNodeId = await getRootNodeId(ctx);
 
 		// Verify bg started (tool_result with backgroundId in JSONL)
-		const preEvents = readSessionEvents(ctx, rootNodeId);
+		const preEvents = await readSessionEvents(ctx, rootNodeId);
 		expect(
 			preEvents.some((e) => e.type === "tool_result" && e.backgroundId),
 		).toBe(true);
@@ -2127,7 +2134,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		await new Promise((r) => setTimeout(r, 1000));
 
 		// After agent starts, JSONL should have synthetic background_complete
-		const postEvents = readSessionEvents(ctx, rootNodeId);
+		const postEvents = await readSessionEvents(ctx, rootNodeId);
 		const bgCompleteEvents = postEvents.filter(
 			(e) =>
 				e.type === "message" &&
@@ -2251,7 +2258,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const rootNodeId = await getRootNodeId(ctx);
 
 		// Verify bg was started (tool_result with backgroundId)
-		const preEvents = readSessionEvents(ctx, rootNodeId);
+		const preEvents = await readSessionEvents(ctx, rootNodeId);
 		expect(
 			preEvents.some((e) => e.type === "tool_result" && e.backgroundId),
 		).toBe(true);
@@ -2278,7 +2285,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		await new Promise((r) => setTimeout(r, 200));
 
 		// KEY CHECK: after shutdown, verify NO duplicate tool_results in JSONL
-		const postShutdownEvents = readSessionEvents(ctx, rootNodeId);
+		const postShutdownEvents = await readSessionEvents(ctx, rootNodeId);
 		const toolResultsByCallId = new Map<string, number>();
 		for (const e of postShutdownEvents) {
 			if (e.type === "tool_result") {
@@ -2304,7 +2311,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 		// After restart: orphan detection should have written exactly ONE tool_result
 		// for the bg await (the one from restart, not from stopAgent)
-		const postRestartEvents = readSessionEvents(ctx, rootNodeId);
+		const postRestartEvents = await readSessionEvents(ctx, rootNodeId);
 		const bgAwaitResultsPost = postRestartEvents.filter(
 			(e) => e.type === "tool_result" && e.toolCallId === bgAwaitCallId,
 		);
@@ -2426,7 +2433,7 @@ describe("Integration: auto-recovery from API 400", () => {
 		await ctx.app.shutdown();
 		await new Promise((r) => setTimeout(r, 200));
 
-		const events1 = readSessionEvents(ctx, rootNodeId);
+		const events1 = await readSessionEvents(ctx, rootNodeId);
 		const bashToolCall = events1.find(
 			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__bash",
 		);
@@ -2453,7 +2460,7 @@ describe("Integration: auto-recovery from API 400", () => {
 		await store.flushSession(rootNodeId);
 
 		// Verify poison is in JSONL
-		const poisonedEvents = readSessionEvents(ctx, rootNodeId);
+		const poisonedEvents = await readSessionEvents(ctx, rootNodeId);
 		const poisonedResults = poisonedEvents.filter(
 			(e) => e.type === "tool_result" && e.toolCallId === bashCallId,
 		);
@@ -2481,7 +2488,7 @@ describe("Integration: auto-recovery from API 400", () => {
 		expect(status2).toBe("passed");
 
 		// Verify: no duplicate tool_results in final JSONL
-		const finalEvents = readSessionEvents(ctx, rootNodeId);
+		const finalEvents = await readSessionEvents(ctx, rootNodeId);
 		const toolResultsByCallId = new Map<string, number>();
 		for (const e of finalEvents) {
 			if (e.type === "tool_result") {
@@ -2790,7 +2797,7 @@ describe("Integration: same-turn tool conflicts", () => {
 		// Wait a bit for bg processes to complete and check JSONL for bg_complete events
 		await new Promise((r) => setTimeout(r, 500));
 		const rootNodeId = await getRootNodeId(ctx);
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 
 		// Find background_complete message events
 		const bgCompleteEvents = events.filter(
@@ -3275,7 +3282,7 @@ describe("Integration: parent-child lifecycle", () => {
 		expect(childNode?.title).toBe("Test Child Task");
 
 		// Verify child JSONL has events
-		const childEvents = readSessionEvents(ctx, childId);
+		const childEvents = await readSessionEvents(ctx, childId);
 		const childToolCalls = childEvents.filter((e) => e.type === "tool_call");
 		expect(childToolCalls.length).toBeGreaterThanOrEqual(1);
 	}, 45000);
@@ -4189,10 +4196,9 @@ describe("Integration: background process lifecycle", () => {
 	test("BG5: bg completes during foreground tool execution", async () => {
 		ctx = await setupTestContext();
 
-		// Turn 1: start bg (fast: sleep 3) + foreground (slow: sleep 6)
+		// Turn 1: start bg (fast: sleep 1) + foreground (slow: sleep 3)
 		// bg_complete arrives while foreground is running → delivered as queue message
 		// Turn 2: should have foreground tool_result + bg_complete text block
-		// Wide timing gap to avoid flakiness on loaded systems
 		const instruction = JSON.stringify({
 			turns: [
 				{
@@ -4201,14 +4207,14 @@ describe("Integration: background process lifecycle", () => {
 							type: "tool_use",
 							name: "mcp__mxd__bash",
 							input: {
-								command: "sleep 3 && echo BG_DONE_FIVE",
+								command: "sleep 1 && echo BG_DONE_FIVE",
 								run_in_background: true,
 							},
 						},
 						{
 							type: "tool_use",
 							name: "mcp__mxd__bash",
-							input: { command: "sleep 6 && echo FG_DONE_FIVE" },
+							input: { command: "sleep 3 && echo FG_DONE_FIVE" },
 						},
 					],
 				},
@@ -4249,7 +4255,7 @@ describe("Integration: background process lifecycle", () => {
 
 		// Verify bg_complete event was written to JSONL
 		const rootNodeId = await getRootNodeId(ctx);
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 		const bgCompleteEvents = events.filter(
 			(e) =>
 				e.type === "message" &&
@@ -4371,7 +4377,7 @@ describe("Integration: background process lifecycle", () => {
 
 		// Verify both bg_complete events in JSONL
 		const rootNodeId = await getRootNodeId(ctx);
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 		const bgCompleteEvents = events.filter(
 			(e) =>
 				e.type === "message" &&
@@ -5522,7 +5528,7 @@ describe("Integration: file operations", () => {
 
 		// Verify JSONL has an error event from the outer retry
 		const rootNodeId = await getRootNodeId(ctx);
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 		const errorEvents = events.filter((e) => e.type === "error");
 		expect(errorEvents.length).toBeGreaterThanOrEqual(1);
 		const errorMsg = (errorEvents[0] as { message: string }).message;
@@ -5582,7 +5588,7 @@ describe("Integration: file operations", () => {
 		expect(rootNode?.status).toBe("in_progress");
 
 		// Should have multiple error events from outer retries
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 		const errorEvents = events.filter((e) => e.type === "error");
 		// At least 3 outer retry errors before giving up
 		expect(errorEvents.length).toBeGreaterThanOrEqual(3);
@@ -5803,7 +5809,9 @@ describe("Integration: fork prefix consistency", () => {
 		const childNodeId = tracker.get(tracker.rootNodeId)
 			?.children?.[0] as string;
 		expect(
-			readSessionEvents(ctx, childNodeId).some((e) => e.type === "fork_marker"),
+			(await readSessionEvents(ctx, childNodeId)).some(
+				(e) => e.type === "fork_marker",
+			),
 		).toBe(true);
 	}, 45000);
 
@@ -5919,7 +5927,7 @@ describe("Integration: fork prefix consistency", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
 		const childNodeId = rootNode?.children?.[0] as string;
-		const childEvents = readSessionEvents(ctx, childNodeId);
+		const childEvents = await readSessionEvents(ctx, childNodeId);
 
 		const forkIdx = childEvents.findIndex((e) => e.type === "fork_marker");
 		expect(forkIdx).toBeGreaterThan(0);
@@ -6150,7 +6158,7 @@ describe("Integration: fork prefix consistency", () => {
 		expect(childBNode?.title).toBe("Child B");
 
 		// Read child B's JSONL
-		const childBEvents = readSessionEvents(ctx, childBId);
+		const childBEvents = await readSessionEvents(ctx, childBId);
 		const forkIdx = childBEvents.findIndex((e) => e.type === "fork_marker");
 		expect(forkIdx).toBeGreaterThan(0);
 
@@ -6572,7 +6580,7 @@ describe("Integration: session_config in JSONL", () => {
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootId = tracker.rootNodeId;
-		const events = readSessionEvents(ctx, rootId);
+		const events = await readSessionEvents(ctx, rootId);
 
 		// session_config should be early in JSONL (after the initial user message)
 		const config = events.find((e) => e.type === "session_config") as
@@ -6628,7 +6636,7 @@ describe("Integration: session_config in JSONL", () => {
 		// Verify session_config was written
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootId = tracker.rootNodeId;
-		const events = readSessionEvents(ctx, rootId);
+		const events = await readSessionEvents(ctx, rootId);
 		const configEvt = events.find((e) => e.type === "session_config");
 		expect(configEvt).toBeDefined();
 
@@ -6757,12 +6765,12 @@ describe("Integration: session_config in JSONL", () => {
 		const childNodeId = tracker.get(rootId)?.children?.[0] as string;
 
 		// Parent JSONL should have session_config
-		const parentEvents = readSessionEvents(ctx, rootId);
+		const parentEvents = await readSessionEvents(ctx, rootId);
 		const parentConfig = parentEvents.find((e) => e.type === "session_config");
 		expect(parentConfig).toBeDefined();
 
 		// Child JSONL should have session_config inherited from parent
-		const childEvents = readSessionEvents(ctx, childNodeId);
+		const childEvents = await readSessionEvents(ctx, childNodeId);
 		const childConfig = childEvents.find((e) => e.type === "session_config");
 		expect(childConfig).toBeDefined();
 
@@ -7369,7 +7377,7 @@ describe("Integration: nested parent-child", () => {
 		expect(grandchildNode?.title).toBe("Grandchild Task");
 
 		// Verify grandchild JSONL has bash events
-		const grandchildEvents = readSessionEvents(ctx, grandchildId);
+		const grandchildEvents = await readSessionEvents(ctx, grandchildId);
 		const bashCalls = grandchildEvents.filter(
 			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__bash",
 		);
@@ -7979,7 +7987,7 @@ describe("Integration: child restart scenarios", () => {
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
 
 		// Verify child JSONL has all 3 bash calls (1 interrupted + 1 real + done)
-		const childEvents = readSessionEvents(ctx, childId);
+		const childEvents = await readSessionEvents(ctx, childId);
 		const childBashCalls = childEvents.filter(
 			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__bash",
 		);
@@ -7992,7 +8000,7 @@ describe("Integration: child restart scenarios", () => {
 
 		// Verify parent JSONL has yield and done
 		const rootNodeId = tracker2.rootNodeId;
-		const parentEvents = readSessionEvents(ctx, rootNodeId);
+		const parentEvents = await readSessionEvents(ctx, rootNodeId);
 		const parentYieldCalls = parentEvents.filter(
 			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__yield",
 		);
@@ -8120,7 +8128,7 @@ describe("Integration: multiple restarts with accumulated state", () => {
 
 		// Verify JSONL has 3 bash tool_calls
 		const rootNodeId = await getRootNodeId(ctx);
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 		const bashCalls = events.filter(
 			(e) => e.type === "tool_call" && e.tool === "mcp__mxd__bash",
 		);
@@ -8289,7 +8297,7 @@ describe("Default branch", () => {
 
 		// The child's branch was created from parent's branch — verify by checking
 		// that child JSONL has a bash tool_result with a branch name starting with mxd/
-		const childEvents = readSessionEvents(ctx, childId);
+		const childEvents = await readSessionEvents(ctx, childId);
 		const bashResults = childEvents.filter(
 			(e) => e.type === "tool_result" && !e.isError,
 		);
@@ -8514,7 +8522,7 @@ describe("Default branch", () => {
 		// Verify the child's bash saw develop-only.txt content
 		const rootNode2 = tracker.get(tracker.rootNodeId) as TaskNode;
 		const childId = rootNode2.children[0] as string;
-		const childEvents = readSessionEvents(ctx, childId);
+		const childEvents = await readSessionEvents(ctx, childId);
 		const bashResults = childEvents.filter(
 			(e) => e.type === "tool_result" && !e.isError,
 		);
@@ -8637,7 +8645,7 @@ describe("Integration: stopTask lifecycle", () => {
 		expect(nodeAfterStop.status).toBe("in_progress");
 
 		// Verify: the original tool_call for bash is in JSONL
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 		const toolCalls = events.filter((e) => e.type === "tool_call");
 		const bashCall = toolCalls.find(
 			(e) => "tool" in e && e.tool === "mcp__mxd__bash",
@@ -8713,7 +8721,7 @@ describe("Integration: stopTask lifecycle", () => {
 		expect(tracker.get(rootNodeId)?.status).toBe("in_progress");
 
 		// JSONL should have the yield tool_call (no orphan result for yield - it's excluded)
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 		const yieldCalls = events.filter(
 			(e) =>
 				e.type === "tool_call" && "tool" in e && e.tool === "mcp__mxd__yield",
@@ -8895,7 +8903,7 @@ describe("Integration: stopTask lifecycle", () => {
 		const childId = rootNode1?.children?.[0] as string;
 
 		// Verify child JSONL has fork_marker (fork was successful)
-		const precrashEvents = readSessionEvents(ctx, childId);
+		const precrashEvents = await readSessionEvents(ctx, childId);
 		const hasForkMarker = precrashEvents.some((e) => e.type === "fork_marker");
 		expect(hasForkMarker).toBe(true);
 
@@ -8915,7 +8923,7 @@ describe("Integration: stopTask lifecycle", () => {
 
 		// KEY CHECK before resume completes: verify no duplicate tool_results
 		// in child's JSONL after orphan cleanup
-		const postCrashEvents = readSessionEvents(ctx, childId);
+		const postCrashEvents = await readSessionEvents(ctx, childId);
 		const toolResultsByCallId = new Map<string, number>();
 		for (const e of postCrashEvents) {
 			if (e.type === "tool_result") {
@@ -9035,7 +9043,7 @@ describe("Integration: stopTask lifecycle", () => {
 		// Without fix: old bash takes 30s, so old finally runs 30s later
 		await new Promise((r) => setTimeout(r, 1500));
 
-		const events = readSessionEvents(ctx, rootNodeId);
+		const events = await readSessionEvents(ctx, rootNodeId);
 
 		// No error events containing "abort" — those are stale leaks from old session
 		const abortErrors = events.filter(
@@ -9109,7 +9117,7 @@ describe("deliverMessage: shouldResume ordering invariant", () => {
 
 		// Read JSONL — should have orchestration_started with resume=false
 		const rootNodeId = await getRootNodeId(ctx);
-		const events1 = readSessionEvents(ctx, rootNodeId);
+		const events1 = await readSessionEvents(ctx, rootNodeId);
 		const orch1 = events1.filter((e) => e.type === "orchestration_started");
 		expect(orch1).toHaveLength(1);
 		expect((orch1[0] as { resume: boolean }).resume).toBe(false);
@@ -9138,7 +9146,7 @@ describe("deliverMessage: shouldResume ordering invariant", () => {
 		expect(status2).toBe("passed");
 
 		// Read JSONL — should now have TWO orchestration_started events
-		const events2 = readSessionEvents(ctx, rootNodeId);
+		const events2 = await readSessionEvents(ctx, rootNodeId);
 		const orch2 = events2.filter((e) => e.type === "orchestration_started");
 		expect(orch2).toHaveLength(2);
 		// First was cold start

@@ -2240,9 +2240,9 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 
 		// Should collapse the first 3 start/stop pairs and keep only the last resume entry
 		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
-		// Only the last "Session resumed" should remain (the one at ts=7000)
+		// Only the last "Agent started" should remain (the one at ts=7000)
 		expect(lifecycleEntries.length).toBe(1);
-		expect(lifecycleEntries[0]?.content).toContain("resumed");
+		expect(lifecycleEntries[0]?.content).toContain("Agent started");
 
 		// The assistant_text should still be there
 		const textEntries = capturedLogs.filter((e) => e.type === "assistant_text");
@@ -2291,7 +2291,7 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 			},
 		]);
 
-		// Both "Session resumed" entries should be preserved because there's content between them
+		// Both "Agent started" entries should be preserved because there's content between them
 		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
 		expect(lifecycleEntries.length).toBeGreaterThanOrEqual(2);
 	});
@@ -2335,7 +2335,7 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 
 		processEventBatch(events);
 
-		// Only the very last "Session resumed" should remain
+		// Only the very last "Agent started" should remain
 		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
 		expect(lifecycleEntries.length).toBe(1);
 		expect(lifecycleEntries[0]?.ts).toBe(50000);
@@ -2390,5 +2390,178 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 		// The first empty start/stop pair should be collapsed, keeping only the last resume
 		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
 		expect(lifecycleEntries.length).toBe(1);
+	});
+});
+
+// ============================================================
+// activeAgents global updates (not filtered by viewed session)
+// ============================================================
+
+describe("event-handler activeAgents global updates", () => {
+	function makeDepsWithActiveAgents(initial: Set<string> = new Set()) {
+		const { deps, logs } = makeDeps();
+		const activeAgents = new Set<string>(initial);
+		const typedDeps = deps as unknown as EventHandlerDeps;
+		typedDeps.setActiveAgents = ((
+			updater: React.SetStateAction<Set<string>>,
+		) => {
+			const result =
+				typeof updater === "function" ? updater(activeAgents) : updater;
+			activeAgents.clear();
+			for (const id of result) activeAgents.add(id);
+		}) as EventHandlerDeps["setActiveAgents"];
+		return { deps: typedDeps, logs, activeAgents };
+	}
+
+	it("handleEvent: agent_active for non-viewed task still updates activeAgents", () => {
+		const { deps, activeAgents } = makeDepsWithActiveAgents();
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		handleEvent({
+			type: "agent_active",
+			taskId: "task-2",
+			ts: 1000,
+		});
+
+		expect(activeAgents.has("task-2")).toBe(true);
+	});
+
+	it("handleEvent: agent_idle for non-viewed task removes from activeAgents", () => {
+		const { deps, activeAgents } = makeDepsWithActiveAgents(
+			new Set(["task-2"]),
+		);
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		handleEvent({
+			type: "agent_idle",
+			taskId: "task-2",
+			ts: 1000,
+		});
+
+		expect(activeAgents.has("task-2")).toBe(false);
+	});
+
+	it("handleEvent: agent_stopped for non-viewed task removes from activeAgents", () => {
+		const { deps, activeAgents } = makeDepsWithActiveAgents(
+			new Set(["task-2"]),
+		);
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		handleEvent({
+			type: "agent_stopped",
+			taskId: "task-2",
+			ts: 1000,
+		});
+
+		expect(activeAgents.has("task-2")).toBe(false);
+	});
+
+	it("handleEvent: orchestration_started for non-viewed task adds to activeAgents", () => {
+		const { deps, activeAgents } = makeDepsWithActiveAgents();
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		handleEvent({
+			type: "orchestration_started",
+			taskId: "task-2",
+			resume: false,
+			model: "claude-sonnet",
+			provider: "anthropic",
+			ts: 1000,
+		});
+
+		expect(activeAgents.has("task-2")).toBe(true);
+	});
+
+	it("handleEvent: orchestration_completed for non-viewed task removes from activeAgents", () => {
+		const { deps, activeAgents } = makeDepsWithActiveAgents(
+			new Set(["task-2"]),
+		);
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		handleEvent({
+			type: "orchestration_completed",
+			taskId: "task-2",
+			success: true,
+			ts: 1000,
+		});
+
+		expect(activeAgents.has("task-2")).toBe(false);
+	});
+
+	it("handleEvent: non-viewed task events do NOT create log entries", () => {
+		const { deps } = makeDepsWithActiveAgents();
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = ((updater: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof updater === "function" ? updater([]) : updater;
+		}) as EventHandlerDeps["setLogs"];
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		// These should update activeAgents but NOT create log entries
+		handleEvent({
+			type: "orchestration_started",
+			taskId: "task-2",
+			resume: true,
+			model: "claude-sonnet",
+			provider: "anthropic",
+			ts: 1000,
+		});
+		handleEvent({
+			type: "agent_stopped",
+			taskId: "task-2",
+			ts: 2000,
+		});
+
+		// setLogs should never have been called (events filtered by taskId)
+		expect(capturedLogs.length).toBe(0);
+	});
+
+	it("processEventBatch: calls checkAgentStatus after processing to reset stale activeAgents", () => {
+		const { deps } = makeDepsWithActiveAgents();
+		// Track checkAgentStatus calls
+		let checkCalled = 0;
+		deps.checkAgentStatus = () => {
+			checkCalled++;
+		};
+
+		const { processEventBatch } = createEventHandler(deps);
+
+		// Process events that include orchestration_started (would add to activeAgents)
+		// but the agent is actually stopped
+		processEventBatch([
+			{
+				type: "orchestration_started",
+				taskId: "task-1",
+				resume: false,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "Working...",
+				taskId: "task-1",
+				ts: 2000,
+			},
+			{
+				type: "agent_stopped",
+				taskId: "task-1",
+				ts: 3000,
+			},
+		]);
+
+		// checkAgentStatus should have been called to reset stale state
+		expect(checkCalled).toBeGreaterThan(0);
 	});
 });

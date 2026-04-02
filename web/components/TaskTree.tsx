@@ -1,8 +1,27 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
+import type { TaskStatus } from "../../src/types.ts";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron, IconEyeOff, IconHexagon, IconTrash } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
+
+/** Sort priority: lower = shown first */
+const STATUS_PRIORITY: Record<TaskStatus, number> = {
+	in_progress: 0,
+	draft: 1,
+	pending: 2,
+	failed: 3,
+	passed: 4,
+	closed: 5,
+};
+
+/** Stable sort by status priority, preserving relative order within same status. */
+function sortByStatus(nodes: TaskNode[]): TaskNode[] {
+	return [...nodes].sort(
+		(a, b) =>
+			(STATUS_PRIORITY[a.status] ?? 9) - (STATUS_PRIORITY[b.status] ?? 9),
+	);
+}
 
 interface DragState {
 	/** ID of the node being dragged */
@@ -52,30 +71,33 @@ export const TaskTree = memo(function TaskTree({
 	);
 	const roots = useMemo(() => {
 		if (rootNode) {
-			// Show children of root node as top-level tasks, preserving order
+			// Show children of root node as top-level tasks, sorted by status
 			const childOrder = rootNode.children;
 			const nodeById = new Map(nodes.map((n) => [n.id, n]));
-			return childOrder
+			const ordered = childOrder
 				.map((id) => nodeById.get(id))
 				.filter((n): n is TaskNode => n !== undefined);
+			return sortByStatus(ordered);
 		}
 		// Fallback: filter out root nodes (nodes with no parent that are parents of others)
 		// This prevents the root orchestrator node from flickering on initial render
 		// before rootNodeId is received via WebSocket
 		const parentIds = new Set(nodes.map((n) => n.parentId).filter(Boolean));
-		return nodes.filter((n) => !n.parentId && !parentIds.has(n.id));
+		return sortByStatus(
+			nodes.filter((n) => !n.parentId && !parentIds.has(n.id)),
+		);
 	}, [nodes, rootNode]);
 
 	const childMap = useMemo(() => {
 		const map = new Map<string, TaskNode[]>();
 		const nodeById = new Map(nodes.map((n) => [n.id, n]));
-		// Build children lists preserving the parent's children order
+		// Build children lists sorted by status priority
 		for (const n of nodes) {
 			if (n.children.length > 0) {
 				const ordered = n.children
 					.map((id) => nodeById.get(id))
 					.filter((c): c is TaskNode => c !== undefined);
-				map.set(n.id, ordered);
+				map.set(n.id, sortByStatus(ordered));
 			}
 		}
 		return map;
@@ -313,6 +335,7 @@ export const TaskTree = memo(function TaskTree({
 	const { t } = useLocale();
 	const isOrchestratorSelected =
 		!selectedTaskId || selectedTaskId === rootNodeId;
+	const hasTextFilter = taskFilter.trim().length > 0;
 	const filteredRoots = matchingIds
 		? roots.filter((r) => matchingIds.has(r.id))
 		: roots;
@@ -394,6 +417,7 @@ export const TaskTree = memo(function TaskTree({
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}
 						matchingIds={matchingIds}
+						hasTextFilter={hasTextFilter}
 						dragState={dragState}
 						dropIndicator={dropIndicator}
 						reparentTargetId={reparentTargetId}
@@ -456,6 +480,7 @@ function TaskNodeView({
 	collapsed,
 	toggleCollapse,
 	matchingIds,
+	hasTextFilter,
 	dragState,
 	dropIndicator,
 	reparentTargetId,
@@ -477,6 +502,7 @@ function TaskNodeView({
 	collapsed: Set<string>;
 	toggleCollapse: (id: string) => void;
 	matchingIds: Set<string> | null;
+	hasTextFilter: boolean;
 	dragState: DragState | null;
 	dropIndicator: DropIndicator | null;
 	reparentTargetId: string | null;
@@ -505,8 +531,9 @@ function TaskNodeView({
 		? allChildren.filter((c) => matchingIds.has(c.id))
 		: allChildren;
 	const hasChildren = children.length > 0;
-	// When filter is active, force-expand all ancestor nodes
-	const isCollapsed = matchingIds ? false : collapsed.has(node.id);
+	// When text filter is active, force-expand all ancestor nodes so matches are visible.
+	// When only hiding completed (no text filter), allow normal collapse behavior.
+	const isCollapsed = hasTextFilter ? false : collapsed.has(node.id);
 
 	const isDragging = dragState?.dragId === node.id;
 	const isReparentTarget = reparentTargetId === node.id;
@@ -605,6 +632,7 @@ function TaskNodeView({
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}
 						matchingIds={matchingIds}
+						hasTextFilter={hasTextFilter}
 						dragState={dragState}
 						dropIndicator={dropIndicator}
 						reparentTargetId={reparentTargetId}
