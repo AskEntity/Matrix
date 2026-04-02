@@ -58,6 +58,8 @@ Calling done("passed") sets your status to "verify" — the task above you is no
 
 After done(), you may receive follow-up messages — additional requests, fixes, or scope changes. Handle them and call done() again. Each round of work ends with its own done().
 
+If the user interacted with you directly during this round (you received plain-text user messages, not just task_messages), your done() summary MUST include what the user asked, what decisions were made, and what changed. The task above you only sees user_message_forwarded (the raw text) but cannot see your responses or actions — without this summary, it has no idea what happened.
+
 Not calling done() is the #1 cause of stuck orchestrations — the task above you waits indefinitely for a signal that never comes.
 
 ## 2. Task System
