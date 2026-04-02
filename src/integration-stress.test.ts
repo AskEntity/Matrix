@@ -121,7 +121,11 @@ async function waitForDone(
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
 		const rootNode = tracker.get(rootNodeId);
-		if (rootNode?.status === "passed" || rootNode?.status === "failed") {
+		if (
+			rootNode?.status === "passed" ||
+			rootNode?.status === "verify" ||
+			rootNode?.status === "failed"
+		) {
 			return rootNode.status;
 		}
 		await new Promise((r) => setTimeout(r, 50));
@@ -618,7 +622,7 @@ describe("Stress: multi-child coordination", () => {
 		// All 3 children resume (interrupted bash → orphan → done)
 		// Parent resumes (yielding → bypass to queue.wait → wakes on task_completes)
 		const status = await waitForDone(ctx, 45000);
-		expect(status).toBe("passed");
+		expect(status).toBe("verify");
 
 		// Verify all 3 children are passed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
@@ -627,7 +631,7 @@ describe("Stress: multi-child coordination", () => {
 
 		for (const childId of rootNode?.children ?? []) {
 			const childNode = tracker.get(childId);
-			expect(childNode?.status).toBe("passed");
+			expect(childNode?.status).toBe("verify");
 		}
 	}, 90000);
 });
@@ -738,7 +742,7 @@ describe("Stress: multiple messages during yield", () => {
 		await sendMessage(ctx, "SEQUENTIAL_MSG_3");
 
 		const status = await waitForDone(ctx);
-		expect(status).toBe("passed");
+		expect(status).toBe("verify");
 
 		// Verify all 3 messages in JSONL
 		const rootNodeId = await getRootNodeId(ctx);
@@ -850,7 +854,7 @@ describe("Stress: multiple messages during yield", () => {
 		await sendMessage(ctx, "POST_RESTART_WAKE");
 
 		const status = await waitForDone(ctx, 20000);
-		expect(status).toBe("passed");
+		expect(status).toBe("verify");
 
 		// Verify the pre-crash message appears in API history
 		const history = ctx.mockAPI.getRequestHistory();
@@ -1030,14 +1034,14 @@ describe("Stress: fork + restart", () => {
 
 		// Both resume: child (interrupted bash → done) → parent (yield → task_complete → done)
 		const status = await waitForDone(ctx, 30000);
-		expect(status).toBe("passed");
+		expect(status).toBe("verify");
 
 		// Verify fork child completed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
 		const childId = rootNode?.children?.[0] as string;
 		const childNode = tracker.get(childId);
-		expect(childNode?.status).toBe("passed");
+		expect(childNode?.status).toBe("verify");
 
 		// Verify child's JSONL has fork_marker
 		const childEvents = readSessionEvents(ctx, childId);
@@ -1318,7 +1322,7 @@ describe("Stress: session lifecycle edge cases", () => {
 		}
 
 		const status = await waitForDone(ctx);
-		expect(status).toBe("passed");
+		expect(status).toBe("verify");
 
 		// JSONL should have events from all 3 cycles
 		const events = readSessionEvents(ctx, rootNodeId);
@@ -1421,7 +1425,7 @@ describe("Stress: session lifecycle edge cases", () => {
 		expect(wakeResp.status).toBe(200);
 
 		const status = await waitForDone(ctx, 20000);
-		expect(status).toBe("passed");
+		expect(status).toBe("verify");
 
 		// Prefix validation passed — all 8 completed turns are consistent
 		const rootNodeId = await getRootNodeId(ctx);
@@ -1491,7 +1495,7 @@ describe("Stress: concurrent message delivery", () => {
 		expect(r3.status).toBe(200);
 
 		const status = await waitForDone(ctx);
-		expect(status).toBe("passed");
+		expect(status).toBe("verify");
 
 		// All 3 messages persisted in JSONL
 		const rootNodeId = await getRootNodeId(ctx);
@@ -1696,13 +1700,13 @@ describe("Stress: child restart edge cases", () => {
 		await sendMessage(ctx, "Wake up parent");
 
 		const status = await waitForDone(ctx, 30000);
-		expect(status).toBe("passed");
+		expect(status).toBe("verify");
 
 		// Verify child also passed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
 		const childId = rootNode?.children?.[0] as string;
-		expect(tracker.get(childId)?.status).toBe("passed");
+		expect(tracker.get(childId)?.status).toBe("verify");
 	}, 60000);
 });
 

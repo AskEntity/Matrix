@@ -923,11 +923,11 @@ describe("Event recording via emit callback", () => {
 								status: z.string().describe("passed or failed"),
 								summary: z.string().describe("Summary"),
 							},
-							async (input) => ({
+							async () => ({
 								content: [
 									{
 										type: "text",
-										text: `Task marked as ${input.status}. Entering idle state.`,
+										text: "Done acknowledged.",
 									},
 								],
 							}),
@@ -936,33 +936,27 @@ describe("Event recording via emit callback", () => {
 				},
 			});
 
-			const consumePromise = (async () => {
-				let result = await session.next();
-				while (!result.done) {
-					if (
-						result.value.type === "status" &&
-						(result.value as { message: string }).message.includes("idle state")
-					) {
-						testQueue.close();
-					}
-					result = await session.next();
-				}
-				return result.value as AgentResult;
-			})();
+			// Consume all events — done() exits loop immediately (no queue close needed)
+			let result = await session.next();
+			while (!result.done) {
+				result = await session.next();
+			}
+			const agentResult = result.value as AgentResult;
 
-			const agentResult = await consumePromise;
-			expect(agentResult.exitReason).not.toBe("done_failed");
+			expect(agentResult.exitReason).toBe("done_passed");
+			expect(agentResult.doneSummary).toBe("Task completed");
 
 			// Verify Events were recorded
 			const strongEvents = emittedEvents;
-			expect(strongEvents.length).toBeGreaterThanOrEqual(4);
+			expect(strongEvents.length).toBeGreaterThanOrEqual(3);
 
-			// Should have: messages_consumed (from queue drain), assistant_text, tool_call, tool_result
+			// Should have: messages_consumed (from queue drain), assistant_text, tool_call
+			// NO tool_result — done() is an intended orphan
 			const types = strongEvents.map((e) => e.type);
 			expect(types).toContain("messages_consumed");
 			expect(types).toContain("assistant_text");
 			expect(types).toContain("tool_call");
-			expect(types).toContain("tool_result");
+			expect(types).not.toContain("tool_result");
 
 			// Verify tool_call has correct tool name
 			const toolCallEvent = strongEvents.find((e) => e.type === "tool_call");
@@ -970,16 +964,6 @@ describe("Event recording via emit callback", () => {
 			if (toolCallEvent?.type === "tool_call") {
 				expect(toolCallEvent.tool).toBe("mcp__mxd__done");
 				expect(toolCallEvent.toolCallId).toBe("call_done");
-			}
-
-			// Verify tool_result has matching toolCallId
-			const toolResultEvent = strongEvents.find(
-				(e) => e.type === "tool_result",
-			);
-			expect(toolResultEvent).toBeDefined();
-			if (toolResultEvent?.type === "tool_result") {
-				expect(toolResultEvent.toolCallId).toBe("call_done");
-				expect(toolResultEvent.content).toContain("Task marked as passed");
 			}
 		} finally {
 			clearContextWindowCache();
@@ -1186,7 +1170,6 @@ describe("Event deterministic verification (OpenAI)", () => {
 			emittedEvents.push(event);
 		};
 
-		let chatCallCount = 0;
 		await withMockFetch(
 			mock(async (url: string | URL | Request) => {
 				const urlStr =
@@ -1198,25 +1181,19 @@ describe("Event deterministic verification (OpenAI)", () => {
 				if (urlStr.includes("/models") && !urlStr.includes("/chat/")) {
 					return createOpenAIModelsResponse();
 				}
-				chatCallCount++;
-				if (chatCallCount === 1) {
-					return createOpenAIChatResponse({
-						content: "I'll complete the task.",
-						toolCalls: [
-							{
-								id: "call_done",
-								name: "mcp__mxd__done",
-								arguments: JSON.stringify({
-									status: "passed",
-									summary: "All done",
-								}),
-							},
-						],
-					});
-				}
+				// done() is an orphan — only 1 API call, loop exits immediately
 				return createOpenAIChatResponse({
-					content: "Task completed.",
-					finishReason: "stop",
+					content: "I'll complete the task.",
+					toolCalls: [
+						{
+							id: "call_done",
+							name: "mcp__mxd__done",
+							arguments: JSON.stringify({
+								status: "passed",
+								summary: "All done",
+							}),
+						},
+					],
 				});
 			}) as unknown as typeof fetch,
 			async () => {
@@ -1236,11 +1213,11 @@ describe("Event deterministic verification (OpenAI)", () => {
 									status: z.string(),
 									summary: z.string().optional(),
 								},
-								async (input) => ({
+								async () => ({
 									content: [
 										{
 											type: "text",
-											text: `Task marked as ${input.status}. Entering idle state.`,
+											text: "Done acknowledged.",
 										},
 									],
 								}),
@@ -1249,29 +1226,21 @@ describe("Event deterministic verification (OpenAI)", () => {
 					},
 				});
 
-				const consumePromise = (async () => {
-					let result = await session.next();
-					while (!result.done) {
-						if (
-							result.value.type === "status" &&
-							(result.value as { message: string }).message.includes(
-								"idle state",
-							)
-						) {
-							testQueue.close();
-						}
-						result = await session.next();
-					}
-					return result.value as AgentResult;
-				})();
+				// Consume all events — loop exits on done
+				let result = await session.next();
+				while (!result.done) {
+					result = await session.next();
+				}
+				const agentResult = result.value as AgentResult;
 
-				const agentResult = await consumePromise;
-				expect(agentResult.exitReason).not.toBe("done_failed");
+				expect(agentResult.exitReason).toBe("done_passed");
+				expect(agentResult.doneSummary).toBe("All done");
 
 				const types = emittedEvents.map((e) => e.type);
 				expect(types).toContain("assistant_text");
 				expect(types).toContain("tool_call");
-				expect(types).toContain("tool_result");
+				// done() is an intended orphan — no tool_result emitted
+				expect(types).not.toContain("tool_result");
 
 				// Verify tool_call details
 				const toolCall = emittedEvents.find((e) => e.type === "tool_call");
@@ -1279,31 +1248,6 @@ describe("Event deterministic verification (OpenAI)", () => {
 					expect(toolCall.tool).toBe("mcp__mxd__done");
 					expect(toolCall.toolCallId).toBe("call_done");
 				}
-
-				// Verify reconstruction — prepend user message event
-				const userMsgEvent: Event = {
-					type: "message",
-					id: "test-prompt",
-					taskId: "",
-					body: {
-						source: "user",
-						id: "test-prompt",
-						ts: 0,
-						content: "Do the task",
-					},
-					ts: Date.now(),
-				};
-				const events = [userMsgEvent, ...emittedEvents];
-				const reconstructed = eventsToOpenAIMessages(events);
-				expect(reconstructed.length).toBeGreaterThanOrEqual(4);
-				// First: user, second: assistant with tool_calls, third: tool result, fourth: assistant
-				expect((reconstructed[0] as { role: string }).role).toBe("user");
-				expect((reconstructed[1] as { role: string }).role).toBe("assistant");
-				const assistantMsg = reconstructed[1] as {
-					tool_calls?: unknown[];
-				};
-				expect(assistantMsg.tool_calls).toBeDefined();
-				expect((reconstructed[2] as { role: string }).role).toBe("tool");
 			},
 		);
 	});
