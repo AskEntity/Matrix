@@ -7,7 +7,7 @@
  *
  * Key insight: root orchestrator agents (depth 0) never close their queue via done() —
  * they enter an idle-yield waiting for new messages. We detect "done" by polling the root
- * node's status (changes from "in_progress" to "passed"/"failed"), then call shutdown().
+ * node's status (changes from "in_progress" to "verify"/"failed"), then call shutdown().
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -126,11 +126,7 @@ async function waitForDone(
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
 		const rootNode = tracker.get(rootNodeId);
-		if (
-			rootNode?.status === "passed" ||
-			rootNode?.status === "verify" ||
-			rootNode?.status === "failed"
-		) {
+		if (rootNode?.status === "verify" || rootNode?.status === "failed") {
 			return rootNode.status;
 		}
 		await new Promise((r) => setTimeout(r, 50));
@@ -930,7 +926,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
 
-		// Wait for root to reach "passed" status
+		// Wait for root to reach "verify" status
 		const firstStatus = await waitForDone(ctx);
 		expect(firstStatus).toBe("verify");
 
@@ -944,7 +940,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		ctx.app = await recreateApp(ctx);
 		await ctx.app.autoResumeProjects();
 
-		// Root status was "passed" → autoResume only checks in_progress → skip
+		// Root status was "verify" → autoResume only checks in_progress → skip
 		// Agent should NOT auto-resume
 		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests);
 
@@ -962,8 +958,8 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		const msgResp = await sendMessage(ctx, wakeInstruction);
 		expect(msgResp.status).toBe(200);
 
-		// Root was already "passed" from first run. launchAgent sets it to "in_progress",
-		// then agent resumes and calls done() again → "passed". We need to wait for
+		// Root was already "verify" from first run. launchAgent sets it to "in_progress",
+		// then agent resumes and calls done() again → "verify". We need to wait for
 		// the transition: passed → in_progress → passed. Poll for in_progress first.
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
@@ -2519,7 +2515,6 @@ describe("Integration: auto-recovery from API 400", () => {
 		// Agent stays in_progress (it was interrupted, not done)
 		expect(rootNode.status).toBe("in_progress");
 		// Should NOT have reached done
-		expect(rootNode.status).not.toBe("passed");
 		expect(rootNode.status).not.toBe("verify");
 		// Only 2 API calls (1 success + 1 failed, no retry)
 		expect(ctx.mockAPI.getRequestCount()).toBe(2);
@@ -4697,12 +4692,12 @@ describe("Integration: tree operations", () => {
 							contains: "Updated Tree Task",
 						},
 					],
-					// Set status to "passed" before closing (close_task rejects pending/draft)
+					// Set status to "verify" before closing (close_task rejects pending/draft)
 					blocks: [
 						{
 							type: "tool_use",
 							name: "mcp__mxd__update_task",
-							input: { taskId: "$taskId", status: "passed" },
+							input: { taskId: "$taskId", status: "verify" },
 						},
 					],
 				},
@@ -6654,8 +6649,8 @@ describe("Integration: message near done() race condition", () => {
 		const startTime = Date.now();
 		while (Date.now() - startTime < 15000) {
 			const updated = tracker.get(childId);
-			// After message endpoint: status goes to in_progress, then back to passed on done()
-			if (updated?.status === "passed" && updated.session == null) {
+			// After message endpoint: status goes to in_progress, then to verify on done()
+			if (updated?.status === "verify" && updated.session == null) {
 				break;
 			}
 			await new Promise((r) => setTimeout(r, 50));
@@ -7275,7 +7270,7 @@ describe("Integration: root done then resume", () => {
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
 
-		// Wait for root to reach "passed" status from the first done()
+		// Wait for root to reach "verify" status from the first done()
 		const firstStatus = await waitForDone(ctx);
 		expect(firstStatus).toBe("verify");
 
@@ -7347,7 +7342,7 @@ describe("Integration: root done then resume", () => {
 		ctx.app = await recreateApp(ctx);
 		await ctx.app.autoResumeProjects();
 
-		// Root status was "passed" → autoResume skips (only resumes in_progress)
+		// Root status was "verify" → autoResume skips (only resumes in_progress)
 		expect(ctx.mockAPI.getRequestCount()).toBe(preRestartRequests);
 
 		// Send a new message with JSON instruction → triggers launchAgent(resume: true)
@@ -7417,7 +7412,7 @@ describe("Integration: root done then resume", () => {
 		ctx.app = await recreateApp(ctx);
 		await ctx.app.autoResumeProjects();
 
-		// Root status was "passed" → autoResume skips
+		// Root status was "verify" → autoResume skips
 		expect(ctx.mockAPI.getRequestCount()).toBe(firstRequests);
 
 		// Send a new user message with instruction → triggers launchAgent(resume: true)

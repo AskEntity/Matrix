@@ -188,7 +188,7 @@ describe("daemon stats", () => {
 			pending: 0,
 			in_progress: 0,
 			verify: 0,
-			passed: 0,
+
 			failed: 0,
 			closed: 0,
 		});
@@ -284,7 +284,7 @@ describe("daemon stats", () => {
 			}),
 		});
 
-		// Mark root as in_progress, child1 as passed
+		// Mark root as in_progress, child1 as verify
 		await app.request(`/projects/${project.id}/tasks/${root.id}`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
@@ -293,7 +293,7 @@ describe("daemon stats", () => {
 		await app.request(`/projects/${project.id}/tasks/${child1.id}`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "passed" }),
+			body: JSON.stringify({ status: "verify" }),
 		});
 
 		const statsRes = await app.request("/stats");
@@ -301,7 +301,7 @@ describe("daemon stats", () => {
 		expect(stats.projectCount).toBe(1);
 		expect(stats.taskCounts.pending).toBe(2); // Child2 + Orchestrator root
 		expect(stats.taskCounts.in_progress).toBe(3); // Root + 2 persistent quality task templates
-		expect(stats.taskCounts.passed).toBe(1); // Child1
+		expect(stats.taskCounts.verify).toBe(1); // Child1
 		expect(stats.taskCounts.failed).toBe(0);
 
 		await rm(tempDir, { recursive: true });
@@ -3265,7 +3265,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(body.error).toBe("Cannot continue task with status: pending");
 	});
 
-	test("continues passed task without worktree — re-creates worktree and launches agent", async () => {
+	test("continues verify task without worktree — re-creates worktree and launches agent", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -3280,7 +3280,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "passed" }),
+			body: JSON.stringify({ status: "verify" }),
 		});
 
 		const res = await app.request(
@@ -3515,7 +3515,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		expect(tracker.get(task.id)?.session).toBeUndefined();
 	});
 
-	test("sets status to in_progress for passed task with worktree", async () => {
+	test("sets status to in_progress for verify task with worktree", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -3530,14 +3530,14 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "passed" }),
+			body: JSON.stringify({ status: "verify" }),
 		});
 
 		// Inject worktreePath directly into the tracker
 		const tracker = await getTracker(projectId);
 		tracker.assignWorktree(
 			task.id,
-			"mxd/fake/passed-branch",
+			"mxd/fake/verify-branch",
 			join(tempDir, "cont-proj"),
 		);
 		await tracker.save();
@@ -3558,7 +3558,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		await new Promise((r) => setTimeout(r, 150));
 	});
 
-	test("continues passed task with message — launches agent", async () => {
+	test("continues verify task with message — launches agent", async () => {
 		const taskRes = await app.request(`/projects/${projectId}/tasks`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -3573,7 +3573,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		await app.request(`/projects/${projectId}/tasks/${task.id}`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ status: "passed" }),
+			body: JSON.stringify({ status: "verify" }),
 		});
 
 		const res = await app.request(

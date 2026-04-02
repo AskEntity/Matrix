@@ -79,7 +79,6 @@ const en: Translations = {
 	"status.pending": "Pending",
 	"status.in_progress": "In Progress",
 	"status.verify": "Verify",
-	"status.passed": "Passed",
 	"status.failed": "Failed",
 	"status.closed": "Closed",
 
@@ -369,7 +368,6 @@ const zh: Translations = {
 	"status.pending": "等待中",
 	"status.in_progress": "进行中",
 	"status.verify": "待验证",
-	"status.passed": "通过",
 	"status.failed": "失败",
 	"status.closed": "已关闭",
 

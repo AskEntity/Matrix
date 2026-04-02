@@ -400,7 +400,7 @@ export function createOrchestratorTools(
 						"draft",
 						"pending",
 						"in_progress",
-						"passed",
+						"verify",
 						"failed",
 						"closed",
 					])

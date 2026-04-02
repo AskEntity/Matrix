@@ -1,13 +1,12 @@
 import type { MessageQueue } from "./message-queue.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
 
-/** Task status follows the lifecycle: draft → pending → in_progress → verify | passed | failed | closed */
+/** Task status follows the lifecycle: draft → pending → in_progress → verify | failed | closed */
 export type TaskStatus =
 	| "draft"
 	| "pending"
 	| "in_progress"
 	| "verify"
-	| "passed"
 	| "failed"
 	| "closed";
 
@@ -163,7 +162,6 @@ export interface StatsResponse {
 		pending: number;
 		in_progress: number;
 		verify: number;
-		passed: number;
 		failed: number;
 		closed: number;
 	};

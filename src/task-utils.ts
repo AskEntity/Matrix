@@ -120,11 +120,13 @@ export function buildTaskPrompt(
 
 	if (node.parentId) {
 		const siblings = tracker.getChildren(node.parentId);
-		const done = siblings.filter((s) => s.status === "passed");
+		const done = siblings.filter(
+			(s) => s.status === "verify" || s.status === "closed",
+		);
 		if (done.length > 0) {
 			parts.push(
 				"\n## Already completed siblings:",
-				...done.map((s) => `- ${s.title} (passed)`),
+				...done.map((s) => `- ${s.title} (${s.status})`),
 			);
 		}
 	}

@@ -840,8 +840,7 @@ export async function runAgentForNode(
 		// Root agent: emit orchestration_completed with aggregated costs
 		if (isRoot) {
 			const currentNode = tracker.get(nodeId);
-			const didPass =
-				currentNode?.status === "passed" || currentNode?.status === "verify";
+			const didPass = currentNode?.status === "verify";
 			const allNodes = tracker.allNodes();
 			const childNodes = allNodes.filter(
 				(n) => n.id !== nodeId && n.costUsd > 0,

@@ -52,7 +52,7 @@ async function notifyParentChain(
 
 		const wasResumed =
 			statusBeforeDelivery === "closed" ||
-			statusBeforeDelivery === "passed" ||
+			statusBeforeDelivery === "verify" ||
 			statusBeforeDelivery === "failed";
 		let content: string;
 		if (wasResumed) {
@@ -208,7 +208,7 @@ export function registerTaskRoutes(
 						| "draft"
 						| "pending"
 						| "in_progress"
-						| "passed"
+						| "verify"
 						| "failed"
 						| "closed"
 						| undefined,
@@ -283,7 +283,7 @@ export function registerTaskRoutes(
 		}
 		if (
 			node.status !== "failed" &&
-			node.status !== "passed" &&
+			node.status !== "verify" &&
 			node.status !== "closed"
 		) {
 			return c.json(
@@ -354,9 +354,9 @@ export function registerTaskRoutes(
 			return c.json(tracker.get(nodeId));
 		}
 
-		// Passed/closed task with no worktree: re-create worktree and launch agent
+		// Verify/closed task with no worktree: re-create worktree and launch agent
 		if (
-			(node.status === "passed" || node.status === "closed") &&
+			(node.status === "verify" || node.status === "closed") &&
 			!node.worktreePath
 		) {
 			try {
