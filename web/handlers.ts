@@ -94,7 +94,7 @@ interface ActionHandlerDeps {
 
 	start: (opts: { prompt: string }) => Promise<void>;
 	stop: () => Promise<void>;
-	compact: () => Promise<void>;
+	compact: (nodeId?: string) => Promise<void>;
 	sendMessageToTask: (
 		taskId: string,
 		msg: string,
@@ -162,7 +162,9 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		const cmd = command.trim().toLowerCase();
 		if (cmd === "/compact") {
 			try {
-				await compact();
+				const nodeId =
+					targetNodeId ?? selectedTaskId ?? rootNodeId ?? undefined;
+				await compact(nodeId);
 			} catch (err) {
 				addLog({
 					type: "error",

@@ -1088,7 +1088,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 											onCompact={
 												isSelectedTaskActive
 													? () => {
-															compact();
+															compact(viewedTaskId ?? undefined);
 														}
 													: undefined
 											}
