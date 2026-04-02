@@ -2240,9 +2240,9 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 
 		// Should collapse the first 3 start/stop pairs and keep only the last resume entry
 		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
-		// Only the last "Session resumed" should remain (the one at ts=7000)
+		// Only the last "Agent started" should remain (the one at ts=7000)
 		expect(lifecycleEntries.length).toBe(1);
-		expect(lifecycleEntries[0]?.content).toContain("resumed");
+		expect(lifecycleEntries[0]?.content).toContain("Agent started");
 
 		// The assistant_text should still be there
 		const textEntries = capturedLogs.filter((e) => e.type === "assistant_text");
@@ -2291,7 +2291,7 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 			},
 		]);
 
-		// Both "Session resumed" entries should be preserved because there's content between them
+		// Both "Agent started" entries should be preserved because there's content between them
 		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
 		expect(lifecycleEntries.length).toBeGreaterThanOrEqual(2);
 	});
@@ -2335,7 +2335,7 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 
 		processEventBatch(events);
 
-		// Only the very last "Session resumed" should remain
+		// Only the very last "Agent started" should remain
 		const lifecycleEntries = capturedLogs.filter((e) => e.type === "lifecycle");
 		expect(lifecycleEntries.length).toBe(1);
 		expect(lifecycleEntries[0]?.ts).toBe(50000);

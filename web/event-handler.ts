@@ -612,7 +612,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					entries.push(
 						createLogEntry({
 							type: "lifecycle",
-							content: "↻ Session resumed",
+							content: "▶ Agent started",
 							taskId: msg.taskId,
 							ts: msg.ts,
 						}),
