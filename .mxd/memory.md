@@ -162,8 +162,6 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_k
 ## Known Bugs (unfixed)
 
 - Manual compaction during yield → consecutive user messages → API 400.
-- Prefix violation after double restart (Restart N) — disabled in test.
-- Flaky: `Fork from closed agent` — timing-dependent.
 
 ## OpenAI Provider
 
@@ -271,3 +269,11 @@ Route by **domain**, not by **file**. Key principle: **whoever introduces a chan
 1. Branch staleness on persistent wake (~5 lines, highest value)
 2. Description ownership enforcement (reject non-root/user edits on persistent tasks)
 3. Message routing expansion (subtree + parent chain, not just direct parent/child)
+
+## Duplicate Yield Orphan Fix (2026-04-02)
+
+API can return multiple yield (or done) tool_calls in the same assistant turn. Production bug: only the first yield got `pendingYieldToolCall`, extras became orphans. `buildSessionRepair` skipped ALL yield/done orphans → unrecoverable 400 loop.
+
+**Fix 1**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done (the intended orphan for resume). Earlier yield/done orphans are genuine repair targets.
+**Fix 2**: Provider loop writes no-op tool_results for duplicate yield calls in the same turn (first one wins).
+**Architectural lesson**: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call. Any other yield/done without a result is a bug.
