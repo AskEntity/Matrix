@@ -666,6 +666,45 @@ describe("lifecycle: concurrent message sources", () => {
 		const node = tracker.get(task.id);
 		if (node) node.session = undefined;
 	});
+
+	test("ensureChildAgentRunning recovers from stale worktreePath — clears path and recreates", async () => {
+		const { app, pm, markReady, getTracker } = createApp({
+			dataDir,
+			agentProvider: createInstantProvider(),
+		});
+		await pm.load();
+		markReady();
+
+		const project = await createProject(app, projectDir);
+		const task = await createTask(app, project.id, "Stale worktree task");
+
+		const tracker = await getTracker(project.id);
+		const node = tracker.get(task.id) as TaskNode;
+
+		// Simulate a stale worktreePath — directory doesn't exist on disk
+		const stalePath = join(projectDir, ".worktrees", "nonexistent-dir");
+		node.worktreePath = stalePath;
+		node.branch = "stale-branch";
+
+		// Send a message — this triggers ensureChildAgentRunning via deliverMessage.
+		// WorktreeManager.create will fail (fake .git), but the stale path
+		// should be cleared before the worktree creation attempt.
+		const res = await sendTaskMessage(
+			app,
+			project.id,
+			task.id,
+			"trigger launch",
+		);
+		expect(res.status).toBe(200);
+
+		// Wait for the async auto-launch to run (and fail at WorktreeManager.create)
+		await delay(200);
+
+		// The stale worktreePath and branch should have been cleared
+		// (even though worktree creation failed because of fake .git)
+		expect(node.worktreePath).not.toBe(stalePath);
+		expect(node.branch).not.toBe("stale-branch");
+	});
 });
 
 describe("lifecycle: queue state transitions", () => {
