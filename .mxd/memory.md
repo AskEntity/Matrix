@@ -180,7 +180,12 @@ Provider loop auto-recovers from 400 invalid_request_error. On 400, pops broken 
 - Event fetching: per-session (`api.taskEvents(projectId, sessionId)`) not per-project. Forked sessions contain parent events — merging causes stale content.
 - Derived state reset: ALL state cleared on project/task switch (logs, tokenUsage, pendingMessages, etc.).
 - Lifecycle entry collapse: consecutive lifecycle-only entries collapsed, keeping last per run.
-- Agent status: `activeAgents` Set updated globally for agent_active/idle/stopped events, regardless of viewed session.
+- Agent status: `activeAgents` Set updated globally in `handleEvent` BEFORE per-session filter (agent_active/idle/stopped/orchestration_started/orchestration_completed). `processEventBatch` calls `checkAgentStatus()` after processing to overwrite stale state from historical events.
+- Per-task message drafts: `localStorage` key `mxd-prompt-draft:<nodeId>`. Debounce uses `targetRef.current` (not `targetNodeId` in deps) to avoid saving stale prompt to wrong task key during render transition.
+- `/compact` targets viewed task: backend reads `nodeId` from POST body, falls back to rootNodeId. Frontend passes `viewedTaskId`.
+- Task tree sort: `STATUS_PRIORITY` in TaskTree.tsx: in_progress(0) > verify(1) > pending(2) > draft(3) > failed(4) > closed(5). Stable sort preserves user ordering within each status group.
+- hideCompleted filter: hides `closed` and `failed` only. `verify` is actionable and remains visible.
+- Scroll follow mode: scroll-to-bottom re-enables follow, scroll-up disables. Follow button also enables.
 
 ## User Preferences
 
