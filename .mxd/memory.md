@@ -162,8 +162,6 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_k
 ## Known Bugs (unfixed)
 
 - Manual compaction during yield → consecutive user messages → API 400.
-- Prefix violation after double restart (Restart N) — disabled in test.
-- Flaky: `Fork from closed agent` — timing-dependent.
 
 ## OpenAI Provider
 
@@ -261,8 +259,21 @@ Route by **domain**, not by **file**. Key principle: **whoever introduces a chan
 - `AgentRequest.isOrchestrator` replaced with `cacheTtl?: "1h"`. Same on ProviderAdapter.callAPI.
 - Prefix validation: system+tools strict JSON compare; message breakpoint position can move but value must match; all other messages compared with cache_control included.
 
+## Known Bugs Status Update (2026-04-02)
+
+- **Prefix violation after double restart**: NO LONGER REPRODUCIBLE. Fixed by unified `buildSessionRepair()` truncate-and-rebuild approach that modifies JSONL on disk (idempotent across restarts). Restart K, N pass 5/5. Restart L passes with prefix validation enabled (3/3). Can enable prefix validation in Restart L and remove from Known Bugs.
+- **Flaky fork from closed agent**: NO LONGER REPRODUCIBLE. Fixed by `flushSession()` call in `copySessionFrom` (eliminates async write race) + `closeTaskOp` preserving JSONL (only delete/reset clear it). 10/10 passes.
+
 ## Unresolved Design (prioritized)
 
 1. Branch staleness on persistent wake (~5 lines, highest value)
 2. Description ownership enforcement (reject non-root/user edits on persistent tasks)
 3. Message routing expansion (subtree + parent chain, not just direct parent/child)
+
+## Duplicate Yield Orphan Fix (2026-04-02)
+
+API can return multiple yield (or done) tool_calls in the same assistant turn. Production bug: only the first yield got `pendingYieldToolCall`, extras became orphans. `buildSessionRepair` skipped ALL yield/done orphans → unrecoverable 400 loop.
+
+**Fix 1**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done (the intended orphan for resume). Earlier yield/done orphans are genuine repair targets.
+**Fix 2**: Provider loop writes no-op tool_results for duplicate yield calls in the same turn (first one wins).
+**Architectural lesson**: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call. Any other yield/done without a result is a bug.

@@ -575,11 +575,30 @@ export function buildSessionRepair(
 		}
 	}
 
+	// Find the LAST tool_call in the event stream — if it's yield/done,
+	// it's the "intended orphan" for resume (no tool_result expected yet).
+	// All OTHER yield/done orphans are genuine bugs that need repair.
+	let lastToolCallId: string | null = null;
+	for (let i = events.length - 1; i >= 0; i--) {
+		const e = events[i];
+		if (e?.type === "tool_call") {
+			lastToolCallId = e.toolCallId;
+			break;
+		}
+	}
+
 	// Categorize problems
 	let hasDuplicates = false;
 	const orphanCallIds: string[] = [];
 	for (const [callId, tool] of toolCallTools) {
-		if (tool === TOOL_YIELD || tool === TOOL_DONE) continue;
+		// Only skip the LAST tool_call if it's yield/done (intended orphan for resume).
+		// Earlier yield/done orphans are genuine bugs (e.g., API returned duplicate
+		// yield calls in same turn, only the first got a tool_result).
+		if (
+			(tool === TOOL_YIELD || tool === TOOL_DONE) &&
+			callId === lastToolCallId
+		)
+			continue;
 		const resultCount = toolResultCounts.get(callId) ?? 0;
 		if (resultCount > 1) hasDuplicates = true;
 		if (resultCount === 0) orphanCallIds.push(callId);
