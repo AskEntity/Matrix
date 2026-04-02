@@ -157,7 +157,7 @@ Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Archite
 
 - Manual compaction during yield → consecutive user messages → API 400.
 - Prefix violation after double restart (Restart N) — disabled in test.
-- Flaky: `Fork from closed agent`, `BG5` — timing-dependent.
+- Flaky: `Fork from closed agent` — timing-dependent.
 
 
 
@@ -344,3 +344,8 @@ Same for CLI: if a new feature adds a CLI flag, that's the feature's scope. CLI 
 **NEVER delete a task with children.** `delete_task` cascades — deletes all descendants AND their session JSONL files. This is now enforced in code (returns 400 "Cannot delete task with children"). Always reparent children first.
 
 **To change persistent mode**: use `update_task` with `persistent: true/false`. false→true creates `.mxd/tasks/<id>.json` and sets status to in_progress. true→false deletes the def file.
+
+
+## BG5 Flaky Test Root Cause (2026-04-02)
+
+Root cause was NOT timing — it was async JSONL writes. `emitEvent` calls `eventStore.append()` without awaiting (fire-and-forget). `waitForDone` checks tracker status (set synchronously in done() handler) and returns before all tool_result events are flushed to disk. Fix: `readSessionEvents` now flushes the daemon EventStore (`ctx.app.ctx.eventStores.get(projectId).flushSession(sessionId)`) before reading. This affected all tests that read JSONL after waitForDone, not just BG5 — BG5 was just the most timing-sensitive.
