@@ -472,25 +472,15 @@ function createAnthropicAdapter(
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {
 				try {
-					// Build request options: abort signal + extended cache TTL header
-					const requestOpts: Record<string, unknown> = {};
-					if (params.signal) requestOpts.signal = params.signal;
-					// 1h cache TTL requires the extended-cache-ttl beta header
-					if (params.cacheTtl === "1h") {
-						requestOpts.headers = {
-							"anthropic-beta": "extended-cache-ttl-2025-04-11",
-						};
-					}
+					// Build request options: abort signal only.
+					// 1h cache TTL (extended-cache-ttl) is GA — no beta header needed.
+					const requestOpts = params.signal
+						? { signal: params.signal }
+						: undefined;
 					const stream = useOAuth
 						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
-							(client.beta.messages as any).stream(
-								createParams,
-								Object.keys(requestOpts).length > 0 ? requestOpts : undefined,
-							)
-						: client.messages.stream(
-								createParams,
-								Object.keys(requestOpts).length > 0 ? requestOpts : undefined,
-							);
+							(client.beta.messages as any).stream(createParams, requestOpts)
+						: client.messages.stream(createParams, requestOpts);
 
 					// Stream text and thinking deltas to UI (throttled to ~12 yields/sec)
 					let textBuffer = "";
