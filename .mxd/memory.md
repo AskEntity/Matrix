@@ -264,3 +264,34 @@ Route by **domain**, not by **file**. Key principle: **whoever introduces a chan
 - `{type: "ephemeral"}` and `{type: "ephemeral", ttl: "1h"}` are DIFFERENT cache entries — TTL is part of prefix identity.
 - `AgentRequest.isOrchestrator` replaced with `cacheTtl?: "1h"`. Same on ProviderAdapter.callAPI.
 - Prefix validation: system+tools strict JSON compare; message breakpoint position can move but value must match; all other messages compared with cache_control included.
+
+## Architecture Evolution — 2026-04-02
+
+### What changed (single session, ~8 hours)
+
+**Lifecycle overhaul**: Two-phase done(), verify status, unified close_task. 23 files, +1489/-795. "passed" status removed entirely (migrated to verify). Persistent tasks now have proper lifecycle: pending → in_progress → verify → close (→ pending again).
+
+**System prompt v2**: Complete rewrite. Three roles (root/persistent/worker). Four domain-owner anti-patterns. Fork as "changing jobs". Three Mutations methodology. Daily work mode for managers. Net -156 lines.
+
+**Cache TTL**: Session-config-driven, inherited via fork. Strict prefix validation matching Anthropic's exact rules. OAuth fix (per-request beta header was overriding defaultHeaders).
+
+**Persistent task status preservation**: mergePersistentTasks no longer force-resets status to in_progress on daemon restart.
+
+**UI**: 8 bug fixes (activeAgents, compact target, draft race, hideCompleted, STATUS_PRIORITY order).
+
+**Tests**: 1145 → 1153 pass.
+
+### Key design principles established
+
+1. **session=null is the irreversibility boundary**: Before null, late messages → relaunch (reversible). After null, commit status + notify parent (irreversible).
+2. **Context window is the scarcest resource for domain owners**: They don't execute because debug traces destroy global perspective, not because of role rules.
+3. **Whoever introduces a change owns ALL consequences**: prompt, UI, tests, docs. File ownership by change origin, not filename.
+4. **done() tool_result on re-wake carries new worktree path**: Agent is already cd'd there (session.cwd set at launch), tool_result is informational.
+
+### Unresolved (prioritized)
+
+1. Branch staleness on persistent wake (~5 lines, highest value)
+2. Description ownership enforcement (reject non-root/user edits on persistent tasks)
+3. Message routing expansion (subtree + parent chain, not just direct parent/child)
+4. ensureChildAgentRunning ghost worktree check
+5. done() tool_result with new cwd on re-wake
