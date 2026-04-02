@@ -260,7 +260,14 @@ When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provide
 - `{type: "ephemeral"}` (5min) and `{type: "ephemeral", ttl: "1h"}` create DIFFERENT cache entries.
 - cache_control field (including TTL) is part of the cached prefix identity — changing it invalidates cache.
 - Longer TTLs must appear before shorter TTLs in the same request.
-- Prefix validation strips cache_control from **messages** (breakpoint position moves each turn) but NOT from system/tools (stable, compared via JSON.stringify).
+- `extended-cache-ttl-2025-04-11` beta header required when using `ttl: "1h"`.
+
+### Prefix Validation — cache_control Rules
+Three-tier strictness in `validatePrefix` (mock-anthropic-api.ts):
+1. **System + tools**: JSON.stringify comparison — position + value must be identical across requests.
+2. **Message breakpoint** (second-to-last user msg): position can move between turns, but cache_control VALUE must stay the same (`extractMessageCacheControl` check).
+3. **All other messages**: cache_control compared strictly via `deepEqualMessage(stripCC=false)` — only the old/new breakpoint indices get `stripCC=true`.
+- `normalizeContent(content, stripCC)` — stripCC parameter controls whether cache_control is stripped. Only true at breakpoint positions.
 
 ### `isOrchestrator` → `cacheTtl`
 - `AgentRequest.isOrchestrator` removed. Replaced with `AgentRequest.cacheTtl?: "1h"`.
