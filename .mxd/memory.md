@@ -245,3 +245,19 @@ When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provide
 - Background processes may be killed by cleanup before completing after done().
 - closeTaskOp now rejects pending/draft status — tests must set passed/verify before close_task.
 - **Late message re-launch**: After done(), messages arriving during shutdown (between queue.close and session clear) get persisted to JSONL but can't trigger auto-launch (session still set). Fixed: finally block checks for unconsumed messages after session clear and re-launches for done exits only (verify/failed status). NOT for interrupted exits — those leave unconsumed messages intentionally.
+
+## Domain Owner Routing Rules
+
+Route by **domain**, not by **file**:
+- **Design Philosophy** → design principles, prompt structure/style. **System Prompt** sub-domain for prompt text coherence.
+- **Task System Design** → task model, status machine, messaging rules, persistent model
+- **Agent Loop** → runtime: provider loop, done/yield, start/stop, JSONL repair. **Lifecycle** for done() implementation, **Runtime** for tools/streaming/compaction
+- **User Interaction** → **Web UI** for frontend, **CLI** for command line
+
+Key principle: **whoever introduces a change owns ALL consequences** (prompt, UI, tests, docs). File ownership is by change origin, not filename.
+
+Domain owners NEVER write code — they manage and understand. Delegate everything, even small tasks.
+
+## Two-Phase Done() (merged 2026-04-02)
+
+23 files, +1489/-795. done() → verify status, close_task unified (persistent→pending, regular→closed), Phase 2 in runAgentForNode, crash recovery, late message re-launch in finally block. 1145 tests pass.
