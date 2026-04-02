@@ -1,8 +1,27 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
+import type { TaskStatus } from "../../src/types.ts";
 import type { TaskNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron, IconEyeOff, IconHexagon, IconTrash } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
+
+/** Sort priority: lower = shown first */
+const STATUS_PRIORITY: Record<TaskStatus, number> = {
+	in_progress: 0,
+	draft: 1,
+	pending: 2,
+	failed: 3,
+	passed: 4,
+	closed: 5,
+};
+
+/** Stable sort by status priority, preserving relative order within same status. */
+function sortByStatus(nodes: TaskNode[]): TaskNode[] {
+	return [...nodes].sort(
+		(a, b) =>
+			(STATUS_PRIORITY[a.status] ?? 9) - (STATUS_PRIORITY[b.status] ?? 9),
+	);
+}
 
 interface DragState {
 	/** ID of the node being dragged */
@@ -52,30 +71,33 @@ export const TaskTree = memo(function TaskTree({
 	);
 	const roots = useMemo(() => {
 		if (rootNode) {
-			// Show children of root node as top-level tasks, preserving order
+			// Show children of root node as top-level tasks, sorted by status
 			const childOrder = rootNode.children;
 			const nodeById = new Map(nodes.map((n) => [n.id, n]));
-			return childOrder
+			const ordered = childOrder
 				.map((id) => nodeById.get(id))
 				.filter((n): n is TaskNode => n !== undefined);
+			return sortByStatus(ordered);
 		}
 		// Fallback: filter out root nodes (nodes with no parent that are parents of others)
 		// This prevents the root orchestrator node from flickering on initial render
 		// before rootNodeId is received via WebSocket
 		const parentIds = new Set(nodes.map((n) => n.parentId).filter(Boolean));
-		return nodes.filter((n) => !n.parentId && !parentIds.has(n.id));
+		return sortByStatus(
+			nodes.filter((n) => !n.parentId && !parentIds.has(n.id)),
+		);
 	}, [nodes, rootNode]);
 
 	const childMap = useMemo(() => {
 		const map = new Map<string, TaskNode[]>();
 		const nodeById = new Map(nodes.map((n) => [n.id, n]));
-		// Build children lists preserving the parent's children order
+		// Build children lists sorted by status priority
 		for (const n of nodes) {
 			if (n.children.length > 0) {
 				const ordered = n.children
 					.map((id) => nodeById.get(id))
 					.filter((c): c is TaskNode => c !== undefined);
-				map.set(n.id, ordered);
+				map.set(n.id, sortByStatus(ordered));
 			}
 		}
 		return map;
