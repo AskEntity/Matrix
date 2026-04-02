@@ -270,15 +270,23 @@ export async function closeTaskOp(
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
 
-	if (node.persistent) {
-		throw new TaskOperationError("Cannot close persistent task");
-	}
-
 	if (node.status === "in_progress") {
 		throw new TaskOperationError(
 			"Cannot close a running task. Stop it first or wait for done().",
 		);
 	}
+
+	if (node.status === "pending" || node.status === "draft") {
+		throw new TaskOperationError(
+			`Cannot close a task with status "${node.status}".`,
+		);
+	}
+
+	// Determine target status
+	const targetStatus =
+		node.persistent && node.status === "verify"
+			? "pending" // persistent verify → pending (ready for next round)
+			: "closed";
 
 	// Clean up worktree + branch if they exist
 	if (node.worktreePath && node.branch) {
@@ -292,7 +300,7 @@ export async function closeTaskOp(
 		node.updatedAt = new Date().toISOString();
 	}
 
-	tracker.updateStatus(node.id, "closed");
+	tracker.updateStatus(node.id, targetStatus);
 
 	await tracker.save();
 	callbacks.broadcastTree();

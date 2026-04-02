@@ -555,6 +555,7 @@ export interface ProviderAdapter {
 		totalOutputTokens: number;
 		totalCacheCreationTokens: number;
 		totalCacheReadTokens: number;
+		doneSummary?: string;
 	}): AgentResult;
 }
 
@@ -572,6 +573,7 @@ function defaultBuildResult(params: {
 	totalOutputTokens: number;
 	totalCacheCreationTokens: number;
 	totalCacheReadTokens: number;
+	doneSummary?: string;
 }): AgentResult {
 	return {
 		exitReason: params.exitReason,
@@ -581,6 +583,7 @@ function defaultBuildResult(params: {
 		sessionId: params.sessionId,
 		inputTokens: params.totalInputTokens,
 		outputTokens: params.totalOutputTokens,
+		doneSummary: params.doneSummary,
 	};
 }
 
@@ -635,6 +638,10 @@ export async function* runProviderLoop(
 	// the agent was in yield state when the daemon restarted. We restore this at loop level
 	// instead of writing a synthetic orphan result — yield is a loop-level pause, not a JS await.
 	let pendingYieldToolCall: { id: string; name: string } | null = null;
+	// Detect pending done from JSONL: if last tool_call is done with no matching result,
+	// the agent called done() and the loop exited (done is an intended orphan).
+	// On wake, write a synthetic tool_result so the message history is well-formed.
+	let pendingDoneToolCall: { id: string; name: string } | null = null;
 	// Detect pending implicit yield from JSONL: last provider content event is assistant_text
 	// (no tool_call after it). The model ended its turn naturally (end_turn) and the agent
 	// was in handleImplicitYield waiting for messages when it died. On resume, bypass to
@@ -660,8 +667,26 @@ export async function* runProviderLoop(
 			}
 		}
 
+		// Detect pending done: last tool_call is TOOL_DONE with no result
+		if (
+			!pendingYieldToolCall &&
+			lastToolCall?.type === "tool_call" &&
+			lastToolCall.tool === TOOL_DONE
+		) {
+			const hasResult = activeEvents.some(
+				(e) =>
+					e.type === "tool_result" && e.toolCallId === lastToolCall.toolCallId,
+			);
+			if (!hasResult) {
+				pendingDoneToolCall = {
+					id: lastToolCall.toolCallId,
+					name: lastToolCall.tool,
+				};
+			}
+		}
+
 		// Check for implicit yield: last provider content event is assistant_text
-		if (!pendingYieldToolCall) {
+		if (!pendingYieldToolCall && !pendingDoneToolCall) {
 			pendingImplicitYieldResume = hasPendingImplicitYield(activeEvents);
 		}
 	}
@@ -676,13 +701,15 @@ export async function* runProviderLoop(
 	//
 	const isYieldResume =
 		pendingYieldToolCall != null || pendingImplicitYieldResume;
+	const isDoneResume = pendingDoneToolCall != null;
 	const isInterruptedResume =
 		!isYieldResume &&
+		!isDoneResume &&
 		isResume &&
 		messages.length > 0 &&
 		(messages[messages.length - 1] as { role?: string })?.role === "user";
 
-	if (queue && !isYieldResume) {
+	if (queue && !isYieldResume && !isDoneResume) {
 		let allMsgs: QueueMessage[];
 
 		if (isInterruptedResume) {
@@ -766,6 +793,7 @@ export async function* runProviderLoop(
 	// Set when doneToolUse is detected in the current turn's tool batch.
 	// Used to determine exitReason on loop exit.
 	let doneExitReason: ExitReason | null = null;
+	let doneSummary = "";
 	{
 		const evt: Event = {
 			type: "status",
@@ -778,6 +806,90 @@ export async function* runProviderLoop(
 	}
 
 	while (true) {
+		// ── Handle pending done resume (done tool_call orphan on JSONL) ──
+		// Agent called done() and the loop exited. On wake (new message), write a
+		// synthetic tool_result for the done tool_call, then continue to next API call.
+		// This is like yield resume but with done context instead of yield messages.
+		if (pendingDoneToolCall && queue) {
+			const doneResult = await handleImplicitYield(queue, emit);
+
+			if (doneResult === null) {
+				// Queue closed — exit
+				const cost = adapter.computeCost(
+					model,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				);
+				const buildResult = adapter.buildResult ?? defaultBuildResult;
+				return buildResult({
+					exitReason: doneExitReason ?? "interrupted",
+					output: lastText,
+					costUsd: cost,
+					turns,
+					sessionId,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+					doneSummary,
+				});
+			}
+
+			if (doneResult.manualCompactRequested) {
+				manualCompactRequested = true;
+			}
+
+			// Write done tool_result with wake context
+			const doneText = `You previously called done(). New messages woke you up:\n\n${doneResult.formatted}`;
+			const doneToolResultEvt: Event = {
+				type: "tool_result",
+				tool: pendingDoneToolCall.name,
+				toolCallId: pendingDoneToolCall.id,
+				content: doneText,
+				isError: false,
+				taskId: "",
+				ts: Date.now(),
+			};
+			emit?.(doneToolResultEvt);
+			yield doneToolResultEvt;
+
+			// Build messages for API from done tool_result + wake messages
+			const doneFormatted = formatQueueMessagesWithHeaders(
+				doneResult.nonCompact,
+			);
+			const doneToolResultMsgs = adapter.buildToolResultsMessage({
+				toolUses: [
+					{
+						id: pendingDoneToolCall.id,
+						name: pendingDoneToolCall.name,
+						input: {},
+					},
+				],
+				execResults: [
+					{
+						content: doneText,
+						isError: false,
+					},
+				],
+				cancellationQueueMsgs: doneResult.nonCompact,
+				cancellationFormatted: doneFormatted,
+			});
+			for (const msg of doneToolResultMsgs) {
+				messages.push(msg);
+			}
+
+			// Emit queue events (messages_consumed, etc.) — the tool_result itself
+			// is already emitted via yield above, don't double-emit
+			if (emit) {
+				recordQueueEvents(emit, doneResult.nonCompact);
+			}
+
+			pendingDoneToolCall = null;
+			// Fall through to API call
+		}
+
 		// ── Handle pending implicit yield resume (end_turn on JSONL) ──
 		// The model ended its turn naturally before daemon crash. On resume, bypass to
 		// handleImplicitYield → block on queue → buildImplicitYieldMessage → API call.
@@ -808,6 +920,7 @@ export async function* runProviderLoop(
 					totalOutputTokens,
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
+					doneSummary,
 				});
 			}
 
@@ -867,6 +980,7 @@ export async function* runProviderLoop(
 					totalOutputTokens,
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
+					doneSummary,
 				});
 			}
 
@@ -1314,6 +1428,7 @@ export async function* runProviderLoop(
 					totalOutputTokens,
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
+					doneSummary,
 				});
 			}
 
@@ -1350,6 +1465,7 @@ export async function* runProviderLoop(
 					totalOutputTokens,
 					totalCacheCreationTokens,
 					totalCacheReadTokens,
+					doneSummary,
 				});
 			}
 
@@ -1454,6 +1570,44 @@ export async function* runProviderLoop(
 			}
 		}
 
+		// ── done() alone: intended orphan (like yield) ──
+		// done() handler closes the queue. No tool_result is written to JSONL or
+		// yielded — the done tool_call stays as an orphan (buildSessionRepair skips it).
+		// Exit immediately with the done exit reason. Phase 2 (in runAgentForNode)
+		// handles status update, parent notification, and done_notified.
+		if (doneToolUse && !hasOtherTools) {
+			const doneIndex = toolUses.indexOf(doneToolUse);
+			const doneResult = execResults[doneIndex] as ToolResult | undefined;
+			if (doneResult && !doneResult.isError) {
+				const doneInput = doneToolUse.input as
+					| { status?: string; summary?: string }
+					| undefined;
+				doneExitReason =
+					doneInput?.status === "passed" ? "done_passed" : "done_failed";
+				doneSummary = doneInput?.summary ?? "";
+				const cost = adapter.computeCost(
+					model,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+				);
+				const buildResultDone = adapter.buildResult ?? defaultBuildResult;
+				return buildResultDone({
+					exitReason: doneExitReason,
+					output: lastText,
+					costUsd: cost,
+					turns,
+					sessionId,
+					totalInputTokens,
+					totalOutputTokens,
+					totalCacheCreationTokens,
+					totalCacheReadTokens,
+					doneSummary,
+				});
+			}
+		}
+
 		// Yield tool_result events for consumer loop
 		for (let i = 0; i < toolUses.length; i++) {
 			const toolUse = toolUses[i] as ProviderToolUse;
@@ -1519,21 +1673,7 @@ export async function* runProviderLoop(
 			}
 		}
 
-		// Detect done() was successfully executed (not errored or conflicting with other tools).
-		// done() handler already updated tracker status + delivered task_complete.
-		// We just need to record the exit reason for the loop's return value.
-		// Only set doneExitReason if the tool execution succeeded (isError = false).
-		if (doneToolUse && !hasOtherTools) {
-			const doneIndex = toolUses.indexOf(doneToolUse);
-			const doneResult = execResults[doneIndex] as ToolResult | undefined;
-			if (doneResult && !doneResult.isError) {
-				const doneInput = doneToolUse.input as { status?: string } | undefined;
-				doneExitReason =
-					doneInput?.status === "passed" ? "done_passed" : "done_failed";
-			}
-		}
-
-		// If queue was closed during tool execution (done() was called for child agents),
+		// If queue was closed during tool execution (e.g. stop/reset),
 		// exit after recording events but before sending results to the API.
 		if (queue?.isClosed) {
 			const cost = adapter.computeCost(
@@ -1555,6 +1695,7 @@ export async function* runProviderLoop(
 				totalOutputTokens,
 				totalCacheCreationTokens,
 				totalCacheReadTokens,
+				doneSummary,
 			});
 		}
 
@@ -1607,5 +1748,6 @@ export async function* runProviderLoop(
 		totalOutputTokens,
 		totalCacheCreationTokens,
 		totalCacheReadTokens,
+		doneSummary,
 	});
 }
