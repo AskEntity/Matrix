@@ -1425,6 +1425,114 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		).toThrow(MockValidationError);
 	}, 10000);
 
+	test("Prefix validation catches message cache_control value change between requests", async () => {
+		// Validates the "last marker" rule: message-level cache_control position
+		// can move between turns, but its VALUE must stay the same.
+		const { MockValidationError } = await import(
+			"./test-utils/mock-anthropic-api.ts"
+		);
+
+		const mockAPI = new ValidatingMockAPI();
+		mockAPI.enablePrefixValidation();
+
+		const system = [
+			{ type: "text", text: "You are helpful." },
+			{
+				type: "text",
+				text: "Variable part",
+				cache_control: { type: "ephemeral", ttl: "1h" },
+			},
+		];
+		const tools = [
+			{
+				name: "bash",
+				description: "Run bash",
+				input_schema: {},
+				cache_control: { type: "ephemeral", ttl: "1h" },
+			},
+		];
+
+		// Turn 1: 1h TTL on message breakpoint (u1 is second-to-last, u2 is last)
+		mockAPI.createStream(
+			{
+				messages: [
+					{
+						role: "user",
+						content: [
+							{
+								type: "text",
+								text: "first",
+								cache_control: { type: "ephemeral", ttl: "1h" },
+							},
+						],
+					},
+					{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+					{ role: "user", content: "second" },
+				],
+				system,
+				tools,
+			},
+			"ttl-value",
+		);
+
+		// Turn 2: 1h TTL moves to u2 (now second-to-last, u3 is last) — position changed, value same → PASS
+		mockAPI.createStream(
+			{
+				messages: [
+					{ role: "user", content: "first" }, // no cache_control here anymore
+					{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+					{
+						role: "user",
+						content: [
+							{
+								type: "text",
+								text: "second",
+								cache_control: { type: "ephemeral", ttl: "1h" },
+							},
+						],
+					},
+					{ role: "assistant", content: [{ type: "text", text: "ok" }] },
+					{ role: "user", content: "third" },
+				],
+				system,
+				tools,
+			},
+			"ttl-value",
+		);
+
+		// Turn 3: cache_control VALUE changed from 1h to default 5min — must throw
+		expect(() =>
+			mockAPI.createStream(
+				{
+					messages: [
+						{ role: "user", content: "first" },
+						{ role: "assistant", content: [{ type: "text", text: "hi" }] },
+						{
+							role: "user",
+							content: [
+								{
+									type: "text",
+									text: "second",
+									cache_control: { type: "ephemeral" }, // changed from 1h!
+								},
+							],
+						},
+						{ role: "assistant", content: [{ type: "text", text: "ok" }] },
+						{ role: "user", content: "third" },
+						{
+							role: "assistant",
+							content: [{ type: "text", text: "sure" }],
+						},
+						{ role: "user", content: "fourth" },
+					],
+					system,
+					tools,
+				},
+				"ttl-value",
+			),
+		).toThrow(MockValidationError);
+	}, 10000);
+
 	test("Restart F: messages enqueued during bash survive restart", async () => {
 		ctx = await setupTestContext();
 		ctx.mockAPI.enablePrefixValidation();
