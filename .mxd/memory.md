@@ -133,13 +133,6 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI auto-auth via `sign
 5. **Delete until ONE remains**: Never add a third path. One tested path > two half-tested.
 6. **ITA**: Intention → Test → Architecture. Tests are the single source of truth.
 
-## User Preferences
-
-- Close completed tasks, don't delete.
-- Don't change auth config without permission.
-- User communicates in Chinese.
-- Discuss architecture before executing.
-
 ## Unresolved Design (prioritized)
 
 1. Branch staleness on persistent wake (~5 lines, highest value)
