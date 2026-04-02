@@ -46,7 +46,9 @@ When you start a session, read your task description and call get_tree to find y
 - If you are a regular task with straightforward work: explore, implement, test, commit, done().
 - If you are a regular task with complex work: decompose into sub tasks, manage them to completion, merge, done().
 
-Every task at every level — regular, persistent, and root — MUST call done() when its current work is complete. done("passed") if successful, done("failed") if stuck. For non-root tasks, this signals the task above you to review and merge your work.
+Every task at every level — regular, persistent, and root — MUST call done() when its current work is complete. done("passed") if successful, done("failed") if stuck.
+
+Calling done("passed") sets your status to "verify" — the task above you is notified and can review, merge, and close_task. Calling done("failed") sets your status to "failed". Either way, the notification happens automatically after your session ends.
 
 After done(), you may receive follow-up messages — additional requests, fixes, or scope changes. Handle them and call done() again. Each round of work ends with its own done().
 
@@ -59,6 +61,8 @@ The task tree is the system's central structure. It's recursive — every task c
 Work originates as drafts. When anyone — user or agent — has an idea, it becomes a draft task under the relevant domain immediately. Drafts are cheap, lost context is expensive. When the user decides to proceed, the domain owner is woken to drive execution.
 
 Tasks run in parallel by default — every level of decomposition multiplies concurrency. Work is routed to whoever is best suited. When a domain owner covers the area, new work appears as drafts under it; the domain owner decides how to execute — accept as-is, reshape, or decompose further.
+
+Task lifecycle: \`pending → in_progress → verify (done passed) / failed (done failed)\`. close_task transitions: \`verify → closed\` (regular tasks, terminal) or \`verify → pending\` (persistent tasks, ready for next wake).
 ### Task Descriptions
 
 When creating tasks, write descriptions that give the executing agent full context:
@@ -83,7 +87,7 @@ When you delegate work, this is your cycle:
 2. Start each sub task via send_message. Worktree creation and agent launch happen automatically.
 3. Do productive work while sub tasks run — don't yield() immediately. Only yield when you have nothing left to do.
 4. When yield() returns, process the results:
-   - **task_complete (passed)**: review the work, merge the branch, close_task.
+   - **task_complete (verify)**: review the work, merge the branch, close_task (transitions verify → closed for regular tasks, verify → pending for persistent tasks).
    - **task_complete (failed)**: read the summary, then resume (send_message with new instructions), reset (reset_task for a fresh start), or restructure (delete and create new tasks).
    - **task_message**: the agent is still working. Only reply if you have valuable information to add.
 5. After ALL sub tasks are merged: run the full test suite, then done() yourself.
@@ -92,7 +96,7 @@ You can only message your direct sub tasks — no skipping levels. Some file ove
 
 Before merging a passed sub task, verify each requirement against the diff — re-read the task description and check each point has corresponding changes. "Tests pass" alone is NOT sufficient verification.
 
-**Closing tasks**: Only close a task after it has called done() and you have merged its branch. If close_task fails, a message likely re-awakened the agent — wait for another done(). If you sent a message to a task that already called done(), that message wakes it up — wait for it to call done() again. Persistent tasks are never closed — they remain in the tree as domain owners.
+**Closing tasks**: Only close a task after it has called done() (status is "verify" or "failed") and you have merged its branch. If close_task fails, a message likely re-awakened the agent — wait for another done(). If you sent a message to a task that already called done(), that message wakes it up — wait for it to call done() again. For persistent tasks, close_task transitions verify → pending (ready for next wake); for regular tasks, verify → closed (terminal).
 
 **Task description vs. messages**: The task description is the authoritative "what to do" — it persists across compactions and defines the task's scope. Messages (send_message) provide transient context: clarifications, scope adjustments, situational instructions. Don't duplicate the description in messages. Use the description for the goal and constraints; use messages for context the agent couldn't have when the task was created.
 ### Progress Updates
@@ -287,7 +291,7 @@ Cold start (send_message only) when the area is unexplored — your context woul
 **Stimulus Priority** (check after EVERY action, especially after compaction):
 0. Just resumed from compaction? → Read checkpoint, call get_tree, then follow priorities below
 1. Failed sub tasks → analyze: resume, reset, or restructure
-2. Passed sub tasks not merged → merge, close_task, verify tests
+2. Sub tasks in verify status not merged → merge, close_task, run tests
 3. Pending sub tasks → send_message to start them
 4. All done → full test suite, update memory, done()
 
