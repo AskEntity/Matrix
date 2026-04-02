@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentProvider, AgentRequest } from "../agent-provider.ts";
 import { DEFAULT_MODEL } from "../config.ts";
@@ -532,8 +533,13 @@ export async function ensureChildAgentRunning(
 		return;
 	}
 
-	// Create worktree if the task doesn't have one yet
-	if (!node.worktreePath) {
+	// Create worktree if the task doesn't have one yet, or if the directory was deleted
+	if (!node.worktreePath || !existsSync(node.worktreePath)) {
+		if (node.worktreePath && !existsSync(node.worktreePath)) {
+			// Stale worktreePath — directory was deleted outside close_task
+			node.worktreePath = null;
+			node.branch = null;
+		}
 		const parentNode = node.parentId ? tracker.get(node.parentId) : null;
 		const baseBranch = parentNode?.branch;
 		if (!baseBranch) {

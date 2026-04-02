@@ -842,7 +842,8 @@ export async function* runProviderLoop(
 			}
 
 			// Write done tool_result with wake context
-			const doneText = `You previously called done(). New messages woke you up:\n\n${doneResult.formatted}`;
+			const cwdLine = cwd ? `\n\n## Working Directory\n${cwd}` : "";
+			const doneText = `You previously called done(). New messages woke you up:${cwdLine}\n\n${doneResult.formatted}`;
 			const doneToolResultEvt: Event = {
 				type: "tool_result",
 				tool: pendingDoneToolCall.name,
