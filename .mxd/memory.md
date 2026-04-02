@@ -244,4 +244,4 @@ When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provide
 - Root agents no longer block in waitForQueueMessages after done() — loop exits immediately.
 - Background processes may be killed by cleanup before completing after done().
 - closeTaskOp now rejects pending/draft status — tests must set passed/verify before close_task.
-- **Late message re-launch**: After done(), messages arriving during shutdown (between queue.close and session clear) get persisted to JSONL but can't trigger auto-launch (session still set). Fixed: finally block checks for unconsumed messages after session clear and re-launches for done exits only (verify/failed status). NOT for interrupted exits — those leave unconsumed messages intentionally.
+- **Phase 2 ordering is critical**: session=null is the irreversibility boundary. Phase 2 (status update, parent notification) runs AFTER session cleanup in finally block, not before. Before session=null: late messages → relaunch (reversible). After session=null: commit verify + notify parent (irreversible). No race window.
