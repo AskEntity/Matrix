@@ -9,8 +9,8 @@ import { statusDotClass } from "./StatusBadge.tsx";
 const STATUS_PRIORITY: Record<TaskStatus, number> = {
 	in_progress: 0,
 	verify: 1,
-	draft: 2,
-	pending: 3,
+	pending: 2,
+	draft: 3,
 	failed: 4,
 	closed: 5,
 };
