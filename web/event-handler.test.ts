@@ -2392,3 +2392,138 @@ describe("event-handler agent_stopped and lifecycle collapse", () => {
 		expect(lifecycleEntries.length).toBe(1);
 	});
 });
+
+// ============================================================
+// activeAgents global updates (not filtered by viewed session)
+// ============================================================
+
+describe("event-handler activeAgents global updates", () => {
+	function makeDepsWithActiveAgents(initial: Set<string> = new Set()) {
+		const { deps, logs } = makeDeps();
+		const activeAgents = new Set<string>(initial);
+		const typedDeps = deps as unknown as EventHandlerDeps;
+		typedDeps.setActiveAgents = ((
+			updater: React.SetStateAction<Set<string>>,
+		) => {
+			const result =
+				typeof updater === "function" ? updater(activeAgents) : updater;
+			activeAgents.clear();
+			for (const id of result) activeAgents.add(id);
+		}) as EventHandlerDeps["setActiveAgents"];
+		return { deps: typedDeps, logs, activeAgents };
+	}
+
+	it("handleEvent: agent_active for non-viewed task still updates activeAgents", () => {
+		const { deps, activeAgents } = makeDepsWithActiveAgents();
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		handleEvent({
+			type: "agent_active",
+			taskId: "task-2",
+			ts: 1000,
+		});
+
+		expect(activeAgents.has("task-2")).toBe(true);
+	});
+
+	it("handleEvent: agent_idle for non-viewed task removes from activeAgents", () => {
+		const { deps, activeAgents } = makeDepsWithActiveAgents(
+			new Set(["task-2"]),
+		);
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		handleEvent({
+			type: "agent_idle",
+			taskId: "task-2",
+			ts: 1000,
+		});
+
+		expect(activeAgents.has("task-2")).toBe(false);
+	});
+
+	it("handleEvent: agent_stopped for non-viewed task removes from activeAgents", () => {
+		const { deps, activeAgents } = makeDepsWithActiveAgents(
+			new Set(["task-2"]),
+		);
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		handleEvent({
+			type: "agent_stopped",
+			taskId: "task-2",
+			ts: 1000,
+		});
+
+		expect(activeAgents.has("task-2")).toBe(false);
+	});
+
+	it("handleEvent: orchestration_started for non-viewed task adds to activeAgents", () => {
+		const { deps, activeAgents } = makeDepsWithActiveAgents();
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		handleEvent({
+			type: "orchestration_started",
+			taskId: "task-2",
+			resume: false,
+			model: "claude-sonnet",
+			provider: "anthropic",
+			ts: 1000,
+		});
+
+		expect(activeAgents.has("task-2")).toBe(true);
+	});
+
+	it("handleEvent: orchestration_completed for non-viewed task removes from activeAgents", () => {
+		const { deps, activeAgents } = makeDepsWithActiveAgents(
+			new Set(["task-2"]),
+		);
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		handleEvent({
+			type: "orchestration_completed",
+			taskId: "task-2",
+			success: true,
+			ts: 1000,
+		});
+
+		expect(activeAgents.has("task-2")).toBe(false);
+	});
+
+	it("handleEvent: non-viewed task events do NOT create log entries", () => {
+		const { deps } = makeDepsWithActiveAgents();
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = ((updater: React.SetStateAction<LogEntry[]>) => {
+			capturedLogs = typeof updater === "function" ? updater([]) : updater;
+		}) as EventHandlerDeps["setLogs"];
+		deps.getViewedSessionId = () => "task-1";
+
+		const { handleEvent } = createEventHandler(deps);
+
+		// These should update activeAgents but NOT create log entries
+		handleEvent({
+			type: "orchestration_started",
+			taskId: "task-2",
+			resume: true,
+			model: "claude-sonnet",
+			provider: "anthropic",
+			ts: 1000,
+		});
+		handleEvent({
+			type: "agent_stopped",
+			taskId: "task-2",
+			ts: 2000,
+		});
+
+		// setLogs should never have been called (events filtered by taskId)
+		expect(capturedLogs.length).toBe(0);
+	});
+});

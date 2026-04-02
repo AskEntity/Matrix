@@ -1092,6 +1092,24 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			return;
 		}
 
+		// Agent lifecycle events update activeAgents GLOBALLY — before the per-session filter.
+		// The task tree sidebar needs accurate active/idle status for ALL tasks, not just the viewed one.
+		if ("taskId" in msg && msg.taskId) {
+			if (msg.type === "orchestration_started" || msg.type === "agent_active") {
+				setActiveAgents((prev) => new Set(prev).add(msg.taskId));
+			} else if (
+				msg.type === "agent_idle" ||
+				msg.type === "agent_stopped" ||
+				msg.type === "orchestration_completed"
+			) {
+				setActiveAgents((prev) => {
+					const next = new Set(prev);
+					next.delete(msg.taskId);
+					return next;
+				});
+			}
+		}
+
 		// Filter SSE events by taskId — only process events for the currently viewed session.
 		// Global events (tree_updated, pending_clarifications) have no taskId and pass through.
 		const viewedId = deps.getViewedSessionId?.();
