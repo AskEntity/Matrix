@@ -2526,4 +2526,42 @@ describe("event-handler activeAgents global updates", () => {
 		// setLogs should never have been called (events filtered by taskId)
 		expect(capturedLogs.length).toBe(0);
 	});
+
+	it("processEventBatch: calls checkAgentStatus after processing to reset stale activeAgents", () => {
+		const { deps } = makeDepsWithActiveAgents();
+		// Track checkAgentStatus calls
+		let checkCalled = 0;
+		deps.checkAgentStatus = () => {
+			checkCalled++;
+		};
+
+		const { processEventBatch } = createEventHandler(deps);
+
+		// Process events that include orchestration_started (would add to activeAgents)
+		// but the agent is actually stopped
+		processEventBatch([
+			{
+				type: "orchestration_started",
+				taskId: "task-1",
+				resume: false,
+				model: "claude-sonnet",
+				provider: "anthropic",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "Working...",
+				taskId: "task-1",
+				ts: 2000,
+			},
+			{
+				type: "agent_stopped",
+				taskId: "task-1",
+				ts: 3000,
+			},
+		]);
+
+		// checkAgentStatus should have been called to reset stale state
+		expect(checkCalled).toBeGreaterThan(0);
+	});
 });

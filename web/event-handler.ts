@@ -1041,6 +1041,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 		setLogs(entries);
 		for (const fn of deferredSideEffects) fn();
+		// Re-fetch real agent status after processing historical events.
+		// processEvent side effects may have stale setActiveAgents calls from
+		// old orchestration_started/agent_stopped events — checkAgentStatus
+		// overwrites with the actual current state from the backend.
+		checkAgentStatus();
 	}
 
 	/** Entry types that count as "meaningful content" — NOT lifecycle noise. */
