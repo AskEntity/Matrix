@@ -951,6 +951,36 @@ export async function runAgentForNode(
 				taskId: nodeId,
 				ts: Date.now(),
 			});
+
+			// Check for messages that arrived during the done() shutdown window
+			// (between queue.close in done() and session clear here). These were
+			// persisted to JSONL by deliverMessage but couldn't be enqueued (queue
+			// closed) and couldn't trigger auto-launch (session was still set).
+			// Only check after done() exits — interrupted agents leave unconsumed
+			// messages intentionally (they'll be consumed on next resume).
+			const doneStatus = finalNode?.status;
+			if (
+				(doneStatus === "verify" || doneStatus === "failed") &&
+				finalNode &&
+				!isRoot
+			) {
+				const eventStore = getEventStore(ctx, project.id);
+				if (eventStore.has(nodeId)) {
+					await eventStore.flushSession(nodeId);
+					const events = eventStore.readActive(nodeId);
+					const unconsumed = findUnconsumedMessages(events);
+					if (unconsumed.length > 0) {
+						ensureChildAgentRunning(ctx, project, tracker, nodeId).catch(
+							(e) => {
+								console.warn(
+									`[finally] Failed to re-launch ${nodeId} for late messages:`,
+									e instanceof Error ? e.message : String(e),
+								);
+							},
+						);
+					}
+				}
+			}
 		}
 	}
 }
