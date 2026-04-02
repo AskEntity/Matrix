@@ -344,3 +344,19 @@ Same for CLI: if a new feature adds a CLI flag, that's the feature's scope. CLI 
 **NEVER delete a task with children.** `delete_task` cascades — deletes all descendants AND their session JSONL files. This is now enforced in code (returns 400 "Cannot delete task with children"). Always reparent children first.
 
 **To change persistent mode**: use `update_task` with `persistent: true/false`. false→true creates `.mxd/tasks/<id>.json` and sets status to in_progress. true→false deletes the def file.
+
+
+## System Prompt v2 Rewrite (2026-04-02)
+
+- Full rewrite done chapter by chapter with user. 10 chapters + closing.
+- Key design: roles defined by tree position, not hardcoded. "task above/below" not "parent/child".
+- done() is universal (all levels including root) and non-terminal (you may be woken again).
+- Fork explained as "changing jobs" — identity continuity, not identity denial. Old fork_marker text "YOU ARE NOT THE AGENT ABOVE" causes agent resistance; draft task created to rewrite it.
+- Memory uses calling convention metaphor: callee-saved (inherited portion untouched), your register space (append freely).
+- ITA three mutations added as Chapter 7. Adversarial testing with vivid example (PIN + top up) in Chapter 6.
+- "ASK — NEVER SILENTLY FALL BACK" elevated to boldest statement in entire prompt — #1 failure mode.
+- Removed "keep tree shallow 2-3 levels" — suppressed natural depth.
+- Draft tasks created for parent: (1) bash tool file redirect feature, (2) done() memory.md append-only enforcement, (3) fork_marker text rewrite.
+- Reference file: /tmp/prompt-reference.txt (backup of reordered old prompt with line numbers).
+- Working file: /tmp/prompt-reordered-v2.txt (chapter-by-chapter editing workspace).
+
