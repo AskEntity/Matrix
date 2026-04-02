@@ -32,8 +32,12 @@ export interface AgentRequest {
 	hasRunningChildren?: () => boolean;
 	/** Budget limit in USD — provider will inject warnings at 80% and 100%. */
 	budgetUsd?: number;
-	/** True for root orchestrator sessions (depth 0). Affects cache TTL strategy. */
-	isOrchestrator?: boolean;
+	/**
+	 * Cache TTL for message-level cache breakpoints.
+	 * "1h" for root + persistent tasks. undefined for regular children (default 5min).
+	 * Stored in session_config, inherited across fork.
+	 */
+	cacheTtl?: "1h";
 	/**
 	 * Emit callback for provider events (broadcast + persist).
 	 * Provider calls this instead of writing to EventStore directly.

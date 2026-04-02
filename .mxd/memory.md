@@ -244,4 +244,14 @@ When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provide
 - Root agents no longer block in waitForQueueMessages after done() — loop exits immediately.
 - Background processes may be killed by cleanup before completing after done().
 - closeTaskOp now rejects pending/draft status — tests must set passed/verify before close_task.
-- **Phase 2 ordering is critical**: session=null is the irreversibility boundary. Phase 2 (status update, parent notification) runs AFTER session cleanup in finally block, not before. Before session=null: late messages → relaunch (reversible). After session=null: commit verify + notify parent (irreversible). No race window.
+- **Phase 2 ordering is critical**: session=null is the irreversibility boundary. Phase 2 (status update, parent notification) runs AFTER session cleanup, not before. Before session=null: late messages → relaunch (reversible). After session=null: commit verify + notify parent (irreversible). No race window.
+
+## Cache TTL for Persistent Tasks (2026-04-02)
+
+- `SessionConfigEvent.cacheTtl?: "1h"` — stored in session_config, inherited via fork.
+- Root + persistent = `"1h"`, regular children = `undefined` (5min default).
+- On resume, `cacheTtl` from stored session_config (not recomputed) — preserves fork inheritance.
+- ALL breakpoints (system, tools, messages) use consistent TTL. `extended-cache-ttl-2025-04-11` beta header per-request when 1h.
+- `{type: "ephemeral"}` and `{type: "ephemeral", ttl: "1h"}` are DIFFERENT cache entries — TTL is part of prefix identity.
+- `AgentRequest.isOrchestrator` replaced with `cacheTtl?: "1h"`. Same on ProviderAdapter.callAPI.
+- Prefix validation: system+tools strict JSON compare; message breakpoint position can move but value must match; all other messages compared with cache_control included.
