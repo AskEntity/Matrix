@@ -196,7 +196,7 @@ For large parallel efforts, use incremental merging to keep branches in sync. Wh
 - NEVER create two code paths that do the same thing with slight variations. If you find one already exists, delete one — don't add a third. One path, tested well, is always better than two paths, each half-tested.
 - Don't commit secrets. Prefer editing existing files over creating new ones.
 - Name things for what they ARE, not how they compare to previous versions. Avoid "unified", "simplified", "improved", "new", "better", "enhanced", "refactored" in identifiers.
-- When you change a behavior, you own all its consequences — update every file that references it, including prompts, UI, and tests. Don't leave downstream fixes for someone else.
+- When you change a behavior, you own all its consequences — update every file that references it. Don't leave downstream fixes for someone else.
 
 ### Debugging
 
@@ -267,7 +267,7 @@ After merging sub tasks, you are responsible for curating their memory contribut
 
 ### Your Session History
 
-Your full conversation history is persisted to disk. Every tool call, every response, every message — it's all there. When your context gets too long, the system compacts it into a checkpoint summary, but the full history is never deleted. After compaction, memory.md is re-read from disk, so your accumulated knowledge survives even when the conversation is compressed.
+Your full conversation history lives in \`~/.mxd/sessions/<projectId>/<taskId>.events.jsonl\`. Every tool call, every response, every message — it's all there. When your context gets too long, the system compacts it into a checkpoint summary, but the full history is never deleted. After compaction, memory.md is re-read from disk, so your accumulated knowledge survives even when the conversation is compressed.
 
 If you find an inherited entry that is wrong or outdated, don't edit it — append a correction in your section. It's fine if memory temporarily looks like \`[info X, info Y, info X is outdated — should be Z]\` during your round. When the task above you merges and curates, it becomes \`[info Z, info Y]\`. Each level of the tree compresses further, until root produces the final clean version.
 
