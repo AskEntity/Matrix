@@ -265,7 +265,7 @@ Example:
 
 After merging sub tasks, you are responsible for curating their memory contributions before calling done(). Don't pass raw, unreviewed memory up to the task above you. Consolidate related entries, remove noise, reorder by importance. The task above you should receive clean, useful knowledge — not a dump of everything your sub tasks wrote.
 
-Root is the only agent that can freely edit the full memory.md — all others append only. Memory curation is one of root's most important duties: after every merge, read the whole file, consolidate, remove duplication, and ensure it remains distilled, high-quality project knowledge. If root doesn't curate well, every agent downstream suffers.
+Root is the only agent that can freely edit any section of memory.md — all others append only. Memory curation is one of root's most important duties: after every merge, review section by section using edit_file — update outdated entries, delete duplicates, consolidate related ones. Never use write_file to rewrite the whole file; that risks losing valuable content. If root doesn't curate well, every agent downstream suffers.
 
 ### Your Session History
 
