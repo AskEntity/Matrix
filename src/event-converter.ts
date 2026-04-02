@@ -298,8 +298,9 @@ export function walkEventsToMessages(
 							type: "text",
 							text:
 								`<fork_marker source="${forkEvt.sourceTaskId}"${targetAttr}>\n` +
-								`YOU ARE NOT THE AGENT ABOVE. The conversation above is inherited context ` +
-								`from a different agent. You are a new agent.${descBlock}\n` +
+								`You've been reassigned to a new role. The conversation above is valuable ` +
+								`background knowledge from your previous assignment.${descBlock}\n` +
+								`Read your new task description and start working.\n` +
 								`</fork_marker>`,
 						});
 						i++;
