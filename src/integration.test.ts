@@ -7570,6 +7570,74 @@ describe("Integration: root done then resume", () => {
 		expect(finalStatus).toBe("verify");
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
 	}, 45000);
+
+	test("done resume tool_result includes Working Directory when cwd is set", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: agent calls done(passed)
+		// Turn 2: after wake, agent calls done again
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "All done." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "first pass" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Woke up, done again." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "second pass" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		// Wait for first done
+		await waitForDone(ctx);
+
+		// Send wake message — triggers done resume path
+		await sendMessage(ctx, "wake up please");
+
+		// Wait for second done
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const start = Date.now();
+		while (Date.now() - start < 5000) {
+			if (tracker.get(rootNodeId)?.status === "in_progress") break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		await waitForDone(ctx, 15000);
+
+		// Read JSONL events and find the done tool_result
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const doneToolResults = events.filter(
+			(e: Event) =>
+				e.type === "tool_result" &&
+				e.tool === "mcp__mxd__done" &&
+				typeof e.content === "string" &&
+				e.content.includes("previously called done"),
+		);
+
+		// There should be exactly one done resume tool_result
+		expect(doneToolResults.length).toBe(1);
+
+		const content = (doneToolResults[0] as { content: string }).content;
+		// Must include "Working Directory" header with the project dir path
+		expect(content).toContain("## Working Directory");
+		expect(content).toContain(ctx.projectDir);
+	}, 30000);
 });
 
 // ── Nested parent-child tests ──
