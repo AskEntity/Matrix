@@ -112,15 +112,18 @@ export function registerAgentRoutes(
 		if (!project) {
 			return c.json({ error: "Project not found" }, 404);
 		}
+		const body = await c.req
+			.json<{ nodeId?: string }>()
+			.catch(() => ({}) as { nodeId?: string });
 		const tracker = ctx.trackers.get(project.id);
-		const rootNodeId = tracker?.rootNodeId;
-		const rootQueue = rootNodeId
-			? tracker?.get(rootNodeId)?.session?.queue
+		const targetNodeId = body.nodeId ?? tracker?.rootNodeId;
+		const targetQueue = targetNodeId
+			? tracker?.get(targetNodeId)?.session?.queue
 			: undefined;
-		if (!rootQueue) {
+		if (!targetQueue) {
 			return c.json({ error: "No active agent for this project" }, 404);
 		}
-		rootQueue.enqueue(createCompactMessage());
+		targetQueue.enqueue(createCompactMessage());
 		return c.json({ compacting: true });
 	});
 

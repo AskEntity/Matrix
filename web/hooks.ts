@@ -457,12 +457,17 @@ export function useAgent(projectId: string) {
 		[projectId],
 	);
 
-	const compact = useCallback(async () => {
-		const res = await authFetch(api.compact(projectId), {
-			method: "POST",
-		});
-		if (!res.ok) throw new Error((await res.json()).error);
-	}, [projectId]);
+	const compact = useCallback(
+		async (nodeId?: string) => {
+			const res = await authFetch(api.compact(projectId), {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(nodeId ? { nodeId } : {}),
+			});
+			if (!res.ok) throw new Error((await res.json()).error);
+		},
+		[projectId],
+	);
 
 	const sendMessageToTask = useCallback(
 		async (

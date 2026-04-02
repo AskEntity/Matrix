@@ -1041,6 +1041,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 		setLogs(entries);
 		for (const fn of deferredSideEffects) fn();
+		// Re-fetch real agent status after processing historical events.
+		// processEvent side effects may have stale setActiveAgents calls from
+		// old orchestration_started/agent_stopped events — checkAgentStatus
+		// overwrites with the actual current state from the backend.
+		checkAgentStatus();
 	}
 
 	/** Entry types that count as "meaningful content" — NOT lifecycle noise. */
@@ -1090,6 +1095,24 @@ export function createEventHandler(deps: EventHandlerDeps) {
 		if (msg.type === "pending_clarifications") {
 			setPendingClarifications(msg.clarifications);
 			return;
+		}
+
+		// Agent lifecycle events update activeAgents GLOBALLY — before the per-session filter.
+		// The task tree sidebar needs accurate active/idle status for ALL tasks, not just the viewed one.
+		if ("taskId" in msg && msg.taskId) {
+			if (msg.type === "orchestration_started" || msg.type === "agent_active") {
+				setActiveAgents((prev) => new Set(prev).add(msg.taskId));
+			} else if (
+				msg.type === "agent_idle" ||
+				msg.type === "agent_stopped" ||
+				msg.type === "orchestration_completed"
+			) {
+				setActiveAgents((prev) => {
+					const next = new Set(prev);
+					next.delete(msg.taskId);
+					return next;
+				});
+			}
 		}
 
 		// Filter SSE events by taskId — only process events for the currently viewed session.
