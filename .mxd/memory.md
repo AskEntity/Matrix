@@ -219,3 +219,18 @@ Major rewrite: 286 insertions, 442 deletions (net -156 lines). 10 chapters + clo
 - Three Mutations chapter: test, architecture, intention.
 - "ASK — NEVER SILENTLY FALL BACK" elevated to boldest statement in prompt.
 - Adversarial testing with vivid example (PIN + top up scenario).
+
+
+## Verify Status + done_notified (2026-04-02)
+
+- "verify" added to TaskStatus union: draft → pending → in_progress → verify | passed | failed | closed
+- done("passed") will produce "verify" (Phase 2 commits it). done("failed") → "failed" (unchanged).
+- PersistentTaskNode status expanded: `"in_progress" | "verify" | "pending"`.
+- `done_notified` event type added to Event union. Persisted to JSONL. Crash-safe Phase 2 marker.
+- closeTaskOp: removed persistent rejection. verify→closed (regular), verify→pending (persistent). Rejects in_progress/pending/draft.
+- buildSessionRepair: TOOL_DONE skipped alongside TOOL_YIELD (not treated as orphans).
+- get_tree: persistent tasks show status when "verify", hide for in_progress/pending.
+- StatsResponse taskCounts includes `verify: number`.
+- AgentResult gets `doneSummary?: string` field.
+- Integration test TREE1 updated: must set status to passed/verify before close_task (pending now rejected).
+- Integration test persistent close: error message changed from "Cannot close persistent task" to "Cannot close a running task".

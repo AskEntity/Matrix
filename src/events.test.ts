@@ -11,7 +11,7 @@ import {
 	queueMessageToEvent,
 } from "./events.ts";
 import { eventsToOpenAIMessages } from "./openai-compatible-provider.ts";
-import { TOOL_YIELD } from "./tool-names.ts";
+import { TOOL_DONE, TOOL_YIELD } from "./tool-names.ts";
 
 describe("queueMessageToEvent", () => {
 	test("converts user message — body is the QueueMessage directly", () => {
@@ -3492,11 +3492,23 @@ describe("isPersistedByEmitEvent", () => {
 			"agent_stopped",
 			"messages_consumed",
 			"fork_marker",
+			"done_notified",
 		];
 		for (const type of persistedTypes) {
 			const event = { type, taskId: "test", ts: 1000 } as Event;
 			expect(isPersistedByEmitEvent(event)).toBe(true);
 		}
+	});
+
+	test("done_notified event is persisted", () => {
+		const event: Event = {
+			type: "done_notified",
+			status: "verify",
+			summary: "Task completed successfully",
+			taskId: "test",
+			ts: 1000,
+		};
+		expect(isPersistedByEmitEvent(event)).toBe(true);
 	});
 
 	test("covers all Event types (exhaustive switch ensures compile-time safety)", () => {
@@ -3529,6 +3541,7 @@ describe("isPersistedByEmitEvent", () => {
 			"compact_started",
 			"agent_stopped",
 			"messages_consumed",
+			"done_notified",
 		];
 		for (const type of allTypes) {
 			const event = { type, taskId: "test", ts: 1000 } as Event;
@@ -3595,6 +3608,20 @@ describe("buildSessionRepair", () => {
 				tool: TOOL_YIELD,
 				toolCallId: "tc-yield",
 				input: {},
+				taskId: "t1",
+				ts: 1000,
+			},
+		];
+		expect(buildSessionRepair(events, "t1")).toBeNull();
+	});
+
+	test("skips done tool_calls — not treated as orphans", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_DONE,
+				toolCallId: "tc-done",
+				input: { status: "passed", summary: "all good" },
 				taskId: "t1",
 				ts: 1000,
 			},

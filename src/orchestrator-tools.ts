@@ -388,8 +388,9 @@ export function createOrchestratorTools(
 								// Mark calling agent's node so it can discover its position
 								...(rest.id === currentTaskId ? { you: true } : {}),
 							};
-							// Persistent tasks have no lifecycle status
-							if (rest.persistent) delete node.status;
+							// Persistent tasks: show status only when it's "verify" (awaiting parent review)
+							if (rest.persistent && rest.status !== "verify")
+								delete node.status;
 							return node;
 						})
 					: nodes.map((n) => {
@@ -399,8 +400,9 @@ export function createOrchestratorTools(
 								children: filterChildren(n.children),
 								parentId: n.parentId,
 							};
-							// Only include status for non-persistent tasks
-							if (!n.persistent) node.status = n.status;
+							// Show status for non-persistent tasks, or persistent tasks in "verify" state
+							if (!n.persistent || n.status === "verify")
+								node.status = n.status;
 							return node;
 						});
 				return {

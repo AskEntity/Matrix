@@ -4,7 +4,7 @@ import {
 	createUserMessage,
 } from "./queue-message-factory.ts";
 import type { EventImageData, PendingState } from "./shared-types.ts";
-import { TOOL_YIELD } from "./tool-names.ts";
+import { TOOL_DONE, TOOL_YIELD } from "./tool-names.ts";
 
 export type { EventImageData, PendingState } from "./shared-types.ts";
 
@@ -198,6 +198,15 @@ export type Event =
 			targetDescription?: string;
 			taskId: string;
 			ts: number;
+	  }
+	| {
+			type: "done_notified";
+			/** The committed status after done() — "verify" for passed, "failed" for failed. */
+			status: "verify" | "failed";
+			/** The agent's summary text from done(). */
+			summary: string;
+			taskId: string;
+			ts: number;
 	  };
 
 /**
@@ -247,6 +256,7 @@ export function isPersistedByEmitEvent(event: Event): boolean {
 		case "agent_stopped":
 		case "messages_consumed":
 		case "fork_marker":
+		case "done_notified":
 			return true;
 
 		default: {
@@ -562,7 +572,7 @@ export function buildSessionRepair(
 	let hasDuplicates = false;
 	const orphanCallIds: string[] = [];
 	for (const [callId, tool] of toolCallTools) {
-		if (tool === TOOL_YIELD) continue;
+		if (tool === TOOL_YIELD || tool === TOOL_DONE) continue;
 		const resultCount = toolResultCounts.get(callId) ?? 0;
 		if (resultCount > 1) hasDuplicates = true;
 		if (resultCount === 0) orphanCallIds.push(callId);

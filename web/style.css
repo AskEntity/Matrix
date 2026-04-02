@@ -26,6 +26,7 @@
 	--color-pending: #6e7681;
 	--color-in-progress: #388bfd; /* blue */
 	--color-testing: #a371f7; /* purple */
+	--color-verify: #a371f7; /* purple — awaiting parent review */
 	--color-passed: #3fb950; /* green */
 	--color-failed: #f85149; /* red */
 	--color-stuck: #e3b341; /* orange/amber */
@@ -570,6 +571,9 @@ select {
 	animation: dot-pulse 1.5s ease-in-out infinite;
 }
 
+.status-dot-verify {
+	background: var(--color-verify);
+}
 .status-dot-passed {
 	background: var(--color-passed);
 }
@@ -1242,6 +1246,11 @@ select {
 	border-color: rgba(56, 139, 253, 0.3);
 }
 
+.mxd-status-badge.verify {
+	background: var(--bg-testing);
+	color: var(--color-verify);
+	border-color: rgba(163, 113, 247, 0.3);
+}
 .mxd-status-badge.passed {
 	background: var(--bg-passed);
 	color: var(--color-passed);
