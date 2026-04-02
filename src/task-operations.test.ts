@@ -474,7 +474,7 @@ describe("closeTaskOp", () => {
 		const task = tracker.addChild(tracker.rootNodeId, "Task", "", {
 			editedBy: "agent",
 		});
-		tracker.updateStatus(task.id, "passed");
+		tracker.updateStatus(task.id, "verify");
 
 		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
 
@@ -514,7 +514,7 @@ describe("closeTaskOp", () => {
 		const task = tracker.addChild(tracker.rootNodeId, "Passed", "", {
 			editedBy: "agent",
 		});
-		tracker.updateStatus(task.id, "passed");
+		tracker.updateStatus(task.id, "verify");
 
 		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
 

@@ -254,7 +254,6 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			pending: 0,
 			in_progress: 0,
 			verify: 0,
-			passed: 0,
 			failed: 0,
 			closed: 0,
 		};

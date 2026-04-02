@@ -276,9 +276,9 @@ export async function closeTaskOp(
 		);
 	}
 
-	if (node.status === "pending" || node.status === "draft") {
+	if (node.status !== "verify" && node.status !== "failed") {
 		throw new TaskOperationError(
-			`Cannot close a task with status "${node.status}".`,
+			`Cannot close a task with status "${node.status}". Only verify or failed tasks can be closed.`,
 		);
 	}
 

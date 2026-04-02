@@ -121,11 +121,7 @@ async function waitForDone(
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
 		const rootNode = tracker.get(rootNodeId);
-		if (
-			rootNode?.status === "passed" ||
-			rootNode?.status === "verify" ||
-			rootNode?.status === "failed"
-		) {
+		if (rootNode?.status === "verify" || rootNode?.status === "failed") {
 			return rootNode.status;
 		}
 		await new Promise((r) => setTimeout(r, 50));

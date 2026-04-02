@@ -39,9 +39,9 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 		? nodes.filter((n) => n.id !== rootNodeId)
 		: nodes;
 	const nodeCount = childNodes.length;
-	const passed = childNodes.filter((n) => n.status === "passed").length;
+	const passed = childNodes.filter((n) => n.status === "verify").length;
 	const done = childNodes.filter(
-		(n) => n.status === "passed" || n.status === "closed",
+		(n) => n.status === "verify" || n.status === "closed",
 	).length;
 	const failed = childNodes.filter((n) => n.status === "failed").length;
 	const inProgress = childNodes.filter(
