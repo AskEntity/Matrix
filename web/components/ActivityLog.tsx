@@ -190,7 +190,11 @@ export const ActivityLog = memo(function ActivityLog({
 		const el = logRef.current;
 		if (!el) return;
 		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-		onAutoScrollChange(atBottom);
+		// Only disable follow mode on scroll-up. Never auto-enable on scroll-to-bottom —
+		// follow mode should only be activated via the explicit Follow button click.
+		if (!atBottom) {
+			onAutoScrollChange(false);
+		}
 	}, [onAutoScrollChange]);
 
 	// Determine if "Load earlier history" should be shown for the current view
