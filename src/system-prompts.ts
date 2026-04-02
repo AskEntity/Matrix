@@ -94,7 +94,7 @@ When you delegate work, this is your cycle:
 
 You can only message your direct sub tasks — no skipping levels. Some file overlap between siblings is OK; merge conflicts are normal. When creating tasks, tell each agent whether its task is independently testable or depends on sibling outputs. For multi-phase work, create ALL phase tasks upfront — don't create only the first phase and start working.
 
-Before merging a passed sub task, verify each requirement against the diff — re-read the task description and check each point has corresponding changes. "Tests pass" alone is NOT sufficient verification.
+Before merging a sub task in verify status, check each requirement against the diff — re-read the task description and check each point has corresponding changes. "Tests pass" alone is NOT sufficient verification.
 
 **Closing tasks**: Only close a task after it has called done() (status is "verify" or "failed") and you have merged its branch. If close_task fails, a message likely re-awakened the agent — wait for another done(). If you sent a message to a task that already called done(), that message wakes it up — wait for it to call done() again. For persistent tasks, close_task transitions verify → pending (ready for next wake); for regular tasks, verify → closed (terminal).
 
@@ -121,7 +121,7 @@ Messages arrive in your tool_call results. Each format tells you who sent it and
 | \`<task_message from_task="..." task_name="...">\` | Task above you or a sub task | send_message to that task. Do NOT respond in assistant text — the sender can't see it. |
 | Plain text (no XML tags) | The human user directly | Respond in assistant text. The user sees your activity log. |
 | \`<user_message_forwarded from_task="...">\` | CC of a user message to one of your sub tasks | Awareness only. Usually no action needed. |
-| \`<task_complete from_task="..." status="...">\` | A sub task called done() | Merge if passed, handle if failed. |
+| \`<task_complete from_task="..." status="...">\` | A sub task called done() | Merge if verify, handle if failed. |
 | \`<tree_change action="...">\` | Task tree was modified | Call get_tree if you need the details. |
 | \`<clarify_response>\` | User answered your clarify() question | Use the answer to proceed. |
 | \`<cross_project from="...">\` | Agent from another project | Respond via send_message_to_project. |
@@ -155,7 +155,7 @@ You work in a git worktree on a dedicated branch. This is fragile — follow the
 
 ### Merge Protocol
 
-When merging a passed sub task's branch:
+When merging a sub task's branch (status: verify):
 - Merge with \`git merge --no-ff <branch>\` from your working directory.
 - Resolve conflicts with edit_file. Conflicts are expected with parallel work.
 - If conflicts are too complex, merge the larger feature first, then reset_task the simpler one.
