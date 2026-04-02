@@ -1808,6 +1808,43 @@ describe("addMessagesCacheControl", () => {
 		// Should still have exactly one cache_control (not duplicated)
 		expect(cached[0]?.cache_control).toEqual({ type: "ephemeral" });
 	});
+
+	test("with '1h' TTL — includes ttl field on cache_control", () => {
+		const messages: MessageParam[] = [
+			{ role: "user", content: "first user message" },
+			{ role: "assistant", content: "first assistant reply" },
+			{ role: "user", content: "second user message" },
+			{ role: "assistant", content: "second assistant reply" },
+			{ role: "user", content: "current user message" },
+		];
+		const result = addMessagesCacheControl(messages, "1h");
+
+		const secondToLastUser = result[2];
+		expect(Array.isArray(secondToLastUser?.content)).toBe(true);
+		const content = secondToLastUser?.content as TextBlockParam[];
+		expect(content[0]?.cache_control).toEqual({
+			type: "ephemeral",
+			ttl: "1h",
+		});
+	});
+
+	test("with undefined TTL — no ttl field on cache_control (default 5min)", () => {
+		const messages: MessageParam[] = [
+			{ role: "user", content: "first" },
+			{ role: "assistant", content: "reply1" },
+			{ role: "user", content: "second" },
+			{ role: "assistant", content: "reply2" },
+			{ role: "user", content: "current" },
+		];
+		const result = addMessagesCacheControl(messages, undefined);
+
+		const secondToLastUser = result[2];
+		expect(Array.isArray(secondToLastUser?.content)).toBe(true);
+		const content = secondToLastUser?.content as TextBlockParam[];
+		// No ttl field — just type: "ephemeral" (Anthropic default 5min)
+		expect(content[0]?.cache_control).toEqual({ type: "ephemeral" });
+		expect(content[0]?.cache_control).not.toHaveProperty("ttl");
+	});
 });
 
 describe("done tool", () => {

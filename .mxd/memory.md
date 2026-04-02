@@ -244,20 +244,22 @@ When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provide
 - Root agents no longer block in waitForQueueMessages after done() — loop exits immediately.
 - Background processes may be killed by cleanup before completing after done().
 - closeTaskOp now rejects pending/draft status — tests must set passed/verify before close_task.
-- **Late message re-launch**: After done(), messages arriving during shutdown (between queue.close and session clear) get persisted to JSONL but can't trigger auto-launch (session still set). Fixed: finally block checks for unconsumed messages after session clear and re-launches for done exits only (verify/failed status). NOT for interrupted exits — those leave unconsumed messages intentionally.
+- **Phase 2 ordering is critical**: session=null is the irreversibility boundary. Phase 2 (status update, parent notification) runs AFTER session cleanup, not before. Before session=null: late messages → relaunch (reversible). After session=null: commit verify + notify parent (irreversible). No race window.
 
 ## Domain Owner Routing Rules
 
-Route by **domain**, not by **file**:
-- **Design Philosophy** → design principles, prompt structure/style. **System Prompt** sub-domain for prompt text coherence.
-- **Task System Design** → task model, status machine, messaging rules, persistent model
-- **Agent Loop** → runtime: provider loop, done/yield, start/stop, JSONL repair. **Lifecycle** for done() implementation, **Runtime** for tools/streaming/compaction
-- **User Interaction** → **Web UI** for frontend, **CLI** for command line
-
-Key principle: **whoever introduces a change owns ALL consequences** (prompt, UI, tests, docs). File ownership is by change origin, not filename.
-
-Domain owners NEVER write code — they manage and understand. Delegate everything, even small tasks.
+Route by **domain**, not by **file**. Key principle: **whoever introduces a change owns ALL consequences** (prompt, UI, tests, docs). Domain owners NEVER write code — they manage and understand. Delegate everything.
 
 ## Two-Phase Done() (merged 2026-04-02)
 
-23 files, +1489/-795. done() → verify status, close_task unified (persistent→pending, regular→closed), Phase 2 in runAgentForNode, crash recovery, late message re-launch in finally block. 1145 tests pass.
+23 files, +1489/-795. done() → verify status, close_task unified (persistent→pending, regular→closed), Phase 2 in runAgentForNode after session cleanup, crash recovery. 1145 tests pass.
+
+## Cache TTL for Persistent Tasks (2026-04-02)
+
+- `SessionConfigEvent.cacheTtl?: "1h"` — stored in session_config, inherited via fork.
+- Root + persistent = `"1h"`, regular children = `undefined` (5min default).
+- On resume, `cacheTtl` from stored session_config (not recomputed) — preserves fork inheritance.
+- ALL breakpoints (system, tools, messages) use consistent TTL. `extended-cache-ttl-2025-04-11` beta header per-request when 1h.
+- `{type: "ephemeral"}` and `{type: "ephemeral", ttl: "1h"}` are DIFFERENT cache entries — TTL is part of prefix identity.
+- `AgentRequest.isOrchestrator` replaced with `cacheTtl?: "1h"`. Same on ProviderAdapter.callAPI.
+- Prefix validation: system+tools strict JSON compare; message breakpoint position can move but value must match; all other messages compared with cache_control included.

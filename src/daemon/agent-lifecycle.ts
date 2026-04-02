@@ -69,12 +69,14 @@ function buildSessionConfig(
 	systemPrompt: SystemPrompt,
 	tools: unknown[],
 	taskId: string,
+	cacheTtl?: "1h",
 ): SessionConfigEvent {
 	return {
 		type: "session_config",
 		tools,
 		systemStable: systemPrompt.stable,
 		systemVariable: systemPrompt.variable,
+		...(cacheTtl ? { cacheTtl } : {}),
 		taskId,
 		ts: Date.now(),
 	};
@@ -609,6 +611,8 @@ export async function runAgentForNode(
 
 	const mcpManager = new McpClientManager();
 	let ownSession: TaskSession | undefined;
+	// Declared outside try so Phase 2 (after finally) can access the result.
+	let agentResult: AgentResult | undefined;
 	try {
 		// Compute depth from the tree
 		const depth = computeDepth(tracker, nodeId);
@@ -732,10 +736,18 @@ export async function runAgentForNode(
 			ts: Date.now(),
 		});
 
+		// Cache TTL: root + persistent tasks get 1h, regular children get default 5min.
+		// On resume, inherit from stored session_config (fork copies this automatically).
+		const cacheTtl: "1h" | undefined =
+			isRoot || node.persistent ? "1h" : undefined;
+
 		// Resolve system prompt: use stored session_config on resume, fresh on start.
 		const isResume = activeEvents.length > 0;
 		const storedConfig = isResume ? findSessionConfig(activeEvents) : undefined;
 		let systemPrompt: SystemPrompt;
+		// On resume, use cacheTtl from stored config (preserves fork inheritance).
+		// On fresh start, use computed cacheTtl.
+		const effectiveCacheTtl = storedConfig?.cacheTtl ?? cacheTtl;
 		if (storedConfig) {
 			// Resume: use frozen system prompt from JSONL for cache stability
 			systemPrompt = {
@@ -752,7 +764,12 @@ export async function runAgentForNode(
 			} else {
 				systemPrompt = buildSystemPrompt();
 			}
-			const configEvt = buildSessionConfig(systemPrompt, [], nodeId);
+			const configEvt = buildSessionConfig(
+				systemPrompt,
+				[],
+				nodeId,
+				effectiveCacheTtl,
+			);
 			emitEvent(ctx, project.id, { ...configEvt, taskId: nodeId });
 			activeEvents = [configEvt, ...activeEvents];
 		}
@@ -775,7 +792,7 @@ export async function runAgentForNode(
 			hasRunningChildren: agentCtx.hasRunningChildren,
 			buildYieldPendingSection: agentCtx.buildYieldPendingSection,
 			getSession,
-			isOrchestrator: isRoot,
+			cacheTtl: effectiveCacheTtl,
 
 			signal: abortController.signal,
 			queue: childQueue,
@@ -783,7 +800,6 @@ export async function runAgentForNode(
 
 		// Root agents: stream directly — done() enters idle-yield, session stays alive.
 		// Child agents: runChildCore adds done() detection — queue close on done.
-		let agentResult: AgentResult;
 		if (isRoot) {
 			const stream = agentCtx.provider.stream(sessionRequest);
 			let result = await stream.next();
@@ -819,57 +835,6 @@ export async function runAgentForNode(
 				budgetUsd: updatedNode.budgetUsd,
 				ts: Date.now(),
 			});
-		}
-
-		// ── Phase 2 of two-phase done() ──
-		// The provider loop exited with a done exit reason. The agent's tool handler
-		// only closed the queue — status update and parent notification happen here,
-		// after the loop is dead and no more tool calls can race.
-		// If done() was NOT called, the agent was interrupted (stop, reset, error,
-		// queue close, daemon restart). Status stays in_progress — agent is resumable.
-		if (
-			agentResult.exitReason === "done_passed" ||
-			agentResult.exitReason === "done_failed"
-		) {
-			const currentNode = tracker.get(nodeId);
-			if (currentNode) {
-				const newStatus =
-					agentResult.exitReason === "done_passed" ? "verify" : "failed";
-				tracker.updateStatus(nodeId, newStatus);
-				await tracker.save();
-				broadcastTreeUpdate(ctx, project.id, tracker);
-
-				// Deliver task_complete to parent (child agents only)
-				if (currentNode.parentId && !isRoot) {
-					const completionMsg = createTaskComplete(
-						nodeId,
-						currentNode.title ?? "unknown",
-						agentResult.exitReason === "done_passed",
-						agentResult.doneSummary ?? "",
-					);
-					deliverMessage(
-						ctx,
-						project,
-						currentNode.parentId,
-						completionMsg,
-					).catch((e) => {
-						console.warn(
-							`[Phase 2] Failed to deliver task_complete to parent ${currentNode.parentId}:`,
-							e,
-						);
-					});
-				}
-
-				// Write done_notified marker — crash-safe confirmation that Phase 2 completed.
-				// On crash recovery, if this event exists, Phase 2 was already committed.
-				emitEvent(ctx, project.id, {
-					type: "done_notified",
-					taskId: nodeId,
-					status: newStatus,
-					summary: agentResult.doneSummary ?? "",
-					ts: Date.now(),
-				});
-			}
 		}
 
 		// Root agent: emit orchestration_completed with aggregated costs
@@ -951,35 +916,83 @@ export async function runAgentForNode(
 				taskId: nodeId,
 				ts: Date.now(),
 			});
+		}
+	}
 
-			// Check for messages that arrived during the done() shutdown window
-			// (between queue.close in done() and session clear here). These were
-			// persisted to JSONL by deliverMessage but couldn't be enqueued (queue
-			// closed) and couldn't trigger auto-launch (session was still set).
-			// Only check after done() exits — interrupted agents leave unconsumed
-			// messages intentionally (they'll be consumed on next resume).
-			const doneStatus = finalNode?.status;
-			if (
-				(doneStatus === "verify" || doneStatus === "failed") &&
-				finalNode &&
-				!isRoot
-			) {
-				const eventStore = getEventStore(ctx, project.id);
-				if (eventStore.has(nodeId)) {
-					await eventStore.flushSession(nodeId);
-					const events = eventStore.readActive(nodeId);
-					const unconsumed = findUnconsumedMessages(events);
-					if (unconsumed.length > 0) {
-						ensureChildAgentRunning(ctx, project, tracker, nodeId).catch(
-							(e) => {
-								console.warn(
-									`[finally] Failed to re-launch ${nodeId} for late messages:`,
-									e instanceof Error ? e.message : String(e),
-								);
-							},
-						);
-					}
+	// ── Phase 2 of two-phase done() ──
+	// Runs AFTER session cleanup (finally block). Session is now null, so any
+	// deliverMessage triggered by our task_complete to parent will correctly see
+	// session=null and launch a new agent if the parent sends a follow-up message.
+	//
+	// Before committing done, check for late messages that arrived during shutdown
+	// (between queue.close in done() and session clear in finally). If found,
+	// re-launch the agent to process them — done didn't actually complete.
+	const isDoneExit =
+		agentResult != null &&
+		(agentResult.exitReason === "done_passed" ||
+			agentResult.exitReason === "done_failed");
+	if (isDoneExit && agentResult) {
+		const currentNode = tracker.get(nodeId);
+		if (currentNode) {
+			// Check for late messages before committing Phase 2
+			const eventStore = getEventStore(ctx, project.id);
+			let hasLateMessages = false;
+			if (!isRoot && eventStore.has(nodeId)) {
+				await eventStore.flushSession(nodeId);
+				const events = eventStore.readActive(nodeId);
+				const unconsumed = findUnconsumedMessages(events);
+				if (unconsumed.length > 0) {
+					hasLateMessages = true;
 				}
+			}
+
+			if (hasLateMessages) {
+				// Late messages arrived — don't commit done. Re-launch agent to
+				// process them. The agent will see the messages and decide again.
+				ensureChildAgentRunning(ctx, project, tracker, nodeId).catch((e) => {
+					console.warn(
+						`[Phase 2] Re-launching ${nodeId} for late messages:`,
+						e instanceof Error ? e.message : String(e),
+					);
+				});
+			} else {
+				// No late messages — commit done.
+				const newStatus =
+					agentResult.exitReason === "done_passed" ? "verify" : "failed";
+				tracker.updateStatus(nodeId, newStatus);
+				await tracker.save();
+				broadcastTreeUpdate(ctx, project.id, tracker);
+
+				// Deliver task_complete to parent (child agents only)
+				if (currentNode.parentId && !isRoot) {
+					const completionMsg = createTaskComplete(
+						nodeId,
+						currentNode.title ?? "unknown",
+						agentResult.exitReason === "done_passed",
+						agentResult.doneSummary ?? "",
+					);
+					deliverMessage(
+						ctx,
+						project,
+						currentNode.parentId,
+						completionMsg,
+					).catch((e) => {
+						console.warn(
+							`[Phase 2] Failed to deliver task_complete to parent ${currentNode.parentId}:`,
+							e,
+						);
+					});
+				}
+
+				// Write done_notified marker — crash-safe confirmation that Phase 2 completed.
+				// On crash recovery, if this event exists, Phase 2 was already committed.
+				emitEvent(ctx, project.id, {
+					type: "done_notified",
+					taskId: nodeId,
+					status: newStatus,
+					summary: agentResult.doneSummary ?? "",
+					ts: Date.now(),
+				});
 			}
 		}
 	}

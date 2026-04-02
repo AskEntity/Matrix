@@ -387,9 +387,17 @@ function createAnthropicAdapter(
 			const messages = params.messages as MessageParam[];
 			const tools = params.tools as Tool[];
 
-			// Cache control: system prompt split into stable + variable for optimal caching.
+			// Cache control: all breakpoints use consistent TTL from session_config.
+			// Root + persistent: "1h" (long-lived). Regular children: undefined (default 5min).
+			// Anthropic requires longer TTLs before shorter TTLs in the same request.
+			// With consistent TTL, all breakpoints use the same value — no ordering issues.
+			const cacheControl = params.cacheTtl
+				? ({ type: "ephemeral" as const, ttl: params.cacheTtl } as const)
+				: ({ type: "ephemeral" as const } as const);
+
+			// System prompt split into stable + variable for optimal caching.
 			// Stable part is shared by ALL agents — auto-hits via Anthropic's 20-block lookback.
-			// Variable part (role + date) gets its own 1h cache breakpoint.
+			// Variable part (role + date) gets its own cache breakpoint.
 			// OAuth mode adds Claude Code preamble as a separate block.
 			const { stable, variable } = params.systemPrompt;
 			const systemBlocks: TextBlockParam[] = useOAuth
@@ -397,7 +405,7 @@ function createAnthropicAdapter(
 						{
 							type: "text",
 							text: "You are Claude Code, Anthropic's official CLI for Claude.",
-							cache_control: { type: "ephemeral", ttl: "1h" },
+							cache_control: cacheControl,
 						},
 						// Stable part — shared across all agents, auto-cached via lookback
 						...(stable ? [{ type: "text" as const, text: stable }] : []),
@@ -407,10 +415,7 @@ function createAnthropicAdapter(
 									{
 										type: "text" as const,
 										text: variable,
-										cache_control: {
-											type: "ephemeral" as const,
-											ttl: "1h" as const,
-										},
+										cache_control: cacheControl,
 									},
 								]
 							: []),
@@ -422,7 +427,7 @@ function createAnthropicAdapter(
 						{
 							type: "text",
 							text: variable || "(no variable prompt)",
-							cache_control: { type: "ephemeral", ttl: "1h" },
+							cache_control: cacheControl,
 						},
 					];
 
@@ -431,17 +436,16 @@ function createAnthropicAdapter(
 				tools.length > 0
 					? tools.map((tool, i) =>
 							i === tools.length - 1
-								? { ...tool, cache_control: { type: "ephemeral", ttl: "1h" } }
+								? { ...tool, cache_control: cacheControl }
 								: tool,
 						)
 					: tools;
 
-			// Cache control: add a cache breakpoint at the second-to-last user message
-			// Orchestrator sessions use 1h TTL (long-lived, stable conversations).
-			// Child agent sessions use default 5m TTL (shorter-lived).
+			// Cache control: add a cache breakpoint at the second-to-last user message.
+			// Uses same TTL as system/tools for consistency.
 			const messagesWithCache = addMessagesCacheControl(
 				messages,
-				params.isOrchestrator ? "1h" : undefined,
+				params.cacheTtl,
 			);
 
 			const createParams = {
@@ -468,13 +472,25 @@ function createAnthropicAdapter(
 			let response: Anthropic.Messages.Message | undefined;
 			for (let attempt = 0; attempt < 5; attempt++) {
 				try {
-					const requestOpts = params.signal
-						? { signal: params.signal }
-						: undefined;
+					// Build request options: abort signal + extended cache TTL header
+					const requestOpts: Record<string, unknown> = {};
+					if (params.signal) requestOpts.signal = params.signal;
+					// 1h cache TTL requires the extended-cache-ttl beta header
+					if (params.cacheTtl === "1h") {
+						requestOpts.headers = {
+							"anthropic-beta": "extended-cache-ttl-2025-04-11",
+						};
+					}
 					const stream = useOAuth
 						? // biome-ignore lint/suspicious/noExplicitAny: beta types are compatible but not identical
-							(client.beta.messages as any).stream(createParams, requestOpts)
-						: client.messages.stream(createParams, requestOpts);
+							(client.beta.messages as any).stream(
+								createParams,
+								Object.keys(requestOpts).length > 0 ? requestOpts : undefined,
+							)
+						: client.messages.stream(
+								createParams,
+								Object.keys(requestOpts).length > 0 ? requestOpts : undefined,
+							);
 
 					// Stream text and thinking deltas to UI (throttled to ~12 yields/sec)
 					let textBuffer = "";
