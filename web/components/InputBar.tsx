@@ -39,6 +39,8 @@ export const InputBar = memo(function InputBar({
 
 	// When targetNodeId changes, save current draft and load new task's draft
 	const prevTargetRef = useRef(targetNodeId);
+	const targetRef = useRef(targetNodeId);
+	targetRef.current = targetNodeId;
 	useEffect(() => {
 		if (prevTargetRef.current === targetNodeId) return;
 		// Save current draft for previous target
@@ -81,25 +83,28 @@ export const InputBar = memo(function InputBar({
 		}
 	}, [prompt, slashFilteredCommands]);
 
-	// localStorage draft save with 2s debounce
+	// localStorage draft save with 2s debounce.
+	// Uses targetRef (not targetNodeId in deps) to avoid saving stale prompt
+	// to wrong task key during the render where targetNodeId changed but
+	// setPrompt hasn't taken effect yet.
 	useEffect(() => {
-		const key = draftKey(targetNodeId);
 		const timer = setTimeout(() => {
+			const key = draftKey(targetRef.current);
 			if (prompt) localStorage.setItem(key, prompt);
 			else localStorage.removeItem(key);
 		}, 2000);
 		return () => clearTimeout(timer);
-	}, [prompt, targetNodeId]);
+	}, [prompt]);
 
 	// Save draft on page unload
 	useEffect(() => {
 		const handler = () => {
-			const key = draftKey(targetNodeId);
+			const key = draftKey(targetRef.current);
 			if (prompt) localStorage.setItem(key, prompt);
 		};
 		window.addEventListener("beforeunload", handler);
 		return () => window.removeEventListener("beforeunload", handler);
-	}, [prompt, targetNodeId]);
+	}, [prompt]);
 
 	function adjustTextareaHeight() {
 		const el = textareaRef.current;
@@ -144,9 +149,9 @@ export const InputBar = memo(function InputBar({
 			onSend(prompt.trim(), images);
 			setPrompt("");
 			setAttachedImages([]);
-			localStorage.removeItem(draftKey(targetNodeId));
+			localStorage.removeItem(draftKey(targetRef.current));
 		},
-		[prompt, attachedImages, projectId, onSend, targetNodeId],
+		[prompt, attachedImages, projectId, onSend],
 	);
 
 	return (
