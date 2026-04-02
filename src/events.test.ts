@@ -3615,6 +3615,144 @@ describe("buildSessionRepair", () => {
 		expect(buildSessionRepair(events, "t1")).toBeNull();
 	});
 
+	test("repairs earlier yield orphan when a later yield is the intended orphan", () => {
+		// API returned two yield tool_calls in same turn. First yield got a result,
+		// but the second yield (tc-yield2) never got one. Then a third yield (tc-yield3)
+		// is the intended orphan (last tool_call, no result = resume state).
+		// buildSessionRepair should repair tc-yield2 but skip tc-yield3.
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield1",
+				input: {},
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield2",
+				input: {},
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_result",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield1",
+				content: "## Pending\n...",
+				isError: false,
+				taskId: "t1",
+				ts: 2000,
+			},
+			// tc-yield2 has NO result — genuine orphan
+			// Agent continues working...
+			{
+				type: "tool_call",
+				tool: "bash",
+				toolCallId: "tc-bash",
+				input: {},
+				taskId: "t1",
+				ts: 3000,
+			},
+			{
+				type: "tool_result",
+				tool: "bash",
+				toolCallId: "tc-bash",
+				content: "ok",
+				isError: false,
+				taskId: "t1",
+				ts: 3001,
+			},
+			// Agent yields again — this is the intended orphan
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield3",
+				input: {},
+				taskId: "t1",
+				ts: 4000,
+			},
+		];
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).not.toBeNull();
+		// Should repair tc-yield2 (orphan) but NOT tc-yield3 (intended orphan)
+		expect(repair?.appendEvents.length).toBe(1);
+		expect((repair?.appendEvents[0] as { toolCallId: string }).toolCallId).toBe(
+			"tc-yield2",
+		);
+		expect((repair?.appendEvents[0] as { isError: boolean }).isError).toBe(
+			true,
+		);
+		// No truncation
+		expect(repair?.truncateAfterIndex).toBe(events.length - 1);
+	});
+
+	test("repairs duplicate yield orphan from same turn (production bug scenario)", () => {
+		// Exact production scenario: API returned 2 yields in same turn.
+		// Only first got a tool_result. Second is orphaned.
+		// Later the agent stopped (429) and restarted. The second yield orphan
+		// should be repaired so the agent can resume.
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield-first",
+				input: {},
+				taskId: "t1",
+				ts: 1000,
+			},
+			{
+				type: "tool_call",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield-second",
+				input: {},
+				taskId: "t1",
+				ts: 1000, // same timestamp — same turn
+			},
+			{
+				type: "tool_result",
+				tool: TOOL_YIELD,
+				toolCallId: "tc-yield-first",
+				content: "## Pending\n...",
+				isError: false,
+				taskId: "t1",
+				ts: 2000,
+			},
+			// tc-yield-second has NO result
+			// Agent continued, then later stopped (429)
+			{
+				type: "tool_call",
+				tool: "search",
+				toolCallId: "tc-search",
+				input: {},
+				taskId: "t1",
+				ts: 3000,
+			},
+			{
+				type: "tool_result",
+				tool: "search",
+				toolCallId: "tc-search",
+				content: "results",
+				isError: false,
+				taskId: "t1",
+				ts: 3001,
+			},
+		];
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).not.toBeNull();
+		// Should repair tc-yield-second (the orphan). tc-search is the last tool_call
+		// but it has a result, so it's not an orphan.
+		expect(repair?.appendEvents.length).toBe(1);
+		expect((repair?.appendEvents[0] as { toolCallId: string }).toolCallId).toBe(
+			"tc-yield-second",
+		);
+		expect((repair?.appendEvents[0] as { isError: boolean }).isError).toBe(
+			true,
+		);
+	});
+
 	test("skips done tool_calls — not treated as orphans", () => {
 		const events: Event[] = [
 			{

@@ -1514,8 +1514,47 @@ export async function* runProviderLoop(
 		const hasOtherTools = otherToolUses.length > 0;
 
 		// Yield alone: loop-level pause (existing behavior)
+		// If API returned multiple yield calls in same turn, first one wins —
+		// extras get no-op tool_results to prevent orphans.
 		if (yieldToolUse && !hasOtherTools && !doneToolUse) {
 			pendingYieldToolCall = { id: yieldToolUse.id, name: yieldToolUse.name };
+
+			// Handle duplicate yield calls in same turn
+			const extraYields = toolUses.filter(
+				(tu) => tu.name === TOOL_YIELD && tu.id !== yieldToolUse.id,
+			);
+			if (extraYields.length > 0) {
+				const extraResults = extraYields.map(() => ({
+					content:
+						"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
+					isError: false,
+				}));
+				const extraToolResultMsgs = adapter.buildToolResultsMessage({
+					toolUses: extraYields,
+					execResults: extraResults,
+					cancellationQueueMsgs: [],
+					cancellationFormatted: "",
+				});
+				for (const msg of extraToolResultMsgs) {
+					messages.push(msg);
+				}
+				// Emit tool_results to JSONL for the extra yields
+				for (let i = 0; i < extraYields.length; i++) {
+					const tu = extraYields[i];
+					if (!tu) continue;
+					const evt: Event = {
+						type: "tool_result" as const,
+						tool: tu.name,
+						toolCallId: tu.id,
+						content: extraResults[i]?.content ?? "",
+						isError: false,
+						taskId: "",
+						ts: Date.now(),
+					};
+					if (emit) emit(evt);
+				}
+			}
+
 			continue;
 		}
 
