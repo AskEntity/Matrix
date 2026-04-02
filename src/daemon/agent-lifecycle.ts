@@ -833,12 +833,9 @@ export async function runAgentForNode(
 		) {
 			const currentNode = tracker.get(nodeId);
 			if (currentNode) {
-				// Update status (skip for persistent tasks — they stay in_progress)
-				if (!currentNode.persistent) {
-					const newStatus =
-						agentResult.exitReason === "done_passed" ? "verify" : "failed";
-					tracker.updateStatus(nodeId, newStatus);
-				}
+				const newStatus =
+					agentResult.exitReason === "done_passed" ? "verify" : "failed";
+				tracker.updateStatus(nodeId, newStatus);
 				await tracker.save();
 				broadcastTreeUpdate(ctx, project.id, tracker);
 
@@ -862,6 +859,16 @@ export async function runAgentForNode(
 						);
 					});
 				}
+
+				// Write done_notified marker — crash-safe confirmation that Phase 2 completed.
+				// On crash recovery, if this event exists, Phase 2 was already committed.
+				emitEvent(ctx, project.id, {
+					type: "done_notified",
+					taskId: nodeId,
+					status: newStatus,
+					summary: agentResult.doneSummary ?? "",
+					ts: Date.now(),
+				});
 			}
 		}
 
