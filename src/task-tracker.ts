@@ -57,10 +57,17 @@ export class TaskTracker {
 					(node as unknown as TaskNode).persistent = false;
 				} else if (p === "reset" || p === "continue" || p === true) {
 					(node as unknown as TaskNode).persistent = true;
-					// Persistent tasks always have status "in_progress" internally
-					node.status = "in_progress";
+					// Migration: "reset"/"continue" → true. Keep existing status from disk.
+					// Only force in_progress for old format ("reset"/"continue") that had no real status.
+					if (p === "reset" || p === "continue") {
+						node.status = "in_progress";
+					}
 				} else {
 					(node as unknown as TaskNode).persistent = false;
+				}
+				// Migrate: "passed" → "verify" (two-phase done() lifecycle)
+				if ((node.status as string) === "passed") {
+					node.status = "verify";
 				}
 				this.nodes.set(node.id, node as unknown as TaskNode);
 			}
@@ -455,9 +462,8 @@ export class TaskTracker {
 				existing.title = def.title;
 				existing.description = def.description;
 				if (def.color !== undefined) existing.color = def.color;
-				// Ensure persistent flag and status are correct
+				// Ensure persistent flag is correct (status preserved from tree.json)
 				(existing as { persistent: boolean }).persistent = true;
-				existing.status = "in_progress";
 			} else {
 				// New persistent task — always in_progress internally
 				const now = new Date().toISOString();

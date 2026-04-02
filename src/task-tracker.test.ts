@@ -72,10 +72,10 @@ describe("TaskTracker", () => {
 		const parent = tracker.addTask("App", "desc");
 		const c1 = tracker.addChild(parent.id, "A", "a");
 		const c2 = tracker.addChild(parent.id, "B", "b");
-		tracker.updateStatus(c1.id, "passed");
+		tracker.updateStatus(c1.id, "verify");
 		tracker.updateStatus(c2.id, "in_progress");
 
-		expect(tracker.byStatus("passed")).toHaveLength(1);
+		expect(tracker.byStatus("verify")).toHaveLength(1);
 		expect(tracker.byStatus("in_progress")).toHaveLength(1);
 		expect(tracker.byStatus("pending")).toHaveLength(2); // parent + root node
 	});
@@ -418,7 +418,8 @@ describe("TaskTracker", () => {
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
 		expect(tracker2.get(task.id)?.persistent).toBe(true);
-		expect(tracker2.get(task.id)?.status).toBe("in_progress");
+		// Status preserved from disk (pending from addTask) — not forced to in_progress
+		expect(tracker2.get(task.id)?.status).toBe("pending");
 	});
 
 	test("legacy 'reset'/'continue' migrated to true on load", async () => {
@@ -553,8 +554,55 @@ describe("TaskTracker", () => {
 		expect(node.title).toBe("Updated Title");
 		expect(node.description).toBe("Updated description");
 		expect(node.persistent).toBe(true);
-		expect(node.status).toBe("in_progress"); // Persistent tasks always in_progress
+		expect(node.status).toBe("in_progress"); // Status preserved from tree.json
 		expect(node.costUsd).toBe(1.5); // Cost preserved from tree.json
+
+		await rm(projectDir, { recursive: true });
+	});
+
+	test("persistent task status preserved across reload (not forced to in_progress)", async () => {
+		const { mkdir: mkdirAsync, writeFile: writeFileAsync } = await import(
+			"node:fs/promises"
+		);
+		const projectDir = await mkdtemp(join(tmpdir(), "mxd-project-"));
+		const tasksDir = join(projectDir, ".mxd", "tasks");
+		await mkdirAsync(tasksDir, { recursive: true });
+
+		const taskId = "01TESTSTATUSPRESERVE";
+		await writeFileAsync(
+			join(tasksDir, `${taskId}.json`),
+			JSON.stringify({
+				title: "Domain Owner",
+				description: "Persistent task",
+			}),
+		);
+
+		// Create tree.json with persistent node in "pending" status
+		// (this happens after close_task: verify → pending)
+		const rootId = tracker.rootNodeId;
+		tracker.addChild(rootId, "placeholder", "placeholder", {
+			persistent: true,
+			id: taskId,
+		});
+		tracker.updateStatus(taskId, "pending");
+		await tracker.save();
+
+		// Reload with project path — status should stay "pending", NOT be forced to "in_progress"
+		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker2.load(undefined, projectDir);
+
+		const node = tracker2.get(taskId) as TaskNode;
+		expect(node.title).toBe("Domain Owner"); // Refreshed from json
+		expect(node.persistent).toBe(true);
+		expect(node.status).toBe("pending"); // NOT "in_progress"
+
+		// Also verify "verify" status is preserved
+		tracker2.updateStatus(taskId, "verify");
+		await tracker2.save();
+
+		const tracker3 = new TaskTracker(join(tempDir, "tree.json"));
+		await tracker3.load(undefined, projectDir);
+		expect(tracker3.get(taskId)?.status).toBe("verify");
 
 		await rm(projectDir, { recursive: true });
 	});
@@ -691,7 +739,7 @@ describe("Persistent task behavior", () => {
 	test("regular task: close sets status to closed", async () => {
 		const rootId = tracker.rootNodeId;
 		const task = tracker.addChild(rootId, "Regular task", "one-off work");
-		tracker.updateStatus(task.id, "passed");
+		tracker.updateStatus(task.id, "verify");
 
 		writeTestEvents(task.id);
 		await eventStore.flush();

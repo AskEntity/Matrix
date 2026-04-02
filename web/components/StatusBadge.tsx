@@ -7,7 +7,6 @@ export function statusDotClass(status: TaskStatus): string {
 		pending: "status-dot-pending",
 		in_progress: "status-dot-in_progress",
 		verify: "status-dot-verify",
-		passed: "status-dot-passed",
 		failed: "status-dot-failed",
 		closed: "status-dot-closed",
 	};

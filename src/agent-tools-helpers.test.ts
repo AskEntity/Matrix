@@ -147,7 +147,7 @@ describe("buildTaskPrompt", () => {
 			id: "task-2",
 			parentId: "parent-1",
 			title: "Done Sibling",
-			status: "passed",
+			status: "verify",
 		});
 		const sibling2 = makeNode({
 			id: "task-3",
@@ -163,7 +163,7 @@ describe("buildTaskPrompt", () => {
 			"",
 		);
 		expect(result).toContain("Already completed siblings");
-		expect(result).toContain("Done Sibling (passed)");
+		expect(result).toContain("Done Sibling (verify)");
 		expect(result).not.toContain("Pending Sibling");
 	});
 

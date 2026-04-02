@@ -12,8 +12,7 @@ const STATUS_PRIORITY: Record<TaskStatus, number> = {
 	draft: 2,
 	pending: 3,
 	failed: 4,
-	passed: 5,
-	closed: 6,
+	closed: 5,
 };
 
 /** Stable sort by status priority, preserving relative order within same status. */
@@ -131,7 +130,7 @@ export const TaskTree = memo(function TaskTree({
 		const hidden = new Set<string>();
 		// First pass: mark completed nodes
 		for (const node of nodes) {
-			if (node.status === "closed" || node.status === "passed") {
+			if (node.status === "closed" || node.status === "verify") {
 				hidden.add(node.id);
 			}
 		}
