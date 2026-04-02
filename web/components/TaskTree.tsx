@@ -8,11 +8,12 @@ import { statusDotClass } from "./StatusBadge.tsx";
 /** Sort priority: lower = shown first */
 const STATUS_PRIORITY: Record<TaskStatus, number> = {
 	in_progress: 0,
-	draft: 1,
-	pending: 2,
-	failed: 3,
-	passed: 4,
-	closed: 5,
+	verify: 1,
+	draft: 2,
+	pending: 3,
+	failed: 4,
+	passed: 5,
+	closed: 6,
 };
 
 /** Stable sort by status priority, preserving relative order within same status. */

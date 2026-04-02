@@ -1,11 +1,12 @@
 import type { MessageQueue } from "./message-queue.ts";
 import type { BackgroundProcess } from "./tools/bash.ts";
 
-/** Task status follows the lifecycle: draft → pending → in_progress → passed | failed | closed */
+/** Task status follows the lifecycle: draft → pending → in_progress → verify | passed | failed | closed */
 export type TaskStatus =
 	| "draft"
 	| "pending"
 	| "in_progress"
+	| "verify"
 	| "passed"
 	| "failed"
 	| "closed";
@@ -63,13 +64,13 @@ export interface RegularTaskNode extends BaseTaskNode {
 }
 
 /**
- * Persistent task node. Always in_progress internally.
- * Definition stored in `.mxd/tasks/<id>.json` (git-tracked).
- * close_task/reset_task are rejected. done() doesn't change status. Session preserved.
+ * Persistent task node. Definition stored in `.mxd/tasks/<id>.json` (git-tracked).
+ * reset_task is rejected. done() doesn't change status directly.
+ * close_task transitions verify→pending. Session preserved across done().
  */
 export interface PersistentTaskNode extends BaseTaskNode {
 	persistent: true;
-	status: "in_progress";
+	status: "in_progress" | "verify" | "pending";
 }
 
 /** A node in the task tree. Each node maps 1:1 to an agent and a git branch. */
@@ -106,6 +107,8 @@ export interface AgentResult {
 	/** Why the provider loop exited. */
 	exitReason: ExitReason;
 	output: string;
+	/** The agent's done() summary text, carried from tool handler to Phase 2 in runAgentForNode. */
+	doneSummary?: string;
 	/** Cost in USD for this execution. */
 	costUsd: number;
 	/** Number of agentic turns (tool-use round trips). */
@@ -159,6 +162,7 @@ export interface StatsResponse {
 		draft: number;
 		pending: number;
 		in_progress: number;
+		verify: number;
 		passed: number;
 		failed: number;
 		closed: number;

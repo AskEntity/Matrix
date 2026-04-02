@@ -4575,6 +4575,23 @@ describe("Integration: tree operations", () => {
 							contains: "Updated Tree Task",
 						},
 					],
+					// Set status to "passed" before closing (close_task rejects pending/draft)
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__update_task",
+							input: { taskId: "$taskId", status: "passed" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+						},
+					],
 					blocks: [
 						{
 							type: "tool_use",
@@ -4847,7 +4864,7 @@ describe("Integration: tree operations", () => {
 							block: 0,
 							type: "tool_result",
 							isError: true,
-							contains: "Cannot close persistent task",
+							contains: "Cannot close a running task",
 						},
 					],
 					blocks: [
