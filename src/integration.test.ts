@@ -530,10 +530,6 @@ describe("Integration: full stack with mock API", () => {
 
 		const persistedTypes = events.map((e) => e.type);
 
-		// Note: done() tool_call has no tool_result in JSONL for root agents.
-		// Root (depth 0) done() enters waitForQueueMessages() which blocks —
-		// the tool_result is only emitted when the agent wakes up or restarts.
-
 		// Should have message events (user messages)
 		expect(
 			persistedTypes.filter((t) => t === "message").length,
@@ -542,15 +538,30 @@ describe("Integration: full stack with mock API", () => {
 		expect(
 			persistedTypes.filter((t) => t === "assistant_text").length,
 		).toBeGreaterThanOrEqual(2);
-		// Should have tool_call events
+		// Should have tool_call events (bash + done)
 		expect(
 			persistedTypes.filter((t) => t === "tool_call").length,
 		).toBeGreaterThanOrEqual(2);
-		// Should have at least 1 tool_result (bash).
-		// done() tool_result may not be in JSONL (root agent blocks in waitForQueueMessages).
+		// Should have at least 1 tool_result (bash only).
 		expect(
 			persistedTypes.filter((t) => t === "tool_result").length,
 		).toBeGreaterThanOrEqual(1);
+
+		// Two-phase done: done() tool_call is an intended orphan — no tool_result in JSONL.
+		// Phase 2 writes done_notified instead, after status update + parent notification.
+		const doneToolCall = events.find(
+			(e) =>
+				e.type === "tool_call" && "tool" in e && e.tool === "mcp__mxd__done",
+		);
+		expect(doneToolCall).toBeTruthy();
+		const doneToolCallId = (doneToolCall as { toolCallId: string }).toolCallId;
+		const doneToolResult = events.find(
+			(e) =>
+				e.type === "tool_result" &&
+				"toolCallId" in e &&
+				e.toolCallId === doneToolCallId,
+		);
+		expect(doneToolResult).toBeUndefined();
 
 		// Verify every tool_call comes before its corresponding tool_result
 		for (let i = 0; i < events.length; i++) {
@@ -9398,4 +9409,225 @@ describe("Integration: Phase 2 crash recovery", () => {
 		const tracker2 = await ctx.app.getTracker(ctx.projectId);
 		expect(tracker2.get(rootNodeId)?.status).toBe("verify");
 	}, 30000);
+});
+
+// ── Two-phase done: additional gap tests ──
+
+describe("Integration: two-phase done() gap tests", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("done() tool_call is intentional orphan in JSONL — no tool_result emitted", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Quick done." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "orphan test" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Wait for Phase 2 (done_notified) to complete
+		await new Promise((r) => setTimeout(r, 200));
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = await readSessionEvents(ctx, rootNodeId);
+
+		// done() tool_call must be present
+		const doneCall = events.find(
+			(e) =>
+				e.type === "tool_call" && "tool" in e && e.tool === "mcp__mxd__done",
+		);
+		expect(doneCall).toBeTruthy();
+
+		// No tool_result for done's tool_call_id — it's an intended orphan
+		const doneCallId = (doneCall as { toolCallId: string }).toolCallId;
+		const doneResult = events.find(
+			(e) =>
+				e.type === "tool_result" &&
+				"toolCallId" in e &&
+				e.toolCallId === doneCallId,
+		);
+		expect(doneResult).toBeUndefined();
+
+		// done_notified should be present instead (Phase 2 marker)
+		const doneNotified = events.find((e) => e.type === "done_notified");
+		expect(doneNotified).toBeTruthy();
+	}, 30000);
+
+	test("persistent task full round-trip: done→verify→close→pending→new message→new session", async () => {
+		ctx = await setupTestContext();
+
+		// Round 1 child instruction: just done
+		const childInstructionR1 = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "round 1 complete" },
+				},
+			],
+		});
+
+		// Round 2 child instruction: bash + done
+		const childInstructionR2 = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "round 2 complete" },
+				},
+			],
+		});
+
+		// Parent orchestrates the full cycle:
+		// T1: create persistent task
+		// T2: send_message (round 1)
+		// T3: yield (wait for child done)
+		// T4: close_task → child goes to pending
+		// T5: send_message (round 2 — re-wake)
+		// T6: yield (wait for child done again)
+		// T7: done
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Cyclic Runner",
+								description: "Persistent task testing full round-trip",
+								persistent: true,
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Round 1",
+								message: childInstructionR1,
+							},
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// After yield: child done → task_complete received
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__close_task",
+							input: { taskId: "$childId" },
+						},
+					],
+				},
+				{
+					// close_task on persistent verify → pending
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Round 2",
+								message: childInstructionR2,
+							},
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", isError: false }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+				{
+					// After yield: child done again → task_complete
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: "## Pending",
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: {
+								status: "passed",
+								summary: "persistent round-trip verified",
+							},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, parentInstruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx, 60000);
+		expect(status).toBe("verify");
+
+		// Verify the persistent child ended in verify after round 2
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.get(tracker.rootNodeId) as TaskNode;
+		const childId = rootNode.children[0] as string;
+		const childNode = tracker.get(childId) as TaskNode;
+
+		expect(childNode.persistent).toBe(true);
+		// After round 2 done(), child is in verify again
+		expect(childNode.status).toBe("verify");
+	}, 60000);
 });
