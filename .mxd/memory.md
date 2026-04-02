@@ -157,7 +157,7 @@ Pose hypothetical change, count files to modify. 1 = good, 3+ = problem. Archite
 
 - Manual compaction during yield → consecutive user messages → API 400.
 - Prefix violation after double restart (Restart N) — disabled in test.
-- Flaky: `Fork from closed agent`, `BG5` — timing-dependent.
+- Flaky: `Fork from closed agent` — timing-dependent.
 
 
 
