@@ -4926,7 +4926,7 @@ describe("Integration: tree operations", () => {
 		expect(serializedNode.description).toBeUndefined();
 	}, 25000);
 
-	test("TREE5: persistent task — full lifecycle: create → launch child → done → stays in_progress", async () => {
+	test("TREE5: persistent task — full lifecycle: create → launch child → done → enters verify", async () => {
 		ctx = await setupTestContext();
 
 		// Child instruction: simple done
@@ -5033,8 +5033,8 @@ describe("Integration: tree operations", () => {
 		const childId = rootNode.children[0] as string;
 		const childNode = tracker.get(childId) as TaskNode;
 
-		// Status stays in_progress (persistent tasks don't change status on done)
-		expect(childNode.status).toBe("in_progress");
+		// Persistent tasks now get verify status after done() (Phase 2 lifecycle)
+		expect(childNode.status).toBe("verify");
 		expect(childNode.persistent).toBe(true);
 		expect(childNode.title).toBe("Persistent Runner");
 
@@ -9197,5 +9197,205 @@ describe("deliverMessage: shouldResume ordering invariant", () => {
 		// would incorrectly get resume=true (because its own message
 		// just populated the JSONL).
 		expect((orch2[1] as { resume: boolean }).resume).toBe(true);
+	}, 30000);
+});
+
+// ── Phase 2 done_notified integration tests ──
+
+describe("Integration: Phase 2 done_notified", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("done_notified event appears in JSONL after done completes", async () => {
+		ctx = await setupTestContext();
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "All done." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "everything works" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Wait a tick for Phase 2 to finish (done_notified emission happens after status update)
+		await new Promise((r) => setTimeout(r, 200));
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const doneNotified = events.find((e) => e.type === "done_notified");
+		expect(doneNotified).toBeTruthy();
+
+		const dn = doneNotified as Event & { type: "done_notified" };
+		expect(dn.status).toBe("verify");
+		expect(dn.summary).toBe("everything works");
+		expect(dn.taskId).toBe(rootNodeId);
+	}, 30000);
+
+	test("done_notified with failed status", async () => {
+		ctx = await setupTestContext();
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Can't do this." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "failed", summary: "stuck on a problem" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("failed");
+
+		await new Promise((r) => setTimeout(r, 200));
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const doneNotified = events.find((e) => e.type === "done_notified");
+		expect(doneNotified).toBeTruthy();
+
+		const dn = doneNotified as Event & { type: "done_notified" };
+		expect(dn.status).toBe("failed");
+		expect(dn.summary).toBe("stuck on a problem");
+	}, 30000);
+});
+
+describe("Integration: Phase 2 crash recovery", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("crash after done tool_call but before Phase 2 → autoResume completes Phase 2", async () => {
+		ctx = await setupTestContext();
+
+		// Agent calls done. Phase 2 (status update + done_notified) happens normally.
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Done." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "task complete" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+		await new Promise((r) => setTimeout(r, 200));
+
+		// Verify done_notified exists from normal flow
+		const rootNodeId = await getRootNodeId(ctx);
+		const normalEvents = await readSessionEvents(ctx, rootNodeId);
+		const normalDoneNotified = normalEvents.filter(
+			(e) => e.type === "done_notified",
+		);
+		expect(normalDoneNotified).toHaveLength(1);
+
+		// Now simulate: manually remove the done_notified and reset status to in_progress
+		// to simulate a crash that happened after done() tool_call but before Phase 2 completed
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		tracker.updateStatus(rootNodeId, "in_progress");
+		await tracker.save();
+
+		// Remove done_notified (and everything after it) from JSONL to simulate
+		// a crash that happened after the done() tool_call but before Phase 2 completed.
+		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+		if (!eventStore) throw new Error("EventStore not found");
+		await eventStore.flushSession(rootNodeId);
+		const fullEvents = eventStore.read(rootNodeId);
+		const firstDoneNotifiedIdx = fullEvents.findIndex(
+			(e) => e.type === "done_notified",
+		);
+		expect(firstDoneNotifiedIdx).toBeGreaterThan(0);
+		// Truncate to keep only events before done_notified
+		await eventStore.truncateAfterLine(rootNodeId, firstDoneNotifiedIdx - 1);
+
+		// Verify truncation worked
+		const afterTruncEvents = eventStore.read(rootNodeId);
+		expect(afterTruncEvents.some((e) => e.type === "done_notified")).toBe(
+			false,
+		);
+		// The done tool_call should still be present (orphaned)
+		expect(
+			afterTruncEvents.some(
+				(e) => e.type === "tool_call" && e.tool === "mcp__mxd__done",
+			),
+		).toBe(true);
+
+		// Restart the app (simulate daemon crash + restart)
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+
+		// autoResumeProjects should detect interrupted Phase 2 and complete it
+		await ctx.app.autoResumeProjects();
+		await new Promise((r) => setTimeout(r, 300));
+
+		// Verify: status was updated to verify
+		const tracker2 = await ctx.app.getTracker(ctx.projectId);
+		expect(tracker2.get(rootNodeId)?.status).toBe("verify");
+
+		// Verify: done_notified was written
+		const recoveredEvents = await readSessionEvents(ctx, rootNodeId);
+		const recoveredDoneNotified = recoveredEvents.filter(
+			(e) => e.type === "done_notified",
+		);
+		expect(recoveredDoneNotified).toHaveLength(1);
+		const dn = recoveredDoneNotified[0] as Event & { type: "done_notified" };
+		expect(dn.status).toBe("verify");
+		expect(dn.summary).toBe("task complete");
+	}, 30000);
+
+	test("crash after done_notified but before status save → autoResume fixes status", async () => {
+		ctx = await setupTestContext();
+
+		// Agent calls done — Phase 2 completes normally
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "All good." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "done correctly" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+		await new Promise((r) => setTimeout(r, 200));
+
+		// Simulate crash: done_notified exists in JSONL but status reverted to in_progress
+		const rootNodeId = await getRootNodeId(ctx);
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		tracker.updateStatus(rootNodeId, "in_progress");
+		await tracker.save();
+
+		// Restart
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+
+		await ctx.app.autoResumeProjects();
+		await new Promise((r) => setTimeout(r, 300));
+
+		// Status should be corrected to verify
+		const tracker2 = await ctx.app.getTracker(ctx.projectId);
+		expect(tracker2.get(rootNodeId)?.status).toBe("verify");
 	}, 30000);
 });

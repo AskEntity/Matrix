@@ -253,3 +253,18 @@ Major rewrite: 286 insertions, 442 deletions (net -156 lines). 10 chapters + clo
 - **Root agents no longer stay alive after done()**: Old behavior had root agents blocking in waitForQueueMessages. New behavior: loop exits immediately. Tests checking session presence after done() need updating.
 - **Multiple done+resume cycles**: JSONL accumulates done orphans. On resume, only the LAST done orphan needs a tool_result. buildSessionRepair skips TOOL_DONE orphans (already implemented in types task).
 
+
+
+## Phase 2: done_notified + Crash Recovery (2026-04-02)
+
+### Changes
+- **done_notified emission**: After status update + parent notification in Phase 2 (runAgentForNode), a `done_notified` event is written to JSONL as a crash-safe marker.
+- **Persistent tasks get verify/failed**: Removed `if (!currentNode.persistent)` guard. Persistent tasks now participate in lifecycle (verify/failed status after done()).
+- **Crash recovery in autoResumeProjects**: Two recovery paths:
+  - `needs_phase2`: done tool_call orphan exists (no tool_result) without done_notified → complete Phase 2 (status update + task_complete + done_notified)
+  - `status_stale`: done_notified exists but node status still in_progress (crash between write and save) → fix status
+- **`findInterruptedDonePhase2`**: Pure function in daemon.ts, detects interrupted Phase 2 from JSONL events. Checks for orphaned TOOL_DONE tool_call without corresponding done_notified.
+
+### Key Pitfalls
+- **EventStore truncation indexing**: `truncateAfterLine(sessionId, lineIndex)` uses absolute line indices in the full JSONL file, not indices relative to `readActive()`. When simulating crash recovery in tests, use `read()` not `readActive()` to compute line indices.
+- **TREE5 test updated**: Persistent task test changed from expecting `in_progress` to `verify` after done() — consistent with new lifecycle design.

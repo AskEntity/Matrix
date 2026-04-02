@@ -4199,3 +4199,182 @@ describe("findOrphanedBackgroundProcesses", () => {
 		expect(orphan.body.stderr).toContain("interrupted by daemon restart");
 	});
 });
+
+// ── findInterruptedDonePhase2 tests ──
+import { findInterruptedDonePhase2 } from "./daemon.ts";
+
+describe("findInterruptedDonePhase2", () => {
+	test("returns null when no done tool_call exists", () => {
+		const events: Event[] = [
+			{ type: "assistant_text", content: "hello", taskId: "t1", ts: 100 },
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				input: { command: "ls" },
+				taskId: "t1",
+				ts: 200,
+			},
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				content: "files",
+				isError: false,
+				taskId: "t1",
+				ts: 300,
+			},
+		];
+		expect(findInterruptedDonePhase2(events)).toBeNull();
+	});
+
+	test("returns null when done tool_call has a tool_result (resumed done)", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_DONE,
+				toolCallId: "done1",
+				input: { status: "passed", summary: "all good" },
+				taskId: "t1",
+				ts: 100,
+			},
+			{
+				type: "tool_result",
+				tool: TOOL_DONE,
+				toolCallId: "done1",
+				content: "resumed",
+				isError: false,
+				taskId: "t1",
+				ts: 200,
+			},
+		];
+		expect(findInterruptedDonePhase2(events)).toBeNull();
+	});
+
+	test("returns needs_phase2 when done tool_call has no done_notified", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_DONE,
+				toolCallId: "done1",
+				input: { status: "passed", summary: "tests pass" },
+				taskId: "t1",
+				ts: 100,
+			},
+		];
+		const result = findInterruptedDonePhase2(events);
+		expect(result).toEqual({
+			type: "needs_phase2",
+			status: "verify",
+			summary: "tests pass",
+		});
+	});
+
+	test("returns needs_phase2 with failed status", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_DONE,
+				toolCallId: "done1",
+				input: { status: "failed", summary: "couldn't fix it" },
+				taskId: "t1",
+				ts: 100,
+			},
+		];
+		const result = findInterruptedDonePhase2(events);
+		expect(result).toEqual({
+			type: "needs_phase2",
+			status: "failed",
+			summary: "couldn't fix it",
+		});
+	});
+
+	test("returns status_stale when done_notified exists (caller checks node status)", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_DONE,
+				toolCallId: "done1",
+				input: { status: "passed", summary: "done" },
+				taskId: "t1",
+				ts: 100,
+			},
+			{
+				type: "done_notified",
+				status: "verify",
+				summary: "done",
+				taskId: "t1",
+				ts: 200,
+			},
+		];
+		const result = findInterruptedDonePhase2(events);
+		expect(result).toEqual({
+			type: "status_stale",
+			status: "verify",
+		});
+	});
+
+	test("handles multiple done cycles — uses the last one", () => {
+		const events: Event[] = [
+			// First done cycle (completed with done_notified + tool_result from resume)
+			{
+				type: "tool_call",
+				tool: TOOL_DONE,
+				toolCallId: "done1",
+				input: { status: "passed", summary: "first attempt" },
+				taskId: "t1",
+				ts: 100,
+			},
+			{
+				type: "done_notified",
+				status: "verify",
+				summary: "first attempt",
+				taskId: "t1",
+				ts: 150,
+			},
+			{
+				type: "tool_result",
+				tool: TOOL_DONE,
+				toolCallId: "done1",
+				content: "resumed after first done",
+				isError: false,
+				taskId: "t1",
+				ts: 200,
+			},
+			// Second done cycle (orphaned — crash before Phase 2)
+			{
+				type: "tool_call",
+				tool: TOOL_DONE,
+				toolCallId: "done2",
+				input: { status: "failed", summary: "second attempt failed" },
+				taskId: "t1",
+				ts: 300,
+			},
+		];
+		const result = findInterruptedDonePhase2(events);
+		expect(result).toEqual({
+			type: "needs_phase2",
+			status: "failed",
+			summary: "second attempt failed",
+		});
+	});
+
+	test("handles empty input on done tool_call", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: TOOL_DONE,
+				toolCallId: "done1",
+				input: {},
+				taskId: "t1",
+				ts: 100,
+			},
+		];
+		const result = findInterruptedDonePhase2(events);
+		expect(result).toEqual({
+			type: "needs_phase2",
+			status: "failed",
+			summary: "",
+		});
+	});
+});
