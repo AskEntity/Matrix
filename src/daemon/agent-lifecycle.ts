@@ -69,12 +69,14 @@ function buildSessionConfig(
 	systemPrompt: SystemPrompt,
 	tools: unknown[],
 	taskId: string,
+	cacheTtl?: "1h",
 ): SessionConfigEvent {
 	return {
 		type: "session_config",
 		tools,
 		systemStable: systemPrompt.stable,
 		systemVariable: systemPrompt.variable,
+		...(cacheTtl ? { cacheTtl } : {}),
 		taskId,
 		ts: Date.now(),
 	};
@@ -732,10 +734,18 @@ export async function runAgentForNode(
 			ts: Date.now(),
 		});
 
+		// Cache TTL: root + persistent tasks get 1h, regular children get default 5min.
+		// On resume, inherit from stored session_config (fork copies this automatically).
+		const cacheTtl: "1h" | undefined =
+			isRoot || node.persistent ? "1h" : undefined;
+
 		// Resolve system prompt: use stored session_config on resume, fresh on start.
 		const isResume = activeEvents.length > 0;
 		const storedConfig = isResume ? findSessionConfig(activeEvents) : undefined;
 		let systemPrompt: SystemPrompt;
+		// On resume, use cacheTtl from stored config (preserves fork inheritance).
+		// On fresh start, use computed cacheTtl.
+		const effectiveCacheTtl = storedConfig?.cacheTtl ?? cacheTtl;
 		if (storedConfig) {
 			// Resume: use frozen system prompt from JSONL for cache stability
 			systemPrompt = {
@@ -752,7 +762,12 @@ export async function runAgentForNode(
 			} else {
 				systemPrompt = buildSystemPrompt();
 			}
-			const configEvt = buildSessionConfig(systemPrompt, [], nodeId);
+			const configEvt = buildSessionConfig(
+				systemPrompt,
+				[],
+				nodeId,
+				effectiveCacheTtl,
+			);
 			emitEvent(ctx, project.id, { ...configEvt, taskId: nodeId });
 			activeEvents = [configEvt, ...activeEvents];
 		}
@@ -775,7 +790,7 @@ export async function runAgentForNode(
 			hasRunningChildren: agentCtx.hasRunningChildren,
 			buildYieldPendingSection: agentCtx.buildYieldPendingSection,
 			getSession,
-			isOrchestrator: isRoot,
+			cacheTtl: effectiveCacheTtl,
 
 			signal: abortController.signal,
 			queue: childQueue,

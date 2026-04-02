@@ -620,27 +620,56 @@ function createMockAnthropicStream(
 // ── Prefix validation helpers ──
 
 /**
- * Normalize message content for comparison.
- * - Strips `cache_control` from content blocks (provider adds these for caching)
- * - Normalizes string content to array form: "text" → [{type: "text", text: "text"}]
+ * Extract the message-level cache_control value from a request's messages.
+ * This is the "last" cache_control marker — placed on the second-to-last user message.
+ * Its position moves between turns (as new messages are added), but its VALUE must stay
+ * consistent across requests in the same conversation.
  *
- * This ensures prefix comparison is semantically correct — the same content
- * may have different cache_control annotations or string-vs-array wrapping
- * between initial send and JSONL reconstruction.
+ * Returns the JSON-serialized cache_control value, or null if no message has one.
+ */
+function extractMessageCacheControl(messages?: unknown[]): string | null {
+	if (!Array.isArray(messages)) return null;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i];
+		if (msg && typeof msg === "object") {
+			const content = (msg as Record<string, unknown>).content;
+			if (Array.isArray(content)) {
+				for (const block of content) {
+					if (block && typeof block === "object") {
+						const cc = (block as Record<string, unknown>).cache_control;
+						if (cc) return JSON.stringify(cc);
+					}
+				}
+			}
+		}
+	}
+	return null;
+}
+
+/**
+ * Normalize message content for comparison.
+ * - Normalizes string content to array form: "text" → [{type: "text", text: "text"}]
+ * - When stripCC=true, strips `cache_control` from content blocks.
  *
  * Note: `caller` is NOT stripped — the mock now includes it (matching real API),
  * and our JSONL reconstruction includes it too. If they ever diverge, that's a
  * real bug we want prefix validation to catch.
  */
-function normalizeContent(content: unknown): unknown {
+function normalizeContent(content: unknown, stripCC = false): unknown {
 	if (typeof content === "string") {
 		return [{ type: "text", text: content }];
 	}
 	if (Array.isArray(content)) {
 		return content.map((block) => {
 			if (block && typeof block === "object") {
-				const { cache_control: _, ...rest } = block as Record<string, unknown>;
-				return rest;
+				if (stripCC) {
+					const { cache_control: _, ...rest } = block as Record<
+						string,
+						unknown
+					>;
+					return rest;
+				}
+				return { ...(block as Record<string, unknown>) };
 			}
 			return block;
 		});
@@ -650,20 +679,48 @@ function normalizeContent(content: unknown): unknown {
 
 /**
  * Deep equality check for Anthropic message objects.
- * Normalizes content (strips cache_control, converts string to array form)
- * so the comparison is semantically meaningful across live/resume boundaries.
+ * Normalizes content (converts string to array form).
+ * When stripCC=true, also strips cache_control from content blocks.
  */
 function deepEqualMessage(
 	a: MessageParam | undefined,
 	b: MessageParam | undefined,
+	stripCC = false,
 ): boolean {
 	if (a === b) return true;
 	if (a == null || b == null) return false;
 	if (a.role !== b.role) return false;
 
-	const aNorm = normalizeContent(a.content);
-	const bNorm = normalizeContent(b.content);
+	const aNorm = normalizeContent(a.content, stripCC);
+	const bNorm = normalizeContent(b.content, stripCC);
 	return deepEqualContent(aNorm, bNorm);
+}
+
+/**
+ * Find the message index that has the message-level cache_control breakpoint.
+ * This is the "last marker" — placed on the second-to-last user message.
+ * Returns -1 if no message has cache_control.
+ */
+function findMessageCacheControlIndex(messages: MessageParam[]): number {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const msg = messages[i];
+		if (msg && typeof msg === "object") {
+			const content = msg.content;
+			if (Array.isArray(content)) {
+				for (const block of content) {
+					if (
+						block &&
+						typeof block === "object" &&
+						// biome-ignore lint/suspicious/noExplicitAny: checking cache_control on varied block types
+						(block as any).cache_control
+					) {
+						return i;
+					}
+				}
+			}
+		}
+	}
+	return -1;
 }
 
 function deepEqualContent(a: unknown, b: unknown): boolean {
@@ -1270,6 +1327,22 @@ export class ValidatingMockAPI {
 			}
 		}
 
+		// Cache control consistency for message-level breakpoint:
+		// System + tools cache_control are already validated by JSON.stringify above
+		// (position + value must be identical). The message-level breakpoint is the
+		// "last" marker — its position moves between turns (second-to-last user message
+		// changes as conversation grows), but its VALUE must stay the same.
+		const prevMsgCC = extractMessageCacheControl(prevRequest.messages);
+		const currMsgCC = extractMessageCacheControl(messages);
+		if (prevMsgCC !== null && currMsgCC !== null && prevMsgCC !== currMsgCC) {
+			throw new MockValidationError(
+				`Message cache_control value changed between API calls for the same conversation.\n` +
+					`Previous: ${prevMsgCC}\n` +
+					`Current:  ${currMsgCC}\n` +
+					`The message breakpoint position can move, but its cache_control value must stay consistent.`,
+			);
+		}
+
 		const prevMessages = prevRequest.messages;
 
 		// The previous messages must be a prefix of the current messages.
@@ -1281,11 +1354,22 @@ export class ValidatingMockAPI {
 			);
 		}
 
-		// Deep-compare each message position that existed in the previous request
+		// Find message-level cache_control breakpoint positions in both requests.
+		// The breakpoint is the "last marker" — placed on the second-to-last user
+		// message. Its position moves between turns as the conversation grows.
+		// At the breakpoint indices, cache_control is stripped for content comparison
+		// (position is allowed to move). At all other indices, cache_control is
+		// compared strictly — any unexpected cache_control is a bug.
+		const prevBreakpointIdx = findMessageCacheControlIndex(prevMessages);
+		const currBreakpointIdx = findMessageCacheControlIndex(messages);
+
 		for (let i = 0; i < prevMessages.length; i++) {
 			const prev = prevMessages[i];
 			const curr = messages[i];
-			if (!deepEqualMessage(prev, curr)) {
+			// Strip cache_control at breakpoint positions (prev or curr) — the
+			// breakpoint legitimately moves between turns.
+			const stripCC = i === prevBreakpointIdx || i === currBreakpointIdx;
+			if (!deepEqualMessage(prev, curr, stripCC)) {
 				throw new MockValidationError(
 					`Prefix violation at message index ${i}: ` +
 						`previous and current messages differ.\n` +

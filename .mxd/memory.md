@@ -245,3 +245,31 @@ When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provide
 - Background processes may be killed by cleanup before completing after done().
 - closeTaskOp now rejects pending/draft status — tests must set passed/verify before close_task.
 - **Late message re-launch**: After done(), messages arriving during shutdown (between queue.close and session clear) get persisted to JSONL but can't trigger auto-launch (session still set). Fixed: finally block checks for unconsumed messages after session clear and re-launches for done exits only (verify/failed status). NOT for interrupted exits — those leave unconsumed messages intentionally.
+
+## Cache TTL for Persistent Tasks (2026-04-02)
+
+### Design
+- `SessionConfigEvent.cacheTtl?: "1h"` — stored in session_config, inherited via fork.
+- Root + persistent tasks: `cacheTtl: "1h"`. Regular children: `undefined` (default 5min).
+- Computed in `agent-lifecycle.ts`: `(isRoot || node.persistent) ? "1h" : undefined`.
+- On resume, `cacheTtl` read from stored session_config (not recomputed) — preserves fork inheritance.
+- ALL cache_control breakpoints (system prompt, tools, messages) use consistent TTL from `cacheTtl`. No more hardcoded `"1h"` for all agents.
+- `extended-cache-ttl-2025-04-11` beta header sent per-request when `cacheTtl === "1h"`.
+
+### Anthropic Cache Rules
+- `{type: "ephemeral"}` (5min) and `{type: "ephemeral", ttl: "1h"}` create DIFFERENT cache entries.
+- cache_control field (including TTL) is part of the cached prefix identity — changing it invalidates cache.
+- Longer TTLs must appear before shorter TTLs in the same request.
+- `extended-cache-ttl-2025-04-11` beta header required when using `ttl: "1h"`.
+
+### Prefix Validation — cache_control Rules
+Three-tier strictness in `validatePrefix` (mock-anthropic-api.ts):
+1. **System + tools**: JSON.stringify comparison — position + value must be identical across requests.
+2. **Message breakpoint** (second-to-last user msg): position can move between turns, but cache_control VALUE must stay the same (`extractMessageCacheControl` check).
+3. **All other messages**: cache_control compared strictly via `deepEqualMessage(stripCC=false)` — only the old/new breakpoint indices get `stripCC=true`.
+- `normalizeContent(content, stripCC)` — stripCC parameter controls whether cache_control is stripped. Only true at breakpoint positions.
+
+### `isOrchestrator` → `cacheTtl`
+- `AgentRequest.isOrchestrator` removed. Replaced with `AgentRequest.cacheTtl?: "1h"`.
+- `ProviderAdapter.callAPI` params: `isOrchestrator` → `cacheTtl`.
+- `addMessagesCacheControl(messages, cacheTtl)` uses TTL directly instead of boolean flag.
