@@ -7,6 +7,10 @@ import { SLASH_COMMANDS, SlashCommandMenu } from "./SlashCommandMenu.tsx";
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
+function draftKey(nodeId: string | null) {
+	return nodeId ? `mxd-prompt-draft:${nodeId}` : "mxd-prompt-draft";
+}
+
 export const InputBar = memo(function InputBar({
 	projectId,
 	targetNodeId,
@@ -27,11 +31,25 @@ export const InputBar = memo(function InputBar({
 	const composingRef = useRef(false);
 
 	const [prompt, setPrompt] = useState(
-		() => localStorage.getItem("mxd-prompt-draft") ?? "",
+		() => localStorage.getItem(draftKey(targetNodeId)) ?? "",
 	);
 	const [attachedImages, setAttachedImages] = useState<
 		{ base64: string; mediaType: string }[]
 	>([]);
+
+	// When targetNodeId changes, save current draft and load new task's draft
+	const prevTargetRef = useRef(targetNodeId);
+	useEffect(() => {
+		if (prevTargetRef.current === targetNodeId) return;
+		// Save current draft for previous target
+		setPrompt((currentPrompt) => {
+			const prevKey = draftKey(prevTargetRef.current);
+			if (currentPrompt) localStorage.setItem(prevKey, currentPrompt);
+			else localStorage.removeItem(prevKey);
+			return localStorage.getItem(draftKey(targetNodeId)) ?? "";
+		});
+		prevTargetRef.current = targetNodeId;
+	}, [targetNodeId]);
 
 	// Slash command autocomplete state
 	const [slashMenuOpen, setSlashMenuOpen] = useState(false);
@@ -65,21 +83,23 @@ export const InputBar = memo(function InputBar({
 
 	// localStorage draft save with 2s debounce
 	useEffect(() => {
+		const key = draftKey(targetNodeId);
 		const timer = setTimeout(() => {
-			if (prompt) localStorage.setItem("mxd-prompt-draft", prompt);
-			else localStorage.removeItem("mxd-prompt-draft");
+			if (prompt) localStorage.setItem(key, prompt);
+			else localStorage.removeItem(key);
 		}, 2000);
 		return () => clearTimeout(timer);
-	}, [prompt]);
+	}, [prompt, targetNodeId]);
 
 	// Save draft on page unload
 	useEffect(() => {
 		const handler = () => {
-			if (prompt) localStorage.setItem("mxd-prompt-draft", prompt);
+			const key = draftKey(targetNodeId);
+			if (prompt) localStorage.setItem(key, prompt);
 		};
 		window.addEventListener("beforeunload", handler);
 		return () => window.removeEventListener("beforeunload", handler);
-	}, [prompt]);
+	}, [prompt, targetNodeId]);
 
 	function adjustTextareaHeight() {
 		const el = textareaRef.current;
@@ -124,9 +144,9 @@ export const InputBar = memo(function InputBar({
 			onSend(prompt.trim(), images);
 			setPrompt("");
 			setAttachedImages([]);
-			localStorage.removeItem("mxd-prompt-draft");
+			localStorage.removeItem(draftKey(targetNodeId));
 		},
-		[prompt, attachedImages, projectId, onSend],
+		[prompt, attachedImages, projectId, onSend, targetNodeId],
 	);
 
 	return (
