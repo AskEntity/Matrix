@@ -261,6 +261,11 @@ Route by **domain**, not by **file**. Key principle: **whoever introduces a chan
 - `AgentRequest.isOrchestrator` replaced with `cacheTtl?: "1h"`. Same on ProviderAdapter.callAPI.
 - Prefix validation: system+tools strict JSON compare; message breakpoint position can move but value must match; all other messages compared with cache_control included.
 
+## Known Bugs Status Update (2026-04-02)
+
+- **Prefix violation after double restart**: NO LONGER REPRODUCIBLE. Fixed by unified `buildSessionRepair()` truncate-and-rebuild approach that modifies JSONL on disk (idempotent across restarts). Restart K, N pass 5/5. Restart L passes with prefix validation enabled (3/3). Can enable prefix validation in Restart L and remove from Known Bugs.
+- **Flaky fork from closed agent**: NO LONGER REPRODUCIBLE. Fixed by `flushSession()` call in `copySessionFrom` (eliminates async write race) + `closeTaskOp` preserving JSONL (only delete/reset clear it). 10/10 passes.
+
 ## Unresolved Design (prioritized)
 
 1. Branch staleness on persistent wake (~5 lines, highest value)
