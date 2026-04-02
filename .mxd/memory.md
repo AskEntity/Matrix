@@ -15,7 +15,7 @@ Creating tasks is CHEAP. Executing must be DELIBERATE. When user discusses desig
 ## How to Run Tests
 
 ```bash
-bun test              # ALL tests (unit + integration). ~1145 pass, 3 skip.
+bun test              # ALL tests (unit + integration). ~1155 pass, 3 skip.
 bun run typecheck     # tsc --noEmit
 bun run check         # biome lint + format
 ```
@@ -143,7 +143,7 @@ Challenge-response with browser keypair (RSA-OAEP 2048). CLI `mxd auth <public_k
 - `ValidatingMockAPI`: instruction-driven mock, sessionId-based conversation keying, prefix validation, field validation.
 - Mock DSL: `{"blocks": [...]}` or `{"turns": [...]}` with assert/capture.
 - `recreateApp()` simulates daemon restarts. `readSessionEvents` flushes EventStore before reading.
-- ~1145 tests (unit + integration). 3 skipped (E2E).
+- ~1155 tests (unit + integration). 3 skipped (E2E).
 
 ## Known Pitfalls
 
@@ -240,10 +240,10 @@ Major rewrite: 286 insertions, 442 deletions (net -156 lines). 10 chapters + clo
 When JSONL has done orphan (last tool_call is TOOL_DONE with no result), provider loop waits for wake messages, writes synthetic tool_result with "You previously called done()" context.
 
 ### Key Pitfalls
-- waitForDone test helper must check "verify" in addition to "passed"/"failed".
+- waitForDone test helper must check "verify" or "failed" (no "passed" status exists).
 - Root agents no longer block in waitForQueueMessages after done() — loop exits immediately.
 - Background processes may be killed by cleanup before completing after done().
-- closeTaskOp now rejects pending/draft status — tests must set passed/verify before close_task.
+- closeTaskOp now rejects pending/draft/in_progress — tests must set verify or failed before close_task.
 - **Phase 2 ordering is critical**: session=null is the irreversibility boundary. Phase 2 (status update, parent notification) runs AFTER session cleanup, not before. Before session=null: late messages → relaunch (reversible). After session=null: commit verify + notify parent (irreversible). No race window.
 
 ## Domain Owner Routing Rules
