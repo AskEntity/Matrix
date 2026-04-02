@@ -609,7 +609,8 @@ export function registerTaskRoutes(
 		});
 
 		// Notify parent chain for non-root nodes (user sending to child task)
-		if (node?.parentId) {
+		// Persistent tasks are autonomous domain owners — no parent notification.
+		if (node?.parentId && !node.persistent) {
 			await notifyParentChain(
 				ctx,
 				project,
