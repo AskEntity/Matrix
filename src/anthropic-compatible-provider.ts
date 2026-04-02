@@ -855,6 +855,7 @@ function createAnthropicAdapter(
 				cacheCreationTokens: params.totalCacheCreationTokens,
 				cacheReadTokens: params.totalCacheReadTokens,
 				outputTokens: params.totalOutputTokens,
+				doneSummary: params.doneSummary,
 			};
 		},
 	};

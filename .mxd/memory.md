@@ -234,3 +234,22 @@ Major rewrite: 286 insertions, 442 deletions (net -156 lines). 10 chapters + clo
 - AgentResult gets `doneSummary?: string` field.
 - Integration test TREE1 updated: must set status to passed/verify before close_task (pending now rejected).
 - Integration test persistent close: error message changed from "Cannot close persistent task" to "Cannot close a running task".
+
+
+## Phase 1: Two-Phase done() — Handler Simplification (2026-04-02)
+
+### Key Changes
+- **done() handler simplified**: Only closes queue + returns acknowledgment. No status update, no parent notification, no waitForQueueMessages blocking.
+- **done() as intended orphan**: Provider loop detects done-alone → executes handler → sets doneExitReason + doneSummary → returns immediately (no tool_result emitted). Like yield but for done.
+- **doneSummary through AgentResult**: All buildResult calls pass `doneSummary` field. Anthropic and default buildResult include it.
+- **Phase 2 in agent-lifecycle.ts**: After loop exits with done exit reason, runAgentForNode updates status (verify/failed), delivers task_complete to parent, saves tracker.
+- **Done resume from JSONL**: When JSONL has done orphan (last tool_call is TOOL_DONE with no result), done resume handler waits for messages, writes synthetic tool_result with wake context, continues to API call.
+- **runChildCore simplified**: Removed fallback done detection (checked tool_result for TOOL_DONE). Now just consumes stream events until generator finishes.
+
+### Pitfalls
+- **Double tool_result emission**: Done resume handler must NOT call buildToolResultEvents (which calls emit) after already yielding the tool_result event. Use recordQueueEvents for queue messages only.
+- **waitForDone needs "verify"**: All test helpers polling for task completion must check status === "verify" in addition to "passed"/"failed".
+- **done() exits loop immediately**: Background processes started during the agent session may be killed by cleanup before completing. Tests checking bg_complete events after done() need to account for this.
+- **Root agents no longer stay alive after done()**: Old behavior had root agents blocking in waitForQueueMessages. New behavior: loop exits immediately. Tests checking session presence after done() need updating.
+- **Multiple done+resume cycles**: JSONL accumulates done orphans. On resume, only the LAST done orphan needs a tool_result. buildSessionRepair skips TOOL_DONE orphans (already implemented in types task).
+

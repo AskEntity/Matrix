@@ -15,13 +15,14 @@ import { MessageQueue } from "../message-queue.ts";
 import { createOrchestratorTools } from "../orchestrator-tools.ts";
 import {
 	createClarifyResponse,
+	createTaskComplete,
 	createUserMessage,
 } from "../queue-message-factory.ts";
 import { buildSystemPrompt, type SystemPrompt } from "../system-prompts.ts";
 import type { TaskTracker } from "../task-tracker.ts";
 import { slugify } from "../task-utils.ts";
 import type { ToolDefinition } from "../tool-definition.ts";
-import { MCP_SERVER_NAME, TOOL_DONE } from "../tool-names.ts";
+import { MCP_SERVER_NAME } from "../tool-names.ts";
 import {
 	cleanupSessionBackgroundProcesses,
 	createBuiltinTools,
@@ -260,10 +261,10 @@ async function createAgentContext(
 export interface RunChildCoreParams {
 	/** The agent provider to use for streaming. */
 	provider: AgentProvider;
-	/** Task tracker for status checks (done() detection). */
-	tracker: TaskTracker;
-	/** Task node ID for the child agent. */
-	taskId: string;
+	/** @deprecated No longer used — done() is detected by the provider loop. Kept for caller compat. */
+	tracker?: TaskTracker;
+	/** @deprecated No longer used — done() is detected by the provider loop. Kept for caller compat. */
+	taskId?: string;
 	/** Pre-created MessageQueue for the child. If omitted, a new one is created. */
 	queue?: MessageQueue;
 	/** Full AgentRequest to pass to provider.stream(). Queue will be set on the request. */
@@ -275,14 +276,14 @@ export interface RunChildCoreParams {
  *
  * Used by `runChildAgentInBackground` for all child agents (both MCP and daemon paths).
  *
- * Done detection: done() handler closes the queue directly (derived from session),
- * which closes the queue before waitForQueueMessages() blocks. The fallback path detects
- * tool_result for mcp__mxd__done and closes the queue (handles edge cases).
+ * Done detection: done() is an intended orphan — the provider loop detects it
+ * and exits immediately (no tool_result emitted). The generator finishes with
+ * the AgentResult. Phase 2 status update happens in runAgentForNode after this returns.
  */
 export async function runChildCore(
 	params: RunChildCoreParams,
 ): Promise<AgentResult> {
-	const { provider, tracker, taskId, sessionRequest } = params;
+	const { provider, sessionRequest } = params;
 
 	// Use pre-created queue or create a new one
 	const childQueue = params.queue ?? new MessageQueue();
@@ -295,34 +296,6 @@ export async function runChildCore(
 		const stream = provider.stream(sessionRequest);
 		let result = await stream.next();
 		while (!result.done) {
-			const event = result.value;
-
-			// Fallback done() detection via tool_result. The primary path is
-			// done() calling closeQueue() directly. This fallback handles edge
-			// cases where done() completes without blocking.
-			if (
-				event.type === "tool_result" &&
-				"tool" in event &&
-				event.tool === TOOL_DONE
-			) {
-				const node = tracker.get(taskId);
-				// For persistent tasks, done() doesn't change status — detect by tool name alone.
-				// For regular tasks, check status changed to passed/failed.
-				if (
-					node?.persistent ||
-					node?.status === "passed" ||
-					node?.status === "failed"
-				) {
-					childQueue.close();
-					// Drain remaining events until the generator exits
-					result = await stream.next();
-					while (!result.done) {
-						result = await stream.next();
-					}
-					return result.value;
-				}
-			}
-
 			result = await stream.next();
 		}
 		return result.value;
@@ -848,16 +821,55 @@ export async function runAgentForNode(
 			});
 		}
 
-		// done() tool updates status directly in the tracker and delivers
-		// task_complete to the parent queue. That is the ONLY path for task_complete.
+		// ── Phase 2 of two-phase done() ──
+		// The provider loop exited with a done exit reason. The agent's tool handler
+		// only closed the queue — status update and parent notification happen here,
+		// after the loop is dead and no more tool calls can race.
 		// If done() was NOT called, the agent was interrupted (stop, reset, error,
 		// queue close, daemon restart). Status stays in_progress — agent is resumable.
-		// No fallback task_complete — the parent is not notified of interruptions.
+		if (
+			agentResult.exitReason === "done_passed" ||
+			agentResult.exitReason === "done_failed"
+		) {
+			const currentNode = tracker.get(nodeId);
+			if (currentNode) {
+				// Update status (skip for persistent tasks — they stay in_progress)
+				if (!currentNode.persistent) {
+					const newStatus =
+						agentResult.exitReason === "done_passed" ? "verify" : "failed";
+					tracker.updateStatus(nodeId, newStatus);
+				}
+				await tracker.save();
+				broadcastTreeUpdate(ctx, project.id, tracker);
+
+				// Deliver task_complete to parent (child agents only)
+				if (currentNode.parentId && !isRoot) {
+					const completionMsg = createTaskComplete(
+						nodeId,
+						currentNode.title ?? "unknown",
+						agentResult.exitReason === "done_passed",
+						agentResult.doneSummary ?? "",
+					);
+					deliverMessage(
+						ctx,
+						project,
+						currentNode.parentId,
+						completionMsg,
+					).catch((e) => {
+						console.warn(
+							`[Phase 2] Failed to deliver task_complete to parent ${currentNode.parentId}:`,
+							e,
+						);
+					});
+				}
+			}
+		}
 
 		// Root agent: emit orchestration_completed with aggregated costs
 		if (isRoot) {
 			const currentNode = tracker.get(nodeId);
-			const didPass = currentNode?.status === "passed";
+			const didPass =
+				currentNode?.status === "passed" || currentNode?.status === "verify";
 			const allNodes = tracker.allNodes();
 			const childNodes = allNodes.filter(
 				(n) => n.id !== nodeId && n.costUsd > 0,

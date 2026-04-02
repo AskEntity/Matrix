@@ -97,7 +97,11 @@ async function waitForDone(
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
 		const rootNode = tracker.get(rootNodeId);
-		if (rootNode?.status === "passed" || rootNode?.status === "failed") {
+		if (
+			rootNode?.status === "passed" ||
+			rootNode?.status === "verify" ||
+			rootNode?.status === "failed"
+		) {
 			return rootNode.status;
 		}
 		await new Promise((r) => setTimeout(r, 50));
@@ -224,7 +228,7 @@ describe("Responses integration: isolated harness", () => {
 
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
-		expect(await waitForDone(ctx)).toBe("passed");
+		expect(await waitForDone(ctx)).toBe("verify");
 
 		const request = ctx.mockAPI.getRequestHistory()[0];
 		expect(request).toBeDefined();
@@ -270,7 +274,7 @@ describe("Responses integration: isolated harness", () => {
 		});
 		const wakeResp = await sendMessage(ctx, wakeInstruction);
 		expect(wakeResp.status).toBe(200);
-		expect(await waitForDone(ctx)).toBe("passed");
+		expect(await waitForDone(ctx)).toBe("verify");
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
 	});
 });
