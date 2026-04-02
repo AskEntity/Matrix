@@ -207,3 +207,15 @@ Tests are the single source of truth. Bottom-up: write tests → find simplest a
 3. **Won't communicate** — text blocks invisible to parent. Use send_message.
 4. **Won't question architecture** — "why does this exist" > "how to make it work".
 5. **"Unify" = add third path** — delete until ONE remains.
+
+## System Prompt v2 Rewrite (2026-04-02)
+
+Major rewrite: 286 insertions, 442 deletions (net -156 lines). 10 chapters + closing.
+- Three roles: root orchestrator, persistent domain owner, worker. Managers never write code.
+- done() universal and non-terminal (persistent tasks: "round finished", not "gone forever").
+- "Keep tree shallow 2-3 levels" removed — replaced with "without depth limit".
+- Fork explained as "changing jobs" — identity continuity, not denial.
+- Memory callee-saved convention: inherited portion untouched, append freely.
+- Three Mutations chapter: test, architecture, intention.
+- "ASK — NEVER SILENTLY FALL BACK" elevated to boldest statement in prompt.
+- Adversarial testing with vivid example (PIN + top up scenario).
