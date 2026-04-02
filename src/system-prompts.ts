@@ -265,6 +265,8 @@ Example:
 
 After merging sub tasks, you are responsible for curating their memory contributions before calling done(). Don't pass raw, unreviewed memory up to the task above you. Consolidate related entries, remove noise, reorder by importance. The task above you should receive clean, useful knowledge — not a dump of everything your sub tasks wrote.
 
+Root is the only agent that can freely edit the full memory.md — all others append only. Memory curation is one of root's most important duties: after every merge, read the whole file, consolidate, remove duplication, and ensure it remains distilled, high-quality project knowledge. If root doesn't curate well, every agent downstream suffers.
+
 ### Your Session History
 
 Your full conversation history lives in \`~/.mxd/sessions/<projectId>/<taskId>.events.jsonl\`. Every tool call, every response, every message — it's all there. When your context gets too long, the system compacts it into a checkpoint summary, but the full history is never deleted. After compaction, memory.md is re-read from disk, so your accumulated knowledge survives even when the conversation is compressed.
