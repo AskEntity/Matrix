@@ -130,7 +130,7 @@ export const TaskTree = memo(function TaskTree({
 		const hidden = new Set<string>();
 		// First pass: mark completed nodes
 		for (const node of nodes) {
-			if (node.status === "closed" || node.status === "verify") {
+			if (node.status === "closed" || node.status === "failed") {
 				hidden.add(node.id);
 			}
 		}
