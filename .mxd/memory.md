@@ -313,3 +313,4 @@ Embrace large type refactors. Rename TaskNode → TreeNode = TaskNode | FolderNo
 - **56 parentId references audited**: each categorized as tree-structure or task-ownership. Task ownership uses getTaskAbove.
 - **Lifecycle rejection**: all lifecycle operations (launch, done, close, reset, send_message) reject folders at entry point.
 - **MUST resist feature creep**: persistent tasks started as "just a flag" and grew into a disaster. Folder stays at ZERO behavior forever.
+- **getTask() vs get() audit**: All production `getTask()` calls audited (2026-04-03). One bug fixed: REST reorder endpoint used `getTask()` → `get()` (folders have children too). All others correct — they access task-specific properties (session, worktree, branch, status).
