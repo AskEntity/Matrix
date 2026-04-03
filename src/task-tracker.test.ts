@@ -111,7 +111,9 @@ describe("TaskTracker", () => {
 
 		// Root node + the saved "App" node are top-level
 		expect(tracker2.getTopLevel()).toHaveLength(2);
-		const appNode = tracker2.getTopLevel().find((n) => n.title === "App") as TaskNode | undefined;
+		const appNode = tracker2.getTopLevel().find((n) => n.title === "App") as
+			| TaskNode
+			| undefined;
 		expect(appNode?.status).toBe("in_progress");
 		expect(tracker2.getChildren(parent.id)).toHaveLength(1);
 	});
@@ -391,7 +393,10 @@ describe("TaskTracker", () => {
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
 		// persistent field should be stripped — not present on TaskNode
-		const loaded = tracker2.getTask(task1.id) as unknown as Record<string, unknown>;
+		const loaded = tracker2.getTask(task1.id) as unknown as Record<
+			string,
+			unknown
+		>;
 		expect(loaded.persistent).toBeUndefined();
 	});
 
@@ -470,10 +475,18 @@ describe("TaskTracker", () => {
 
 	test("lifecycle operations reject folders", () => {
 		const folder = tracker.addFolder("Features", tracker.rootNodeId);
-		expect(() => tracker.updateStatus(folder.id, "in_progress")).toThrow(/folder/i);
-		expect(() => tracker.assignBranch(folder.id, "some-branch")).toThrow(/folder/i);
-		expect(() => tracker.assignWorktree(folder.id, "branch", "/path")).toThrow(/folder/i);
-		expect(() => tracker.updateDescription(folder.id, "desc")).toThrow(/folder/i);
+		expect(() => tracker.updateStatus(folder.id, "in_progress")).toThrow(
+			/folder/i,
+		);
+		expect(() => tracker.assignBranch(folder.id, "some-branch")).toThrow(
+			/folder/i,
+		);
+		expect(() => tracker.assignWorktree(folder.id, "branch", "/path")).toThrow(
+			/folder/i,
+		);
+		expect(() => tracker.updateDescription(folder.id, "desc")).toThrow(
+			/folder/i,
+		);
 		expect(() => tracker.updateColor(folder.id, "red")).toThrow(/folder/i);
 	});
 
@@ -509,6 +522,8 @@ describe("TaskTracker", () => {
 		// task inside folder still there
 		expect(tracker.getTask(task.id)?.parentId).toBe(folder.id);
 		// getTasksBelow of new parent reaches through folder
-		expect(tracker.getTasksBelow(newParent.id).map((n) => n.id)).toContain(task.id);
+		expect(tracker.getTasksBelow(newParent.id).map((n) => n.id)).toContain(
+			task.id,
+		);
 	});
 });

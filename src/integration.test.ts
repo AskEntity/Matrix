@@ -7840,7 +7840,8 @@ describe("Integration: child restart scenarios", () => {
 
 		// Get child ID before crash
 		const tracker1 = await ctx.app.getTracker(ctx.projectId);
-		const childId = tracker1.getTask(tracker1.rootNodeId)?.children?.[0] as string;
+		const childId = tracker1.getTask(tracker1.rootNodeId)
+			?.children?.[0] as string;
 
 		await new Promise((r) => setTimeout(r, 300));
 

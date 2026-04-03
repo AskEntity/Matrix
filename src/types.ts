@@ -94,9 +94,7 @@ export function isTask(node: TreeNode): node is TaskNode {
 }
 
 /** Serialized form of a tree node in tree.json (session stripped). */
-export type SerializedTreeNode =
-	| FolderNode
-	| Omit<TaskNode, "session">;
+export type SerializedTreeNode = FolderNode | Omit<TaskNode, "session">;
 
 /**
  * Why the provider loop exited.

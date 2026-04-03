@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { type TreeNode, isTask } from "../hooks.ts";
+import { isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconHexagon, IconPause, IconTrash } from "./icons.tsx";
 
@@ -39,11 +39,15 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 		? nodes.filter((n) => n.id !== rootNodeId)
 		: nodes;
 	const nodeCount = childNodes.length;
-	const passed = childNodes.filter((n) => isTask(n) && n.status === "verify").length;
+	const passed = childNodes.filter(
+		(n) => isTask(n) && n.status === "verify",
+	).length;
 	const done = childNodes.filter(
 		(n) => isTask(n) && (n.status === "verify" || n.status === "closed"),
 	).length;
-	const failed = childNodes.filter((n) => isTask(n) && n.status === "failed").length;
+	const failed = childNodes.filter(
+		(n) => isTask(n) && n.status === "failed",
+	).length;
 	const inProgress = childNodes.filter(
 		(n) => isTask(n) && n.status === "in_progress",
 	).length;

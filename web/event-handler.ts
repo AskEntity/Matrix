@@ -6,9 +6,9 @@ import {
 	createLogEntry,
 	getLogTaskId,
 	type IncomingEvent,
+	isTask,
 	type LogEntry,
 	type TreeNode,
-	isTask,
 	type UIEvent,
 } from "./hooks.ts";
 
@@ -407,7 +407,10 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
 						const clearedSessionIds = new Set(
 							msg.nodes
-								.filter((node) => isTask(node) && node.status === "pending" && !node.session)
+								.filter(
+									(node) =>
+										isTask(node) && node.status === "pending" && !node.session,
+								)
 								.map((node) => node.id),
 						);
 						clearSessionState(clearedSessionIds);

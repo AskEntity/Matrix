@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import type { TaskStatus } from "../../src/types.ts";
-import { type TreeNode, isTask } from "../hooks.ts";
+import { isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron, IconEyeOff, IconHexagon, IconTrash } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
@@ -135,7 +135,10 @@ export const TaskTree = memo(function TaskTree({
 		const hidden = new Set<string>();
 		// First pass: mark completed nodes
 		for (const node of nodes) {
-			if (isTask(node) && (node.status === "closed" || node.status === "failed")) {
+			if (
+				isTask(node) &&
+				(node.status === "closed" || node.status === "failed")
+			) {
 				hidden.add(node.id);
 			}
 		}
@@ -570,7 +573,11 @@ function TreeNodeView({
 			<button
 				type="button"
 				className={`mxd-task-node${isSelected ? " selected" : ""}${isTask(node) && node.status === "draft" ? " mxd-task-draft" : ""}${isDragging ? " mxd-task-dragging" : ""}${isReparentTarget ? " mxd-reparent-target" : ""}${isTask(node) && node.status === "closed" ? " mxd-task-closed" : ""}${!isTask(node) ? " mxd-folder-node" : ""}`}
-				style={isTask(node) && node.color ? { borderLeftColor: node.color } : undefined}
+				style={
+					isTask(node) && node.color
+						? { borderLeftColor: node.color }
+						: undefined
+				}
 				draggable
 				onDragStart={(e) => onDragStart(node.id, parentId, e)}
 				onDragOver={(e) => onDragOver(node.id, parentId, siblingIds, e)}
