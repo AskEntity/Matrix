@@ -341,3 +341,9 @@ Without shutdown, old app's agent stays alive. New app launches another agent fo
 - Displayed as subtle ⚡ hover badge on assistant messages (not separate log entries).
 - Color-coded: green (>80% hit), yellow (>30%), grey (<30%).
 - Compaction also emits usage (estimated=true, no cache fields) — persisted harmlessly.
+
+## TaskNode Serialization — stripSession() (2026-04-03)
+
+`JSON.stringify(TaskNode)` must NEVER include `session` (runtime-only: messages[], allTools, queue, abortController). Use `stripSession(node)` from `types.ts`. All four MCP tools that return TaskNode now use it: `get_tree`, `get_task`, `create_task`, `update_task`.
+
+**Bug found**: create_task and update_task were missing the strip. A forked task (700K+ tokens in messages[]) updating its own description produced a 2.95MB tool_result → context doubled from 735K to 1.75M → API rejected. get_tree and get_task already had manual `const { session, ...rest }` — unified to `stripSession()`.
