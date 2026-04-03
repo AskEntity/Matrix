@@ -55,6 +55,13 @@ export interface DaemonContext {
 	 */
 	readonly streamingText: Map<string, string>;
 
+	/**
+	 * Tracked agent loop promises per node ID.
+	 * Stored when runAgentForNode starts, removed when it completes.
+	 * Used by stopTask/resetTask to await loop exit before clearing JSONL.
+	 */
+	readonly agentLoopPromises: Map<string, Promise<void>>;
+
 	/** Mutable counters/flags */
 	requestCount: number;
 	startupReady: boolean;

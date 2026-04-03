@@ -142,6 +142,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 		pendingClarifications: new Map<string, PendingClarification[]>(),
 		eventStores: new Map(),
 		streamingText: new Map(),
+		agentLoopPromises: new Map(),
 		requestCount: 0,
 		startupReady: false,
 		globalConfig: config.initialConfig ?? {},

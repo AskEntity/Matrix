@@ -80,6 +80,12 @@ export interface OrchestratorToolsDeps {
 	clearEventStore: (sessionId: string) => void;
 	/** Check if a session has JSONL events. */
 	hasEventStore: (sessionId: string) => boolean;
+	/**
+	 * Stop a running agent and await its loop exit.
+	 * Returns true if an agent was stopped, false if no agent was running.
+	 * Must wait for the agent loop to fully settle before returning.
+	 */
+	stopTask?: (nodeId: string) => Promise<boolean>;
 	/** Copy session events from source to target, appending a fork_marker. Returns event count. */
 	copySessionFrom: (
 		sourceId: string,
@@ -964,6 +970,11 @@ export function createOrchestratorTools(
 						broadcastTree,
 						removeWorktree: (id, slug) => wm.remove(id, slug),
 						clearEventStore: deps.clearEventStore,
+						stopTask: deps.stopTask
+							? async (nodeId) => {
+									await deps.stopTask?.(nodeId);
+								}
+							: undefined,
 					});
 
 					return {

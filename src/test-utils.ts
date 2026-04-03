@@ -45,6 +45,8 @@ export function mockDaemonContext(opts: {
 		sseClients: new Set(),
 		pendingClarifications: new Map(),
 		eventStores: new Map(),
+		streamingText: new Map(),
+		agentLoopPromises: new Map(),
 		requestCount: 0,
 		startupReady: true,
 		globalConfig: {},
