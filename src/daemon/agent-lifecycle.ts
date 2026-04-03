@@ -28,7 +28,7 @@ import {
 	cleanupSessionBackgroundProcesses,
 	createBuiltinTools,
 } from "../tools/index.ts";
-import { isTask, type AgentResult, type TaskSession } from "../types.ts";
+import { type AgentResult, isTask, type TaskSession } from "../types.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
 import {

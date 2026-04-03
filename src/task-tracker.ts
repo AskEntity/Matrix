@@ -3,11 +3,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
 	type FolderNode,
+	isFolder,
+	isTask,
 	type TaskNode,
 	type TaskStatus,
 	type TreeNode,
-	isFolder,
-	isTask,
 } from "./types.ts";
 import { ulid } from "./ulid.ts";
 
@@ -148,7 +148,8 @@ export class TaskTracker {
 	): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		if (isFolder(node)) throw new Error(`Cannot update status on folder: ${nodeId}`);
+		if (isFolder(node))
+			throw new Error(`Cannot update status on folder: ${nodeId}`);
 		node.status = status;
 		if (editedBy) node.editedBy = editedBy;
 		node.updatedAt = new Date().toISOString();
@@ -158,7 +159,8 @@ export class TaskTracker {
 	assignWorktree(nodeId: string, branch: string, worktreePath: string): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		if (isFolder(node)) throw new Error(`Cannot assign worktree to folder: ${nodeId}`);
+		if (isFolder(node))
+			throw new Error(`Cannot assign worktree to folder: ${nodeId}`);
 		node.branch = branch;
 		node.worktreePath = worktreePath;
 		node.updatedAt = new Date().toISOString();
@@ -187,7 +189,8 @@ export class TaskTracker {
 	): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		if (isFolder(node)) throw new Error(`Cannot update description on folder: ${nodeId}`);
+		if (isFolder(node))
+			throw new Error(`Cannot update description on folder: ${nodeId}`);
 		node.description = description;
 		if (editedBy) node.editedBy = editedBy;
 		node.updatedAt = new Date().toISOString();
@@ -197,7 +200,8 @@ export class TaskTracker {
 	assignBranch(nodeId: string, branch: string): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		if (isFolder(node)) throw new Error(`Cannot assign branch to folder: ${nodeId}`);
+		if (isFolder(node))
+			throw new Error(`Cannot assign branch to folder: ${nodeId}`);
 		node.branch = branch;
 		node.updatedAt = new Date().toISOString();
 	}
@@ -282,10 +286,7 @@ export class TaskTracker {
 	}
 
 	/** Add a folder node. Folders are pure grouping — no status, no lifecycle. */
-	addFolder(
-		title: string,
-		parentId: string | null,
-	): FolderNode {
+	addFolder(title: string, parentId: string | null): FolderNode {
 		const now = new Date().toISOString();
 		const folder: FolderNode = {
 			id: ulid(),
@@ -418,7 +419,8 @@ export class TaskTracker {
 	): void {
 		const node = this.nodes.get(nodeId);
 		if (!node) throw new Error(`Node not found: ${nodeId}`);
-		if (isFolder(node)) throw new Error(`Cannot update color on folder: ${nodeId}`);
+		if (isFolder(node))
+			throw new Error(`Cannot update color on folder: ${nodeId}`);
 		if (color) {
 			node.color = color;
 		} else {

@@ -34,8 +34,8 @@ import { createTaskComplete } from "./queue-message-factory.ts";
 import { buildSystemPrompt } from "./system-prompts.ts";
 import { TOOL_DONE } from "./tool-names.ts";
 import {
-	isTask,
 	type HealthResponse,
+	isTask,
 	type StatsResponse,
 	type VersionResponse,
 } from "./types.ts";
@@ -389,8 +389,9 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 			// Collect all in_progress task nodes that have JSONL sessions
 			const inProgressNodes = tracker
 				.allNodes()
-				.filter((n): n is import("./types.ts").TaskNode =>
-					isTask(n) && n.status === "in_progress" && eventStore.has(n.id),
+				.filter(
+					(n): n is import("./types.ts").TaskNode =>
+						isTask(n) && n.status === "in_progress" && eventStore.has(n.id),
 				);
 
 			if (inProgressNodes.length === 0) continue;
