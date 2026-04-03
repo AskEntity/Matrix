@@ -633,6 +633,12 @@ export async function* runProviderLoop(
 	// Bind live messages array for hidden evaluate_script tool (selfBootstrap).
 	request.setMessages?.(messages);
 
+	// Store messages ref on TaskSession for debug dump endpoint.
+	const currentSession = request.getSession?.(sessionId);
+	if (currentSession) {
+		currentSession.messages = messages;
+	}
+
 	// Detect pending yield from JSONL: if last tool_call is yield with no matching result,
 	// the agent was in yield state when the daemon restarted. We restore this at loop level
 	// instead of writing a synthetic orphan result — yield is a loop-level pause, not a JS await.
@@ -800,6 +806,11 @@ export async function* runProviderLoop(
 
 	// Bind frozen tools for hidden evaluate_script tool (selfBootstrap).
 	request.setAllTools?.(jsonTools);
+
+	// Store allTools ref on TaskSession for debug dump endpoint.
+	if (currentSession) {
+		currentSession.allTools = jsonTools;
+	}
 
 	// Emit session_config on fresh start (tools are now populated, not [])
 	if (!storedConfig && emit) {

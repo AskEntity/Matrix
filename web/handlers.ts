@@ -215,6 +215,38 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 			setShowSettings(true);
 			return true;
 		}
+		if (cmd === "/dump-messages") {
+			try {
+				const nodeId =
+					targetNodeId ?? selectedTaskId ?? rootNodeId ?? undefined;
+				const res = await authFetch(api.debugDumpMessages(projectId), {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(nodeId ? { nodeId } : {}),
+				});
+				if (!res.ok) throw new Error((await res.json()).error);
+				const data = await res.json();
+				// Trigger file download
+				const blob = new Blob([JSON.stringify(data, null, 2)], {
+					type: "application/json",
+				});
+				const url = URL.createObjectURL(blob);
+				const a = document.createElement("a");
+				a.href = url;
+				a.download = `messages-dump-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+				a.click();
+				URL.revokeObjectURL(url);
+				// Success: file download is the indicator, no log needed.
+			} catch (err) {
+				addLog({
+					type: "error",
+					message: (err as Error).message,
+					taskId: "",
+					ts: Date.now(),
+				});
+			}
+			return true;
+		}
 		return false;
 	}
 

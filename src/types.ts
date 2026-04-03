@@ -27,6 +27,10 @@ export interface TaskSession {
 	backgroundProcesses: Map<string, BackgroundProcess>;
 	/** Foreground execution tracking — resolve callbacks for move-to-background. Key: `${sessionId}:${execId}` */
 	foregroundExecutions: Map<string, { resolve: () => void; command: string }>;
+	/** Live provider messages[] — set by runProviderLoop via setMessages callback. For debug dump. */
+	messages?: unknown[];
+	/** Frozen JsonTool[] — set by runProviderLoop via setAllTools callback. For debug dump. */
+	allTools?: unknown[];
 }
 
 /** Shared fields for all task nodes. */
