@@ -762,35 +762,31 @@ function createAnthropicAdapter(
 					: []),
 			];
 
+			// No tool results + no images → string content (matches JSONL reconstruction)
+			if (
+				toolResults.length === 0 &&
+				queueImageBlocks.length === 0 &&
+				queueTextBlocks.length === 1
+			) {
+				return [
+					{
+						role: "user" as const,
+						content: queueTextBlocks[0]?.text ?? "",
+					},
+				];
+			}
+
+			// No content at all → empty array (shouldn't happen in practice)
+			if (userContentBlocks.length === 0) {
+				return [];
+			}
+
 			return [
 				{
 					role: "user" as const,
 					content: userContentBlocks as MessageParam["content"],
 				},
 			];
-		},
-
-		buildImplicitYieldMessage(formatted: string, nonCompact) {
-			const imageBlocks = extractQueueImages(nonCompact);
-
-			if (imageBlocks.length > 0) {
-				return {
-					role: "user" as const,
-					content: [
-						{ type: "text" as const, text: formatted },
-						...imageBlocks,
-						{
-							type: "text" as const,
-							text: `[${imageBlocks.length} image(s) attached by user]`,
-						},
-					],
-				};
-			}
-			// No images — use string content (matches JSONL reconstruction)
-			return {
-				role: "user" as const,
-				content: formatted,
-			};
 		},
 
 		computeCost(

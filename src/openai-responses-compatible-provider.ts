@@ -8,7 +8,7 @@ import {
 	walkEventsToMessages,
 } from "./event-converter.ts";
 import type { Event } from "./events.ts";
-import { MessageQueue, type QueueMessage } from "./message-queue.ts";
+import { MessageQueue } from "./message-queue.ts";
 import {
 	extractQueueImageParts,
 	type ProviderAdapter,
@@ -989,35 +989,31 @@ function createOpenAIResponsesAdapter(
 			}
 
 			if (allQueueTexts.length > 0 || allQueueImageParts.length > 0) {
-				result.push({
-					role: "user",
-					content: [
-						...allQueueTexts.map((text) => ({ type: "text" as const, text })),
-						...allQueueImageParts,
-					],
-				});
+				// Single text, no images, no tool results → string content (matches JSONL reconstruction)
+				if (
+					allQueueTexts.length === 1 &&
+					allQueueImageParts.length === 0 &&
+					result.length === 0
+				) {
+					result.push({
+						role: "user",
+						content: allQueueTexts[0] ?? "",
+					});
+				} else {
+					result.push({
+						role: "user",
+						content: [
+							...allQueueTexts.map((text) => ({
+								type: "text" as const,
+								text,
+							})),
+							...allQueueImageParts,
+						],
+					});
+				}
 			}
 
 			return result;
-		},
-
-		buildImplicitYieldMessage(formatted: string, nonCompact: QueueMessage[]) {
-			const imageParts = extractQueueImageParts(nonCompact);
-			const textParts = formatted
-				.split("\n")
-				.filter((line) => line.trim())
-				.map((line) => ({ type: "text" as const, text: line }));
-
-			if (imageParts.length > 0 || textParts.length > 1) {
-				return {
-					role: "user" as const,
-					content: [...textParts, ...imageParts],
-				};
-			}
-			return {
-				role: "user" as const,
-				content: textParts[0]?.text ?? formatted,
-			};
 		},
 
 		validateImage(base64: string, _mediaType: string) {
