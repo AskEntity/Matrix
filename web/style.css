@@ -172,6 +172,10 @@ select {
 	flex-shrink: 0;
 }
 
+.mxd-logo svg {
+	transform: translateY(-0.5px);
+}
+
 .mxd-header-title {
 	font-size: 14px;
 	font-weight: 600;
@@ -989,6 +993,16 @@ select {
 .mxd-tab-close:hover {
 	background: var(--bg-overlay);
 	color: var(--text-primary);
+}
+
+/* Preview tab — italic, gets replaced by next single-click */
+.mxd-tab-preview .mxd-tab-label {
+	font-style: italic;
+}
+
+/* Tab being dragged */
+.mxd-tab-dragging {
+	opacity: 0.4;
 }
 
 /* =========================================================
