@@ -27,7 +27,11 @@ import { join } from "node:path";
 import { MessageQueue } from "./message-queue.ts";
 import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { TaskTracker } from "./task-tracker.ts";
-import { getDescendantIds, isDescendantOf } from "./task-utils.ts";
+import {
+	buildTaskPrompt,
+	getDescendantIds,
+	isDescendantOf,
+} from "./task-utils.ts";
 import { attachMockSession, mockOrchestratorDeps } from "./test-utils.ts";
 
 describe("folder-aware: isDescendantOf", () => {
@@ -1062,5 +1066,53 @@ describe("folder-aware: TaskTracker persistence", () => {
 
 		expect(tracker.getTask(folder.id)).toBeUndefined();
 		expect(tracker.get(folder.id)).toBeDefined();
+	});
+});
+
+describe("folder-aware: buildTaskPrompt", () => {
+	let tempDir: string;
+
+	beforeEach(async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mxd-folder-prompt-"));
+	});
+
+	afterEach(async () => {
+		await rm(tempDir, { recursive: true });
+	});
+
+	test("task in folder shows owning task (not folder) in 'Your task is part of'", () => {
+		const tracker = new TaskTracker(join(tempDir, "tree.json"));
+		const root = tracker.addTask("Orchestrator", "");
+		const folder = tracker.addFolder("My Folder", root.id);
+		const child = tracker.addChild(folder.id, "Child Task", "Do the work");
+
+		const prompt = buildTaskPrompt(child, tracker, "");
+		// Should mention root (the owning task), not the folder
+		expect(prompt).toContain(`Your task is part of "Orchestrator"`);
+		expect(prompt).toContain(root.id);
+		// Should NOT contain the folder ID as the "part of" target
+		expect(prompt).not.toContain(`part of "My Folder"`);
+	});
+
+	test("task directly under another task still works", () => {
+		const tracker = new TaskTracker(join(tempDir, "tree.json"));
+		const parent = tracker.addTask("Parent", "");
+		const child = tracker.addChild(parent.id, "Child", "desc");
+
+		const prompt = buildTaskPrompt(child, tracker, "");
+		expect(prompt).toContain(`Your task is part of "Parent"`);
+		expect(prompt).toContain(parent.id);
+	});
+
+	test("task in nested folders shows correct owning task", () => {
+		const tracker = new TaskTracker(join(tempDir, "tree.json"));
+		const root = tracker.addTask("Root Agent", "");
+		const f1 = tracker.addFolder("F1", root.id);
+		const f2 = tracker.addFolder("F2", f1.id);
+		const task = tracker.addChild(f2.id, "Deep Task", "");
+
+		const prompt = buildTaskPrompt(task, tracker, "");
+		expect(prompt).toContain(`Your task is part of "Root Agent"`);
+		expect(prompt).toContain(root.id);
 	});
 });
