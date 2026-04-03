@@ -75,7 +75,6 @@ async function handleImplicitYield(
 	queue: MessageQueue,
 	emit?: (event: Event) => void,
 ): Promise<{
-	formatted: string;
 	nonCompact: QueueMessage[];
 	manualCompactRequested: boolean;
 	compactOnly: boolean;
@@ -102,15 +101,12 @@ async function handleImplicitYield(
 		const nonCompact = all.filter((m) => m.source !== "compact");
 		if (nonCompact.length === 0) {
 			return {
-				formatted: "",
 				nonCompact: [],
 				manualCompactRequested,
 				compactOnly: true,
 			};
 		}
-		const formatted = nonCompact.map(formatQueueMessage).join("\n");
 		return {
-			formatted,
 			nonCompact,
 			manualCompactRequested,
 			compactOnly: false,
@@ -729,10 +725,9 @@ export async function* runProviderLoop(
 		}
 
 		if (allMsgs.length > 0) {
-			// Build user content from the queue message(s).
-			// All messages go through formatQueueMessage for consistent formatting
+			// Format each queue message individually for consistent formatting
 			// (includes [HH:MM:SS] prefix) between live path and JSONL reconstruction.
-			const firstUserContent = allMsgs.map(formatQueueMessage).join("\n\n");
+			const formattedTexts = allMsgs.map(formatQueueMessage);
 
 			// On resume from a crash during tool execution, the last reconstructed message
 			// may be a user message (tool_result). Appending another user message would
@@ -747,21 +742,39 @@ export async function* runProviderLoop(
 				Array.isArray(lastMsg.content)
 			) {
 				// Last message is a user message with content blocks (e.g., tool_results).
-				// Append queue text as additional text blocks.
-				(lastMsg.content as unknown[]).push({
-					type: "text",
-					text: firstUserContent,
-				});
+				// Append queue text as additional text blocks — one per message.
+				for (const text of formattedTexts) {
+					(lastMsg.content as unknown[]).push({
+						type: "text",
+						text,
+					});
+				}
 			} else if (
 				lastMsg &&
 				lastMsg.role === "user" &&
 				typeof lastMsg.content === "string"
 			) {
-				// Last message is a plain string user message — combine as string.
-				lastMsg.content = `${lastMsg.content}\n\n${firstUserContent}`;
+				// Last message is a plain string user message — convert to text blocks.
+				const blocks = [
+					{ type: "text", text: lastMsg.content },
+					...formattedTexts.map((t) => ({ type: "text", text: t })),
+				];
+				lastMsg.content = blocks;
 			} else {
 				// Normal case: no prior user message, push new one.
-				messages.push({ role: "user" as const, content: firstUserContent });
+				// Single message → string content (matches JSONL reconstruction for single message).
+				// Multiple messages → text blocks (matches JSONL reconstruction).
+				if (formattedTexts.length === 1) {
+					messages.push({
+						role: "user" as const,
+						content: formattedTexts[0] ?? "",
+					});
+				} else {
+					messages.push({
+						role: "user" as const,
+						content: formattedTexts.map((t) => ({ type: "text", text: t })),
+					});
+				}
 			}
 
 			// Record queue events for the consumed messages

@@ -17,7 +17,7 @@ import {
 	runProviderLoop,
 	type ToolResult,
 } from "./provider-shared.ts";
-import { formatQueueMessagesWithHeaders } from "./queue-utils.ts";
+import { formatQueueMessage } from "./task-utils.ts";
 import type { JsonTool } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
@@ -974,12 +974,13 @@ function createOpenAIResponsesAdapter(
 				result.push({ role: "user", content: imageParts });
 			}
 
-			// Raw queue messages — format internally
+			// Raw queue messages — format each individually.
+			// Each message becomes its own entry to match JSONL reconstruction.
 			if (params.queueMessages.length > 0) {
-				const formatted = formatQueueMessagesWithHeaders(params.queueMessages);
-				for (const line of formatted.split("\n")) {
-					if (line.trim()) {
-						allQueueTexts.push(line);
+				for (const msg of params.queueMessages) {
+					const text = formatQueueMessage(msg);
+					if (text) {
+						allQueueTexts.push(text);
 					}
 				}
 				const queueImageParts = extractQueueImageParts(params.queueMessages);
