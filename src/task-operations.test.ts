@@ -406,7 +406,7 @@ describe("deleteTaskOp", () => {
 
 		expect(result.taskId).toBe(task.id);
 		expect(result.title).toBe("Leaf");
-		expect(tracker.get(task.id)).toBeUndefined();
+		expect(tracker.getTask(task.id)).toBeUndefined();
 		expect(broadcastCount).toBe(1);
 	});
 
@@ -461,7 +461,7 @@ describe("closeTaskOp", () => {
 		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
 
 		expect(result.taskId).toBe(task.id);
-		const node = tracker.get(task.id);
+		const node = tracker.getTask(task.id);
 		expect(node?.status).toBe("closed");
 	});
 
@@ -474,7 +474,7 @@ describe("closeTaskOp", () => {
 		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
 
 		expect(result.taskId).toBe(task.id);
-		const node = tracker.get(task.id);
+		const node = tracker.getTask(task.id);
 		expect(node?.status).toBe("closed");
 	});
 
@@ -487,7 +487,7 @@ describe("closeTaskOp", () => {
 		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
 
 		expect(result.taskId).toBe(task.id);
-		const node = tracker.get(task.id);
+		const node = tracker.getTask(task.id);
 		expect(node?.status).toBe("closed");
 	});
 
@@ -500,7 +500,7 @@ describe("closeTaskOp", () => {
 		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
 
 		expect(result.taskId).toBe(task.id);
-		const node = tracker.get(task.id);
+		const node = tracker.getTask(task.id);
 		expect(node?.status).toBe("closed");
 	});
 
@@ -556,7 +556,7 @@ describe("resetTaskOp", () => {
 		const result = await resetTaskOp(tracker, task.id, makeCallbacks());
 
 		expect(result.taskId).toBe(task.id);
-		const node = tracker.get(task.id);
+		const node = tracker.getTask(task.id);
 		expect(node?.status).toBe("pending");
 	});
 
@@ -621,7 +621,7 @@ describe("reorderTasksOp", () => {
 			makeCallbacks(),
 		);
 
-		const root = tracker.get(tracker.rootNodeId);
+		const root = tracker.getTask(tracker.rootNodeId);
 		expect(root?.children).toEqual([c2.id, c1.id]);
 		expect(broadcastCount).toBe(1);
 	});
@@ -758,7 +758,7 @@ describe("surgical description edit via updateTaskOp", () => {
 		// Reload and verify
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load("main");
-		const reloaded = tracker2.get(task.id);
+		const reloaded = tracker2.getTask(task.id);
 		expect(reloaded?.description).toBe(
 			"Phase 1: types\nPhase 2: implementation (DONE)\nPhase 3: tests",
 		);

@@ -96,7 +96,7 @@ async function waitForDone(
 	const rootNodeId = tracker.rootNodeId;
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
-		const rootNode = tracker.get(rootNodeId);
+		const rootNode = tracker.getTask(rootNodeId);
 		if (rootNode?.status === "verify" || rootNode?.status === "failed") {
 			return rootNode.status;
 		}
@@ -110,7 +110,7 @@ async function waitForIdle(ctx: TestContext, timeoutMs = 10000): Promise<void> {
 	const rootNodeId = tracker.rootNodeId;
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
-		const rootNode = tracker.get(rootNodeId);
+		const rootNode = tracker.getTask(rootNodeId);
 		if (rootNode?.session?.queue?.idle) return;
 		await new Promise((r) => setTimeout(r, 50));
 	}

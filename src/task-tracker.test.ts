@@ -56,14 +56,14 @@ describe("TaskTracker", () => {
 	test("updateStatus changes node status", () => {
 		const task = tracker.addTask("App", "desc");
 		tracker.updateStatus(task.id, "in_progress");
-		expect(tracker.get(task.id)?.status).toBe("in_progress");
+		expect(tracker.getTask(task.id)?.status).toBe("in_progress");
 	});
 
 	test("assignBranch sets branch name", () => {
 		const parent = tracker.addTask("App", "desc");
 		const child = tracker.addChild(parent.id, "Auth", "desc");
 		tracker.assignBranch(child.id, "feat/auth");
-		expect(tracker.get(child.id)?.branch).toBe("feat/auth");
+		expect(tracker.getTask(child.id)?.branch).toBe("feat/auth");
 	});
 
 	test("byStatus filters nodes", () => {
@@ -85,8 +85,8 @@ describe("TaskTracker", () => {
 
 		tracker.remove(c1.id);
 
-		expect(tracker.get(c1.id)).toBeUndefined();
-		expect(tracker.get(c1a.id)).toBeUndefined();
+		expect(tracker.getTask(c1.id)).toBeUndefined();
+		expect(tracker.getTask(c1a.id)).toBeUndefined();
 		expect(tracker.getChildren(parent.id)).toHaveLength(0);
 		expect(tracker.allNodes()).toHaveLength(2); // parent + root node
 	});
@@ -111,7 +111,7 @@ describe("TaskTracker", () => {
 
 		// Root node + the saved "App" node are top-level
 		expect(tracker2.getTopLevel()).toHaveLength(2);
-		const appNode = tracker2.getTopLevel().find((n) => n.title === "App");
+		const appNode = tracker2.getTopLevel().find((n) => n.title === "App") as TaskNode | undefined;
 		expect(appNode?.status).toBe("in_progress");
 		expect(tracker2.getChildren(parent.id)).toHaveLength(1);
 	});
@@ -129,13 +129,13 @@ describe("TaskTracker", () => {
 		// Use full ID for exact match, and verify ambiguous short prefix returns undefined.
 		const task = tracker.addTask("Prefix test", "Test prefix matching");
 		// Full ID always works
-		expect(tracker.get(task.id)).toBe(task);
+		expect(tracker.getTask(task.id)).toBe(task);
 		// Short prefix (8 chars) is ambiguous with the root node (same ms timestamp)
 		// so it correctly returns undefined
 		const shortId = task.id.slice(0, 8);
-		expect(tracker.get(shortId)).toBeUndefined(); // ambiguous — both root and task match
+		expect(tracker.getTask(shortId)).toBeUndefined(); // ambiguous — both root and task match
 		// Too short (7 chars) should not match
-		expect(tracker.get(task.id.slice(0, 7))).toBeUndefined();
+		expect(tracker.getTask(task.id.slice(0, 7))).toBeUndefined();
 	});
 
 	test("updateCost accumulates cost on a task node", () => {
@@ -143,10 +143,10 @@ describe("TaskTracker", () => {
 		expect(task.costUsd).toBe(0);
 
 		tracker.updateCost(task.id, 0.0123);
-		expect(tracker.get(task.id)?.costUsd).toBeCloseTo(0.0123);
+		expect(tracker.getTask(task.id)?.costUsd).toBeCloseTo(0.0123);
 
 		tracker.updateCost(task.id, 0.0077);
-		expect(tracker.get(task.id)?.costUsd).toBeCloseTo(0.02);
+		expect(tracker.getTask(task.id)?.costUsd).toBeCloseTo(0.02);
 	});
 
 	test("updateCost does nothing for unknown nodeId", () => {
@@ -161,7 +161,7 @@ describe("TaskTracker", () => {
 
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
-		expect(tracker2.get(task.id)?.costUsd).toBeCloseTo(0.0456);
+		expect(tracker2.getTask(task.id)?.costUsd).toBeCloseTo(0.0456);
 	});
 
 	test("costUsd and editedBy have defaults on creation", () => {
@@ -195,7 +195,7 @@ describe("TaskTracker", () => {
 
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
-		const loaded = tracker2.get(task.id);
+		const loaded = tracker2.getTask(task.id);
 		expect(loaded?.costUsd).toBe(0);
 		expect(loaded?.editedBy).toBe("agent");
 	});
@@ -204,10 +204,10 @@ describe("TaskTracker", () => {
 		const task1 = tracker.addTask("Task A", "First");
 		const task2 = tracker.addTask("Task B", "Second");
 		// Using a 1-char prefix (too short) returns undefined
-		expect(tracker.get(task1.id.slice(0, 1))).toBeUndefined();
+		expect(tracker.getTask(task1.id.slice(0, 1))).toBeUndefined();
 		// Full IDs still work
-		expect(tracker.get(task1.id)).toBe(task1);
-		expect(tracker.get(task2.id)).toBe(task2);
+		expect(tracker.getTask(task1.id)).toBe(task1);
+		expect(tracker.getTask(task2.id)).toBe(task2);
 	});
 
 	test("addTask accepts budgetUsd option", () => {
@@ -238,7 +238,7 @@ describe("TaskTracker", () => {
 
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
-		expect(tracker2.get(task.id)?.budgetUsd).toBe(2.0);
+		expect(tracker2.getTask(task.id)?.budgetUsd).toBe(2.0);
 	});
 
 	test("addTask accepts draft option and sets status to draft", () => {
@@ -264,10 +264,10 @@ describe("TaskTracker", () => {
 		expect(task.status).toBe("pending");
 
 		tracker.updateStatus(task.id, "draft");
-		expect(tracker.get(task.id)?.status).toBe("draft");
+		expect(tracker.getTask(task.id)?.status).toBe("draft");
 
 		tracker.updateStatus(task.id, "pending");
-		expect(tracker.get(task.id)?.status).toBe("pending");
+		expect(tracker.getTask(task.id)?.status).toBe("pending");
 	});
 
 	test("draft status persists across save/load", async () => {
@@ -276,14 +276,14 @@ describe("TaskTracker", () => {
 
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
-		expect(tracker2.get(task.id)?.status).toBe("draft");
+		expect(tracker2.getTask(task.id)?.status).toBe("draft");
 	});
 
 	test("root node auto-created on load (fresh project)", () => {
 		// Root node is created automatically when tracker loads with no tree.json
 		const rootId = tracker.rootNodeId;
 		expect(rootId).toBeTruthy();
-		const root = tracker.get(rootId) as TaskNode;
+		const root = tracker.getTask(rootId) as TaskNode;
 		expect(root.title).toBe("Orchestrator");
 		expect(root.parentId).toBeNull();
 		expect(root.status).toBe("pending");
@@ -297,7 +297,7 @@ describe("TaskTracker", () => {
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
 		expect(tracker2.rootNodeId).toBe(rootId);
-		expect(tracker2.get(rootId)?.title).toBe("Orchestrator");
+		expect(tracker2.getTask(rootId)?.title).toBe("Orchestrator");
 		expect(tracker2.getChildren(rootId)).toHaveLength(1);
 	});
 
@@ -391,7 +391,7 @@ describe("TaskTracker", () => {
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
 		// persistent field should be stripped — not present on TaskNode
-		const loaded = tracker2.get(task1.id) as unknown as Record<string, unknown>;
+		const loaded = tracker2.getTask(task1.id) as unknown as Record<string, unknown>;
 		expect(loaded.persistent).toBeUndefined();
 	});
 

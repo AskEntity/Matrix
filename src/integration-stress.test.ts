@@ -120,7 +120,7 @@ async function waitForDone(
 	const rootNodeId = tracker.rootNodeId;
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
-		const rootNode = tracker.get(rootNodeId);
+		const rootNode = tracker.getTask(rootNodeId);
 		if (rootNode?.status === "verify" || rootNode?.status === "failed") {
 			return rootNode.status;
 		}
@@ -134,7 +134,7 @@ async function waitForIdle(ctx: TestContext, timeoutMs = 10000): Promise<void> {
 	const rootNodeId = tracker.rootNodeId;
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
-		const rootNode = tracker.get(rootNodeId);
+		const rootNode = tracker.getTask(rootNodeId);
 		if (rootNode?.session?.queue?.idle) return;
 		await new Promise((r) => setTimeout(r, 50));
 	}
@@ -623,11 +623,11 @@ describe("Stress: multi-child coordination", () => {
 
 		// Verify all 3 children are passed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		expect(rootNode?.children?.length).toBe(3);
 
 		for (const childId of rootNode?.children ?? []) {
-			const childNode = tracker.get(childId);
+			const childNode = tracker.getTask(childId);
 			expect(childNode?.status).toBe("verify");
 		}
 	}, 90000);
@@ -1037,9 +1037,9 @@ describe("Stress: fork + restart", () => {
 
 		// Verify fork child completed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		const childId = rootNode?.children?.[0] as string;
-		const childNode = tracker.get(childId);
+		const childNode = tracker.getTask(childId);
 		expect(childNode?.status).toBe("verify");
 
 		// Verify child's JSONL has fork_marker
@@ -1316,7 +1316,7 @@ describe("Stress: session lifecycle edge cases", () => {
 		const rootNodeId = tracker.rootNodeId;
 		const start2 = Date.now();
 		while (Date.now() - start2 < 5000) {
-			if (tracker.get(rootNodeId)?.status === "in_progress") break;
+			if (tracker.getTask(rootNodeId)?.status === "in_progress") break;
 			await new Promise((r) => setTimeout(r, 50));
 		}
 
@@ -1704,9 +1704,9 @@ describe("Stress: child restart edge cases", () => {
 
 		// Verify child also passed
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
 		const childId = rootNode?.children?.[0] as string;
-		expect(tracker.get(childId)?.status).toBe("verify");
+		expect(tracker.getTask(childId)?.status).toBe("verify");
 	}, 60000);
 });
 

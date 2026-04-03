@@ -305,7 +305,7 @@ describe("lifecycle: task state vs message delivery", () => {
 		// Attach session to simulate a running agent
 		const taskQueue = new MessageQueue();
 		const tracker = await getTracker(project.id);
-		attachMockSession(tracker.get(task.id) as TaskNode, taskQueue);
+		attachMockSession(tracker.getTask(task.id) as TaskNode, taskQueue);
 
 		const res = await sendTaskMessage(
 			app,
@@ -325,7 +325,7 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect((msgs[0] as { content: string }).content).toBe("hello running");
 
 		// Cleanup
-		(tracker.get(task.id) as TaskNode).session = undefined;
+		(tracker.getTask(task.id) as TaskNode).session = undefined;
 		taskQueue.close();
 	});
 
@@ -344,7 +344,7 @@ describe("lifecycle: task state vs message delivery", () => {
 		const taskQueue = new MessageQueue();
 		taskQueue.idle = true;
 		const tracker = await getTracker(project.id);
-		attachMockSession(tracker.get(task.id) as TaskNode, taskQueue);
+		attachMockSession(tracker.getTask(task.id) as TaskNode, taskQueue);
 
 		// Start a wait that should resolve when message arrives
 		let wokenMsg: unknown = null;
@@ -362,7 +362,7 @@ describe("lifecycle: task state vs message delivery", () => {
 		expect((wokenMsg as { content: string }).content).toBe("wake up");
 
 		// Cleanup
-		(tracker.get(task.id) as TaskNode).session = undefined;
+		(tracker.getTask(task.id) as TaskNode).session = undefined;
 		taskQueue.close();
 	});
 
@@ -483,7 +483,7 @@ describe("lifecycle: task state vs message delivery", () => {
 		const taskQueue = new MessageQueue();
 		taskQueue.close();
 		const tracker = await getTracker(project.id);
-		attachMockSession(tracker.get(task.id) as TaskNode, taskQueue);
+		attachMockSession(tracker.getTask(task.id) as TaskNode, taskQueue);
 
 		const res = await sendTaskMessage(app, project.id, task.id, "hello");
 		// After audit: route handler catches enqueue errors and falls through to persist
@@ -493,7 +493,7 @@ describe("lifecycle: task state vs message delivery", () => {
 		};
 		expect(body.ok).toBe(true);
 
-		(tracker.get(task.id) as TaskNode).session = undefined;
+		(tracker.getTask(task.id) as TaskNode).session = undefined;
 	});
 });
 
@@ -528,7 +528,7 @@ describe("lifecycle: concurrent message sources", () => {
 		// Attach session to simulate running agent
 		const taskQueue = new MessageQueue();
 		const tracker = await getTracker(project.id);
-		attachMockSession(tracker.get(task.id) as TaskNode, taskQueue);
+		attachMockSession(tracker.getTask(task.id) as TaskNode, taskQueue);
 
 		// Send two messages rapidly
 		const [res1, res2] = await Promise.all([
@@ -547,9 +547,9 @@ describe("lifecycle: concurrent message sources", () => {
 		expect(contents).toContain("second");
 
 		// Session queue should be the same one
-		expect(tracker.get(task.id)?.session?.queue).toBe(taskQueue);
+		expect(tracker.getTask(task.id)?.session?.queue).toBe(taskQueue);
 
-		(tracker.get(task.id) as TaskNode).session = undefined;
+		(tracker.getTask(task.id) as TaskNode).session = undefined;
 		taskQueue.close();
 	});
 
@@ -566,7 +566,7 @@ describe("lifecycle: concurrent message sources", () => {
 
 		const taskQueue = new MessageQueue();
 		const tracker = await getTracker(project.id);
-		attachMockSession(tracker.get(task.id) as TaskNode, taskQueue);
+		attachMockSession(tracker.getTask(task.id) as TaskNode, taskQueue);
 
 		// Send 5 messages
 		for (let i = 0; i < 5; i++) {
@@ -580,7 +580,7 @@ describe("lifecycle: concurrent message sources", () => {
 			expect((msgs[i] as { content: string }).content).toBe(`msg-${i}`);
 		}
 
-		(tracker.get(task.id) as TaskNode).session = undefined;
+		(tracker.getTask(task.id) as TaskNode).session = undefined;
 		taskQueue.close();
 	});
 
@@ -597,7 +597,7 @@ describe("lifecycle: concurrent message sources", () => {
 
 		// No session — message gets persisted
 		const tracker = await getTracker(project.id);
-		expect(tracker.get(task.id)?.session).toBeUndefined();
+		expect(tracker.getTask(task.id)?.session).toBeUndefined();
 
 		const res = await sendTaskMessage(
 			app,
@@ -642,7 +642,7 @@ describe("lifecycle: concurrent message sources", () => {
 
 		// The auto-launch should have created a session on the tracker node
 		const tracker = await getTracker(project.id);
-		const queue = tracker.get(task.id)?.session?.queue;
+		const queue = tracker.getTask(task.id)?.session?.queue;
 		// Note: if the instant provider completed, session may already be removed.
 		// With long-running provider, it should still be there.
 		if (queue) {
@@ -659,11 +659,11 @@ describe("lifecycle: concurrent message sources", () => {
 			expect(body2.ok).toBe(true);
 
 			// Still the same queue on the session
-			expect(tracker.get(task.id)?.session?.queue).toBe(queue);
+			expect(tracker.getTask(task.id)?.session?.queue).toBe(queue);
 
 			queue.close();
 		}
-		const node = tracker.get(task.id);
+		const node = tracker.getTask(task.id);
 		if (node) node.session = undefined;
 	});
 
@@ -679,7 +679,7 @@ describe("lifecycle: concurrent message sources", () => {
 		const task = await createTask(app, project.id, "Stale worktree task");
 
 		const tracker = await getTracker(project.id);
-		const node = tracker.get(task.id) as TaskNode;
+		const node = tracker.getTask(task.id) as TaskNode;
 
 		// Simulate a stale worktreePath — directory doesn't exist on disk
 		const stalePath = join(projectDir, ".worktrees", "nonexistent-dir");
@@ -887,7 +887,7 @@ describe("lifecycle: session consistency on tracker nodes", () => {
 
 		// Session should be cleaned up after agent finishes
 		const tracker = await getTracker(project.id);
-		expect(tracker.get(task.id)?.session).toBeUndefined();
+		expect(tracker.getTask(task.id)?.session).toBeUndefined();
 	});
 
 	test("session on node holds the queue reference", () => {
@@ -958,8 +958,8 @@ describe("lifecycle: parent chain notifications", () => {
 		const tracker = await getTracker(project.id);
 		const parentQueue = new MessageQueue();
 		const childQueue = new MessageQueue();
-		attachMockSession(tracker.get(parent.id) as TaskNode, parentQueue);
-		attachMockSession(tracker.get(child.id) as TaskNode, childQueue);
+		attachMockSession(tracker.getTask(parent.id) as TaskNode, parentQueue);
+		attachMockSession(tracker.getTask(child.id) as TaskNode, childQueue);
 
 		// Send message to child — should notify parent
 		const res = await sendTaskMessage(app, project.id, child.id, "child msg");
@@ -979,8 +979,8 @@ describe("lifecycle: parent chain notifications", () => {
 		expect(notification).toBeTruthy();
 		expect((notification as { content: string }).content).toContain("Child");
 
-		(tracker.get(parent.id) as TaskNode).session = undefined;
-		(tracker.get(child.id) as TaskNode).session = undefined;
+		(tracker.getTask(parent.id) as TaskNode).session = undefined;
+		(tracker.getTask(child.id) as TaskNode).session = undefined;
 		parentQueue.close();
 		childQueue.close();
 	});
@@ -1007,9 +1007,9 @@ describe("lifecycle: parent chain notifications", () => {
 		const gpQueue = new MessageQueue();
 		const pQueue = new MessageQueue();
 		const cQueue = new MessageQueue();
-		attachMockSession(tracker.get(grandparent.id) as TaskNode, gpQueue);
-		attachMockSession(tracker.get(parent.id) as TaskNode, pQueue);
-		attachMockSession(tracker.get(child.id) as TaskNode, cQueue);
+		attachMockSession(tracker.getTask(grandparent.id) as TaskNode, gpQueue);
+		attachMockSession(tracker.getTask(parent.id) as TaskNode, pQueue);
+		attachMockSession(tracker.getTask(child.id) as TaskNode, cQueue);
 
 		await sendTaskMessage(app, project.id, child.id, "deep msg");
 
@@ -1028,9 +1028,9 @@ describe("lifecycle: parent chain notifications", () => {
 			true,
 		);
 
-		(tracker.get(grandparent.id) as TaskNode).session = undefined;
-		(tracker.get(parent.id) as TaskNode).session = undefined;
-		(tracker.get(child.id) as TaskNode).session = undefined;
+		(tracker.getTask(grandparent.id) as TaskNode).session = undefined;
+		(tracker.getTask(parent.id) as TaskNode).session = undefined;
+		(tracker.getTask(child.id) as TaskNode).session = undefined;
 		gpQueue.close();
 		pQueue.close();
 		cQueue.close();
@@ -1053,7 +1053,7 @@ describe("lifecycle: parent chain notifications", () => {
 		// Only attach session for child (parent is not running)
 		const tracker = await getTracker(project.id);
 		const childQueue = new MessageQueue();
-		attachMockSession(tracker.get(child.id) as TaskNode, childQueue);
+		attachMockSession(tracker.getTask(child.id) as TaskNode, childQueue);
 
 		await sendTaskMessage(app, project.id, child.id, "child msg");
 
@@ -1072,7 +1072,7 @@ describe("lifecycle: parent chain notifications", () => {
 		);
 		expect(notification).toBeTruthy();
 
-		(tracker.get(child.id) as TaskNode).session = undefined;
+		(tracker.getTask(child.id) as TaskNode).session = undefined;
 		childQueue.close();
 	});
 
@@ -1095,10 +1095,10 @@ describe("lifecycle: parent chain notifications", () => {
 		// Attach sessions for root and child
 		const tracker = await getTracker(project.id);
 		const rootQueue = new MessageQueue();
-		attachMockSession(tracker.get(root.id) as TaskNode, rootQueue);
+		attachMockSession(tracker.getTask(root.id) as TaskNode, rootQueue);
 
 		const childQueue = new MessageQueue();
-		attachMockSession(tracker.get(child.id) as TaskNode, childQueue);
+		attachMockSession(tracker.getTask(child.id) as TaskNode, childQueue);
 
 		// Send message to child — should notify root via session queue
 		const res = await sendTaskMessage(app, project.id, child.id, "hello child");
@@ -1120,8 +1120,8 @@ describe("lifecycle: parent chain notifications", () => {
 			"Child task",
 		);
 
-		(tracker.get(child.id) as TaskNode).session = undefined;
-		(tracker.get(root.id) as TaskNode).session = undefined;
+		(tracker.getTask(child.id) as TaskNode).session = undefined;
+		(tracker.getTask(root.id) as TaskNode).session = undefined;
 		childQueue.close();
 		rootQueue.close();
 	});
@@ -1408,7 +1408,7 @@ describe("lifecycle: stop agent cascading", () => {
 		await setTaskStatus(app, project.id, childTask.id, "in_progress");
 
 		const childQueue = new MessageQueue();
-		attachMockSession(tracker.get(childTask.id) as TaskNode, childQueue);
+		attachMockSession(tracker.getTask(childTask.id) as TaskNode, childQueue);
 
 		// Stop the orchestrator — should cascade to children
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
@@ -1427,7 +1427,7 @@ describe("lifecycle: stop agent cascading", () => {
 		// Child status should stay in_progress (interrupted, not failed)
 		// stopAgent no longer marks children as failed — they are resumable on restart
 		const updatedTracker = await getTracker(project.id);
-		const childNode = updatedTracker.get(childTask.id);
+		const childNode = updatedTracker.getTask(childTask.id);
 		expect(childNode?.status).toBe("in_progress");
 	});
 });
@@ -1468,7 +1468,7 @@ describe("lifecycle: clarify response routing", () => {
 		const child = await createTask(app, project.id, "Clarifying child");
 		const tracker = await getTracker(project.id);
 		const childQueue = new MessageQueue();
-		attachMockSession(tracker.get(child.id) as TaskNode, childQueue);
+		attachMockSession(tracker.getTask(child.id) as TaskNode, childQueue);
 
 		// Send clarify response targeting the child
 		const res = await app.request(`/projects/${project.id}/clarify`, {
@@ -1487,7 +1487,7 @@ describe("lifecycle: clarify response routing", () => {
 		expect(childMsgs[0]?.source).toBe("clarify_response");
 		expect((childMsgs[0] as { answer: string }).answer).toBe("yes, proceed");
 
-		(tracker.get(child.id) as TaskNode).session = undefined;
+		(tracker.getTask(child.id) as TaskNode).session = undefined;
 		childQueue.close();
 		await app.request(`/projects/${project.id}/stop`, { method: "POST" });
 		await delay(100);
@@ -1802,7 +1802,7 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 		// Attach session (simulating running agent)
 		const tracker = await getTracker(project.id);
 		const taskQueue = new MessageQueue();
-		attachMockSession(tracker.get(task.id) as TaskNode, taskQueue);
+		attachMockSession(tracker.getTask(task.id) as TaskNode, taskQueue);
 
 		// Delete the task via REST
 		const res = await app.request(`/projects/${project.id}/tasks/${task.id}`, {
@@ -1855,7 +1855,7 @@ describe("lifecycle: REST DELETE /tasks/:id closes agent queues", () => {
 
 		const tracker = await getTracker(project.id);
 		const taskQueue = new MessageQueue();
-		attachMockSession(tracker.get(task.id) as TaskNode, taskQueue);
+		attachMockSession(tracker.getTask(task.id) as TaskNode, taskQueue);
 
 		const res = await app.request(`/projects/${project.id}/tasks/${task.id}`, {
 			method: "DELETE",
@@ -1920,7 +1920,7 @@ describe("lifecycle: child completion notification paths", () => {
 		const trackerPath = join(dataDir, "test-reset-tracker.json");
 		const tracker = new TaskTracker(trackerPath);
 		await tracker.load();
-		const parentNode = tracker.get(tracker.rootNodeId) as TaskNode;
+		const parentNode = tracker.getTask(tracker.rootNodeId) as TaskNode;
 		const childNode = tracker.addChild(parentNode.id, "Child", "");
 		tracker.updateStatus(parentNode.id, "in_progress");
 		tracker.updateStatus(childNode.id, "in_progress");
@@ -2023,7 +2023,7 @@ describe("lifecycle: child completion notification paths", () => {
 		const trackerPath = join(dataDir, "test-donefix-tracker.json");
 		const tracker = new TaskTracker(trackerPath);
 		await tracker.load();
-		const parentNode = tracker.get(tracker.rootNodeId) as TaskNode;
+		const parentNode = tracker.getTask(tracker.rootNodeId) as TaskNode;
 		tracker.updateStatus(parentNode.id, "in_progress");
 		const childNode = tracker.addChild(parentNode.id, "Child", "");
 		const childId = childNode.id;
@@ -2103,7 +2103,7 @@ describe("lifecycle: child completion notification paths", () => {
 		// Queue close exits the loop — no deadlock
 		expect(result).not.toBe("timeout");
 		// Status NOT updated by runChildCore (Phase 2 in runAgentForNode does that)
-		expect(tracker.get(childId)?.status).toBe("in_progress");
+		expect(tracker.getTask(childId)?.status).toBe("in_progress");
 
 		// Cleanup
 		parentNode.session = undefined;
@@ -2117,7 +2117,7 @@ describe("lifecycle: child completion notification paths", () => {
 		const trackerPath = join(dataDir, "test-deadlock-tracker.json");
 		const tracker = new TaskTracker(trackerPath);
 		await tracker.load();
-		const parentNode = tracker.get(tracker.rootNodeId) as TaskNode;
+		const parentNode = tracker.getTask(tracker.rootNodeId) as TaskNode;
 		tracker.updateStatus(parentNode.id, "in_progress");
 		const childNode = tracker.addChild(parentNode.id, "Child", "");
 		const childId = childNode.id;
@@ -2206,15 +2206,15 @@ describe("lifecycle: child completion notification paths", () => {
 		// Attach session for the child (simulating running agent)
 		const tracker = await getTracker(project.id);
 		const oldQueue = new MessageQueue();
-		attachMockSession(tracker.get(child.id) as TaskNode, oldQueue);
-		expect(tracker.get(child.id)?.session?.queue).toBe(oldQueue);
+		attachMockSession(tracker.getTask(child.id) as TaskNode, oldQueue);
+		expect(tracker.getTask(child.id)?.session?.queue).toBe(oldQueue);
 
 		// Simulate reset_task: clear session THEN close (correct order)
-		(tracker.get(child.id) as TaskNode).session = undefined;
+		(tracker.getTask(child.id) as TaskNode).session = undefined;
 		oldQueue.close();
 
 		// Verify session is gone
-		expect(tracker.get(child.id)?.session).toBeUndefined();
+		expect(tracker.getTask(child.id)?.session).toBeUndefined();
 
 		// Verify old queue is closed
 		expect(() =>
@@ -2234,10 +2234,10 @@ describe("lifecycle: child completion notification paths", () => {
 
 		// If auto-launch succeeded, a new session was created (and may already be gone
 		// if the instant provider completed). Either way, it's not the old queue.
-		const newQueue = tracker.get(child.id)?.session?.queue;
+		const newQueue = tracker.getTask(child.id)?.session?.queue;
 		if (newQueue) {
 			expect(newQueue).not.toBe(oldQueue);
-			(tracker.get(child.id) as TaskNode).session = undefined;
+			(tracker.getTask(child.id) as TaskNode).session = undefined;
 			newQueue.close();
 		}
 	});
@@ -2257,7 +2257,7 @@ describe("lifecycle: child completion notification paths", () => {
 		// Attach session simulating a running agent blocked on queue.wait()
 		const tracker = await getTracker(project.id);
 		const taskQueue = new MessageQueue();
-		attachMockSession(tracker.get(task.id) as TaskNode, taskQueue);
+		attachMockSession(tracker.getTask(task.id) as TaskNode, taskQueue);
 
 		// Start a waiter to detect when queue is closed
 		let waiterError: Error | null = null;
@@ -2267,9 +2267,9 @@ describe("lifecycle: child completion notification paths", () => {
 
 		// Simulate reset_task behavior:
 		// 1. Clear session (so callers see "no session")
-		const activeQueue = tracker.get(task.id)?.session?.queue;
+		const activeQueue = tracker.getTask(task.id)?.session?.queue;
 		expect(activeQueue).toBe(taskQueue);
-		(tracker.get(task.id) as TaskNode).session = undefined;
+		(tracker.getTask(task.id) as TaskNode).session = undefined;
 
 		// 2. Close the queue (stops the agent)
 		activeQueue?.close();
@@ -2286,7 +2286,7 @@ describe("lifecycle: child completion notification paths", () => {
 		expect(waiterError!.message).toBe("Queue closed");
 
 		// Verify session is gone
-		expect(tracker.get(task.id)?.session).toBeUndefined();
+		expect(tracker.getTask(task.id)?.session).toBeUndefined();
 
 		// Verify status is pending
 		const getRes = await app.request(`/projects/${project.id}/tasks`);

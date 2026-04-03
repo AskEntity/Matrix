@@ -931,7 +931,7 @@ describe("daemon tasks API", () => {
 		// Attach session to simulate a running agent
 		const taskQueue = new MessageQueue();
 		const tracker = await getTracker(projectId);
-		const taskNode = tracker.get(task.id) as TaskNode;
+		const taskNode = tracker.getTask(task.id) as TaskNode;
 		attachMockSession(taskNode, taskQueue);
 
 		// Delete the leaf task — should close its queue
@@ -1138,7 +1138,7 @@ describe("daemon tasks API", () => {
 		expect(receivedQueue).toBe(true);
 		// Ensure session is cleaned up after agent completes
 		await new Promise((r) => setTimeout(r, 50));
-		expect(daemonTracker.get(task.id)?.session).toBeUndefined();
+		expect(daemonTracker.getTask(task.id)?.session).toBeUndefined();
 
 		await rm(localDataDir, { recursive: true });
 	});
@@ -2013,7 +2013,7 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		// Attach session to simulate a running agent
 		taskQueue = new MessageQueue();
 		const tracker = await gt(projectId);
-		const taskNode = tracker.get(taskId) as TaskNode;
+		const taskNode = tracker.getTask(taskId) as TaskNode;
 		attachMockSession(taskNode, taskQueue);
 
 		const res = await app.request(
@@ -2092,7 +2092,7 @@ describe("POST /projects/:id/tasks/:nodeId/message", () => {
 		taskQueue = new MessageQueue();
 		taskQueue.close();
 		const tracker = await gt(projectId);
-		const taskNode = tracker.get(taskId) as TaskNode;
+		const taskNode = tracker.getTask(taskId) as TaskNode;
 		attachMockSession(taskNode, taskQueue);
 
 		const res = await app.request(
@@ -2414,7 +2414,7 @@ describe("POST /projects/:id/clarify", () => {
 
 		// Attach session to simulate a running child agent
 		const childQueue = new MessageQueue();
-		const childNode = tracker.get(child.id) as TaskNode;
+		const childNode = tracker.getTask(child.id) as TaskNode;
 		attachMockSession(childNode, childQueue);
 
 		try {
@@ -2522,7 +2522,7 @@ describe("POST /projects/:id/clarify", () => {
 
 		const closedQueue = new MessageQueue();
 		closedQueue.close();
-		const childNode = tracker.get(child.id) as TaskNode;
+		const childNode = tracker.getTask(child.id) as TaskNode;
 		attachMockSession(childNode, closedQueue);
 
 		try {
@@ -2963,7 +2963,7 @@ describe("POST /projects/:id/stop", () => {
 
 		// Attach session to simulate a running child agent
 		const childQueue = new MessageQueue();
-		const childNode = tracker.get(child.id) as TaskNode;
+		const childNode = tracker.getTask(child.id) as TaskNode;
 		attachMockSession(childNode, childQueue);
 
 		// Verify queue is open
@@ -3512,7 +3512,7 @@ describe("POST /projects/:id/tasks/:nodeId/continue", () => {
 		await new Promise((r) => setTimeout(r, 150));
 
 		// Session should be cleaned up after completion
-		expect(tracker.get(task.id)?.session).toBeUndefined();
+		expect(tracker.getTask(task.id)?.session).toBeUndefined();
 	});
 
 	test("sets status to in_progress for verify task with worktree", async () => {
@@ -4551,7 +4551,7 @@ describe("lifecycle edge cases", () => {
 		// Agent should have been stopped as a side effect
 		await new Promise((r) => setTimeout(r, 100));
 		const tracker = await getTracker(project.id);
-		expect(tracker.get(tracker.rootNodeId)?.session).toBeUndefined();
+		expect(tracker.getTask(tracker.rootNodeId)?.session).toBeUndefined();
 	});
 
 	test("deleting project stops running agent", async () => {
