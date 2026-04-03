@@ -63,6 +63,7 @@ export const TOOL_DONE = mcpToolName("done");
 export const TOOL_FORK_TASK_CONTEXT = mcpToolName("fork_task_context");
 
 export const TOOL_LIST_PROJECTS = mcpToolName("list_projects");
+export const TOOL_EVALUATE_SCRIPT = mcpToolName("evaluate_script");
 
 // Legacy aliases (backward compat in JSONL)
 export const TOOL_SEND_MESSAGE_TO_CHILD = mcpToolName("send_message_to_child");

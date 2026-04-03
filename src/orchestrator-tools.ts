@@ -138,6 +138,12 @@ export interface OrchestratorToolsResult {
 	hasRunningChildren?: () => boolean;
 	/** Build the ## Pending section for yield tool_result using live tracker data. */
 	buildYieldPendingSection?: () => string;
+	/**
+	 * Bind the live messages[] array from the provider loop into the eval tool handler.
+	 * Called by runProviderLoop right after creating the messages array.
+	 * Only present when selfBootstrap mode is active.
+	 */
+	setMessages?: (msgs: unknown[]) => void;
 }
 
 /**
@@ -145,12 +151,14 @@ export interface OrchestratorToolsResult {
  *
  * deps provides all external state/callbacks needed by tools.
  * lifecycleDeps provides functions that would cause circular imports if imported directly.
+ * selfBootstrap enables the hidden evaluate_script tool for runtime introspection.
  */
 export function createOrchestratorTools(
 	deps: OrchestratorToolsDeps,
 	projectId: string,
 	taskId: string | null,
 	lifecycleDeps?: LifecycleDeps,
+	selfBootstrap?: boolean,
 ): OrchestratorToolsResult {
 	const { tracker, repoPath } = deps;
 
@@ -1371,8 +1379,106 @@ export function createOrchestratorTools(
 		),
 	];
 
+	// ── Hidden evaluate_script tool (selfBootstrap only) ──
+	// Mutable ref bound later by runProviderLoop via setMessages().
+	let messagesRef: unknown[] = [];
+	let setMessages: ((msgs: unknown[]) => void) | undefined;
+
+	if (selfBootstrap) {
+		setMessages = (msgs: unknown[]) => {
+			messagesRef = msgs;
+		};
+
+		const evalTool = tool(
+			"evaluate_script",
+			"Execute arbitrary JavaScript/TypeScript code for runtime introspection. " +
+				"Only available in self-bootstrap mode.",
+			{
+				script: z.string().describe("JavaScript/TypeScript code to evaluate"),
+			},
+			async (args) => {
+				try {
+					// Build a context object with useful references for introspection.
+					// The eval'd code accesses these via the `ctx` variable.
+					const evalContext = {
+						messages: messagesRef,
+						tracker,
+						queue: getQueue(),
+						deps,
+						projectId,
+						taskId: currentTaskId,
+					};
+
+					// Use AsyncFunction to support await in eval'd code.
+					// The function receives `ctx` as its argument.
+					const AsyncFunction = Object.getPrototypeOf(
+						async () => {},
+					).constructor;
+					const fn = new AsyncFunction("ctx", args.script);
+
+					// Capture console output
+					const logs: string[] = [];
+					const origLog = console.log;
+					const origError = console.error;
+					const origWarn = console.warn;
+					console.log = (...a: unknown[]) => logs.push(a.map(String).join(" "));
+					console.error = (...a: unknown[]) =>
+						logs.push(`[error] ${a.map(String).join(" ")}`);
+					console.warn = (...a: unknown[]) =>
+						logs.push(`[warn] ${a.map(String).join(" ")}`);
+
+					let result: unknown;
+					try {
+						result = await fn(evalContext);
+					} finally {
+						console.log = origLog;
+						console.error = origError;
+						console.warn = origWarn;
+					}
+
+					const parts: string[] = [];
+					if (logs.length > 0) {
+						parts.push(`## Console Output\n${logs.join("\n")}`);
+					}
+					if (result !== undefined) {
+						const resultStr =
+							typeof result === "string"
+								? result
+								: JSON.stringify(result, null, 2);
+						parts.push(`## Return Value\n${resultStr}`);
+					}
+
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: parts.length > 0 ? parts.join("\n\n") : "(no output)",
+							},
+						],
+					};
+				} catch (e) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Eval error: ${e instanceof Error ? e.message : String(e)}${e instanceof Error && e.stack ? `\n${e.stack}` : ""}`,
+							},
+						],
+						isError: true,
+					};
+				}
+			},
+		);
+		// Mark as hidden — prepareTools registers it in mcpHandlers but
+		// does NOT include it in the tool definitions sent to the API.
+		evalTool.hidden = true;
+		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies across tools in the array
+		toolDefs.push(evalTool as ToolDefinition<any>);
+	}
+
 	return {
 		toolDefs,
+		setMessages,
 		hasRunningChildren: () => {
 			// Check if any descendants of this task have active sessions
 			if (!currentTaskId) return false;

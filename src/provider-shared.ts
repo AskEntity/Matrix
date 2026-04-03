@@ -634,6 +634,9 @@ export async function* runProviderLoop(
 		? adapter.convertEventsToMessages(filterEventImages(adapter, activeEvents))
 		: [];
 
+	// Bind live messages array for hidden evaluate_script tool (selfBootstrap).
+	request.setMessages?.(messages);
+
 	// Detect pending yield from JSONL: if last tool_call is yield with no matching result,
 	// the agent was in yield state when the daemon restarted. We restore this at loop level
 	// instead of writing a synthetic orphan result — yield is a loop-level pause, not a JS await.

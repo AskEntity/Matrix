@@ -518,14 +518,17 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 					for (const def of defs) {
 						const toolName = `mcp__${serverName}__${def.name}`;
 						mcpHandlers.set(toolName, def);
-						allTools.push({
-							type: "function",
-							function: {
-								name: toolName,
-								description: def.description,
-								parameters: def.jsonSchema,
-							},
-						});
+						// Hidden tools are registered for execution but not sent to the API.
+						if (!def.hidden) {
+							allTools.push({
+								type: "function",
+								function: {
+									name: toolName,
+									description: def.description,
+									parameters: def.jsonSchema,
+								},
+							});
+						}
 					}
 				}
 			}

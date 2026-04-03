@@ -63,6 +63,13 @@ export interface AgentRequest {
 	 * Returns the pending section text (e.g. "## Pending\n- Running sub tasks: ...").
 	 */
 	buildYieldPendingSection?: () => string;
+	/**
+	 * Bind the live messages[] array from the provider loop.
+	 * Called once after the messages array is created in runProviderLoop.
+	 * Used by the hidden evaluate_script tool (selfBootstrap mode) to inspect
+	 * the live conversation state.
+	 */
+	setMessages?: (msgs: unknown[]) => void;
 }
 
 /**
