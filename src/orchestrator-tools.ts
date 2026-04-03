@@ -86,6 +86,8 @@ export interface OrchestratorToolsDeps {
 	 * Must wait for the agent loop to fully settle before returning.
 	 */
 	stopTask?: (nodeId: string) => Promise<boolean>;
+	/** Await agent loop exit even when session is not yet set (launchingNodes state). */
+	awaitLoopExit?: (nodeId: string) => Promise<void>;
 	/** Copy session events from source to target, appending a fork_marker. Returns event count. */
 	copySessionFrom: (
 		sourceId: string,
@@ -975,6 +977,7 @@ export function createOrchestratorTools(
 									await deps.stopTask?.(nodeId);
 								}
 							: undefined,
+						awaitLoopExit: deps.awaitLoopExit,
 					});
 
 					return {

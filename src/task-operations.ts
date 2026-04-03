@@ -301,6 +301,13 @@ export async function resetTaskOp(
 		 * Without this, the agent's async cleanup can write events AFTER JSONL is cleared.
 		 */
 		stopTask?: (nodeId: string) => Promise<void>;
+		/**
+		 * Await agent loop exit even when session is not yet set.
+		 * Covers the launchingNodes gap: runAgentForNode is running
+		 * (worktree creation, MCP connect) but session hasn't been set yet.
+		 * Without this, clearEventStore races with the loop's setup writes.
+		 */
+		awaitLoopExit?: (nodeId: string) => Promise<void>;
 	},
 ): Promise<{ taskId: string; title: string }> {
 	const node = tracker.get(nodeId);
@@ -321,6 +328,11 @@ export async function resetTaskOp(
 			node.session = undefined;
 			queue.close();
 		}
+	} else if (callbacks.awaitLoopExit) {
+		// No session yet — agent may be in launchingNodes state (still creating
+		// worktree, connecting MCP). The loop promise exists but session doesn't.
+		// Await loop exit so its writes complete BEFORE we clear JSONL.
+		await callbacks.awaitLoopExit(node.id);
 	}
 
 	// Clean up worktree + branch if they exist

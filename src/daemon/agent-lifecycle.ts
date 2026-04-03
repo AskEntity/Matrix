@@ -194,6 +194,10 @@ async function createAgentContext(
 				getProject: (id) => ctx.pm.get(id),
 				getTracker: (projectId) => ctx.trackers.get(projectId),
 				stopTask: (nodeId) => stopTask(ctx, project.id, nodeId),
+				awaitLoopExit: async (nodeId) => {
+					const promise = ctx.agentLoopPromises.get(nodeId);
+					if (promise) await promise;
+				},
 			},
 			project.id,
 			opts.currentTaskId,
