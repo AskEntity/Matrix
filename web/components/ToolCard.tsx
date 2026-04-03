@@ -1,8 +1,11 @@
+import type { ReactNode } from "react";
 import { memo, useState } from "react";
 import {
 	isBuiltinTool,
 	stripMcpPrefix,
 	TOOL_DONE,
+	TOOL_SEND_MESSAGE,
+	TOOL_SEND_MESSAGE_TO_CHILD,
 } from "../../src/tool-names.ts";
 import {
 	formatTime,
@@ -17,6 +20,7 @@ import { ToolResultImages } from "./tools/ToolResultImages.tsx";
 import {
 	bashBgExcludeKeys,
 	formatArgs,
+	getArg,
 	getToolTitle,
 	isTitleOnly,
 	summarizeToolResult,
@@ -28,9 +32,11 @@ export { LogEntryView } from "./tools/LogEntryView.tsx";
 export const ToolCard = memo(function ToolCard({
 	entry,
 	nodeMap,
+	onTaskNavigate,
 }: {
 	entry: Extract<LogEntry, { type: "tool_pair" }>;
 	nodeMap: Map<string, TreeNode>;
+	onTaskNavigate?: (taskId: string, ts?: number) => void;
 }) {
 	const { t } = useLocale();
 
@@ -105,6 +111,40 @@ export const ToolCard = memo(function ToolCard({
 
 	const hasImages = entry.images && entry.images.length > 0;
 
+	// Build title — clickable for send_message tools
+	let cardTitle: string | ReactNode = getToolTitle(
+		toolName,
+		toolArgs,
+		resultContent,
+		nodeMap,
+		{ emoji: true },
+	);
+	if (
+		onTaskNavigate &&
+		(toolName === TOOL_SEND_MESSAGE || toolName === TOOL_SEND_MESSAGE_TO_CHILD)
+	) {
+		const targetTaskId = getArg(toolArgs, "taskId");
+		if (targetTaskId) {
+			const targetTitle = nodeMap?.get(targetTaskId)?.title ?? targetTaskId;
+			cardTitle = (
+				<>
+					{"→ Message: "}
+					{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate */}
+					{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable task name */}
+					<span
+						className="mxd-clickable-task-name"
+						onClick={(e) => {
+							e.stopPropagation();
+							onTaskNavigate(targetTaskId, entry.ts);
+						}}
+					>
+						{targetTitle}
+					</span>
+				</>
+			);
+		}
+	}
+
 	return (
 		<div className="mxd-lmxd-entry mxd-event-tool_card">
 			<span className="mxd-lmxd-time">{formatTime(entry.ts)}</span>
@@ -114,9 +154,7 @@ export const ToolCard = memo(function ToolCard({
 				</span>
 			)}
 			<Card
-				title={getToolTitle(toolName, toolArgs, resultContent, nodeMap, {
-					emoji: true,
-				})}
+				title={cardTitle}
 				className={`${statusClass} ${accentClass}`}
 				collapsible={!titleOnly}
 				defaultExpanded={defaultExpanded}
