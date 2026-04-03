@@ -3915,16 +3915,6 @@ button.mxd-tool-card-header:hover {
 		min-height: 0;
 	}
 
-	/* Hide the detail panel (top split) on mobile */
-	.mxd-detail-panel {
-		display: none;
-	}
-
-	/* Hide the resize divider */
-	.mxd-resize-divider {
-		display: none;
-	}
-
 	/* Activity panel takes all remaining space */
 	.mxd-content .mxd-activity-panel {
 		flex: 1;
@@ -3962,6 +3952,20 @@ button.mxd-tool-card-header:hover {
 	/* Hide fullscreen toggle on mobile (layout is already full-screen) */
 	.mxd-fullscreen-btn {
 		display: none;
+	}
+
+	/* Compact metadata bar on mobile */
+	.mxd-task-meta-compact {
+		padding: 4px 10px;
+	}
+
+	.mxd-meta-right .mxd-task-branch-tag {
+		display: none;
+	}
+
+	/* Tab bar: allow horizontal scroll on mobile */
+	.mxd-tab-bar {
+		padding-left: 4px;
 	}
 
 	/* Hide sidebar resize handle on mobile */
@@ -4015,11 +4019,6 @@ button.mxd-tool-card-header:hover {
 .mxd-fullscreen .mxd-content {
 	flex: 1;
 	width: 100%;
-}
-
-.mxd-fullscreen .mxd-detail-panel,
-.mxd-fullscreen .mxd-resize-divider {
-	display: none;
 }
 
 .mxd-fullscreen .mxd-activity-panel {
