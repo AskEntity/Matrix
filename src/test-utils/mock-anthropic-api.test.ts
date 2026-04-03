@@ -1325,4 +1325,102 @@ describe("ValidatingMockAPI", () => {
 			expect(mock.getCapturedVars().size).toBe(0);
 		});
 	});
+
+	// ── delay_ms ──
+
+	describe("delay_ms", () => {
+		test("turn with delay_ms delays before first stream event", async () => {
+			const instruction = JSON.stringify({
+				blocks: [{ type: "text", text: "Delayed response" }],
+				delay_ms: 100,
+			});
+
+			const stream = createStream({
+				messages: [{ role: "user", content: instruction }],
+			});
+
+			// Stream object is returned immediately — delay is inside the async iterator
+			expect(stream).toBeDefined();
+
+			const start = performance.now();
+			const events: unknown[] = [];
+			for await (const event of stream) {
+				events.push(event);
+			}
+			const elapsed = performance.now() - start;
+
+			// Should have taken at least 100ms
+			expect(elapsed).toBeGreaterThanOrEqual(90); // small tolerance for timer precision
+			// Response content should still be correct
+			const msg = await stream.finalMessage();
+			expect(msg.content[0]).toMatchObject({
+				type: "text",
+				text: "Delayed response",
+			});
+		});
+
+		test("turn without delay_ms emits events immediately", async () => {
+			const instruction = JSON.stringify({
+				blocks: [{ type: "text", text: "Immediate response" }],
+			});
+
+			const stream = createStream({
+				messages: [{ role: "user", content: instruction }],
+			});
+
+			const start = performance.now();
+			const events: unknown[] = [];
+			for await (const event of stream) {
+				events.push(event);
+			}
+			const elapsed = performance.now() - start;
+
+			// Should complete in under 50ms (no delay)
+			expect(elapsed).toBeLessThan(50);
+			expect(events.length).toBeGreaterThan(0);
+		});
+
+		test("delay_ms works in multi-turn instructions", async () => {
+			const instruction = JSON.stringify({
+				turns: [
+					{
+						blocks: [{ type: "text", text: "Turn 1 fast" }],
+					},
+					{
+						blocks: [{ type: "text", text: "Turn 2 slow" }],
+						delay_ms: 100,
+					},
+				],
+			});
+
+			// Turn 1: no delay
+			const stream1 = createStream({
+				messages: [{ role: "user", content: instruction }],
+			});
+			const start1 = performance.now();
+			for await (const _ of stream1) {
+				/* drain */
+			}
+			const elapsed1 = performance.now() - start1;
+			expect(elapsed1).toBeLessThan(50);
+
+			// Turn 2: delayed
+			const stream2 = createStream({
+				messages: [
+					{ role: "user", content: instruction },
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "Turn 1 fast" }],
+					},
+					{ role: "user", content: "continue" },
+				],
+			});
+			const start2 = performance.now();
+			for await (const _ of stream2) {
+				/* drain */
+			}
+			const elapsed2 = performance.now() - start2;
+			expect(elapsed2).toBeGreaterThanOrEqual(90);
+		});
+	});
 });

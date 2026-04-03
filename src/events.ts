@@ -62,7 +62,7 @@ export interface SessionConfigEvent {
 	ts: number;
 }
 
-export type Event =
+export type Event = (
 	| MessageEvent
 	| SessionConfigEvent
 	| { type: "assistant_text"; content: string; taskId: string; ts: number }
@@ -221,7 +221,16 @@ export type Event =
 			summary: string;
 			taskId: string;
 			ts: number;
-	  };
+	  }
+) & {
+	/**
+	 * ULID identifying the agent loop instance (runAgentForNode invocation)
+	 * that emitted this event. Generated once per loop, injected into every
+	 * event via emitWithTask. Used to detect interleaved events from duplicate
+	 * launches of the same task.
+	 */
+	traceId?: string;
+};
 
 /**
  * Whether emitEvent() should persist this event to JSONL.
