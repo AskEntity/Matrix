@@ -1,6 +1,0 @@
-{
-	"title": "CLI",
-	"description": "mxd command-line interface — message sending, auth flow, project management from terminal.",
-	"persistent": true,
-	"color": "#388bfd"
-}

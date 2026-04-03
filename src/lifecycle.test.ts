@@ -985,58 +985,6 @@ describe("lifecycle: parent chain notifications", () => {
 		childQueue.close();
 	});
 
-	test("user message to persistent task does NOT notify parent chain", async () => {
-		const { app, pm, markReady, getTracker } = createApp({
-			dataDir,
-			agentProvider: createLongRunningProvider(),
-		});
-		await pm.load();
-		markReady();
-
-		const project = await createProject(app, projectDir);
-		const parent = await createTask(app, project.id, "Parent");
-		const child = await createTask(app, project.id, "Persistent Child", {
-			parentId: parent.id,
-		});
-
-		// Make child persistent via PATCH
-		await app.request(`/projects/${project.id}/tasks/${child.id}`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ persistent: true }),
-		});
-
-		// Attach sessions for both parent and child
-		const tracker = await getTracker(project.id);
-		const parentQueue = new MessageQueue();
-		const childQueue = new MessageQueue();
-		attachMockSession(tracker.get(parent.id) as TaskNode, parentQueue);
-		attachMockSession(tracker.get(child.id) as TaskNode, childQueue);
-
-		// Send message to persistent child
-		const res = await sendTaskMessage(
-			app,
-			project.id,
-			child.id,
-			"hello persistent",
-		);
-		expect(res.status).toBe(200);
-
-		// Child should have the user message
-		const childMsgs = childQueue.drain();
-		expect(childMsgs).toHaveLength(1);
-		expect(childMsgs[0]?.source).toBe("user");
-
-		// Parent should NOT have any notification — persistent tasks are autonomous
-		const parentMsgs = parentQueue.drain();
-		expect(parentMsgs).toHaveLength(0);
-
-		(tracker.get(parent.id) as TaskNode).session = undefined;
-		(tracker.get(child.id) as TaskNode).session = undefined;
-		parentQueue.close();
-		childQueue.close();
-	});
-
 	test("user message to grandchild notifies entire ancestor chain", async () => {
 		const { app, pm, markReady, getTracker } = createApp({
 			dataDir,

@@ -742,10 +742,9 @@ export async function runAgentForNode(
 			ts: Date.now(),
 		});
 
-		// Cache TTL: root + persistent tasks get 1h, regular children get default 5min.
+		// Cache TTL: root gets 1h, regular children get default 5min.
 		// On resume, inherit from stored session_config (fork copies this automatically).
-		const cacheTtl: "1h" | undefined =
-			isRoot || node.persistent ? "1h" : undefined;
+		const cacheTtl: "1h" | undefined = isRoot ? "1h" : undefined;
 
 		// Resolve system prompt: use stored session_config on resume, fresh on start.
 		const isResume = activeEvents.length > 0;

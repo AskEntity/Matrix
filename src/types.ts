@@ -56,43 +56,13 @@ interface BaseTaskNode {
 	session?: TaskSession;
 }
 
-/** Regular task node with full lifecycle. */
-export interface RegularTaskNode extends BaseTaskNode {
-	persistent: false;
+/** A node in the task tree. Each node maps 1:1 to an agent and a git branch. */
+export interface TaskNode extends BaseTaskNode {
 	status: TaskStatus;
 }
 
-/**
- * Persistent task node. Definition stored in `.mxd/tasks/<id>.json` (git-tracked).
- * reset_task is rejected. done() doesn't change status directly.
- * close_task transitions verify→pending. Session preserved across done().
- */
-export interface PersistentTaskNode extends BaseTaskNode {
-	persistent: true;
-	status: "in_progress" | "verify" | "pending";
-}
-
-/** A node in the task tree. Each node maps 1:1 to an agent and a git branch. */
-export type TaskNode = RegularTaskNode | PersistentTaskNode;
-
-/**
- * Serialized form of a persistent task node in tree.json.
- * Title/description are omitted — they live in `.mxd/tasks/<id>.json`.
- */
-export type SerializedPersistentNode = Omit<
-	PersistentTaskNode,
-	"title" | "description" | "session"
->;
-
-/**
- * Serialized form of a regular task node in tree.json.
- */
-export type SerializedRegularNode = Omit<RegularTaskNode, "session">;
-
-/** Discriminated union for tree.json serialization. */
-export type SerializedTaskNode =
-	| SerializedRegularNode
-	| SerializedPersistentNode;
+/** Serialized form of a task node in tree.json (session stripped). */
+export type SerializedTaskNode = Omit<TaskNode, "session">;
 
 /**
  * Why the provider loop exited.

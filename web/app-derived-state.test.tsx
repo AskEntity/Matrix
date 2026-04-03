@@ -54,7 +54,6 @@ function makeNode(
 		updatedAt: "2026-04-01T00:00:00Z",
 		createdAt: "2026-04-01T00:00:00Z",
 		costUsd: 0,
-		persistent: false,
 		editedBy: "user",
 	};
 }

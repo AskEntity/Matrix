@@ -13,7 +13,7 @@ describe("executeTool Zod validation", () => {
 				"Create a task",
 				{
 					title: z.string(),
-					persistent: z.boolean().optional(),
+					enabled: z.boolean().optional(),
 				},
 				async () => ({
 					content: [{ type: "text" as const, text: "ok" }],
@@ -23,12 +23,12 @@ describe("executeTool Zod validation", () => {
 
 		const result = await executeTool(
 			"create_task",
-			{ title: "test", persistent: "false" },
+			{ title: "test", enabled: "false" },
 			handlers,
 		);
 		expect(result.isError).toBe(true);
 		expect(result.content).toContain("validation error");
-		expect(result.content).toContain("persistent");
+		expect(result.content).toContain("enabled");
 	});
 
 	test("accepts boolean false for z.literal(false) field", async () => {
@@ -40,7 +40,7 @@ describe("executeTool Zod validation", () => {
 				"Create a task",
 				{
 					title: z.string(),
-					persistent: z.boolean().optional(),
+					enabled: z.boolean().optional(),
 				},
 				async () => ({
 					content: [{ type: "text" as const, text: "ok" }],
@@ -50,14 +50,14 @@ describe("executeTool Zod validation", () => {
 
 		const result = await executeTool(
 			"create_task",
-			{ title: "test", persistent: false },
+			{ title: "test", enabled: false },
 			handlers,
 		);
 		expect(result.isError).toBeFalsy();
 		expect(result.content).toBe("ok");
 	});
 
-	test("accepts boolean true for persistent field", async () => {
+	test("accepts boolean true for optional boolean field", async () => {
 		const handlers = new Map();
 		handlers.set(
 			"create_task",
@@ -66,7 +66,7 @@ describe("executeTool Zod validation", () => {
 				"Create a task",
 				{
 					title: z.string(),
-					persistent: z.boolean().optional(),
+					enabled: z.boolean().optional(),
 				},
 				async () => ({
 					content: [{ type: "text" as const, text: "ok" }],
@@ -76,7 +76,7 @@ describe("executeTool Zod validation", () => {
 
 		const result = await executeTool(
 			"create_task",
-			{ title: "test", persistent: true },
+			{ title: "test", enabled: true },
 			handlers,
 		);
 		expect(result.isError).toBeFalsy();
@@ -92,7 +92,7 @@ describe("executeTool Zod validation", () => {
 				"Create a task",
 				{
 					title: z.string(),
-					persistent: z.boolean().optional(),
+					enabled: z.boolean().optional(),
 				},
 				async () => ({
 					content: [{ type: "text" as const, text: "ok" }],

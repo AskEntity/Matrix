@@ -1,6 +1,0 @@
-{
-	"title": "OpenAI Provider",
-	"description": "OpenAI provider support — Responses API, Chat Completions, model compatibility, parity with Anthropic provider.",
-	"persistent": true,
-	"color": "#f0883e"
-}
