@@ -80,40 +80,19 @@ export function addMessagesCacheControl(
 	messages: MessageParam[],
 	ttl?: "5m" | "1h",
 ): MessageParam[] {
-	if (messages.length < 3) {
-		// Not enough history to be worth caching
-		return messages;
-	}
+	if (messages.length === 0) return messages;
 
-	// Find the index of the second-to-last user message (skip the last one which is the
-	// current turn's input).
-	let lastUserIdx = -1;
-	let secondToLastUserIdx = -1;
-	for (let i = messages.length - 1; i >= 0; i--) {
-		if (messages[i]?.role === "user") {
-			if (lastUserIdx === -1) {
-				lastUserIdx = i;
-			} else {
-				secondToLastUserIdx = i;
-				break;
-			}
-		}
-	}
-
-	if (secondToLastUserIdx === -1) {
-		// Fewer than 2 user messages — nothing to cache yet
-		return messages;
-	}
+	// Last message is always a user message (tool_results are in user role).
+	// Anthropic's lookback caches all preceding history from this breakpoint.
+	const lastIdx = messages.length - 1;
 
 	// Build cache_control value — include ttl only when explicitly set
 	const cacheControl = ttl
 		? ({ type: "ephemeral" as const, ttl } as const)
 		: ({ type: "ephemeral" as const } as const);
 
-	// Clone messages and add cache_control to the second-to-last user message.
-	// If its content is a string, convert to TextBlockParam array first.
 	return messages.map((msg, i) => {
-		if (i !== secondToLastUserIdx) return msg;
+		if (i !== lastIdx) return msg;
 
 		const content = msg.content;
 		if (typeof content === "string") {

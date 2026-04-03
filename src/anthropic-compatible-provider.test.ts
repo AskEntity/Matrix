@@ -1644,40 +1644,24 @@ describe("tool() jsonSchema generation", () => {
 });
 
 describe("addMessagesCacheControl", () => {
-	test("returns messages unchanged if fewer than 3", () => {
-		const messages: MessageParam[] = [
-			{ role: "user", content: "hello" },
-			{ role: "assistant", content: "hi" },
-		];
-		const result = addMessagesCacheControl(messages);
-		expect(result).toEqual(messages);
-	});
-
-	test("adds cache_control to second-to-last user message (string content)", () => {
+	test("adds cache_control to last user message (string content)", () => {
 		const messages: MessageParam[] = [
 			{ role: "user", content: "first user message" },
 			{ role: "assistant", content: "first assistant reply" },
-			{ role: "user", content: "second user message" },
-			{ role: "assistant", content: "second assistant reply" },
-			{ role: "user", content: "current user message (no cache)" },
+			{ role: "user", content: "last user message" },
 		];
 		const result = addMessagesCacheControl(messages);
 
-		// The last user message (index 4) should NOT have cache_control
-		const lastUser = result[4];
-		expect(lastUser?.content).toBe("current user message (no cache)");
-
-		// The second-to-last user message (index 2) should be converted to array with cache_control
-		const secondToLastUser = result[2];
-		expect(Array.isArray(secondToLastUser?.content)).toBe(true);
-		const content = secondToLastUser?.content as TextBlockParam[];
+		// The last user message (index 2) should have cache_control
+		const lastUser = result[2];
+		expect(Array.isArray(lastUser?.content)).toBe(true);
+		const content = lastUser?.content as TextBlockParam[];
 		expect(content[0]?.cache_control).toEqual({ type: "ephemeral" });
-		expect(content[0]?.text).toBe("second user message");
+		expect(content[0]?.text).toBe("last user message");
 
-		// Other messages should be unchanged
+		// Other messages unchanged
 		expect(result[0]).toEqual(messages[0]);
 		expect(result[1]).toEqual(messages[1]);
-		expect(result[3]).toEqual(messages[3]);
 	});
 
 	test("adds cache_control to last block of array content", () => {
@@ -1694,14 +1678,23 @@ describe("addMessagesCacheControl", () => {
 					},
 				],
 			},
-			{ role: "assistant", content: "reply2" },
-			{ role: "user", content: "current" },
 		];
 		const result = addMessagesCacheControl(messages);
-		const secondToLastUser = result[2];
-		expect(Array.isArray(secondToLastUser?.content)).toBe(true);
+		const lastUser = result[2];
+		expect(Array.isArray(lastUser?.content)).toBe(true);
 		// biome-ignore lint/suspicious/noExplicitAny: accessing cache_control after transformation
-		const content = secondToLastUser?.content as any[];
+		const content = lastUser?.content as any[];
+		expect(content[0]?.cache_control).toEqual({ type: "ephemeral" });
+	});
+
+	test("single user message gets cache_control", () => {
+		const messages: MessageParam[] = [
+			{ role: "user", content: "only one user message" },
+		];
+		const result = addMessagesCacheControl(messages);
+		const user = result[0];
+		expect(Array.isArray(user?.content)).toBe(true);
+		const content = user?.content as TextBlockParam[];
 		expect(content[0]?.cache_control).toEqual({ type: "ephemeral" });
 	});
 
@@ -1710,20 +1703,14 @@ describe("addMessagesCacheControl", () => {
 			{ role: "user", content: "first" },
 			{ role: "assistant", content: "a1" },
 			{ role: "user", content: "second" },
-			{ role: "assistant", content: "a2" },
-			{ role: "user", content: "third" },
 		];
 		const original = JSON.stringify(messages);
 		addMessagesCacheControl(messages);
 		expect(JSON.stringify(messages)).toBe(original);
 	});
 
-	test("skips caching if fewer than 2 user messages", () => {
-		const messages: MessageParam[] = [
-			{ role: "assistant", content: "hi" },
-			{ role: "assistant", content: "there" },
-			{ role: "user", content: "only one user message" },
-		];
+	test("empty messages returns unchanged", () => {
+		const messages: MessageParam[] = [];
 		const result = addMessagesCacheControl(messages);
 		expect(result).toEqual(messages);
 	});
@@ -1743,14 +1730,10 @@ describe("addMessagesCacheControl", () => {
 					},
 				],
 			},
-			{ role: "assistant", content: "a2" },
-			{ role: "user", content: "current" },
 		];
 		const result = addMessagesCacheControl(messages);
-		// Already has cache_control — should remain as-is (not add another)
 		// biome-ignore lint/suspicious/noExplicitAny: accessing cache_control after transformation
 		const cached = result[2]?.content as any[];
-		// Should still have exactly one cache_control (not duplicated)
 		expect(cached[0]?.cache_control).toEqual({ type: "ephemeral" });
 	});
 
@@ -1758,15 +1741,13 @@ describe("addMessagesCacheControl", () => {
 		const messages: MessageParam[] = [
 			{ role: "user", content: "first user message" },
 			{ role: "assistant", content: "first assistant reply" },
-			{ role: "user", content: "second user message" },
-			{ role: "assistant", content: "second assistant reply" },
-			{ role: "user", content: "current user message" },
+			{ role: "user", content: "last user message" },
 		];
 		const result = addMessagesCacheControl(messages, "1h");
 
-		const secondToLastUser = result[2];
-		expect(Array.isArray(secondToLastUser?.content)).toBe(true);
-		const content = secondToLastUser?.content as TextBlockParam[];
+		const lastUser = result[2];
+		expect(Array.isArray(lastUser?.content)).toBe(true);
+		const content = lastUser?.content as TextBlockParam[];
 		expect(content[0]?.cache_control).toEqual({
 			type: "ephemeral",
 			ttl: "1h",
@@ -1777,16 +1758,13 @@ describe("addMessagesCacheControl", () => {
 		const messages: MessageParam[] = [
 			{ role: "user", content: "first" },
 			{ role: "assistant", content: "reply1" },
-			{ role: "user", content: "second" },
-			{ role: "assistant", content: "reply2" },
-			{ role: "user", content: "current" },
+			{ role: "user", content: "last" },
 		];
 		const result = addMessagesCacheControl(messages, undefined);
 
-		const secondToLastUser = result[2];
-		expect(Array.isArray(secondToLastUser?.content)).toBe(true);
-		const content = secondToLastUser?.content as TextBlockParam[];
-		// No ttl field — just type: "ephemeral" (Anthropic default 5min)
+		const lastUser = result[2];
+		expect(Array.isArray(lastUser?.content)).toBe(true);
+		const content = lastUser?.content as TextBlockParam[];
 		expect(content[0]?.cache_control).toEqual({ type: "ephemeral" });
 		expect(content[0]?.cache_control).not.toHaveProperty("ttl");
 	});
