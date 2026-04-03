@@ -30,27 +30,40 @@ export const InputBar = memo(function InputBar({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const composingRef = useRef(false);
 
-	const [prompt, setPrompt] = useState(
-		() => localStorage.getItem(draftKey(targetNodeId)) ?? "",
-	);
+	// Draft management: synchronous save/restore on every switch.
+	// promptRef always holds the latest prompt value to avoid stale closures.
+	const promptRef = useRef("");
+	const targetRef = useRef(targetNodeId);
+	const [prompt, setPrompt] = useState(() => {
+		const initial = localStorage.getItem(draftKey(targetNodeId)) ?? "";
+		promptRef.current = initial;
+		return initial;
+	});
 	const [attachedImages, setAttachedImages] = useState<
 		{ base64: string; mediaType: string }[]
 	>([]);
 
-	// When targetNodeId changes, save current draft and load new task's draft
-	const prevTargetRef = useRef(targetNodeId);
-	const targetRef = useRef(targetNodeId);
-	targetRef.current = targetNodeId;
-	useEffect(() => {
-		if (prevTargetRef.current === targetNodeId) return;
-		// Save current draft for previous target
-		setPrompt((currentPrompt) => {
-			const prevKey = draftKey(prevTargetRef.current);
-			if (currentPrompt) localStorage.setItem(prevKey, currentPrompt);
-			else localStorage.removeItem(prevKey);
-			return localStorage.getItem(draftKey(targetNodeId)) ?? "";
+	// Keep promptRef in sync with every prompt change
+	const setPromptAndRef = useCallback((value: string | ((prev: string) => string)) => {
+		setPrompt((prev) => {
+			const next = typeof value === "function" ? value(prev) : value;
+			promptRef.current = next;
+			return next;
 		});
-		prevTargetRef.current = targetNodeId;
+	}, []);
+
+	// When targetNodeId changes, save current draft SYNCHRONOUSLY and load new draft
+	useEffect(() => {
+		if (targetRef.current === targetNodeId) return;
+		// Save draft for the previous target immediately using ref (always fresh)
+		const prevKey = draftKey(targetRef.current);
+		if (promptRef.current) localStorage.setItem(prevKey, promptRef.current);
+		else localStorage.removeItem(prevKey);
+		// Load draft for new target
+		const newDraft = localStorage.getItem(draftKey(targetNodeId)) ?? "";
+		promptRef.current = newDraft;
+		setPrompt(newDraft);
+		targetRef.current = targetNodeId;
 	}, [targetNodeId]);
 
 	// Slash command autocomplete state
@@ -84,13 +97,11 @@ export const InputBar = memo(function InputBar({
 	}, [prompt, slashFilteredCommands]);
 
 	// localStorage draft save with 2s debounce.
-	// Uses targetRef (not targetNodeId in deps) to avoid saving stale prompt
-	// to wrong task key during the render where targetNodeId changed but
-	// setPrompt hasn't taken effect yet.
+	// Uses promptRef + targetRef (not state in deps) to always write fresh values.
 	useEffect(() => {
 		const timer = setTimeout(() => {
 			const key = draftKey(targetRef.current);
-			if (prompt) localStorage.setItem(key, prompt);
+			if (promptRef.current) localStorage.setItem(key, promptRef.current);
 			else localStorage.removeItem(key);
 		}, 2000);
 		return () => clearTimeout(timer);
@@ -100,11 +111,11 @@ export const InputBar = memo(function InputBar({
 	useEffect(() => {
 		const handler = () => {
 			const key = draftKey(targetRef.current);
-			if (prompt) localStorage.setItem(key, prompt);
+			if (promptRef.current) localStorage.setItem(key, promptRef.current);
 		};
 		window.addEventListener("beforeunload", handler);
 		return () => window.removeEventListener("beforeunload", handler);
-	}, [prompt]);
+	}, []);
 
 	function adjustTextareaHeight() {
 		const el = textareaRef.current;
@@ -136,10 +147,10 @@ export const InputBar = memo(function InputBar({
 	}
 
 	const handleSlashSelect = useCallback((cmd: { name: string }) => {
-		setPrompt(`/${cmd.name}`);
+		setPromptAndRef(`/${cmd.name}`);
 		setSlashMenuOpen(false);
 		textareaRef.current?.focus();
-	}, []);
+	}, [setPromptAndRef]);
 
 	const handleSubmit = useCallback(
 		(e: React.FormEvent | React.KeyboardEvent) => {
@@ -147,11 +158,11 @@ export const InputBar = memo(function InputBar({
 			if (!prompt.trim() || !projectId) return;
 			const images = attachedImages.length > 0 ? attachedImages : undefined;
 			onSend(prompt.trim(), images);
-			setPrompt("");
+			setPromptAndRef("");
 			setAttachedImages([]);
 			localStorage.removeItem(draftKey(targetRef.current));
 		},
-		[prompt, attachedImages, projectId, onSend],
+		[prompt, attachedImages, projectId, onSend, setPromptAndRef],
 	);
 
 	return (
@@ -196,7 +207,7 @@ export const InputBar = memo(function InputBar({
 				rows={1}
 				value={prompt}
 				onChange={(e) => {
-					setPrompt(e.target.value);
+					setPromptAndRef(e.target.value);
 					adjustTextareaHeight();
 				}}
 				onBlur={() => setSlashMenuOpen(false)}
