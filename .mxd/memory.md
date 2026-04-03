@@ -15,7 +15,7 @@ Creating tasks is CHEAP. Executing must be DELIBERATE. When user discusses desig
 ## How to Run Tests
 
 ```bash
-bun test              # ALL tests (unit + integration). ~1157 pass, 3 skip.
+bun test              # ALL tests (unit + integration). ~1139 pass, 3 skip.
 bun run typecheck     # tsc --noEmit
 bun run check         # biome lint + format
 ```
@@ -266,9 +266,9 @@ Route by **domain**, not by **file**. Key principle: **whoever introduces a chan
 
 ## Unresolved Design (prioritized)
 
-1. Branch staleness on persistent wake (~5 lines, highest value)
-2. Description ownership enforcement (reject non-root/user edits on persistent tasks)
-3. Message routing expansion (subtree + parent chain, not just direct parent/child)
+1. Message routing expansion (subtree + parent chain, not just direct parent/child)
+2. Folder/grouping feature (UI-only visual grouping, not tree structure)
+3. Tool search — dynamic tool discovery (draft exists, Anthropic has server-side `defer_loading` but user prefers client-side)
 
 ## Duplicate Yield Orphan Fix (2026-04-02)
 
@@ -279,76 +279,35 @@ API can return multiple yield (or done) tool_calls in the same assistant turn. P
 **Architectural lesson**: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call. Any other yield/done without a result is a bug.
 
 
-## ⚠️ Persistent Task: Failed Abstraction — DELETE
+## Persistent Task Deletion (2026-04-03)
 
-Persistent tasks are a failed abstraction. They tried to solve "some tasks need to run repeatedly" but introduced massive complexity:
-- Dual-source sync (tree.json + .mxd/tasks/*.json)
-- done() semantic split (permanent vs round-finished)
-- Special lifecycle in every codepath (close, reset, delete, get_tree, launch)
-- System prompt third role (persistent domain owner)
-- Cache-hostile (each persistent node = independent session)
-- Knowledge fragmentation (context scattered across persistent sessions)
-- Fork conflict (fork transfers knowledge; persistent tries to accumulate it in-place)
+Deleted entire persistent task feature: -1940 lines, 44 files. Was a failed abstraction — all use cases covered by regular tasks + fork + templates. Kept: two-phase done(), verify status, Zod validation.
 
-All legitimate use cases are covered WITHOUT persistent:
-- Repeated execution → send message to closed/verify task, it wakes up
-- Quality agents → root creates one-off task from template
-- Organization → future folder feature (separate from task)
-- Knowledge transfer → fork
+## Cache Architecture (2026-04-03)
 
-Decision: completely delete persistent. Keep general improvements discovered during persistent work (two-phase done, verify status, Zod validation).
+### Anthropic Cache Prefix Order
+**tools → system → messages** (NOT system → tools → messages). Tools mismatch = entire prefix miss (including system and messages).
 
-## Persistent Deletion: What to Keep vs Delete
+### Cache Fixes Applied
+1. **Multiline split fix**: `buildToolResultsMessage` and `buildImplicitYieldMessage` split queue messages by `\n` into individual text blocks. JSONL reconstruction merged them back into one. Fix: keep as single text block.
+2. **JsonTool golden source**: `{name, description, jsonSchema}` — provider-agnostic. Frozen in session_config. Resume uses frozen tools → byte-identical → cache hit.
+3. **session_config tools=[] fix**: Moved session_config emission from agent-lifecycle to runProviderLoop (after tools are ready).
+4. **MCP tool ordering**: MCP servers connect asynchronously → tool registration order non-deterministic. Frozen tools solve this.
 
-**Keep (general improvements):**
-- Two-phase done() (Phase 1 in provider loop, Phase 2 in runAgentForNode finally)
-- Verify status (done→verify→close lifecycle)
-- Tool input Zod validation
-- close_task consequences in prompt
+### Cache Results
+- Restart: 99.8% cache hit (582 creation / 362K read)
+- Fork: 100% cache hit (0 creation / 365K read)
 
-**Delete (persistent-specific):**
-- persistent field on TaskNode, discriminated union
-- .mxd/tasks/*.json definition files + savePersistentDef + mergePersistentTasks
-- close_task verify→pending path (only keep verify→closed)
-- done() skip status update for persistent
-- get_tree hide status for persistent
-- create_task persistent option
-- System prompt persistent domain owner role
-- All persistent-related tests
+### Remaining Cache Concern
+`addAssistantMessage` stores raw API response content (SDK key order). JSONL reconstruction uses our manual key order. Within a session this is consistent (messages[] grows in memory). But the two key orders are `{type, id, name, input, caller}` (both paths currently). If SDK ever changes key order, this would break. Low priority — currently not causing issues.
+
+### yield/done tool_result
+- yield: `"resumed."` — queue messages delivered as separate text blocks
+- done resume: `"You previously called done(). New messages woke you up:"` + working directory — queue messages as separate text blocks (no duplicate embedding)
+- Deleted: `buildYieldPendingSection`, `pendingClarifications` counter
+
+### await_background Deleted
+await blocked entire agent loop. yield is the one path — accepts all message types. -360 lines.
 
 
-
-## Cache Miss on Restart: Root Cause Found (2026-04-03)
-
-**Problem**: Daemon restart causes full cache miss (~$6.75 on Opus for 450K token session).
-
-**Root cause**: `addAssistantMessage` stores raw API response content in messages[]. On restart, `eventsToAnthropicMessages` reconstructs tool_use blocks manually. The two have different JSON key orders:
-- API response: `{id, caller, input, name, type}` (SDK ToolUseBlock order)
-- Reconstruction: `{type, id, name, input, caller}` (our manual construction order)
-
-JSON.stringify produces different bytes → Anthropic cache key mismatch → full cache miss.
-
-**Fix direction**: Store raw API response content blocks in JSONL, reconstruct from stored raw content on restart. This makes live and restart paths byte-identical.
-
-**Cache experiment result**: Fork/diverge IS cache-friendly. Shared prefix only written once, both divergent paths cache-read. The problem is NOT fork — it is reconstruction fidelity.
-
-## Persistent Task Deletion Complete (2026-04-03)
-
-Deleted entire persistent task feature: -1940 lines, 44 files. Kept two-phase done(), verify status, Zod validation. Decision: persistent was a failed abstraction — all use cases covered by regular tasks + fork + templates.
-
-## Tree Flattened
-
-All tasks reparented to root. All persistent intermediate nodes deleted. Tree is now flat: root → tasks. No domain owners, no routing layers. Future organization via folder feature (UI-only grouping, not tree structure).
-
-## JsonTool Golden Source (2026-04-03)
-
-**Problem**: session_config wrote `tools: []` because buildSessionConfig ran in agent-lifecycle.ts before tools were ready. On resume, tools were regenerated from Zod → different JSON key order → cache miss (~$6+ per restart).
-
-**Fix**: `JsonTool` type in tool-definition.ts: `{name, description, jsonSchema}`. Provider-agnostic, computed once, frozen in session_config JSONL.
-- `buildJsonTools(mcpToolDefs)`: iterates defs, filters hidden, returns `JsonTool[]`. No handler registration.
-- `prepareTools(jsonTools)`: simple mapper. Anthropic: `{name, description, input_schema}`. OpenAI: `{type:"function", name, description, strict:false, parameters}`.
-- session_config emitted by `runProviderLoop` (not agent-lifecycle) — tools are populated.
-- On resume: frozen `JsonTool[]` from session_config used directly → byte-identical → cache hit.
-- Handler registration: single location in `runProviderLoop` (mcpHandlers map), NOT in prepareTools.
-- Compaction session_config refresh: uses same frozen `jsonTools`, not regenerated.
 
