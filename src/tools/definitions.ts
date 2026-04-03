@@ -129,30 +129,23 @@ export function createBuiltinTools(
 	// ── background ──
 	const backgroundTool = tool(
 		"background",
-		"Manage background processes. Use to list, check status, kill, or await background processes that were started via bash with run_in_background=true or that exceeded foreground_timeout.\n\nActions:\n- list: Show all background processes for this session\n- status: Get detailed status of a specific background process\n- kill: Terminate a running background process\n- await: Block until a background process completes and return its full output (like a foreground command)",
+		"Manage background processes. Use to list, check status, or kill background processes that were started via bash with run_in_background=true or that exceeded foreground_timeout.\n\nActions:\n- list: Show all background processes for this session\n- status: Get detailed status of a specific background process\n- kill: Terminate a running background process\n\nTo wait for background process completion, use yield() — background completions are delivered as queue messages.",
 		{
 			action: z
-				.enum(["list", "status", "kill", "await"])
+				.enum(["list", "status", "kill"])
 				.describe(
-					"Action to take. 'list': show all background processes. 'status': get status of a specific process. 'kill': terminate a process. 'await': block until completion.",
+					"Action to take. 'list': show all background processes. 'status': get status of a specific process. 'kill': terminate a process.",
 				),
 			id: z
 				.string()
 				.optional()
 				.describe(
-					"Background process ID (e.g. 'bg-A1B2C3D4'). Required for status, kill, and await actions.",
-				),
-			timeout: z
-				.number()
-				.optional()
-				.describe(
-					"Maximum time in ms to wait for await action. Optional — defaults to waiting indefinitely.",
+					"Background process ID (e.g. 'bg-A1B2C3D4'). Required for status and kill actions.",
 				),
 		},
 		async (args) => {
 			const action = args.action;
 			const id = args.id;
-			const timeout = args.timeout;
 
 			const bgSession = getSession(sessionId);
 			if (!bgSession) {
@@ -165,7 +158,6 @@ export function createBuiltinTools(
 			const result = await executeBackgroundTool(
 				action,
 				id,
-				timeout,
 				bgSession.backgroundProcesses,
 			);
 			return textResult(result.content, result.isError);

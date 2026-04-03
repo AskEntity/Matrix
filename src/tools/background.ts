@@ -6,7 +6,6 @@
  * All functions take Maps (from TaskSession) instead of using module-level globals.
  */
 import {
-	awaitBackgroundProcess,
 	type BackgroundProcess,
 	getBackgroundStatus,
 	killBackgroundProcess,
@@ -56,27 +55,14 @@ export function moveToBackground(
 }
 
 /**
- * Cancel an active await on a background process.
- * Currently a no-op since await uses completionPromise which resolves on process exit.
- * Reserved for future use with timeout-based await cancellation.
- */
-export function cancelAwait(_sessionId: string, _bgId: string): string | null {
-	// Await is blocking on completionPromise — we can't cancel it without
-	// killing the process. If the caller wants to stop waiting, they should
-	// kill the process instead.
-	return "Cannot cancel await — use kill to terminate the process instead.";
-}
-
-/**
  * Execute the background management tool.
- * Handles list/status/kill/await actions on background processes.
+ * Handles list/status/kill actions on background processes.
  */
-export async function executeBackgroundTool(
+export function executeBackgroundTool(
 	action: string,
 	id: string | undefined,
-	_timeout: number | undefined,
 	bgMap: Map<string, BackgroundProcess>,
-): Promise<{ content: string; isError: boolean }> {
+): { content: string; isError: boolean } {
 	if (action === "list") {
 		const processes = listBackgroundProcesses(bgMap);
 		if (processes.length === 0) {
@@ -94,7 +80,7 @@ export async function executeBackgroundTool(
 
 	if (!id) {
 		return {
-			content: "Error: id is required for status/kill/await actions.",
+			content: "Error: id is required for status and kill actions.",
 			isError: true,
 		};
 	}
@@ -121,19 +107,8 @@ export async function executeBackgroundTool(
 		return { content: result, isError: false };
 	}
 
-	if (action === "await") {
-		const result = await awaitBackgroundProcess(bgMap, id);
-		if (result === null) {
-			return {
-				content: `Background process ${id} not found.`,
-				isError: true,
-			};
-		}
-		return result;
-	}
-
 	return {
-		content: `Unknown action: ${action}. Use 'list', 'status', 'kill', or 'await'.`,
+		content: `Unknown action: ${action}. Use 'list', 'status', or 'kill'.`,
 		isError: true,
 	};
 }

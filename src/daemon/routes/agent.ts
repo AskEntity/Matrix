@@ -5,7 +5,7 @@ import {
 	createUserMessage,
 } from "../../queue-message-factory.ts";
 import type { SystemPrompt } from "../../system-prompts.ts";
-import { cancelAwait, moveToBackground } from "../../tools/background.ts";
+import { moveToBackground } from "../../tools/background.ts";
 import { killBackgroundProcess } from "../../tools/bash.ts";
 import {
 	handleClarifyResponse,
@@ -305,22 +305,6 @@ export function registerAgentRoutes(
 			return c.json({ error: "Session not found" }, 404);
 		}
 		const result = killBackgroundProcess(session.backgroundProcesses, bgId);
-		if (result === null) {
-			return c.json({ error: `Background process ${bgId} not found` }, 404);
-		}
-		return c.json({ ok: true, message: result });
-	});
-
-	// Cancel an active await on a background process
-	app.post("/projects/:id/background/:bgId/cancel-await", async (c) => {
-		const bgId = c.req.param("bgId");
-		const body = await c.req
-			.json<{ sessionId: string }>()
-			.catch(() => ({}) as { sessionId: string });
-		if (!body?.sessionId) {
-			return c.json({ error: "sessionId is required" }, 400);
-		}
-		const result = cancelAwait(body.sessionId, bgId);
 		if (result === null) {
 			return c.json({ error: `Background process ${bgId} not found` }, 404);
 		}
