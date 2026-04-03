@@ -1283,62 +1283,6 @@ describe("executeBashWithTimeout", () => {
 		cleanupSessionBackgroundProcesses(bgMap);
 	});
 
-	test("background tool action=await blocks until process completes and returns output", async () => {
-		const sessionId = "test-await";
-		const queue = new MessageQueue();
-		const { bgMap, fgMap } = createTestMaps();
-		// Start a background command
-		const bgResult = await executeBashWithTimeout(
-			"echo await-test",
-			tempDir,
-			undefined,
-			0,
-			sessionId,
-			queue,
-			undefined,
-			bgMap,
-			fgMap,
-		);
-		const bgId = bgResult.content.match(/bg-[A-Z0-9]+/)?.[0] ?? "";
-		expect(bgId).toBeTruthy();
-
-		// Drain the completion notification so it doesn't interfere
-		await queue.wait();
-
-		// Await returns minimal completion info (output delivered via background_complete message)
-		const result = await executeTool(
-			"background",
-			{ action: "await", id: bgId },
-			tempDir,
-			undefined,
-			sessionId,
-			queue,
-			undefined,
-			makeGetSession(bgMap, fgMap),
-		);
-		expect(result.isError).toBe(false);
-		expect(result.content).toContain("completed");
-		expect(result.content).toContain("exit 0");
-
-		cleanupSessionBackgroundProcesses(bgMap);
-	});
-
-	test("background tool action=await for unknown process returns error", async () => {
-		const { bgMap, fgMap } = createTestMaps();
-		const result = await executeTool(
-			"background",
-			{ action: "await", id: "bg-unknown" },
-			tempDir,
-			undefined,
-			"test-session",
-			undefined,
-			undefined,
-			makeGetSession(bgMap, fgMap),
-		);
-		expect(result.isError).toBe(true);
-		expect(result.content).toContain("not found");
-	});
-
 	test("background tool action=list shows all processes", async () => {
 		const sessionId = "test-list";
 		const queue = new MessageQueue();

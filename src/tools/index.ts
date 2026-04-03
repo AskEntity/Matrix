@@ -1,8 +1,4 @@
-export {
-	cancelAwait,
-	listBackgroundProcesses,
-	moveToBackground,
-} from "./background.ts";
+export { listBackgroundProcesses, moveToBackground } from "./background.ts";
 export type { BackgroundProcess } from "./bash.ts";
 export {
 	cleanupSessionBackgroundProcesses,

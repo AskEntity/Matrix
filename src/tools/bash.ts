@@ -44,7 +44,7 @@ export interface BackgroundProcess {
 	stdoutPath: string | null;
 	/** Path to the stderr output file (while running, for partial reads). */
 	stderrPath: string | null;
-	/** Resolves when the process completes. Used by background tool "await" action. */
+	/** Resolves when the process completes. Used internally for cleanup tracking. */
 	completionPromise?: Promise<void>;
 	/** Call to resolve the completion promise. */
 	resolveCompletion?: () => void;
@@ -89,7 +89,6 @@ function fileSize(path: string): number {
  * This is THE formatting function — ALL paths use it:
  * - Foreground completion
  * - Background completion notification (queue message)
- * - background tool "await" result
  * - background tool "status" on completed process
  */
 function formatBashResult(
@@ -253,32 +252,6 @@ export function killBackgroundProcess(
 	}
 
 	return `Process ${bgId} is running but has no kill handle.`;
-}
-
-/**
- * Await a background process completion, then return formatted result.
- * Returns null if process not found.
- */
-export async function awaitBackgroundProcess(
-	bgMap: Map<string, BackgroundProcess>,
-	bgId: string,
-): Promise<{ content: string; isError: boolean } | null> {
-	const bg = bgMap.get(bgId);
-	if (!bg) return null;
-
-	// Wait for completion if still running
-	if (bg.status === "running" && bg.completionPromise) {
-		await bg.completionPromise;
-	}
-
-	// Simplified await: just return minimal completion info.
-	// The actual output comes via background_complete queue message.
-	const exitCode = bg.exitCode ?? 1;
-	const durationMs = (bg.endTime ?? Date.now()) - bg.startTime;
-	return {
-		content: `Process ${bg.id} completed (exit ${exitCode}, ${Math.round(durationMs / 1000)}s). Output delivered via background completion message.`,
-		isError: exitCode !== 0,
-	};
 }
 
 /** Get status of a background process. Returns a status message or null if not found. */
