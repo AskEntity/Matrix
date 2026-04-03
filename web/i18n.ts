@@ -56,6 +56,10 @@ const en: Translations = {
 	"tasks.moveToRoot": "↑ Move to root level",
 	"tasks.hideCompleted": "Hide completed",
 
+	// Sidebar
+	"sidebar.collapse": "Collapse sidebar",
+	"sidebar.expand": "Expand sidebar",
+
 	// Orchestrator
 	"orch.label": "Orchestrator",
 	"orch.rootSession": "Root agent session",
@@ -344,6 +348,10 @@ const zh: Translations = {
 
 	"tasks.moveToRoot": "↑ 移至顶层",
 	"tasks.hideCompleted": "隐藏已完成",
+
+	// Sidebar
+	"sidebar.collapse": "折叠侧边栏",
+	"sidebar.expand": "展开侧边栏",
 
 	// Orchestrator
 	"orch.label": "编排器",

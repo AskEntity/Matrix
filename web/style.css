@@ -283,8 +283,9 @@ select {
    ========================================================= */
 
 .mxd-sidebar {
-	width: var(--sidebar-width);
+	width: var(--sidebar-w, var(--sidebar-width));
 	min-width: var(--sidebar-min);
+	max-width: 600px;
 	flex-shrink: 0;
 	border-right: 1px solid var(--border);
 	background: var(--bg-surface);
@@ -292,6 +293,78 @@ select {
 	flex-direction: column;
 	overflow: hidden;
 	transition: width var(--t-slow);
+}
+
+/* Desktop sidebar collapsed */
+.mxd-sidebar.mxd-sidebar-collapsed {
+	width: 0;
+	min-width: 0;
+	border-right: none;
+	overflow: hidden;
+}
+
+/* Sidebar resize handle — vertical divider between sidebar and content */
+.mxd-sidebar-resize-handle {
+	flex-shrink: 0;
+	width: 4px;
+	cursor: col-resize;
+	position: relative;
+	z-index: 2;
+	background: transparent;
+	transition: background var(--t-fast);
+}
+
+.mxd-sidebar-resize-handle:hover,
+.mxd-sidebar-resizing .mxd-sidebar-resize-handle {
+	background: var(--accent);
+}
+
+/* Expand hit area for easier grabbing */
+.mxd-sidebar-resize-handle::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: -4px;
+	width: 12px;
+	height: 100%;
+}
+
+/* Prevent text selection while resizing sidebar */
+.mxd-sidebar-resizing {
+	cursor: col-resize;
+	user-select: none;
+}
+
+/* Disable sidebar transition during resize drag for instant feedback */
+.mxd-sidebar-resizing .mxd-sidebar {
+	transition: none;
+}
+
+/* Sidebar collapse button — desktop only */
+.mxd-sidebar-collapse-btn {
+	/* shown by default on desktop, hidden on mobile (mobile uses hamburger) */
+}
+
+/* Sidebar expand button — shown when sidebar is collapsed on desktop */
+.mxd-sidebar-expand-btn {
+	flex-shrink: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	background: var(--bg-surface);
+	border: none;
+	border-right: 1px solid var(--border);
+	color: var(--text-muted);
+	cursor: pointer;
+	transition:
+		color var(--t-fast),
+		background var(--t-fast);
+}
+
+.mxd-sidebar-expand-btn:hover {
+	color: var(--text-primary);
+	background: var(--bg-raised);
 }
 
 .mxd-panel-header {
@@ -3725,6 +3798,28 @@ button.mxd-tool-card-header:hover {
 	.mxd-fullscreen-btn {
 		display: none;
 	}
+
+	/* Hide sidebar resize handle on mobile */
+	.mxd-sidebar-resize-handle {
+		display: none;
+	}
+
+	/* Hide sidebar collapse/expand buttons on mobile (uses hamburger instead) */
+	.mxd-sidebar-collapse-btn {
+		display: none;
+	}
+
+	.mxd-sidebar-expand-btn {
+		display: none;
+	}
+
+	/* On mobile, sidebar collapsed state shouldn't apply — mobile has its own overlay mechanism */
+	.mxd-sidebar.mxd-sidebar-collapsed {
+		width: 85vw;
+		max-width: 320px;
+		min-width: 0;
+		border-right: 1px solid var(--border);
+	}
 }
 
 /* Hamburger button: hidden on desktop, shown on mobile via above rule */
@@ -3756,7 +3851,9 @@ button.mxd-tool-card-header:hover {
    ========================================================= */
 
 .mxd-fullscreen .mxd-sidebar,
-.mxd-fullscreen .mxd-sidebar-backdrop {
+.mxd-fullscreen .mxd-sidebar-backdrop,
+.mxd-fullscreen .mxd-sidebar-resize-handle,
+.mxd-fullscreen .mxd-sidebar-expand-btn {
 	display: none;
 }
 

@@ -18,6 +18,7 @@ import {
 	IconMinimize,
 	IconPlus,
 	IconRefresh,
+	IconSidebarLeft,
 } from "./components/icons.tsx";
 import { LoginPage } from "./components/LoginPage.tsx";
 import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
@@ -164,6 +165,14 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	const [logs, setLogs] = useState<LogEntry[]>([]);
 	const [showSettings, setShowSettings] = useState(false);
 	const [sidebarOpen, setSidebarOpen] = useState(false);
+	const [sidebarCollapsed, setSidebarCollapsed] = useState(
+		() => localStorage.getItem("mxd-sidebar-collapsed") === "true",
+	);
+	const [sidebarWidth, setSidebarWidth] = useState(() => {
+		const stored = localStorage.getItem("mxd-sidebar-width");
+		return stored ? Number(stored) : 288;
+	});
+	const [isSidebarDragging, setIsSidebarDragging] = useState(false);
 	const [splitRatio, setSplitRatio] = useState(0.35);
 	const [isDragging, setIsDragging] = useState(false);
 	const [autoScroll, setAutoScroll] = useState(true);
@@ -349,6 +358,40 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		};
 	}, [isDragging]);
 
+	// ── Sidebar resize ───────────────────────────────────────────────────
+
+	const handleSidebarResizeStart = useCallback((e: React.MouseEvent) => {
+		e.preventDefault();
+		setIsSidebarDragging(true);
+	}, []);
+
+	useEffect(() => {
+		if (!isSidebarDragging) return;
+		const handleMouseMove = (e: MouseEvent) => {
+			const width = Math.min(600, Math.max(180, e.clientX));
+			setSidebarWidth(width);
+		};
+		const handleMouseUp = (e: MouseEvent) => {
+			setIsSidebarDragging(false);
+			const finalWidth = Math.min(600, Math.max(180, e.clientX));
+			localStorage.setItem("mxd-sidebar-width", String(finalWidth));
+		};
+		document.addEventListener("mousemove", handleMouseMove);
+		document.addEventListener("mouseup", handleMouseUp);
+		return () => {
+			document.removeEventListener("mousemove", handleMouseMove);
+			document.removeEventListener("mouseup", handleMouseUp);
+		};
+	}, [isSidebarDragging]);
+
+	const handleToggleSidebarCollapse = useCallback(() => {
+		setSidebarCollapsed((prev) => {
+			const next = !prev;
+			localStorage.setItem("mxd-sidebar-collapsed", String(next));
+			return next;
+		});
+	}, []);
+
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			const target = e.target as HTMLElement;
@@ -370,10 +413,15 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					document.querySelector(".mxd-lmxd-search") as HTMLInputElement | null
 				)?.focus();
 			}
+			// Ctrl+B / Cmd+B toggles sidebar (VSCode convention)
+			if (e.key === "b" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
+				e.preventDefault();
+				handleToggleSidebarCollapse();
+			}
 		};
 		document.addEventListener("keydown", handleKeyDown);
 		return () => document.removeEventListener("keydown", handleKeyDown);
-	}, [rootNodeId, fullscreen]);
+	}, [rootNodeId, fullscreen, handleToggleSidebarCollapse]);
 
 	// ── SSE handler ──────────────────────────────────────────────────────────
 
@@ -882,7 +930,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				/>
 			)}
 
-			<main className={`mxd-main${fullscreen ? " mxd-fullscreen" : ""}`}>
+			<main
+				className={`mxd-main${fullscreen ? " mxd-fullscreen" : ""}${isSidebarDragging ? " mxd-sidebar-resizing" : ""}`}
+			>
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop is a visual overlay, not a focusable control */}
 				{/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop is dismissed by Escape key or clicking outside */}
 				<div
@@ -890,7 +940,12 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					onClick={() => setSidebarOpen(false)}
 				/>
 				<aside
-					className={`mxd-sidebar${sidebarOpen ? " mxd-sidebar-open" : ""}`}
+					className={`mxd-sidebar${sidebarOpen ? " mxd-sidebar-open" : ""}${sidebarCollapsed ? " mxd-sidebar-collapsed" : ""}`}
+					style={
+						!sidebarCollapsed
+							? ({ "--sidebar-w": `${sidebarWidth}px` } as React.CSSProperties)
+							: undefined
+					}
 				>
 					<div className="mxd-panel-header">
 						<span className="mxd-panel-title">{t("tasks.title")}</span>
@@ -942,6 +997,14 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									<IconGear size={13} />
 								</button>
 							)}
+							<button
+								type="button"
+								className="mxd-btn-icon mxd-sidebar-collapse-btn"
+								onClick={handleToggleSidebarCollapse}
+								data-tip={t("sidebar.collapse")}
+							>
+								<IconSidebarLeft size={13} />
+							</button>
 						</div>
 					</div>
 					<TaskTree
@@ -957,6 +1020,27 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						onCancelCreate={handleCancelCreate}
 					/>
 				</aside>
+
+				{/* Sidebar resize handle — desktop only, hidden when collapsed */}
+				{!sidebarCollapsed && (
+					/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */
+					<div
+						className="mxd-sidebar-resize-handle"
+						onMouseDown={handleSidebarResizeStart}
+					/>
+				)}
+
+				{/* Sidebar expand button — shown only when collapsed */}
+				{sidebarCollapsed && (
+					<button
+						type="button"
+						className="mxd-sidebar-expand-btn"
+						onClick={handleToggleSidebarCollapse}
+						title={t("sidebar.expand")}
+					>
+						<IconSidebarLeft size={14} />
+					</button>
+				)}
 
 				<section
 					className={`mxd-content${isDragging ? " dragging" : ""}${detailCollapsed ? " mxd-detail-collapsed" : ""}`}
