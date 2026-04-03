@@ -10,7 +10,6 @@ import { CuteCat } from "./components/CuteCat.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import {
 	IconArrowDown,
-	IconBack,
 	IconClose,
 	IconExpand,
 	IconGear,
@@ -943,11 +942,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		[selectedTaskId, rootNodeId],
 	);
 
-	const handleClearTarget = useCallback(() => {
-		setTargetNodeId(null);
-		setSelectedTaskId(rootNodeId);
-	}, [rootNodeId]);
-
 	const handleClarifyAnswerChange = useCallback(
 		(clarificationId: string, value: string) =>
 			setClarifyAnswers((prev) => ({
@@ -1030,12 +1024,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		[projectId, updateProject],
 	);
 
-	const filterLabel = isOrchestratorNode
-		? t("orch.label")
-		: selectedNode
-			? selectedNode.title
-			: null;
-
 	// ── Render ───────────────────────────────────────────────────────────────
 
 	return (
@@ -1110,21 +1098,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					<div className="mxd-panel-header">
 						<span className="mxd-panel-title">{t("tasks.title")}</span>
 						<div className="mxd-panel-actions">
-							{selectedTaskId && !isOrchestratorNode && (
-								<>
-									<span className="mxd-filter-chip" title={filterLabel ?? ""}>
-										{filterLabel}
-									</span>
-									<button
-										type="button"
-										className="mxd-btn-icon"
-										onClick={() => setSelectedTaskId(rootNodeId)}
-										data-tip={t("tasks.clearFilter")}
-									>
-										<IconBack size={11} />
-									</button>
-								</>
-							)}
 							<button
 								type="button"
 								className="mxd-btn-icon"
@@ -1387,7 +1360,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				pendingClarifications={pendingClarifications}
 				clarifyAnswers={clarifyAnswers}
 				onSend={handleSend}
-				onClearTarget={handleClearTarget}
 				onClarifySubmit={handleClarifySubmit}
 				onClarifyAnswerChange={handleClarifyAnswerChange}
 			/>
