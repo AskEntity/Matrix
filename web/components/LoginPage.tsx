@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { setToken } from "../auth.ts";
+import { IconHexagon } from "./icons.tsx";
 
 interface LoginPageProps {
 	onAuthenticated: () => void;
@@ -136,7 +137,9 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 				{/* Left branding panel */}
 				<div className="mxd-login-brand">
 					<div className="mxd-login-brand-content">
-						<div className="mxd-login-logo">M</div>
+						<div className="mxd-login-logo">
+							<IconHexagon size={32} />
+						</div>
 						<h1 className="mxd-login-title">Matrix</h1>
 						<p className="mxd-login-tagline">Autonomous agent orchestration</p>
 					</div>
