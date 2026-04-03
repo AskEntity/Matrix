@@ -3,7 +3,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +16,6 @@ import {
 	resetTaskOp,
 	updateTaskOp,
 } from "./task-operations.ts";
-import type { PersistentTaskDef } from "./task-tracker.ts";
 import { TaskTracker } from "./task-tracker.ts";
 
 let tempDir: string;
@@ -246,22 +245,6 @@ describe("updateTaskOp", () => {
 		expect(updated.status).toBe("in_progress");
 	});
 
-	test("rejects closing persistent tasks", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Persistent", "", {
-			editedBy: "agent",
-			persistent: true,
-		});
-
-		await expect(
-			updateTaskOp(
-				tracker,
-				task.id,
-				{ status: "closed" },
-				"user",
-				makeCallbacks(),
-			),
-		).rejects.toThrow("Cannot close persistent task");
-	});
 
 	test("reparents task", async () => {
 		const parent1 = tracker.addChild(tracker.rootNodeId, "P1", "", {
@@ -496,19 +479,6 @@ describe("closeTaskOp", () => {
 		expect(node?.status).toBe("closed");
 	});
 
-	test("verify → pending for persistent tasks", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Persistent", "", {
-			editedBy: "agent",
-			persistent: true,
-		});
-		tracker.updateStatus(task.id, "verify");
-
-		const result = await closeTaskOp(tracker, task.id, makeCallbacks());
-
-		expect(result.taskId).toBe(task.id);
-		const node = tracker.get(task.id);
-		expect(node?.status).toBe("pending");
-	});
 
 	test("passed → closed (backward compat)", async () => {
 		const task = tracker.addChild(tracker.rootNodeId, "Passed", "", {
@@ -627,16 +597,6 @@ describe("resetTaskOp", () => {
 		expect(cleared).toContain(task.id);
 	});
 
-	test("rejects resetting persistent task", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Persistent", "", {
-			editedBy: "agent",
-			persistent: true,
-		});
-
-		await expect(
-			resetTaskOp(tracker, task.id, makeCallbacks()),
-		).rejects.toThrow("Cannot reset persistent task");
-	});
 
 	test("throws for nonexistent task", async () => {
 		await expect(
@@ -832,192 +792,4 @@ describe("surgical description edit via updateTaskOp", () => {
 	});
 });
 
-// ── Persistent task write-back ──
 
-describe("persistent task write-back", () => {
-	function readDefFile(taskId: string): PersistentTaskDef {
-		const defPath = join(tempDir, ".mxd", "tasks", `${taskId}.json`);
-		return JSON.parse(readFileSync(defPath, "utf-8")) as PersistentTaskDef;
-	}
-
-	function defFileExists(taskId: string): boolean {
-		return existsSync(join(tempDir, ".mxd", "tasks", `${taskId}.json`));
-	}
-
-	test("update persistent task title → file has new title", async () => {
-		const task = tracker.addChild(
-			tracker.rootNodeId,
-			"Original Title",
-			"Some description",
-			{ editedBy: "agent", persistent: true },
-		);
-
-		await updateTaskOp(
-			tracker,
-			task.id,
-			{ title: "Updated Title" },
-			"user",
-			makeCallbacks(),
-		);
-
-		const def = readDefFile(task.id);
-		expect(def.title).toBe("Updated Title");
-		expect(def.description).toBe("Some description");
-		expect(def.persistent).toBe(true);
-	});
-
-	test("update persistent task description → file updated", async () => {
-		const task = tracker.addChild(
-			tracker.rootNodeId,
-			"My Task",
-			"Old description",
-			{ editedBy: "agent", persistent: true },
-		);
-
-		await updateTaskOp(
-			tracker,
-			task.id,
-			{ description: "New description" },
-			"agent",
-			makeCallbacks(),
-		);
-
-		const def = readDefFile(task.id);
-		expect(def.title).toBe("My Task");
-		expect(def.description).toBe("New description");
-		expect(def.persistent).toBe(true);
-	});
-
-	test("update persistent task color → file updated with color", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Colored Task", "desc", {
-			editedBy: "agent",
-			persistent: true,
-		});
-
-		await updateTaskOp(
-			tracker,
-			task.id,
-			{ color: "red" },
-			"user",
-			makeCallbacks(),
-		);
-
-		const def = readDefFile(task.id);
-		expect(def.color).toBe("#f85149");
-	});
-
-	test("update non-persistent task → no file write", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Regular Task", "desc", {
-			editedBy: "agent",
-		});
-
-		await updateTaskOp(
-			tracker,
-			task.id,
-			{ title: "New Title" },
-			"user",
-			makeCallbacks(),
-		);
-
-		expect(defFileExists(task.id)).toBe(false);
-	});
-
-	test("status-only update on persistent task → no file write", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Persistent", "desc", {
-			editedBy: "agent",
-			persistent: true,
-		});
-
-		await updateTaskOp(
-			tracker,
-			task.id,
-			{ status: "in_progress" },
-			"user",
-			makeCallbacks(),
-		);
-
-		// No title/description/color change → no file written
-		expect(defFileExists(task.id)).toBe(false);
-	});
-
-	test("round-trip: update → save → reload → values preserved", async () => {
-		const task = tracker.addChild(
-			tracker.rootNodeId,
-			"Initial Title",
-			"Initial desc",
-			{ editedBy: "agent", persistent: true },
-		);
-
-		await updateTaskOp(
-			tracker,
-			task.id,
-			{ title: "Round-trip Title", description: "Round-trip desc" },
-			"user",
-			makeCallbacks(),
-		);
-
-		// Verify file was written
-		const def = readDefFile(task.id);
-		expect(def.title).toBe("Round-trip Title");
-		expect(def.description).toBe("Round-trip desc");
-
-		// Reload tracker from disk — save() strips title/desc for persistent nodes,
-		// mergePersistentTasks repopulates from .mxd/tasks/<id>.json
-		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
-		await tracker2.load("main", tempDir);
-		const reloaded = tracker2.get(task.id);
-		expect(reloaded?.title).toBe("Round-trip Title");
-		expect(reloaded?.description).toBe("Round-trip desc");
-		expect(reloaded?.persistent).toBe(true);
-	});
-
-	test("createTaskOp with persistent flag writes definition file", async () => {
-		const task = await createTaskOp(
-			tracker,
-			{
-				title: "Created Persistent",
-				description: "Created desc",
-				parentId: tracker.rootNodeId,
-				persistent: true,
-				color: "blue",
-			},
-			"user",
-			makeCallbacks(),
-		);
-
-		const def = readDefFile(task.id);
-		expect(def.title).toBe("Created Persistent");
-		expect(def.description).toBe("Created desc");
-		expect(def.persistent).toBe(true);
-		expect(def.color).toBe("#388bfd");
-	});
-
-	test("clearing color on persistent task removes it from file", async () => {
-		const task = tracker.addChild(tracker.rootNodeId, "Colored", "desc", {
-			editedBy: "agent",
-			persistent: true,
-		});
-		tracker.updateColor(task.id, "#ff0000");
-
-		// Set color initially
-		await updateTaskOp(
-			tracker,
-			task.id,
-			{ color: "green" },
-			"user",
-			makeCallbacks(),
-		);
-		expect(readDefFile(task.id).color).toBe("#3fb950");
-
-		// Clear color
-		await updateTaskOp(
-			tracker,
-			task.id,
-			{ color: null },
-			"user",
-			makeCallbacks(),
-		);
-		const def = readDefFile(task.id);
-		expect(def.color).toBeUndefined();
-	});
-});

@@ -76,53 +76,6 @@ describe("ProjectManager", () => {
 			expect(content).toContain("#!/bin/bash");
 		});
 
-		test("creates quality task templates in .mxd/tasks/", async () => {
-			const projectPath = join(tempDir, "quality-test");
-			await pm.init(projectPath);
-
-			const tasksDir = join(projectPath, ".mxd", "tasks");
-			expect(existsSync(tasksDir)).toBe(true);
-
-			const { readdirSync } = await import("node:fs");
-			const files = readdirSync(tasksDir).filter((f) => f.endsWith(".json"));
-			expect(files.length).toBe(2);
-
-			// Read both and verify content
-			const tasks = await Promise.all(
-				files.map(async (f) => {
-					const raw = await readFile(join(tasksDir, f), "utf-8");
-					return JSON.parse(raw);
-				}),
-			);
-			const titles = tasks.map((t) => t.title).sort();
-			expect(titles).toEqual([
-				"Quality: Architecture Mutation",
-				"Quality: Test Mutation",
-			]);
-			for (const task of tasks) {
-				expect(task.persistent).toBe(true);
-				expect(task.description).toBeTruthy();
-			}
-		});
-
-		test("does not overwrite existing quality task templates", async () => {
-			const projectPath = join(tempDir, "quality-skip");
-			await mkdir(join(projectPath, ".mxd", "tasks"), { recursive: true });
-			await writeFile(
-				join(projectPath, ".mxd", "tasks", "custom.json"),
-				JSON.stringify({ title: "Custom", description: "custom task" }),
-				"utf-8",
-			);
-			await pm.init(projectPath);
-
-			const { readdirSync } = await import("node:fs");
-			const files = readdirSync(join(projectPath, ".mxd", "tasks")).filter(
-				(f) => f.endsWith(".json"),
-			);
-			// Should still be just the one custom file — no templates added
-			expect(files.length).toBe(1);
-			expect(files[0]).toBe("custom.json");
-		});
 	});
 
 	describe("init — existing directory", () => {

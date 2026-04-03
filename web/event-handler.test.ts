@@ -1107,7 +1107,6 @@ describe("event-handler live session clearing", () => {
 					worktreePath: null,
 					session: undefined,
 					color: undefined,
-					persistent: false,
 				},
 				{
 					id: "task-reset",
@@ -1124,7 +1123,6 @@ describe("event-handler live session clearing", () => {
 					worktreePath: null,
 					session: undefined,
 					color: undefined,
-					persistent: false,
 				},
 				{
 					id: "other-task",
@@ -1141,7 +1139,6 @@ describe("event-handler live session clearing", () => {
 					worktreePath: null,
 					session: {} as TaskNode["session"],
 					color: undefined,
-					persistent: false,
 				},
 			],
 			rootNodeId: "root",

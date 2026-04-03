@@ -1653,9 +1653,9 @@ describe("Integration: daemon restart with prefix consistency", () => {
 		await ctx.app.autoResumeProjects();
 
 		// Send a message after restart — this triggers handleInjectMessage → launchAgent(resume)
-		// The message gets written to JSONL (emitEvent) AND persistent queue (deliverMessage).
+		// The message gets written to JSONL (emitEvent) AND queue (deliverMessage).
 		// On launchAgent, findUnconsumedMessages reads it from JSONL, loadPersistedMessages
-		// reads it from disk. Without dedup, the message appears TWICE in the queue.
+		// On launchAgent, findUnconsumedMessages reads it from JSONL. Without dedup, the message appears TWICE.
 		const wakeInstruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "UNIQUE_RESTART_MESSAGE" },
@@ -4968,399 +4968,6 @@ describe("Integration: tree operations", () => {
 		expect(status).toBe("verify");
 	}, 20000);
 
-	test("TREE4: persistent task — create writes .mxd/tasks/<id>.json, close rejected", async () => {
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		const instruction = JSON.stringify({
-			turns: [
-				{
-					// Create a persistent task
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__create_task",
-							input: {
-								title: "Test Mutation Agent",
-								description: "Run mutation tests periodically",
-								color: "#a371f7",
-								persistent: true,
-							},
-						},
-					],
-				},
-				{
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							isError: false,
-							contains: "Test Mutation Agent",
-							capture: {
-								taskId: 'regex:"id":\\s*"([A-Z0-9]+)"',
-							},
-						},
-					],
-					// Try to close the persistent task — should error
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__close_task",
-							input: { taskId: "$taskId" },
-						},
-					],
-				},
-				{
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							isError: true,
-							contains: "Cannot close a running task",
-						},
-					],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: {
-								status: "passed",
-								summary: "persistent task lifecycle verified",
-							},
-						},
-					],
-				},
-			],
-		});
-
-		const resp = await startAgent(ctx, instruction);
-		expect(resp.status).toBe(200);
-
-		const status = await waitForDone(ctx);
-		expect(status).toBe("verify");
-
-		// Verify .mxd/tasks/<id>.json was created in the project dir
-		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId);
-		const childId = rootNode?.children?.[0];
-		expect(childId).toBeDefined();
-
-		const taskDefPath = join(
-			ctx.projectDir,
-			".mxd",
-			"tasks",
-			`${childId}.json`,
-		);
-		expect(existsSync(taskDefPath)).toBe(true);
-		const def = JSON.parse(await Bun.file(taskDefPath).text());
-		expect(def.title).toBe("Test Mutation Agent");
-		expect(def.description).toBe("Run mutation tests periodically");
-		expect(def.color).toBe("#a371f7");
-
-		// Verify the task node is persistent and in_progress
-		const childNode = tracker.get(childId as string);
-		expect(childNode?.persistent).toBe(true);
-		expect(childNode?.status).toBe("in_progress");
-		expect(childNode?.title).toBe("Test Mutation Agent");
-
-		// Verify tree.json doesn't contain title/description for persistent node
-		const { readFile: readFileAsync } = await import("node:fs/promises");
-		const treePath = join(ctx.dataDir, "projects", ctx.projectId, "tree.json");
-		const treeData = JSON.parse(await readFileAsync(treePath, "utf-8"));
-		const serializedNode = treeData.nodes.find(
-			(n: { id: string }) => n.id === childId,
-		);
-		expect(serializedNode.persistent).toBe(true);
-		expect(serializedNode.title).toBeUndefined();
-		expect(serializedNode.description).toBeUndefined();
-	}, 25000);
-
-	test("TREE5: persistent task — full lifecycle: create → launch child → done → enters verify", async () => {
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		// Child instruction: simple done
-		const childInstruction = JSON.stringify({
-			blocks: [
-				{
-					type: "tool_use",
-					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "persistent child done" },
-				},
-			],
-		});
-
-		// Parent: create persistent task → send_message → yield → done
-		// close_task is no longer valid for persistent tasks
-		const parentInstruction = JSON.stringify({
-			turns: [
-				{
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__create_task",
-							input: {
-								title: "Persistent Runner",
-								description: "A persistent task that runs periodically",
-								persistent: true,
-								color: "purple",
-							},
-						},
-					],
-				},
-				{
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							isError: false,
-							contains: "Persistent Runner",
-							capture: {
-								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
-							},
-						},
-					],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__send_message",
-							input: {
-								taskId: "$childId",
-								title: "Run it",
-								message: childInstruction,
-							},
-						},
-					],
-				},
-				{
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							isError: false,
-						},
-					],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__yield",
-							input: {},
-						},
-					],
-				},
-				{
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							contains: "## Pending",
-							isError: false,
-						},
-					],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: {
-								status: "passed",
-								summary: "persistent task lifecycle complete",
-							},
-						},
-					],
-				},
-			],
-		});
-
-		const resp = await startAgent(ctx, parentInstruction);
-		expect(resp.status).toBe(200);
-
-		const status = await waitForDone(ctx, 45000);
-		expect(status).toBe("verify");
-
-		// Verify the persistent child
-		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId) as TaskNode;
-		const childId = rootNode.children[0] as string;
-		const childNode = tracker.get(childId) as TaskNode;
-
-		// Persistent tasks now get verify status after done() (Phase 2 lifecycle)
-		expect(childNode.status).toBe("verify");
-		expect(childNode.persistent).toBe(true);
-		expect(childNode.title).toBe("Persistent Runner");
-
-		// .mxd/tasks/<id>.json exists in repo
-		const taskDefPath = join(
-			ctx.projectDir,
-			".mxd",
-			"tasks",
-			`${childId}.json`,
-		);
-		expect(existsSync(taskDefPath)).toBe(true);
-
-		// tree.json doesn't have title/description for the persistent node
-		const { readFile: readFileAsync } = await import("node:fs/promises");
-		const treePath = join(ctx.dataDir, "projects", ctx.projectId, "tree.json");
-		const treeData = JSON.parse(await readFileAsync(treePath, "utf-8"));
-		const serialized = treeData.nodes.find(
-			(n: { id: string }) => n.id === childId,
-		);
-		expect(serialized.persistent).toBe(true);
-		expect(serialized.title).toBeUndefined();
-		expect(serialized.description).toBeUndefined();
-	}, 60000);
-
-	test("TREE6: persistent task definition survives daemon restart", async () => {
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		// Manually create a persistent task definition file
-		const { mkdir: mkdirAsync, writeFile: writeFileAsync } = await import(
-			"node:fs/promises"
-		);
-		const tasksDir = join(ctx.projectDir, ".mxd", "tasks");
-		await mkdirAsync(tasksDir, { recursive: true });
-		const persistentId = "01AAABBBCCCDDDEEEFF";
-		await writeFileAsync(
-			join(tasksDir, `${persistentId}.json`),
-			JSON.stringify({
-				title: "Quality Gate",
-				description: "Run quality checks before merge",
-			}),
-		);
-
-		// Git commit so it survives
-		Bun.spawnSync(["git", "add", ".mxd/tasks/"], { cwd: ctx.projectDir });
-		Bun.spawnSync(["git", "commit", "-m", "add persistent task def"], {
-			cwd: ctx.projectDir,
-		});
-
-		// Force re-create app to pick up the new persistent task file
-		ctx.app = (
-			await (async () => {
-				await ctx.app.shutdown();
-				await new Promise((r) => setTimeout(r, 50));
-				const provider = createMockedProviderWithMock(ctx.mockAPI);
-				const appResult = createApp({
-					dataDir: ctx.dataDir,
-					agentProvider: provider,
-				});
-				await appResult.pm.load();
-				appResult.markReady();
-				return { app: appResult };
-			})()
-		).app;
-
-		const tracker2 = await ctx.app.getTracker(ctx.projectId);
-		const node = tracker2.get(persistentId);
-		expect(node).toBeDefined();
-		expect(node?.persistent).toBe(true);
-		expect(node?.title).toBe("Quality Gate");
-		expect(node?.description).toBe("Run quality checks before merge");
-		expect(node?.status).toBe("in_progress");
-		expect(node?.parentId).toBe(tracker2.rootNodeId);
-	}, 15000);
-
-	test("TREE7: update_task writes to .mxd/tasks/<id>.json for persistent tasks", async () => {
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		const instruction = JSON.stringify({
-			turns: [
-				{
-					// Turn 1: Create a persistent task
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__create_task",
-							input: {
-								title: "Original Title",
-								description: "Original description",
-								persistent: true,
-							},
-						},
-					],
-				},
-				{
-					// Turn 2: Update the persistent task's title and description
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							isError: false,
-							contains: "Original Title",
-							capture: {
-								taskId: 'regex:"id":\\s*"([A-Z0-9]+)"',
-							},
-						},
-					],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__update_task",
-							input: {
-								taskId: "$taskId",
-								title: "Updated Title",
-								description: "Updated description after change",
-							},
-						},
-					],
-				},
-				{
-					// Turn 3: Done
-					assert: [{ block: 0, type: "tool_result", notContains: "Error" }],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: {
-								status: "passed",
-								summary: "updated persistent task",
-							},
-						},
-					],
-				},
-			],
-		});
-
-		const resp = await startAgent(ctx, instruction);
-		expect(resp.status).toBe(200);
-
-		const status = await waitForDone(ctx);
-		expect(status).toBe("verify");
-
-		// Get the child task ID
-		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId) as TaskNode;
-		const childId = rootNode.children[0] as string;
-
-		// Verify in-memory state has the updated values
-		const childNode = tracker.get(childId) as TaskNode;
-		expect(childNode.persistent).toBe(true);
-		expect(childNode.title).toBe("Updated Title");
-		expect(childNode.description).toBe("Updated description after change");
-
-		// Verify .mxd/tasks/<id>.json has the updated values
-		const { readFile: readFileAsync } = await import("node:fs/promises");
-		const defPath = join(ctx.projectDir, ".mxd", "tasks", `${childId}.json`);
-		expect(existsSync(defPath)).toBe(true);
-		const def = JSON.parse(await readFileAsync(defPath, "utf-8"));
-		expect(def.title).toBe("Updated Title");
-		expect(def.description).toBe("Updated description after change");
-
-		// === RESTART: the real test — does the update survive? ===
-		await ctx.app.shutdown();
-		await new Promise((r) => setTimeout(r, 100));
-		ctx.app = await recreateApp(ctx);
-
-		// After restart, load should read from .mxd/tasks/<id>.json
-		const tracker2 = await ctx.app.getTracker(ctx.projectId);
-		const nodeAfterRestart = tracker2.get(childId) as TaskNode;
-		expect(nodeAfterRestart.persistent).toBe(true);
-		expect(nodeAfterRestart.title).toBe("Updated Title");
-		expect(nodeAfterRestart.description).toBe(
-			"Updated description after change",
-		);
-	}, 25000);
 });
 
 // ── File operation tests ──
@@ -5743,7 +5350,7 @@ describe("Integration: file operations", () => {
 			],
 		});
 
-		// Inject persistent rate limit on the 2nd API call (count=10 to exceed
+		// Inject rate limit on the 2nd API call (count=10 to exceed
 		// both inner retries and outer retries). With TransientAPIError, inner retry
 		// fails immediately, and outer retry tries MAX_OUTER_RETRIES (3) times.
 		// So we need count >= 4 (1 original + 3 outer retries).
@@ -6563,8 +6170,8 @@ describe("Integration: message near done() race condition", () => {
 	 * Bug: message sent to a passed child task via REST gets duplicated on resume.
 	 *
 	 * The /tasks/:nodeId/message endpoint writes the message to JSONL (event body
-	 * WITHOUT id) and to persistent queue (WITH id). On resume, findUnconsumedMessages
-	 * recovers it from JSONL, but the dedup against persistent queue fails because
+	 * WITHOUT id) and to queue (WITH id). On resume, findUnconsumedMessages
+	 * recovers it from JSONL, but the dedup against queue fails because
 	 * the JSONL body has no id. Result: message appears twice.
 	 */
 	test("Message to passed child → resume → no duplication", async () => {
@@ -7015,7 +6622,7 @@ describe("Integration: session_config in JSONL", () => {
 							name: "mcp__mxd__create_task",
 							input: {
 								title: "Regular Child",
-								description: "Non-persistent child task",
+								description: "Regular child task",
 							},
 						},
 					],
@@ -7091,7 +6698,7 @@ describe("Integration: session_config in JSONL", () => {
 				{
 					type: "tool_use",
 					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "persistent done" },
+					input: { status: "passed", summary: "child done" },
 				},
 			],
 		});
@@ -7104,9 +6711,8 @@ describe("Integration: session_config in JSONL", () => {
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
 							input: {
-								title: "Persistent Runner",
-								description: "A persistent task",
-								persistent: true,
+								title: "Runner Task",
+								description: "A regular child task",
 							},
 						},
 					],
@@ -9962,169 +9568,4 @@ describe("Integration: two-phase done() gap tests", () => {
 		expect(doneNotified).toBeTruthy();
 	}, 30000);
 
-	test("persistent task full round-trip: done→verify→close→pending→new message→new session", async () => {
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		// Round 1 child instruction: just done
-		const childInstructionR1 = JSON.stringify({
-			blocks: [
-				{
-					type: "tool_use",
-					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "round 1 complete" },
-				},
-			],
-		});
-
-		// Round 2 child instruction: bash + done
-		const childInstructionR2 = JSON.stringify({
-			blocks: [
-				{
-					type: "tool_use",
-					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "round 2 complete" },
-				},
-			],
-		});
-
-		// Parent orchestrates the full cycle:
-		// T1: create persistent task
-		// T2: send_message (round 1)
-		// T3: yield (wait for child done)
-		// T4: close_task → child goes to pending
-		// T5: send_message (round 2 — re-wake)
-		// T6: yield (wait for child done again)
-		// T7: done
-		const parentInstruction = JSON.stringify({
-			turns: [
-				{
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__create_task",
-							input: {
-								title: "Cyclic Runner",
-								description: "Persistent task testing full round-trip",
-								persistent: true,
-							},
-						},
-					],
-				},
-				{
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							isError: false,
-							capture: {
-								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
-							},
-						},
-					],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__send_message",
-							input: {
-								taskId: "$childId",
-								title: "Round 1",
-								message: childInstructionR1,
-							},
-						},
-					],
-				},
-				{
-					assert: [{ block: 0, type: "tool_result", isError: false }],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__yield",
-							input: {},
-						},
-					],
-				},
-				{
-					// After yield: child done → task_complete received
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							contains: "## Pending",
-							isError: false,
-						},
-					],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__close_task",
-							input: { taskId: "$childId" },
-						},
-					],
-				},
-				{
-					// close_task on persistent verify → pending
-					assert: [{ block: 0, type: "tool_result", isError: false }],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__send_message",
-							input: {
-								taskId: "$childId",
-								title: "Round 2",
-								message: childInstructionR2,
-							},
-						},
-					],
-				},
-				{
-					assert: [{ block: 0, type: "tool_result", isError: false }],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__yield",
-							input: {},
-						},
-					],
-				},
-				{
-					// After yield: child done again → task_complete
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							contains: "## Pending",
-							isError: false,
-						},
-					],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: {
-								status: "passed",
-								summary: "persistent round-trip verified",
-							},
-						},
-					],
-				},
-			],
-		});
-
-		const resp = await startAgent(ctx, parentInstruction);
-		expect(resp.status).toBe(200);
-
-		const status = await waitForDone(ctx, 60000);
-		expect(status).toBe("verify");
-
-		// Verify the persistent child ended in verify after round 2
-		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.get(tracker.rootNodeId) as TaskNode;
-		const childId = rootNode.children[0] as string;
-		const childNode = tracker.get(childId) as TaskNode;
-
-		expect(childNode.persistent).toBe(true);
-		// After round 2 done(), child is in verify again
-		expect(childNode.status).toBe("verify");
-	}, 60000);
 });

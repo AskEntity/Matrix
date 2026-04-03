@@ -1678,21 +1678,21 @@ describe("tool() jsonSchema generation", () => {
 		]);
 	});
 
-	test("handles boolean type (persistent field)", async () => {
+	test("handles optional boolean type", async () => {
 		const { z } = await import("zod");
 		const { tool: toolFactory } = await import("./tool-definition.ts");
 		const def = toolFactory(
 			"test",
 			"test tool",
 			{
-				persistent: z.boolean().optional().describe("Persistent mode"),
+				enabled: z.boolean().optional().describe("Enable mode"),
 			},
 			async () => ({ content: [{ type: "text", text: "ok" }] }),
 		);
 		const props = (def.jsonSchema as Record<string, unknown>)
 			.properties as Record<string, unknown>;
-		expect(props?.persistent).toEqual({
-			description: "Persistent mode",
+		expect(props?.enabled).toEqual({
+			description: "Enable mode",
 			type: "boolean",
 		});
 	});
