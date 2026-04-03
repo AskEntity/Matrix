@@ -11,7 +11,7 @@ The user types one sentence. It reaches:
 
 One keystroke multiplied to N agents who each understand it in their own context. The user never explains the same thing twice — the message flows through the tree automatically.
 
-**Example from today**: User told the keepalive task "直接交给用户设置吧。project global之类的三层设置。" One sentence. The task understood: replace hardcoded TTL with configurable settings. I (root) saw the forwarded message and understood the direction change. No coordination meeting needed.
+**Example from today**: User told the keepalive task "just let the user configure it. Three-layer settings — project, global, and so on." One sentence. The task understood: replace hardcoded TTL with configurable settings. I (root) saw the forwarded message and understood the direction change. No coordination meeting needed.
 
 ## Information Asymmetry Is a Feature
 
@@ -31,11 +31,11 @@ The forwarded messages ARE the compression layer. User's words are the highest-s
 ## Discussion Mode: The Unexpected Productivity Multiplier
 
 The user doesn't always give commands. Often they think out loud:
-- "说起来..." (speaking of which...)
-- "我觉得..." (I think...)
-- "你怎么看？" (what do you think?)
-- "稍等" (wait)
-- "我有想法了" (I have an idea)
+- "speaking of which..."
+- "I think..."
+- "what do you think?"
+- "wait"
+- "I have an idea"
 
 These signals mean: **don't act yet, engage in dialogue.** The agent that recognizes this and yields (instead of done()) gets richer context and better instructions.
 
@@ -58,9 +58,9 @@ But fork has a dark side: the child inherits the parent's MISTAKES too. Stale as
 ## The User's Superpower: Pattern Recognition Across Agents
 
 The user sees patterns that no individual agent can:
-- "这个和之前persist的盛况一样" — folder bugs look like persistent bugs (same iceberg pattern)
-- "这两个你觉得需要什么后续讨论吗" — connecting two tasks that don't know about each other
-- "把它reparent给他" — organizational surgery based on domain overlap
+- "this is the same iceberg pattern as the persistent tasks debacle" — folder bugs look like persistent bugs (same iceberg pattern)
+- "do you think these two need any follow-up discussion?" — connecting two tasks that don't know about each other
+- "reparent it under him" — organizational surgery based on domain overlap
 
 This cross-agent pattern recognition is irreplaceable. An agent sees its own context. The user sees the matrix.
 
