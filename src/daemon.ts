@@ -24,6 +24,7 @@ import {
 	registerAuthRoutes,
 } from "./daemon/routes/auth.ts";
 import { registerConfigRoutes } from "./daemon/routes/config.ts";
+import { registerMockShowcaseRoute } from "./daemon/routes/mock-showcase.ts";
 import { registerProjectRoutes } from "./daemon/routes/projects.ts";
 import { registerSSERoute } from "./daemon/routes/sse.ts";
 import { registerTaskRoutes } from "./daemon/routes/tasks.ts";
@@ -291,6 +292,7 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 	registerConfigRoutes(app, ctx);
 	registerAgentRoutes(app, ctx, ORCHESTRATOR_SYSTEM_PROMPT);
 	registerSSERoute(app, ctx);
+	registerMockShowcaseRoute(app);
 
 	// Static file serving for the web UI (fallback for non-Bun environments)
 	app.use("/web/*", serveStatic({ root: "./" }));

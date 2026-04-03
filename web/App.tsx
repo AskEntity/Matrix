@@ -43,6 +43,7 @@ import {
 	useThreeLayerConfig,
 } from "./hooks.ts";
 import { LocaleProvider, useLocale } from "./i18n.ts";
+import { MockShowcase } from "./MockShowcase.tsx";
 import { applyTheme, themes } from "./themes.ts";
 
 // ── Hash routing helpers ───────────────────────────────────────────────────
@@ -73,11 +74,14 @@ function updateHash(
 
 // ── Main App ───────────────────────────────────────────────────────────────
 
+/** Check ?mock query param once at module load — never changes during session. */
+const IS_MOCK_MODE = new URLSearchParams(window.location.search).has("mock");
+
 export function App() {
 	return (
 		<LocaleProvider>
 			<ErrorBoundary>
-				<AppInner />
+				{IS_MOCK_MODE ? <MockShowcase /> : <AppInner />}
 			</ErrorBoundary>
 		</LocaleProvider>
 	);
