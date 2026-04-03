@@ -160,6 +160,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				return {
 					type: "task_completed",
 					taskId: parentTaskId,
+					fromTaskId: qe.taskId,
 					title: qe.title,
 					success: qe.success,
 					output: qe.output,
@@ -194,6 +195,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				return {
 					type: "task_message",
 					taskId: parentTaskId,
+					fromTaskId: qe.fromTaskId,
 					fromTitle: qe.fromTitle,
 					title: qe.title ?? "",
 					content: qe.content,
@@ -204,6 +206,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 				return {
 					type: "user_message_forwarded",
 					taskId: parentTaskId,
+					fromTaskId: qe.fromTaskId,
 					title: qe.fromTitle,
 					content: qe.content,
 					...(qe.resumed ? { resumed: true } : {}),

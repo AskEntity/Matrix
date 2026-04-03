@@ -2140,6 +2140,20 @@ button.mxd-tool-card-header:hover {
 	margin-left: 0.5em;
 }
 
+/* Clickable task name in forwarded messages and other cards */
+.mxd-clickable-task-name {
+	cursor: pointer;
+	text-decoration: underline;
+	text-decoration-style: dotted;
+	text-underline-offset: 2px;
+	transition: color var(--t-fast);
+}
+
+.mxd-clickable-task-name:hover {
+	color: var(--accent-hover);
+	text-decoration-style: solid;
+}
+
 .mxd-tool-card-bg-complete {
 	border-color: rgba(139, 148, 158, 0.3);
 	background: rgba(139, 148, 158, 0.05);

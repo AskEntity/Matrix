@@ -58,11 +58,13 @@ export const LogEntryView = memo(function LogEntryView({
 	nodeMap,
 	projectId,
 	rootNodeId,
+	onTaskNavigate,
 }: {
 	entry: LogEntry;
 	nodeMap: Map<string, TreeNode>;
 	projectId?: string;
 	rootNodeId?: string | null;
+	onTaskNavigate?: (taskId: string) => void;
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const [movingToBg, setMovingToBg] = useState(false);
@@ -328,12 +330,34 @@ export const LogEntryView = memo(function LogEntryView({
 	// task_completed — styled card with green/red border, collapsible output
 	if (entry.type === "task_completed") {
 		const title = entry.title;
+		const fromTaskId =
+			"fromTaskId" in entry ? (entry.fromTaskId as string) : undefined;
 		const success = entry.success;
 		const output = entry.output ?? "";
 		const borderClass = success
 			? "mxd-tool-card-done-passed"
 			: "mxd-tool-card-done-failed";
-		const completedTitle = `Task ${success ? "Passed" : "Failed"}: ${title}`;
+		const prefix = `${success ? "✓" : "✗"} Task ${success ? "Passed" : "Failed"}: `;
+		const canNavigate = fromTaskId && onTaskNavigate;
+
+		const titleNode = canNavigate ? (
+			<>
+				{prefix}
+				{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate affordance */}
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable task name */}
+				<span
+					className="mxd-clickable-task-name"
+					onClick={(e) => {
+						e.stopPropagation();
+						onTaskNavigate(fromTaskId);
+					}}
+				>
+					{title}
+				</span>
+			</>
+		) : (
+			`${prefix}${title}`
+		);
 
 		return (
 			<LogEntryWrapper
@@ -341,10 +365,7 @@ export const LogEntryView = memo(function LogEntryView({
 				taskLabel={taskLabel}
 				taskId={entry.taskId}
 			>
-				<Card
-					title={`${success ? "✓" : "✗"} ${completedTitle}`}
-					className={borderClass}
-				>
+				<Card title={titleNode} className={borderClass}>
 					{output.length > 0 ? (
 						<div className="mxd-tool-card-body">
 							<div className="mxd-tool-card-result">{output}</div>
@@ -373,18 +394,36 @@ export const LogEntryView = memo(function LogEntryView({
 	// task_message (from another task — either direction)
 	if (entry.type === "task_message") {
 		const fromTitle = entry.fromTitle ?? "";
+		const fromTaskId =
+			"fromTaskId" in entry ? (entry.fromTaskId as string) : undefined;
 		const msgTitle = entry.title ?? "";
-		const label = msgTitle
-			? `↑ ${msgTitle}`
-			: fromTitle
-				? `↑ from ${fromTitle}`
-				: "↑ Task Message";
 		const text = getEntryText(entry);
 		const isLong = text.length > 100 || text.includes("\n");
 		const headerText =
 			text.length > 100
 				? `${text.slice(0, 100)}…`
 				: (text.split("\n")[0] ?? text);
+
+		const displayTitle = msgTitle || fromTitle || "Task Message";
+		const canNavigate = fromTaskId && onTaskNavigate;
+		const labelNode = canNavigate ? (
+			<>
+				{"↑ "}
+				{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate affordance */}
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable task name */}
+				<span
+					className="mxd-clickable-task-name"
+					onClick={(e) => {
+						e.stopPropagation();
+						onTaskNavigate(fromTaskId);
+					}}
+				>
+					{displayTitle}
+				</span>
+			</>
+		) : (
+			`↑ ${displayTitle}`
+		);
 
 		return (
 			<LogEntryWrapper
@@ -393,7 +432,7 @@ export const LogEntryView = memo(function LogEntryView({
 				taskId={getLogTaskId(entry)}
 			>
 				<Card
-					title={label}
+					title={labelNode}
 					detail={isLong ? headerText : text}
 					className="mxd-tool-card-task-message"
 				>
@@ -410,11 +449,31 @@ export const LogEntryView = memo(function LogEntryView({
 	// user_message_forwarded — CC'd user message to sub task, rendered muted
 	if (entry.type === "user_message_forwarded") {
 		const childTitle = entry.title ?? "";
+		const fromTaskId =
+			"fromTaskId" in entry ? (entry.fromTaskId as string) : undefined;
 		const resumed = "resumed" in entry && entry.resumed;
-		const label = resumed
-			? `🔄 user resumed → ${childTitle}`
-			: `📨 user → ${childTitle}`;
+		const prefix = resumed ? "🔄 user resumed → " : "📨 user → ";
 		const text = getEntryText(entry);
+
+		const titleNode =
+			fromTaskId && onTaskNavigate ? (
+				<>
+					{prefix}
+					{/* biome-ignore lint/a11y/useKeyWithClickEvents: click-to-navigate affordance */}
+					{/* biome-ignore lint/a11y/noStaticElementInteractions: clickable task name */}
+					<span
+						className="mxd-clickable-task-name"
+						onClick={(e) => {
+							e.stopPropagation();
+							onTaskNavigate(fromTaskId);
+						}}
+					>
+						{childTitle}
+					</span>
+				</>
+			) : (
+				`${prefix}${childTitle}`
+			);
 
 		return (
 			<LogEntryWrapper
@@ -422,7 +481,11 @@ export const LogEntryView = memo(function LogEntryView({
 				taskLabel={taskLabel}
 				taskId={getLogTaskId(entry)}
 			>
-				<Card title={label} detail={text} className="mxd-tool-card-forwarded" />
+				<Card
+					title={titleNode}
+					detail={text}
+					className="mxd-tool-card-forwarded"
+				/>
 			</LogEntryWrapper>
 		);
 	}
