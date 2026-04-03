@@ -327,6 +327,7 @@ describe("Stress: compaction + restart", () => {
 
 	test("COMPACT2: manual compact during yield creates consecutive user messages (known bug)", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// This test documents a known production bug:
 		// Manual compaction triggered during explicit yield creates consecutive
@@ -643,6 +644,7 @@ describe("Stress: multiple messages during yield", () => {
 
 	test("YIELD_BATCH1: multiple messages queued before yield wakes → all delivered together", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Agent yields. We write messages directly to JSONL (simulating persistence)
 		// and enqueue them. Then crash + restart — on resume, all messages are recovered
@@ -765,6 +767,7 @@ describe("Stress: multiple messages during yield", () => {
 
 	test("YIELD_BATCH2: message sent during yield persists in JSONL across restart", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Agent yields. We send a message (persists to JSONL). Then crash.
 		// The message may or may not have been consumed before crash — either way
@@ -1446,6 +1449,7 @@ describe("Stress: concurrent message delivery", () => {
 
 	test("CONCURRENT1: 3 messages sent simultaneously to yielding agent", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Agent yields, we send 3 messages concurrently (Promise.all)
 		const instruction = JSON.stringify({
