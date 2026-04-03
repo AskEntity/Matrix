@@ -803,6 +803,9 @@ export async function* runProviderLoop(
 	// Map to provider-specific format (Anthropic Tool, OpenAI ResponsesTool)
 	const allTools = adapter.prepareTools(jsonTools);
 
+	// Bind frozen tools for hidden evaluate_script tool (selfBootstrap).
+	request.setAllTools?.(jsonTools);
+
 	// Emit session_config on fresh start (tools are now populated, not [])
 	if (!storedConfig && emit) {
 		const sp = request.systemPrompt ?? { stable: "", variable: "" };

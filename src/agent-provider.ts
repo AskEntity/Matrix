@@ -57,14 +57,19 @@ export interface AgentRequest {
 	 */
 	getSession?: (sessionId: string) => TaskSession | undefined;
 	/**
-
-	/**
 	 * Bind the live messages[] array from the provider loop.
 	 * Called once after the messages array is created in runProviderLoop.
 	 * Used by the hidden evaluate_script tool (selfBootstrap mode) to inspect
 	 * the live conversation state.
 	 */
 	setMessages?: (msgs: unknown[]) => void;
+	/**
+	 * Bind the frozen JsonTool[] from the provider loop.
+	 * Called once after tools are resolved in runProviderLoop.
+	 * Used by the hidden evaluate_script tool (selfBootstrap mode) to inspect
+	 * the session's tool definitions.
+	 */
+	setAllTools?: (tools: unknown[]) => void;
 }
 
 /**

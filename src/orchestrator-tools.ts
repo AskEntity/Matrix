@@ -105,6 +105,11 @@ export interface OrchestratorToolsDeps {
 	) => { id: string; name: string; path: string } | undefined;
 	/** Get a tracker for another project (cross-project messaging). */
 	getTracker: (projectId: string) => TaskTracker | undefined;
+	/**
+	 * Full DaemonContext for runtime introspection (evaluate_script).
+	 * Optional — only available when running under the daemon (not in tests).
+	 */
+	daemonCtx?: unknown;
 }
 
 /**
@@ -143,6 +148,13 @@ export interface OrchestratorToolsResult {
 	 * Only present when selfBootstrap mode is active.
 	 */
 	setMessages?: (msgs: unknown[]) => void;
+
+	/**
+	 * Bind the frozen JsonTool[] from the provider loop into the eval tool handler.
+	 * Called by runProviderLoop after tools are resolved.
+	 * Only present when selfBootstrap mode is active.
+	 */
+	setAllTools?: (tools: unknown[]) => void;
 }
 
 /**
@@ -1371,13 +1383,18 @@ export function createOrchestratorTools(
 	];
 
 	// ── Hidden evaluate_script tool (selfBootstrap only) ──
-	// Mutable ref bound later by runProviderLoop via setMessages().
+	// Mutable refs bound later by runProviderLoop via setMessages()/setAllTools().
 	let messagesRef: unknown[] = [];
+	let allToolsRef: unknown[] = [];
 	let setMessages: ((msgs: unknown[]) => void) | undefined;
+	let setAllTools: ((tools: unknown[]) => void) | undefined;
 
 	if (selfBootstrap) {
 		setMessages = (msgs: unknown[]) => {
 			messagesRef = msgs;
+		};
+		setAllTools = (tools: unknown[]) => {
+			allToolsRef = tools;
 		};
 
 		const evalTool = tool(
@@ -1398,6 +1415,9 @@ export function createOrchestratorTools(
 						deps,
 						projectId,
 						taskId: currentTaskId,
+						sessionId: currentTaskId,
+						daemonCtx: deps.daemonCtx,
+						allTools: allToolsRef,
 					};
 
 					// Use AsyncFunction to support await in eval'd code.
@@ -1470,6 +1490,7 @@ export function createOrchestratorTools(
 	return {
 		toolDefs,
 		setMessages,
+		setAllTools,
 		hasRunningChildren: () => {
 			// Check if any descendants of this task have active sessions
 			if (!currentTaskId) return false;
