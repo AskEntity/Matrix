@@ -56,6 +56,9 @@ const en: Translations = {
 
 	"tasks.moveToRoot": "↑ Move to root level",
 	"tasks.hideCompleted": "Hide completed",
+	"tasks.filterAll": "Show all tasks",
+	"tasks.filterHideClosed": "Hide closed/failed",
+	"tasks.filterActiveFavorites": "Active + Favorites",
 
 	// Sidebar
 	"sidebar.collapse": "Collapse sidebar",
@@ -350,6 +353,9 @@ const zh: Translations = {
 
 	"tasks.moveToRoot": "↑ 移至顶层",
 	"tasks.hideCompleted": "隐藏已完成",
+	"tasks.filterAll": "显示全部",
+	"tasks.filterHideClosed": "隐藏已关闭",
+	"tasks.filterActiveFavorites": "活跃 + 收藏",
 
 	// Sidebar
 	"sidebar.collapse": "折叠侧边栏",
