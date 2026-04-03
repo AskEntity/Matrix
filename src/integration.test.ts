@@ -122,6 +122,7 @@ async function waitForDone(
 ): Promise<string> {
 	const tracker = await ctx.app.getTracker(ctx.projectId);
 	const rootNodeId = tracker.rootNodeId;
+	let prevHadSession = false;
 
 	const start = Date.now();
 	while (Date.now() - start < timeoutMs) {
@@ -129,6 +130,45 @@ async function waitForDone(
 		if (rootNode?.status === "verify" || rootNode?.status === "failed") {
 			return rootNode.status;
 		}
+		// Detect agent crash: session was active but now gone, status still in_progress
+		const hasSession = !!rootNode?.session;
+		if (prevHadSession && !hasSession && rootNode?.status === "in_progress") {
+			// Agent crashed — read JSONL for error details
+			let errorDetail = "(no error details found in JSONL)";
+			try {
+				const events = await readSessionEvents(ctx, rootNodeId);
+				// Search backwards for any event with error-like content
+				for (
+					let i = events.length - 1;
+					i >= Math.max(0, events.length - 20);
+					i--
+				) {
+					const e = events[i] as Record<string, unknown>;
+					const json = JSON.stringify(e);
+					if (
+						json.includes("violation") ||
+						json.includes("rror") ||
+						json.includes("crash")
+					) {
+						errorDetail = json.slice(0, 1000);
+						break;
+					}
+				}
+				// If nothing found, show last 3 events
+				if (errorDetail.includes("no error details")) {
+					const last3 = events
+						.slice(-3)
+						.map((e) => JSON.stringify(e).slice(0, 300));
+					errorDetail = `Last 3 events: ${last3.join(" | ")}`;
+				}
+			} catch {
+				// ignore read errors
+			}
+			throw new Error(
+				`Agent crashed (session gone, status still in_progress). ${errorDetail}`,
+			);
+		}
+		prevHadSession = hasSession;
 		await new Promise((r) => setTimeout(r, 50));
 	}
 	throw new Error(`Agent did not call done() within ${timeoutMs}ms`);
@@ -2460,6 +2500,89 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
+
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
+	}, 30000);
+
+	test("Restart: multiline user messages preserve content blocks across restart", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// Turns: yield → yield → yield. Done comes from wake message after restart.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Waiting." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Got first." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Got second." },
+						{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+		await waitForIdle(ctx);
+		expect(ctx.mockAPI.getRequestCount()).toBe(1);
+
+		// Send multiline message "1\n2\n3" — not JSON, so mock uses next queued turn
+		let msgResp = await sendMessage(ctx, "1\n2\n3");
+		expect(msgResp.status).toBe(200);
+		await waitForIdle(ctx);
+		expect(ctx.mockAPI.getRequestCount()).toBe(2);
+
+		// Send multiline message "4\n5"
+		msgResp = await sendMessage(ctx, "4\n5");
+		expect(msgResp.status).toBe(200);
+		await waitForIdle(ctx);
+		expect(ctx.mockAPI.getRequestCount()).toBe(3);
+
+		const preRestartRequests = ctx.mockAPI.getRequestCount();
+
+		// === CRASH ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+
+		// Wake after restart — prefix validation compares pre-restart messages
+		// with post-restart JSONL reconstruction. If multiline messages were
+		// split into N text blocks in live path but merged into 1 on reconstruction,
+		// prefix validation MUST catch this.
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Done." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "multiline restart" },
+				},
+			],
+		});
+		const wakeResp = await sendMessage(ctx, wakeInstruction);
+		expect(wakeResp.status).toBe(200);
+
+		// After the fix, prefix validation should pass and agent should reach done().
+		// Before the fix, multiline messages are split into N text blocks in live path
+		// but merged into 1 on JSONL reconstruction — prefix validation catches this.
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
 
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThan(preRestartRequests);
 	}, 30000);

@@ -724,13 +724,13 @@ function createAnthropicAdapter(
 			// Queue messages from yield/done tools
 			for (const exec of params.execResults) {
 				if (exec.formattedQueueMessages) {
-					// Each queue message is already formatted with timestamp via formatQueueMessage.
-					// Split them back into individual text blocks.
-					for (const line of exec.formattedQueueMessages.split("\n")) {
-						if (line.trim()) {
-							queueTextBlocks.push({ type: "text" as const, text: line });
-						}
-					}
+					// Keep as a single text block — must match JSONL reconstruction.
+					// Splitting by line creates N blocks in live path but JSONL
+					// reconstruction merges them into one, causing cache miss on restart.
+					queueTextBlocks.push({
+						type: "text" as const,
+						text: exec.formattedQueueMessages,
+					});
 					if (exec.mcpImages?.length) {
 						for (const img of exec.mcpImages) {
 							queueImageBlocks.push({
@@ -751,11 +751,10 @@ function createAnthropicAdapter(
 				params.cancellationQueueMsgs.length > 0 &&
 				params.cancellationFormatted
 			) {
-				for (const line of params.cancellationFormatted.split("\n")) {
-					if (line.trim()) {
-						queueTextBlocks.push({ type: "text" as const, text: line });
-					}
-				}
+				queueTextBlocks.push({
+					type: "text" as const,
+					text: params.cancellationFormatted,
+				});
 				const cancellationImageBlocks = extractQueueImages(
 					params.cancellationQueueMsgs,
 				);
@@ -789,33 +788,24 @@ function createAnthropicAdapter(
 
 		buildImplicitYieldMessage(formatted: string, nonCompact) {
 			const imageBlocks = extractQueueImages(nonCompact);
-			// Each queue message is its own text block — split by newline
-			const textBlocks = formatted
-				.split("\n")
-				.filter((line) => line.trim())
-				.map((line) => ({ type: "text" as const, text: line }));
 
-			if (imageBlocks.length > 0 || textBlocks.length > 1) {
+			if (imageBlocks.length > 0) {
 				return {
 					role: "user" as const,
 					content: [
-						...textBlocks,
+						{ type: "text" as const, text: formatted },
 						...imageBlocks,
-						...(imageBlocks.length > 0
-							? [
-									{
-										type: "text" as const,
-										text: `[${imageBlocks.length} image(s) attached by user]`,
-									},
-								]
-							: []),
+						{
+							type: "text" as const,
+							text: `[${imageBlocks.length} image(s) attached by user]`,
+						},
 					],
 				};
 			}
-			// Single queue message, no images — use string content
+			// No images — use string content (matches JSONL reconstruction)
 			return {
 				role: "user" as const,
-				content: textBlocks[0]?.text ?? formatted,
+				content: formatted,
 			};
 		},
 
