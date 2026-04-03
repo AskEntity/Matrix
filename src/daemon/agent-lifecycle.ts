@@ -62,26 +62,8 @@ function findSessionConfig(events: Event[]): SessionConfigEvent | undefined {
 	return undefined;
 }
 
-/**
- * Build a session_config event from current state.
- * Used for fresh start and compaction (refreshes config).
- */
-function buildSessionConfig(
-	systemPrompt: SystemPrompt,
-	tools: unknown[],
-	taskId: string,
-	cacheTtl?: "1h",
-): SessionConfigEvent {
-	return {
-		type: "session_config",
-		tools,
-		systemStable: systemPrompt.stable,
-		systemVariable: systemPrompt.variable,
-		...(cacheTtl ? { cacheTtl } : {}),
-		taskId,
-		ts: Date.now(),
-	};
-}
+// session_config is emitted by runProviderLoop (with populated tools).
+// Previously buildSessionConfig lived here but wrote tools=[] (bug).
 
 // ---------------------------------------------------------------------------
 // Shared helpers — used by runAgentForNode
@@ -770,14 +752,8 @@ export async function runAgentForNode(
 			} else {
 				systemPrompt = buildSystemPrompt();
 			}
-			const configEvt = buildSessionConfig(
-				systemPrompt,
-				[],
-				nodeId,
-				effectiveCacheTtl,
-			);
-			emitEvent(ctx, project.id, { ...configEvt, taskId: nodeId });
-			activeEvents = [configEvt, ...activeEvents];
+			// session_config is emitted by runProviderLoop after tools are built.
+			// Previously we emitted here with tools=[] — now tools are populated.
 		}
 
 		const refreshSystemPrompt = () =>

@@ -340,3 +340,15 @@ Deleted entire persistent task feature: -1940 lines, 44 files. Kept two-phase do
 
 All tasks reparented to root. All persistent intermediate nodes deleted. Tree is now flat: root → tasks. No domain owners, no routing layers. Future organization via folder feature (UI-only grouping, not tree structure).
 
+## JsonTool Golden Source (2026-04-03)
+
+**Problem**: session_config wrote `tools: []` because buildSessionConfig ran in agent-lifecycle.ts before tools were ready. On resume, tools were regenerated from Zod → different JSON key order → cache miss (~$6+ per restart).
+
+**Fix**: `JsonTool` type in tool-definition.ts: `{name, description, jsonSchema}`. Provider-agnostic, computed once, frozen in session_config JSONL.
+- `buildJsonTools(mcpToolDefs)`: iterates defs, filters hidden, returns `JsonTool[]`. No handler registration.
+- `prepareTools(jsonTools)`: simple mapper. Anthropic: `{name, description, input_schema}`. OpenAI: `{type:"function", name, description, strict:false, parameters}`.
+- session_config emitted by `runProviderLoop` (not agent-lifecycle) — tools are populated.
+- On resume: frozen `JsonTool[]` from session_config used directly → byte-identical → cache hit.
+- Handler registration: single location in `runProviderLoop` (mcpHandlers map), NOT in prepareTools.
+- Compaction session_config refresh: uses same frozen `jsonTools`, not regenerated.
+

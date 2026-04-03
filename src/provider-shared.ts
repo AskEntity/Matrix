@@ -35,6 +35,7 @@ import {
 import type { EventImageData } from "./shared-types.ts";
 import { formatQueueMessage } from "./task-utils.ts";
 import type { ToolDefinition } from "./tool-definition.ts";
+import { buildJsonTools, type JsonTool } from "./tool-definition.ts";
 import {
 	defaultOuterRetryDelay,
 	executeTool,
@@ -430,13 +431,13 @@ export interface ProviderAdapter {
 	/** Reconstruct provider messages from JSONL events (for resume). */
 	convertEventsToMessages(events: Event[]): unknown[];
 
-	/** Build provider-specific tool definitions from built-in + MCP tools. */
-	prepareTools(
-		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-		mcpToolDefs: Record<string, ToolDefinition<any>[]> | undefined,
-		// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
-		mcpHandlers: Map<string, ToolDefinition<any>>,
-	): unknown[];
+	/**
+	 * Map provider-agnostic JsonTool[] to provider-specific tool definitions.
+	 * JsonTool is the golden source (from session_config). This just reformats:
+	 * - Anthropic: { name, description, input_schema }
+	 * - OpenAI: { type: "function", name, description, strict: false, parameters }
+	 */
+	prepareTools(jsonTools: JsonTool[]): unknown[];
 
 	/**
 	 * Call the provider API with the given messages and tools.
@@ -769,7 +770,7 @@ export async function* runProviderLoop(
 		}
 	}
 
-	// Build MCP tool handlers map and provider-specific tool definitions
+	// Build MCP tool handlers map (for executeTool dispatch)
 	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic varies
 	const mcpHandlers = new Map<string, ToolDefinition<any>>();
 	if (request.mcpToolDefs) {
@@ -780,7 +781,42 @@ export async function* runProviderLoop(
 			}
 		}
 	}
-	const allTools = adapter.prepareTools(request.mcpToolDefs, mcpHandlers);
+
+	// Build provider-agnostic JSON Schema tool definitions.
+	// On resume: use frozen tools from session_config (byte-identical = cache hit).
+	// On fresh start: build from Zod schemas and store in session_config.
+	const storedConfig = isResume
+		? (() => {
+				for (let i = activeEvents.length - 1; i >= 0; i--) {
+					if (activeEvents[i]?.type === "session_config")
+						return activeEvents[i] as import("./events.ts").SessionConfigEvent;
+				}
+				return undefined;
+			})()
+		: undefined;
+
+	const jsonTools: JsonTool[] =
+		storedConfig && storedConfig.tools.length > 0
+			? (storedConfig.tools as JsonTool[])
+			: buildJsonTools(request.mcpToolDefs);
+
+	// Map to provider-specific format (Anthropic Tool, OpenAI ResponsesTool)
+	const allTools = adapter.prepareTools(jsonTools);
+
+	// Emit session_config on fresh start (tools are now populated, not [])
+	if (!storedConfig && emit) {
+		const sp = request.systemPrompt ?? { stable: "", variable: "" };
+		const sessionConfigEvt: import("./events.ts").Event = {
+			type: "session_config",
+			tools: jsonTools,
+			systemStable: sp.stable,
+			systemVariable: sp.variable,
+			...(request.cacheTtl ? { cacheTtl: request.cacheTtl } : {}),
+			taskId: "",
+			ts: Date.now(),
+		} as import("./events.ts").Event;
+		emit(sessionConfigEvt);
+	}
 
 	let turns = 0;
 	let totalInputTokens = 0;
@@ -1145,7 +1181,7 @@ export async function* runProviderLoop(
 				estimatedInputTokens = compactResult.estimatedInputTokens;
 				manualCompactRequested = false;
 
-				// Refresh session_config after compaction — updates date, tools if changed.
+				// Refresh session_config after compaction — updates date, keeps frozen tools.
 				// compact_marker was already emitted by processCompaction; session_config
 				// follows it so readActive() sees the fresh config for this segment.
 				if (emit) {
@@ -1155,7 +1191,7 @@ export async function* runProviderLoop(
 					if (freshPrompt) {
 						const sessionConfigEvt: Event = {
 							type: "session_config",
-							tools: allTools,
+							tools: jsonTools,
 							systemStable: freshPrompt.stable,
 							systemVariable: freshPrompt.variable,
 							...(request.cacheTtl ? { cacheTtl: request.cacheTtl } : {}),

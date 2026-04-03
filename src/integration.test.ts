@@ -6290,6 +6290,17 @@ describe("Integration: session_config in JSONL", () => {
 			  }
 			| undefined;
 		expect(config).toBeDefined();
+		// tools must be populated (not empty [] — that was the old bug)
+		expect(config?.tools.length).toBeGreaterThan(0);
+		// Each tool should have name, description, jsonSchema (golden source)
+		const firstTool = config?.tools[0] as {
+			name: string;
+			description: string;
+			jsonSchema: Record<string, unknown>;
+		};
+		expect(firstTool?.name).toBeTruthy();
+		expect(firstTool?.description).toBeTruthy();
+		expect(firstTool?.jsonSchema).toBeTruthy();
 		// stable part should contain the SYSTEM_PROMPT content
 		expect(config?.systemStable.length).toBeGreaterThan(100);
 		expect(config?.systemStable).toContain("autonomous programming agent");
@@ -6368,6 +6379,81 @@ describe("Integration: session_config in JSONL", () => {
 		const firstReqSystem = history[0]?.system;
 		const resumeReq = history[history.length - 1] as (typeof history)[0];
 		expect(resumeReq.system).toEqual(firstReqSystem);
+	}, 45000);
+
+	test("Resume uses frozen tools from session_config (not regenerated from Zod)", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		// First run: bash → done
+		const doneInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "echo TOOLS_TEST" },
+						},
+					],
+				},
+				{
+					assert: [{ block: 0, type: "tool_result", contains: "TOOLS_TEST" }],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "first" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, doneInstruction);
+		expect(resp.status).toBe(200);
+		await waitForDone(ctx, 15000);
+
+		// Get the tools from the first run's API request
+		const history1 = ctx.mockAPI.getRequestHistory();
+		const firstReqTools = history1[0]?.tools;
+		expect(firstReqTools).toBeDefined();
+		expect((firstReqTools as unknown[]).length).toBeGreaterThan(0);
+
+		// Verify session_config has tools (not [])
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootId = tracker.rootNodeId;
+		const events = await readSessionEvents(ctx, rootId);
+		const config = events.find((e) => e.type === "session_config") as
+			| { tools: unknown[] }
+			| undefined;
+		expect(config).toBeDefined();
+		expect(config?.tools.length).toBeGreaterThan(0);
+
+		// Restart the app (simulates daemon restart)
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+		ctx.app = await recreateApp(ctx);
+
+		// Resume
+		const resumeInstruction = JSON.stringify({
+			blocks: [
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "resumed" },
+				},
+			],
+		});
+		const resumeResp = await sendMessage(ctx, resumeInstruction);
+		expect(resumeResp.status).toBe(200);
+		await waitForDone(ctx, 15000);
+
+		// The resume request should have the EXACT same tools as the first request
+		// (byte-identical from frozen session_config, not regenerated from Zod)
+		const history2 = ctx.mockAPI.getRequestHistory();
+		const resumeReqTools = history2[history2.length - 1]?.tools;
+		expect(resumeReqTools).toEqual(firstReqTools);
 	}, 45000);
 
 	test("Forked child inherits session_config from parent", async () => {
