@@ -9553,7 +9553,10 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 		for (const e of orchEvents) {
 			if (e.type === "orchestration_started") {
 				consecutiveStarts++;
-				maxConsecutiveStarts = Math.max(maxConsecutiveStarts, consecutiveStarts);
+				maxConsecutiveStarts = Math.max(
+					maxConsecutiveStarts,
+					consecutiveStarts,
+				);
 			} else {
 				consecutiveStarts = 0;
 			}
@@ -9561,5 +9564,148 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 
 		// Should never have 2+ consecutive starts (duplicate launch)
 		expect(maxConsecutiveStarts).toBeLessThanOrEqual(1);
+	}, 30000);
+});
+
+// ── traceId injection tests ──
+
+describe("Integration: traceId injection", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("all events emitted by runAgentForNode carry the same traceId", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Hello from agent." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "done" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForDone(ctx);
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = await readSessionEvents(ctx, rootNodeId);
+
+		// Collect all traceIds from events that have them
+		const traceIds = new Set<string>();
+		for (const e of events) {
+			const evt = e as Event & { traceId?: string };
+			if (evt.traceId) {
+				traceIds.add(evt.traceId);
+			}
+		}
+
+		// Should have exactly one traceId across all events
+		expect(traceIds.size).toBe(1);
+
+		// orchestration_started should carry the traceId
+		const orchStarted = events.find(
+			(e) => e.type === "orchestration_started",
+		) as Event & { traceId?: string };
+		expect(orchStarted).toBeDefined();
+		expect(orchStarted?.traceId).toBeDefined();
+		expect(orchStarted?.traceId?.length).toBe(26); // ULID is 26 chars
+
+		// Provider events (assistant_text, tool_call) should also carry traceId
+		const assistantText = events.find(
+			(e) => e.type === "assistant_text",
+		) as Event & { traceId?: string };
+		expect(assistantText?.traceId).toBe(orchStarted?.traceId);
+
+		const toolCall = events.find((e) => e.type === "tool_call") as Event & {
+			traceId?: string;
+		};
+		expect(toolCall?.traceId).toBe(orchStarted?.traceId);
+	}, 15000);
+
+	test("after restart, new traceId is different from pre-restart events", async () => {
+		ctx = await setupTestContext();
+
+		// First run: agent calls done
+		const instruction1 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "First run." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "first" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction1);
+		await waitForDone(ctx);
+
+		// Restart the app
+		await ctx.app.shutdown();
+		ctx.app = await recreateApp(ctx);
+
+		// Second run: send another message
+		const instruction2 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Second run." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "second" },
+				},
+			],
+		});
+
+		await sendMessage(ctx, instruction2);
+		await waitForDone(ctx);
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = await readSessionEvents(ctx, rootNodeId);
+
+		// Collect traceIds from orchestration_started events
+		const orchStarted = events.filter(
+			(e) => e.type === "orchestration_started",
+		) as Array<Event & { traceId?: string }>;
+		expect(orchStarted).toHaveLength(2);
+
+		const traceId1 = orchStarted[0]?.traceId;
+		const traceId2 = orchStarted[1]?.traceId;
+
+		expect(traceId1).toBeDefined();
+		expect(traceId2).toBeDefined();
+		expect(traceId1).not.toBe(traceId2);
+
+		// Events from first run should all share traceId1
+		// Events from second run should all share traceId2
+		// Find the boundary: orchestration_completed after first run
+		const orchCompletedIdx = events.findIndex(
+			(e) => e.type === "orchestration_completed",
+		);
+		expect(orchCompletedIdx).toBeGreaterThan(-1);
+
+		// All events with traceId before the boundary should be traceId1
+		for (let i = 0; i < orchCompletedIdx; i++) {
+			const evt = events[i] as Event & { traceId?: string };
+			if (evt.traceId) {
+				expect(evt.traceId).toBe(traceId1);
+			}
+		}
+
+		// Events with traceId after the second orchestration_started should be traceId2
+		const secondOrchIdx = events.findIndex(
+			(e, i) => i > orchCompletedIdx && e.type === "orchestration_started",
+		);
+		for (let i = secondOrchIdx; i < events.length; i++) {
+			const evt = events[i] as Event & { traceId?: string };
+			if (evt.traceId) {
+				expect(evt.traceId).toBe(traceId2);
+			}
+		}
 	}, 30000);
 });
