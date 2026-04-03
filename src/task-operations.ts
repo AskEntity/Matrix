@@ -185,6 +185,24 @@ export async function deleteTaskOp(
 ): Promise<{ taskId: string; title: string }> {
 	const node = tracker.get(nodeId);
 	if (!node) throw new TaskOperationError(`Task not found: ${nodeId}`);
+
+	if (isFolder(node)) {
+		// Folders can only be deleted when empty
+		if (node.children.length > 0) {
+			throw new TaskOperationError(
+				`Cannot delete folder with children. Move or delete children first.`,
+			);
+		}
+		const title = node.title;
+		tracker.remove(nodeId);
+		await tracker.save();
+		callbacks.broadcastTree();
+		if (editedBy === "user") {
+			callbacks.notifyTreeChange?.("deleted", nodeId, title);
+		}
+		return { taskId: nodeId, title };
+	}
+
 	if (node.children.length > 0) {
 		throw new TaskOperationError(
 			`Cannot delete task with children. Reparent or delete children first.`,

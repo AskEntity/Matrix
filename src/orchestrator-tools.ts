@@ -323,6 +323,7 @@ export function createOrchestratorTools(
 						"Optional color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex like '#ff5733'). " +
 							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
 					),
+
 			},
 			async (args) => {
 				try {
