@@ -189,6 +189,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		}
 		return [];
 	});
+	const [previewTabId, setPreviewTabId] = useState<string | null>(null);
 	const [viewMode, setViewMode] = useState<"activity" | "description">(
 		"activity",
 	);
@@ -817,19 +818,51 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 	const handleToggleSidebar = useCallback(() => setSidebarOpen((s) => !s), []);
 
+	// Use refs to read current preview/tabs without deps
+	const previewTabRef = useRef(previewTabId);
+	previewTabRef.current = previewTabId;
+	const openTabsRef = useRef(openTabs);
+	openTabsRef.current = openTabs;
+
 	const handleTaskSelect = useCallback(
 		(id: string | null) => {
 			setSelectedTaskId(id);
 			setSidebarOpen(false);
-			// Add to open tabs if it's a non-root task and not already open
-			if (id && id !== rootNodeId) {
-				setOpenTabs((prev) => {
-					if (prev.includes(id)) return prev;
-					const next = [...prev, id];
-					localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
-					return next;
-				});
+			if (!id || id === rootNodeId) return;
+			const prev = openTabsRef.current;
+			const curPreview = previewTabRef.current;
+			if (prev.includes(id)) {
+				// Already open — just select it
+				return;
 			}
+			let next: string[];
+			if (curPreview && prev.includes(curPreview)) {
+				// Replace preview tab in-place
+				next = prev.map((t) => (t === curPreview ? id : t));
+			} else {
+				// Append new tab
+				next = [...prev, id];
+			}
+			setOpenTabs(next);
+			setPreviewTabId(id);
+			localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
+		},
+		[rootNodeId],
+	);
+
+	const handleTaskPin = useCallback(
+		(id: string | null) => {
+			if (!id || id === rootNodeId) return;
+			setSelectedTaskId(id);
+			setSidebarOpen(false);
+			// Pin: add to tabs if not present, clear preview
+			setPreviewTabId((prev) => (prev === id ? null : prev));
+			setOpenTabs((prev) => {
+				if (prev.includes(id)) return prev;
+				const next = [...prev, id];
+				localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
+				return next;
+			});
 		},
 		[rootNodeId],
 	);
@@ -838,9 +871,15 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		setSelectedTaskId(id);
 	}, []);
 
+	const handleTabDoubleClick = useCallback((id: string) => {
+		// Double-click pins the tab (removes from preview)
+		setPreviewTabId((prev) => (prev === id ? null : prev));
+	}, []);
+
 	const handleTabClose = useCallback(
 		(id: string, e?: React.MouseEvent) => {
 			e?.stopPropagation();
+			setPreviewTabId((prev) => (prev === id ? null : prev));
 			setOpenTabs((prev) => {
 				const next = prev.filter((t) => t !== id);
 				localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
@@ -1079,6 +1118,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						rootNodeId={rootNodeId}
 						activeAgents={activeAgents}
 						onSelect={handleTaskSelect}
+						onDoubleClick={handleTaskPin}
 						onReorder={reorderTasks}
 						onReparent={reparentTask}
 						isCreating={isCreatingTask}
@@ -1087,9 +1127,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					/>
 				</aside>
 
-				{/* Sidebar resize handle — always visible, doubles as expand strip when collapsed */}
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */}
-				{/* biome-ignore lint/a11y/useKeyWithClickEvents: sidebar expand handled by Ctrl+B keyboard shortcut */}
 				<div
 					className={`mxd-sidebar-resize-handle${sidebarCollapsed ? " mxd-sidebar-resize-handle-collapsed" : ""}`}
 					onMouseDown={handleSidebarResizeStart}
@@ -1112,12 +1150,14 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								if (!tabNode) return null;
 								const isActive = selectedTaskId === tabId;
 								const isTabActive = isTask(tabNode) && activeAgents.has(tabId);
+								const isPreview = previewTabId === tabId;
 								return (
 									<button
 										key={tabId}
 										type="button"
-										className={`mxd-tab${isActive ? " mxd-tab-active" : ""}`}
+										className={`mxd-tab${isActive ? " mxd-tab-active" : ""}${isPreview ? " mxd-tab-preview" : ""}`}
 										onClick={() => handleTabSelect(tabId)}
+										onDoubleClick={() => handleTabDoubleClick(tabId)}
 									>
 										{isTabActive && <span className="mxd-task-spinner" />}
 										{isTask(tabNode) && !isTabActive && (
@@ -1176,9 +1216,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								className={`mxd-view-toggle-btn${viewMode === "description" ? " active" : ""}`}
 								onClick={() => setViewMode("description")}
 							>
-								{isOrchestratorNode
-									? t("project.details")
-									: t("detail.title")}
+								{isOrchestratorNode ? t("project.details") : t("detail.title")}
 							</button>
 						</div>
 						<div className="mxd-panel-actions">
@@ -1198,13 +1236,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 										inputTokens={usage.inputTokens}
 										contextWindow={usage.contextWindow}
 										estimated={usage.estimated}
-										onCompact={
-											isSelectedTaskActive
-												? () => {
-														compact(viewedTaskId ?? undefined);
-													}
-												: undefined
-										}
+										onCompact={() => {
+											compact(viewedTaskId ?? undefined);
+										}}
 									/>
 								) : null;
 							})()}
@@ -1263,9 +1297,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					) : isOrchestratorNode ? (
 						<div className="mxd-description-view">
 							<OrchestratorDetail
-								isRootActive={
-									rootNodeId ? activeAgents.has(rootNodeId) : false
-								}
+								isRootActive={rootNodeId ? activeAgents.has(rootNodeId) : false}
 								nodes={nodes}
 								rootNodeId={rootNodeId}
 								totalCost={totalCost}

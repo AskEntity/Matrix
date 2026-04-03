@@ -44,13 +44,16 @@ export const InputBar = memo(function InputBar({
 	>([]);
 
 	// Keep promptRef in sync with every prompt change
-	const setPromptAndRef = useCallback((value: string | ((prev: string) => string)) => {
-		setPrompt((prev) => {
-			const next = typeof value === "function" ? value(prev) : value;
-			promptRef.current = next;
-			return next;
-		});
-	}, []);
+	const setPromptAndRef = useCallback(
+		(value: string | ((prev: string) => string)) => {
+			setPrompt((prev) => {
+				const next = typeof value === "function" ? value(prev) : value;
+				promptRef.current = next;
+				return next;
+			});
+		},
+		[],
+	);
 
 	// When targetNodeId changes, save current draft SYNCHRONOUSLY and load new draft
 	useEffect(() => {
@@ -98,6 +101,8 @@ export const InputBar = memo(function InputBar({
 
 	// localStorage draft save with 2s debounce.
 	// Uses promptRef + targetRef (not state in deps) to always write fresh values.
+	// prompt in deps is intentional — it restarts the debounce timer on each keystroke.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: prompt triggers debounce restart, refs read fresh values
 	useEffect(() => {
 		const timer = setTimeout(() => {
 			const key = draftKey(targetRef.current);
@@ -146,11 +151,14 @@ export const InputBar = memo(function InputBar({
 		reader.readAsDataURL(file);
 	}
 
-	const handleSlashSelect = useCallback((cmd: { name: string }) => {
-		setPromptAndRef(`/${cmd.name}`);
-		setSlashMenuOpen(false);
-		textareaRef.current?.focus();
-	}, [setPromptAndRef]);
+	const handleSlashSelect = useCallback(
+		(cmd: { name: string }) => {
+			setPromptAndRef(`/${cmd.name}`);
+			setSlashMenuOpen(false);
+			textareaRef.current?.focus();
+		},
+		[setPromptAndRef],
+	);
 
 	const handleSubmit = useCallback(
 		(e: React.FormEvent | React.KeyboardEvent) => {

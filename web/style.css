@@ -991,6 +991,11 @@ select {
 	color: var(--text-primary);
 }
 
+/* Preview tab — italic, gets replaced by next single-click */
+.mxd-tab-preview .mxd-tab-label {
+	font-style: italic;
+}
+
 /* =========================================================
    Compact Task Metadata Bar
    ========================================================= */
