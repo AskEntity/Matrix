@@ -10,7 +10,6 @@ import { CuteCat } from "./components/CuteCat.tsx";
 import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import {
 	IconArrowDown,
-	IconBack,
 	IconClose,
 	IconExpand,
 	IconGear,
@@ -122,9 +121,22 @@ function AppInner() {
 	if (authState === "loading") {
 		return (
 			<div className="mxd-login-page">
-				<div className="mxd-login-card">
-					<div className="mxd-login-icon">⏳</div>
-					<p className="mxd-login-subtitle">Loading...</p>
+				<div className="mxd-login-container">
+					<div className="mxd-login-brand">
+						<div className="mxd-login-brand-content">
+							<div className="mxd-login-logo">
+								<IconHexagon size={32} />
+							</div>
+							<h1 className="mxd-login-title">Matrix</h1>
+						</div>
+						<div className="mxd-login-brand-decoration" />
+					</div>
+					<div className="mxd-login-auth">
+						<div className="mxd-login-loading">
+							<div className="mxd-login-spinner" />
+							<p>Loading…</p>
+						</div>
+					</div>
 				</div>
 			</div>
 		);
@@ -178,17 +190,25 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	});
 	const [isSidebarDragging, setIsSidebarDragging] = useState(false);
 	const [openTabs, setOpenTabs] = useState<string[]>(() => {
+		let tabs: string[] = [];
 		try {
 			const stored = localStorage.getItem("mxd-open-tabs");
 			if (stored) {
 				const parsed = JSON.parse(stored);
-				if (Array.isArray(parsed)) return parsed;
+				if (Array.isArray(parsed)) tabs = parsed;
 			}
 		} catch {
 			/* ignore */
 		}
-		return [];
+		// Ensure the hash taskId is in the tab list
+		const hashTask = initialHash.taskId;
+		if (hashTask && !tabs.includes(hashTask)) {
+			tabs = [...tabs, hashTask];
+			localStorage.setItem("mxd-open-tabs", JSON.stringify(tabs));
+		}
+		return tabs;
 	});
+	const [previewTabId, setPreviewTabId] = useState<string | null>(null);
 	const [viewMode, setViewMode] = useState<"activity" | "description">(
 		"activity",
 	);
@@ -357,11 +377,15 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		const SNAP_CLOSE_THRESHOLD = 100;
 		const MIN_OPEN_WIDTH = 180;
 		const MAX_WIDTH = 600;
+		let hasDragged = false;
 		const handleMouseMove = (e: MouseEvent) => {
+			hasDragged = true;
 			if (e.clientX < SNAP_CLOSE_THRESHOLD) {
 				// Snap closed — show at 0 width during drag
 				setSidebarWidth(0);
+				setSidebarCollapsed(true);
 			} else {
+				setSidebarCollapsed(false);
 				setSidebarWidth(
 					Math.min(MAX_WIDTH, Math.max(MIN_OPEN_WIDTH, e.clientX)),
 				);
@@ -369,6 +393,20 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		};
 		const handleMouseUp = (e: MouseEvent) => {
 			setIsSidebarDragging(false);
+			// If user just clicked (no drag), toggle collapsed
+			if (!hasDragged) {
+				setSidebarCollapsed((prev) => {
+					const next = !prev;
+					localStorage.setItem("mxd-sidebar-collapsed", String(next));
+					if (!next) {
+						// Restore previous width when expanding via click
+						const stored = localStorage.getItem("mxd-sidebar-width");
+						if (stored) setSidebarWidth(Number(stored));
+					}
+					return next;
+				});
+				return;
+			}
 			if (e.clientX < SNAP_CLOSE_THRESHOLD) {
 				// Snap to collapsed
 				setSidebarCollapsed(true);
@@ -643,9 +681,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		setTargetNodeId(selectedTaskId);
 	}, [selectedTaskId, rootNodeId]);
 
-	// Clean up stale tabs (nodes that were deleted)
+	// Clean up stale tabs (nodes that were deleted).
+	// Guard: skip when nodeMap is empty (nodes not yet loaded from server).
 	useEffect(() => {
-		if (openTabs.length === 0) return;
+		if (openTabs.length === 0 || nodeMap.size === 0) return;
 		const validTabs = openTabs.filter((id) => nodeMap.has(id));
 		if (validTabs.length !== openTabs.length) {
 			setOpenTabs(validTabs);
@@ -799,19 +838,51 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 	const handleToggleSidebar = useCallback(() => setSidebarOpen((s) => !s), []);
 
+	// Use refs to read current preview/tabs without deps
+	const previewTabRef = useRef(previewTabId);
+	previewTabRef.current = previewTabId;
+	const openTabsRef = useRef(openTabs);
+	openTabsRef.current = openTabs;
+
 	const handleTaskSelect = useCallback(
 		(id: string | null) => {
 			setSelectedTaskId(id);
 			setSidebarOpen(false);
-			// Add to open tabs if it's a non-root task and not already open
-			if (id && id !== rootNodeId) {
-				setOpenTabs((prev) => {
-					if (prev.includes(id)) return prev;
-					const next = [...prev, id];
-					localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
-					return next;
-				});
+			if (!id || id === rootNodeId) return;
+			const prev = openTabsRef.current;
+			const curPreview = previewTabRef.current;
+			if (prev.includes(id)) {
+				// Already open — just select it
+				return;
 			}
+			let next: string[];
+			if (curPreview && prev.includes(curPreview)) {
+				// Replace preview tab in-place
+				next = prev.map((t) => (t === curPreview ? id : t));
+			} else {
+				// Append new tab
+				next = [...prev, id];
+			}
+			setOpenTabs(next);
+			setPreviewTabId(id);
+			localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
+		},
+		[rootNodeId],
+	);
+
+	const handleTaskPin = useCallback(
+		(id: string | null) => {
+			if (!id || id === rootNodeId) return;
+			setSelectedTaskId(id);
+			setSidebarOpen(false);
+			// Pin: add to tabs if not present, clear preview
+			setPreviewTabId((prev) => (prev === id ? null : prev));
+			setOpenTabs((prev) => {
+				if (prev.includes(id)) return prev;
+				const next = [...prev, id];
+				localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
+				return next;
+			});
 		},
 		[rootNodeId],
 	);
@@ -820,9 +891,51 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		setSelectedTaskId(id);
 	}, []);
 
+	const handleTabDoubleClick = useCallback((id: string) => {
+		// Double-click pins the tab (removes from preview)
+		setPreviewTabId((prev) => (prev === id ? null : prev));
+	}, []);
+
+	const [tabDragId, setTabDragId] = useState<string | null>(null);
+
+	const handleTabDragStart = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			e.dataTransfer.effectAllowed = "move";
+			e.dataTransfer.setData("text/plain", tabId);
+			setTimeout(() => setTabDragId(tabId), 0);
+		},
+		[],
+	);
+
+	const handleTabDragOver = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			if (!tabDragId || tabDragId === tabId) return;
+			e.preventDefault();
+			e.dataTransfer.dropEffect = "move";
+			// Reorder on hover for instant visual feedback
+			setOpenTabs((prev) => {
+				const fromIdx = prev.indexOf(tabDragId);
+				const toIdx = prev.indexOf(tabId);
+				if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev;
+				const next = [...prev];
+				next.splice(fromIdx, 1);
+				next.splice(toIdx, 0, tabDragId);
+				return next;
+			});
+		},
+		[tabDragId],
+	);
+
+	const handleTabDragEnd = useCallback(() => {
+		setTabDragId(null);
+		// Persist final order
+		localStorage.setItem("mxd-open-tabs", JSON.stringify(openTabsRef.current));
+	}, []);
+
 	const handleTabClose = useCallback(
 		(id: string, e?: React.MouseEvent) => {
 			e?.stopPropagation();
+			setPreviewTabId((prev) => (prev === id ? null : prev));
 			setOpenTabs((prev) => {
 				const next = prev.filter((t) => t !== id);
 				localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
@@ -838,11 +951,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		},
 		[selectedTaskId, rootNodeId],
 	);
-
-	const handleClearTarget = useCallback(() => {
-		setTargetNodeId(null);
-		setSelectedTaskId(rootNodeId);
-	}, [rootNodeId]);
 
 	const handleClarifyAnswerChange = useCallback(
 		(clarificationId: string, value: string) =>
@@ -926,12 +1034,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		[projectId, updateProject],
 	);
 
-	const filterLabel = isOrchestratorNode
-		? t("orch.label")
-		: selectedNode
-			? selectedNode.title
-			: null;
-
 	// ── Render ───────────────────────────────────────────────────────────────
 
 	return (
@@ -1006,21 +1108,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					<div className="mxd-panel-header">
 						<span className="mxd-panel-title">{t("tasks.title")}</span>
 						<div className="mxd-panel-actions">
-							{selectedTaskId && !isOrchestratorNode && (
-								<>
-									<span className="mxd-filter-chip" title={filterLabel ?? ""}>
-										{filterLabel}
-									</span>
-									<button
-										type="button"
-										className="mxd-btn-icon"
-										onClick={() => setSelectedTaskId(rootNodeId)}
-										data-tip={t("tasks.clearFilter")}
-									>
-										<IconBack size={11} />
-									</button>
-								</>
-							)}
 							<button
 								type="button"
 								className="mxd-btn-icon"
@@ -1061,6 +1148,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						rootNodeId={rootNodeId}
 						activeAgents={activeAgents}
 						onSelect={handleTaskSelect}
+						onDoubleClick={handleTaskPin}
 						onReorder={reorderTasks}
 						onReparent={reparentTask}
 						isCreating={isCreatingTask}
@@ -1069,13 +1157,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					/>
 				</aside>
 
-				{/* Sidebar resize handle — always visible, doubles as expand strip when collapsed */}
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */}
-				{/* biome-ignore lint/a11y/useKeyWithClickEvents: sidebar expand handled by Ctrl+B keyboard shortcut */}
 				<div
 					className={`mxd-sidebar-resize-handle${sidebarCollapsed ? " mxd-sidebar-resize-handle-collapsed" : ""}`}
-					onMouseDown={sidebarCollapsed ? undefined : handleSidebarResizeStart}
-					onClick={sidebarCollapsed ? handleToggleSidebarCollapse : undefined}
+					onMouseDown={handleSidebarResizeStart}
 				/>
 
 				<section className="mxd-content">
@@ -1095,12 +1180,18 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								if (!tabNode) return null;
 								const isActive = selectedTaskId === tabId;
 								const isTabActive = isTask(tabNode) && activeAgents.has(tabId);
+								const isPreview = previewTabId === tabId;
 								return (
 									<button
 										key={tabId}
 										type="button"
-										className={`mxd-tab${isActive ? " mxd-tab-active" : ""}`}
+										className={`mxd-tab${isActive ? " mxd-tab-active" : ""}${isPreview ? " mxd-tab-preview" : ""}${tabDragId === tabId ? " mxd-tab-dragging" : ""}`}
 										onClick={() => handleTabSelect(tabId)}
+										onDoubleClick={() => handleTabDoubleClick(tabId)}
+										draggable
+										onDragStart={(e) => handleTabDragStart(tabId, e)}
+										onDragOver={(e) => handleTabDragOver(tabId, e)}
+										onDragEnd={handleTabDragEnd}
 									>
 										{isTabActive && <span className="mxd-task-spinner" />}
 										{isTask(tabNode) && !isTabActive && (
@@ -1146,26 +1237,22 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 					{/* View mode panel header */}
 					<div className="mxd-panel-header">
-						{!isOrchestratorNode && selectedNode ? (
-							<div className="mxd-view-toggle">
-								<button
-									type="button"
-									className={`mxd-view-toggle-btn${viewMode === "activity" ? " active" : ""}`}
-									onClick={() => setViewMode("activity")}
-								>
-									{t("activity.title")}
-								</button>
-								<button
-									type="button"
-									className={`mxd-view-toggle-btn${viewMode === "description" ? " active" : ""}`}
-									onClick={() => setViewMode("description")}
-								>
-									{t("detail.title")}
-								</button>
-							</div>
-						) : (
-							<span className="mxd-panel-title">{t("activity.title")}</span>
-						)}
+						<div className="mxd-view-toggle">
+							<button
+								type="button"
+								className={`mxd-view-toggle-btn${viewMode === "activity" ? " active" : ""}`}
+								onClick={() => setViewMode("activity")}
+							>
+								{t("activity.title")}
+							</button>
+							<button
+								type="button"
+								className={`mxd-view-toggle-btn${viewMode === "description" ? " active" : ""}`}
+								onClick={() => setViewMode("description")}
+							>
+								{isOrchestratorNode ? t("project.details") : t("detail.title")}
+							</button>
+						</div>
 						<div className="mxd-panel-actions">
 							{(() => {
 								const usageTaskId =
@@ -1183,13 +1270,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 										inputTokens={usage.inputTokens}
 										contextWindow={usage.contextWindow}
 										estimated={usage.estimated}
-										onCompact={
-											isSelectedTaskActive
-												? () => {
-														compact(viewedTaskId ?? undefined);
-													}
-												: undefined
-										}
+										onCompact={() => {
+											compact(viewedTaskId ?? undefined);
+										}}
 									/>
 								) : null;
 							})()}
@@ -1222,27 +1305,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						</div>
 					</div>
 
-					{/* Orchestrator detail — shown above activity for orchestrator view */}
-					{isOrchestratorNode && (
-						<OrchestratorDetail
-							isRootActive={rootNodeId ? activeAgents.has(rootNodeId) : false}
-							nodes={nodes}
-							rootNodeId={rootNodeId}
-							totalCost={totalCost}
-							turns={lastTurns}
-							inputTokens={lastInputTokens}
-							cacheCreationTokens={lastCacheCreationTokens}
-							cacheReadTokens={lastCacheReadTokens}
-							outputTokens={lastOutputTokens}
-							provider={agentProvider}
-							model={agentModel}
-							onClearSession={handleClearRootSession}
-							onStop={handleStop}
-						/>
-					)}
-
-					{/* Main view area — activity log or description */}
-					{viewMode === "activity" || isOrchestratorNode ? (
+					{/* Main view area */}
+					{viewMode === "activity" ? (
 						<div className="mxd-activity-panel">
 							<BackgroundProcessBar
 								processes={backgroundProcesses}
@@ -1264,17 +1328,34 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								onLoadOlderEvents={handleLoadOlderEvents}
 							/>
 						</div>
+					) : isOrchestratorNode ? (
+						<div className="mxd-description-view">
+							<OrchestratorDetail
+								isRootActive={rootNodeId ? activeAgents.has(rootNodeId) : false}
+								nodes={nodes}
+								rootNodeId={rootNodeId}
+								totalCost={totalCost}
+								turns={lastTurns}
+								inputTokens={lastInputTokens}
+								cacheCreationTokens={lastCacheCreationTokens}
+								cacheReadTokens={lastCacheReadTokens}
+								outputTokens={lastOutputTokens}
+								provider={agentProvider}
+								model={agentModel}
+								onClearSession={handleClearRootSession}
+								onStop={handleStop}
+							/>
+						</div>
 					) : selectedNode && isTask(selectedNode) ? (
 						<div className="mxd-description-view">
-							{selectedNode.description ? (
-								<div className="mxd-description-content">
-									{selectedNode.description}
-								</div>
-							) : (
-								<div className="mxd-detail-empty">
-									<span>{t("detail.noDescription")}</span>
-								</div>
-							)}
+							<TaskDetail
+								node={selectedNode}
+								projectId={projectId}
+								isActive={activeAgents.has(selectedNode.id)}
+								onDelete={handleDeleteTask}
+								onStop={handleStopTask}
+								onClearSession={handleClearTaskSession}
+							/>
 						</div>
 					) : null}
 				</section>
@@ -1289,7 +1370,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 				pendingClarifications={pendingClarifications}
 				clarifyAnswers={clarifyAnswers}
 				onSend={handleSend}
-				onClearTarget={handleClearTarget}
 				onClarifySubmit={handleClarifySubmit}
 				onClarifyAnswerChange={handleClarifyAnswerChange}
 			/>

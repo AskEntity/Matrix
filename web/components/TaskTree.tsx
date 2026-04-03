@@ -71,6 +71,7 @@ export const TaskTree = memo(function TaskTree({
 	rootNodeId,
 	activeAgents,
 	onSelect,
+	onDoubleClick,
 	onReorder,
 	onReparent,
 	isCreating,
@@ -82,6 +83,7 @@ export const TaskTree = memo(function TaskTree({
 	rootNodeId: string | null;
 	activeAgents?: Set<string>;
 	onSelect: (id: string | null) => void;
+	onDoubleClick?: (id: string) => void;
 	onReorder?: (parentId: string, children: string[]) => Promise<void>;
 	onReparent?: (nodeId: string, newParentId: string) => Promise<void>;
 	isCreating?: boolean;
@@ -442,6 +444,7 @@ export const TaskTree = memo(function TaskTree({
 						rootNodeId={rootNodeId}
 						activeAgents={activeAgents}
 						onSelect={onSelect}
+						onDoubleClick={onDoubleClick}
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}
 						matchingIds={matchingIds}
@@ -499,6 +502,7 @@ function TreeNodeView({
 	rootNodeId,
 	activeAgents,
 	onSelect,
+	onDoubleClick,
 	collapsed,
 	toggleCollapse,
 	matchingIds,
@@ -521,6 +525,7 @@ function TreeNodeView({
 	rootNodeId: string | null;
 	activeAgents?: Set<string>;
 	onSelect: (id: string | null) => void;
+	onDoubleClick?: (id: string) => void;
 	collapsed: Set<string>;
 	toggleCollapse: (id: string) => void;
 	matchingIds: Set<string> | null;
@@ -598,7 +603,17 @@ function TreeNodeView({
 				onDrop={(e) => onDrop(node.id, parentId, siblingIds, e)}
 				onClick={(e) => {
 					e.stopPropagation();
-					onSelect(isSelected ? rootNodeId : node.id);
+					if (isFolder(node)) {
+						// Folders only toggle collapse, never select
+						toggleCollapse(node.id);
+						return;
+					}
+					onSelect(node.id);
+				}}
+				onDoubleClick={(e) => {
+					e.stopPropagation();
+					if (isFolder(node)) return;
+					onDoubleClick?.(node.id);
 				}}
 			>
 				<div
@@ -652,6 +667,7 @@ function TreeNodeView({
 						rootNodeId={rootNodeId}
 						activeAgents={activeAgents}
 						onSelect={onSelect}
+						onDoubleClick={onDoubleClick}
 						collapsed={collapsed}
 						toggleCollapse={toggleCollapse}
 						matchingIds={matchingIds}

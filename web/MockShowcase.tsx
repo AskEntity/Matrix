@@ -90,9 +90,7 @@ function MockShowcaseInner() {
 			timestamp: number;
 		}[]
 	>([]);
-	const [clarifyAnswers, setClarifyAnswers] = useState<Record<string, string>>(
-		{},
-	);
+	const [clarifyAnswers] = useState<Record<string, string>>({});
 	const [backgroundProcesses, setBackgroundProcesses] = useState<
 		Map<
 			string,
@@ -214,12 +212,9 @@ function MockShowcaseInner() {
 	}, []);
 
 	const noop = useCallback(() => {}, []);
+	// No-op: clarify input is visible but non-functional in mock mode
 	const handleClarifyAnswerChange = useCallback(
-		(clarificationId: string, value: string) =>
-			setClarifyAnswers((prev) => ({
-				...prev,
-				[clarificationId]: value,
-			})),
+		(_clarificationId: string, _value: string) => {},
 		[],
 	);
 	const handleThemeChange = useCallback(
@@ -266,9 +261,13 @@ function MockShowcaseInner() {
 	if (loading) {
 		return (
 			<div className="mxd-login-page">
-				<div className="mxd-login-card">
-					<div className="mxd-login-icon">⏳</div>
-					<p className="mxd-login-subtitle">Loading mock showcase…</p>
+				<div className="mxd-login-container">
+					<div className="mxd-login-auth">
+						<div className="mxd-login-loading">
+							<div className="mxd-login-spinner" />
+							<p>Loading mock showcase…</p>
+						</div>
+					</div>
 				</div>
 			</div>
 		);
@@ -277,15 +276,16 @@ function MockShowcaseInner() {
 	if (error) {
 		return (
 			<div className="mxd-login-page">
-				<div className="mxd-login-card">
-					<div className="mxd-login-icon">❌</div>
-					<p className="mxd-login-subtitle">
-						Failed to load mock data: {error}
-					</p>
-					<p className="mxd-login-subtitle" style={{ fontSize: "11px" }}>
-						Make sure the daemon is running and the /mock-showcase endpoint is
-						registered.
-					</p>
+				<div className="mxd-login-container">
+					<div className="mxd-login-auth">
+						<div className="mxd-login-loading">
+							<p>❌ Failed to load mock data: {error}</p>
+							<p style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+								Make sure the daemon is running and the /mock-showcase endpoint
+								is registered.
+							</p>
+						</div>
+					</div>
 				</div>
 			</div>
 		);
@@ -407,7 +407,6 @@ function MockShowcaseInner() {
 				pendingClarifications={pendingClarifications}
 				clarifyAnswers={clarifyAnswers}
 				onSend={noop}
-				onClearTarget={noop}
 				onClarifySubmit={noop}
 				onClarifyAnswerChange={handleClarifyAnswerChange}
 			/>

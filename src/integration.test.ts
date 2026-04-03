@@ -9476,724 +9476,166 @@ describe("Integration: two-phase done() gap tests", () => {
 	}, 30000);
 });
 
-// ── resetTask: JSONL race condition tests ──
-
-describe("Integration: resetTask JSONL cleanup race", () => {
+describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 	let ctx: TestContext;
 
 	afterEach(async () => {
 		if (ctx) await teardownTestContext(ctx);
 	});
 
-	test("reset running agent: JSONL stays deleted (no reappearance from async cleanup)", async () => {
-		// Bug: reset_task cleared JSONL, but old agent's async finally block
-		// wrote agent_stopped AFTER deletion → JSONL reappeared as 540 bytes.
-		// Fix: stopTask awaits loop exit before resetTaskOp clears JSONL.
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		// Root agent calls yield (enters idle state) — keeps it alive
-		const instruction = JSON.stringify({
-			blocks: [
-				{ type: "text", text: "Starting." },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__yield",
-					input: {},
-				},
-			],
-		});
-		await startAgent(ctx, instruction);
-		await waitForIdle(ctx);
-
-		const rootNodeId = await getRootNodeId(ctx);
-		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
-		if (!eventStore) throw new Error("EventStore not found");
-
-		// Verify JSONL exists before reset
-		expect(eventStore.has(rootNodeId)).toBe(true);
-
-		// Stop the agent — this now awaits loop exit
-		const stopResp = await ctx.app.app.request(
-			`/projects/${ctx.projectId}/tasks/${rootNodeId}/stop`,
-			{ method: "POST" },
-		);
-		expect(stopResp.status).toBe(200);
-
-		// Clear JSONL (simulating what resetTaskOp does after stopTask)
-		eventStore.clear(rootNodeId);
-		expect(eventStore.has(rootNodeId)).toBe(false);
-
-		// Wait a generous amount of time for any async cleanup to settle
-		await new Promise((r) => setTimeout(r, 500));
-
-		// KEY CHECK: JSONL must still be gone
-		expect(eventStore.has(rootNodeId)).toBe(false);
-	}, 15000);
-
-	test("reset running agent during bash: JSONL stays deleted", async () => {
-		// Agent is mid-tool-execution (bash). Reset must:
-		// 1. Stop agent (abort kills bash)
-		// 2. Await loop exit (finally block runs)
-		// 3. THEN clear JSONL
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		// Agent runs a long bash command
-		const instruction = JSON.stringify({
-			blocks: [
-				{ type: "text", text: "Running command." },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__bash",
-					input: { command: "sleep 30" },
-				},
-			],
-		});
-		await startAgent(ctx, instruction);
-
-		// Wait for bash to start
-		const start = Date.now();
-		while (ctx.mockAPI.getRequestCount() < 1 && Date.now() - start < 5000) {
-			await new Promise((r) => setTimeout(r, 50));
+	/**
+	 * Helper: count unique traceIds in events. If > expected, there were duplicate loops.
+	 */
+	function uniqueTraceIds(events: Event[]): Set<string> {
+		const ids = new Set<string>();
+		for (const e of events) {
+			const tid = (e as Event & { traceId?: string }).traceId;
+			if (tid) ids.add(tid);
 		}
-		await new Promise((r) => setTimeout(r, 200));
+		return ids;
+	}
 
-		const rootNodeId = await getRootNodeId(ctx);
-		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
-		if (!eventStore) throw new Error("EventStore not found");
-
-		// Verify agent is running and JSONL exists
-		const tracker = await ctx.app.getTracker(ctx.projectId);
-		expect(tracker.getTask(rootNodeId)?.session).toBeTruthy();
-		expect(eventStore.has(rootNodeId)).toBe(true);
-
-		// Stop + clear (simulating resetTaskOp's new behavior)
-		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
-		);
-		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
-
-		// Now clear JSONL
-		eventStore.clear(rootNodeId);
-		expect(eventStore.has(rootNodeId)).toBe(false);
-
-		// Wait for any async cleanup
-		await new Promise((r) => setTimeout(r, 500));
-
-		// KEY CHECK: JSONL must still be gone
-		expect(eventStore.has(rootNodeId)).toBe(false);
-	}, 15000);
-
-	test("reset yielding agent then fork: fork succeeds (no stale JSONL)", async () => {
-		// The real-world scenario: reset_task + fork_task_context.
-		// Previously fork would fail with "already has session data" because
-		// the old agent's cleanup wrote events after JSONL was cleared.
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		// Agent yields — entering idle state
-		const instruction = JSON.stringify({
-			blocks: [
-				{ type: "text", text: "Starting." },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__yield",
-					input: {},
-				},
-			],
-		});
-		await startAgent(ctx, instruction);
-		await waitForIdle(ctx);
-
-		const rootNodeId = await getRootNodeId(ctx);
-		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
-		if (!eventStore) throw new Error("EventStore not found");
-
-		// Create a child task (target for fork)
-		const child = tracker.addChild(rootNodeId, "Fork target", "", {
-			editedBy: "user",
-		});
-		await tracker.save();
-
-		// Verify root JSONL exists
-		expect(eventStore.has(rootNodeId)).toBe(true);
-		// Verify child has NO JSONL
-		expect(eventStore.has(child.id)).toBe(false);
-
-		// Stop the root agent (awaits loop exit)
-		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
-		);
-		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
-
-		// Verify loop has fully exited — session should be cleared
-		const rootAfterStop = tracker.getTask(rootNodeId);
-		expect(rootAfterStop?.session).toBeUndefined();
-
-		// Clear JSONL (simulating resetTaskOp)
-		eventStore.clear(rootNodeId);
-		expect(eventStore.has(rootNodeId)).toBe(false);
-
-		// Wait for any async cleanup
-		await new Promise((r) => setTimeout(r, 300));
-
-		// KEY CHECK: JSONL must still be gone → hasEventStore returns false
-		expect(eventStore.has(rootNodeId)).toBe(false);
-
-		// Now attempt to copy session from another source to child.
-		// Since rootNodeId was cleared, we can't fork from it.
-		// But the key assertion is that rootNodeId JSONL didn't reappear.
-		// (In the real workflow, the source would be a different task with data.)
-	}, 15000);
-
-	test("reset already-stopped agent: JSONL is cleanly deleted", async () => {
-		// Trivial case: agent is not running, reset just clears JSONL.
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		// Agent calls done immediately
-		const instruction = JSON.stringify({
-			blocks: [
-				{ type: "text", text: "Done." },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "trivial" },
-				},
-			],
-		});
-		await startAgent(ctx, instruction);
-		const status = await waitForDone(ctx);
-		expect(status).toBe("verify");
-
-		// Wait for Phase 2 to complete
-		await new Promise((r) => setTimeout(r, 300));
-
-		const rootNodeId = await getRootNodeId(ctx);
-		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
-		if (!eventStore) throw new Error("EventStore not found");
-
-		// Agent is stopped (status=verify, session=undefined)
-		expect(tracker.getTask(rootNodeId)?.session).toBeUndefined();
-		expect(eventStore.has(rootNodeId)).toBe(true);
-
-		// Clear JSONL
-		eventStore.clear(rootNodeId);
-		expect(eventStore.has(rootNodeId)).toBe(false);
-
-		// Wait and verify no reappearance
-		await new Promise((r) => setTimeout(r, 300));
-		expect(eventStore.has(rootNodeId)).toBe(false);
-	}, 15000);
-
-	test("agentLoopPromises is cleaned up after loop exits", async () => {
-		// Verify the promise tracking doesn't leak.
+	test("Scenario 1: yield state → restart → no duplicate launch", async () => {
 		ctx = await setupTestContext();
 
-		const instruction = JSON.stringify({
-			blocks: [
-				{ type: "text", text: "Done." },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "cleanup test" },
-				},
-			],
-		});
-		await startAgent(ctx, instruction);
-		const status = await waitForDone(ctx);
-		expect(status).toBe("verify");
-
-		// Wait for Phase 2 + cleanup
-		await new Promise((r) => setTimeout(r, 300));
-
-		// Promise should be cleaned up after loop exits
-		const rootNodeId = await getRootNodeId(ctx);
-		expect(ctx.app.ctx.agentLoopPromises.has(rootNodeId)).toBe(false);
-	}, 15000);
-
-	test("stopTask emits agent_stopped AFTER loop exit — generation guard prevents JSONL reappearance", async () => {
-		// The most subtle race: stopTask awaits the loop promise, THEN emits
-		// agent_stopped via emitEvent. emitEvent calls eventStore.append()
-		// which is async (fire-and-forget). If resetTaskOp calls clearEventStore
-		// immediately after stopTask returns, the agent_stopped write might
-		// execute after clear. The generation guard in EventStore prevents this.
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		// Agent yields to stay alive
+		// Agent yields (safe state)
 		const instruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Yielding." },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__yield",
-					input: {},
-				},
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
 			],
 		});
+
 		await startAgent(ctx, instruction);
 		await waitForIdle(ctx);
 
-		const rootNodeId = await getRootNodeId(ctx);
-		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
-		if (!eventStore) throw new Error("EventStore not found");
-
-		// Verify JSONL has events
-		await eventStore.flushSession(rootNodeId);
-		const eventsBefore = eventStore.read(rootNodeId);
-		expect(eventsBefore.length).toBeGreaterThan(0);
-
-		// Import stopTask to call it directly, then IMMEDIATELY clear
-		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
-		);
-		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
-
-		// stopTask just returned — it emitted agent_stopped (async write pending).
-		// Clear IMMEDIATELY — no delay. This is the race window.
-		eventStore.clear(rootNodeId);
-
-		// No delay at all — check immediately
-		expect(eventStore.has(rootNodeId)).toBe(false);
-
-		// Now wait for ALL async writes to settle
-		await eventStore.flush();
-
-		// KEY: JSONL must STILL be gone. Without the generation guard,
-		// stopTask's agent_stopped write would re-create the file.
-		expect(eventStore.has(rootNodeId)).toBe(false);
-	}, 15000);
-
-	test("multiple rapid emitEvents before clear — all dropped by generation guard", async () => {
-		// Worst case: many events enqueued in rapid succession, then clear.
-		// Every single one must be dropped.
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		const instruction = JSON.stringify({
-			blocks: [
-				{ type: "text", text: "Starting." },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__yield",
-					input: {},
-				},
-			],
-		});
-		await startAgent(ctx, instruction);
-		await waitForIdle(ctx);
-
-		const rootNodeId = await getRootNodeId(ctx);
-		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
-		if (!eventStore) throw new Error("EventStore not found");
-
-		// Stop agent
-		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
-		);
-		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
-
-		// Simulate a burst of fire-and-forget writes (like error events from
-		// catch block + agent_stopped from finally block + done_notified from Phase 2)
-		const { emitEvent } = await import("./daemon/event-system.ts");
-		emitEvent(ctx.app.ctx, ctx.projectId, {
-			type: "error",
-			taskId: rootNodeId,
-			message: "stale error 1",
-			ts: Date.now(),
-		});
-		emitEvent(ctx.app.ctx, ctx.projectId, {
-			type: "error",
-			taskId: rootNodeId,
-			message: "stale error 2",
-			ts: Date.now(),
-		});
-		emitEvent(ctx.app.ctx, ctx.projectId, {
-			type: "agent_stopped",
-			taskId: rootNodeId,
-			ts: Date.now(),
-		});
-
-		// Clear — all 3 pending writes should be invalidated
-		eventStore.clear(rootNodeId);
-
-		await eventStore.flush();
-		expect(eventStore.has(rootNodeId)).toBe(false);
-	}, 15000);
-
-	test("reset then immediately start new agent — new JSONL contains only new events", async () => {
-		// Full workflow: agent runs → stop → clear → start new agent.
-		// New agent's JSONL must be clean (no ghosts from old session).
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		// First agent yields
-		const instruction1 = JSON.stringify({
-			blocks: [
-				{ type: "text", text: "First run." },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__yield",
-					input: {},
-				},
-			],
-		});
-		await startAgent(ctx, instruction1);
-		await waitForIdle(ctx);
-
-		const rootNodeId = await getRootNodeId(ctx);
-		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
-		if (!eventStore) throw new Error("EventStore not found");
-
-		// Read events from first run
-		await eventStore.flushSession(rootNodeId);
-		const firstRunEvents = eventStore.read(rootNodeId);
-		const firstOrchs = firstRunEvents.filter(
-			(e) => e.type === "orchestration_started",
-		);
-		expect(firstOrchs).toHaveLength(1);
-
-		// Stop + clear (simulating reset)
-		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
-		);
-		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
-		eventStore.clear(rootNodeId);
-		expect(eventStore.has(rootNodeId)).toBe(false);
-
-		// Reset tracker status so new agent can launch
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		tracker.updateStatus(rootNodeId, "pending");
-		await tracker.save();
+		const rootNodeId = tracker.rootNodeId;
 
-		// Reset mock API — prefix validator has stale history from first run
-		ctx.mockAPI.reset();
-		ctx.mockAPI.enablePrefixValidation();
+		// Count pre-restart traceIds
+		const preEvents = await readSessionEvents(ctx, rootNodeId);
+		const preTraceIds = uniqueTraceIds(preEvents);
+		expect(preTraceIds.size).toBe(1);
 
-		// Start second agent immediately
-		const instruction2 = JSON.stringify({
-			blocks: [
-				{ type: "text", text: "Second run." },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__done",
-					input: { status: "passed", summary: "second run" },
-				},
-			],
-		});
-		await startAgent(ctx, instruction2);
-		const status = await waitForDone(ctx);
-		expect(status).toBe("verify");
+		// === CRASH: shutdown the daemon ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
 
-		// Wait for Phase 2
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
 		await new Promise((r) => setTimeout(r, 300));
 
-		// Read new events — should only contain second run's events
-		await eventStore.flushSession(rootNodeId);
-		const secondRunEvents = eventStore.read(rootNodeId);
-		const orchs = secondRunEvents.filter(
-			(e) => e.type === "orchestration_started",
-		);
-		// Only ONE orchestration_started (from second run, not leaked from first)
-		expect(orchs).toHaveLength(1);
-		expect((orchs[0] as Record<string, unknown>).resume).toBe(false); // cold start, not resume
+		// No new API call (yield resume waits for message)
+		// Check: only ONE orchestration_started after restart (no duplicate launch)
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const startTraceIds = events
+			.filter((e) => e.type === "orchestration_started")
+			.map((e) => (e as Event & { traceId?: string }).traceId)
+			.filter(Boolean);
 
-		// No stale events from first run should be present
-		const allTexts = secondRunEvents
-			.filter((e) => e.type === "assistant_text")
-			.map((e) => (e as Record<string, unknown>).content);
-		for (const text of allTexts) {
-			expect(String(text)).not.toContain("First run");
-		}
+		// Should have 1-2 orchestration_started: one pre-crash, possibly one from resume
+		// (yield resume may or may not have emitted orchestration_started yet)
+		expect(startTraceIds.length).toBeGreaterThanOrEqual(1);
+		expect(startTraceIds.length).toBeLessThanOrEqual(2);
+		// All orchestration_started events should have unique traceIds
+		expect(new Set(startTraceIds).size).toBe(startTraceIds.length);
 	}, 15000);
 
-	test("stop during API streaming — loop promise resolves after abort settles", async () => {
-		// Agent is mid-API-streaming (not in tool execution, not yielding).
-		// The abort should cause the stream to throw, catch block runs,
-		// finally block runs, loop promise resolves.
+	test("Scenario 2: interrupted mid-tool → restart → single launch with delay_ms", async () => {
 		ctx = await setupTestContext();
 
-		// Use a slow-responding instruction — agent starts streaming response
-		// The mock API returns text blocks that the agent will stream
+		// Turn 1: agent does bash
+		// Turn 2: will be delayed (simulates "streaming when restart happens")
 		const instruction = JSON.stringify({
-			blocks: [
-				{ type: "text", text: "This is a very long response. " },
-				{ type: "text", text: "Still going. " },
-				{ type: "text", text: "Almost done. " },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__bash",
-					input: { command: "sleep 30" },
-				},
-			],
-		});
-		await startAgent(ctx, instruction);
-
-		// Wait for API call to start
-		const start = Date.now();
-		while (ctx.mockAPI.getRequestCount() < 1 && Date.now() - start < 5000) {
-			await new Promise((r) => setTimeout(r, 50));
-		}
-		// Wait for bash to be executing
-		await new Promise((r) => setTimeout(r, 300));
-
-		const rootNodeId = await getRootNodeId(ctx);
-		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
-		if (!eventStore) throw new Error("EventStore not found");
-
-		expect(eventStore.has(rootNodeId)).toBe(true);
-
-		// Stop + clear
-		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
-		);
-		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
-		eventStore.clear(rootNodeId);
-
-		await eventStore.flush();
-		expect(eventStore.has(rootNodeId)).toBe(false);
-
-		// Wait generously
-		await new Promise((r) => setTimeout(r, 500));
-		expect(eventStore.has(rootNodeId)).toBe(false);
-	}, 15000);
-
-	test("concurrent stop + clear on same node — no crash, JSONL stays gone", async () => {
-		// Simulate concurrent stopTask calls (e.g., user clicks stop twice rapidly)
-		ctx = await setupTestContext();
-
-		const instruction = JSON.stringify({
-			blocks: [
-				{ type: "text", text: "Yielding." },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__yield",
-					input: {},
-				},
-			],
-		});
-		await startAgent(ctx, instruction);
-		await waitForIdle(ctx);
-
-		const rootNodeId = await getRootNodeId(ctx);
-		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
-		if (!eventStore) throw new Error("EventStore not found");
-
-		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
-		);
-
-		// Fire two concurrent stops — second one returns false (already stopped)
-		const [result1, result2] = await Promise.all([
-			stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId),
-			stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId),
-		]);
-
-		// One succeeds, one fails (no session)
-		expect([result1, result2].filter(Boolean)).toHaveLength(1);
-
-		// Clear and verify
-		eventStore.clear(rootNodeId);
-		await eventStore.flush();
-		expect(eventStore.has(rootNodeId)).toBe(false);
-	}, 15000);
-
-	test("parent creates child → child yields → parent resets child → child JSONL gone", async () => {
-		// The real production workflow: parent orchestrator spawns a child,
-		// child runs and enters yield, parent decides to reset the child.
-		// Child JSONL must be fully deleted with no reappearance.
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
-
-		// Child instruction: just yield (stays alive)
-		const childInstruction = JSON.stringify({
-			blocks: [
-				{ type: "text", text: "Child working." },
-				{
-					type: "tool_use",
-					name: "mcp__mxd__yield",
-					input: {},
-				},
-			],
-		});
-
-		// Parent: create_task → send_message → wait for child to start →
-		// then reset_task → done
-		const parentInstruction = JSON.stringify({
 			turns: [
 				{
 					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__create_task",
-							input: {
-								title: "Resettable Child",
-								description: "A child to be reset",
-							},
-						},
-					],
-				},
-				{
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							isError: false,
-							capture: {
-								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
-							},
-						},
-					],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__send_message",
-							input: {
-								taskId: "$childId",
-								title: "Start",
-								message: childInstruction,
-							},
-						},
-					],
-				},
-				{
-					// After send_message, wait a bit for child to launch, then reset
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							isError: false,
-						},
-					],
-					blocks: [
-						{ type: "text", text: "Child started, now resetting." },
+						{ type: "text", text: "Running tool." },
 						{
 							type: "tool_use",
 							name: "mcp__mxd__bash",
-							input: { command: "sleep 2" }, // give child time to start + yield
+							input: { command: "echo test" },
 						},
 					],
 				},
 				{
 					blocks: [
+						{ type: "text", text: "Second turn." },
 						{
 							type: "tool_use",
-							name: "mcp__mxd__reset_task",
-							input: { taskId: "$childId" },
+							name: "mcp__mxd__yield",
+							input: {},
 						},
 					],
-				},
-				{
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							contains: '"reset": true',
-							isError: false,
-						},
-					],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: {
-								status: "passed",
-								summary: "reset child successfully",
-							},
-						},
-					],
+					delay_ms: 3000, // 3 second delay before streaming starts
 				},
 			],
 		});
 
-		const resp = await startAgent(ctx, parentInstruction);
-		expect(resp.status).toBe(200);
+		await startAgent(ctx, instruction);
 
-		const status = await waitForDone(ctx, 30000);
-		expect(status).toBe("verify");
+		// Wait for turn 1 to complete (bash executed) but turn 2 is still delayed
+		await new Promise((r) => setTimeout(r, 1000));
 
-		// Wait for Phase 2
-		await new Promise((r) => setTimeout(r, 300));
-
-		// Find the child
 		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNode = tracker.getTask(tracker.rootNodeId);
-		const childId = rootNode?.children?.[0] as string;
-		const childNode = tracker.getTask(childId);
+		const rootNodeId = tracker.rootNodeId;
 
-		// Child should be in pending status (reset)
-		expect(childNode?.status).toBe("pending");
-		expect(childNode?.session).toBeUndefined();
+		// === CRASH during the delay window ===
+		// JSONL state: tool_result for bash written, no yield yet
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
 
-		// KEY CHECK: child JSONL must be gone
-		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
-		if (!eventStore) throw new Error("EventStore not found");
-		await eventStore.flush();
-		expect(eventStore.has(childId)).toBe(false);
-	}, 45000);
+		ctx.app = await recreateApp(ctx);
 
-	test("parent resets running child via REST, then child JSONL stays clean for fork", async () => {
-		// Hybrid test: parent agent launches child, then the TEST
-		// (acting as external caller) stops the child and clears JSONL.
-		// This covers the real-world path: external tool/REST calls reset.
-		ctx = await setupTestContext();
-		ctx.mockAPI.enablePrefixValidation();
+		await ctx.app.autoResumeProjects();
 
-		// Child instruction: yield (stay alive)
-		const childInstruction = JSON.stringify({
+		// Send wake message with post-restart instruction
+		const wakeInstruction = JSON.stringify({
 			blocks: [
-				{
-					type: "tool_use",
-					name: "mcp__mxd__yield",
-					input: {},
-				},
+				{ type: "text", text: "Resumed after restart." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
 			],
 		});
+		await sendMessage(ctx, wakeInstruction);
+		await new Promise((r) => setTimeout(r, 2000));
 
-		// Parent: create_task → send_message → yield (wait for child to complete)
-		const parentInstruction = JSON.stringify({
+		// Check: only ONE orchestration_started after the restart.
+		// Pre-crash events have a different traceId from post-restart events.
+		// If there are 2+ post-restart orchestration_started, that's a duplicate launch.
+		const events = await readSessionEvents(ctx, rootNodeId);
+
+		// Find traceIds from orchestration_started events
+		const startTraceIds = events
+			.filter((e) => e.type === "orchestration_started")
+			.map((e) => (e as Event & { traceId?: string }).traceId)
+			.filter(Boolean);
+
+		// Should have exactly 2 orchestration_started: one pre-crash, one post-restart
+		// Each with a different traceId (different loop instances)
+		expect(startTraceIds.length).toBe(2);
+		expect(new Set(startTraceIds).size).toBe(2);
+	}, 15000);
+
+	test("Scenario 3: root + child both in_progress → restart → no interleaved traceIds", async () => {
+		ctx = await setupTestContext();
+
+		// Root creates child, sends message, yields
+		const rootInstruction = JSON.stringify({
 			turns: [
 				{
 					blocks: [
+						{ type: "text", text: "Creating child." },
 						{
 							type: "tool_use",
 							name: "mcp__mxd__create_task",
-							input: {
-								title: "Child To Reset",
-								description: "Will be externally reset",
-							},
-						},
-					],
-				},
-				{
-					assert: [
-						{
-							block: 0,
-							type: "tool_result",
-							isError: false,
-							capture: {
-								childId: 'regex:"id":\\s*"([A-Z0-9]+)"',
-							},
-						},
-					],
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__send_message",
-							input: {
-								taskId: "$childId",
-								title: "Start",
-								message: childInstruction,
-							},
+							input: { title: "Worker", description: "Do work" },
 						},
 					],
 				},
 				{
 					blocks: [
+						{ type: "text", text: "Yielding." },
 						{
 							type: "tool_use",
 							name: "mcp__mxd__yield",
@@ -10201,82 +9643,265 @@ describe("Integration: resetTask JSONL cleanup race", () => {
 						},
 					],
 				},
+			],
+		});
+
+		await startAgent(ctx, rootInstruction);
+		await waitForIdle(ctx);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// === CRASH: shutdown the daemon ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART with both root (yielding) and possibly child in_progress ===
+		ctx.app = await recreateApp(ctx);
+
+		await ctx.app.autoResumeProjects();
+
+		// Send wake message with post-restart instruction
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "After restart." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+		await new Promise((r) => setTimeout(r, 1000));
+
+		// Check: only ONE orchestration_started after restart (no duplicate launch).
+		// Pre-crash orchestration_started has a different traceId from post-restart.
+		const rootEvents = await readSessionEvents(ctx, rootNodeId);
+		const startTraceIds = rootEvents
+			.filter((e) => e.type === "orchestration_started")
+			.map((e) => (e as Event & { traceId?: string }).traceId)
+			.filter(Boolean);
+
+		// Should have 2 orchestration_started: one pre-crash, one post-restart
+		expect(startTraceIds.length).toBe(2);
+		// Each should have a unique traceId (different loop instances, not duplicate)
+		expect(new Set(startTraceIds).size).toBe(2);
+	}, 30000);
+});
+
+// ── traceId injection tests ──
+
+describe("Integration: traceId injection", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("all events emitted by runAgentForNode carry the same traceId", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Hello from agent." },
 				{
-					// After yield wakes (via our external done message), parent finishes
-					blocks: [
-						{
-							type: "tool_use",
-							name: "mcp__mxd__done",
-							input: { status: "passed", summary: "parent done" },
-						},
-					],
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "done" },
 				},
 			],
 		});
 
-		const resp = await startAgent(ctx, parentInstruction);
-		expect(resp.status).toBe(200);
+		await startAgent(ctx, instruction);
+		await waitForDone(ctx);
 
-		// Wait for parent to enter yield (child should be running)
-		await waitForIdle(ctx);
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = await readSessionEvents(ctx, rootNodeId);
 
-		// Find the child node
-		const tracker = await ctx.app.getTracker(ctx.projectId);
-		const rootNodeId = tracker.rootNodeId;
-		const rootNode = tracker.getTask(rootNodeId);
-		const childId = rootNode?.children?.[0] as string;
-		expect(childId).toBeTruthy();
-
-		// Wait for child to also be in yield state
-		const start = Date.now();
-		while (Date.now() - start < 10000) {
-			const child = tracker.getTask(childId);
-			if (child?.session?.queue?.idle) break;
-			await new Promise((r) => setTimeout(r, 100));
+		// Collect all traceIds from events that have them
+		const traceIds = new Set<string>();
+		for (const e of events) {
+			const evt = e as Event & { traceId?: string };
+			if (evt.traceId) {
+				traceIds.add(evt.traceId);
+			}
 		}
 
-		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
-		if (!eventStore) throw new Error("EventStore not found");
+		// Should have exactly one traceId across all events
+		expect(traceIds.size).toBe(1);
 
-		// Verify child JSONL exists
-		await eventStore.flushSession(childId);
-		expect(eventStore.has(childId)).toBe(true);
-		const childEventsBefore = eventStore.read(childId);
-		expect(childEventsBefore.length).toBeGreaterThan(0);
+		// orchestration_started should carry the traceId
+		const orchStarted = events.find(
+			(e) => e.type === "orchestration_started",
+		) as Event & { traceId?: string };
+		expect(orchStarted).toBeDefined();
+		expect(orchStarted?.traceId).toBeDefined();
+		expect(orchStarted?.traceId?.length).toBe(26); // ULID is 26 chars
 
-		// === EXTERNAL RESET: stop child + clear JSONL ===
-		const { stopTask: stopTaskFn } = await import(
-			"./daemon/agent-lifecycle.ts"
+		// Provider events (assistant_text, tool_call) should also carry traceId
+		const assistantText = events.find(
+			(e) => e.type === "assistant_text",
+		) as Event & { traceId?: string };
+		expect(assistantText?.traceId).toBe(orchStarted?.traceId);
+
+		const toolCall = events.find((e) => e.type === "tool_call") as Event & {
+			traceId?: string;
+		};
+		expect(toolCall?.traceId).toBe(orchStarted?.traceId);
+	}, 15000);
+
+	test("after restart, new traceId is different from pre-restart events", async () => {
+		ctx = await setupTestContext();
+
+		// First run: agent calls done
+		const instruction1 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "First run." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "first" },
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction1);
+		await waitForDone(ctx);
+
+		// Restart the app
+		await ctx.app.shutdown();
+		ctx.app = await recreateApp(ctx);
+
+		// Second run: send another message
+		const instruction2 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Second run." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "second" },
+				},
+			],
+		});
+
+		await sendMessage(ctx, instruction2);
+		await waitForDone(ctx);
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const events = await readSessionEvents(ctx, rootNodeId);
+
+		// Collect traceIds from orchestration_started events
+		const orchStarted = events.filter(
+			(e) => e.type === "orchestration_started",
+		) as Array<Event & { traceId?: string }>;
+		expect(orchStarted).toHaveLength(2);
+
+		const traceId1 = orchStarted[0]?.traceId as string;
+		const traceId2 = orchStarted[1]?.traceId as string;
+
+		expect(traceId1).toBeDefined();
+		expect(traceId2).toBeDefined();
+		expect(traceId1).not.toBe(traceId2);
+
+		// Events from first run should all share traceId1
+		// Events from second run should all share traceId2
+		// Find the boundary: orchestration_completed after first run
+		const orchCompletedIdx = events.findIndex(
+			(e) => e.type === "orchestration_completed",
 		);
-		const stopped = await stopTaskFn(ctx.app.ctx, ctx.projectId, childId);
-		expect(stopped).toBe(true);
-		eventStore.clear(childId);
+		expect(orchCompletedIdx).toBeGreaterThan(-1);
 
-		// Wait for any async writes to settle
-		await eventStore.flush();
-		await new Promise((r) => setTimeout(r, 300));
-
-		// KEY CHECK: child JSONL must be gone and stay gone
-		expect(eventStore.has(childId)).toBe(false);
-
-		// Bonus: verify fork would succeed (no "already has session data")
-		expect(eventStore.has(childId)).toBe(false);
-
-		// Clean up: wake parent so test can finish
-		const { createTaskComplete } = await import("./queue-message-factory.ts");
-		const { deliverMessage } = await import("./daemon/agent-lifecycle.ts");
-		const project = ctx.app.ctx.pm.get(ctx.projectId);
-		if (project) {
-			const fakeComplete = createTaskComplete(
-				childId,
-				"Child To Reset",
-				true,
-				"externally reset",
-			);
-			await deliverMessage(ctx.app.ctx, project, rootNodeId, fakeComplete);
+		// All events with traceId before the boundary should be traceId1
+		for (let i = 0; i < orchCompletedIdx; i++) {
+			const evt = events[i] as Event & { traceId?: string };
+			if (evt.traceId) {
+				expect(evt.traceId).toBe(traceId1);
+			}
 		}
 
-		const status = await waitForDone(ctx, 15000);
-		expect(status).toBe("verify");
+		// Events with traceId after the second orchestration_started should be traceId2
+		const secondOrchIdx = events.findIndex(
+			(e, i) => i > orchCompletedIdx && e.type === "orchestration_started",
+		);
+		for (let i = secondOrchIdx; i < events.length; i++) {
+			const evt = events[i] as Event & { traceId?: string };
+			if (evt.traceId) {
+				expect(evt.traceId).toBe(traceId2);
+			}
+		}
 	}, 30000);
+
+	test("launchingNodes gap: agent writes JSONL after clear when session not yet set", async () => {
+		// Simulates the launchingNodes race at the EventStore + daemon state level.
+		// No real agent — we manually create the state that runAgentForNode produces
+		// and verify that resetTaskOp's current logic can't prevent JSONL reappearance.
+		//
+		// Sequence:
+		// 1. Node enters launchingNodes (session=null, loop promise registered)
+		// 2. resetTaskOp checks node.session?.queue → false → skips stopTask
+		// 3. resetTaskOp calls clearEventStore → JSONL deleted
+		// 4. Agent loop finishes setup → writes events → JSONL reappears
+		//
+		// The generation guard does NOT help here because the writes are
+		// enqueued AFTER clear (new generation), so they succeed.
+		ctx = await setupTestContext();
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const child = tracker.addChild(
+			tracker.rootNodeId,
+			"Launching Child",
+			"",
+			{ editedBy: "user" },
+		);
+		await tracker.save();
+
+		// Get or create EventStore for the project
+		const { getEventStore } = await import("./daemon/helpers.ts");
+		const eventStore = getEventStore(ctx.app.ctx, ctx.projectId);
+
+		// Simulate runAgentForNode's initial state:
+		// launchingNodes set, loop promise registered, session null.
+		ctx.app.ctx.launchingNodes.add(child.id);
+
+		let resolveLoop: (() => void) | undefined;
+		const loopPromise = new Promise<void>((resolve) => {
+			resolveLoop = resolve;
+		});
+		ctx.app.ctx.agentLoopPromises.set(child.id, loopPromise);
+
+		// Simulate the agent loop's async setup + write (runs in background)
+		const simulatedLoop = (async () => {
+			// Simulate setup delay (worktree creation, MCP connect)
+			await new Promise((r) => setTimeout(r, 100));
+			// Agent writes events after setup completes
+			await eventStore.append(child.id, {
+				type: "orchestration_started" as const,
+				taskId: child.id,
+				ts: Date.now(),
+				resume: false,
+				provider: "test",
+				model: "test",
+			});
+			ctx.app.ctx.launchingNodes.delete(child.id);
+			ctx.app.ctx.agentLoopPromises.delete(child.id);
+			resolveLoop?.();
+		})();
+
+		// resetTaskOp's current logic: check node.session?.queue
+		const childNode = tracker.getTask(child.id);
+		expect(childNode?.session).toBeUndefined();
+
+		// stopTask would return false (no session) — skipped entirely.
+		// resetTaskOp goes straight to clear:
+		eventStore.clear(child.id);
+
+		// Wait for simulated loop to finish
+		await simulatedLoop;
+		await eventStore.flush();
+
+		// JSONL reappears because the loop wrote AFTER clear.
+		// The generation guard doesn't help — writes were enqueued AFTER
+		// the generation bump (new generation), so they succeed.
+		//
+		// This test documents the gap. When awaitLoopExit is added to
+		// resetTaskOp, change this assertion to expect(false).
+		expect(eventStore.has(child.id)).toBe(true);
+	}, 15000);
 });

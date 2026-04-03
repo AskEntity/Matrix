@@ -2,7 +2,6 @@ import { memo } from "react";
 import type { TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { InputBar } from "./InputBar.tsx";
-import { IconBack } from "./icons.tsx";
 
 export const AppFooter = memo(function AppFooter({
 	projectId,
@@ -13,7 +12,6 @@ export const AppFooter = memo(function AppFooter({
 	pendingClarifications,
 	clarifyAnswers,
 	onSend,
-	onClearTarget,
 	onClarifySubmit,
 	onClarifyAnswerChange,
 }: {
@@ -41,7 +39,6 @@ export const AppFooter = memo(function AppFooter({
 		message: string,
 		images?: { base64: string; mediaType: string }[],
 	) => void;
-	onClearTarget: () => void;
 	onClarifySubmit: (clarificationId: string) => void;
 	onClarifyAnswerChange: (clarificationId: string, value: string) => void;
 }) {
@@ -118,23 +115,6 @@ export const AppFooter = memo(function AppFooter({
 					)
 				);
 			})()}
-			{targetNodeId && (
-				<div className="mxd-message-target">
-					<span className="mxd-message-target-label">
-						→ {t("target.sendingTo")}{" "}
-						<strong>{nodeMap.get(targetNodeId)?.title ?? targetNodeId}</strong>
-					</span>
-					<button
-						type="button"
-						className="mxd-message-target-clear"
-						onClick={onClearTarget}
-						aria-label={t("target.sendToOrch")}
-						title={t("target.sendToOrch")}
-					>
-						<IconBack size={10} />
-					</button>
-				</div>
-			)}
 			<InputBar
 				projectId={projectId}
 				targetNodeId={targetNodeId}

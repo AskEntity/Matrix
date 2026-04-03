@@ -62,7 +62,7 @@ export interface SessionConfigEvent {
 	ts: number;
 }
 
-export type Event =
+export type Event = (
 	| MessageEvent
 	| SessionConfigEvent
 	| { type: "assistant_text"; content: string; taskId: string; ts: number }
@@ -221,7 +221,16 @@ export type Event =
 			summary: string;
 			taskId: string;
 			ts: number;
-	  };
+	  }
+) & {
+	/**
+	 * ULID identifying the agent loop instance (runAgentForNode invocation)
+	 * that emitted this event. Generated once per loop, injected into every
+	 * event via emitWithTask. Used to detect interleaved events from duplicate
+	 * launches of the same task.
+	 */
+	traceId?: string;
+};
 
 /**
  * Whether emitEvent() should persist this event to JSONL.
@@ -596,6 +605,45 @@ export function buildSessionRepair(
 		}
 	}
 
+	// Check positional ordering: a tool_result must appear before the next
+	// assistant turn after its tool_call. If a new assistant_text appears between
+	// a tool_call and its tool_result, the result is out of position.
+	// This happens when duplicate agent loops write interleaved events.
+	const toolCallIndices = new Map<string, number>(); // callId → event index
+	const toolResultIndices = new Map<string, number>(); // callId → first result index
+	const assistantTextIndices: number[] = [];
+	for (let i = 0; i < events.length; i++) {
+		const e = events[i];
+		if (e?.type === "tool_call") {
+			toolCallIndices.set(e.toolCallId, i);
+		} else if (
+			e?.type === "tool_result" &&
+			!toolResultIndices.has(e.toolCallId)
+		) {
+			toolResultIndices.set(e.toolCallId, i);
+		} else if (e?.type === "assistant_text") {
+			assistantTextIndices.push(i);
+		}
+	}
+
+	// Find the earliest out-of-position tool_result: there exists an assistant_text
+	// between the tool_call and its tool_result (a new turn started before resolution).
+	let outOfOrderIndex = -1;
+	for (const [callId, callIdx] of toolCallIndices) {
+		const resultIdx = toolResultIndices.get(callId);
+		if (resultIdx === undefined) continue; // orphan — handled below
+		// Check if any assistant_text falls between callIdx and resultIdx
+		for (const atIdx of assistantTextIndices) {
+			if (atIdx > callIdx && atIdx < resultIdx) {
+				// This tool_result is out of position — record the earliest problem point
+				if (outOfOrderIndex === -1 || callIdx < outOfOrderIndex) {
+					outOfOrderIndex = callIdx;
+				}
+				break;
+			}
+		}
+	}
+
 	// Categorize problems
 	let hasDuplicates = false;
 	const orphanCallIds: string[] = [];
@@ -613,7 +661,72 @@ export function buildSessionRepair(
 		if (resultCount === 0) orphanCallIds.push(callId);
 	}
 
-	if (!hasDuplicates && orphanCallIds.length === 0) return null;
+	if (!hasDuplicates && orphanCallIds.length === 0 && outOfOrderIndex === -1)
+		return null;
+
+	// Strategy 0: OUT-OF-ORDER tool_results — truncate from the problematic tool_call.
+	// This is the most severe case: two agent loops wrote interleaved events.
+	// Truncate everything from the first out-of-order tool_call onwards, append
+	// interrupted tool_results for any orphaned calls in the kept section.
+	if (outOfOrderIndex >= 0) {
+		// Truncate from one event BEFORE the out-of-order tool_call
+		const truncateAt = Math.max(0, outOfOrderIndex - 1);
+		const keptEvents = events.slice(0, truncateAt + 1);
+
+		// Find orphans in the kept section
+		const keptCalls = new Map<string, string>();
+		const keptResults = new Set<string>();
+		for (const e of keptEvents) {
+			if (e.type === "tool_call") keptCalls.set(e.toolCallId, e.tool);
+			else if (e.type === "tool_result") keptResults.add(e.toolCallId);
+		}
+
+		const appendEvents: Event[] = [];
+		const now = Date.now();
+		for (const [callId, tool] of keptCalls) {
+			if (keptResults.has(callId)) continue;
+			// Skip the intended orphan (last yield/done in kept section)
+			if (tool === TOOL_YIELD || tool === TOOL_DONE) {
+				let isLastCall = true;
+				for (let i = keptEvents.length - 1; i >= 0; i--) {
+					if (keptEvents[i]?.type === "tool_call") {
+						isLastCall =
+							(keptEvents[i] as Event & { toolCallId: string }).toolCallId ===
+							callId;
+						break;
+					}
+				}
+				if (isLastCall) continue;
+			}
+			appendEvents.push({
+				type: "tool_result" as const,
+				tool,
+				toolCallId: callId,
+				content:
+					"Tool execution was interrupted — out-of-order events detected and repaired.",
+				isError: true,
+				taskId,
+				ts: now,
+			} as Event);
+		}
+
+		if (opts?.reason) {
+			appendEvents.push({
+				type: "message",
+				id: `repair-${now}`,
+				taskId,
+				body: {
+					source: "system" as never,
+					id: `repair-${now}`,
+					ts: now,
+					content: `Session repaired: ${opts.reason}. Out-of-order events truncated.`,
+				},
+				ts: now,
+			} as Event);
+		}
+
+		return { truncateAfterIndex: truncateAt, appendEvents };
+	}
 
 	// Two different repair strategies:
 	//

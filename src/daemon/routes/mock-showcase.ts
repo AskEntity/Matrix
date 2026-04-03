@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Hono } from "hono";
 import type { Event } from "../../events.ts";
 import {
@@ -304,9 +306,10 @@ function buildMockData() {
 	const events: Event[] = [];
 	let m = 120; // start 120 minutes ago — plenty of room
 
-	// 1x1 red PNG for image tests
-	const tinyPng =
-		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+	// 200x200 gradient PNG loaded from file — visible image for testing rendering
+	const mockPng = readFileSync(
+		join(import.meta.dirname, "mock-showcase-image.png"),
+	).toString("base64");
 
 	// ═══════════════════════════════════════════════════════════════════════
 	// SECTION 1: Lifecycle + content events
@@ -348,8 +351,8 @@ function buildMockData() {
 			content:
 				"Here's the screenshot of the current UI. Can you fix the alignment?",
 			images: [
-				{ base64: tinyPng, mediaType: "image/png" },
-				{ base64: tinyPng, mediaType: "image/png" },
+				{ base64: mockPng, mediaType: "image/png" },
+				{ base64: mockPng, mediaType: "image/png" },
 			],
 		},
 		m,
@@ -447,7 +450,7 @@ function buildMockData() {
 		{ path: "screenshot.png" },
 		"Image file read successfully (1x1 pixels)",
 		m,
-		{ images: [{ base64: tinyPng, mediaType: "image/png" }] },
+		{ images: [{ base64: mockPng, mediaType: "image/png" }] },
 	);
 
 	// search
@@ -864,7 +867,7 @@ function buildMockData() {
 		{ fullPage: true, format: "png" },
 		"Screenshot captured (1x1 pixels)",
 		m,
-		{ images: [{ base64: tinyPng, mediaType: "image/png" }] },
+		{ images: [{ base64: mockPng, mediaType: "image/png" }] },
 	);
 
 	// ═══════════════════════════════════════════════════════════════════════

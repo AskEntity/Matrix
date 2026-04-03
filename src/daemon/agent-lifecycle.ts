@@ -29,6 +29,7 @@ import {
 	createBuiltinTools,
 } from "../tools/index.ts";
 import { type AgentResult, isTask, type TaskSession } from "../types.ts";
+import { ulid } from "../ulid.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
 import {
@@ -637,6 +638,11 @@ export async function runAgentForNode(
 	// Declared outside try so Phase 2 (after finally) can access the result.
 	let agentResult: AgentResult | undefined;
 	try {
+		// Generate a unique trace ID for this agent loop instance.
+		// Injected into every event emitted by this loop via emitWithTask.
+		// Enables detection of interleaved events from duplicate launches.
+		const loopTraceId = ulid();
+
 		// Compute depth from the tree
 		const depth = computeDepth(tracker, nodeId);
 
@@ -736,9 +742,9 @@ export async function runAgentForNode(
 		// After lock release, messages go directly to the queue via deliverMessage.
 		ctx.launchingNodes.delete(nodeId);
 
-		// Build emit callback: emitEvent with taskId injected + streaming text tracking
+		// Build emit callback: emitEvent with taskId + traceId injected + streaming text tracking
 		const emitWithTask = (event: Event) => {
-			const withTaskId = { ...event, taskId: nodeId };
+			const withIds = { ...event, taskId: nodeId, traceId: loopTraceId };
 			// Track streaming text for partial injection into batch events API
 			if (event.type === "text_delta") {
 				const existing = ctx.streamingText.get(nodeId) ?? "";
@@ -746,7 +752,7 @@ export async function runAgentForNode(
 			} else if (event.type === "assistant_text") {
 				ctx.streamingText.delete(nodeId);
 			}
-			emitEvent(ctx, project.id, withTaskId as Event);
+			emitEvent(ctx, project.id, withIds as Event);
 		};
 
 		// Notify UI that this agent is now active
@@ -756,6 +762,7 @@ export async function runAgentForNode(
 			resume: opts?.resume ?? eventStore.has(nodeId),
 			provider: agentCtx.provider.name,
 			model: effectiveModel ?? DEFAULT_MODEL,
+			traceId: loopTraceId,
 			ts: Date.now(),
 		});
 
