@@ -101,12 +101,14 @@ export const LogEntryView = memo(function LogEntryView({
 	projectId,
 	rootNodeId,
 	onTaskNavigate,
+	showCacheBadges,
 }: {
 	entry: LogEntry;
 	nodeMap: Map<string, TreeNode>;
 	projectId?: string;
 	rootNodeId?: string | null;
 	onTaskNavigate?: (taskId: string, ts?: number) => void;
+	showCacheBadges?: boolean;
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const [movingToBg, setMovingToBg] = useState(false);
@@ -676,7 +678,7 @@ export const LogEntryView = memo(function LogEntryView({
 				)}
 				<div className="mxd-lmxd-body">
 					<span className="mxd-lmxd-text">{text}</span>
-					{ci && <CacheInfoBadge cacheInfo={ci} />}
+					{ci && showCacheBadges && <CacheInfoBadge cacheInfo={ci} />}
 				</div>
 			</div>
 		);

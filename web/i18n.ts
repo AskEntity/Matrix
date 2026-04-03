@@ -125,6 +125,7 @@ const en: Translations = {
 	"activity.follow": "Follow",
 	"activity.fullscreen": "Fullscreen",
 	"activity.exitFullscreen": "Exit fullscreen",
+	"activity.toggleCacheBadges": "Toggle cache info badges",
 
 	// Settings
 	"settings.title": "Settings",
@@ -164,6 +165,13 @@ const en: Translations = {
 	"settings.fromLocal": "from: local",
 	"settings.sectionModels": "Models & Auth",
 	"settings.sectionLimits": "Limits",
+	"settings.sectionCache": "Cache",
+	"settings.cacheTtlRoot": "Root Cache TTL",
+	"settings.cacheTtlChild": "Child Cache TTL",
+	"settings.cacheTtl5m": "5 min (default)",
+	"settings.cacheTtl1h": "1 hour",
+	"settings.cacheTtl5mChild": "5 min",
+	"settings.cacheTtl1hRoot": "1 hour (default)",
 	"settings.sectionDaemon": "Daemon",
 	"settings.defaultAuth": "Root Auth",
 	"settings.authGroups": "Auth Groups (Global)",
@@ -210,6 +218,7 @@ const en: Translations = {
 	"footer.attachImage": "Attach image",
 	"footer.contextWindow": "Context",
 	"footer.estimated": "estimated",
+	"footer.compactAt": "Compact at",
 	"footer.compact": "Compact context",
 	"footer.compactPending": "Compact pending…",
 
@@ -422,6 +431,7 @@ const zh: Translations = {
 	"activity.follow": "跟踪",
 	"activity.fullscreen": "全屏",
 	"activity.exitFullscreen": "退出全屏",
+	"activity.toggleCacheBadges": "显示/隐藏缓存信息",
 
 	// Settings
 	"settings.title": "设置",
@@ -459,6 +469,13 @@ const zh: Translations = {
 	"settings.fromLocal": "来源: 本地",
 	"settings.sectionModels": "模型与认证",
 	"settings.sectionLimits": "限制",
+	"settings.sectionCache": "缓存",
+	"settings.cacheTtlRoot": "根代理缓存 TTL",
+	"settings.cacheTtlChild": "子代理缓存 TTL",
+	"settings.cacheTtl5m": "5 分钟（默认）",
+	"settings.cacheTtl1h": "1 小时",
+	"settings.cacheTtl5mChild": "5 分钟",
+	"settings.cacheTtl1hRoot": "1 小时（默认）",
 	"settings.sectionDaemon": "守护进程",
 	"settings.defaultAuth": "根认证",
 	"settings.authGroups": "认证组（全局）",
@@ -505,6 +522,7 @@ const zh: Translations = {
 	"footer.attachImage": "附加图片",
 	"footer.contextWindow": "上下文",
 	"footer.estimated": "估算",
+	"footer.compactAt": "压缩阈值",
 	"footer.compact": "压缩上下文",
 	"footer.compactPending": "压缩等待中…",
 

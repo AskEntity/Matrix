@@ -8,6 +8,16 @@ export function formatTokenCount(n: number): string {
 	return String(n);
 }
 
+/**
+ * Compute the compaction threshold from the context window.
+ * Mirrors getCompactionThresholds() in src/compaction.ts.
+ * Smaller windows need more buffer (17%), 1M+ windows use 8%.
+ */
+export function getCompactThreshold(contextWindow: number): number {
+	const ratio = contextWindow >= 1_000_000 ? 0.08 : 0.17;
+	return Math.floor(contextWindow * (1 - ratio));
+}
+
 export const TokenUsageBadge = memo(function TokenUsageBadge({
 	inputTokens,
 	contextWindow,
@@ -20,9 +30,10 @@ export const TokenUsageBadge = memo(function TokenUsageBadge({
 	onCompact?: () => void;
 }) {
 	const { t } = useLocale();
-	const ratio = contextWindow > 0 ? inputTokens / contextWindow : 0;
-	const level = ratio >= 0.8 ? "red" : ratio >= 0.5 ? "yellow" : "green";
-	const tooltip = `${t("footer.contextWindow")}: ${formatTokenCount(inputTokens)} / ${formatTokenCount(contextWindow)}${estimated ? ` (${t("footer.estimated")})` : ""}`;
+	const threshold = getCompactThreshold(contextWindow);
+	const ratio = threshold > 0 ? inputTokens / threshold : 0;
+	const level = ratio >= 0.95 ? "red" : ratio >= 0.8 ? "yellow" : "green";
+	const tooltip = `${t("footer.contextWindow")}: ${formatTokenCount(inputTokens)} / ${formatTokenCount(threshold)}${estimated ? ` (${t("footer.estimated")})` : ""}\n${t("footer.compactAt")} ${formatTokenCount(threshold)}`;
 	return (
 		<>
 			{onCompact && (
@@ -36,7 +47,7 @@ export const TokenUsageBadge = memo(function TokenUsageBadge({
 				</button>
 			)}
 			<span className={`mxd-token-badge mxd-token-${level}`} title={tooltip}>
-				{formatTokenCount(inputTokens)} / {formatTokenCount(contextWindow)}
+				{formatTokenCount(inputTokens)} / {formatTokenCount(threshold)}
 				{estimated && <span className="mxd-token-estimated">~</span>}
 			</span>
 		</>
