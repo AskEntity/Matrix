@@ -3,13 +3,19 @@
  *
  * Activated by `?mock=true` in the URL. Fetches static data from `/mock-showcase`
  * and renders it using the same components as the real app.
- * No SSE, no auth, no agent controls — pure static render.
+ * No SSE connection — pure static render with all UI elements visible.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authFetch } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
+import { AppFooter } from "./components/AppFooter.tsx";
+import { AppHeader } from "./components/AppHeader.tsx";
+import { BackgroundProcessBar } from "./components/BackgroundProcessBar.tsx";
+import { CuteCat } from "./components/CuteCat.tsx";
+import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import { TaskTree } from "./components/TaskTree.tsx";
+import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
 import { createEventHandler, type EventHandlerDeps } from "./event-handler.ts";
 import {
 	type IncomingEvent,
@@ -18,17 +24,45 @@ import {
 	type TreeNode,
 } from "./hooks.ts";
 import { useLocale } from "./i18n.ts";
+import { applyTheme, themes } from "./themes.ts";
 
 interface MockData {
 	nodes: TreeNode[];
 	rootNodeId: string;
 	events: IncomingEvent[];
+	backgroundProcesses?: Array<{
+		id: string;
+		command: string;
+		startTime: number;
+		taskId?: string;
+	}>;
+	pendingClarifications?: Array<{
+		id: string;
+		taskId: string;
+		question: string;
+		title?: string;
+		body?: string;
+		timestamp: number;
+	}>;
+	tokenUsage?: {
+		inputTokens: number;
+		contextWindow: number;
+		estimated?: boolean;
+	};
 }
 
 export function MockShowcase() {
+	return (
+		<ErrorBoundary>
+			<MockShowcaseInner />
+		</ErrorBoundary>
+	);
+}
+
+function MockShowcaseInner() {
 	const { t } = useLocale();
 
-	// ── State that mirrors what AuthenticatedApp provides ──
+	// ── State ──
 	const [nodes, setNodes] = useState<TreeNode[]>([]);
 	const [rootNodeId, setRootNodeId] = useState<string | null>(null);
 	const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -46,6 +80,44 @@ export function MockShowcase() {
 			images?: Array<{ base64: string; mediaType: string }>;
 		}[]
 	>([]);
+	const [pendingClarifications, setPendingClarifications] = useState<
+		{
+			id: string;
+			taskId: string;
+			question: string;
+			title?: string;
+			body?: string;
+			timestamp: number;
+		}[]
+	>([]);
+	const [clarifyAnswers, setClarifyAnswers] = useState<Record<string, string>>(
+		{},
+	);
+	const [backgroundProcesses, setBackgroundProcesses] = useState<
+		Map<
+			string,
+			{
+				id: string;
+				command: string;
+				startTime: number;
+				taskId?: string;
+			}
+		>
+	>(() => new Map());
+	const [tokenUsage, setTokenUsage] = useState<{
+		inputTokens: number;
+		contextWindow: number;
+		estimated?: boolean;
+	} | null>(null);
+	const [theme, setThemeState] = useState<
+		"dark" | "light" | "cute-light" | "cute-dark"
+	>(() => {
+		const stored = localStorage.getItem("mxd-theme");
+		if (stored === "light" || stored === "cute-light" || stored === "cute-dark")
+			return stored;
+		return "dark";
+	});
+	const [sidebarOpen, setSidebarOpen] = useState(false);
 
 	const nodeMap = useMemo(() => {
 		const map = new Map<string, TreeNode>();
@@ -57,13 +129,20 @@ export function MockShowcase() {
 	const viewedSessionId = selectedTaskId ?? rootNodeId;
 	viewedSessionRef.current = viewedSessionId;
 
-	// ── Build event handler with minimal deps ──
+	// ── Theme ──
+	useEffect(() => {
+		const config = themes[theme];
+		if (config) applyTheme(config);
+		localStorage.setItem("mxd-theme", theme);
+	}, [theme]);
+
+	// ── Event handler ──
 	const { processEventBatch } = useMemo(() => {
 		const deps: EventHandlerDeps = {
-			updateFromWS: () => {}, // No live updates in mock mode
+			updateFromWS: () => {},
 			setRootNodeId,
 			setActiveAgents,
-			checkAgentStatus: () => {}, // No backend to check
+			checkAgentStatus: () => {},
 			setAgentProvider: () => {},
 			setAgentModel: () => {},
 			setLogs,
@@ -95,6 +174,27 @@ export function MockShowcase() {
 				setNodes(data.nodes);
 				setRootNodeId(data.rootNodeId);
 				processEventBatch(data.events);
+				if (data.backgroundProcesses) {
+					const bgMap = new Map<
+						string,
+						{
+							id: string;
+							command: string;
+							startTime: number;
+							taskId?: string;
+						}
+					>();
+					for (const bp of data.backgroundProcesses) {
+						bgMap.set(bp.id, bp);
+					}
+					setBackgroundProcesses(bgMap);
+				}
+				if (data.pendingClarifications) {
+					setPendingClarifications(data.pendingClarifications);
+				}
+				if (data.tokenUsage) {
+					setTokenUsage(data.tokenUsage);
+				}
 				setLoading(false);
 			})
 			.catch((e) => {
@@ -107,10 +207,28 @@ export function MockShowcase() {
 		};
 	}, [processEventBatch]);
 
+	// ── Callbacks ──
 	const handleTaskSelect = useCallback((id: string | null) => {
 		setSelectedTaskId(id);
+		setSidebarOpen(false);
 	}, []);
 
+	const noop = useCallback(() => {}, []);
+	const handleClarifyAnswerChange = useCallback(
+		(clarificationId: string, value: string) =>
+			setClarifyAnswers((prev) => ({
+				...prev,
+				[clarificationId]: value,
+			})),
+		[],
+	);
+	const handleThemeChange = useCallback(
+		(t: string) => setThemeState(t as typeof theme),
+		[],
+	);
+	const handleToggleSidebar = useCallback(() => setSidebarOpen((s) => !s), []);
+
+	// ── Derived ──
 	const isOrchestratorNode = !selectedTaskId || selectedTaskId === rootNodeId;
 	const selectedNode =
 		selectedTaskId && !isOrchestratorNode
@@ -129,6 +247,19 @@ export function MockShowcase() {
 		);
 		return sum > 0 ? sum : null;
 	}, [nodes]);
+
+	// Mock project for AppHeader
+	const mockProjects = useMemo(
+		() => [
+			{
+				id: "mock",
+				name: "Mock Showcase",
+				path: "/mock",
+				pathExists: true as const,
+			},
+		],
+		[],
+	);
 
 	// ── Render ──
 
@@ -162,39 +293,50 @@ export function MockShowcase() {
 
 	return (
 		<>
-			{/* Simplified header for mock mode */}
-			<header className="mxd-header">
-				<div className="mxd-header-left">
-					<span className="mxd-logo">⬡ Matrix</span>
-					<span
-						style={{
-							fontSize: "11px",
-							color: "var(--text-faint)",
-							marginLeft: "8px",
-						}}
-					>
-						Mock Showcase
-					</span>
-				</div>
-				<div className="mxd-header-right">
-					{totalCost !== null && (
-						<span
-							style={{
-								fontSize: "11px",
-								color: "var(--text-faint)",
-								fontFamily: "var(--font-mono)",
-							}}
-						>
-							${totalCost.toFixed(2)}
-						</span>
-					)}
-				</div>
-			</header>
+			<AppHeader
+				connected={true}
+				projects={mockProjects}
+				projectId="mock"
+				showAddProject={false}
+				newProjectPath=""
+				creatingProject={false}
+				showSettings={false}
+				theme={theme}
+				onProjectChange={noop}
+				onShowAddProject={noop}
+				onAddProject={noop}
+				onNewProjectPathChange={noop}
+				onCancelAddProject={noop}
+				onToggleSettings={noop}
+				onThemeChange={handleThemeChange}
+				onToggleSidebar={handleToggleSidebar}
+			/>
 
 			<main className="mxd-main">
-				<aside className="mxd-sidebar">
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop */}
+				{/* biome-ignore lint/a11y/useKeyWithClickEvents: backdrop */}
+				<div
+					className={`mxd-sidebar-backdrop${sidebarOpen ? " mxd-sidebar-open" : ""}`}
+					onClick={() => setSidebarOpen(false)}
+				/>
+				<aside
+					className={`mxd-sidebar${sidebarOpen ? " mxd-sidebar-open" : ""}`}
+				>
 					<div className="mxd-panel-header">
 						<span className="mxd-panel-title">{t("tasks.title")}</span>
+						<div className="mxd-panel-actions">
+							{totalCost !== null && (
+								<span
+									style={{
+										fontSize: "10px",
+										color: "var(--text-faint)",
+										fontFamily: "var(--font-mono)",
+									}}
+								>
+									${totalCost.toFixed(2)}
+								</span>
+							)}
+						</div>
 					</div>
 					<TaskTree
 						nodes={nodes}
@@ -225,7 +367,23 @@ export function MockShowcase() {
 									</span>
 								)}
 							</span>
+							<div className="mxd-panel-actions">
+								{tokenUsage && (
+									<TokenUsageBadge
+										inputTokens={tokenUsage.inputTokens}
+										contextWindow={tokenUsage.contextWindow}
+										estimated={tokenUsage.estimated}
+										onCompact={noop}
+									/>
+								)}
+							</div>
 						</div>
+						<BackgroundProcessBar
+							processes={backgroundProcesses}
+							projectId=""
+							filterTaskId={selectedTaskId}
+							rootNodeId={rootNodeId}
+						/>
 						<ActivityLog
 							entries={logs}
 							filterTaskId={selectedTaskId}
@@ -240,52 +398,21 @@ export function MockShowcase() {
 				</section>
 			</main>
 
-			{/* Pending messages footer — shows unconsumed messages as chips */}
-			{pendingMessages.length > 0 && (
-				<footer
-					className="mxd-footer"
-					style={{
-						borderTop: "1px solid var(--border)",
-						padding: "6px 12px",
-						display: "flex",
-						gap: "6px",
-						alignItems: "center",
-						flexWrap: "wrap",
-					}}
-				>
-					<span
-						style={{
-							fontSize: "10px",
-							color: "var(--text-faint)",
-							textTransform: "uppercase",
-							letterSpacing: "0.5px",
-							fontWeight: 600,
-						}}
-					>
-						Pending
-					</span>
-					{pendingMessages.map((msg) => (
-						<span
-							key={msg.id}
-							className="mxd-pending-chip"
-							style={{
-								fontSize: "11px",
-								padding: "2px 8px",
-								borderRadius: "10px",
-								background: "var(--bg-elevated)",
-								border: "1px solid var(--border)",
-								color: "var(--text-secondary)",
-								maxWidth: "200px",
-								overflow: "hidden",
-								textOverflow: "ellipsis",
-								whiteSpace: "nowrap",
-							}}
-						>
-							{msg.text}
-						</span>
-					))}
-				</footer>
-			)}
+			<AppFooter
+				projectId=""
+				targetNodeId={null}
+				rootNodeId={rootNodeId}
+				nodeMap={nodeMap}
+				pendingMessages={pendingMessages}
+				pendingClarifications={pendingClarifications}
+				clarifyAnswers={clarifyAnswers}
+				onSend={noop}
+				onClearTarget={noop}
+				onClarifySubmit={noop}
+				onClarifyAnswerChange={handleClarifyAnswerChange}
+			/>
+
+			{themes[theme]?.hasCat && <CuteCat />}
 		</>
 	);
 }

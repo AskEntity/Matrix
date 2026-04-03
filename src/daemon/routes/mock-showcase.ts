@@ -519,7 +519,7 @@ function buildMockData() {
 		m,
 	);
 
-	// get_tree
+	// get_tree (plain)
 	m = pushResolved(
 		events,
 		TOOL_GET_TREE,
@@ -536,6 +536,42 @@ function buildMockData() {
 					id: taskIds.inProgress,
 					title: "Refactor event system",
 					status: "in_progress",
+					children: [],
+				},
+			],
+		}),
+		m,
+	);
+
+	// get_tree (with details + closed)
+	m = pushResolved(
+		events,
+		TOOL_GET_TREE,
+		{ format: "flat", include_details: true, include_closed: true },
+		JSON.stringify({
+			nodes: [
+				{
+					id: ROOT_ID,
+					title: "Root",
+					status: "in_progress",
+					description: "Root orchestrator",
+					costUsd: 2.45,
+					children: [taskIds.inProgress, taskIds.closed],
+				},
+				{
+					id: taskIds.inProgress,
+					title: "Refactor event system",
+					status: "in_progress",
+					description: "Migrate to discriminated unions.",
+					costUsd: 0.73,
+					children: [],
+				},
+				{
+					id: taskIds.closed,
+					title: "Database migration tool",
+					status: "closed",
+					description: "Built schema migration tool.",
+					costUsd: 0.89,
 					children: [],
 				},
 			],
@@ -560,19 +596,38 @@ function buildMockData() {
 		m,
 	);
 
-	// update_task
+	// update_task (field changes: status, title, color)
 	m = pushResolved(
 		events,
 		TOOL_UPDATE_TASK,
 		{
 			taskId: taskIds.draft,
 			title: "Design new auth system (OAuth2 + PKCE)",
+			status: "pending",
 			color: "blue",
 		},
 		JSON.stringify({
 			id: taskIds.draft,
 			title: "Design new auth system (OAuth2 + PKCE)",
-			status: "draft",
+			status: "pending",
+		}),
+		m,
+	);
+
+	// update_task (surgical description diff — triggers DiffView)
+	m = pushResolved(
+		events,
+		TOOL_UPDATE_TASK,
+		{
+			taskId: taskIds.inProgress,
+			old_description: "Migrate from string-based event types",
+			new_description:
+				"Migrate from string-based event types to discriminated unions with exhaustive switches",
+		},
+		JSON.stringify({
+			id: taskIds.inProgress,
+			title: "Refactor event system",
+			status: "in_progress",
 		}),
 		m,
 	);
@@ -1269,9 +1324,46 @@ function buildMockData() {
 		ts: ts(m--),
 	});
 
+	// ── Additional UI state ──
+	const backgroundProcesses = [
+		{
+			id: "bg-MOCK001",
+			command: "bun run typecheck --watch",
+			startTime: ts(5),
+			taskId: SESSION_ID,
+		},
+		{
+			id: "bg-MOCK002",
+			command: "bun test --watch --bail",
+			startTime: ts(3),
+			taskId: SESSION_ID,
+		},
+	];
+
+	const pendingClarifications = [
+		{
+			id: ulid(),
+			taskId: SESSION_ID,
+			question:
+				"Should the mock showcase include MCP external tool cards, or only builtin tools?",
+			title: "Mock showcase scope",
+			body: "I noticed there are external MCP tools (e.g., brave-search, chrome-devtools). Should I include sample cards for those, or focus only on the builtin mxd tools?",
+			timestamp: ts(8),
+		},
+	];
+
+	const tokenUsage = {
+		inputTokens: 98500,
+		contextWindow: 200000,
+		estimated: false,
+	};
+
 	return {
 		nodes,
 		rootNodeId: ROOT_ID,
 		events,
+		backgroundProcesses,
+		pendingClarifications,
+		tokenUsage,
 	};
 }
