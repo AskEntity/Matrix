@@ -1342,6 +1342,63 @@ describe("daemon tasks API", () => {
 		);
 		expect(res.status).toBe(404);
 	});
+
+	test("PATCH /tasks/:nodeId/reorder works on folder nodes", async () => {
+		// Create a folder under root
+		const folderRes = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "My Folder",
+				folder: true,
+				parentId: rootNodeId,
+			}),
+		});
+		expect(folderRes.status).toBe(201);
+		const folder = (await folderRes.json()) as { id: string };
+
+		// Create two tasks inside the folder
+		const t1Res = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Task 1",
+				description: "",
+				parentId: folder.id,
+			}),
+		});
+		const t1 = (await t1Res.json()) as TaskNode;
+
+		const t2Res = await app.request(`/projects/${projectId}/tasks`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				title: "Task 2",
+				description: "",
+				parentId: folder.id,
+			}),
+		});
+		const t2 = (await t2Res.json()) as TaskNode;
+
+		// Reorder folder's children: reverse order
+		const reorderRes = await app.request(
+			`/projects/${projectId}/tasks/${folder.id}/reorder`,
+			{
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ children: [t2.id, t1.id] }),
+			},
+		);
+		expect(reorderRes.status).toBe(200);
+
+		// Verify order via GET /tasks
+		const tasksRes = await app.request(`/projects/${projectId}/tasks`);
+		const { nodes } = (await tasksRes.json()) as {
+			nodes: Array<{ id: string; children?: string[] }>;
+		};
+		const updatedFolder = nodes.find((n) => n.id === folder.id);
+		expect(updatedFolder?.children).toEqual([t2.id, t1.id]);
+	});
 });
 
 describe("GET /projects/:id/events", () => {

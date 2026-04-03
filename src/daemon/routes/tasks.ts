@@ -265,9 +265,9 @@ export function registerTaskRoutes(
 		}
 		const tracker = await getTracker(ctx, project.id);
 		const nodeId = c.req.param("nodeId");
-		const node = tracker.getTask(nodeId);
+		const node = tracker.get(nodeId);
 		if (!node) {
-			return c.json({ error: "Task not found" }, 404);
+			return c.json({ error: "Node not found" }, 404);
 		}
 		const body = await c.req.json<{ children: string[] }>();
 		if (!Array.isArray(body.children)) {
