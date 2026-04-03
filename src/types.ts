@@ -96,6 +96,12 @@ export function isTask(node: TreeNode): node is TaskNode {
 /** Serialized form of a tree node in tree.json (session stripped). */
 export type SerializedTreeNode = FolderNode | Omit<TaskNode, "session">;
 
+/** Strip runtime-only session from a TaskNode for serialization. */
+export function stripSession(node: TaskNode): Omit<TaskNode, "session"> {
+	const { session: _, ...rest } = node;
+	return rest;
+}
+
 /**
  * Why the provider loop exited.
  * - `done_passed` / `done_failed` — agent explicitly called done(). Agent's decision.

@@ -4878,6 +4878,157 @@ describe("Integration: tree operations", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
 	}, 20000);
+
+	test("TREE4: update_task tool_result must not leak session data", async () => {
+		ctx = await setupTestContext();
+
+		// Agent gets its own task ID via get_tree, then updates its own description.
+		// The root agent has a live session — if serialization leaks session,
+		// the tool_result will contain "queue", "abortController", "messages", etc.
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__get_tree",
+							input: {},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: {
+								rootId: 'regex:"id":\\s*"([^"]+)"',
+							},
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__update_task",
+							input: {
+								taskId: "$rootId",
+								description: "Updated description for session leak test",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "Updated description for session leak test",
+							notContains: "abortController",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "session leak check done" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Double-check: read JSONL and verify update_task tool_result doesn't contain session fields
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const events = await readSessionEvents(ctx, tracker.rootNodeId);
+		const updateResults = events.filter(
+			(e) =>
+				e.type === "tool_result" &&
+				"tool" in e &&
+				e.tool === "mcp__mxd__update_task",
+		);
+		expect(updateResults.length).toBeGreaterThan(0);
+		for (const result of updateResults) {
+			const content = String("content" in result ? result.content : "");
+			expect(content).not.toContain('"session"');
+			expect(content).not.toContain('"queue"');
+			expect(content).not.toContain('"abortController"');
+			expect(content).not.toContain('"messages"');
+			expect(content).not.toContain('"allTools"');
+			// Reasonable size — a node without session should be < 2KB
+			expect(content.length).toBeLessThan(5000);
+		}
+	}, 20000);
+
+	test("TREE5: create_task tool_result must not leak session data", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Session leak test child",
+								description: "Testing create_task serialization",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							contains: "Session leak test child",
+							notContains: "abortController",
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "create_task leak check" },
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+
+		// Verify JSONL: create_task tool_result should not contain session
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const events = await readSessionEvents(ctx, tracker.rootNodeId);
+		const createResults = events.filter(
+			(e) =>
+				e.type === "tool_result" &&
+				"tool" in e &&
+				e.tool === "mcp__mxd__create_task",
+		);
+		expect(createResults.length).toBeGreaterThan(0);
+		for (const result of createResults) {
+			const content = String("content" in result ? result.content : "");
+			expect(content).not.toContain('"session"');
+			expect(content).not.toContain('"queue"');
+			expect(content).not.toContain('"allTools"');
+			expect(content.length).toBeLessThan(5000);
+		}
+	}, 20000);
 });
 
 // ── File operation tests ──

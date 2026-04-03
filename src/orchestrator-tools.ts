@@ -33,7 +33,7 @@ import {
 	slugify,
 } from "./task-utils.ts";
 import { type ToolDefinition, tool } from "./tool-definition.ts";
-import { isFolder, isTask } from "./types.ts";
+import { isFolder, isTask, stripSession } from "./types.ts";
 
 import { WorktreeManager } from "./worktree-manager.ts";
 
@@ -237,7 +237,7 @@ export function createOrchestratorTools(
 									children: filterChildren(n.children),
 								};
 							}
-							const { session: _session, ...rest } = n;
+							const rest = stripSession(n);
 							const node: Record<string, unknown> = {
 								...rest,
 								children: filterChildren(rest.children),
@@ -289,12 +289,11 @@ export function createOrchestratorTools(
 						isError: true,
 					};
 				}
-				const { session: _session, ...rest } = node;
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: JSON.stringify(rest, null, 2),
+							text: JSON.stringify(stripSession(node), null, 2),
 						},
 					],
 				};
@@ -380,7 +379,7 @@ export function createOrchestratorTools(
 						content: [
 							{
 								type: "text" as const,
-								text: JSON.stringify(node, null, 2),
+								text: JSON.stringify(stripSession(node), null, 2),
 							},
 						],
 					};
@@ -594,7 +593,7 @@ export function createOrchestratorTools(
 						content: [
 							{
 								type: "text" as const,
-								text: JSON.stringify(node, null, 2),
+								text: JSON.stringify(stripSession(node), null, 2),
 							},
 						],
 					};
