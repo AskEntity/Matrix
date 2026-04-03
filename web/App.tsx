@@ -876,6 +876,42 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		setPreviewTabId((prev) => (prev === id ? null : prev));
 	}, []);
 
+	const [tabDragId, setTabDragId] = useState<string | null>(null);
+
+	const handleTabDragStart = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			e.dataTransfer.effectAllowed = "move";
+			e.dataTransfer.setData("text/plain", tabId);
+			setTimeout(() => setTabDragId(tabId), 0);
+		},
+		[],
+	);
+
+	const handleTabDragOver = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			if (!tabDragId || tabDragId === tabId) return;
+			e.preventDefault();
+			e.dataTransfer.dropEffect = "move";
+			// Reorder on hover for instant visual feedback
+			setOpenTabs((prev) => {
+				const fromIdx = prev.indexOf(tabDragId);
+				const toIdx = prev.indexOf(tabId);
+				if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return prev;
+				const next = [...prev];
+				next.splice(fromIdx, 1);
+				next.splice(toIdx, 0, tabDragId);
+				return next;
+			});
+		},
+		[tabDragId],
+	);
+
+	const handleTabDragEnd = useCallback(() => {
+		setTabDragId(null);
+		// Persist final order
+		localStorage.setItem("mxd-open-tabs", JSON.stringify(openTabsRef.current));
+	}, []);
+
 	const handleTabClose = useCallback(
 		(id: string, e?: React.MouseEvent) => {
 			e?.stopPropagation();
@@ -1155,9 +1191,13 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									<button
 										key={tabId}
 										type="button"
-										className={`mxd-tab${isActive ? " mxd-tab-active" : ""}${isPreview ? " mxd-tab-preview" : ""}`}
+										className={`mxd-tab${isActive ? " mxd-tab-active" : ""}${isPreview ? " mxd-tab-preview" : ""}${tabDragId === tabId ? " mxd-tab-dragging" : ""}`}
 										onClick={() => handleTabSelect(tabId)}
 										onDoubleClick={() => handleTabDoubleClick(tabId)}
+										draggable
+										onDragStart={(e) => handleTabDragStart(tabId, e)}
+										onDragOver={(e) => handleTabDragOver(tabId, e)}
+										onDragEnd={handleTabDragEnd}
 									>
 										{isTabActive && <span className="mxd-task-spinner" />}
 										{isTask(tabNode) && !isTabActive && (
