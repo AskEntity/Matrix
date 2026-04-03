@@ -355,6 +355,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							project,
 							taskAbove.id,
 							completionMsg,
+							// quiet: skip auto-launch — the parent will be launched
+							// by the autoResume loop below. Without quiet, deliverMessage
+							// would auto-launch the parent here, then autoResume would
+							// also try to launch it → duplicate agent loop.
+							{ quiet: true },
 						).catch((e) => {
 							console.warn(
 								`[autoResume] Failed to deliver task_complete to parent ${taskAbove.id}:`,

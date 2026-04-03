@@ -314,3 +314,17 @@ Embrace large type refactors. Rename TaskNode → TreeNode = TaskNode | FolderNo
 - **Lifecycle rejection**: all lifecycle operations (launch, done, close, reset, send_message) reject folders at entry point.
 - **MUST resist feature creep**: persistent tasks started as "just a flag" and grew into a disaster. Folder stays at ZERO behavior forever.
 - **getTask() vs get() audit**: All production `getTask()` calls audited (2026-04-03). One bug fixed: REST reorder endpoint used `getTask()` → `get()` (folders have children too). All others correct — they access task-specific properties (session, worktree, branch, status).
+
+## Duplicate Launch Prevention in autoResumeProjects (2026-04-03)
+
+### Bug: pre-register launchingNodes prevents runAgentForNode from starting
+`autoResumeProjects` tried to pre-register all nodes in `launchingNodes` before launching. But `runAgentForNode` checks `launchingNodes.has(nodeId)` → returns early. Agents never started. Never pre-register in `launchingNodes` from outside `runAgentForNode`.
+
+### Fix: quiet deliverMessage in Phase 2 crash recovery
+Phase 2 crash recovery calls `deliverMessage(task_complete)` to parent. Without `quiet: true`, this auto-launches the parent → duplicate launch (autoResume also launches it). Fix: `{ quiet: true }` prevents auto-launch. Message goes to JSONL, recovered by `findUnconsumedMessages` when autoResume launches the parent.
+
+### Test lesson: maxConsecutiveStarts conflates crash+resume with duplicate launch
+After a crash, `orchestration_completed` never emits (the loop was interrupted). So `orchestration_started` from before crash + from resume = 2 consecutive starts. This is NORMAL. Use traceId uniqueness on `orchestration_started` events instead.
+
+### Test lesson: shutdown() required before recreateApp() in restart tests
+Without shutdown, old app's agent stays alive. New app launches another agent for same node → appears as duplicate but is a test setup bug (can't happen in production crash where process is dead).

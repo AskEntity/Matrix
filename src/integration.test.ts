@@ -9483,19 +9483,153 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 		if (ctx) await teardownTestContext(ctx);
 	});
 
-	test("autoResumeProjects does not produce duplicate orchestration_started", async () => {
+	/**
+	 * Helper: count unique traceIds in events. If > expected, there were duplicate loops.
+	 */
+	function uniqueTraceIds(events: Event[]): Set<string> {
+		const ids = new Set<string>();
+		for (const e of events) {
+			const tid = (e as Event & { traceId?: string }).traceId;
+			if (tid) ids.add(tid);
+		}
+		return ids;
+	}
+
+	test("Scenario 1: yield state → restart → no duplicate launch", async () => {
 		ctx = await setupTestContext();
 
-		// Turn 1: agent does bash then yields
+		// Agent yields (safe state)
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Yielding." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// Count pre-restart traceIds
+		const preEvents = await readSessionEvents(ctx, rootNodeId);
+		const preTraceIds = uniqueTraceIds(preEvents);
+		expect(preTraceIds.size).toBe(1);
+
+		// === CRASH: shutdown the daemon ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+		await ctx.app.autoResumeProjects();
+		await new Promise((r) => setTimeout(r, 300));
+
+		// No new API call (yield resume waits for message)
+		// Check: only ONE orchestration_started after restart (no duplicate launch)
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const startTraceIds = events
+			.filter((e) => e.type === "orchestration_started")
+			.map((e) => (e as Event & { traceId?: string }).traceId)
+			.filter(Boolean);
+
+		// Should have 1-2 orchestration_started: one pre-crash, possibly one from resume
+		// (yield resume may or may not have emitted orchestration_started yet)
+		expect(startTraceIds.length).toBeGreaterThanOrEqual(1);
+		expect(startTraceIds.length).toBeLessThanOrEqual(2);
+		// All orchestration_started events should have unique traceIds
+		expect(new Set(startTraceIds).size).toBe(startTraceIds.length);
+	}, 15000);
+
+	test("Scenario 2: interrupted mid-tool → restart → single launch with delay_ms", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: agent does bash
+		// Turn 2: will be delayed (simulates "streaming when restart happens")
 		const instruction = JSON.stringify({
 			turns: [
 				{
 					blocks: [
-						{ type: "text", text: "Working..." },
+						{ type: "text", text: "Running tool." },
 						{
 							type: "tool_use",
 							name: "mcp__mxd__bash",
-							input: { command: "echo hello" },
+							input: { command: "echo test" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Second turn." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+					delay_ms: 3000, // 3 second delay before streaming starts
+				},
+			],
+		});
+
+		await startAgent(ctx, instruction);
+
+		// Wait for turn 1 to complete (bash executed) but turn 2 is still delayed
+		await new Promise((r) => setTimeout(r, 1000));
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+
+		// === CRASH during the delay window ===
+		// JSONL state: tool_result for bash written, no yield yet
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		ctx.app = await recreateApp(ctx);
+
+		await ctx.app.autoResumeProjects();
+
+		// Send wake message with post-restart instruction
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Resumed after restart." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+		await new Promise((r) => setTimeout(r, 2000));
+
+		// Check: only ONE orchestration_started after the restart.
+		// Pre-crash events have a different traceId from post-restart events.
+		// If there are 2+ post-restart orchestration_started, that's a duplicate launch.
+		const events = await readSessionEvents(ctx, rootNodeId);
+
+		// Find traceIds from orchestration_started events
+		const startTraceIds = events
+			.filter((e) => e.type === "orchestration_started")
+			.map((e) => (e as Event & { traceId?: string }).traceId)
+			.filter(Boolean);
+
+		// Should have exactly 2 orchestration_started: one pre-crash, one post-restart
+		// Each with a different traceId (different loop instances)
+		expect(startTraceIds.length).toBe(2);
+		expect(new Set(startTraceIds).size).toBe(2);
+	}, 15000);
+
+	test("Scenario 3: root + child both in_progress → restart → no interleaved traceIds", async () => {
+		ctx = await setupTestContext();
+
+		// Root creates child, sends message, yields
+		const rootInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Creating child." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: { title: "Worker", description: "Do work" },
 						},
 					],
 				},
@@ -9512,43 +9646,43 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 			],
 		});
 
-		const resp = await startAgent(ctx, instruction);
-		expect(resp.status).toBe(200);
-
+		await startAgent(ctx, rootInstruction);
 		await waitForIdle(ctx);
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
 
-		// === RESTART ===
+		// === CRASH: shutdown the daemon ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
+		// === RESTART with both root (yielding) and possibly child in_progress ===
 		ctx.app = await recreateApp(ctx);
+
 		await ctx.app.autoResumeProjects();
-		await new Promise((r) => setTimeout(r, 500));
 
-		// Check JSONL: no consecutive orchestration_started without completed
-		const events = await readSessionEvents(ctx, rootNodeId);
-		const orchEvents = events.filter(
-			(e) =>
-				e.type === "orchestration_started" ||
-				e.type === "orchestration_completed",
-		);
+		// Send wake message with post-restart instruction
+		const wakeInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "After restart." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+		await sendMessage(ctx, wakeInstruction);
+		await new Promise((r) => setTimeout(r, 1000));
 
-		let consecutiveStarts = 0;
-		let maxConsecutiveStarts = 0;
-		for (const e of orchEvents) {
-			if (e.type === "orchestration_started") {
-				consecutiveStarts++;
-				maxConsecutiveStarts = Math.max(
-					maxConsecutiveStarts,
-					consecutiveStarts,
-				);
-			} else {
-				consecutiveStarts = 0;
-			}
-		}
+		// Check: only ONE orchestration_started after restart (no duplicate launch).
+		// Pre-crash orchestration_started has a different traceId from post-restart.
+		const rootEvents = await readSessionEvents(ctx, rootNodeId);
+		const startTraceIds = rootEvents
+			.filter((e) => e.type === "orchestration_started")
+			.map((e) => (e as Event & { traceId?: string }).traceId)
+			.filter(Boolean);
 
-		// Should never have 2+ consecutive starts (duplicate launch)
-		expect(maxConsecutiveStarts).toBeLessThanOrEqual(1);
+		// Should have 2 orchestration_started: one pre-crash, one post-restart
+		expect(startTraceIds.length).toBe(2);
+		// Each should have a unique traceId (different loop instances, not duplicate)
+		expect(new Set(startTraceIds).size).toBe(2);
 	}, 30000);
 });
 
