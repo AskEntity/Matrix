@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Event } from "./events.ts";
 import { TaskTracker } from "./task-tracker.ts";
 import type { TaskNode } from "./types.ts";
 
@@ -396,7 +395,7 @@ describe("TaskTracker", () => {
 		const tracker2 = new TaskTracker(join(tempDir, "tree.json"));
 		await tracker2.load();
 		// persistent field should be stripped — not present on TaskNode
-		const loaded = tracker2.get(task1.id) as Record<string, unknown>;
+		const loaded = tracker2.get(task1.id) as unknown as Record<string, unknown>;
 		expect(loaded.persistent).toBeUndefined();
 	});
 
