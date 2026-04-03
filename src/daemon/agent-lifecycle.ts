@@ -193,6 +193,11 @@ async function createAgentContext(
 					})),
 				getProject: (id) => ctx.pm.get(id),
 				getTracker: (projectId) => ctx.trackers.get(projectId),
+				stopTask: (nodeId) => stopTask(ctx, project.id, nodeId),
+				awaitLoopExit: async (nodeId) => {
+					const promise = ctx.agentLoopPromises.get(nodeId);
+					if (promise) await promise;
+				},
 			},
 			project.id,
 			opts.currentTaskId,
@@ -372,11 +377,29 @@ export async function stopTask(
 
 	if (!node.session) return false;
 
+	// Grab the loop promise BEFORE clearing session — once session is gone,
+	// the loop's finally block will fire and resolve this promise.
+	const loopPromise = ctx.agentLoopPromises.get(nodeId);
+
+	// Resolve foreground executions (bash sleep etc.) so the loop can exit promptly.
+	for (const fg of node.session.foregroundExecutions.values()) {
+		fg.resolve();
+	}
+	node.session.foregroundExecutions.clear();
+
 	// Close queue, abort in-flight API calls, and clean up session
 	node.session.queue.close();
 	node.session.abortController.abort();
 	cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
 	node.session = undefined;
+
+	// Await loop exit — ensures finally block (agent_stopped, MCP disconnect,
+	// Phase 2 done) has completed before we return. Without this, callers
+	// (e.g., resetTask) that clear JSONL after stopTask would race with the
+	// loop's async cleanup writing events to the deleted JSONL.
+	if (loopPromise) {
+		await loopPromise;
+	}
 
 	await tracker.save();
 	broadcastTreeUpdate(ctx, projectId, tracker);
@@ -605,6 +628,14 @@ export async function runAgentForNode(
 		return;
 	}
 	ctx.launchingNodes.add(nodeId);
+
+	// Track loop promise so stopTask/resetTask can await loop exit.
+	// Resolved in finally block after ALL cleanup (including Phase 2) completes.
+	let resolveLoopPromise: (() => void) | undefined;
+	const loopPromise = new Promise<void>((resolve) => {
+		resolveLoopPromise = resolve;
+	});
+	ctx.agentLoopPromises.set(nodeId, loopPromise);
 
 	const mcpManager = new McpClientManager();
 	let ownSession: TaskSession | undefined;
@@ -990,6 +1021,10 @@ export async function runAgentForNode(
 			}
 		}
 	}
+
+	// Resolve loop promise so stopTask/resetTask can detect loop exit.
+	ctx.agentLoopPromises.delete(nodeId);
+	resolveLoopPromise?.();
 }
 
 // --- Shared handlers (used by REST routes) ---

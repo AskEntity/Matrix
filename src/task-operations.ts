@@ -295,6 +295,19 @@ export async function resetTaskOp(
 		broadcastTree: () => void;
 		removeWorktree: (taskId: string, slug: string) => Promise<void>;
 		clearEventStore: (nodeId: string) => void;
+		/**
+		 * Stop a running agent and await its loop exit.
+		 * Must wait for the agent loop's finally block to complete before returning.
+		 * Without this, the agent's async cleanup can write events AFTER JSONL is cleared.
+		 */
+		stopTask?: (nodeId: string) => Promise<void>;
+		/**
+		 * Await agent loop exit even when session is not yet set.
+		 * Covers the launchingNodes gap: runAgentForNode is running
+		 * (worktree creation, MCP connect) but session hasn't been set yet.
+		 * Without this, clearEventStore races with the loop's setup writes.
+		 */
+		awaitLoopExit?: (nodeId: string) => Promise<void>;
 	},
 ): Promise<{ taskId: string; title: string }> {
 	const node = tracker.get(nodeId);
@@ -302,11 +315,24 @@ export async function resetTaskOp(
 	if (isFolder(node))
 		throw new TaskOperationError(`Cannot reset a folder: ${nodeId}`);
 
-	// Close running agent if active
+	// Stop running agent and await loop exit BEFORE clearing JSONL.
+	// The agent loop's finally block may write events (agent_stopped, etc.).
+	// We must wait for it to complete so those writes happen BEFORE we clear.
 	if (node.session?.queue) {
-		const queue = node.session.queue;
-		node.session = undefined;
-		queue.close();
+		if (callbacks.stopTask) {
+			// Daemon path: stop + await loop exit (writes settle before clear)
+			await callbacks.stopTask(node.id);
+		} else {
+			// Test/fallback path: just close queue + clear session
+			const queue = node.session.queue;
+			node.session = undefined;
+			queue.close();
+		}
+	} else if (callbacks.awaitLoopExit) {
+		// No session yet — agent may be in launchingNodes state (still creating
+		// worktree, connecting MCP). The loop promise exists but session doesn't.
+		// Await loop exit so its writes complete BEFORE we clear JSONL.
+		await callbacks.awaitLoopExit(node.id);
 	}
 
 	// Clean up worktree + branch if they exist
@@ -320,7 +346,7 @@ export async function resetTaskOp(
 		node.branch = null;
 	}
 
-	// Delete event JSONL files
+	// Delete event JSONL files — safe now because agent loop has fully exited
 	callbacks.clearEventStore(node.id);
 
 	tracker.updateStatus(node.id, "pending");

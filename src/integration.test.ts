@@ -9828,3 +9828,613 @@ describe("Integration: traceId injection", () => {
 		}
 	}, 30000);
 });
+
+// ── resetTask: JSONL race condition tests ──
+
+describe("Integration: resetTask JSONL cleanup race", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("reset running agent: JSONL stays deleted (no reappearance from async cleanup)", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Starting." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+		if (!eventStore) throw new Error("EventStore not found");
+
+		expect(eventStore.has(rootNodeId)).toBe(true);
+
+		const stopResp = await ctx.app.app.request(
+			`/projects/${ctx.projectId}/tasks/${rootNodeId}/stop`,
+			{ method: "POST" },
+		);
+		expect(stopResp.status).toBe(200);
+
+		eventStore.clear(rootNodeId);
+		expect(eventStore.has(rootNodeId)).toBe(false);
+
+		await new Promise((r) => setTimeout(r, 500));
+		expect(eventStore.has(rootNodeId)).toBe(false);
+	}, 15000);
+
+	test("reset running agent during bash: JSONL stays deleted", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Running command." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__bash",
+					input: { command: "sleep 30" },
+				},
+			],
+		});
+		await startAgent(ctx, instruction);
+
+		const start = Date.now();
+		while (ctx.mockAPI.getRequestCount() < 1 && Date.now() - start < 5000) {
+			await new Promise((r) => setTimeout(r, 50));
+		}
+		await new Promise((r) => setTimeout(r, 200));
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+		if (!eventStore) throw new Error("EventStore not found");
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		expect(tracker.getTask(rootNodeId)?.session).toBeTruthy();
+		expect(eventStore.has(rootNodeId)).toBe(true);
+
+		const { stopTask: stopTaskFn } = await import(
+			"./daemon/agent-lifecycle.ts"
+		);
+		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
+
+		eventStore.clear(rootNodeId);
+		expect(eventStore.has(rootNodeId)).toBe(false);
+
+		await new Promise((r) => setTimeout(r, 500));
+		expect(eventStore.has(rootNodeId)).toBe(false);
+	}, 15000);
+
+	test("reset already-stopped agent: JSONL is cleanly deleted", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Done." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "trivial" },
+				},
+			],
+		});
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+		await new Promise((r) => setTimeout(r, 300));
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+		if (!eventStore) throw new Error("EventStore not found");
+
+		expect(tracker.getTask(rootNodeId)?.session).toBeUndefined();
+		expect(eventStore.has(rootNodeId)).toBe(true);
+
+		eventStore.clear(rootNodeId);
+		expect(eventStore.has(rootNodeId)).toBe(false);
+
+		await new Promise((r) => setTimeout(r, 300));
+		expect(eventStore.has(rootNodeId)).toBe(false);
+	}, 15000);
+
+	test("agentLoopPromises is cleaned up after loop exits", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Done." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "cleanup test" },
+				},
+			],
+		});
+		await startAgent(ctx, instruction);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+		await new Promise((r) => setTimeout(r, 300));
+
+		const rootNodeId = await getRootNodeId(ctx);
+		expect(ctx.app.ctx.agentLoopPromises.has(rootNodeId)).toBe(false);
+	}, 15000);
+
+	test("stopTask emits agent_stopped AFTER loop exit — generation guard prevents JSONL reappearance", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Yielding." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+		if (!eventStore) throw new Error("EventStore not found");
+
+		const { stopTask: stopTaskFn } = await import(
+			"./daemon/agent-lifecycle.ts"
+		);
+		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
+
+		// Clear IMMEDIATELY after stopTask — race window for agent_stopped async write
+		eventStore.clear(rootNodeId);
+		expect(eventStore.has(rootNodeId)).toBe(false);
+
+		await eventStore.flush();
+		expect(eventStore.has(rootNodeId)).toBe(false);
+	}, 15000);
+
+	test("multiple rapid emitEvents before clear — all dropped by generation guard", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Starting." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+		if (!eventStore) throw new Error("EventStore not found");
+
+		const { stopTask: stopTaskFn } = await import(
+			"./daemon/agent-lifecycle.ts"
+		);
+		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
+
+		const { emitEvent } = await import("./daemon/event-system.ts");
+		emitEvent(ctx.app.ctx, ctx.projectId, {
+			type: "error",
+			taskId: rootNodeId,
+			message: "stale 1",
+			ts: Date.now(),
+		});
+		emitEvent(ctx.app.ctx, ctx.projectId, {
+			type: "error",
+			taskId: rootNodeId,
+			message: "stale 2",
+			ts: Date.now(),
+		});
+		emitEvent(ctx.app.ctx, ctx.projectId, {
+			type: "agent_stopped",
+			taskId: rootNodeId,
+			ts: Date.now(),
+		});
+
+		eventStore.clear(rootNodeId);
+		await eventStore.flush();
+		expect(eventStore.has(rootNodeId)).toBe(false);
+	}, 15000);
+
+	test("reset then immediately start new agent — new JSONL contains only new events", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const instruction1 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "First run." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+		await startAgent(ctx, instruction1);
+		await waitForIdle(ctx);
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+		if (!eventStore) throw new Error("EventStore not found");
+
+		const { stopTask: stopTaskFn } = await import(
+			"./daemon/agent-lifecycle.ts"
+		);
+		await stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId);
+		eventStore.clear(rootNodeId);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		tracker.updateStatus(rootNodeId, "pending");
+		await tracker.save();
+
+		ctx.mockAPI.reset();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const instruction2 = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Second run." },
+				{
+					type: "tool_use",
+					name: "mcp__mxd__done",
+					input: { status: "passed", summary: "second run" },
+				},
+			],
+		});
+		await startAgent(ctx, instruction2);
+		const status = await waitForDone(ctx);
+		expect(status).toBe("verify");
+		await new Promise((r) => setTimeout(r, 300));
+
+		await eventStore.flushSession(rootNodeId);
+		const events = eventStore.read(rootNodeId);
+		const orchs = events.filter((e) => e.type === "orchestration_started");
+		expect(orchs).toHaveLength(1);
+		expect((orchs[0] as Record<string, unknown>).resume).toBe(false);
+	}, 15000);
+
+	test("concurrent stop + clear on same node — no crash, JSONL stays gone", async () => {
+		ctx = await setupTestContext();
+
+		const instruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Yielding." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+		await startAgent(ctx, instruction);
+		await waitForIdle(ctx);
+
+		const rootNodeId = await getRootNodeId(ctx);
+		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+		if (!eventStore) throw new Error("EventStore not found");
+
+		const { stopTask: stopTaskFn } = await import(
+			"./daemon/agent-lifecycle.ts"
+		);
+		const [result1, result2] = await Promise.all([
+			stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId),
+			stopTaskFn(ctx.app.ctx, ctx.projectId, rootNodeId),
+		]);
+		expect([result1, result2].filter(Boolean)).toHaveLength(1);
+
+		eventStore.clear(rootNodeId);
+		await eventStore.flush();
+		expect(eventStore.has(rootNodeId)).toBe(false);
+	}, 15000);
+
+	test("parent creates child → child yields → parent resets child → child JSONL gone", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const childInstruction = JSON.stringify({
+			blocks: [
+				{ type: "text", text: "Child working." },
+				{ type: "tool_use", name: "mcp__mxd__yield", input: {} },
+			],
+		});
+
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Resettable Child",
+								description: "A child to be reset",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: { childId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Waiting for child to start." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "sleep 2" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__reset_task",
+							input: { taskId: "$childId" },
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							contains: '"reset": true',
+							isError: false,
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "reset child successfully" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, parentInstruction);
+		const status = await waitForDone(ctx, 30000);
+		expect(status).toBe("verify");
+		await new Promise((r) => setTimeout(r, 300));
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNode = tracker.getTask(tracker.rootNodeId);
+		const childId = rootNode?.children?.[0] as string;
+		const childNode = tracker.getTask(childId);
+		expect(childNode?.status).toBe("pending");
+		expect(childNode?.session).toBeUndefined();
+
+		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+		if (!eventStore) throw new Error("EventStore not found");
+		await eventStore.flush();
+		expect(eventStore.has(childId)).toBe(false);
+	}, 45000);
+
+	test("parent resets running child via REST, then child JSONL stays clean for fork", async () => {
+		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
+
+		const childInstruction = JSON.stringify({
+			blocks: [{ type: "tool_use", name: "mcp__mxd__yield", input: {} }],
+		});
+
+		const parentInstruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__create_task",
+							input: {
+								title: "Child To Reset",
+								description: "Will be externally reset",
+							},
+						},
+					],
+				},
+				{
+					assert: [
+						{
+							block: 0,
+							type: "tool_result",
+							isError: false,
+							capture: { childId: 'regex:"id":\\s*"([A-Z0-9]+)"' },
+						},
+					],
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__send_message",
+							input: {
+								taskId: "$childId",
+								title: "Start",
+								message: childInstruction,
+							},
+						},
+					],
+				},
+				{ blocks: [{ type: "tool_use", name: "mcp__mxd__yield", input: {} }] },
+				{
+					blocks: [
+						{
+							type: "tool_use",
+							name: "mcp__mxd__done",
+							input: { status: "passed", summary: "parent done" },
+						},
+					],
+				},
+			],
+		});
+
+		await startAgent(ctx, parentInstruction);
+		await waitForIdle(ctx);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		const rootNode = tracker.getTask(rootNodeId);
+		const childId = rootNode?.children?.[0] as string;
+		expect(childId).toBeTruthy();
+
+		// Wait for child to yield
+		const start = Date.now();
+		while (Date.now() - start < 10000) {
+			const child = tracker.getTask(childId);
+			if (child?.session?.queue?.idle) break;
+			await new Promise((r) => setTimeout(r, 100));
+		}
+
+		const eventStore = ctx.app.ctx.eventStores.get(ctx.projectId);
+		if (!eventStore) throw new Error("EventStore not found");
+		await eventStore.flushSession(childId);
+		expect(eventStore.has(childId)).toBe(true);
+
+		const { stopTask: stopTaskFn } = await import(
+			"./daemon/agent-lifecycle.ts"
+		);
+		await stopTaskFn(ctx.app.ctx, ctx.projectId, childId);
+		eventStore.clear(childId);
+
+		await eventStore.flush();
+		await new Promise((r) => setTimeout(r, 300));
+		expect(eventStore.has(childId)).toBe(false);
+
+		// Wake parent
+		const { createTaskComplete } = await import("./queue-message-factory.ts");
+		const { deliverMessage } = await import("./daemon/agent-lifecycle.ts");
+		const project = ctx.app.ctx.pm.get(ctx.projectId);
+		if (project) {
+			const fakeComplete = createTaskComplete(
+				childId,
+				"Child To Reset",
+				true,
+				"externally reset",
+			);
+			await deliverMessage(ctx.app.ctx, project, rootNodeId, fakeComplete);
+		}
+
+		const status = await waitForDone(ctx, 15000);
+		expect(status).toBe("verify");
+	}, 30000);
+
+	test("launchingNodes gap WITHOUT fix: clear without await → JSONL reappears", async () => {
+		// Proves the gap exists: if we clear without awaiting the loop promise,
+		// the simulated loop writes AFTER clear and JSONL reappears.
+		ctx = await setupTestContext();
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const child = tracker.addChild(tracker.rootNodeId, "Launching Child", "", {
+			editedBy: "user",
+		});
+		await tracker.save();
+
+		const { getEventStore } = await import("./daemon/helpers.ts");
+		const eventStore = getEventStore(ctx.app.ctx, ctx.projectId);
+
+		ctx.app.ctx.launchingNodes.add(child.id);
+		let resolveLoop: (() => void) | undefined;
+		const loopPromise = new Promise<void>((resolve) => {
+			resolveLoop = resolve;
+		});
+		ctx.app.ctx.agentLoopPromises.set(child.id, loopPromise);
+
+		const simulatedLoop = (async () => {
+			await new Promise((r) => setTimeout(r, 100));
+			await eventStore.append(child.id, {
+				type: "orchestration_started" as const,
+				taskId: child.id,
+				ts: Date.now(),
+				resume: false,
+				provider: "test",
+				model: "test",
+			});
+			ctx.app.ctx.launchingNodes.delete(child.id);
+			ctx.app.ctx.agentLoopPromises.delete(child.id);
+			resolveLoop?.();
+		})();
+
+		// BUG PATH: session is null, no awaitLoopExit → clear immediately
+		eventStore.clear(child.id);
+
+		await simulatedLoop;
+		await eventStore.flush();
+
+		// JSONL reappears — writes happened after clear
+		expect(eventStore.has(child.id)).toBe(true);
+
+		// Clean up
+		eventStore.clear(child.id);
+	}, 15000);
+
+	test("launchingNodes gap WITH fix: awaitLoopExit before clear → JSONL stays gone", async () => {
+		// Proves the fix works: await loopPromise before clear,
+		// loop writes complete first, then clear deletes everything.
+		ctx = await setupTestContext();
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const child = tracker.addChild(
+			tracker.rootNodeId,
+			"Launching Child 2",
+			"",
+			{
+				editedBy: "user",
+			},
+		);
+		await tracker.save();
+
+		const { getEventStore } = await import("./daemon/helpers.ts");
+		const eventStore = getEventStore(ctx.app.ctx, ctx.projectId);
+
+		ctx.app.ctx.launchingNodes.add(child.id);
+		let resolveLoop: (() => void) | undefined;
+		const loopPromise = new Promise<void>((resolve) => {
+			resolveLoop = resolve;
+		});
+		ctx.app.ctx.agentLoopPromises.set(child.id, loopPromise);
+
+		const simulatedLoop = (async () => {
+			await new Promise((r) => setTimeout(r, 100));
+			await eventStore.append(child.id, {
+				type: "orchestration_started" as const,
+				taskId: child.id,
+				ts: Date.now(),
+				resume: false,
+				provider: "test",
+				model: "test",
+			});
+			ctx.app.ctx.launchingNodes.delete(child.id);
+			ctx.app.ctx.agentLoopPromises.delete(child.id);
+			resolveLoop?.();
+		})();
+
+		// FIX PATH: await loop exit before clearing (what resetTaskOp now does)
+		const promise = ctx.app.ctx.agentLoopPromises.get(child.id);
+		if (promise) await promise;
+
+		// Also await simulatedLoop to ensure all internal writes flushed
+		await simulatedLoop;
+		eventStore.clear(child.id);
+		await eventStore.flush();
+
+		// JSONL stays gone — loop finished before clear
+		expect(eventStore.has(child.id)).toBe(false);
+	}, 15000);
+});
