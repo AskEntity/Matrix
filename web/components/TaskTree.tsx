@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, useRef, useState } from "react";
 import type { TaskStatus } from "../../src/types.ts";
-import { isTask, type TreeNode } from "../hooks.ts";
+import { isFolder, isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconChevron, IconEyeOff, IconHexagon, IconTrash } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
@@ -15,17 +15,38 @@ const STATUS_PRIORITY: Record<TaskStatus, number> = {
 	closed: 5,
 };
 
-/** Sort by status priority; within each status group, newest first. Folders sort after drafts. */
+/** Sort by status priority; within each status group, newest first. Folders keep original position. */
 function sortByStatus(nodes: TreeNode[]): TreeNode[] {
-	const indexMap = new Map(nodes.map((n, i) => [n.id, i]));
-	return [...nodes].sort((a, b) => {
-		const aPriority = isTask(a) ? (STATUS_PRIORITY[a.status] ?? 9) : 3.5;
-		const bPriority = isTask(b) ? (STATUS_PRIORITY[b.status] ?? 9) : 3.5;
+	// Separate folders (keep original order) from tasks (sort by status)
+	const folders: { index: number; node: TreeNode }[] = [];
+	const tasks: TreeNode[] = [];
+	for (let i = 0; i < nodes.length; i++) {
+		const n = nodes[i];
+		if (!n) continue;
+		if (isFolder(n)) {
+			folders.push({ index: i, node: n });
+		} else {
+			tasks.push(n);
+		}
+	}
+
+	// Sort tasks by status priority, newest first within same status
+	const taskIndexMap = new Map(tasks.map((n, i) => [n.id, i]));
+	tasks.sort((a, b) => {
+		const aPriority = isTask(a) ? (STATUS_PRIORITY[a.status] ?? 9) : 9;
+		const bPriority = isTask(b) ? (STATUS_PRIORITY[b.status] ?? 9) : 9;
 		const statusDiff = aPriority - bPriority;
 		if (statusDiff !== 0) return statusDiff;
-		// Reverse original order within same status: higher original index = shown first
-		return (indexMap.get(b.id) ?? 0) - (indexMap.get(a.id) ?? 0);
+		return (taskIndexMap.get(b.id) ?? 0) - (taskIndexMap.get(a.id) ?? 0);
 	});
+
+	// Merge: insert folders back at their original positions
+	const result: TreeNode[] = [...tasks];
+	for (const f of folders) {
+		const insertAt = Math.min(f.index, result.length);
+		result.splice(insertAt, 0, f.node);
+	}
+	return result;
 }
 
 interface DragState {
