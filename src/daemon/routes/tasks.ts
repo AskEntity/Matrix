@@ -341,12 +341,11 @@ export function registerTaskRoutes(
 			const content = body.message
 				? body.message
 				: "Continue working. Pick up where you left off and complete the task.";
-			const parentNode = node.parentId
-				? tracker.getTask(node.parentId)
-				: undefined;
+			// Use getTaskAbove to skip folders — folders have no identity for messages
+			const taskAbove = tracker.getTaskAbove(nodeId);
 			const continueMsg = createTaskMessage(
-				parentNode?.id ?? "",
-				parentNode?.title ?? "User",
+				taskAbove?.id ?? "",
+				taskAbove?.title ?? "User",
 				content,
 				{ header },
 			);
@@ -370,10 +369,9 @@ export function registerTaskRoutes(
 			!node.worktreePath
 		) {
 			try {
-				const parentNode = node.parentId
-					? tracker.getTask(node.parentId)
-					: null;
-				const baseBranch = parentNode?.branch;
+				// Use getTaskAbove to skip folders — folders have no branch
+				const taskAboveForBranch = tracker.getTaskAbove(nodeId);
+				const baseBranch = taskAboveForBranch?.branch;
 				if (!baseBranch) {
 					return c.json(
 						{ error: "Cannot create worktree — parent has no branch assigned" },
@@ -400,12 +398,10 @@ export function registerTaskRoutes(
 				const updatedNode = tracker.getTask(nodeId);
 				const header = buildTaskPrompt(updatedNode ?? node, tracker, memory);
 				const content = body.message ?? "Start working on this task.";
-				const parentNode2 = node.parentId
-					? tracker.getTask(node.parentId)
-					: undefined;
+				const taskAbove2 = tracker.getTaskAbove(nodeId);
 				const continueMsg2 = createTaskMessage(
-					parentNode2?.id ?? "",
-					parentNode2?.title ?? "User",
+					taskAbove2?.id ?? "",
+					taskAbove2?.title ?? "User",
 					content,
 					{ header },
 				);
