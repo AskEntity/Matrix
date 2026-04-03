@@ -28,7 +28,7 @@ import {
 	cleanupSessionBackgroundProcesses,
 	createBuiltinTools,
 } from "../tools/index.ts";
-import type { AgentResult, TaskSession } from "../types.ts";
+import { isTask, type AgentResult, type TaskSession } from "../types.ts";
 import { WorktreeManager } from "../worktree-manager.ts";
 import type { DaemonContext } from "./context.ts";
 import {
@@ -187,7 +187,7 @@ async function createAgentContext(
 						path: p.path,
 						hasActiveAgent: (() => {
 							const t = ctx.trackers.get(p.id);
-							return t ? t.get(t.rootNodeId)?.session != null : false;
+							return t ? t.getTask(t.rootNodeId)?.session != null : false;
 						})(),
 					})),
 				getProject: (id) => ctx.pm.get(id),
@@ -309,7 +309,7 @@ export async function stopAgent(
 	if (!tracker) return;
 
 	const rootNodeId = tracker.rootNodeId;
-	const rootNode = tracker.get(rootNodeId);
+	const rootNode = tracker.getTask(rootNodeId);
 
 	// Check if root agent is actually running
 	if (!rootNode?.session) return;
@@ -317,7 +317,7 @@ export async function stopAgent(
 	// Stop ALL agents (root + children) via session on tracker nodes.
 	// Each node's session has its own queue + abort controller.
 	for (const node of tracker.allNodes()) {
-		if (node.session) {
+		if (isTask(node) && node.session) {
 			node.session.queue.close();
 			node.session.abortController.abort();
 			cleanupSessionBackgroundProcesses(node.session.backgroundProcesses);
@@ -366,7 +366,7 @@ export async function stopTask(
 	const tracker = ctx.trackers.get(projectId);
 	if (!tracker) return false;
 
-	const node = tracker.get(nodeId);
+	const node = tracker.getTask(nodeId);
 	if (!node) return false;
 
 	if (!node.session) return false;
@@ -446,7 +446,7 @@ export async function deliverMessage(
 	// Skip if launch lock is held — the agent is still reading JSONL events.
 	// Our message is already in JSONL (step 1) and will be recovered by findUnconsumedMessages.
 	if (!ctx.launchingNodes.has(nodeId)) {
-		const queue = tracker.get(nodeId)?.session?.queue;
+		const queue = tracker.getTask(nodeId)?.session?.queue;
 		if (queue) {
 			try {
 				queue.enqueue(message);
@@ -462,7 +462,7 @@ export async function deliverMessage(
 
 	// Step 4: Auto-launch (unless quiet).
 	if (!opts?.quiet) {
-		const node = tracker.get(nodeId);
+		const node = tracker.getTask(nodeId);
 		if (!node) {
 			// Unknown node — message persisted to JSONL but no launch
 		} else if (node.parentId) {
@@ -512,7 +512,7 @@ export async function ensureChildAgentRunning(
 	nodeId: string,
 	model?: string,
 ): Promise<void> {
-	const node = tracker.get(nodeId);
+	const node = tracker.getTask(nodeId);
 	if (!node) return;
 
 	// Guard: if agent is already running or being launched, do nothing.
@@ -528,7 +528,7 @@ export async function ensureChildAgentRunning(
 			node.worktreePath = null;
 			node.branch = null;
 		}
-		const parentNode = node.parentId ? tracker.get(node.parentId) : null;
+		const parentNode = node.parentId ? tracker.getTask(node.parentId) : null;
 		const baseBranch = parentNode?.branch;
 		if (!baseBranch) {
 			throw new Error(
@@ -561,10 +561,10 @@ export async function ensureChildAgentRunning(
 /** Compute the depth of a task in the tree by walking up the parentId chain. */
 function computeDepth(tracker: TaskTracker, nodeId: string): number {
 	let depth = 0;
-	let current = tracker.get(nodeId);
+	let current = tracker.getTask(nodeId);
 	while (current?.parentId) {
 		depth++;
-		current = tracker.get(current.parentId);
+		current = tracker.getTask(current.parentId);
 	}
 	return depth;
 }
@@ -591,7 +591,7 @@ export async function runAgentForNode(
 	nodeId: string,
 	opts?: RunAgentOpts,
 ): Promise<void> {
-	const node = tracker.get(nodeId);
+	const node = tracker.getTask(nodeId);
 	if (!node) return;
 	const isRoot = !node.parentId;
 	const agentCwd = isRoot ? project.path : (node.worktreePath as string);
@@ -629,7 +629,7 @@ export async function runAgentForNode(
 		ownSession = taskSession;
 
 		// getSession lookup: find session from tracker by sessionId
-		const getSession = (sid: string) => tracker.get(sid)?.session;
+		const getSession = (sid: string) => tracker.getTask(sid)?.session;
 
 		const agentCtx = await createAgentContext(ctx, project, {
 			tracker,
@@ -813,7 +813,7 @@ export async function runAgentForNode(
 		}
 
 		// Budget exceeded check
-		const updatedNode = tracker.get(nodeId);
+		const updatedNode = tracker.getTask(nodeId);
 		if (updatedNode?.budgetUsd && updatedNode.costUsd > updatedNode.budgetUsd) {
 			emitEvent(ctx, project.id, {
 				type: "budget_exceeded",
@@ -827,10 +827,10 @@ export async function runAgentForNode(
 
 		// Root agent: emit orchestration_completed with aggregated costs
 		if (isRoot) {
-			const currentNode = tracker.get(nodeId);
+			const currentNode = tracker.getTask(nodeId);
 			const didPass = currentNode?.status === "verify";
-			const allNodes = tracker.allNodes();
-			const childNodes = allNodes.filter(
+			const allTaskNodes = tracker.allNodes().filter(isTask);
+			const childNodes = allTaskNodes.filter(
 				(n) => n.id !== nodeId && n.costUsd > 0,
 			);
 			const childCostUsd = childNodes.reduce((sum, n) => sum + n.costUsd, 0);
@@ -859,7 +859,7 @@ export async function runAgentForNode(
 	} catch (e) {
 		// Check if our session was replaced (stopTask/stopAgent already cleaned up).
 		// If so, suppress error events — they'd be stale leaks from an old session.
-		const replacedNode = tracker.get(nodeId);
+		const replacedNode = tracker.getTask(nodeId);
 		const wasReplaced =
 			!replacedNode?.session || replacedNode.session !== ownSession;
 		if (!wasReplaced) {
@@ -884,7 +884,7 @@ export async function runAgentForNode(
 		// Clean up session: background processes + detach from node.
 		// Only clear if this is still OUR session — a replacement agent
 		// may have already set a new session on the node.
-		const finalNode = tracker.get(nodeId);
+		const finalNode = tracker.getTask(nodeId);
 		const sessionWasReplaced =
 			!finalNode?.session || finalNode.session !== ownSession;
 		if (finalNode?.session && finalNode.session === ownSession) {
@@ -919,7 +919,7 @@ export async function runAgentForNode(
 		(agentResult.exitReason === "done_passed" ||
 			agentResult.exitReason === "done_failed");
 	if (isDoneExit && agentResult) {
-		const currentNode = tracker.get(nodeId);
+		const currentNode = tracker.getTask(nodeId);
 		if (currentNode) {
 			// Check for late messages before committing Phase 2
 			const eventStore = getEventStore(ctx, project.id);
