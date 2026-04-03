@@ -37,6 +37,12 @@ export interface ToolDefinition<Schema extends ZodRawShape = ZodRawShape> {
 	) => Promise<CallToolResult>;
 	/** JSON Schema for the tool's input. All providers use this directly. */
 	jsonSchema: Record<string, unknown>;
+	/**
+	 * If true, the tool is registered in the handler map for execution but
+	 * NOT included in the tool definitions sent to the API. The model learns
+	 * about hidden tools from the system prompt, not from tool schemas.
+	 */
+	hidden?: boolean;
 }
 
 /** Convert a Zod raw shape to JSON Schema. */

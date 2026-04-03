@@ -122,6 +122,8 @@ interface AgentContextResult {
 	mcpToolDefs: Record<string, ToolDefinition<any>[]>;
 	hasRunningChildren?: () => boolean;
 	buildYieldPendingSection?: () => string;
+	/** Bind live messages[] from provider loop for evaluate_script (selfBootstrap). */
+	setMessages?: (msgs: unknown[]) => void;
 }
 
 /**
@@ -158,79 +160,84 @@ async function createAgentContext(
 		await mcpManager.connectAll(effectiveCfg.mcpServers, opts.projectPath);
 	}
 
-	const { toolDefs, hasRunningChildren, buildYieldPendingSection } =
-		createOrchestratorTools(
-			{
-				tracker: opts.tracker,
-				repoPath: project.path,
-				emit: (event) => {
-					const ts = (event.ts as number) || Date.now();
-					if (event.type === "agent_event") {
-						const evtTaskId = (event.taskId as string) || "";
-						const eventType = event.eventType as string;
-						const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
-						emitEvent(ctx, project.id, {
-							type: eventType,
-							taskId: evtTaskId,
-							ts,
-							...rest,
-						} as unknown as Event);
-					} else {
-						const withTs = event.ts ? event : { ...event, ts };
-						emitEvent(ctx, project.id, withTs as unknown as Event);
-					}
-				},
-				broadcastTree: () => broadcastTreeUpdate(ctx, project.id, opts.tracker),
-				clearEventStore: (sessionId) =>
-					getEventStore(ctx, project.id).clear(sessionId),
-				hasEventStore: (sessionId) =>
-					getEventStore(ctx, project.id).has(sessionId),
-				copySessionFrom: (sourceId, targetId, opts) =>
-					getEventStore(ctx, project.id).copySessionFrom(
-						sourceId,
-						targetId,
-						opts,
-					),
-				dataDir: ctx.config.dataDir,
-				getClarifyTimeoutMs: () => ctx.globalConfig?.clarifyTimeoutMs,
-				getDefaultBudgetUsd: () => ctx.globalConfig?.budgetUsd,
-				listProjects: () =>
-					ctx.pm.list().map((p) => ({
-						id: p.id,
-						name: p.name,
-						path: p.path,
-						hasActiveAgent: (() => {
-							const t = ctx.trackers.get(p.id);
-							return t ? t.get(t.rootNodeId)?.session != null : false;
-						})(),
-					})),
-				getProject: (id) => ctx.pm.get(id),
-				getTracker: (projectId) => ctx.trackers.get(projectId),
+	const {
+		toolDefs,
+		hasRunningChildren,
+		buildYieldPendingSection,
+		setMessages,
+	} = createOrchestratorTools(
+		{
+			tracker: opts.tracker,
+			repoPath: project.path,
+			emit: (event) => {
+				const ts = (event.ts as number) || Date.now();
+				if (event.type === "agent_event") {
+					const evtTaskId = (event.taskId as string) || "";
+					const eventType = event.eventType as string;
+					const { type: _t, taskId: _tid, eventType: _et, ...rest } = event;
+					emitEvent(ctx, project.id, {
+						type: eventType,
+						taskId: evtTaskId,
+						ts,
+						...rest,
+					} as unknown as Event);
+				} else {
+					const withTs = event.ts ? event : { ...event, ts };
+					emitEvent(ctx, project.id, withTs as unknown as Event);
+				}
 			},
-			project.id,
-			opts.currentTaskId,
-			{
-				deliverMessage: async (
-					nodeId: string,
-					message: QueueMessage,
-					opts?: { quiet?: boolean },
-				) => {
-					await deliverMessage(ctx, project, nodeId, message, opts);
-				},
-				injectMessageToProject:
-					opts.depth === 0 && opts.orchestratorSystemPrompt
-						? async (projectId: string, message: string) => {
-								return handleInjectMessage(
-									ctx,
-									projectId,
-									message,
-									undefined,
-									opts.orchestratorSystemPrompt,
-								);
-							}
-						: undefined,
+			broadcastTree: () => broadcastTreeUpdate(ctx, project.id, opts.tracker),
+			clearEventStore: (sessionId) =>
+				getEventStore(ctx, project.id).clear(sessionId),
+			hasEventStore: (sessionId) =>
+				getEventStore(ctx, project.id).has(sessionId),
+			copySessionFrom: (sourceId, targetId, opts) =>
+				getEventStore(ctx, project.id).copySessionFrom(
+					sourceId,
+					targetId,
+					opts,
+				),
+			dataDir: ctx.config.dataDir,
+			getClarifyTimeoutMs: () => ctx.globalConfig?.clarifyTimeoutMs,
+			getDefaultBudgetUsd: () => ctx.globalConfig?.budgetUsd,
+			listProjects: () =>
+				ctx.pm.list().map((p) => ({
+					id: p.id,
+					name: p.name,
+					path: p.path,
+					hasActiveAgent: (() => {
+						const t = ctx.trackers.get(p.id);
+						return t ? t.get(t.rootNodeId)?.session != null : false;
+					})(),
+				})),
+			getProject: (id) => ctx.pm.get(id),
+			getTracker: (projectId) => ctx.trackers.get(projectId),
+		},
+		project.id,
+		opts.currentTaskId,
+		{
+			deliverMessage: async (
+				nodeId: string,
+				message: QueueMessage,
+				opts?: { quiet?: boolean },
+			) => {
+				await deliverMessage(ctx, project, nodeId, message, opts);
 			},
-		);
+			injectMessageToProject:
+				opts.depth === 0 && opts.orchestratorSystemPrompt
+					? async (projectId: string, message: string) => {
+							return handleInjectMessage(
+								ctx,
+								projectId,
+								message,
+								undefined,
+								opts.orchestratorSystemPrompt,
+							);
+						}
+					: undefined,
+		},
+		effectiveCfg.selfBootstrap,
+	);
 
 	// Create built-in tools with handler closures that read session state
 	const builtinTools = createBuiltinTools(
@@ -253,6 +260,7 @@ async function createAgentContext(
 		mcpToolDefs,
 		hasRunningChildren,
 		buildYieldPendingSection,
+		setMessages,
 	};
 }
 
@@ -798,6 +806,7 @@ export async function runAgentForNode(
 			buildYieldPendingSection: agentCtx.buildYieldPendingSection,
 			getSession,
 			cacheTtl: effectiveCacheTtl,
+			setMessages: agentCtx.setMessages,
 
 			signal: abortController.signal,
 			queue: childQueue,

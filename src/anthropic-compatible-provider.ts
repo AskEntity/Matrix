@@ -372,11 +372,15 @@ function createAnthropicAdapter(
 					for (const def of defs) {
 						const toolName = `mcp__${serverName}__${def.name}`;
 						mcpHandlers.set(toolName, def);
-						allTools.push({
-							name: toolName,
-							description: def.description,
-							input_schema: def.jsonSchema as Tool["input_schema"],
-						});
+						// Hidden tools are registered for execution but not sent to the API.
+						// The model learns about them from the system prompt.
+						if (!def.hidden) {
+							allTools.push({
+								name: toolName,
+								description: def.description,
+								input_schema: def.jsonSchema as Tool["input_schema"],
+							});
+						}
 					}
 				}
 			}

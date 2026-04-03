@@ -753,13 +753,16 @@ function createOpenAIResponsesAdapter(
 					for (const def of defs) {
 						const toolName = `mcp__${serverName}__${def.name}`;
 						mcpHandlers.set(toolName, def);
-						allTools.push({
-							type: "function",
-							name: toolName,
-							description: def.description,
-							strict: false,
-							parameters: def.jsonSchema,
-						});
+						// Hidden tools are registered for execution but not sent to the API.
+						if (!def.hidden) {
+							allTools.push({
+								type: "function",
+								name: toolName,
+								description: def.description,
+								strict: false,
+								parameters: def.jsonSchema,
+							});
+						}
 					}
 				}
 			}
