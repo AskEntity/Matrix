@@ -9475,3 +9475,91 @@ describe("Integration: two-phase done() gap tests", () => {
 		expect(doneNotified).toBeTruthy();
 	}, 30000);
 });
+
+describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
+	let ctx: TestContext;
+
+	afterEach(async () => {
+		if (ctx) await teardownTestContext(ctx);
+	});
+
+	test("autoResumeProjects does not produce duplicate orchestration_started", async () => {
+		ctx = await setupTestContext();
+
+		// Turn 1: agent does bash then yields
+		const instruction = JSON.stringify({
+			turns: [
+				{
+					blocks: [
+						{ type: "text", text: "Working..." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__bash",
+							input: { command: "echo hello" },
+						},
+					],
+				},
+				{
+					blocks: [
+						{ type: "text", text: "Yielding." },
+						{
+							type: "tool_use",
+							name: "mcp__mxd__yield",
+							input: {},
+						},
+					],
+				},
+			],
+		});
+
+		const resp = await startAgent(ctx, instruction);
+		expect(resp.status).toBe(200);
+
+		const tracker = await ctx.app.getTracker(ctx.projectId);
+		const rootNodeId = tracker.rootNodeId;
+		await waitForIdle(ctx, rootNodeId);
+
+		// === RESTART ===
+		ctx.app = await recreateApp(ctx);
+
+		// Post-restart: agent resumes from yield, gets message, yields again
+		ctx.mockAPI.addTurn(
+			rootNodeId,
+			JSON.stringify({
+				blocks: [
+					{ type: "text", text: "Resumed." },
+					{
+						type: "tool_use",
+						name: "mcp__mxd__yield",
+						input: {},
+					},
+				],
+			}),
+		);
+
+		await ctx.app.autoResumeProjects();
+		await new Promise((r) => setTimeout(r, 500));
+
+		// Check JSONL: no consecutive orchestration_started without completed
+		const events = await readSessionEvents(ctx, rootNodeId);
+		const orchEvents = events.filter(
+			(e) =>
+				e.type === "orchestration_started" ||
+				e.type === "orchestration_completed",
+		);
+
+		let consecutiveStarts = 0;
+		let maxConsecutiveStarts = 0;
+		for (const e of orchEvents) {
+			if (e.type === "orchestration_started") {
+				consecutiveStarts++;
+				maxConsecutiveStarts = Math.max(maxConsecutiveStarts, consecutiveStarts);
+			} else {
+				consecutiveStarts = 0;
+			}
+		}
+
+		// Should never have 2+ consecutive starts (duplicate launch)
+		expect(maxConsecutiveStarts).toBeLessThanOrEqual(1);
+	}, 30000);
+});
