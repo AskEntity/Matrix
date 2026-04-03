@@ -11,19 +11,19 @@ import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import {
 	IconArrowDown,
 	IconBack,
-	IconChevron,
+	IconClose,
 	IconExpand,
 	IconGear,
 	IconHexagon,
 	IconMinimize,
 	IconPlus,
 	IconRefresh,
-	IconSidebarLeft,
 } from "./components/icons.tsx";
 import { LoginPage } from "./components/LoginPage.tsx";
 import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
 import { RelocateBanner } from "./components/RelocateBanner.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
+import { statusDotClass } from "./components/StatusBadge.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
 import { TaskTree } from "./components/TaskTree.tsx";
 import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
@@ -177,12 +177,22 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		return stored ? Number(stored) : 288;
 	});
 	const [isSidebarDragging, setIsSidebarDragging] = useState(false);
-	const [splitRatio, setSplitRatio] = useState(0.35);
-	const [isDragging, setIsDragging] = useState(false);
-	const [autoScroll, setAutoScroll] = useState(true);
-	const [detailCollapsed, setDetailCollapsed] = useState(
-		() => localStorage.getItem("mxd-detail-collapsed") === "true",
+	const [openTabs, setOpenTabs] = useState<string[]>(() => {
+		try {
+			const stored = localStorage.getItem("mxd-open-tabs");
+			if (stored) {
+				const parsed = JSON.parse(stored);
+				if (Array.isArray(parsed)) return parsed;
+			}
+		} catch {
+			/* ignore */
+		}
+		return [];
+	});
+	const [viewMode, setViewMode] = useState<"activity" | "description">(
+		"activity",
 	);
+	const [autoScroll, setAutoScroll] = useState(true);
 	const [fullscreen, setFullscreen] = useState(false);
 	const [theme, setThemeState] = useState<
 		"dark" | "light" | "cute-light" | "cute-dark"
@@ -236,7 +246,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		Map<string, { hasOlder: boolean; oldestTs: number }>
 	>(() => new Map());
 	const [loadingOlderEvents, setLoadingOlderEvents] = useState(false);
-	const contentPanelRef = useRef<HTMLElement>(null);
 
 	// The currently viewed session = selectedTaskId ?? rootNodeId.
 	// Kept as a ref so callbacks (handleReconnect) don't need to re-create on every selection change.
@@ -336,32 +345,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		else document.title = `${base} [${passed}/${total}]`;
 	}, [nodes, rootNodeId, projects, projectId]);
 
-	const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
-		e.preventDefault();
-		setIsDragging(true);
-	}, []);
-
-	useEffect(() => {
-		if (!isDragging) return;
-		const handleMouseMove = (e: MouseEvent) => {
-			const panel = contentPanelRef.current;
-			if (!panel) return;
-			const rect = panel.getBoundingClientRect();
-			const ratio = Math.min(
-				0.85,
-				Math.max(0.1, (e.clientY - rect.top) / rect.height),
-			);
-			setSplitRatio(ratio);
-		};
-		const handleMouseUp = () => setIsDragging(false);
-		document.addEventListener("mousemove", handleMouseMove);
-		document.addEventListener("mouseup", handleMouseUp);
-		return () => {
-			document.removeEventListener("mousemove", handleMouseMove);
-			document.removeEventListener("mouseup", handleMouseUp);
-		};
-	}, [isDragging]);
-
 	// ── Sidebar resize ───────────────────────────────────────────────────
 
 	const handleSidebarResizeStart = useCallback((e: React.MouseEvent) => {
@@ -371,14 +354,35 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 	useEffect(() => {
 		if (!isSidebarDragging) return;
+		const SNAP_CLOSE_THRESHOLD = 100;
+		const MIN_OPEN_WIDTH = 180;
+		const MAX_WIDTH = 600;
 		const handleMouseMove = (e: MouseEvent) => {
-			const width = Math.min(600, Math.max(180, e.clientX));
-			setSidebarWidth(width);
+			if (e.clientX < SNAP_CLOSE_THRESHOLD) {
+				// Snap closed — show at 0 width during drag
+				setSidebarWidth(0);
+			} else {
+				setSidebarWidth(
+					Math.min(MAX_WIDTH, Math.max(MIN_OPEN_WIDTH, e.clientX)),
+				);
+			}
 		};
 		const handleMouseUp = (e: MouseEvent) => {
 			setIsSidebarDragging(false);
-			const finalWidth = Math.min(600, Math.max(180, e.clientX));
-			localStorage.setItem("mxd-sidebar-width", String(finalWidth));
+			if (e.clientX < SNAP_CLOSE_THRESHOLD) {
+				// Snap to collapsed
+				setSidebarCollapsed(true);
+				localStorage.setItem("mxd-sidebar-collapsed", "true");
+			} else {
+				const finalWidth = Math.min(
+					MAX_WIDTH,
+					Math.max(MIN_OPEN_WIDTH, e.clientX),
+				);
+				setSidebarWidth(finalWidth);
+				setSidebarCollapsed(false);
+				localStorage.setItem("mxd-sidebar-collapsed", "false");
+				localStorage.setItem("mxd-sidebar-width", String(finalWidth));
+			}
 		};
 		document.addEventListener("mousemove", handleMouseMove);
 		document.addEventListener("mouseup", handleMouseUp);
@@ -639,9 +643,20 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		setTargetNodeId(selectedTaskId);
 	}, [selectedTaskId, rootNodeId]);
 
+	// Clean up stale tabs (nodes that were deleted)
+	useEffect(() => {
+		if (openTabs.length === 0) return;
+		const validTabs = openTabs.filter((id) => nodeMap.has(id));
+		if (validTabs.length !== openTabs.length) {
+			setOpenTabs(validTabs);
+			localStorage.setItem("mxd-open-tabs", JSON.stringify(validTabs));
+		}
+	}, [openTabs, nodeMap]);
+
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only trigger on task selection change
 	useEffect(() => {
 		setAutoScroll(true);
+		setViewMode("activity");
 		requestAnimationFrame(() => {
 			const logEl = document.querySelector(".mxd-activity-log");
 			if (logEl) logEl.scrollTop = logEl.scrollHeight;
@@ -747,6 +762,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			setProjectId(id);
 			setSelectedTaskId(null);
 			setRootNodeId(null);
+			setOpenTabs([]);
+			localStorage.setItem("mxd-open-tabs", "[]");
 			setLogs([]);
 			setTokenUsage({});
 			setPendingMessages([]);
@@ -782,10 +799,45 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 	const handleToggleSidebar = useCallback(() => setSidebarOpen((s) => !s), []);
 
-	const handleTaskSelect = useCallback((id: string | null) => {
+	const handleTaskSelect = useCallback(
+		(id: string | null) => {
+			setSelectedTaskId(id);
+			setSidebarOpen(false);
+			// Add to open tabs if it's a non-root task and not already open
+			if (id && id !== rootNodeId) {
+				setOpenTabs((prev) => {
+					if (prev.includes(id)) return prev;
+					const next = [...prev, id];
+					localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
+					return next;
+				});
+			}
+		},
+		[rootNodeId],
+	);
+
+	const handleTabSelect = useCallback((id: string | null) => {
 		setSelectedTaskId(id);
-		setSidebarOpen(false);
 	}, []);
+
+	const handleTabClose = useCallback(
+		(id: string, e?: React.MouseEvent) => {
+			e?.stopPropagation();
+			setOpenTabs((prev) => {
+				const next = prev.filter((t) => t !== id);
+				localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
+				// If closing the active tab, select the nearest remaining tab or orchestrator
+				if (selectedTaskId === id) {
+					const closedIndex = prev.indexOf(id);
+					const newActive =
+						next[Math.min(closedIndex, next.length - 1)] ?? rootNodeId;
+					setSelectedTaskId(newActive);
+				}
+				return next;
+			});
+		},
+		[selectedTaskId, rootNodeId],
+	);
 
 	const handleClearTarget = useCallback(() => {
 		setTargetNodeId(null);
@@ -1001,14 +1053,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									<IconGear size={13} />
 								</button>
 							)}
-							<button
-								type="button"
-								className="mxd-btn-icon mxd-sidebar-collapse-btn"
-								onClick={handleToggleSidebarCollapse}
-								data-tip={t("sidebar.collapse")}
-							>
-								<IconSidebarLeft size={13} />
-							</button>
 						</div>
 					</div>
 					<TaskTree
@@ -1025,220 +1069,214 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					/>
 				</aside>
 
-				{/* Sidebar resize handle — desktop only, hidden when collapsed */}
-				{!sidebarCollapsed && (
-					/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */
-					<div
-						className="mxd-sidebar-resize-handle"
-						onMouseDown={handleSidebarResizeStart}
-					/>
-				)}
+				{/* Sidebar resize handle — always visible, doubles as expand strip when collapsed */}
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */}
+				{/* biome-ignore lint/a11y/useKeyWithClickEvents: sidebar expand handled by Ctrl+B keyboard shortcut */}
+				<div
+					className={`mxd-sidebar-resize-handle${sidebarCollapsed ? " mxd-sidebar-resize-handle-collapsed" : ""}`}
+					onMouseDown={sidebarCollapsed ? undefined : handleSidebarResizeStart}
+					onClick={sidebarCollapsed ? handleToggleSidebarCollapse : undefined}
+				/>
 
-				{/* Sidebar expand button — shown only when collapsed */}
-				{sidebarCollapsed && (
-					<button
-						type="button"
-						className="mxd-sidebar-expand-btn"
-						onClick={handleToggleSidebarCollapse}
-						title={t("sidebar.expand")}
-					>
-						<IconSidebarLeft size={14} />
-					</button>
-				)}
-
-				<section
-					className={`mxd-content${isDragging ? " dragging" : ""}${detailCollapsed ? " mxd-detail-collapsed" : ""}`}
-					ref={contentPanelRef}
-				>
+				<section className="mxd-content">
+					{/* Tab bar */}
+					{openTabs.length > 0 && (
+						<div className="mxd-tab-bar">
+							<button
+								type="button"
+								className={`mxd-tab${isOrchestratorNode ? " mxd-tab-active" : ""}`}
+								onClick={() => handleTabSelect(rootNodeId)}
+							>
+								<IconHexagon size={10} />
+								<span className="mxd-tab-label">{t("orch.label")}</span>
+							</button>
+							{openTabs.map((tabId) => {
+								const tabNode = nodeMap.get(tabId);
+								if (!tabNode) return null;
+								const isActive = selectedTaskId === tabId;
+								const isTabActive = isTask(tabNode) && activeAgents.has(tabId);
+								return (
+									<button
+										key={tabId}
+										type="button"
+										className={`mxd-tab${isActive ? " mxd-tab-active" : ""}`}
+										onClick={() => handleTabSelect(tabId)}
+									>
+										{isTabActive && <span className="mxd-task-spinner" />}
+										{isTask(tabNode) && !isTabActive && (
+											<span
+												className={`mxd-tab-dot ${statusDotClass(tabNode.status)}`}
+											/>
+										)}
+										<span className="mxd-tab-label">{tabNode.title}</span>
+										{/* biome-ignore lint/a11y/useKeyWithClickEvents: close button is mouse-only */}
+										{/* biome-ignore lint/a11y/noStaticElementInteractions: tab close affordance */}
+										<span
+											className="mxd-tab-close"
+											onClick={(e) => handleTabClose(tabId, e)}
+										>
+											<IconClose size={9} />
+										</span>
+									</button>
+								);
+							})}
+						</div>
+					)}
 					{projectPathMissing && currentProject && (
 						<RelocateBanner
 							projectPath={currentProject.path}
 							onRelocate={handleRelocate}
 						/>
 					)}
-					<div
-						className="mxd-detail-panel"
-						style={
-							detailCollapsed
-								? undefined
-								: ({
-										"--split-ratio": splitRatio,
-										minHeight: 0,
-									} as React.CSSProperties)
-						}
-					>
-						<div className="mxd-panel-header">
+
+					{/* Compact metadata header for task views */}
+					{!isOrchestratorNode && selectedNode && isTask(selectedNode) && (
+						<div className="mxd-task-meta-bar">
+							<TaskDetail
+								node={selectedNode}
+								projectId={projectId}
+								isActive={activeAgents.has(selectedNode.id)}
+								onDelete={handleDeleteTask}
+								onStop={handleStopTask}
+								onClearSession={handleClearTaskSession}
+								compact
+							/>
+						</div>
+					)}
+
+					{/* View mode panel header */}
+					<div className="mxd-panel-header">
+						{!isOrchestratorNode && selectedNode ? (
+							<div className="mxd-view-toggle">
+								<button
+									type="button"
+									className={`mxd-view-toggle-btn${viewMode === "activity" ? " active" : ""}`}
+									onClick={() => setViewMode("activity")}
+								>
+									{t("activity.title")}
+								</button>
+								<button
+									type="button"
+									className={`mxd-view-toggle-btn${viewMode === "description" ? " active" : ""}`}
+									onClick={() => setViewMode("description")}
+								>
+									{t("detail.title")}
+								</button>
+							</div>
+						) : (
+							<span className="mxd-panel-title">{t("activity.title")}</span>
+						)}
+						<div className="mxd-panel-actions">
+							{(() => {
+								const usageTaskId =
+									targetNodeId ??
+									selectedTaskId ??
+									rootNodeId ??
+									nodes.find(
+										(n) =>
+											!n.parentId && isTask(n) && n.status === "in_progress",
+									)?.id ??
+									"orchestrator";
+								const usage = tokenUsage[usageTaskId];
+								return usage ? (
+									<TokenUsageBadge
+										inputTokens={usage.inputTokens}
+										contextWindow={usage.contextWindow}
+										estimated={usage.estimated}
+										onCompact={
+											isSelectedTaskActive
+												? () => {
+														compact(viewedTaskId ?? undefined);
+													}
+												: undefined
+										}
+									/>
+								) : null;
+							})()}
+							{viewMode === "activity" && !autoScroll && (
+								<button
+									type="button"
+									className="mxd-scroll-follow-btn"
+									onClick={() => setAutoScroll(true)}
+								>
+									<IconArrowDown size={10} />
+									{t("activity.follow")}
+								</button>
+							)}
 							<button
 								type="button"
-								className="mxd-detail-collapse-toggle"
-								onClick={() => {
-									setDetailCollapsed((prev) => {
-										const next = !prev;
-										localStorage.setItem("mxd-detail-collapsed", String(next));
-										return next;
-									});
-								}}
+								className="mxd-btn-icon mxd-fullscreen-btn"
+								onClick={() => setFullscreen((f) => !f)}
 								title={
-									detailCollapsed ? t("detail.expand") : t("detail.collapse")
+									fullscreen
+										? t("activity.exitFullscreen")
+										: t("activity.fullscreen")
 								}
 							>
-								<IconChevron size={10} expanded={!detailCollapsed} />
+								{fullscreen ? (
+									<IconMinimize size={12} />
+								) : (
+									<IconExpand size={12} />
+								)}
 							</button>
-							<span className="mxd-panel-title">
-								{isOrchestratorNode
-									? t("orch.label")
-									: selectedNode
-										? t("detail.title")
-										: t("detail.details")}
-							</span>
 						</div>
-						{!detailCollapsed &&
-							(isOrchestratorNode ? (
-								<OrchestratorDetail
-									isRootActive={
-										rootNodeId ? activeAgents.has(rootNodeId) : false
-									}
-									nodes={nodes}
-									rootNodeId={rootNodeId}
-									totalCost={totalCost}
-									turns={lastTurns}
-									inputTokens={lastInputTokens}
-									cacheCreationTokens={lastCacheCreationTokens}
-									cacheReadTokens={lastCacheReadTokens}
-									outputTokens={lastOutputTokens}
-									provider={agentProvider}
-									model={agentModel}
-									onClearSession={handleClearRootSession}
-									onStop={handleStop}
-								/>
-							) : selectedNode && isTask(selectedNode) ? (
-								<TaskDetail
-									node={selectedNode}
-									projectId={projectId}
-									isActive={activeAgents.has(selectedNode.id)}
-									onDelete={handleDeleteTask}
-									onStop={handleStopTask}
-									onClearSession={handleClearTaskSession}
-								/>
-							) : (
-								<div className="mxd-detail-empty">
-									<IconHexagon size={28} />
-									<span>{t("detail.selectTask")}</span>
-								</div>
-							))}
 					</div>
 
-					{!detailCollapsed && (
-						/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */
-						<div
-							className="mxd-resize-divider"
-							onMouseDown={handleDividerMouseDown}
+					{/* Orchestrator detail — shown above activity for orchestrator view */}
+					{isOrchestratorNode && (
+						<OrchestratorDetail
+							isRootActive={rootNodeId ? activeAgents.has(rootNodeId) : false}
+							nodes={nodes}
+							rootNodeId={rootNodeId}
+							totalCost={totalCost}
+							turns={lastTurns}
+							inputTokens={lastInputTokens}
+							cacheCreationTokens={lastCacheCreationTokens}
+							cacheReadTokens={lastCacheReadTokens}
+							outputTokens={lastOutputTokens}
+							provider={agentProvider}
+							model={agentModel}
+							onClearSession={handleClearRootSession}
+							onStop={handleStop}
 						/>
 					)}
 
-					<div
-						className="mxd-activity-panel"
-						style={
-							detailCollapsed
-								? undefined
-								: ({
-										"--activity-ratio": 1 - splitRatio,
-									} as React.CSSProperties)
-						}
-					>
-						<div className="mxd-panel-header">
-							<span className="mxd-panel-title">
-								{t("activity.title")}
-								{filterLabel && !isOrchestratorNode && (
-									<span
-										style={{
-											color: "var(--text-faint)",
-											marginLeft: "6px",
-											fontSize: "10px",
-											fontWeight: 400,
-											textTransform: "none",
-											letterSpacing: 0,
-										}}
-									>
-										— {filterLabel}
-									</span>
-								)}
-							</span>
-							<div className="mxd-panel-actions">
-								{(() => {
-									const usageTaskId =
-										targetNodeId ??
-										selectedTaskId ??
-										rootNodeId ??
-										nodes.find(
-											(n) =>
-												!n.parentId && isTask(n) && n.status === "in_progress",
-										)?.id ??
-										"orchestrator";
-									const usage = tokenUsage[usageTaskId];
-									return usage ? (
-										<TokenUsageBadge
-											inputTokens={usage.inputTokens}
-											contextWindow={usage.contextWindow}
-											estimated={usage.estimated}
-											onCompact={
-												isSelectedTaskActive
-													? () => {
-															compact(viewedTaskId ?? undefined);
-														}
-													: undefined
-											}
-										/>
-									) : null;
-								})()}
-								{!autoScroll && (
-									<button
-										type="button"
-										className="mxd-scroll-follow-btn"
-										onClick={() => setAutoScroll(true)}
-									>
-										<IconArrowDown size={10} />
-										{t("activity.follow")}
-									</button>
-								)}
-								<button
-									type="button"
-									className="mxd-btn-icon mxd-fullscreen-btn"
-									onClick={() => setFullscreen((f) => !f)}
-									title={
-										fullscreen
-											? t("activity.exitFullscreen")
-											: t("activity.fullscreen")
-									}
-								>
-									{fullscreen ? (
-										<IconMinimize size={12} />
-									) : (
-										<IconExpand size={12} />
-									)}
-								</button>
-							</div>
+					{/* Main view area — activity log or description */}
+					{viewMode === "activity" || isOrchestratorNode ? (
+						<div className="mxd-activity-panel">
+							<BackgroundProcessBar
+								processes={backgroundProcesses}
+								projectId={projectId}
+								filterTaskId={selectedTaskId}
+								rootNodeId={rootNodeId}
+							/>
+							<ActivityLog
+								entries={logs}
+								filterTaskId={selectedTaskId}
+								rootNodeId={rootNodeId}
+								nodeMap={nodeMap}
+								autoScroll={autoScroll}
+								onAutoScrollChange={setAutoScroll}
+								isActive={isSelectedTaskActive}
+								projectId={projectId}
+								olderEventsAvailable={olderEventsAvailable}
+								loadingOlderEvents={loadingOlderEvents}
+								onLoadOlderEvents={handleLoadOlderEvents}
+							/>
 						</div>
-						<BackgroundProcessBar
-							processes={backgroundProcesses}
-							projectId={projectId}
-							filterTaskId={selectedTaskId}
-							rootNodeId={rootNodeId}
-						/>
-						<ActivityLog
-							entries={logs}
-							filterTaskId={selectedTaskId}
-							rootNodeId={rootNodeId}
-							nodeMap={nodeMap}
-							autoScroll={autoScroll}
-							onAutoScrollChange={setAutoScroll}
-							isActive={isSelectedTaskActive}
-							projectId={projectId}
-							olderEventsAvailable={olderEventsAvailable}
-							loadingOlderEvents={loadingOlderEvents}
-							onLoadOlderEvents={handleLoadOlderEvents}
-						/>
-					</div>
+					) : selectedNode && isTask(selectedNode) ? (
+						<div className="mxd-description-view">
+							{selectedNode.description ? (
+								<div className="mxd-description-content">
+									{selectedNode.description}
+								</div>
+							) : (
+								<div className="mxd-detail-empty">
+									<span>{t("detail.noDescription")}</span>
+								</div>
+							)}
+						</div>
+					) : null}
 				</section>
 			</main>
 

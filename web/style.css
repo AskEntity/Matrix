@@ -340,31 +340,15 @@ select {
 	transition: none;
 }
 
-/* Sidebar collapse button — desktop only */
-.mxd-sidebar-collapse-btn {
-	/* shown by default on desktop, hidden on mobile (mobile uses hamburger) */
-}
-
-/* Sidebar expand button — shown when sidebar is collapsed on desktop */
-.mxd-sidebar-expand-btn {
-	flex-shrink: 0;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 32px;
-	background: var(--bg-surface);
-	border: none;
-	border-right: 1px solid var(--border);
-	color: var(--text-muted);
+/* Sidebar resize handle when collapsed — wider, clickable to reopen */
+.mxd-sidebar-resize-handle-collapsed {
+	width: 6px;
 	cursor: pointer;
-	transition:
-		color var(--t-fast),
-		background var(--t-fast);
+	background: var(--border-subtle);
 }
 
-.mxd-sidebar-expand-btn:hover {
-	color: var(--text-primary);
-	background: var(--bg-raised);
+.mxd-sidebar-resize-handle-collapsed:hover {
+	background: var(--accent);
 }
 
 .mxd-panel-header {
@@ -910,6 +894,198 @@ select {
 	user-select: none;
 }
 
+/* =========================================================
+   Tab Bar
+   ========================================================= */
+
+.mxd-tab-bar {
+	display: flex;
+	align-items: stretch;
+	gap: 0;
+	background: var(--bg-surface);
+	border-bottom: 1px solid var(--border);
+	flex-shrink: 0;
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: none;
+	min-height: 33px;
+}
+
+.mxd-tab-bar::-webkit-scrollbar {
+	display: none;
+}
+
+.mxd-tab {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 0 12px;
+	height: 33px;
+	border: none;
+	border-right: 1px solid var(--border-subtle);
+	background: var(--bg-surface);
+	color: var(--text-muted);
+	font-size: 12px;
+	font-family: inherit;
+	cursor: pointer;
+	white-space: nowrap;
+	max-width: 200px;
+	transition:
+		background var(--t-fast),
+		color var(--t-fast);
+	flex-shrink: 0;
+}
+
+.mxd-tab:hover {
+	background: var(--bg-raised);
+	color: var(--text-secondary);
+}
+
+.mxd-tab-active {
+	background: var(--bg-base);
+	color: var(--text-primary);
+	border-bottom: 2px solid var(--accent);
+}
+
+.mxd-tab-active:hover {
+	background: var(--bg-base);
+}
+
+.mxd-tab-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	min-width: 0;
+}
+
+.mxd-tab-dot {
+	flex-shrink: 0;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+}
+
+.mxd-tab-close {
+	flex-shrink: 0;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	border-radius: var(--radius-sm);
+	color: var(--text-faint);
+	margin-left: 2px;
+	opacity: 0;
+	transition:
+		opacity var(--t-fast),
+		background var(--t-fast),
+		color var(--t-fast);
+}
+
+.mxd-tab:hover .mxd-tab-close {
+	opacity: 1;
+}
+
+.mxd-tab-close:hover {
+	background: var(--bg-overlay);
+	color: var(--text-primary);
+}
+
+/* =========================================================
+   Compact Task Metadata Bar
+   ========================================================= */
+
+.mxd-task-meta-bar {
+	flex-shrink: 0;
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--bg-surface);
+}
+
+.mxd-task-meta-compact {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 6px 14px;
+	min-height: 36px;
+}
+
+.mxd-meta-left {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	flex: 1;
+}
+
+.mxd-meta-right {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+}
+
+.mxd-meta-cost {
+	font-family: var(--font-mono);
+	font-size: 11px;
+	color: var(--text-muted);
+}
+
+/* =========================================================
+   View Mode Toggle
+   ========================================================= */
+
+.mxd-view-toggle {
+	display: flex;
+	align-items: center;
+	gap: 0;
+}
+
+.mxd-view-toggle-btn {
+	padding: 0 10px;
+	height: 36px;
+	border: none;
+	background: none;
+	color: var(--text-muted);
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	cursor: pointer;
+	border-bottom: 2px solid transparent;
+	transition:
+		color var(--t-fast),
+		border-color var(--t-fast);
+}
+
+.mxd-view-toggle-btn:hover {
+	color: var(--text-secondary);
+}
+
+.mxd-view-toggle-btn.active {
+	color: var(--text-primary);
+	border-bottom-color: var(--accent);
+}
+
+/* =========================================================
+   Description View
+   ========================================================= */
+
+.mxd-description-view {
+	flex: 1;
+	overflow-y: auto;
+	min-height: 0;
+}
+
+.mxd-description-content {
+	padding: 16px 20px;
+	font-size: 13px;
+	line-height: 1.7;
+	color: var(--text-secondary);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
 /* Detail panel (top) */
 .mxd-detail-panel {
 	flex: var(--split-ratio);
@@ -975,22 +1151,11 @@ select {
 
 /* Activity panel (bottom) */
 .mxd-activity-panel {
-	flex: var(--activity-ratio);
+	flex: 1;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
 	min-height: 0;
-}
-
-/* Collapsed detail panel: just the header, no flex grow */
-.mxd-detail-collapsed .mxd-detail-panel {
-	flex: none;
-	overflow: hidden;
-}
-
-/* Activity panel fills space when detail is collapsed */
-.mxd-detail-collapsed .mxd-activity-panel {
-	flex: 1;
 }
 
 /* =========================================================
@@ -3750,16 +3915,6 @@ button.mxd-tool-card-header:hover {
 		min-height: 0;
 	}
 
-	/* Hide the detail panel (top split) on mobile */
-	.mxd-detail-panel {
-		display: none;
-	}
-
-	/* Hide the resize divider */
-	.mxd-resize-divider {
-		display: none;
-	}
-
 	/* Activity panel takes all remaining space */
 	.mxd-content .mxd-activity-panel {
 		flex: 1;
@@ -3799,17 +3954,22 @@ button.mxd-tool-card-header:hover {
 		display: none;
 	}
 
+	/* Compact metadata bar on mobile */
+	.mxd-task-meta-compact {
+		padding: 4px 10px;
+	}
+
+	.mxd-meta-right .mxd-task-branch-tag {
+		display: none;
+	}
+
+	/* Tab bar: allow horizontal scroll on mobile */
+	.mxd-tab-bar {
+		padding-left: 4px;
+	}
+
 	/* Hide sidebar resize handle on mobile */
 	.mxd-sidebar-resize-handle {
-		display: none;
-	}
-
-	/* Hide sidebar collapse/expand buttons on mobile (uses hamburger instead) */
-	.mxd-sidebar-collapse-btn {
-		display: none;
-	}
-
-	.mxd-sidebar-expand-btn {
 		display: none;
 	}
 
@@ -3852,19 +4012,13 @@ button.mxd-tool-card-header:hover {
 
 .mxd-fullscreen .mxd-sidebar,
 .mxd-fullscreen .mxd-sidebar-backdrop,
-.mxd-fullscreen .mxd-sidebar-resize-handle,
-.mxd-fullscreen .mxd-sidebar-expand-btn {
+.mxd-fullscreen .mxd-sidebar-resize-handle {
 	display: none;
 }
 
 .mxd-fullscreen .mxd-content {
 	flex: 1;
 	width: 100%;
-}
-
-.mxd-fullscreen .mxd-detail-panel,
-.mxd-fullscreen .mxd-resize-divider {
-	display: none;
 }
 
 .mxd-fullscreen .mxd-activity-panel {
