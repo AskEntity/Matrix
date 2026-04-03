@@ -1265,15 +1265,14 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						</div>
 					) : selectedNode && isTask(selectedNode) ? (
 						<div className="mxd-description-view">
-							{selectedNode.description ? (
-								<div className="mxd-description-content">
-									{selectedNode.description}
-								</div>
-							) : (
-								<div className="mxd-detail-empty">
-									<span>{t("detail.noDescription")}</span>
-								</div>
-							)}
+							<TaskDetail
+								node={selectedNode}
+								projectId={projectId}
+								isActive={activeAgents.has(selectedNode.id)}
+								onDelete={handleDeleteTask}
+								onStop={handleStopTask}
+								onClearSession={handleClearTaskSession}
+							/>
 						</div>
 					) : null}
 				</section>
