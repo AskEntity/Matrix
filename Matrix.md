@@ -1,6 +1,6 @@
 # Matrix
 
-**可自举的自主 AI 编程系统** — 给定目标，AI 自主规划、实现、测试、迭代。Agent 像枝条一样分出去工作，完成后嫁接回主干。
+**可自举的多 Agent IDE** — 每个 tab 是一个 task，每个 task 是一个完整的故事。一个人，团队级的产出。Agent 像枝条一样分出去工作，完成后嫁接回主干。
 
 > 本文档供 AI session 冷启动使用。包含架构设计、方法论、实现路径。
 > 来源：多个 AI 辅助开发项目的实战经验 + 业界自主编程 agent 研究。
@@ -301,21 +301,34 @@ project/
 
 核心数据结构是**任务树**。项目是树根，root agent 分解出子节点，每层 agent 可以继续分解自己的子节点。
 
+**TreeNode = TaskNode | FolderNode**（discriminated union）：
+
+任务树的节点分两种类型：
+- **TaskNode**：完整生命周期（status、branch、session、cost 等）。所有 agent 行为的承载者
+- **FolderNode**：纯视觉分组。只有 id、title、parentId、children、type:"folder"。零行为、零生命周期、零成本
+
+Folder 对 task ownership 透明：`getTaskAbove()` 向上遍历时跳过 folder，返回最近的 TaskNode 祖先。`getTasksBelow()` 穿透 folder 收集所有后代 TaskNode。这意味着 folder 内的 task 在消息路由、权限检查等方面归属于 folder 上方最近的 task，而非 folder 本身。
+
+Folder 工具：`create_folder`、`delete_folder`（必须为空）、`rename_folder`——与 task 工具分离。
+
 **按功能垂直切分，不按前后端水平切分**：
 
 ```
 project: "多人聊天应用"
-├── 实时消息收发              [feat/realtime-msg]     ✅ passed
-│   ├── WebSocket 协议 + 服务端处理
-│   ├── 客户端连接管理 + 重连
-│   └── 消息渲染 UI
-├── 用户认证                  [feat/auth]             🔄 in_progress
-│   ├── JWT 签发/验证
-│   ├── 登录/注册 API + UI
-│   └── 会话持久化
-├── 消息持久化 + 历史记录      [feat/msg-history]      ⏳ pending
-├── 多房间/频道                                       ⏳ pending
-└── 在线状态 + 输入指示器                              ⏳ pending
+├── 📁 核心功能
+│   ├── 实时消息收发          [feat/realtime-msg]     ✅ verify
+│   │   ├── WebSocket 协议 + 服务端处理
+│   │   ├── 客户端连接管理 + 重连
+│   │   └── 消息渲染 UI
+│   ├── 用户认证              [feat/auth]             🔄 in_progress
+│   │   ├── JWT 签发/验证
+│   │   ├── 登录/注册 API + UI
+│   │   └── 会话持久化
+│   └── 消息持久化 + 历史记录  [feat/msg-history]      ⏳ pending
+├── 📁 扩展功能
+│   ├── 多房间/频道                                    ⏳ pending
+│   └── 在线状态 + 输入指示器                           ⏳ pending
+└── Draft: 语音消息支持                                 📝 draft
 ```
 
 每个功能节点是一个**垂直切片**——从数据层到 API 到 UI 全部包含。这确保每个节点完成后都是一个可用的、可测试的增量，而不是"后端做完了但没法验证因为前端还没做"。
@@ -332,8 +345,9 @@ project: "多人聊天应用"
 **节点状态**：`draft → pending → in_progress → verify | failed → closed`
 
 - `draft`：想法/计划阶段，不可执行。用 `update_task(draft: false)` 激活为 pending
-- `verify`：agent 调用 done("passed") 后进入此状态，等待父 agent review + merge
-- `closed`：已完成并清理（worktree + branch 已删），节点保留在树中供历史查看
+- `verify`：agent 调用 done("passed") 后进入此状态（注意：不存在 "passed" 状态），等待父 agent review + merge
+- `failed`：agent 调用 done("failed") 或被中断。可用 send_message 继续（保留上下文）或 reset_task 重试
+- `closed`：已完成并清理（worktree + branch 已删），节点保留在树中供历史查看。可通过 send_message 重新激活
 
 **Agent 退出模型（exitReason）**：
 
@@ -343,6 +357,12 @@ Agent 退出通过 `exitReason` 明确区分：
 - **`interrupted`** — 所有非 done() 退出：stop、reset、error、daemon restart、queue close
 
 **只有 `done()` 能产生 `task_complete` 消息给父 agent**。Interrupted 的 agent 不会向父报告——它们随时可恢复。`stopAgent()` 保持子 agent 为 `in_progress`（不标为 failed），因为它们的工作仍在分支上。
+
+**done() 两阶段提交**：
+
+- **Phase 1**（agent 侧）：done() handler 关闭 queue、返回确认。不更新 status，不通知父 agent。Provider loop 检测到 done，设置 exitReason + doneSummary，退出循环
+- **Phase 2**（daemon 侧，在 runAgentForNode 中）：loop 退出后，更新 status（verify/failed），写 `done_notified` crash-safe 标记到 JSONL，广播 tree change，通过 deliverMessage 通知父 agent
+- **崩溃恢复**：daemon 重启时 `findInterruptedDonePhase2` 检测 JSONL 中有 done tool_call 但无 done_notified → 补完 Phase 2
 
 **Agent 生命周期 = 分支生命周期**：
 - **passed** → 父 agent merge 分支、`close_task` 清理 worktree + branch（节点保留），记忆汇入
@@ -384,47 +404,51 @@ feat/realtime-msg 分支上 agent 的 memory.md：
 
 这解决了 Context Manager 的核心难题：context window 会被压缩，对话历史会丢失，但**记忆已经持久化在 git 中**。新 session / 新 agent 启动时读 `.mxd/memory.md`，就能继承之前积累的经验，无需从对话历史中恢复。
 
-**任务树即 UI**：
+**任务树即 IDE**：
 
-任务树不只是内部数据结构，它本身就是面向用户的界面：
+任务树不只是内部数据结构，它本身就是面向用户的 IDE 界面（tab-based layout，类似 VSCode）：
 
 ```
-┌─ 多人聊天应用  [root agent · main] ───────────────────┐
-│                                                        │
-│  ✅ 实时消息收发          agent #2 · merged            │
-│  │  点击展开 → agent 对话记录、commit 历史、记忆条目    │
-│  │                                                     │
-│  🔄 用户认证              agent #3 · feat/auth         │
-│  │  点击展开 → 实时查看 agent 正在做什么               │
-│  │  ├── ✅ JWT 签发/验证   agent #4 · merged into auth │
-│  │  ├── 🔄 登录注册 API    agent #5 · feat/auth-ui     │
-│  │  └── ⏳ 会话持久化      (agent #3 稍后自行处理)      │
-│  │                                                     │
-│  ⏳ 消息持久化 + 历史记录  (root agent 决定何时启动)    │
-│  ⏳ 多房间/频道                                         │
-│  🔴 在线状态 + 输入指示器  agent #6 · failed             │
-│     点击展开 → 查看失败原因、agent 的分析、保留的分支   │
-└────────────────────────────────────────────────────────┘
+┌─ Sidebar (可折叠/调整大小) ──────────────────────────────────────────────┐
+│  📁 后端                                                                 │
+│  │  ✅ 实时消息收发          merged                                      │
+│  │  🔄 用户认证              in_progress                                  │
+│  │  │  ├── ✅ JWT 签发/验证   closed                                      │
+│  │  │  ├── ✔️ 登录注册 API    verify (等待 review)                        │
+│  │  │  └── ⏳ 会话持久化      pending                                     │
+│  📁 前端                                                                 │
+│  │  ⏳ 消息持久化              pending                                    │
+│  🔴 在线状态指示器              failed                                    │
+├──────────────────────────────────────────────────────────────────────────┤
+│  [用户认证] [登录注册 API] [+]          ← VSCode 风格 preview/pin tabs    │
+│  ┌──────────────────────────────────────────────────────────────────────┐│
+│  │  Activity | Description              ← view mode switcher            ││
+│  │                                                                      ││
+│  │  实时流式对话：text output、tool calls（可展开卡片）、                  ││
+│  │  来自其他 agent 的消息、token usage badge（⚡ hover 显示 cache info）   ││
+│  └──────────────────────────────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-每个节点 = 一个 agent（已完成、进行中、或待分配）。点击可查看：
-- **Agent 状态**：运行中 / 完成 / stuck，分支名、与父分支的距离
-- **Agent 对话流**：该 agent 的思考和操作过程（实时流式）
-- **commit 历史**：该 agent 在分支上的 git log
-- **记忆条目**：该 agent 积累的经验和决策
-- **子 agent 列表**：该 agent spawn 了哪些子 agent，各自状态
-- **失败详情**：尝试过什么、卡在哪里、需要什么帮助
+- **Task tree sidebar**：可折叠、可调整大小。状态颜色标识。支持 Folder 分组。Favorite/pin 快捷访问
+- **Task tabs**：单击 preview，双击 pin。每个 tab 显示一个 task 的完整故事
+- **View mode switcher**：Activity（实时流式对话）vs Description（任务目标和上下文）
+- **三模式筛选**：全部显示 / 隐藏已完成 / 仅显示收藏
+- **Discussion mode**：用户和 agent 对话时，agent yield() 而非 done()——保持会话状态
+- **User message forwarding**：用户向任意 agent 发消息，整个父链收到 CC 通知——root 实时看到所有决策流
 
 用户在这个 UI 上可以：给 failed agent 发送 continue 指令、调整节点优先级、插入新需求节点（root agent 响应）、拆分过大的节点。
 
 **Context 压缩**（结构化 compact）：
 
-接近 context window 上限时，对**全部对话**生成结构化 checkpoint，然后**重建上下文**：
+接近 context window 上限时（920K / 1M，8% buffer），对**全部对话**生成结构化 checkpoint，然后**重建上下文**：
 
-1. 用同级模型对完整对话生成 checkpoint（7 个 `<summary>` section：Task / Current Phase / Completed / Files Modified / Current State / Next Action / Key Context）
+1. 用同级模型对完整对话生成 checkpoint（7 个 `<summary>` section：User Requests / Current Phase / Completed Work / Task Tree State / Key Insights & Rejected Approaches / Key Context / Pending Work）
 2. `compact_marker` 写入 JSONL——event converter 跳过 marker 之前的所有事件
 3. 重建：原始 task prompt + 从磁盘重读 fresh memory + checkpoint + CWD 注入 + resume instructions
 4. System prompt 每次 API 调用都重新发送（方法论、架构规则不会丢失）
+
+**Compaction 经济学**：920K trigger + 64K checkpoint + 16K overhead = 1000K ≤ 1M。比旧的 830K trigger 多 90K working space ≈ 45 extra conversation turns。
 
 关键设计：
 - **前瞻性**：checkpoint 重点在"下一步该做什么"，不是回顾历史
@@ -437,25 +461,38 @@ feat/realtime-msg 分支上 agent 的 memory.md：
 
 - **子 agent 不需要全局 context**：它只需要知道自己负责的子树 + 从 root 继承的方法论和架构约束
 
-**Prompt Caching**：
+**Cache 架构**：
 
-使用 Anthropic 的显式 cache breakpoints 降低 API 成本。Cache prefix 顺序为 tools → system → messages。每次 API 调用设置 cache 断点：
-1. Tools 数组最后一个 tool definition（TTL 1h）
-2. System prompt variable block（TTL 1h）
-3. 对话历史中的 user message（orchestrator 1h TTL，child agent 5m 默认）
+使用 Anthropic 的显式 cache breakpoints 降低 API 成本。Cache prefix 顺序为 **tools → system → messages**（注意：不是 system → tools）。每次 API 调用设置 cache 断点：
+1. Tools 数组最后一个 tool definition
+2. System prompt variable block
+3. 对话历史中最后一条 user message（总是 user role）
 
-Tools 以 `JsonTool {name, description, jsonSchema}` 格式冻结在 session_config 中。Resume 时使用 frozen tools 而非重新生成，确保 byte-identical → cache hit。
+**Cache TTL**：可配置。Root agent 使用 1h TTL（存活时间长、对话稳定），child agent 默认 5min TTL。`session_config.cacheTtl` 在 session 启动时设定，通过 fork 继承。
 
-效果：system prompt + tools 在整个 session 中只计费一次（后续 turn 命中 cache，0.1x 价格）。对话历史随 turn 增长，但已有部分也命中 cache。
+**Frozen Tools**：Tools 以 `JsonTool {name, description, jsonSchema}` 格式冻结在 session_config event 中。Resume 时使用 frozen tools 而非重新从 Zod 生成，确保 byte-identical → cache hit。MCP 外部工具异步连接导致的顺序不确定性被 frozen tools 解决。
+
+**Byte-identical 重建**：live path 和 JSONL reconstruction path 使用同一个函数格式化数据。两个 codepath 格式化同一数据必然 diverge——Matrix 只有一个。
+
+**Fork prefix sharing**：fork 复制 frozen session_config，三个从同一 parent fork 的 agent 共享一个 cache prefix。创建一次，三个都读。
+
+**实测结果**：
+- 重启：99.8% cache hit（582 creation / 362K read）
+- Fork：100% cache hit（0 creation / 365K read）
+- 一个完整 session（3 小时，13 task，1400 API 调用）：99.4% cache hit，503M total input tokens
 
 **Stimulus Generator**（per agent，但 root 和子 agent 行为不同）：
 
-Root agent（优先级从高到低）：
+**两种角色**（不存在独立的 orchestrator 组件——角色由在树中的位置决定）：
+
+Root orchestrator（优先级从高到低）：
+  0. 刚从 compaction 恢复 → 读 checkpoint，get_tree，然后按优先级执行
   1. 有 failed 的子 agent → 审查失败原因，send_message resume（给指示）或 reset_task（换方案）
-  2. 有 passed 但未 merge 的子 agent → merge 分支，close_task 清理（节点保留）
-  3. 有 pending 的子节点 → 评估依赖关系，send_message spawn 下一个子 agent
+  2. 有 verify 状态未 merge 的子 agent → review diff，merge 分支，close_task 清理（节点保留）
+  3. 有 pending 的子节点 → send_message spawn 下一个子 agent
   4. 所有子 agent done → 在 main 上跑完整测试套件确认无回归
   5. 所有任务完成 → done("passed")
+  Root 从不写生产代码——所有实现委托给子任务。
 
 子 agent：
   1. 当前任务测试失败 → 修复
@@ -486,16 +523,19 @@ Worker Tools（内置，mcp__mxd__ namespace）：
 Orchestration Tools（MCP server "mxd"）：
   get_tree(format?, include_closed?) → task tree (flat or tree, lightweight default)
   get_task(taskId) → single node detail
-  create_task(title, desc, parentId?, draft?) → node
+  create_task(title, desc, parentId?, draft?, color?) → node
   update_task(taskId, { status?, title?, description?, draft?, parentId? }) → node
   delete_task(taskId) → remove node + worktree + branch recursively
-  close_task(taskId) → clean worktree/branch, set closed (node preserved)
+  close_task(taskId) → clean worktree/branch, set closed (node preserved, rejects in_progress/pending/draft)
   reset_task(taskId) → remove worktree/session, set pending (fresh retry)
   reorder_tasks(nodeId, children[]) → reorder child nodes
+  create_folder(title, parentId?) → visual grouping node (no lifecycle)
+  delete_folder(folderId) → remove empty folder (fails if has children)
+  rename_folder(folderId, title) → rename folder
   send_message(taskId, title, message, requestReply?) → unified up/down communication
   fork_task_context(sourceTaskId, targetTaskId) → copy session context (unix fork semantics)
   yield() → suspends until queue message, returns "resumed." + queue messages as text blocks
-  done(status, summary) → signal passed/failed exit
+  done(status, summary) → two-phase commit: agent decides → daemon commits
   clarify(question) → non-blocking question to user
   list_projects() → discover other projects
   send_message_to_project(projectId, message) → cross-project messaging
@@ -1038,7 +1078,7 @@ interface ToolPlugin {
 - [SWE-Agent ACI Documentation](https://swe-agent.com/0.7/background/aci/)
 - [Anthropic Agents Cookbook](https://github.com/anthropics/anthropic-cookbook/tree/main/patterns/agents)
 
-## 十四、实现状态评估（2026-03-29）
+## 十四、实现状态评估（2026-04-03）
 
 > 本节记录设计文档各部分的实现状态。由系统自身评估生成。
 
@@ -1051,57 +1091,68 @@ interface ToolPlugin {
 | §三 核心方法论 | ✅ | 垂直迭代、测试驱动、实际执行消灭幻觉、调试协议、替换铁律、膨胀防控——全部注入 system prompt。 |
 | §4.2 系统结构 | ✅ | Daemon (Hono HTTP+SSE)。REST API 完整。Agent 树 = 任务树，每 agent 一个 worktree + branch。 |
 | §4.2.1 数据分离 | ✅ | `.mxd/memory.md` 在 git。tree.json / sessions / events 在 daemon 侧。配置三层（global > repo > local）。 |
-| §4.3 Agent 内部结构 | ✅ | Task Tracker、Context Manager (compaction)、Stimulus Generator (system prompt 优先级规则)。exitReason 模型（done_passed/done_failed/interrupted）。autoResume 按 JSONL 状态独立评估每个 agent。 |
-| §4.3 记忆系统 | ✅ | scratch pad 式 memory.md。子 agent 自由写入、append-only。合并后上层整理。分支丢弃 = 记忆丢弃。`setup_worktree.sh.example` 模式：项目 init 创建示例，agent 必须审查定制后创建 .sh。 |
-| §4.3 任务树即 UI | ✅ | 节点状态、分支信息、点击展开 agent 对话流（activity log）、实时 SSE streaming。 |
-| §4.3 Context 压缩 | ✅ | 结构化 checkpoint (7 sections)。Fresh memory 重读。UI compact boundary。compact_marker 在 JSONL 中——event converter 跳过 marker 之前的事件。 |
-| §4.3 Prompt Caching | ✅ | Anthropic cache breakpoints。System prompt + tools 1h TTL。Messages cache control (orchestrator 1h, child 5m)。 |
-| §4.4 Tool 设计 | ✅ | Worker tools (bash, background, read_file, write_file, edit_file, list_files, search) + Orchestration tools (get_tree, get_task, create_task, update_task, delete_task, close_task, reset_task, reorder_tasks, send_message, fork_task_context, yield, done, clarify, list_projects, send_message_to_project)。Same-turn conflict rules。输出有界、结构化返回。 |
+| §4.3 Agent 内部结构 | ✅ | Task Tracker、Context Manager (compaction at 920K/1M)、Stimulus Generator (system prompt 优先级规则)。exitReason 三态模型（done_passed/done_failed/interrupted）。done() 两阶段提交（agent 决定 → daemon 提交）。autoResume 按 JSONL 状态独立评估每个 agent。 |
+| §4.3 任务树 | ✅ | TreeNode = TaskNode \| FolderNode (discriminated union)。Folder 纯视觉分组，透明于 task ownership。verify 状态。Draft tasks。 |
+| §4.3 记忆系统 | ✅ | scratch pad 式 memory.md。子 agent 自由写入、append-only。合并后上层整理。分支丢弃 = 记忆丢弃。 |
+| §4.3 IDE UI | ✅ | Tab-based layout（VSCode 风格 preview/pin tabs）。可折叠/调整大小的 sidebar。Activity/Description view mode switcher。Favorite/pin 快捷访问。三模式筛选。Token usage badge（cache hit 率颜色编码）。Discussion mode。User message forwarding（CC 到父链）。 |
+| §4.3 Context 压缩 | ✅ | 结构化 checkpoint (7 sections)。920K trigger（8% buffer）。Fresh memory 重读。UI compact boundary。compact_marker 在 JSONL 中。 |
+| §4.3 Cache 架构 | ✅ | Frozen JsonTool in session_config。Prefix 顺序 tools→system→messages。Breakpoint on last user message。可配置 TTL（root 1h, child 5min default）。Fork inherits cache identity。99.4% cache hit rate measured。 |
+| §4.4 Tool 设计 | ✅ | Worker tools (bash, background, read_file, write_file, edit_file, list_files, search) + Orchestration tools (get_tree, get_task, create_task, update_task, delete_task, close_task, reset_task, reorder_tasks, create_folder, delete_folder, rename_folder, send_message, fork_task_context, yield, done, clarify, list_projects, send_message_to_project)。Same-turn conflict rules。 |
 | §4.5 演进路径 | ✅ | Phase 0-1 跳过（直接自建 tool 层）。Phase 2-3 完成（直接 API 调用 + 自建 tool 层）。Anthropic + OpenAI 两个 provider。自举已达成。 |
 | §4.6 认证配置 | ✅ | LLM API：Auth group 配置（Anthropic + OpenAI，含 Claude OAuth）。Web UI：RSA-OAEP 挑战-响应 + JWT。CLI 自动签发短期 JWT。 |
-| §5.1 永不停止 | ✅ | Root agent 持续运行。done() passed/failed。end_turn = 隐式 yield（永远不是隐式 done）。clarify 非阻塞。send_message 统一上下通信。 |
-| §5.3 澄清与通信 | ✅ | clarify(question) 非阻塞。send_message 统一上下通信（替代原设计的 report_to_parent + send_message_to_child）。yield() 接收所有消息类型。 |
-| §5.4 用户中途交互 | ✅ | inject message、update task、send_message to running agent。中断处理：完成当前原子操作后处理。 |
-| §5.7 可观测性 | ✅ | 任务树 UI + 结构化 JSONL 事件日志 + Token/成本追踪 (usage events)。 |
-| §九 方法论注入 | ✅ | system-prompts.ts 中 SYSTEM_PROMPT 涵盖所有核心规则。Ownership framing 超出原设计。 |
-| §十一 自举 | ✅ ⭐ | 系统在自身之上开发自己。Worktree 隔离修改。完整测试套件保护。 |
+| §5.1 永不停止 | ✅ | Root agent 持续运行。done() passed/failed（两阶段提交）。end_turn = 隐式 yield（永远不是隐式 done）。clarify 非阻塞。send_message 统一上下通信。 |
+| §5.3 澄清与通信 | ✅ | clarify(question) 非阻塞。send_message 统一上下通信。yield() 接收所有消息类型（await_background 已删除——yield 是唯一等待路径）。 |
+| §5.4 用户中途交互 | ✅ | inject message、update task、send_message to running agent。中断处理：完成当前原子操作后处理。Discussion mode：agent yield() 而非 done()。 |
+| §5.7 可观测性 | ✅ | Tab-based IDE UI + 结构化 JSONL 事件日志 + Token/成本追踪 (persisted usage events) + traceId 基础设施（检测 concurrent loops）。 |
+| §九 方法论注入 | ✅ | system-prompts.ts 中 ~400 行 SYSTEM_PROMPT（10 章）。两种角色（root orchestrator + worker）。ITA 三层变异。Fork = "changing jobs"。 |
+| §十一 自举 | ✅ ⭐ | 系统在自身之上开发自己。Worktree 隔离修改。1268 测试保护。 |
 
 ### ⚠️ 部分实现
 
 | 设计章节 | 状态 | 已实现 | 缺失 |
 |---------|------|--------|------|
-| §4.5 多 provider | 70% | Anthropic + OpenAI 两个 provider | 更多 provider（Gemini 等） |
-| §5.2 自主程度 | 30% | system prompt 有 autonomy 概念（Level 10/4/0） | 无 per-project 可配置的 1-10 级别、无 per-scope override、无 timeout/timeout_action |
-| §5.6 成本控制 | 40% | Token 追踪 (usage events)、项目预算 (budget_exceeded) | 无节点预算、无单步预算、无循环检测、无空转检测、无模型自动分级 |
-| §六 失败模式防御 | 25% | failCount tracking、基本重试逻辑 | 无自动 stuck 标记、无无限循环检测、无分支漂移检测、无镀金检测 |
+| §4.5 多 provider | 70% | Anthropic + OpenAI Responses 两个 provider | 更多 provider（Gemini 等）。Chat Completions 是 dead code。 |
+| §5.2 自主程度 | 30% | system prompt 有 autonomy 概念 | 无 per-project 可配置的 1-10 级别、无 per-scope override、无 timeout/timeout_action |
+| §5.6 成本控制 | 40% | Token 追踪 (persisted usage events)、项目预算 (budget_exceeded) | 无节点预算、无单步预算、无循环检测、无空转检测、无模型自动分级 |
+| §六 失败模式防御 | 30% | failCount tracking、基本重试逻辑、EventStore generation guard（防止 stale writes）、traceId 检测 concurrent loops | 无自动 stuck 标记、无无限循环检测、无分支漂移检测、无镀金检测 |
 
 ### ❌ 未实现
 
 | 设计章节 | 状态 | 说明 |
 |---------|------|------|
-| §七 安全模型 | 10% | 无文件系统沙箱、无网络限制、无命令白名单、无 security.yaml per project。Agent 有完整系统访问权限。自用阶段可接受，hosted 部署必须解决。 |
-| §十二 元可扩展 | 20% | MCP server 模式部分替代插件体系。AI 自修改概念上在运行但无正式化 PR 生成。无版本号方案、无 patch stack。 |
+| §七 安全模型 | 10% | 无文件系统沙箱、无网络限制、无命令白名单。Agent 有完整系统访问权限。自用阶段可接受，hosted 部署必须解决。 |
+| §十二 元可扩展 | 20% | MCP server 模式部分替代插件体系。AI 自修改概念上在运行但无正式化 PR 生成。 |
 | §5.5 配置示例 | 10% | autonomy level 配置、per-scope override、timeout 机制均未实现。 |
 
 ### 🆕 超出原设计的功能
 
 | 功能 | 说明 |
 |------|------|
+| Tab-based IDE UI | VSCode 风格 preview/pin tabs。可折叠 sidebar。Activity/Description view mode。Favorite/pin。三模式筛选。 |
+| Folder nodes | TreeNode = TaskNode \| FolderNode。纯视觉分组，透明于 task ownership。create_folder/delete_folder/rename_folder。 |
+| Two-phase done() | Phase 1 agent 决定 → Phase 2 daemon 提交。Crash recovery via done_notified marker。 |
+| Verify status | done("passed") → verify 状态。close_task 只接受 verify/failed。 |
+| Configurable cache TTL | session_config.cacheTtl。Root 1h，child 5min default。Fork 继承。 |
+| traceId infrastructure | 每个 event 携带 traceId (ULID)。检测同一 session 上的 concurrent loops。 |
+| EventStore generation guard | 三层防御：stopTask await、generation guard（stale writes → no-op）、awaitLoopExit。 |
 | RSA-OAEP 挑战-响应认证 | 比原设计的 API key/OAuth 更安全的 Web UI 认证。JWT 明文从不离开浏览器。 |
 | SSE 实时推送 | 原设计提到 WebSocket，实际用了更简单的 SSE + ring buffer 重连 |
-| Fork task context | unix fork() 语义。复制 agent 对话上下文到新 task，加速冷启动。支持多层 fork chain。 |
+| Fork task context | unix fork() 语义。复制 agent 对话上下文到新 task。支持多层 fork chain。Cache prefix sharing。 |
 | 跨项目通信 | list_projects + send_message_to_project 跨项目 agent 通信 |
-| External MCP server 集成 | McpClientManager，支持外部 MCP 工具（如 Chrome DevTools、Brave Search） |
-| Ownership framing | 对 agent 心理模型的洞察——"拥有"任务 vs "被分配"任务影响 agent 自主性 |
-| Lazy-load activity log | Compact barrier 分页加载，大幅减少初始加载时间 |
-| Background process management | bash foreground_timeout + move-to-background + REST 管理。background tool（list/status/kill） |
-| Outer API retry | provider loop 外层重试，捕获 transient API 错误（rate limit、overloaded）。指数退避 30s/60s/120s。 |
-| Integration test framework | ValidatingMockAPI + instruction DSL。Mock per-conversation turn queues。Prefix validation。recreateApp() 模拟真实 daemon restart。 |
-| Slash command autocomplete | /compact、/stop、/clear、/settings 快捷命令 |
+| External MCP server 集成 | McpClientManager，支持外部 MCP 工具 |
+| Discussion mode | 用户与 agent 对话时 agent yield() 而非 done()。User message forwarding CC 到父链。 |
+| Auto-recovery from API 400 | Provider loop 自动恢复 invalid_request_error。弹出问题消息、注入安全合成 tool_results + 恢复文本、重试一次。 |
+| Usage event persistence | usage events 从临时变为持久化（写入 JSONL）。UI 显示为 ⚡ hover badge，cache hit 率颜色编码。 |
+| stripSession() | JSON.stringify(TaskNode) 安全化。防止 session (messages[] 等运行时数据) 序列化。 |
+| Integration test framework | ValidatingMockAPI + instruction DSL。Mock per-conversation turn queues。Prefix validation。recreateApp() 模拟 daemon restart。 |
+| Background process management | bash foreground_timeout + move-to-background。background tool（list/status/kill）。 |
+| Outer API retry | provider loop 外层重试，捕获 transient API 错误。指数退避 30s/60s/120s。 |
+| Slash commands | /compact、/stop、/clear、/settings |
 | i18n 支持 | 中英文界面切换 |
-| Draft tasks | `draft: true` 创建不可执行的占位任务，用于捕获想法和计划 |
-| Task lifecycle tools | close_task（清理资源保留节点）、reset_task（重置重试）、reorder_tasks（排序子节点） |
+| Configurable default branch | 项目 init 时检测 base branch，存储在 root node。不硬编码 main/master。 |
 
 ### 总结
 
-系统的核心设计愿景已基本实现：自主编程循环、任务树 orchestration、记忆系统、context 管理、自举运行。Agent 生命周期已从简单的 passed/failed 演进为 exitReason 三态模型（done_passed/done_failed/interrupted），支持 daemon restart 后按 JSONL 状态精确恢复。最大的缺口是安全/沙箱模型（§七），这是走向多用户/hosted 部署的关键阻碍。成本控制和失败模式防御有基础但不完整。元可扩展（§十二）的正式化机制尚未建立，但概念上已在日常开发中运行。
+系统的核心设计愿景已全面实现：自主编程循环、任务树 orchestration、记忆系统、context 管理、cache 架构、自举运行。Agent 生命周期使用两阶段 done() 提交（agent 决定 → daemon 提交 + crash recovery）。任务树支持 TaskNode + FolderNode discriminated union。IDE UI 使用 tab-based layout with discussion mode。Cache 架构实现 99.4% hit rate（frozen tools + byte-identical reconstruction + fork prefix sharing + configurable TTL）。1268 测试保护系统完整性。
+
+最大的缺口仍是安全/沙箱模型（§七），是走向 hosted 部署的关键阻碍。成本控制和失败模式防御有基础但不完整。
