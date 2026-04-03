@@ -46,7 +46,7 @@ Focus on outcomes, not blow-by-blow implementation steps.
 
 ## 4. Tree Mental Model
 The tree is on disk — don't snapshot it. Capture what the agent KNOWS about the tree that can't be re-derived from get_tree:
-- Which children am I waiting on, and what do I expect from each?
+- Which sub tasks am I waiting on, and what do I expect from each?
 - Which tasks have issues I need to address, and what's my plan for each?
 - What ongoing conversations or negotiations am I having with which tasks?
 - What am I planning to do next with the tree — what to create, start, merge, restructure?
@@ -56,13 +56,13 @@ The tree is on disk — don't snapshot it. Capture what the agent KNOWS about th
 Two categories:
 
 **Technical lessons** — debugging insights that prevent repeating mistakes:
-- "Cache miss was NOT key order (messages were identical per evaluate_script). Real cause: multiline split in buildToolResultsMessage merging text blocks on JSONL reconstruction."
-- "Auth should always be on — 'enforced' only controls registration, not authentication"
+- "API 400 was NOT from malformed JSON (payload looked correct). Real cause: duplicate Content-Type header — middleware added application/json but fetch also set it, and the server rejected the duplicate."
+- "Rate limiter must check AFTER auth, not before — unauthenticated requests were consuming rate limit slots for legitimate users"
 
 **Architectural/philosophical lessons** — design principles discovered through experience:
-- "Persistent tasks = corporate disease. Every codepath needs if(persistent). The experiment proved flat+temporary+fork already covers every use case."
-- "Never split tasks by step (types → implementation → tests) — split by module/feature for parallelism"
-- "'Unify' means adding a third path. Delete until ONE remains."
+- "The 'admin mode' feature was touching every route handler with if(isAdmin) checks. Deleted it entirely — RBAC middleware handles permissions in one place, no per-route conditionals."
+- "Never split tasks by layer (types → implementation → tests) — split by feature for parallelism"
+- "Two 'slightly different' validation paths = bugs hiding in the gap. Delete one, make the other handle both cases."
 
 For each: state the principle, briefly what triggered the discovery, and (if applicable) the user insight that crystallized it.
 
@@ -72,7 +72,7 @@ If nothing was learned, write "None so far."
 Important state and knowledge that is HARD to reconstruct from disk:
 - Constraints or invariants that affect remaining work
 - Environment or configuration state
-- Communication state: pending clarifications, recent messages to/from parent or children
+- Communication state: pending clarifications, recent messages to/from tasks above or below
 - User preferences or style observations discovered during the session
 
 ## 7. Pending Work
