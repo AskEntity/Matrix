@@ -122,9 +122,20 @@ function AppInner() {
 	if (authState === "loading") {
 		return (
 			<div className="mxd-login-page">
-				<div className="mxd-login-card">
-					<div className="mxd-login-icon">⏳</div>
-					<p className="mxd-login-subtitle">Loading...</p>
+				<div className="mxd-login-container">
+					<div className="mxd-login-brand">
+						<div className="mxd-login-brand-content">
+							<div className="mxd-login-logo">M</div>
+							<h1 className="mxd-login-title">Matrix</h1>
+						</div>
+						<div className="mxd-login-brand-decoration" />
+					</div>
+					<div className="mxd-login-auth">
+						<div className="mxd-login-loading">
+							<div className="mxd-login-spinner" />
+							<p>Loading…</p>
+						</div>
+					</div>
 				</div>
 			</div>
 		);
