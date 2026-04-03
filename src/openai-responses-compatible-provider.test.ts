@@ -825,8 +825,7 @@ describe("OpenAIResponsesCompatibleProvider runLoop", () => {
 				cwd: tmpDir,
 				systemPrompt: { stable: "Stable", variable: "Variable" },
 				queue,
-				buildYieldPendingSection: () =>
-					"## Pending\n- Running sub tasks: none\n- Pending clarifications: none",
+
 				mcpToolDefs: {
 					mxd: [
 						tool("yield", "Wait for more work", {}, async () => ({

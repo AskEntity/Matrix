@@ -57,12 +57,7 @@ export interface AgentRequest {
 	 */
 	getSession?: (sessionId: string) => TaskSession | undefined;
 	/**
-	 * Build the ## Pending section for yield tool_result at resume time.
-	 * Called by the provider loop when yield resumes after receiving messages.
-	 * Uses live tracker data to report running sub tasks and pending clarifications.
-	 * Returns the pending section text (e.g. "## Pending\n- Running sub tasks: ...").
-	 */
-	buildYieldPendingSection?: () => string;
+
 	/**
 	 * Bind the live messages[] array from the provider loop.
 	 * Called once after the messages array is created in runProviderLoop.

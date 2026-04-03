@@ -2661,13 +2661,8 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "tool_result",
 				tool: "test_tool",
 				toolCallId: "tc-yield",
-				content:
-					'## Pending\n- Running sub tasks: "Build" (t2)\n- Pending clarifications: none',
+				content: "resumed.",
 				isError: false,
-				pending: {
-					runningChildren: [{ id: "t2", title: "Build" }],
-					pendingClarifications: 0,
-				},
 				taskId: "test",
 				ts: 1004,
 			},
@@ -2682,13 +2677,11 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		expect(messages).toHaveLength(3);
 		const userMsg = messages[2] as { role: string; content: unknown[] };
 		expect(userMsg.role).toBe("user");
-		// pending section is embedded in tool_result content (not a separate text block).
-		// Text blocks should contain the consumed message only.
+		// tool_result just says "resumed." — queue messages are in separate text blocks.
 		const toolResult = (
 			userMsg.content as { type: string; content?: string }[]
 		).find((b) => b.type === "tool_result");
-		expect(toolResult?.content).toContain("## Pending");
-		expect(toolResult?.content).toContain('"Build" (t2)');
+		expect(toolResult?.content).toContain("resumed.");
 		// Consumed message should be in a text block with timestamp
 		const textBlocks = (
 			userMsg.content as { type: string; text?: string }[]
@@ -2737,13 +2730,8 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "tool_result",
 				tool: "test_tool",
 				toolCallId: "tc-yield",
-				content:
-					'## Pending\n- Running sub tasks: "Build" (t2)\n- Pending clarifications: none',
+				content: "resumed.",
 				isError: false,
-				pending: {
-					runningChildren: [{ id: "t2", title: "Build" }],
-					pendingClarifications: 0,
-				},
 				taskId: "test",
 				ts: 1004,
 			},
@@ -2758,9 +2746,7 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		expect(messages).toHaveLength(3);
 		const toolMsg = messages[2] as { role: string; content: string };
 		expect(toolMsg.role).toBe("tool");
-		// pending section is in the tool content itself (not appended separately)
-		expect(toolMsg.content).toContain("## Pending");
-		expect(toolMsg.content).toContain('"Build" (t2)');
+		expect(toolMsg.content).toContain("resumed.");
 	});
 
 	test("Anthropic: user_message with body.images gets image blocks", () => {
@@ -3001,13 +2987,8 @@ describe("structured JSONL — queueEntry on user_message", () => {
 				type: "tool_result",
 				tool: "test_tool",
 				toolCallId: "tc-yield",
-				content:
-					'<task_complete from_task="t1" task_name="Build UI" status="passed">All tests pass</task_complete>\n<task_message from_task="p1" task_name="Orchestrator">Keep going</task_message>\n\n## Pending\n- Running sub tasks: none\n- Pending clarifications: none',
+				content: "resumed.",
 				isError: false,
-				pending: {
-					runningChildren: [],
-					pendingClarifications: 0,
-				},
 				taskId: "test",
 				ts: 1005,
 			},
@@ -3031,11 +3012,10 @@ describe("structured JSONL — queueEntry on user_message", () => {
 		const allText = textBlocks.map((b) => b.text).join("");
 		expect(allText).toContain("Build UI");
 		expect(allText).toContain("Keep going");
-		// Pending section is in tool_result content, not in text blocks
 		const toolResult = (
 			userMsg.content as { type: string; content?: string }[]
 		).find((b) => b.type === "tool_result");
-		expect(toolResult?.content).toContain("## Pending");
+		expect(toolResult?.content).toContain("resumed.");
 	});
 
 	test("Anthropic: mixed tools — only last tool_result group gets queue messages", () => {

@@ -551,7 +551,7 @@ describe("Stress: multi-child coordination", () => {
 						{
 							block: 0,
 							type: "tool_result",
-							contains: "## Pending",
+							contains: "resumed.",
 						},
 					],
 					blocks: [
@@ -1623,7 +1623,7 @@ describe("Stress: child restart edge cases", () => {
 						{
 							block: 0,
 							type: "tool_result",
-							contains: "## Pending",
+							contains: "resumed.",
 						},
 					],
 					blocks: [

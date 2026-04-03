@@ -136,8 +136,7 @@ export interface OrchestratorToolsResult {
 	toolDefs: ToolDefinition<any>[];
 	/** Returns true if this agent has running children (checked via session on tracker). */
 	hasRunningChildren?: () => boolean;
-	/** Build the ## Pending section for yield tool_result using live tracker data. */
-	buildYieldPendingSection?: () => string;
+
 	/**
 	 * Bind the live messages[] array from the provider loop into the eval tool handler.
 	 * Called by runProviderLoop right after creating the messages array.
@@ -182,9 +181,6 @@ export function createOrchestratorTools(
 	const broadcastTree = () => {
 		deps.broadcastTree();
 	};
-	/** Count of outstanding clarify() calls that have not yet received a clarify_response. */
-	let pendingClarifications = 0;
-
 	const toolDefs = [
 		tool(
 			"get_tree",
@@ -587,15 +583,13 @@ export function createOrchestratorTools(
 			"yield",
 			"Suspend execution and wait for messages (child completions, user messages, etc.). " +
 				"Call this when you have spawned tasks and are waiting for results. " +
-				"Returns all accumulated messages plus a ## Pending summary section. " +
+				"Returns all accumulated messages. " +
 				"Zero token burn while waiting.",
 			{},
 			async () => {
 				// Return immediately with _isYield signal. The provider loop intercepts this
 				// and enters a loop-level pause instead of sending this result to the API.
-				// When messages arrive, the loop calls buildYieldPendingSection() to get
-				// live pending data, then constructs the full tool_result.
-				// This makes yield state serializable and recoverable across daemon restarts.
+				// When messages arrive, the loop constructs the tool_result with wake messages.
 				return {
 					content: [{ type: "text" as const, text: "" }],
 					isError: false,
@@ -982,9 +976,6 @@ export function createOrchestratorTools(
 			},
 			async (args) => {
 				const taskId = currentTaskId ?? "orchestrator";
-
-				// Track this as a pending clarification — decremented in yield() when clarify_response arrives
-				pendingClarifications++;
 
 				emit({
 					type: "clarification_requested",
@@ -1485,30 +1476,6 @@ export function createOrchestratorTools(
 			return getDescendantIds(tracker, currentTaskId).some(
 				(id) => tracker.get(id)?.session != null,
 			);
-		},
-		buildYieldPendingSection: () => {
-			// Build ## Pending section using live tracker data at resume time
-			const myDescendants = currentTaskId
-				? getDescendantIds(tracker, currentTaskId)
-				: [];
-			const runningChildren = myDescendants.filter(
-				(id) => tracker.get(id)?.session != null,
-			);
-			const runningChildrenData = runningChildren.map((id) => ({
-				id,
-				title: tracker.get(id)?.title ?? id,
-			}));
-			const runningChildrenText =
-				runningChildrenData.length > 0
-					? runningChildrenData.map((c) => `"${c.title}" (${c.id})`).join(", ")
-					: "none";
-			const clarifyText =
-				pendingClarifications > 0 ? String(pendingClarifications) : "none";
-			return [
-				"## Pending",
-				`- Running sub tasks: ${runningChildrenText}`,
-				`- Pending clarifications: ${clarifyText}`,
-			].join("\n");
 		},
 	};
 }

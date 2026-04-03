@@ -3123,7 +3123,7 @@ describe("Integration: yield wakeup assertions", () => {
 						{
 							block: 0,
 							type: "tool_result",
-							contains: "## Pending",
+							contains: "resumed.",
 							isError: false,
 						},
 						{
@@ -3160,7 +3160,7 @@ describe("Integration: yield wakeup assertions", () => {
 		expect(status).toBe("verify");
 
 		// If we got here, the assert DSL validated that:
-		// - block 0 = tool_result containing "## Pending"
+		// - block 0 = tool_result containing "resumed."
 		// - block 1 = text containing "WAKE_MESSAGE_CONTENT"
 		expect(ctx.mockAPI.getRequestCount()).toBeGreaterThanOrEqual(2);
 	}, 20000);
@@ -3257,7 +3257,7 @@ describe("Integration: yield wakeup assertions", () => {
 						{
 							block: 0,
 							type: "tool_result",
-							contains: "## Pending",
+							contains: "resumed.",
 							isError: false,
 						},
 						{ block: 1, type: "text", contains: "FIRST_MSG_ALPHA" },
@@ -3277,7 +3277,7 @@ describe("Integration: yield wakeup assertions", () => {
 						{
 							block: 0,
 							type: "tool_result",
-							contains: "## Pending",
+							contains: "resumed.",
 						},
 						{ block: 1, type: "text", contains: "SECOND_MSG_BETA" },
 					],
@@ -3343,7 +3343,7 @@ describe("Integration: yield wakeup assertions", () => {
 						{
 							block: 0,
 							type: "tool_result",
-							contains: "## Pending",
+							contains: "resumed.",
 							isError: false,
 						},
 						{
@@ -3490,7 +3490,7 @@ describe("Integration: parent-child lifecycle", () => {
 						{
 							block: 0,
 							type: "tool_result",
-							contains: "## Pending",
+							contains: "resumed.",
 							isError: false,
 						},
 						{
@@ -3610,7 +3610,7 @@ describe("Integration: parent-child lifecycle", () => {
 						{
 							block: 0,
 							type: "tool_result",
-							contains: "## Pending",
+							contains: "resumed.",
 						},
 						{
 							block: 1,
@@ -4594,7 +4594,7 @@ describe("Integration: background process lifecycle", () => {
 						{
 							block: 0,
 							type: "tool_result",
-							contains: "## Pending",
+							contains: "resumed.",
 						},
 						{
 							block: 1,
@@ -4617,7 +4617,7 @@ describe("Integration: background process lifecycle", () => {
 						{
 							block: 0,
 							type: "tool_result",
-							contains: "## Pending",
+							contains: "resumed.",
 						},
 						{
 							block: 1,
@@ -4711,7 +4711,7 @@ describe("Integration: background process lifecycle", () => {
 						{
 							block: 0,
 							type: "tool_result",
-							contains: "## Pending",
+							contains: "resumed.",
 						},
 						{
 							block: 1,
@@ -5642,7 +5642,7 @@ describe("Integration: fork prefix consistency", () => {
 					blocks: [{ type: "tool_use", name: "mcp__mxd__yield", input: {} }],
 				},
 				{
-					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
+					assert: [{ block: 0, type: "tool_result", contains: "resumed." }],
 					blocks: [
 						{
 							type: "tool_use",
@@ -5813,7 +5813,7 @@ describe("Integration: fork prefix consistency", () => {
 					],
 				},
 				{
-					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
+					assert: [{ block: 0, type: "tool_result", contains: "resumed." }],
 					blocks: [
 						{
 							type: "tool_use",
@@ -5981,7 +5981,7 @@ describe("Integration: fork prefix consistency", () => {
 				},
 				{
 					// Turn 4: A completed, create child B
-					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
+					assert: [{ block: 0, type: "tool_result", contains: "resumed." }],
 					blocks: [
 						{
 							type: "tool_use",
@@ -6038,7 +6038,7 @@ describe("Integration: fork prefix consistency", () => {
 				},
 				{
 					// Turn 8: done
-					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
+					assert: [{ block: 0, type: "tool_result", contains: "resumed." }],
 					blocks: [
 						{
 							type: "tool_use",
@@ -6651,7 +6651,7 @@ describe("Integration: session_config in JSONL", () => {
 					blocks: [{ type: "tool_use", name: "mcp__mxd__yield", input: {} }],
 				},
 				{
-					assert: [{ block: 0, type: "tool_result", contains: "## Pending" }],
+					assert: [{ block: 0, type: "tool_result", contains: "resumed." }],
 					blocks: [
 						{
 							type: "tool_use",

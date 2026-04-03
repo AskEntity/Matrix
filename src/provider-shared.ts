@@ -846,7 +846,7 @@ export async function* runProviderLoop(
 
 			// Write done tool_result with wake context
 			const cwdLine = cwd ? `\n\n## Working Directory\n${cwd}` : "";
-			const doneText = `You previously called done(). New messages woke you up:${cwdLine}\n\n${doneResult.formatted}`;
+			const doneText = `You previously called done(). New messages woke you up:${cwdLine}`;
 			const doneToolResultEvt: Event = {
 				type: "tool_result",
 				tool: pendingDoneToolCall.name,
@@ -1035,12 +1035,9 @@ export async function* runProviderLoop(
 			// Filter oversized images from queue messages before yield tool_result
 			filterQueueMessageImages(adapter, yieldResult.nonCompact);
 
-			// Build yield tool_result with pending section + queue messages as additional
-			// text blocks in the same user message. Headers (memory.md + working dir) are
-			// stripped from queue messages — they shouldn't appear in tool_result content.
-			const pendingSection =
-				request.buildYieldPendingSection?.() ??
-				"## Pending\n- Running sub tasks: unknown\n- Pending clarifications: none";
+			// Build yield tool_result — just "resumed." Queue messages appear as
+			// additional text blocks in the same user message.
+			const yieldContent = "resumed.";
 			const yieldFormatted = formatQueueMessagesWithHeaders(
 				yieldResult.nonCompact,
 			);
@@ -1054,7 +1051,7 @@ export async function* runProviderLoop(
 				],
 				execResults: [
 					{
-						content: pendingSection,
+						content: yieldContent,
 						isError: false,
 					},
 				],
@@ -1073,7 +1070,7 @@ export async function* runProviderLoop(
 				type: "tool_result",
 				tool: pendingYieldToolCall.name,
 				toolCallId: pendingYieldToolCall.id,
-				content: pendingSection,
+				content: yieldContent,
 				isError: false,
 				taskId: "",
 				ts: Date.now(),

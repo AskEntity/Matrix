@@ -121,7 +121,6 @@ interface AgentContextResult {
 	// biome-ignore lint/suspicious/noExplicitAny: ToolDefinition generic is not narrowable here
 	mcpToolDefs: Record<string, ToolDefinition<any>[]>;
 	hasRunningChildren?: () => boolean;
-	buildYieldPendingSection?: () => string;
 	/** Bind live messages[] from provider loop for evaluate_script (selfBootstrap). */
 	setMessages?: (msgs: unknown[]) => void;
 }
@@ -160,12 +159,7 @@ async function createAgentContext(
 		await mcpManager.connectAll(effectiveCfg.mcpServers, opts.projectPath);
 	}
 
-	const {
-		toolDefs,
-		hasRunningChildren,
-		buildYieldPendingSection,
-		setMessages,
-	} = createOrchestratorTools(
+	const { toolDefs, hasRunningChildren, setMessages } = createOrchestratorTools(
 		{
 			tracker: opts.tracker,
 			repoPath: project.path,
@@ -259,7 +253,6 @@ async function createAgentContext(
 		mcpManager,
 		mcpToolDefs,
 		hasRunningChildren,
-		buildYieldPendingSection,
 		setMessages,
 	};
 }
@@ -803,7 +796,6 @@ export async function runAgentForNode(
 			model: effectiveModel,
 			mcpToolDefs: agentCtx.mcpToolDefs,
 			hasRunningChildren: agentCtx.hasRunningChildren,
-			buildYieldPendingSection: agentCtx.buildYieldPendingSection,
 			getSession,
 			cacheTtl: effectiveCacheTtl,
 			setMessages: agentCtx.setMessages,
