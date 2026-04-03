@@ -3966,7 +3966,7 @@ describe("buildSessionRepair", () => {
 		const repair = buildSessionRepair(events, "t1");
 		expect(repair).not.toBeNull();
 		// Should truncate before the out-of-order tool_call
-		expect(repair!.truncateAfterIndex).toBeLessThan(4);
+		expect(repair?.truncateAfterIndex).toBeLessThan(4);
 	});
 
 	test("no repair needed when tool_results are positionally correct", () => {
