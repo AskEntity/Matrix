@@ -88,6 +88,8 @@ interface SingleTurnInstruction {
 	stop_reason?: "end_turn" | "tool_use";
 	/** Assert rules to validate tool_results from the previous turn before returning this turn's response. */
 	assert?: AssertRule[];
+	/** Delay in milliseconds before emitting the first stream event. Used to simulate slow API responses. */
+	delay_ms?: number;
 }
 
 interface MultiTurnInstruction {
@@ -528,6 +530,7 @@ function createMockAnthropicStream(
 	content: ContentBlock[],
 	stopReason: "end_turn" | "tool_use",
 	model: string,
+	delayMs?: number,
 ): {
 	[Symbol.asyncIterator](): AsyncIterableIterator<StreamEvent>;
 	finalMessage(): Promise<Anthropic.Messages.Message>;
@@ -609,6 +612,9 @@ function createMockAnthropicStream(
 
 	return {
 		[Symbol.asyncIterator]: async function* () {
+			if (delayMs != null && delayMs > 0) {
+				await new Promise((r) => setTimeout(r, delayMs));
+			}
 			for (const event of events) {
 				yield event;
 			}
@@ -1091,7 +1097,11 @@ export class ValidatingMockAPI {
 	private processTurn(
 		turn: SingleTurnInstruction,
 		messages: MessageParam[],
-	): { content: ContentBlock[]; stopReason: "end_turn" | "tool_use" } {
+	): {
+		content: ContentBlock[];
+		stopReason: "end_turn" | "tool_use";
+		delayMs?: number;
+	} {
 		// Validate asserts against tool_results in current request
 		if (turn.assert && turn.assert.length > 0) {
 			this.validateAsserts(turn.assert, messages);
@@ -1101,7 +1111,8 @@ export class ValidatingMockAPI {
 		const resolvedBlocks = this.substituteVars(turn.blocks);
 		const resolvedTurn = { ...turn, blocks: resolvedBlocks };
 
-		return buildResponseContent(resolvedTurn);
+		const result = buildResponseContent(resolvedTurn);
+		return { ...result, delayMs: turn.delay_ms };
 	}
 
 	/**
@@ -1202,8 +1213,8 @@ export class ValidatingMockAPI {
 		if (convQueue && convQueue.length > 0) {
 			const turn = convQueue.shift() as SingleTurnInstruction;
 			if (convQueue.length === 0) this.conversationQueues.delete(convKey);
-			const { content, stopReason } = this.processTurn(turn, messages);
-			return createMockAnthropicStream(content, stopReason, modelName);
+			const { content, stopReason, delayMs } = this.processTurn(turn, messages);
+			return createMockAnthropicStream(content, stopReason, modelName, delayMs);
 		}
 
 		// 2. Try to parse a new instruction from the last user message
@@ -1216,13 +1227,29 @@ export class ValidatingMockAPI {
 					this.conversationQueues.set(convKey, rest);
 				}
 				if (first) {
-					const { content, stopReason } = this.processTurn(first, messages);
-					return createMockAnthropicStream(content, stopReason, modelName);
+					const { content, stopReason, delayMs } = this.processTurn(
+						first,
+						messages,
+					);
+					return createMockAnthropicStream(
+						content,
+						stopReason,
+						modelName,
+						delayMs,
+					);
 				}
 			} else {
 				// Single turn
-				const { content, stopReason } = this.processTurn(instruction, messages);
-				return createMockAnthropicStream(content, stopReason, modelName);
+				const { content, stopReason, delayMs } = this.processTurn(
+					instruction,
+					messages,
+				);
+				return createMockAnthropicStream(
+					content,
+					stopReason,
+					modelName,
+					delayMs,
+				);
 			}
 		}
 
