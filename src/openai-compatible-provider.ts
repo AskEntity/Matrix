@@ -17,6 +17,7 @@ import {
 	runProviderLoop,
 	type ToolResult,
 } from "./provider-shared.ts";
+import { formatQueueMessagesWithHeaders } from "./queue-utils.ts";
 import type { JsonTool } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
@@ -659,7 +660,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 			(messages as OpenAIMessage[]).push(historyMsg);
 		},
 
-		buildToolResultsMessage(params): unknown[] {
+		buildUserTurn(params): unknown[] {
 			const result: OpenAIMessage[] = [];
 
 			// Image results to inject as user message (OpenAI tool results are text-only)
@@ -668,7 +669,7 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 				dataUri: string;
 			}> = [];
 
-			// All queue text blocks from any source — unified, no idle/working distinction
+			// All queue text blocks from any source
 			const allQueueTexts: string[] = [];
 			const allQueueImageParts: Array<
 				| { type: "text"; text: string }
@@ -691,7 +692,6 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 				});
 
 				if (exec.formattedQueueMessages) {
-					// Each queue message is its own text — split by newline
 					for (const line of exec.formattedQueueMessages.split("\n")) {
 						if (line.trim()) {
 							allQueueTexts.push(line);
@@ -766,19 +766,15 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 					"\n\n[CRITICAL: If your work is complete, call done() with status 'passed' or 'failed'. Do NOT stop without calling done().]";
 			}
 
-			// Cancellation point queue messages — add to unified collection
-			if (
-				params.cancellationQueueMsgs.length > 0 &&
-				params.cancellationFormatted
-			) {
-				for (const line of params.cancellationFormatted.split("\n")) {
+			// Raw queue messages — format internally
+			if (params.queueMessages.length > 0) {
+				const formatted = formatQueueMessagesWithHeaders(params.queueMessages);
+				for (const line of formatted.split("\n")) {
 					if (line.trim()) {
 						allQueueTexts.push(line);
 					}
 				}
-				const queueImageParts = extractQueueImageParts(
-					params.cancellationQueueMsgs,
-				);
+				const queueImageParts = extractQueueImageParts(params.queueMessages);
 				for (const part of queueImageParts) {
 					allQueueImageParts.push(part);
 				}

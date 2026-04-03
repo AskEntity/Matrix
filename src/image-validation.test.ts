@@ -56,7 +56,7 @@ const anthropicAdapter: ProviderAdapter = {
 	supportsTokenCounting: false,
 	buildResponseEvents: () => [],
 	addAssistantMessage: () => {},
-	buildToolResultsMessage: () => [],
+	buildUserTurn: () => [],
 	computeCost: () => 0,
 } as ProviderAdapter;
 

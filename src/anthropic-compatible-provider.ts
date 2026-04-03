@@ -24,6 +24,7 @@ import {
 	runProviderLoop,
 	type ToolResult,
 } from "./provider-shared.ts";
+import { formatQueueMessagesWithHeaders } from "./queue-utils.ts";
 import type { JsonTool } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
@@ -655,7 +656,7 @@ function createAnthropicAdapter(
 			});
 		},
 
-		buildToolResultsMessage(params): unknown[] {
+		buildUserTurn(params): unknown[] {
 			type ImageMediaType =
 				| "image/jpeg"
 				| "image/png"
@@ -693,8 +694,9 @@ function createAnthropicAdapter(
 				}
 			}
 
-			// Collect all queue messages as individual text blocks — no "idle"/"working" distinction.
-			// Each queue message from yield/done tools or cancellation point becomes its own text block.
+			// Collect queue text blocks and images from two sources:
+			// 1. execResults[].formattedQueueMessages — from yield/done tool handlers
+			// 2. params.queueMessages — from cancellation point or implicit yield
 			const queueTextBlocks: Array<{ type: "text"; text: string }> = [];
 			const queueImageBlocks: Array<{
 				type: "image";
@@ -705,12 +707,10 @@ function createAnthropicAdapter(
 				};
 			}> = [];
 
-			// Queue messages from yield/done tools
+			// Source 1: Queue messages embedded in tool execution results (yield/done)
 			for (const exec of params.execResults) {
 				if (exec.formattedQueueMessages) {
 					// Keep as a single text block — must match JSONL reconstruction.
-					// Splitting by line creates N blocks in live path but JSONL
-					// reconstruction merges them into one, causing cache miss on restart.
 					queueTextBlocks.push({
 						type: "text" as const,
 						text: exec.formattedQueueMessages,
@@ -730,24 +730,22 @@ function createAnthropicAdapter(
 				}
 			}
 
-			// Queue messages from cancellation point
-			if (
-				params.cancellationQueueMsgs.length > 0 &&
-				params.cancellationFormatted
-			) {
-				queueTextBlocks.push({
-					type: "text" as const,
-					text: params.cancellationFormatted,
-				});
-				const cancellationImageBlocks = extractQueueImages(
-					params.cancellationQueueMsgs,
-				);
-				for (const img of cancellationImageBlocks) {
+			// Source 2: Raw queue messages — format internally
+			if (params.queueMessages.length > 0) {
+				const formatted = formatQueueMessagesWithHeaders(params.queueMessages);
+				if (formatted) {
+					queueTextBlocks.push({
+						type: "text" as const,
+						text: formatted,
+					});
+				}
+				const imageBlocks = extractQueueImages(params.queueMessages);
+				for (const img of imageBlocks) {
 					queueImageBlocks.push(img);
 				}
 			}
 
-			// Anthropic user message content: tool_results first, then queue text blocks, then images
+			// Anthropic: single user message — tool_results first, then text, then images
 			const userContentBlocks = [
 				...toolResults,
 				...queueTextBlocks,
@@ -762,7 +760,7 @@ function createAnthropicAdapter(
 					: []),
 			];
 
-			// No tool results + no images → string content (matches JSONL reconstruction)
+			// No tool results + no images + single text → string content (matches JSONL reconstruction)
 			if (
 				toolResults.length === 0 &&
 				queueImageBlocks.length === 0 &&
