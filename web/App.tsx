@@ -12,6 +12,7 @@ import {
 	IconArrowDown,
 	IconBack,
 	IconChevron,
+	IconClose,
 	IconExpand,
 	IconGear,
 	IconHexagon,
@@ -23,6 +24,7 @@ import { LoginPage } from "./components/LoginPage.tsx";
 import { OrchestratorDetail } from "./components/OrchestratorDetail.tsx";
 import { RelocateBanner } from "./components/RelocateBanner.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
+import { statusDotClass } from "./components/StatusBadge.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
 import { TaskTree } from "./components/TaskTree.tsx";
 import { TokenUsageBadge } from "./components/TokenUsageBadge.tsx";
@@ -176,6 +178,18 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		return stored ? Number(stored) : 288;
 	});
 	const [isSidebarDragging, setIsSidebarDragging] = useState(false);
+	const [openTabs, setOpenTabs] = useState<string[]>(() => {
+		try {
+			const stored = localStorage.getItem("mxd-open-tabs");
+			if (stored) {
+				const parsed = JSON.parse(stored);
+				if (Array.isArray(parsed)) return parsed;
+			}
+		} catch {
+			/* ignore */
+		}
+		return [];
+	});
 	const [splitRatio, setSplitRatio] = useState(0.35);
 	const [isDragging, setIsDragging] = useState(false);
 	const [autoScroll, setAutoScroll] = useState(true);
@@ -659,6 +673,16 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		setTargetNodeId(selectedTaskId);
 	}, [selectedTaskId, rootNodeId]);
 
+	// Clean up stale tabs (nodes that were deleted)
+	useEffect(() => {
+		if (openTabs.length === 0) return;
+		const validTabs = openTabs.filter((id) => nodeMap.has(id));
+		if (validTabs.length !== openTabs.length) {
+			setOpenTabs(validTabs);
+			localStorage.setItem("mxd-open-tabs", JSON.stringify(validTabs));
+		}
+	}, [openTabs, nodeMap]);
+
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only trigger on task selection change
 	useEffect(() => {
 		setAutoScroll(true);
@@ -767,6 +791,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			setProjectId(id);
 			setSelectedTaskId(null);
 			setRootNodeId(null);
+			setOpenTabs([]);
+			localStorage.setItem("mxd-open-tabs", "[]");
 			setLogs([]);
 			setTokenUsage({});
 			setPendingMessages([]);
@@ -802,10 +828,45 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 	const handleToggleSidebar = useCallback(() => setSidebarOpen((s) => !s), []);
 
-	const handleTaskSelect = useCallback((id: string | null) => {
+	const handleTaskSelect = useCallback(
+		(id: string | null) => {
+			setSelectedTaskId(id);
+			setSidebarOpen(false);
+			// Add to open tabs if it's a non-root task and not already open
+			if (id && id !== rootNodeId) {
+				setOpenTabs((prev) => {
+					if (prev.includes(id)) return prev;
+					const next = [...prev, id];
+					localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
+					return next;
+				});
+			}
+		},
+		[rootNodeId],
+	);
+
+	const handleTabSelect = useCallback((id: string | null) => {
 		setSelectedTaskId(id);
-		setSidebarOpen(false);
 	}, []);
+
+	const handleTabClose = useCallback(
+		(id: string, e?: React.MouseEvent) => {
+			e?.stopPropagation();
+			setOpenTabs((prev) => {
+				const next = prev.filter((t) => t !== id);
+				localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
+				// If closing the active tab, select the nearest remaining tab or orchestrator
+				if (selectedTaskId === id) {
+					const closedIndex = prev.indexOf(id);
+					const newActive =
+						next[Math.min(closedIndex, next.length - 1)] ?? rootNodeId;
+					setSelectedTaskId(newActive);
+				}
+				return next;
+			});
+		},
+		[selectedTaskId, rootNodeId],
+	);
 
 	const handleClearTarget = useCallback(() => {
 		setTargetNodeId(null);
@@ -1050,6 +1111,49 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					className={`mxd-content${isDragging ? " dragging" : ""}${detailCollapsed ? " mxd-detail-collapsed" : ""}`}
 					ref={contentPanelRef}
 				>
+					{/* Tab bar */}
+					{openTabs.length > 0 && (
+						<div className="mxd-tab-bar">
+							<button
+								type="button"
+								className={`mxd-tab${isOrchestratorNode ? " mxd-tab-active" : ""}`}
+								onClick={() => handleTabSelect(rootNodeId)}
+							>
+								<IconHexagon size={10} />
+								<span className="mxd-tab-label">{t("orch.label")}</span>
+							</button>
+							{openTabs.map((tabId) => {
+								const tabNode = nodeMap.get(tabId);
+								if (!tabNode) return null;
+								const isActive = selectedTaskId === tabId;
+								const isTabActive = isTask(tabNode) && activeAgents.has(tabId);
+								return (
+									<button
+										key={tabId}
+										type="button"
+										className={`mxd-tab${isActive ? " mxd-tab-active" : ""}`}
+										onClick={() => handleTabSelect(tabId)}
+									>
+										{isTabActive && <span className="mxd-task-spinner" />}
+										{isTask(tabNode) && !isTabActive && (
+											<span
+												className={`mxd-tab-dot ${statusDotClass(tabNode.status)}`}
+											/>
+										)}
+										<span className="mxd-tab-label">{tabNode.title}</span>
+										{/* biome-ignore lint/a11y/useKeyWithClickEvents: close button is mouse-only */}
+										{/* biome-ignore lint/a11y/noStaticElementInteractions: tab close affordance */}
+										<span
+											className="mxd-tab-close"
+											onClick={(e) => handleTabClose(tabId, e)}
+										>
+											<IconClose size={9} />
+										</span>
+									</button>
+								);
+							})}
+						</div>
+					)}
 					{projectPathMissing && currentProject && (
 						<RelocateBanner
 							projectPath={currentProject.path}
