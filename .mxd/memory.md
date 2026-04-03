@@ -277,3 +277,42 @@ API can return multiple yield (or done) tool_calls in the same assistant turn. P
 **Fix 1**: `buildSessionRepair` only skips the LAST tool_call if it's yield/done (the intended orphan for resume). Earlier yield/done orphans are genuine repair targets.
 **Fix 2**: Provider loop writes no-op tool_results for duplicate yield calls in the same turn (first one wins).
 **Architectural lesson**: "Skip yield/done" was too broad — the invariant is "skip the INTENDED orphan", which is specifically the LAST tool_call. Any other yield/done without a result is a bug.
+
+
+## ⚠️ Persistent Task: Failed Abstraction — DELETE
+
+Persistent tasks are a failed abstraction. They tried to solve "some tasks need to run repeatedly" but introduced massive complexity:
+- Dual-source sync (tree.json + .mxd/tasks/*.json)
+- done() semantic split (permanent vs round-finished)
+- Special lifecycle in every codepath (close, reset, delete, get_tree, launch)
+- System prompt third role (persistent domain owner)
+- Cache-hostile (each persistent node = independent session)
+- Knowledge fragmentation (context scattered across persistent sessions)
+- Fork conflict (fork transfers knowledge; persistent tries to accumulate it in-place)
+
+All legitimate use cases are covered WITHOUT persistent:
+- Repeated execution → send message to closed/verify task, it wakes up
+- Quality agents → root creates one-off task from template
+- Organization → future folder feature (separate from task)
+- Knowledge transfer → fork
+
+Decision: completely delete persistent. Keep general improvements discovered during persistent work (two-phase done, verify status, Zod validation).
+
+## Persistent Deletion: What to Keep vs Delete
+
+**Keep (general improvements):**
+- Two-phase done() (Phase 1 in provider loop, Phase 2 in runAgentForNode finally)
+- Verify status (done→verify→close lifecycle)
+- Tool input Zod validation
+- close_task consequences in prompt
+
+**Delete (persistent-specific):**
+- persistent field on TaskNode, discriminated union
+- .mxd/tasks/*.json definition files + savePersistentDef + mergePersistentTasks
+- close_task verify→pending path (only keep verify→closed)
+- done() skip status update for persistent
+- get_tree hide status for persistent
+- create_task persistent option
+- System prompt persistent domain owner role
+- All persistent-related tests
+
