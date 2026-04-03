@@ -3082,3 +3082,516 @@ describe("Event deterministic verification", () => {
 		expect(hasUserMsg).toBe(true);
 	});
 });
+
+// ── Cache consistency: live path vs JSONL reconstruction ──
+// These tests exercise the ACTUAL provider loop (live buildUserTurn) and compare
+// the resulting messages[] with what eventsToAnthropicMessages produces from the
+// emitted JSONL events. Any mismatch = cache miss on restart.
+
+describe("Cache consistency: buildUserTurn matches JSONL reconstruction", () => {
+	let tmpDir: string;
+
+	beforeAll(async () => {
+		tmpDir = await mkdtemp(join(tmpdir(), "mxd-cache-consistency-"));
+	});
+
+	afterAll(async () => {
+		await rm(tmpDir, { recursive: true, force: true });
+	});
+
+	/** Helper: create a provider with a mocked client */
+	function createProvider(
+		streamFn: (params: unknown) => ReturnType<typeof createMockStream>,
+	) {
+		const savedKey = process.env.ANTHROPIC_API_KEY;
+		process.env.ANTHROPIC_API_KEY = "test-key";
+		const provider = new AnthropicCompatibleProvider("claude-sonnet-4-6");
+		process.env.ANTHROPIC_API_KEY = savedKey;
+		// biome-ignore lint/suspicious/noExplicitAny: replacing internal client for testing
+		(provider as any).client = {
+			messages: {
+				stream: streamFn,
+				countTokens: async () => ({ input_tokens: 100 }),
+			},
+		};
+		return provider;
+	}
+
+	test("MCP image in tool_result: live messages include image blocks matching JSONL reconstruction", async () => {
+		// Custom MCP tool that returns image data (simulates Chrome DevTools take_screenshot)
+		const fakeBase64 =
+			"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+		const testDir = join(tmpDir, "mcp-image");
+		await mkdir(testDir, { recursive: true });
+
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
+
+		// Capture the live messages array from the provider
+		let liveMessages: unknown[] | null = null;
+
+		let callCount = 0;
+		const provider = createProvider(() => {
+			callCount++;
+			if (callCount === 1) {
+				return createMockStream(
+					buildAnthropicResponse({
+						text: "Taking screenshot.",
+						toolUses: [
+							{
+								id: "tu_ss",
+								name: "mcp__chrome__take_screenshot",
+								input: {},
+							},
+						],
+					}),
+					["Taking screenshot."],
+				);
+			}
+			return createMockStream(
+				buildAnthropicResponse({
+					text: "Done.",
+					stopReason: "end_turn",
+				}),
+				["Done."],
+			);
+		});
+
+		const testQueue = queueWithPrompt("Take a screenshot", testDir);
+
+		const session = provider.stream({
+			cwd: testDir,
+			systemPrompt: { stable: "You are helpful.", variable: "" },
+			emit,
+			queue: testQueue,
+			setMessages: (msgs) => {
+				liveMessages = msgs;
+			},
+			mcpToolDefs: {
+				chrome: [
+					tool("take_screenshot", "Take a screenshot", {}, async () => ({
+						// MCP tool returns image via content array (MCP format)
+						content: [
+							{
+								type: "text",
+								text: "Took a screenshot of the current page.",
+							},
+							{
+								type: "image",
+								data: fakeBase64,
+								mimeType: "image/png",
+							},
+						],
+					})),
+				],
+			},
+		});
+
+		// Run until end_turn → idle → close queue
+		let result = await session.next();
+		while (!result.done) {
+			if (
+				result.value.type === "status" &&
+				(result.value as { message?: string }).message?.includes("idle")
+			) {
+				testQueue.close();
+			}
+			result = await session.next();
+		}
+
+		expect(liveMessages).not.toBeNull();
+		expect(callCount).toBe(2);
+
+		// Build the full events array (prepend user message event)
+		const userMsgEvent: Event = {
+			type: "message",
+			id: "test-prompt",
+			taskId: "",
+			body: {
+				source: "user",
+				id: "test-prompt",
+				ts: 0,
+				content: "Take a screenshot",
+			},
+			ts: Date.now(),
+		};
+		const allEvents = [userMsgEvent, ...emittedEvents];
+
+		// Reconstruct from JSONL events
+		const reconstructed = eventsToAnthropicMessages(allEvents);
+
+		// Find the user message containing the tool_result in both arrays
+		const findToolResultMsg = (msgs: unknown[]) =>
+			(msgs as Array<{ role: string; content: unknown }>).find((m) => {
+				if (m.role !== "user" || !Array.isArray(m.content)) return false;
+				return (m.content as Array<{ type: string }>).some(
+					(b) => b.type === "tool_result",
+				);
+			});
+
+		const liveToolResultMsg = findToolResultMsg(
+			liveMessages as unknown as unknown[],
+		);
+		const reconToolResultMsg = findToolResultMsg(reconstructed);
+
+		expect(liveToolResultMsg).toBeDefined();
+		expect(reconToolResultMsg).toBeDefined();
+
+		// The tool_result block itself must match between live and reconstructed.
+		const liveToolResult = (
+			liveToolResultMsg?.content as Array<Record<string, unknown>>
+		).find((b) => b.type === "tool_result");
+		const reconToolResult = (
+			reconToolResultMsg?.content as Array<Record<string, unknown>>
+		).find((b) => b.type === "tool_result");
+
+		// JSONL reconstruction includes image blocks in tool_result content
+		expect(Array.isArray(reconToolResult?.content)).toBe(true);
+		// Live path must also have array content (not just a string)
+		expect(Array.isArray(liveToolResult?.content)).toBe(true);
+
+		// Deep equality — must be byte-identical
+		expect(liveToolResult).toEqual(reconToolResult);
+	});
+
+	test("Multiple queue messages at cancellation point produce separate text blocks", async () => {
+		const testDir = join(tmpDir, "multi-queue");
+		await mkdir(testDir, { recursive: true });
+
+		const emittedEvents: Event[] = [];
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+		};
+
+		let liveMessages: unknown[] | null = null;
+
+		let callCount = 0;
+		const provider = createProvider(() => {
+			callCount++;
+			if (callCount === 1) {
+				return createMockStream(
+					buildAnthropicResponse({
+						text: "Running bash.",
+						toolUses: [
+							{
+								id: "tu_bash",
+								name: "mcp__mxd__bash",
+								input: { command: "sleep 0.1" },
+							},
+						],
+					}),
+					["Running bash."],
+				);
+			}
+			return createMockStream(
+				buildAnthropicResponse({
+					text: "All done.",
+					stopReason: "end_turn",
+				}),
+				["All done."],
+			);
+		});
+
+		const testQueue = queueWithPrompt("Start", testDir);
+
+		const session = provider.stream({
+			cwd: testDir,
+			systemPrompt: { stable: "You are helpful.", variable: "" },
+			emit,
+			queue: testQueue,
+			setMessages: (msgs) => {
+				liveMessages = msgs;
+			},
+			mcpToolDefs: {
+				mxd: [
+					tool(
+						"bash",
+						"Run a command",
+						{ command: z.string() },
+						async (input) => {
+							// During bash execution, enqueue two messages to simulate
+							// multiple messages arriving at the cancellation point
+							testQueue.enqueue({
+								source: "task_complete" as const,
+								id: "tc-1",
+								ts: Date.now(),
+								taskId: "child-1",
+								title: "Task A",
+								success: true,
+								output: "Done with A",
+							});
+							testQueue.enqueue({
+								source: "task_complete" as const,
+								id: "tc-2",
+								ts: Date.now(),
+								taskId: "child-2",
+								title: "Task B",
+								success: true,
+								output: "Done with B",
+							});
+							return {
+								content: [{ type: "text", text: `Ran: ${input.command}` }],
+							};
+						},
+					),
+				],
+			},
+		});
+
+		// Run until end_turn → idle → close queue
+		let result = await session.next();
+		while (!result.done) {
+			if (
+				result.value.type === "status" &&
+				(result.value as { message?: string }).message?.includes("idle")
+			) {
+				testQueue.close();
+			}
+			result = await session.next();
+		}
+
+		expect(liveMessages).not.toBeNull();
+		expect(callCount).toBe(2);
+
+		// Build full events array (prepend user message)
+		const userMsgEvent: Event = {
+			type: "message",
+			id: "test-prompt",
+			taskId: "",
+			body: {
+				source: "user",
+				id: "test-prompt",
+				ts: 0,
+				content: "Start",
+			},
+			ts: Date.now(),
+		};
+		const allEvents = [userMsgEvent, ...emittedEvents];
+
+		// Reconstruct from JSONL events
+		const reconstructed = eventsToAnthropicMessages(allEvents);
+
+		// Find the user message containing tool_result + queue text blocks
+		const findToolResultMsg = (msgs: unknown[]) =>
+			(msgs as Array<{ role: string; content: unknown }>).find((m) => {
+				if (m.role !== "user" || !Array.isArray(m.content)) return false;
+				return (m.content as Array<{ type: string }>).some(
+					(b) => b.type === "tool_result",
+				);
+			});
+
+		const liveMsg = findToolResultMsg(liveMessages as unknown as unknown[]);
+		const reconMsg = findToolResultMsg(reconstructed);
+
+		expect(liveMsg).toBeDefined();
+		expect(reconMsg).toBeDefined();
+
+		// Extract text blocks (skip tool_result blocks)
+		const getTextBlocks = (msg: { content: unknown[] }) =>
+			(msg.content as Array<{ type: string; text?: string }>).filter(
+				(b) => b.type === "text",
+			);
+
+		const reconTextBlocks = getTextBlocks(reconMsg as { content: unknown[] });
+		const liveTextBlocks = getTextBlocks(liveMsg as { content: unknown[] });
+
+		// JSONL reconstruction produces SEPARATE text blocks per consumed message
+		expect(reconTextBlocks.length).toBe(2);
+		expect(reconTextBlocks[0]?.text).toContain("Task A");
+		expect(reconTextBlocks[1]?.text).toContain("Task B");
+
+		// Live path must produce the same number of separate blocks
+		expect(liveTextBlocks.length).toBe(reconTextBlocks.length);
+
+		// Deep equality — must be byte-identical
+		expect(liveTextBlocks).toEqual(reconTextBlocks);
+	});
+
+	test("Multiple queue messages during explicit yield produce separate text blocks", async () => {
+		const testDir = join(tmpDir, "yield-multi-queue");
+		await mkdir(testDir, { recursive: true });
+
+		const emittedEvents: Event[] = [];
+		let liveMessages: unknown[] | null = null;
+		let idleCount = 0;
+
+		const testQueue = queueWithPrompt("Start", testDir);
+
+		// Detect idle via emit callback — enqueue messages on first idle (yield),
+		// close queue on second idle (end_turn after wake).
+		const emit = (event: Event) => {
+			emittedEvents.push(event);
+			if (event.type === "agent_idle") {
+				idleCount++;
+				if (idleCount === 1) {
+					// First idle = yield waiting. Enqueue two messages simultaneously.
+					testQueue.enqueue({
+						source: "task_complete" as const,
+						id: "tc-y1",
+						ts: Date.now(),
+						taskId: "child-1",
+						title: "Yield Task A",
+						success: true,
+						output: "Yield done A",
+					});
+					testQueue.enqueue({
+						source: "task_complete" as const,
+						id: "tc-y2",
+						ts: Date.now(),
+						taskId: "child-2",
+						title: "Yield Task B",
+						success: true,
+						output: "Yield done B",
+					});
+				} else {
+					// Second idle = end_turn after wake. Close queue.
+					testQueue.close();
+				}
+			}
+		};
+
+		let callCount = 0;
+		const provider = createProvider(() => {
+			callCount++;
+			if (callCount === 1) {
+				return createMockStream(
+					buildAnthropicResponse({
+						text: "Yielding.",
+						toolUses: [
+							{
+								id: "tu_yield",
+								name: "mcp__mxd__yield",
+								input: {},
+							},
+						],
+					}),
+					["Yielding."],
+				);
+			}
+			return createMockStream(
+				buildAnthropicResponse({
+					text: "Got messages.",
+					stopReason: "end_turn",
+				}),
+				["Got messages."],
+			);
+		});
+
+		const session = provider.stream({
+			cwd: testDir,
+			systemPrompt: { stable: "You are helpful.", variable: "" },
+			emit,
+			queue: testQueue,
+			setMessages: (msgs) => {
+				liveMessages = msgs;
+			},
+			mcpToolDefs: { mxd: [] },
+		});
+
+		// Drive generator to completion — idle detection happens in emit callback
+		let result = await session.next();
+		while (!result.done) {
+			result = await session.next();
+		}
+
+		expect(liveMessages).not.toBeNull();
+		expect(callCount).toBe(2);
+		expect(idleCount).toBe(2);
+
+		// Build full events (prepend user + task_complete message events for reconstruction)
+		const userMsgEvent: Event = {
+			type: "message",
+			id: "test-prompt",
+			taskId: "",
+			body: {
+				source: "user",
+				id: "test-prompt",
+				ts: 0,
+				content: "Start",
+			},
+			ts: Date.now(),
+		};
+		const tcMsg1: Event = {
+			type: "message",
+			id: "tc-y1",
+			taskId: "",
+			body: {
+				source: "task_complete" as const,
+				id: "tc-y1",
+				ts: Date.now(),
+				taskId: "child-1",
+				title: "Yield Task A",
+				success: true,
+				output: "Yield done A",
+			},
+			ts: Date.now(),
+		};
+		const tcMsg2: Event = {
+			type: "message",
+			id: "tc-y2",
+			taskId: "",
+			body: {
+				source: "task_complete" as const,
+				id: "tc-y2",
+				ts: Date.now(),
+				taskId: "child-2",
+				title: "Yield Task B",
+				success: true,
+				output: "Yield done B",
+			},
+			ts: Date.now(),
+		};
+
+		// Insert message events before their messages_consumed references
+		const orderedEvents: Event[] = [userMsgEvent];
+		for (const e of emittedEvents) {
+			if (
+				e.type === "messages_consumed" &&
+				(e as { messageIds: string[] }).messageIds.includes("tc-y1")
+			) {
+				orderedEvents.push(tcMsg1, tcMsg2);
+			}
+			orderedEvents.push(e);
+		}
+
+		const reconstructed = eventsToAnthropicMessages(orderedEvents);
+
+		// Find the user message with tool_result (yield) + queue text blocks
+		const findLastToolResultMsg = (msgs: unknown[]) => {
+			const all = (msgs as Array<{ role: string; content: unknown }>).filter(
+				(m) => {
+					if (m.role !== "user" || !Array.isArray(m.content)) return false;
+					return (m.content as Array<{ type: string }>).some(
+						(b) => b.type === "tool_result",
+					);
+				},
+			);
+			return all[all.length - 1];
+		};
+
+		const liveMsg = findLastToolResultMsg(liveMessages as unknown as unknown[]);
+		const reconMsg = findLastToolResultMsg(reconstructed);
+
+		expect(liveMsg).toBeDefined();
+		expect(reconMsg).toBeDefined();
+
+		const getTextBlocks = (msg: { content: unknown[] }) =>
+			(msg.content as Array<{ type: string; text?: string }>).filter(
+				(b) => b.type === "text",
+			);
+
+		const reconTextBlocks = getTextBlocks(reconMsg as { content: unknown[] });
+		const liveTextBlocks = getTextBlocks(liveMsg as { content: unknown[] });
+
+		// JSONL reconstruction: separate text blocks per message
+		expect(reconTextBlocks.length).toBe(2);
+		expect(reconTextBlocks[0]?.text).toContain("Yield Task A");
+		expect(reconTextBlocks[1]?.text).toContain("Yield Task B");
+
+		// Live path must match
+		expect(liveTextBlocks.length).toBe(reconTextBlocks.length);
+		expect(liveTextBlocks).toEqual(reconTextBlocks);
+	});
+});

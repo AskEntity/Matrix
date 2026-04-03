@@ -4,7 +4,6 @@
  */
 import { type Event, queueMessageToEvent } from "./events.ts";
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
-import { formatQueueMessage } from "./task-utils.ts";
 
 // ── Queue image extraction ──
 
@@ -65,30 +64,6 @@ export function extractQueueImageParts(
 		}
 	}
 	return parts;
-}
-
-/**
- * Format queue messages with headers extracted to message level.
- * For user messages: header placed before raw content (not via formatQueueMessage which embeds header).
- * For task_messages with header: header placed before the XML-formatted content (sans header).
- * Other messages: formatted normally via formatQueueMessage.
- */
-export function formatQueueMessagesWithHeaders(msgs: QueueMessage[]): string {
-	const parts: string[] = [];
-	for (const msg of msgs) {
-		if (msg.source === "user" && msg.header) {
-			parts.push(msg.header);
-			parts.push(msg.content);
-		} else if (msg.source === "task_message" && msg.header) {
-			parts.push(msg.header);
-			// Format without header to avoid duplication (formatQueueMessage includes header)
-			const stripped = { ...msg, header: undefined };
-			parts.push(formatQueueMessage(stripped));
-		} else {
-			parts.push(formatQueueMessage(msg));
-		}
-	}
-	return parts.join("\n\n");
 }
 
 // ── Cancellation point queue drain ──

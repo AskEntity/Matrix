@@ -24,7 +24,7 @@ import {
 	runProviderLoop,
 	type ToolResult,
 } from "./provider-shared.ts";
-import { formatQueueMessagesWithHeaders } from "./queue-utils.ts";
+import { formatQueueMessage } from "./task-utils.ts";
 import type { JsonTool } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
@@ -668,21 +668,58 @@ function createAnthropicAdapter(
 				const toolUse = params.toolUses[i] as ProviderToolUse;
 				const exec = params.execResults[i] as ToolResult;
 
-				if (exec.isImage && exec.imageData && exec.mediaType) {
-					toolResults.push({
-						type: "tool_result",
-						tool_use_id: toolUse.id,
-						content: [
-							{
+				// Collect images from either direct imageData or MCP images.
+				// Both go into tool_result content blocks: images first, then text.
+				// This matches JSONL reconstruction order in onToolResults.
+				const hasDirectImage = exec.isImage && exec.imageData && exec.mediaType;
+				const hasMcpImages =
+					!exec.formattedQueueMessages && exec.mcpImages?.length;
+
+				if (hasDirectImage || hasMcpImages) {
+					const contentParts: Array<
+						| {
+								type: "image";
+								source: {
+									type: "base64";
+									media_type: ImageMediaType;
+									data: string;
+								};
+						  }
+						| { type: "text"; text: string }
+					> = [];
+
+					// Direct image (e.g. built-in read_file on an image)
+					if (hasDirectImage) {
+						contentParts.push({
+							type: "image",
+							source: {
+								type: "base64",
+								media_type: exec.mediaType as ImageMediaType,
+								data: exec.imageData as string,
+							},
+						});
+					}
+
+					// MCP images (e.g. Chrome DevTools take_screenshot)
+					if (hasMcpImages && exec.mcpImages) {
+						for (const img of exec.mcpImages) {
+							contentParts.push({
 								type: "image",
 								source: {
 									type: "base64",
-									media_type: exec.mediaType as ImageMediaType,
-									data: exec.imageData,
+									media_type: img.mediaType as ImageMediaType,
+									data: img.base64 ?? img.data ?? "",
 								},
-							},
-							{ type: "text", text: exec.content },
-						],
+							});
+						}
+					}
+
+					contentParts.push({ type: "text", text: exec.content });
+
+					toolResults.push({
+						type: "tool_result",
+						tool_use_id: toolUse.id,
+						content: contentParts,
 					});
 				} else {
 					toolResults.push({
@@ -730,14 +767,18 @@ function createAnthropicAdapter(
 				}
 			}
 
-			// Source 2: Raw queue messages — format internally
+			// Source 2: Raw queue messages — format each as its own text block.
+			// Each message becomes a separate text block to match JSONL reconstruction,
+			// which produces one text block per consumed message via formatEventForAI.
 			if (params.queueMessages.length > 0) {
-				const formatted = formatQueueMessagesWithHeaders(params.queueMessages);
-				if (formatted) {
-					queueTextBlocks.push({
-						type: "text" as const,
-						text: formatted,
-					});
+				for (const msg of params.queueMessages) {
+					const text = formatQueueMessage(msg);
+					if (text) {
+						queueTextBlocks.push({
+							type: "text" as const,
+							text,
+						});
+					}
 				}
 				const imageBlocks = extractQueueImages(params.queueMessages);
 				for (const img of imageBlocks) {
