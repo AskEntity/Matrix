@@ -157,6 +157,7 @@ describe("Responses integration: isolated harness", () => {
 
 	test("runs end-to-end through tool execution and records the round-trip in /responses payloads", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 		const instruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Let me inspect the repo." },
@@ -207,6 +208,7 @@ describe("Responses integration: isolated harness", () => {
 
 	test("validates /responses request shape and tool/result round-trip", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 		const instruction = JSON.stringify({
 			turns: [
 				{

@@ -267,6 +267,7 @@ describe("Integration: full stack with mock API", () => {
 
 	test("Scenario 1: normal multi-turn with real tool execution", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Instruction: turn 1 runs bash, turn 2 asserts output then calls done()
 		const instruction = JSON.stringify({
@@ -339,6 +340,7 @@ describe("Integration: full stack with mock API", () => {
 
 	test("Scenario 2: multiple tools execute with real results", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Write a file to read
 		await Bun.write(join(ctx.projectDir, "test-file.txt"), "file_content_here");
@@ -400,6 +402,7 @@ describe("Integration: full stack with mock API", () => {
 
 	test("Scenario 3: explicit yield + wake with message", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: yield
 		const instruction = JSON.stringify({
@@ -446,6 +449,7 @@ describe("Integration: full stack with mock API", () => {
 
 	test("Scenario 4: implicit yield (end_turn) + wake with message", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Agent returns text-only (end_turn) → enters implicit yield
 		const instruction = JSON.stringify({
@@ -490,6 +494,7 @@ describe("Integration: full stack with mock API", () => {
 
 	test("Scenario 5: JSONL event sequence is correct", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -576,6 +581,7 @@ describe("Integration: full stack with mock API", () => {
 
 	test("Scenario 6: message injection during tool execution", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -626,6 +632,7 @@ describe("Integration: full stack with mock API", () => {
 
 	test("Scenario 7: validation catches contract violations", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// This test verifies that the mock API's validation is working
 		// by checking it catches violations in isolation (not through the provider).
@@ -2076,10 +2083,7 @@ describe("Integration: daemon restart with prefix consistency", () => {
 
 	test("Restart L: crash during end_turn implicit yield + message recovery", async () => {
 		ctx = await setupTestContext();
-		// Note: prefix validation intentionally disabled for this test.
-		// end_turn implicit yield + consumed message has a known timestamp formatting
-		// difference between live path (timestamped string) and resume path (array form).
-		// This test validates message survival, not prefix consistency.
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Agent returns text-only (end_turn) → enters implicit yield.
 		// Message is injected — it wakes the agent and gets consumed.
@@ -2472,6 +2476,7 @@ describe("Integration: auto-recovery from API 400", () => {
 
 	test("400 crashes the agent — repair fixes JSONL on next launch", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -2527,6 +2532,7 @@ describe("Integration: auto-recovery from API 400", () => {
 		// 3. Restart → repair fires, removes poison
 		// 4. Agent resumes and calls done — proving the JSONL is clean
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: bash echo
 		// Turn 2: done
@@ -2652,6 +2658,7 @@ describe("Integration: same-turn tool conflicts", () => {
 
 	test("yield + bash same turn: bash executes, yield returns success (no-op)", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: bash + yield in same turn
 		// Expected: bash executes normally, yield returns success without waiting
@@ -2713,6 +2720,7 @@ describe("Integration: same-turn tool conflicts", () => {
 
 	test("bash + yield reverse order: same behavior regardless of order", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: yield first, bash second — should behave identically to bash+yield
 		const instruction = JSON.stringify({
@@ -2771,6 +2779,7 @@ describe("Integration: same-turn tool conflicts", () => {
 
 	test("done + bash same turn: bash executes, done returns error", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: bash + done in same turn
 		// Expected: bash executes normally, done returns error (can't finish without seeing results)
@@ -2838,6 +2847,7 @@ describe("Integration: same-turn tool conflicts", () => {
 
 	test("Scenario: concurrent background bash commands get unique output files", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Two bash commands backgrounded in same turn (Promise.all).
 		// Bug: they share the same output file path → output corruption.
@@ -2968,6 +2978,7 @@ describe("Integration: yield wakeup assertions", () => {
 
 	test("Scenario: explicit yield → user message → assert yield resume structure", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: agent yields
 		// Turn 2 (after wake): assert structure — block 0 is yield tool_result with ## Pending,
@@ -3033,6 +3044,7 @@ describe("Integration: yield wakeup assertions", () => {
 
 	test("Scenario: implicit yield (end_turn) → message inject → assert text block", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Agent returns text-only → implicit yield (end_turn)
 		// When message arrives, it becomes a new user message (not tool_result, since no tool was used)
@@ -3097,6 +3109,7 @@ describe("Integration: yield wakeup assertions", () => {
 
 	test("Scenario: yield → two messages → assert both present in order", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: agent yields
 		// Turn 2 (after wake): assert both messages are present as text blocks
@@ -3185,6 +3198,7 @@ describe("Integration: yield wakeup assertions", () => {
 
 	test("Scenario: yield → message with task_message format → assert XML content", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// This test verifies that yield resume correctly formats different message types.
 		// We send a regular user message (which arrives as source: "user")
@@ -3254,6 +3268,7 @@ describe("Integration: parent-child lifecycle", () => {
 
 	test("Scenario: parent creates child → child does work → parent receives task_complete", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Child instruction: bash echo + done
 		const childInstruction = JSON.stringify({
@@ -3406,6 +3421,7 @@ describe("Integration: parent-child lifecycle", () => {
 
 	test("Scenario: child fails → parent receives failed task_complete", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Child instruction: calls done("failed")
 		const childInstruction = JSON.stringify({
@@ -3525,6 +3541,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 	test("LC1: done(passed) → status=verify, exitReason=done_passed", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			blocks: [
@@ -3547,6 +3564,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 	test("LC2: done(failed) → status=failed, exitReason=done_failed", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			blocks: [
@@ -3565,6 +3583,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 	test("LC3: interrupted (crash) → status stays in_progress, no task_complete", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Agent starts a long bash command, then we crash
 		const instruction = JSON.stringify({
@@ -3606,6 +3625,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 	test("LC4: interrupted (stop) → status stays in_progress", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Agent yields, then we stop it
 		const instruction = JSON.stringify({
@@ -3633,6 +3653,7 @@ describe("Integration: lifecycle exitReason and interrupt behavior", () => {
 
 	test("LC5: stop root with children → all stay in_progress", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Parent creates a child and yields
 		const childInstruction = JSON.stringify({
@@ -3723,6 +3744,7 @@ describe("Integration: yield bypass on restart", () => {
 
 	test("LC6: yield → restart → bypass → message → done (zero wasted API calls)", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: agent yields
 		const instruction = JSON.stringify({
@@ -3776,6 +3798,7 @@ describe("Integration: yield bypass on restart", () => {
 
 	test("LC7: interrupted agent resumes normally after restart", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Agent runs a bash command — we crash during it
 		const instruction = JSON.stringify({
@@ -3826,6 +3849,7 @@ describe("Integration: yield bypass on restart", () => {
 
 	test("LC8: end_turn enters implicit yield, message wakes agent", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// First turn: API returns end_turn (no tool calls).
 		// With the new behavior, this enters implicit yield instead of exiting.
@@ -4015,6 +4039,7 @@ describe("Integration: background process lifecycle", () => {
 
 	test("BG1: foreground timeout triggers auto-background", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// bash with foreground_timeout=500 and a command that takes longer
 		// → should be moved to background automatically
@@ -4070,6 +4095,7 @@ describe("Integration: background process lifecycle", () => {
 
 	test("BG2: background await", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: run_in_background with echo → returns bg ID immediately
 		// Turn 2: await with captured bg ID
@@ -4137,6 +4163,7 @@ describe("Integration: background process lifecycle", () => {
 
 	test("BG3: background list + status", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: start two bg processes (sleep to keep them running long enough to list)
 		// Turn 2: list → assert both commands appear
@@ -4246,6 +4273,7 @@ describe("Integration: background process lifecycle", () => {
 
 	test("BG4: background kill", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: start bg sleep 30
 		// Turn 2: kill it with captured bg ID
@@ -4312,6 +4340,7 @@ describe("Integration: background process lifecycle", () => {
 
 	test("BG5: bg completes during foreground tool execution", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: start bg (fast: sleep 1) + foreground (slow: sleep 3)
 		// bg_complete arrives while foreground is running → delivered as queue message
@@ -4387,6 +4416,7 @@ describe("Integration: background process lifecycle", () => {
 
 	test("BG6: multiple bg processes complete during yield", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Start 2 bg processes (short sleeps), then yield.
 		// bg_complete messages wake yield and deliver notifications.
@@ -4509,6 +4539,7 @@ describe("Integration: background process lifecycle", () => {
 
 	test("BG7: REST move-to-background during foreground execution", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: bash sleep 10 (long foreground, high timeout so it doesn't auto-background)
 		// Test code: while bash is running, call REST to move it to background
@@ -4645,6 +4676,7 @@ describe("Integration: tree operations", () => {
 
 	test("TREE1: create_task → update_task → close_task chain", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -4757,6 +4789,7 @@ describe("Integration: tree operations", () => {
 
 	test("TREE2: create_task + reorder_tasks", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// First get the root node ID from get_tree, then create 3 tasks, then reorder
 		const instruction = JSON.stringify({
@@ -4876,6 +4909,7 @@ describe("Integration: tree operations", () => {
 
 	test("TREE3: get_tree reflects changes", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -4936,6 +4970,7 @@ describe("Integration: tree operations", () => {
 
 	test("TREE4: persistent task — create writes .mxd/tasks/<id>.json, close rejected", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -5042,6 +5077,7 @@ describe("Integration: tree operations", () => {
 
 	test("TREE5: persistent task — full lifecycle: create → launch child → done → enters verify", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Child instruction: simple done
 		const childInstruction = JSON.stringify({
@@ -5175,6 +5211,7 @@ describe("Integration: tree operations", () => {
 
 	test("TREE6: persistent task definition survives daemon restart", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Manually create a persistent task definition file
 		const { mkdir: mkdirAsync, writeFile: writeFileAsync } = await import(
@@ -5225,6 +5262,7 @@ describe("Integration: tree operations", () => {
 
 	test("TREE7: update_task writes to .mxd/tasks/<id>.json for persistent tasks", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -5336,6 +5374,7 @@ describe("Integration: file operations", () => {
 
 	test("FILE1: write_file → read_file chain", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -5396,6 +5435,7 @@ describe("Integration: file operations", () => {
 
 	test("FILE2: read_file → edit_file → read_file", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Pre-write a file with known content
 		await Bun.write(
@@ -5481,6 +5521,7 @@ describe("Integration: file operations", () => {
 
 	test("FILE3: search → read_file workflow", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Pre-write multiple files with searchable content
 		await Bun.write(
@@ -5549,6 +5590,7 @@ describe("Integration: file operations", () => {
 
 	test("FILE4: list_files with glob", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Pre-write files in nested dirs
 		const { mkdirSync, writeFileSync } = await import("node:fs");
@@ -5607,6 +5649,7 @@ describe("Integration: file operations", () => {
 
 	test("Transient API error: outer retry recovers after rate limit", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// 2-turn conversation: bash → done
 		const instruction = JSON.stringify({
@@ -5672,6 +5715,7 @@ describe("Integration: file operations", () => {
 
 	test("Transient API error: agent dies after max outer retries exhausted", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Simple instruction
 		const instruction = JSON.stringify({
@@ -6327,6 +6371,7 @@ describe("Integration: fork prefix consistency", () => {
 
 	test("Fork + other tools in same turn: fork returns error", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Parent: create_task → (bash + fork in SAME turn) → assert fork errored → done
 		const instruction = JSON.stringify({
@@ -6524,6 +6569,7 @@ describe("Integration: message near done() race condition", () => {
 	 */
 	test("Message to passed child → resume → no duplication", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Child instruction (first run): just call done immediately
 		const childInstruction = JSON.stringify({
@@ -6697,6 +6743,7 @@ describe("Integration: session_config in JSONL", () => {
 
 	test("Fresh start writes session_config as first event in JSONL", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			blocks: [
@@ -6737,6 +6784,7 @@ describe("Integration: session_config in JSONL", () => {
 
 	test("Resume uses frozen system prompt from session_config", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// First run: bash → done (two turns)
 		const doneInstruction = JSON.stringify({
@@ -6916,6 +6964,7 @@ describe("Integration: session_config in JSONL", () => {
 
 	test("Root session_config has cacheTtl: '1h'", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			blocks: [
@@ -6945,6 +6994,7 @@ describe("Integration: session_config in JSONL", () => {
 
 	test("Regular child session_config has no cacheTtl (default 5min)", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const childInstruction = JSON.stringify({
 			blocks: [
@@ -7034,6 +7084,7 @@ describe("Integration: session_config in JSONL", () => {
 
 	test("Persistent task session_config has cacheTtl: '1h'", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const childInstruction = JSON.stringify({
 			blocks: [
@@ -7124,6 +7175,7 @@ describe("Integration: session_config in JSONL", () => {
 
 	test("Root API requests use consistent 1h cache_control on system + tools", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			blocks: [
@@ -7171,6 +7223,7 @@ describe("Integration: session_config in JSONL", () => {
 
 	test("get_tree marks calling agent's node with (you)", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			turns: [
@@ -7379,6 +7432,7 @@ describe("Integration: root done then resume", () => {
 
 	test("root agent done(passed), session exits, new message triggers JSONL resume", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Disable prefix validation — post-done JSONL has lifecycle events
 		// that may reconstruct differently on resume.
@@ -7573,6 +7627,7 @@ describe("Integration: root done then resume", () => {
 
 	test("done resume tool_result includes Working Directory when cwd is set", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: agent calls done(passed)
 		// Turn 2: after wake, agent calls done again
@@ -8631,6 +8686,7 @@ describe("Default branch", () => {
 
 	test("root node gets branch set from git HEAD at tracker load time", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
@@ -8642,6 +8698,7 @@ describe("Default branch", () => {
 
 	test("root node branch persists across save/load", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNode = tracker.get(tracker.rootNodeId);
@@ -8662,6 +8719,7 @@ describe("Default branch", () => {
 
 	test("child task worktree branches from parent's branch", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Child does bash to check its branch, then done()
 		const childInstruction = JSON.stringify({
@@ -8892,6 +8950,7 @@ describe("Default branch", () => {
 	test("child worktree on non-main branch contains correct content", async () => {
 		// Use standard setupTestContext, then add a file and switch to develop
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Add a develop-only file on a new branch
 		Bun.spawnSync(["git", "checkout", "-b", "develop"], {
@@ -9045,6 +9104,7 @@ describe("Integration: stopTask lifecycle", () => {
 
 	test("stopTask during bash: stop → orphan cleanup → resume succeeds", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: start a long-running bash command
 		// Turn 2: after resume (interrupted bash result), call done
@@ -9153,6 +9213,7 @@ describe("Integration: stopTask lifecycle", () => {
 
 	test("stopTask during yield: stop → resume succeeds", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: agent yields
 		const instruction = JSON.stringify({
@@ -9219,6 +9280,7 @@ describe("Integration: stopTask lifecycle", () => {
 
 	test("stopTask on non-running agent returns 404", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const rootNodeId = await getRootNodeId(ctx);
 
@@ -9236,6 +9298,7 @@ describe("Integration: stopTask lifecycle", () => {
 		// If orphan cleanup doesn't check for existing synthetic results from
 		// copySessionFrom, it may write DUPLICATE tool_results → API 400.
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Child: bash (will be interrupted) → on resume, done(passed)
 		const childInstruction = JSON.stringify({
@@ -9438,6 +9501,7 @@ describe("Integration: stopTask lifecycle", () => {
 		// 1. stopTask resolves foreground executions so bash returns quickly
 		// 2. runAgentForNode's catch/finally suppress events when session was replaced
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Turn 1: agent starts a bash command (will be interrupted by stop)
 		// Turn 2 (after resume): agent sees interrupted bash result + new message → done
@@ -9575,6 +9639,7 @@ describe("deliverMessage: shouldResume ordering invariant", () => {
 
 	test("first message → cold start (resume=false), restart + second message → resume=true", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// First run: agent calls done immediately
 		const instruction1 = JSON.stringify({
@@ -9648,6 +9713,7 @@ describe("Integration: Phase 2 done_notified", () => {
 
 	test("done_notified event appears in JSONL after done completes", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 		const instruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "All done." },
@@ -9679,6 +9745,7 @@ describe("Integration: Phase 2 done_notified", () => {
 
 	test("done_notified with failed status", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 		const instruction = JSON.stringify({
 			blocks: [
 				{ type: "text", text: "Can't do this." },
@@ -9716,6 +9783,7 @@ describe("Integration: Phase 2 crash recovery", () => {
 
 	test("crash after done tool_call but before Phase 2 → autoResume completes Phase 2", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Agent calls done. Phase 2 (status update + done_notified) happens normally.
 		const instruction = JSON.stringify({
@@ -9799,6 +9867,7 @@ describe("Integration: Phase 2 crash recovery", () => {
 
 	test("crash after done_notified but before status save → autoResume fixes status", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Agent calls done — Phase 2 completes normally
 		const instruction = JSON.stringify({
@@ -9848,6 +9917,7 @@ describe("Integration: two-phase done() gap tests", () => {
 
 	test("done() tool_call is intentional orphan in JSONL — no tool_result emitted", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		const instruction = JSON.stringify({
 			blocks: [
@@ -9894,6 +9964,7 @@ describe("Integration: two-phase done() gap tests", () => {
 
 	test("persistent task full round-trip: done→verify→close→pending→new message→new session", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 
 		// Round 1 child instruction: just done
 		const childInstructionR1 = JSON.stringify({

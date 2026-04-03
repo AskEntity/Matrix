@@ -691,6 +691,7 @@ describe("Invariant: Task Events Endpoint Isolation", () => {
 
 	test("GET /tasks/:id/events?after=compact returns only that session's events", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 		const { app, projectId } = ctx;
 
 		// Get the root node via tracker
@@ -817,6 +818,7 @@ describe("Invariant: Task Events Endpoint Isolation", () => {
 
 	test("GET /tasks/:id/events (no after param) returns all events for that session only", async () => {
 		ctx = await setupTestContext();
+		ctx.mockAPI.enablePrefixValidation();
 		const { app, projectId } = ctx;
 
 		const tracker = await app.getTracker(projectId);
