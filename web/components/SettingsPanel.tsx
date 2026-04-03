@@ -772,6 +772,119 @@ function McpServersSection({
 	);
 }
 
+// ---- Cache TTL Section ----
+
+function CacheTtlSection({
+	tab,
+	layers,
+	draft,
+	onDraftChange,
+}: {
+	tab: ActiveTab;
+	layers: ThreeLayerConfig;
+	draft: Record<string, unknown>;
+	onDraftChange: (patch: Record<string, unknown>) => void;
+}) {
+	const { t } = useLocale();
+
+	const cacheTtl = (draft.cacheTtl ?? {}) as {
+		root?: string;
+		child?: string;
+	};
+
+	// Inherited values for non-global tabs
+	const inherited = (() => {
+		if (tab === "global") return { root: undefined, child: undefined };
+		const lower =
+			tab === "local"
+				? {
+						...((layers.global.cacheTtl ?? {}) as {
+							root?: string;
+							child?: string;
+						}),
+						...((layers.repo.cacheTtl ?? {}) as {
+							root?: string;
+							child?: string;
+						}),
+					}
+				: ((layers.global.cacheTtl ?? {}) as {
+						root?: string;
+						child?: string;
+					});
+		return { root: lower.root, child: lower.child };
+	})();
+
+	const rootValue = cacheTtl.root ?? "";
+	const childValue = cacheTtl.child ?? "";
+
+	const handleChange = (field: "root" | "child", value: string) => {
+		const updated = { ...cacheTtl };
+		if (value) {
+			updated[field] = value;
+		} else {
+			delete updated[field];
+		}
+		// If both fields are empty/cleared, remove the entire cacheTtl key
+		if (!updated.root && !updated.child) {
+			onDraftChange({ cacheTtl: undefined });
+		} else {
+			onDraftChange({ cacheTtl: updated });
+		}
+	};
+
+	return (
+		<div className="mxd-settings-section">
+			<div className="mxd-settings-section-title">
+				{t("settings.sectionCache")}
+			</div>
+
+			{/* Root Cache TTL */}
+			<div className="mxd-settings-field">
+				<span className="mxd-settings-label">{t("settings.cacheTtlRoot")}</span>
+				<select
+					className="mxd-select mxd-settings-input"
+					value={rootValue}
+					onChange={(e) => handleChange("root", e.target.value)}
+				>
+					{tab !== "global" && (
+						<option value="">
+							{t("settings.inheritOption")}
+							{inherited.root
+								? ` (${inherited.root === "1h" ? t("settings.cacheTtl1h") : t("settings.cacheTtl5mChild")})`
+								: ""}
+						</option>
+					)}
+					<option value="1h">{t("settings.cacheTtl1hRoot")}</option>
+					<option value="5m">{t("settings.cacheTtl5m")}</option>
+				</select>
+			</div>
+
+			{/* Child Cache TTL */}
+			<div className="mxd-settings-field">
+				<span className="mxd-settings-label">
+					{t("settings.cacheTtlChild")}
+				</span>
+				<select
+					className="mxd-select mxd-settings-input"
+					value={childValue}
+					onChange={(e) => handleChange("child", e.target.value)}
+				>
+					{tab !== "global" && (
+						<option value="">
+							{t("settings.inheritOption")}
+							{inherited.child
+								? ` (${inherited.child === "1h" ? t("settings.cacheTtl1h") : t("settings.cacheTtl5mChild")})`
+								: ""}
+						</option>
+					)}
+					<option value="5m">{t("settings.cacheTtl5m")}</option>
+					<option value="1h">{t("settings.cacheTtl1h")}</option>
+				</select>
+			</div>
+		</div>
+	);
+}
+
 // ---- Tab-level Save/Revert bar ----
 
 function TabActions({
@@ -843,6 +956,13 @@ function GlobalTab({
 			/>
 
 			<McpServersSection
+				tab={tab}
+				layers={layers}
+				draft={draft}
+				onDraftChange={onDraftChange}
+			/>
+
+			<CacheTtlSection
 				tab={tab}
 				layers={layers}
 				draft={draft}
@@ -973,6 +1093,13 @@ function ProjectTab({
 			</div>
 
 			<McpServersSection
+				tab={tab}
+				layers={layers}
+				draft={draft}
+				onDraftChange={onDraftChange}
+			/>
+
+			<CacheTtlSection
 				tab={tab}
 				layers={layers}
 				draft={draft}
