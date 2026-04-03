@@ -254,7 +254,7 @@ export class TaskTracker {
 	 */
 	getTaskAbove(nodeId: string): TaskNode | undefined {
 		const node = this.get(nodeId);
-		if (!node || !node.parentId) return undefined;
+		if (!node?.parentId) return undefined;
 		let current = this.get(node.parentId);
 		while (current) {
 			if (isTask(current)) return current;

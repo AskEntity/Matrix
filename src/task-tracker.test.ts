@@ -604,11 +604,13 @@ describe("TaskTracker", () => {
 	test("reorderChildren works with mixed folders and tasks", () => {
 		const folder = tracker.addFolder("Folder", tracker.rootNodeId);
 		const task = tracker.addChild(tracker.rootNodeId, "Task", "desc");
-		const root = tracker.get(tracker.rootNodeId)!;
+		const root = tracker.get(tracker.rootNodeId);
+		if (!root) throw new Error("root not found");
 		expect(root.children).toContain(folder.id);
 		expect(root.children).toContain(task.id);
 		tracker.reorderChildren(tracker.rootNodeId, [task.id, folder.id]);
-		const reordered = tracker.get(tracker.rootNodeId)!;
+		const reordered = tracker.get(tracker.rootNodeId);
+		if (!reordered) throw new Error("reordered root not found");
 		expect(reordered.children[0]).toBe(task.id);
 		expect(reordered.children[1]).toBe(folder.id);
 	});
