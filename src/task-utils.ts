@@ -92,11 +92,12 @@ export function buildTaskPrompt(
 	parts.push(`# Task: ${node.title}`);
 	parts.push(`Task ID: \`${node.id}\``);
 	// Add "Your task is part of" line for task navigation context
+	// Uses getTaskAbove to skip folders — agents message their owning task, not the folder.
 	if (node.parentId) {
-		const parentNode = tracker.getTask(node.parentId);
-		if (parentNode) {
+		const taskAbove = tracker.getTaskAbove(node.id);
+		if (taskAbove) {
 			parts.push(
-				`\nYour task is part of "${parentNode.title}" (\`${node.parentId}\`). Send messages to \`${node.parentId}\` to discuss questions or coordinate.`,
+				`\nYour task is part of "${taskAbove.title}" (\`${taskAbove.id}\`). Send messages to \`${taskAbove.id}\` to discuss questions or coordinate.`,
 			);
 		}
 	}

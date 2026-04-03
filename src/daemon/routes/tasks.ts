@@ -17,6 +17,7 @@ import {
 } from "../../task-operations.ts";
 import { buildTaskPrompt, slugify } from "../../task-utils.ts";
 import { cleanupSessionBackgroundProcesses } from "../../tools/index.ts";
+import { isTask } from "../../types.ts";
 import { WorktreeManager } from "../../worktree-manager.ts";
 import {
 	deliverMessage,
@@ -45,34 +46,38 @@ async function notifyParentChain(
 	const node = tracker.getTask(taskId);
 	if (!node?.parentId) return;
 
-	let currentId = node.parentId;
+	// Walk parent chain using tracker.get() to traverse through folders
+	let currentId: string | null = node.parentId;
 	while (currentId) {
-		const ancestor = tracker.getTask(currentId);
+		const ancestor = tracker.get(currentId);
 		if (!ancestor) break;
 
-		const wasResumed =
-			statusBeforeDelivery === "closed" ||
-			statusBeforeDelivery === "verify" ||
-			statusBeforeDelivery === "failed";
-		let content: string;
-		if (wasResumed) {
-			const details: string[] = [];
-			if (node.worktreePath) details.push(`worktree: ${node.worktreePath}`);
-			if (node.branch) details.push(`branch: ${node.branch}`);
-			const detailStr = details.length > 0 ? ` (${details.join(", ")})` : "";
-			content = `User RESUMED ${statusBeforeDelivery} task '${taskTitle}'${detailStr} with message: ${messageContent}`;
-		} else {
-			content = `User sent a message to child task '${taskTitle}' (${taskId}): ${messageContent}`;
+		// Only deliver to task nodes — folders have no queue/session
+		if (isTask(ancestor)) {
+			const wasResumed =
+				statusBeforeDelivery === "closed" ||
+				statusBeforeDelivery === "verify" ||
+				statusBeforeDelivery === "failed";
+			let content: string;
+			if (wasResumed) {
+				const details: string[] = [];
+				if (node.worktreePath) details.push(`worktree: ${node.worktreePath}`);
+				if (node.branch) details.push(`branch: ${node.branch}`);
+				const detailStr = details.length > 0 ? ` (${details.join(", ")})` : "";
+				content = `User RESUMED ${statusBeforeDelivery} task '${taskTitle}'${detailStr} with message: ${messageContent}`;
+			} else {
+				content = `User sent a message to child task '${taskTitle}' (${taskId}): ${messageContent}`;
+			}
+
+			const notification = wasResumed
+				? createTaskMessage(taskId, taskTitle, content)
+				: createUserMessageForwarded(taskId, taskTitle, content);
+
+			// Quiet delivery — don't auto-launch stopped agents for notifications
+			await deliverMessage(ctx, project, currentId, notification, {
+				quiet: true,
+			});
 		}
-
-		const notification = wasResumed
-			? createTaskMessage(taskId, taskTitle, content)
-			: createUserMessageForwarded(taskId, taskTitle, content);
-
-		// Quiet delivery — don't auto-launch stopped agents for notifications
-		await deliverMessage(ctx, project, currentId, notification, {
-			quiet: true,
-		});
 
 		if (!ancestor.parentId) break;
 		currentId = ancestor.parentId;
@@ -97,14 +102,17 @@ function notifyTreeChange(
 		deliverMessage(ctx, project, nodeId, msg, { quiet: true });
 	}
 
-	// Walk up from the changed node's parent to root.
-	const node = tracker.getTask(nodeId);
+	// Walk up from the changed node's parent to root, traversing through folders.
+	const node = tracker.get(nodeId);
 	let currentId = node?.parentId;
 	while (currentId) {
-		const ancestor = tracker.getTask(currentId);
+		const ancestor = tracker.get(currentId);
 		if (!ancestor) break;
-		const msg = createTreeChange(action, nodeId, title);
-		deliverMessage(ctx, project, currentId, msg, { quiet: true });
+		// Only deliver to task nodes — folders have no queue/session
+		if (isTask(ancestor)) {
+			const msg = createTreeChange(action, nodeId, title);
+			deliverMessage(ctx, project, currentId, msg, { quiet: true });
+		}
 		if (!ancestor.parentId) break;
 		currentId = ancestor.parentId;
 	}
@@ -341,12 +349,11 @@ export function registerTaskRoutes(
 			const content = body.message
 				? body.message
 				: "Continue working. Pick up where you left off and complete the task.";
-			const parentNode = node.parentId
-				? tracker.getTask(node.parentId)
-				: undefined;
+			// Use getTaskAbove to skip folders — folders have no identity for messages
+			const taskAbove = tracker.getTaskAbove(nodeId);
 			const continueMsg = createTaskMessage(
-				parentNode?.id ?? "",
-				parentNode?.title ?? "User",
+				taskAbove?.id ?? "",
+				taskAbove?.title ?? "User",
 				content,
 				{ header },
 			);
@@ -370,10 +377,9 @@ export function registerTaskRoutes(
 			!node.worktreePath
 		) {
 			try {
-				const parentNode = node.parentId
-					? tracker.getTask(node.parentId)
-					: null;
-				const baseBranch = parentNode?.branch;
+				// Use getTaskAbove to skip folders — folders have no branch
+				const taskAboveForBranch = tracker.getTaskAbove(nodeId);
+				const baseBranch = taskAboveForBranch?.branch;
 				if (!baseBranch) {
 					return c.json(
 						{ error: "Cannot create worktree — parent has no branch assigned" },
@@ -400,12 +406,10 @@ export function registerTaskRoutes(
 				const updatedNode = tracker.getTask(nodeId);
 				const header = buildTaskPrompt(updatedNode ?? node, tracker, memory);
 				const content = body.message ?? "Start working on this task.";
-				const parentNode2 = node.parentId
-					? tracker.getTask(node.parentId)
-					: undefined;
+				const taskAbove2 = tracker.getTaskAbove(nodeId);
 				const continueMsg2 = createTaskMessage(
-					parentNode2?.id ?? "",
-					parentNode2?.title ?? "User",
+					taskAbove2?.id ?? "",
+					taskAbove2?.title ?? "User",
 					content,
 					{ header },
 				);
