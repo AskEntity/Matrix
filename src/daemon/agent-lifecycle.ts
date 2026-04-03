@@ -776,7 +776,8 @@ export async function runAgentForNode(
 		const configuredTtl = isRoot
 			? (agentCtx.effectiveCfg.cacheTtl?.root ?? "1h")
 			: (agentCtx.effectiveCfg.cacheTtl?.child ?? "5m");
-		const cacheTtl: "1h" | undefined = configuredTtl === "1h" ? "1h" : undefined;
+		const cacheTtl: "1h" | undefined =
+			configuredTtl === "1h" ? "1h" : undefined;
 
 		// Resolve system prompt: use stored session_config on resume, fresh on start.
 		const isResume = activeEvents.length > 0;
