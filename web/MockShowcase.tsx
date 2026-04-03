@@ -402,7 +402,6 @@ function MockShowcaseInner() {
 				pendingClarifications={pendingClarifications}
 				clarifyAnswers={clarifyAnswers}
 				onSend={noop}
-				onClearTarget={noop}
 				onClarifySubmit={noop}
 				onClarifyAnswerChange={handleClarifyAnswerChange}
 			/>
