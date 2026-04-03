@@ -8,8 +8,17 @@ import type { Event } from "./events.ts";
 
 // ── Constants ──
 
-/** Reserve ~17% as compaction buffer — compress when messages exceed this */
-const COMPACT_BUFFER_RATIO = 0.17;
+/**
+ * Compaction buffer ratios by context window size.
+ * Smaller windows need more buffer (17%) because checkpoint + rebuilt context is a larger fraction.
+ * 1M+ windows can use a smaller buffer (8%) — 920K trigger leaves room for 64K checkpoint + 16K rebuilt context.
+ */
+const COMPACT_BUFFER_RATIO_SMALL = 0.17;
+const COMPACT_BUFFER_RATIO_LARGE = 0.08;
+const LARGE_CONTEXT_THRESHOLD = 1_000_000;
+
+/** Max output tokens for compaction checkpoint generation (64K). */
+export const COMPACTION_MAX_TOKENS = 64_000;
 
 /** Summarization instruction injected as a user message for in-context compaction. */
 export const SUMMARIZATION_INSTRUCTION = `[SYSTEM: Context compression required. Generate a checkpoint summary NOW.
@@ -158,9 +167,11 @@ export function getCompactionThresholds(contextWindow: number): {
 	compressThreshold: number;
 	lazyCountThreshold: number;
 } {
-	const compressThreshold = Math.floor(
-		contextWindow * (1 - COMPACT_BUFFER_RATIO),
-	);
+	const ratio =
+		contextWindow >= LARGE_CONTEXT_THRESHOLD
+			? COMPACT_BUFFER_RATIO_LARGE
+			: COMPACT_BUFFER_RATIO_SMALL;
+	const compressThreshold = Math.floor(contextWindow * (1 - ratio));
 	return {
 		compressThreshold,
 		lazyCountThreshold: compressThreshold - 16_000,

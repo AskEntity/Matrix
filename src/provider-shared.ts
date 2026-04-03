@@ -18,6 +18,7 @@ import type { AgentRequest } from "./agent-provider.ts";
 import { checkBudget, recordBudgetWarning } from "./budget.ts";
 import {
 	buildSummarizationInstruction,
+	COMPACTION_MAX_TOKENS,
 	getCompactionThresholds,
 	processCompaction,
 } from "./compaction.ts";
@@ -1331,7 +1332,9 @@ export async function* runProviderLoop(
 					messages,
 					tools: allTools,
 					systemPrompt: request.systemPrompt ?? { stable: "", variable: "" },
-					maxTokens: DEFAULT_MAX_TOKENS,
+					maxTokens: compactionPending
+						? COMPACTION_MAX_TOKENS
+						: DEFAULT_MAX_TOKENS,
 					signal: request.signal,
 					isCompacting: compactionPending,
 					cacheTtl: request.cacheTtl,
