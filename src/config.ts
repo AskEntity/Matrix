@@ -50,6 +50,13 @@ export interface MatrixConfig {
 	auth?: WebAuthnConfig;
 	/** Extended thinking configuration for Anthropic models. */
 	thinking?: ThinkingConfig;
+	/** Cache TTL configuration. Controls how long Anthropic caches prompts. */
+	cacheTtl?: {
+		/** TTL for root orchestrator. "5m" (default ephemeral) or "1h" (extended). Default: "1h" */
+		root?: "5m" | "1h";
+		/** TTL for child tasks. "5m" (default ephemeral) or "1h" (extended). Default: "5m" */
+		child?: "5m" | "1h";
+	};
 }
 
 export const DEFAULT_MODEL = "claude-sonnet-4-6";
