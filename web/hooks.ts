@@ -151,10 +151,20 @@ export type IncomingEvent = UIEvent | SSEOnlyEvent;
  * Some UIEvent variants already have taskId (Event); for others it's
  * added as extra metadata via the intersection.
  */
+/** Per-turn cache/token info attached from usage events. */
+export interface CacheInfo {
+	inputTokens: number;
+	outputTokens?: number;
+	cacheCreationTokens?: number;
+	cacheReadTokens?: number;
+}
+
 export type LogEntry = UIEvent & {
 	id: number;
 	taskId?: string;
 	expanded?: boolean;
+	/** Per-turn token/cache breakdown, attached from usage events. */
+	cacheInfo?: CacheInfo;
 };
 
 let logIdCounter = 0;

@@ -1396,6 +1396,7 @@ export async function* runProviderLoop(
 		const usageEvt: Event = {
 			type: "usage",
 			inputTokens: usage.totalContextTokens,
+			outputTokens: usage.outputTokens,
 			contextWindow,
 			cacheCreationTokens: usage.cacheCreationTokens,
 			cacheReadTokens: usage.cacheReadTokens,
