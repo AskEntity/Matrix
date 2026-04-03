@@ -11,7 +11,6 @@ import { ErrorBoundary } from "./components/ErrorBoundary.tsx";
 import {
 	IconArrowDown,
 	IconBack,
-	IconChevron,
 	IconClose,
 	IconExpand,
 	IconGear,
@@ -190,12 +189,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		}
 		return [];
 	});
-	const [splitRatio, setSplitRatio] = useState(0.35);
-	const [isDragging, setIsDragging] = useState(false);
-	const [autoScroll, setAutoScroll] = useState(true);
-	const [detailCollapsed, setDetailCollapsed] = useState(
-		() => localStorage.getItem("mxd-detail-collapsed") === "true",
+	const [viewMode, setViewMode] = useState<"activity" | "description">(
+		"activity",
 	);
+	const [autoScroll, setAutoScroll] = useState(true);
 	const [fullscreen, setFullscreen] = useState(false);
 	const [theme, setThemeState] = useState<
 		"dark" | "light" | "cute-light" | "cute-dark"
@@ -249,7 +246,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		Map<string, { hasOlder: boolean; oldestTs: number }>
 	>(() => new Map());
 	const [loadingOlderEvents, setLoadingOlderEvents] = useState(false);
-	const contentPanelRef = useRef<HTMLElement>(null);
 
 	// The currently viewed session = selectedTaskId ?? rootNodeId.
 	// Kept as a ref so callbacks (handleReconnect) don't need to re-create on every selection change.
@@ -348,32 +344,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		else if (passed === total) document.title = `${base} [✓]`;
 		else document.title = `${base} [${passed}/${total}]`;
 	}, [nodes, rootNodeId, projects, projectId]);
-
-	const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
-		e.preventDefault();
-		setIsDragging(true);
-	}, []);
-
-	useEffect(() => {
-		if (!isDragging) return;
-		const handleMouseMove = (e: MouseEvent) => {
-			const panel = contentPanelRef.current;
-			if (!panel) return;
-			const rect = panel.getBoundingClientRect();
-			const ratio = Math.min(
-				0.85,
-				Math.max(0.1, (e.clientY - rect.top) / rect.height),
-			);
-			setSplitRatio(ratio);
-		};
-		const handleMouseUp = () => setIsDragging(false);
-		document.addEventListener("mousemove", handleMouseMove);
-		document.addEventListener("mouseup", handleMouseUp);
-		return () => {
-			document.removeEventListener("mousemove", handleMouseMove);
-			document.removeEventListener("mouseup", handleMouseUp);
-		};
-	}, [isDragging]);
 
 	// ── Sidebar resize ───────────────────────────────────────────────────
 
@@ -686,6 +656,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only trigger on task selection change
 	useEffect(() => {
 		setAutoScroll(true);
+		setViewMode("activity");
 		requestAnimationFrame(() => {
 			const logEl = document.querySelector(".mxd-activity-log");
 			if (logEl) logEl.scrollTop = logEl.scrollHeight;
@@ -1107,10 +1078,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 					onClick={sidebarCollapsed ? handleToggleSidebarCollapse : undefined}
 				/>
 
-				<section
-					className={`mxd-content${isDragging ? " dragging" : ""}${detailCollapsed ? " mxd-detail-collapsed" : ""}`}
-					ref={contentPanelRef}
-				>
+				<section className="mxd-content">
 					{/* Tab bar */}
 					{openTabs.length > 0 && (
 						<div className="mxd-tab-bar">
@@ -1160,189 +1128,155 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 							onRelocate={handleRelocate}
 						/>
 					)}
-					<div
-						className="mxd-detail-panel"
-						style={
-							detailCollapsed
-								? undefined
-								: ({
-										"--split-ratio": splitRatio,
-										minHeight: 0,
-									} as React.CSSProperties)
-						}
-					>
-						<div className="mxd-panel-header">
+
+					{/* Compact metadata header for task views */}
+					{!isOrchestratorNode && selectedNode && isTask(selectedNode) && (
+						<div className="mxd-task-meta-bar">
+							<TaskDetail
+								node={selectedNode}
+								projectId={projectId}
+								isActive={activeAgents.has(selectedNode.id)}
+								onDelete={handleDeleteTask}
+								onStop={handleStopTask}
+								onClearSession={handleClearTaskSession}
+								compact
+							/>
+						</div>
+					)}
+
+					{/* View mode panel header */}
+					<div className="mxd-panel-header">
+						{!isOrchestratorNode && selectedNode ? (
+							<div className="mxd-view-toggle">
+								<button
+									type="button"
+									className={`mxd-view-toggle-btn${viewMode === "activity" ? " active" : ""}`}
+									onClick={() => setViewMode("activity")}
+								>
+									{t("activity.title")}
+								</button>
+								<button
+									type="button"
+									className={`mxd-view-toggle-btn${viewMode === "description" ? " active" : ""}`}
+									onClick={() => setViewMode("description")}
+								>
+									{t("detail.title")}
+								</button>
+							</div>
+						) : (
+							<span className="mxd-panel-title">{t("activity.title")}</span>
+						)}
+						<div className="mxd-panel-actions">
+							{(() => {
+								const usageTaskId =
+									targetNodeId ??
+									selectedTaskId ??
+									rootNodeId ??
+									nodes.find(
+										(n) =>
+											!n.parentId && isTask(n) && n.status === "in_progress",
+									)?.id ??
+									"orchestrator";
+								const usage = tokenUsage[usageTaskId];
+								return usage ? (
+									<TokenUsageBadge
+										inputTokens={usage.inputTokens}
+										contextWindow={usage.contextWindow}
+										estimated={usage.estimated}
+										onCompact={
+											isSelectedTaskActive
+												? () => {
+														compact(viewedTaskId ?? undefined);
+													}
+												: undefined
+										}
+									/>
+								) : null;
+							})()}
+							{viewMode === "activity" && !autoScroll && (
+								<button
+									type="button"
+									className="mxd-scroll-follow-btn"
+									onClick={() => setAutoScroll(true)}
+								>
+									<IconArrowDown size={10} />
+									{t("activity.follow")}
+								</button>
+							)}
 							<button
 								type="button"
-								className="mxd-detail-collapse-toggle"
-								onClick={() => {
-									setDetailCollapsed((prev) => {
-										const next = !prev;
-										localStorage.setItem("mxd-detail-collapsed", String(next));
-										return next;
-									});
-								}}
+								className="mxd-btn-icon mxd-fullscreen-btn"
+								onClick={() => setFullscreen((f) => !f)}
 								title={
-									detailCollapsed ? t("detail.expand") : t("detail.collapse")
+									fullscreen
+										? t("activity.exitFullscreen")
+										: t("activity.fullscreen")
 								}
 							>
-								<IconChevron size={10} expanded={!detailCollapsed} />
+								{fullscreen ? (
+									<IconMinimize size={12} />
+								) : (
+									<IconExpand size={12} />
+								)}
 							</button>
-							<span className="mxd-panel-title">
-								{isOrchestratorNode
-									? t("orch.label")
-									: selectedNode
-										? t("detail.title")
-										: t("detail.details")}
-							</span>
 						</div>
-						{!detailCollapsed &&
-							(isOrchestratorNode ? (
-								<OrchestratorDetail
-									isRootActive={
-										rootNodeId ? activeAgents.has(rootNodeId) : false
-									}
-									nodes={nodes}
-									rootNodeId={rootNodeId}
-									totalCost={totalCost}
-									turns={lastTurns}
-									inputTokens={lastInputTokens}
-									cacheCreationTokens={lastCacheCreationTokens}
-									cacheReadTokens={lastCacheReadTokens}
-									outputTokens={lastOutputTokens}
-									provider={agentProvider}
-									model={agentModel}
-									onClearSession={handleClearRootSession}
-									onStop={handleStop}
-								/>
-							) : selectedNode && isTask(selectedNode) ? (
-								<TaskDetail
-									node={selectedNode}
-									projectId={projectId}
-									isActive={activeAgents.has(selectedNode.id)}
-									onDelete={handleDeleteTask}
-									onStop={handleStopTask}
-									onClearSession={handleClearTaskSession}
-								/>
-							) : (
-								<div className="mxd-detail-empty">
-									<IconHexagon size={28} />
-									<span>{t("detail.selectTask")}</span>
-								</div>
-							))}
 					</div>
 
-					{!detailCollapsed && (
-						/* biome-ignore lint/a11y/noStaticElementInteractions: resize handle */
-						<div
-							className="mxd-resize-divider"
-							onMouseDown={handleDividerMouseDown}
+					{/* Orchestrator detail — shown above activity for orchestrator view */}
+					{isOrchestratorNode && (
+						<OrchestratorDetail
+							isRootActive={rootNodeId ? activeAgents.has(rootNodeId) : false}
+							nodes={nodes}
+							rootNodeId={rootNodeId}
+							totalCost={totalCost}
+							turns={lastTurns}
+							inputTokens={lastInputTokens}
+							cacheCreationTokens={lastCacheCreationTokens}
+							cacheReadTokens={lastCacheReadTokens}
+							outputTokens={lastOutputTokens}
+							provider={agentProvider}
+							model={agentModel}
+							onClearSession={handleClearRootSession}
+							onStop={handleStop}
 						/>
 					)}
 
-					<div
-						className="mxd-activity-panel"
-						style={
-							detailCollapsed
-								? undefined
-								: ({
-										"--activity-ratio": 1 - splitRatio,
-									} as React.CSSProperties)
-						}
-					>
-						<div className="mxd-panel-header">
-							<span className="mxd-panel-title">
-								{t("activity.title")}
-								{filterLabel && !isOrchestratorNode && (
-									<span
-										style={{
-											color: "var(--text-faint)",
-											marginLeft: "6px",
-											fontSize: "10px",
-											fontWeight: 400,
-											textTransform: "none",
-											letterSpacing: 0,
-										}}
-									>
-										— {filterLabel}
-									</span>
-								)}
-							</span>
-							<div className="mxd-panel-actions">
-								{(() => {
-									const usageTaskId =
-										targetNodeId ??
-										selectedTaskId ??
-										rootNodeId ??
-										nodes.find(
-											(n) =>
-												!n.parentId && isTask(n) && n.status === "in_progress",
-										)?.id ??
-										"orchestrator";
-									const usage = tokenUsage[usageTaskId];
-									return usage ? (
-										<TokenUsageBadge
-											inputTokens={usage.inputTokens}
-											contextWindow={usage.contextWindow}
-											estimated={usage.estimated}
-											onCompact={
-												isSelectedTaskActive
-													? () => {
-															compact(viewedTaskId ?? undefined);
-														}
-													: undefined
-											}
-										/>
-									) : null;
-								})()}
-								{!autoScroll && (
-									<button
-										type="button"
-										className="mxd-scroll-follow-btn"
-										onClick={() => setAutoScroll(true)}
-									>
-										<IconArrowDown size={10} />
-										{t("activity.follow")}
-									</button>
-								)}
-								<button
-									type="button"
-									className="mxd-btn-icon mxd-fullscreen-btn"
-									onClick={() => setFullscreen((f) => !f)}
-									title={
-										fullscreen
-											? t("activity.exitFullscreen")
-											: t("activity.fullscreen")
-									}
-								>
-									{fullscreen ? (
-										<IconMinimize size={12} />
-									) : (
-										<IconExpand size={12} />
-									)}
-								</button>
-							</div>
+					{/* Main view area — activity log or description */}
+					{viewMode === "activity" || isOrchestratorNode ? (
+						<div className="mxd-activity-panel">
+							<BackgroundProcessBar
+								processes={backgroundProcesses}
+								projectId={projectId}
+								filterTaskId={selectedTaskId}
+								rootNodeId={rootNodeId}
+							/>
+							<ActivityLog
+								entries={logs}
+								filterTaskId={selectedTaskId}
+								rootNodeId={rootNodeId}
+								nodeMap={nodeMap}
+								autoScroll={autoScroll}
+								onAutoScrollChange={setAutoScroll}
+								isActive={isSelectedTaskActive}
+								projectId={projectId}
+								olderEventsAvailable={olderEventsAvailable}
+								loadingOlderEvents={loadingOlderEvents}
+								onLoadOlderEvents={handleLoadOlderEvents}
+							/>
 						</div>
-						<BackgroundProcessBar
-							processes={backgroundProcesses}
-							projectId={projectId}
-							filterTaskId={selectedTaskId}
-							rootNodeId={rootNodeId}
-						/>
-						<ActivityLog
-							entries={logs}
-							filterTaskId={selectedTaskId}
-							rootNodeId={rootNodeId}
-							nodeMap={nodeMap}
-							autoScroll={autoScroll}
-							onAutoScrollChange={setAutoScroll}
-							isActive={isSelectedTaskActive}
-							projectId={projectId}
-							olderEventsAvailable={olderEventsAvailable}
-							loadingOlderEvents={loadingOlderEvents}
-							onLoadOlderEvents={handleLoadOlderEvents}
-						/>
-					</div>
+					) : selectedNode && isTask(selectedNode) ? (
+						<div className="mxd-description-view">
+							{selectedNode.description ? (
+								<div className="mxd-description-content">
+									{selectedNode.description}
+								</div>
+							) : (
+								<div className="mxd-detail-empty">
+									<span>{t("detail.noDescription")}</span>
+								</div>
+							)}
+						</div>
+					) : null}
 				</section>
 			</main>
 

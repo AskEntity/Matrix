@@ -48,6 +48,7 @@ export const TaskDetail = memo(function TaskDetail({
 	onDelete,
 	onStop,
 	onClearSession,
+	compact,
 }: {
 	node: TaskNode;
 	projectId: string;
@@ -55,6 +56,7 @@ export const TaskDetail = memo(function TaskDetail({
 	onDelete: () => void;
 	onStop?: () => void;
 	onClearSession?: () => void;
+	compact?: boolean;
 }) {
 	const { t } = useLocale();
 	const isRunning = isActive ?? node.status === "in_progress";
@@ -110,6 +112,79 @@ export const TaskDetail = memo(function TaskDetail({
 		},
 		[projectId, node.id, node.description],
 	);
+
+	if (compact) {
+		return (
+			<div className="mxd-task-meta-compact">
+				<div className="mxd-meta-left">
+					<StatusBadge status={node.status} />
+					{editingTitle ? (
+						<input
+							ref={titleInputRef}
+							className="mxd-editable-title-input"
+							style={{ fontSize: "13px" }}
+							value={editTitle}
+							onChange={(e) => setEditTitle(e.target.value)}
+							onBlur={() => saveTitle(editTitle)}
+							onKeyDown={(e) => {
+								if (e.key === "Enter") saveTitle(editTitle);
+								if (e.key === "Escape") {
+									setEditTitle(node.title);
+									setEditingTitle(false);
+								}
+							}}
+						/>
+					) : (
+						<button
+							type="button"
+							className="mxd-editable-title"
+							style={{ fontSize: "13px", fontWeight: 600 }}
+							onClick={() => {
+								setEditingTitle(true);
+								setTimeout(() => titleInputRef.current?.focus(), 0);
+							}}
+							title={t("detail.clickToEdit")}
+						>
+							{node.title}
+						</button>
+					)}
+					<button
+						type="button"
+						className="mxd-detail-task-id"
+						onClick={copyId}
+						title={t("detail.copyId")}
+						style={{ marginBottom: 0 }}
+					>
+						<span className="mxd-detail-task-id-text">
+							{node.id.slice(0, 12)}…
+						</span>
+						<IconCopy size={9} />
+						{idCopied && (
+							<span className="mxd-detail-id-copied">{t("detail.copied")}</span>
+						)}
+					</button>
+				</div>
+				<div className="mxd-meta-right">
+					{node.branch && (
+						<span className="mxd-task-branch-tag">{node.branch}</span>
+					)}
+					{node.costUsd > 0 && (
+						<span className="mxd-meta-cost">${node.costUsd.toFixed(3)}</span>
+					)}
+					{isRunning && onStop && (
+						<button
+							type="button"
+							className="mxd-btn mxd-btn-warning mxd-btn-sm"
+							onClick={onStop}
+						>
+							<IconPause size={10} />
+							{t("detail.stop")}
+						</button>
+					)}
+				</div>
+			</div>
+		);
+	}
 
 	return (
 		<div className="mxd-detail-content">

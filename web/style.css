@@ -991,6 +991,101 @@ select {
 	color: var(--text-primary);
 }
 
+/* =========================================================
+   Compact Task Metadata Bar
+   ========================================================= */
+
+.mxd-task-meta-bar {
+	flex-shrink: 0;
+	border-bottom: 1px solid var(--border-subtle);
+	background: var(--bg-surface);
+}
+
+.mxd-task-meta-compact {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 6px 14px;
+	min-height: 36px;
+}
+
+.mxd-meta-left {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	flex: 1;
+}
+
+.mxd-meta-right {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-shrink: 0;
+}
+
+.mxd-meta-cost {
+	font-family: var(--font-mono);
+	font-size: 11px;
+	color: var(--text-muted);
+}
+
+/* =========================================================
+   View Mode Toggle
+   ========================================================= */
+
+.mxd-view-toggle {
+	display: flex;
+	align-items: center;
+	gap: 0;
+}
+
+.mxd-view-toggle-btn {
+	padding: 0 10px;
+	height: 36px;
+	border: none;
+	background: none;
+	color: var(--text-muted);
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	cursor: pointer;
+	border-bottom: 2px solid transparent;
+	transition:
+		color var(--t-fast),
+		border-color var(--t-fast);
+}
+
+.mxd-view-toggle-btn:hover {
+	color: var(--text-secondary);
+}
+
+.mxd-view-toggle-btn.active {
+	color: var(--text-primary);
+	border-bottom-color: var(--accent);
+}
+
+/* =========================================================
+   Description View
+   ========================================================= */
+
+.mxd-description-view {
+	flex: 1;
+	overflow-y: auto;
+	min-height: 0;
+}
+
+.mxd-description-content {
+	padding: 16px 20px;
+	font-size: 13px;
+	line-height: 1.7;
+	color: var(--text-secondary);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
 /* Detail panel (top) */
 .mxd-detail-panel {
 	flex: var(--split-ratio);
@@ -1056,22 +1151,11 @@ select {
 
 /* Activity panel (bottom) */
 .mxd-activity-panel {
-	flex: var(--activity-ratio);
+	flex: 1;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
 	min-height: 0;
-}
-
-/* Collapsed detail panel: just the header, no flex grow */
-.mxd-detail-collapsed .mxd-detail-panel {
-	flex: none;
-	overflow: hidden;
-}
-
-/* Activity panel fills space when detail is collapsed */
-.mxd-detail-collapsed .mxd-activity-panel {
-	flex: 1;
 }
 
 /* =========================================================
