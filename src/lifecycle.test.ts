@@ -977,7 +977,10 @@ describe("lifecycle: parent chain notifications", () => {
 			(m) => m.source === "user_message_forwarded",
 		);
 		expect(notification).toBeTruthy();
-		expect((notification as { content: string }).content).toContain("Child");
+		// Content is the raw user message, not a formatted string
+		expect((notification as { content: string }).content).toBe("child msg");
+		// Task title goes in fromTitle attribute
+		expect((notification as { fromTitle: string }).fromTitle).toBe("Child");
 
 		(tracker.getTask(parent.id) as TaskNode).session = undefined;
 		(tracker.getTask(child.id) as TaskNode).session = undefined;
@@ -1116,7 +1119,10 @@ describe("lifecycle: parent chain notifications", () => {
 			(m) => m.source === "user_message_forwarded",
 		);
 		expect(notification).toBeTruthy();
-		expect((notification as { content: string }).content).toContain(
+		// Content is the raw user message, not a formatted string
+		expect((notification as { content: string }).content).toBe("hello child");
+		// Task title goes in fromTitle attribute
+		expect((notification as { fromTitle: string }).fromTitle).toBe(
 			"Child task",
 		);
 

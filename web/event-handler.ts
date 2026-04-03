@@ -206,6 +206,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 					taskId: parentTaskId,
 					title: qe.fromTitle,
 					content: qe.content,
+					...(qe.resumed ? { resumed: true } : {}),
 					ts: eventTs,
 				};
 			case "background_complete":

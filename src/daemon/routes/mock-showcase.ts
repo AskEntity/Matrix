@@ -858,6 +858,19 @@ function buildMockData() {
 		m,
 	);
 
+	// User message forwarded (resumed)
+	m = pushConsumedMessage(
+		events,
+		{
+			source: "user_message_forwarded",
+			fromTaskId: ROOT_ID,
+			fromTitle: "Orchestrator",
+			content: "Pick up where you left off on the auth middleware.",
+			resumed: true,
+		},
+		m,
+	);
+
 	// Task complete (success)
 	m = pushConsumedMessage(
 		events,
