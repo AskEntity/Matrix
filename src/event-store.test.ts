@@ -839,4 +839,128 @@ describe("EventStore", () => {
 		expect(marker.targetTitle).toBeUndefined();
 		expect(marker.targetDescription).toBeUndefined();
 	});
+
+	// ── clear() generation guard tests ──
+
+	test("clear drops pending async writes — file stays deleted", async () => {
+		// Simulate the reset_task race: writes are enqueued, then clear() is called.
+		// The pending writes must NOT re-create the file after deletion.
+		const event: Event = {
+			type: "agent_stopped",
+			taskId: "race-test",
+			ts: 1000,
+		};
+
+		// Enqueue several writes (fire-and-forget, like emitEvent does)
+		store.append("race-test", event);
+		store.append("race-test", event);
+		store.append("race-test", event);
+
+		// Clear before writes complete — bumps generation
+		store.clear("race-test");
+
+		// Wait for all pending writes to settle
+		await store.flush();
+
+		// KEY: file must NOT exist — writes were dropped by generation guard
+		expect(store.has("race-test")).toBe(false);
+	});
+
+	test("clear then new write: new write succeeds", async () => {
+		// After clear, new writes (from a new agent session) should work normally.
+		const oldEvent: Event = {
+			type: "agent_stopped",
+			taskId: "s1",
+			ts: 1000,
+		};
+		const newEvent: Event = {
+			type: "orchestration_started",
+			taskId: "s1",
+			ts: 2000,
+		} as Event;
+
+		// Old writes
+		store.append("s1", oldEvent);
+		store.append("s1", oldEvent);
+
+		// Clear
+		store.clear("s1");
+
+		// New write after clear — should succeed
+		await store.append("s1", newEvent);
+
+		expect(store.has("s1")).toBe(true);
+		const events = store.read("s1");
+		expect(events).toHaveLength(1);
+		expect(events[0]?.type).toBe("orchestration_started");
+	});
+
+	test("double clear: second clear is safe even with no writes", async () => {
+		const event: Event = {
+			type: "message",
+			id: "",
+			body: { source: "user", id: "dc", ts: 0, content: "x" },
+			taskId: "dc-test",
+			ts: 1000,
+		};
+
+		await store.append("dc-test", event);
+		expect(store.has("dc-test")).toBe(true);
+
+		store.clear("dc-test");
+		store.clear("dc-test"); // second clear — no crash, no stale writes
+
+		await store.flush();
+		expect(store.has("dc-test")).toBe(false);
+	});
+
+	test("clear between appendBatch calls: only post-clear batch survives", async () => {
+		const ev1: Event = { type: "agent_stopped", taskId: "ab", ts: 1 };
+		const ev2: Event = { type: "agent_stopped", taskId: "ab", ts: 2 };
+		const ev3: Event = {
+			type: "orchestration_started",
+			taskId: "ab",
+			ts: 3,
+		} as Event;
+
+		// Enqueue batch (fire-and-forget)
+		store.appendBatch("ab", [ev1, ev2]);
+
+		// Clear before batch completes
+		store.clear("ab");
+
+		// New batch after clear
+		await store.appendBatch("ab", [ev3]);
+
+		const events = store.read("ab");
+		expect(events).toHaveLength(1);
+		expect(events[0]?.ts).toBe(3);
+	});
+
+	test("interleaved append-clear-append-clear: final state is empty", async () => {
+		const event: Event = { type: "agent_stopped", taskId: "ic", ts: 1 };
+
+		store.append("ic", event);
+		store.clear("ic");
+		store.append("ic", event);
+		store.clear("ic");
+
+		await store.flush();
+		expect(store.has("ic")).toBe(false);
+	});
+
+	test("clear does not affect other sessions", async () => {
+		const ev1: Event = { type: "agent_stopped", taskId: "s1", ts: 1 };
+		const ev2: Event = { type: "agent_stopped", taskId: "s2", ts: 2 };
+
+		await store.append("s1", ev1);
+		await store.append("s2", ev2);
+
+		store.clear("s1");
+		await store.flush();
+
+		expect(store.has("s1")).toBe(false);
+		expect(store.has("s2")).toBe(true);
+		expect(store.read("s2")).toHaveLength(1);
+	});
 });

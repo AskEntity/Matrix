@@ -22,6 +22,13 @@ import { ulid } from "./ulid.ts";
 export class EventStore {
 	/** Per-session write queue to serialize async appends and prevent interleaving */
 	private writeQueues = new Map<string, Promise<void>>();
+	/**
+	 * Per-session generation counter. Incremented on clear().
+	 * Writes capture the generation at enqueue time; if it changes before
+	 * the write executes (because clear() was called), the write is dropped.
+	 * This prevents async writes from re-creating a deleted JSONL file.
+	 */
+	private sessionGenerations = new Map<string, number>();
 
 	constructor(private dir: string) {
 		if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -31,13 +38,27 @@ export class EventStore {
 		return join(this.dir, `${sessionId}.events.jsonl`);
 	}
 
+	/** Get the current generation for a session. */
+	private getGeneration(sessionId: string): number {
+		return this.sessionGenerations.get(sessionId) ?? 0;
+	}
+
 	/** Serialize a write operation for a given session */
 	private enqueueWrite(
 		sessionId: string,
 		writeFn: () => Promise<void>,
 	): Promise<void> {
+		// Capture generation at enqueue time — if it changes before execution,
+		// clear() was called and this write should be silently dropped.
+		const generation = this.getGeneration(sessionId);
+		const guardedFn = () => {
+			if (this.getGeneration(sessionId) !== generation) {
+				return Promise.resolve(); // Session was cleared — drop write
+			}
+			return writeFn();
+		};
 		const prev = this.writeQueues.get(sessionId) ?? Promise.resolve();
-		const next = prev.then(writeFn, writeFn); // run even if previous failed
+		const next = prev.then(guardedFn, guardedFn); // run even if previous failed
 		this.writeQueues.set(sessionId, next);
 		// Clean up completed queues to prevent memory leak
 		next.then(() => {
@@ -328,8 +349,15 @@ export class EventStore {
 		return { eventCount: activeEvents.length };
 	}
 
-	/** Clear all events for a session */
+	/**
+	 * Clear all events for a session.
+	 * Increments the session generation so any pending async writes (enqueued
+	 * before this call) are silently dropped — they won't re-create the file.
+	 */
 	clear(sessionId: string): void {
+		// Bump generation: all writes enqueued before this point see a stale
+		// generation and become no-ops when they eventually execute.
+		this.sessionGenerations.set(sessionId, this.getGeneration(sessionId) + 1);
 		const p = this.path(sessionId);
 		if (existsSync(p)) unlinkSync(p);
 	}
