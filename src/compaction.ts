@@ -18,65 +18,77 @@ Do NOT use any tools. Respond with ONLY the checkpoint in <summary>...</summary>
 
 Write the checkpoint with these sections IN ORDER. Every section is required.
 
-## 1. User Requests (MOST CRITICAL)
-Chronological timeline of every user message or parent instruction received, with the tasks created/completed in response to each. For each entry:
-- The message (verbatim or close paraphrase)
-- Tasks created in response (IDs, titles)
-- Tasks completed/merged in response (what was accomplished)
-- Decisions made or deferred
-This creates a complete narrative thread. The resuming agent has NO access to previous messages — this is the only record.
-For resolved requests, state the outcome concisely. Do not carry forward debugging narratives or step-by-step problem-solving details from issues that are fully resolved.
+## 1. Story So Far (MOST CRITICAL)
+Chronological narrative of the session — not a list of facts, but the story of decisions and discoveries.
+
+For each significant episode, capture:
+- What was attempted and why it seemed right at the time
+- What went wrong or what was discovered that changed the approach
+- The reasoning that led to the final decision — not just "we decided X" but "we tried Y, discovered Z, and that's why X"
+- User insights that course-corrected thinking — preserve their actual words/reasoning, not just their conclusion
+
+This is the section the resuming agent will read most carefully. Facts can be re-derived from code and tests. Reasoning cannot — once lost, the agent will repeat the same wrong approaches and miss the same insights.
+
+For resolved issues: keep the LESSON (what class of problem was this, how to recognize it), drop the step-by-step debugging log. The journey matters, not every step.
+
+For in-progress issues: keep the full narrative including what's been tried and what's currently hypothesized.
 
 ## 2. Current Phase
 What the agent is doing RIGHT NOW: planning / implementing / testing / debugging / reviewing / orchestrating / done
-If debugging: include the exact error message and what has been tried.
+If debugging: include the exact error message, current hypothesis, and what has been tried.
+If orchestrating: which sub tasks are running, which are blocked, what's being waited on.
 
 ## 3. Completed Work
-What has been built, tested, committed, and merged — with key architectural and technical decisions.
-Include specific file paths and function names. Note WHY decisions were made, not just what.
-Focus on outcomes and key decisions. Omit debugging journeys and error traces for issues already resolved.
+What has been built, tested, committed, and merged — with key decisions and their reasoning.
+Include specific file paths and function names.
+For each significant decision: state the choice AND the rejected alternative with reasoning.
+Focus on outcomes, not blow-by-blow implementation steps.
 
-## 4. Task Tree State
-Current live task tree. Only tasks that currently exist (pending/in_progress/failed/draft). For each: ID, title, status, branch. Omit completed/merged tasks (they're recorded in Section 1's timeline). Group: Running → Failed → Pending → Draft.
+## 4. Tree Mental Model
+The tree is on disk — don't snapshot it. Capture what the agent KNOWS about the tree that can't be re-derived from get_tree:
+- Which children am I waiting on, and what do I expect from each?
+- Which tasks have issues I need to address, and what's my plan for each?
+- What ongoing conversations or negotiations am I having with which tasks?
+- What am I planning to do next with the tree — what to create, start, merge, restructure?
+- Any coordination concerns: tasks that depend on each other, potential merge conflicts, sequencing decisions.
 
-## 5. Key Insights & Rejected Approaches
-Design principles and mental models discovered during this session — especially from failed approaches.
-Focus on HIGH-LEVEL insights that prevent entire CLASSES of bugs, not one-off technical fixes.
+## 5. Rejected Approaches & Lessons
+Two categories:
 
-Good examples:
+**Technical lessons** — debugging insights that prevent repeating mistakes:
+- "Cache miss was NOT key order (messages were identical per evaluate_script). Real cause: multiline split in buildToolResultsMessage merging text blocks on JSONL reconstruction."
 - "Auth should always be on — 'enforced' only controls registration, not authentication"
-- "MCP and HTTP code paths must share implementation, not duplicate logic"
-- "Cache invariant: all in-memory state is a cache of disk state — destroying and recreating it should be invisible"
-- "Never split by step (types → implementation → tests) — split by module/feature for parallelism"
 
-Bad examples (these belong in code comments, not in the checkpoint):
-- "startRegistration(options) directly doesn't work, need {optionsJSON: options}"
-- "Cookie secure:true doesn't work on HTTP localhost"
-- "CDN path /v3/fonts returns 404, use /v2/fonts instead"
+**Architectural/philosophical lessons** — design principles discovered through experience:
+- "Persistent tasks = corporate disease. Every codepath needs if(persistent). The experiment proved flat+temporary+fork already covers every use case."
+- "Never split tasks by step (types → implementation → tests) — split by module/feature for parallelism"
+- "'Unify' means adding a third path. Delete until ONE remains."
 
-For each insight: state the principle, and briefly note what triggered the discovery.
-If truly nothing was learned, write "None so far."
+For each: state the principle, briefly what triggered the discovery, and (if applicable) the user insight that crystallized it.
+
+If nothing was learned, write "None so far."
 
 ## 6. Key Context
 Important state and knowledge that is HARD to reconstruct from disk:
-- Constraints or invariants that affect the remaining work
+- Constraints or invariants that affect remaining work
 - Environment or configuration state
 - Communication state: pending clarifications, recent messages to/from parent or children
+- User preferences or style observations discovered during the session
 
 ## 7. Pending Work
 Numbered list of ALL remaining tasks/steps to complete the goal.
 Be specific: "implement X in file Y", "add test for Z", "merge child branch A".
+For each item, note any dependencies on other items.
 
 Rules:
 - Be precise: file paths, function names, exact error messages, task IDs
 - Do NOT repeat system prompt or task description content — the agent already has those
 - Do NOT include file contents that can be re-read from disk
-- Focus on context that is HARD to reconstruct: decisions, state, user intent, failures
-- Include ALL user messages/requests — verbatim or close paraphrase, never summarize away
-- Each user request must note: what was asked → what was done → what was the outcome
-- Aim for thoroughness — lost context is far more expensive than a longer checkpoint
+- Reasoning > facts. The agent can re-read files; it cannot re-derive WHY a decision was made.
+- Preserve user voice: when a user's insight shaped a decision, include their words (or close paraphrase) with attribution, not just the conclusion
+- On re-compaction, strengthen the narrative — condense details but preserve the arc. The journey becomes MORE important over time, not less. Recurring patterns are the highest-value content: once is an incident, twice is a pattern, three times is architecture. If a problem class appeared before and appears again, that recurrence IS the insight — highlight it explicitly.
 - Length: use as many tokens as needed for complex sessions. Never truncate mid-thought.
-- On re-compaction, resolved issues need only their resolution noted — not the journey to get there. Retain useful architectural and decision context.]`;
+- Each section must earn its space: if a section would be empty or trivial, write one line and move on. Spend tokens on narrative and reasoning, not formatting.]`;
 
 /** Build the full summarization instruction with the current working directory appended. */
 export function buildSummarizationInstruction(cwd?: string): string {
