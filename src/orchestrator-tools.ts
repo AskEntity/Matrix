@@ -1360,6 +1360,28 @@ export function createOrchestratorTools(
 					),
 			},
 			async (_args) => {
+				// Guard: reject done() if any descendants have active sessions.
+				// Orphaned children have no one to merge their work or handle task_complete.
+				if (currentTaskId) {
+					const runningDescendants = getDescendantIds(tracker, currentTaskId)
+						.filter((id) => tracker.get(id)?.session != null)
+						.map((id) => {
+							const n = tracker.get(id);
+							return `${n?.title ?? id} (${id})`;
+						});
+					if (runningDescendants.length > 0) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Cannot call done() while child tasks are still running:\n${runningDescendants.map((r) => `  - ${r}`).join("\n")}\nWait for them to complete or stop them first.`,
+								},
+							],
+							isError: true,
+						};
+					}
+				}
+
 				// Phase 1 of two-phase done(): just close the queue and return.
 				// Status update, parent notification, and done_notified happen in Phase 2
 				// (runAgentForNode, after the provider loop exits).

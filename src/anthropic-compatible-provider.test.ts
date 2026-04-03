@@ -1951,6 +1951,86 @@ describe("done tool", () => {
 		// Simple acknowledgment text
 		expect(result.content[0].text).toContain("Done acknowledged (passed)");
 	});
+
+	test("done() rejects when child has active session", async () => {
+		const parent = tracker.addTask("Parent Task", "description");
+		tracker.updateStatus(parent.id, "in_progress");
+		const child = tracker.addChild(parent.id, "Running Child", "desc");
+		const childQueue = new MessageQueue();
+		attachMockSession(child, childQueue);
+
+		const result = await invokeDoneTool(parent.id, {
+			status: "passed",
+			summary: "All done",
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("Cannot call done()");
+		expect(result.content[0].text).toContain("Running Child");
+
+		// Clean up
+		child.session = undefined;
+		childQueue.close();
+	});
+
+	test("done() rejects when grandchild has active session", async () => {
+		const parent = tracker.addTask("Parent Task", "description");
+		tracker.updateStatus(parent.id, "in_progress");
+		const child = tracker.addChild(parent.id, "Child Task", "desc");
+		const grandchild = tracker.addChild(child.id, "Running Grandchild", "desc");
+		const grandchildQueue = new MessageQueue();
+		attachMockSession(grandchild, grandchildQueue);
+
+		const result = await invokeDoneTool(parent.id, {
+			status: "passed",
+			summary: "All done",
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("Cannot call done()");
+		expect(result.content[0].text).toContain("Running Grandchild");
+
+		// Clean up
+		grandchild.session = undefined;
+		grandchildQueue.close();
+	});
+
+	test("done() succeeds when no children have active sessions", async () => {
+		const parent = tracker.addTask("Parent Task", "description");
+		tracker.updateStatus(parent.id, "in_progress");
+		tracker.addChild(parent.id, "Idle Child", "desc");
+		// No session attached to child
+
+		const result = await invokeDoneTool(parent.id, {
+			status: "passed",
+			summary: "All done",
+		});
+		expect(result.isError).toBeUndefined();
+		expect(result.content[0].text).toContain("Done acknowledged (passed)");
+	});
+
+	test("done() lists multiple running children in error", async () => {
+		const parent = tracker.addTask("Parent Task", "description");
+		tracker.updateStatus(parent.id, "in_progress");
+		const child1 = tracker.addChild(parent.id, "Worker A", "desc");
+		const child2 = tracker.addChild(parent.id, "Worker B", "desc");
+		const q1 = new MessageQueue();
+		const q2 = new MessageQueue();
+		attachMockSession(child1, q1);
+		attachMockSession(child2, q2);
+
+		const result = await invokeDoneTool(parent.id, {
+			status: "passed",
+			summary: "All done",
+		});
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("Worker A");
+		expect(result.content[0].text).toContain("Worker B");
+
+		// Clean up
+		child1.session = undefined;
+		child2.session = undefined;
+		q1.close();
+		q2.close();
+	});
 });
 
 describe("jsSearch", () => {
