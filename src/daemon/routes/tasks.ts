@@ -138,6 +138,7 @@ export function registerTaskRoutes(
 			description: string;
 			parentId?: string;
 			budgetUsd?: number;
+			folder?: boolean;
 		}>();
 		if (!body.title) {
 			return c.json({ error: "title is required" }, 400);
@@ -147,6 +148,15 @@ export function registerTaskRoutes(
 		}
 
 		const tracker = await getTracker(ctx, project.id);
+
+		// Folder creation — minimal node, zero lifecycle
+		if (body.folder) {
+			const folder = tracker.addFolder(body.title, body.parentId);
+			await tracker.save();
+			broadcastTreeUpdate(ctx, project.id, tracker);
+			return c.json(folder, 201);
+		}
+
 		try {
 			const node = await createTaskOp(
 				tracker,
