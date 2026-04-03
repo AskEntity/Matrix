@@ -1522,14 +1522,14 @@ describe("SUMMARIZATION_INSTRUCTION", () => {
 		);
 		expect(SUMMARIZATION_INSTRUCTION).toContain("Pending Work");
 		expect(SUMMARIZATION_INSTRUCTION).toContain("Tree Mental Model");
+		expect(SUMMARIZATION_INSTRUCTION).toContain("User Messages (Reference)");
 	});
 
 	test("does not include system-injected sections", () => {
 		expect(SUMMARIZATION_INSTRUCTION).not.toContain(
 			"Current Working Directory",
 		);
-		expect(SUMMARIZATION_INSTRUCTION).not.toContain("## 8. Next Action");
-		expect(SUMMARIZATION_INSTRUCTION).not.toContain("## 9. Next Action");
+		expect(SUMMARIZATION_INSTRUCTION).not.toContain("## 9.");
 	});
 });
 
