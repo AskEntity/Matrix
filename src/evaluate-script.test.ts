@@ -18,6 +18,15 @@ import { TOOL_EVALUATE_SCRIPT } from "./tool-names.ts";
 
 // ── Helpers ──
 
+/** Find evaluate_script tool from result, throw if missing. */
+function findEvalTool(
+	result: ReturnType<typeof createOrchestratorTools>,
+): ToolDefinition {
+	const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+	if (!evalTool) throw new Error("evalTool not found");
+	return evalTool;
+}
+
 /** Minimal deps for createOrchestratorTools. */
 function makeDeps(
 	overrides?: Partial<OrchestratorToolsDeps>,
@@ -60,12 +69,9 @@ describe("hidden tool mechanism", () => {
 		hiddenTool.hidden = true;
 
 		// Simulate what prepareTools does in all providers
-		const mcpToolDefs: Record<string, ToolDefinition[]> = {
-			// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-			mxd: [
-				visibleTool as ToolDefinition<any>,
-				hiddenTool as ToolDefinition<any>,
-			],
+		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
+		const mcpToolDefs: Record<string, ToolDefinition<any>[]> = {
+			mxd: [visibleTool, hiddenTool],
 		};
 
 		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
@@ -165,11 +171,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -188,11 +193,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -213,11 +217,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -237,11 +240,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -261,7 +263,7 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
 		// Simulate provider loop binding the messages array
 		const messages = [
@@ -270,9 +272,8 @@ describe("evaluate_script tool", () => {
 		];
 		result.setMessages?.(messages);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -291,11 +292,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		// TaskTracker exists and has expected methods
 		const execResult = await executeTool(
@@ -315,11 +315,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -341,11 +340,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -364,11 +362,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -388,11 +385,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -412,11 +408,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -438,11 +433,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -465,11 +459,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -488,11 +481,10 @@ describe("evaluate_script tool", () => {
 			undefined,
 			true,
 		);
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
@@ -513,7 +505,7 @@ describe("evaluate_script tool", () => {
 		);
 		expect(result.setAllTools).toBeDefined();
 
-		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool = findEvalTool(result);
 
 		// Simulate provider loop binding the tools array
 		const tools = [
@@ -522,9 +514,8 @@ describe("evaluate_script tool", () => {
 		];
 		result.setAllTools?.(tools);
 
-		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-		const handlers = new Map<string, ToolDefinition<any>>();
-		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool!);
+		const handlers = new Map<string, ToolDefinition>();
+		handlers.set(TOOL_EVALUATE_SCRIPT, evalTool);
 
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
