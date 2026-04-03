@@ -316,3 +316,27 @@ Decision: completely delete persistent. Keep general improvements discovered dur
 - System prompt persistent domain owner role
 - All persistent-related tests
 
+
+
+## Cache Miss on Restart: Root Cause Found (2026-04-03)
+
+**Problem**: Daemon restart causes full cache miss (~$6.75 on Opus for 450K token session).
+
+**Root cause**: `addAssistantMessage` stores raw API response content in messages[]. On restart, `eventsToAnthropicMessages` reconstructs tool_use blocks manually. The two have different JSON key orders:
+- API response: `{id, caller, input, name, type}` (SDK ToolUseBlock order)
+- Reconstruction: `{type, id, name, input, caller}` (our manual construction order)
+
+JSON.stringify produces different bytes → Anthropic cache key mismatch → full cache miss.
+
+**Fix direction**: Store raw API response content blocks in JSONL, reconstruct from stored raw content on restart. This makes live and restart paths byte-identical.
+
+**Cache experiment result**: Fork/diverge IS cache-friendly. Shared prefix only written once, both divergent paths cache-read. The problem is NOT fork — it is reconstruction fidelity.
+
+## Persistent Task Deletion Complete (2026-04-03)
+
+Deleted entire persistent task feature: -1940 lines, 44 files. Kept two-phase done(), verify status, Zod validation. Decision: persistent was a failed abstraction — all use cases covered by regular tasks + fork + templates.
+
+## Tree Flattened
+
+All tasks reparented to root. All persistent intermediate nodes deleted. Tree is now flat: root → tasks. No domain owners, no routing layers. Future organization via folder feature (UI-only grouping, not tree structure).
+
