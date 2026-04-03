@@ -34,6 +34,7 @@ type UIOnlyEvent =
 	| {
 			type: "task_message";
 			taskId?: string;
+			fromTaskId?: string;
 			fromTitle: string;
 			title: string;
 			content: string;
@@ -43,6 +44,7 @@ type UIOnlyEvent =
 	| {
 			type: "user_message_forwarded";
 			taskId?: string;
+			fromTaskId?: string;
 			title: string;
 			content: string;
 			resumed?: boolean;
@@ -76,6 +78,7 @@ type UIOnlyEvent =
 	| {
 			type: "task_completed";
 			taskId?: string;
+			fromTaskId?: string;
 			title: string;
 			success: boolean;
 			output: string;

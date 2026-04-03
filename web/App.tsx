@@ -1326,6 +1326,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								olderEventsAvailable={olderEventsAvailable}
 								loadingOlderEvents={loadingOlderEvents}
 								onLoadOlderEvents={handleLoadOlderEvents}
+								onTaskNavigate={handleTaskPin}
 							/>
 						</div>
 					) : isOrchestratorNode ? (
