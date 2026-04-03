@@ -9515,28 +9515,13 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 		const resp = await startAgent(ctx, instruction);
 		expect(resp.status).toBe(200);
 
+		await waitForIdle(ctx);
+
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
-		await waitForIdle(ctx, rootNodeId);
 
 		// === RESTART ===
 		ctx.app = await recreateApp(ctx);
-
-		// Post-restart: agent resumes from yield, gets message, yields again
-		ctx.mockAPI.addTurn(
-			rootNodeId,
-			JSON.stringify({
-				blocks: [
-					{ type: "text", text: "Resumed." },
-					{
-						type: "tool_use",
-						name: "mcp__mxd__yield",
-						input: {},
-					},
-				],
-			}),
-		);
-
 		await ctx.app.autoResumeProjects();
 		await new Promise((r) => setTimeout(r, 500));
 
@@ -9674,8 +9659,8 @@ describe("Integration: traceId injection", () => {
 		) as Array<Event & { traceId?: string }>;
 		expect(orchStarted).toHaveLength(2);
 
-		const traceId1 = orchStarted[0]?.traceId;
-		const traceId2 = orchStarted[1]?.traceId;
+		const traceId1 = orchStarted[0]?.traceId as string;
+		const traceId2 = orchStarted[1]?.traceId as string;
 
 		expect(traceId1).toBeDefined();
 		expect(traceId2).toBeDefined();
