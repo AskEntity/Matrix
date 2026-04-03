@@ -55,6 +55,16 @@ function parseHash(): { projectId?: string; taskId?: string } {
 	return { projectId: raw.slice(0, slash), taskId: raw.slice(slash + 1) };
 }
 
+/** Parse "HH:MM:SS" to total seconds for timestamp comparison */
+function timeToSeconds(hms: string): number {
+	const parts = hms.split(":");
+	return (
+		(Number(parts[0]) || 0) * 3600 +
+		(Number(parts[1]) || 0) * 60 +
+		(Number(parts[2]) || 0)
+	);
+}
+
 function updateHash(
 	projectId: string,
 	taskId: string | null,
@@ -692,14 +702,60 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		}
 	}, [openTabs, nodeMap]);
 
+	// When set, the next task switch should scroll to this timestamp instead of the bottom.
+	const scrollToTsRef = useRef<number | null>(null);
+
 	// biome-ignore lint/correctness/useExhaustiveDependencies: only trigger on task selection change
 	useEffect(() => {
-		setAutoScroll(true);
 		setViewMode("activity");
-		requestAnimationFrame(() => {
-			const logEl = document.querySelector(".mxd-activity-log");
-			if (logEl) logEl.scrollTop = logEl.scrollHeight;
-		});
+		const targetTs = scrollToTsRef.current;
+		scrollToTsRef.current = null;
+
+		if (targetTs) {
+			// Smart scroll: find message near timestamp → scroll to it.
+			// If not found (pending/unconsumed) → enable follow mode.
+			setAutoScroll(false);
+			// Delay to let event fetch + render complete after task switch
+			setTimeout(() => {
+				const logEl = document.querySelector(".mxd-activity-log");
+				if (!logEl) {
+					setAutoScroll(true);
+					return;
+				}
+				const entries = logEl.querySelectorAll(".mxd-lmxd-entry");
+				let best: Element | null = null;
+				let bestDiff = Number.POSITIVE_INFINITY;
+				const targetTime = new Date(targetTs);
+				const targetHMS = `${String(targetTime.getHours()).padStart(2, "0")}:${String(targetTime.getMinutes()).padStart(2, "0")}:${String(targetTime.getSeconds()).padStart(2, "0")}`;
+				const targetSec = timeToSeconds(targetHMS);
+				for (const el of entries) {
+					const timeEl = el.querySelector(".mxd-lmxd-time");
+					if (!timeEl) continue;
+					const timeText = timeEl.textContent?.trim() ?? "";
+					const diff = Math.abs(timeToSeconds(timeText) - targetSec);
+					if (diff < bestDiff) {
+						bestDiff = diff;
+						best = el;
+					}
+				}
+				// Within 30s = found the message → scroll to it with highlight.
+				// Beyond 30s = message is pending/not rendered → enable follow mode.
+				if (best && bestDiff <= 30) {
+					best.scrollIntoView({ block: "center", behavior: "smooth" });
+					best.classList.add("mxd-scroll-target");
+					setTimeout(() => best?.classList.remove("mxd-scroll-target"), 2000);
+				} else {
+					setAutoScroll(true);
+					logEl.scrollTop = logEl.scrollHeight;
+				}
+			}, 300);
+		} else {
+			setAutoScroll(true);
+			requestAnimationFrame(() => {
+				const logEl = document.querySelector(".mxd-activity-log");
+				if (logEl) logEl.scrollTop = logEl.scrollHeight;
+			});
+		}
 	}, [selectedTaskId]);
 
 	// ── Handlers ─────────────────────────────────────────────────────────────
@@ -931,6 +987,31 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		// Persist final order
 		localStorage.setItem("mxd-open-tabs", JSON.stringify(openTabsRef.current));
 	}, []);
+
+	/** Navigate to a task from an activity log card. Supports root. Scrolls to timestamp if provided. */
+	const handleTaskNavigate = useCallback(
+		(id: string, ts?: number) => {
+			if (!id) return;
+			if (ts) {
+				scrollToTsRef.current = ts;
+			}
+			if (id === rootNodeId) {
+				// Navigate to root — just select it
+				setSelectedTaskId(rootNodeId);
+				return;
+			}
+			// Open as pinned tab
+			setSelectedTaskId(id);
+			setPreviewTabId((prev) => (prev === id ? null : prev));
+			setOpenTabs((prev) => {
+				if (prev.includes(id)) return prev;
+				const next = [...prev, id];
+				localStorage.setItem("mxd-open-tabs", JSON.stringify(next));
+				return next;
+			});
+		},
+		[rootNodeId],
+	);
 
 	const handleTabClose = useCallback(
 		(id: string, e?: React.MouseEvent) => {
@@ -1326,7 +1407,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								olderEventsAvailable={olderEventsAvailable}
 								loadingOlderEvents={loadingOlderEvents}
 								onLoadOlderEvents={handleLoadOlderEvents}
-								onTaskNavigate={handleTaskPin}
+								onTaskNavigate={handleTaskNavigate}
 							/>
 						</div>
 					) : isOrchestratorNode ? (

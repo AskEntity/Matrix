@@ -2166,6 +2166,20 @@ button.mxd-tool-card-header:hover {
 	text-decoration-style: solid;
 }
 
+/* Scroll target highlight — brief flash when navigating to a specific message */
+.mxd-scroll-target {
+	animation: mxd-scroll-highlight 2s ease-out;
+}
+
+@keyframes mxd-scroll-highlight {
+	0% {
+		background: rgba(56, 139, 253, 0.2);
+	}
+	100% {
+		background: transparent;
+	}
+}
+
 .mxd-tool-card-bg-complete {
 	border-color: rgba(139, 148, 158, 0.3);
 	background: rgba(139, 148, 158, 0.05);

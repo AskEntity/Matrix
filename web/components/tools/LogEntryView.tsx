@@ -106,7 +106,7 @@ export const LogEntryView = memo(function LogEntryView({
 	nodeMap: Map<string, TreeNode>;
 	projectId?: string;
 	rootNodeId?: string | null;
-	onTaskNavigate?: (taskId: string) => void;
+	onTaskNavigate?: (taskId: string, ts?: number) => void;
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const [movingToBg, setMovingToBg] = useState(false);
@@ -391,7 +391,7 @@ export const LogEntryView = memo(function LogEntryView({
 					className="mxd-clickable-task-name"
 					onClick={(e) => {
 						e.stopPropagation();
-						onTaskNavigate(fromTaskId);
+						onTaskNavigate(fromTaskId, entry.ts);
 					}}
 				>
 					{title}
@@ -457,7 +457,7 @@ export const LogEntryView = memo(function LogEntryView({
 					className="mxd-clickable-task-name"
 					onClick={(e) => {
 						e.stopPropagation();
-						onTaskNavigate(fromTaskId);
+						onTaskNavigate(fromTaskId, entry.ts);
 					}}
 				>
 					{displayTitle}
@@ -507,7 +507,7 @@ export const LogEntryView = memo(function LogEntryView({
 						className="mxd-clickable-task-name"
 						onClick={(e) => {
 							e.stopPropagation();
-							onTaskNavigate(fromTaskId);
+							onTaskNavigate(fromTaskId, entry.ts);
 						}}
 					>
 						{childTitle}
