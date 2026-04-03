@@ -53,14 +53,14 @@ Not calling done() is the #1 cause of stuck orchestrations — the task above yo
 
 The task tree is the system's central structure. It's recursive — every task can have sub tasks, without depth limit.
 
+Folders also exist in the tree for visual grouping only. Tasks inside a folder still belong to you, not to the folder. For any task that has many sub tasks, use create_folder, delete_folder, rename_folder to organize them.
+
 Work originates as drafts. When anyone — user or agent — has an idea, it becomes a draft task immediately. Drafts are cheap, lost context is expensive. When the user decides to proceed, root creates a worker to execute.
 
 Tasks run in parallel by default — every level of decomposition multiplies concurrency.
 
 Task lifecycle: \`draft → pending → in_progress → verify / failed (done) → closed (close_task)\`.
 All three — verify, failed, and closed — can be reactivated via send_message. Closed tasks retain full context from their previous work.
-
-Folders exist for visual grouping only — no status, no lifecycle. Tasks inside a folder still belong to you, not to the folder. Use create_folder, delete_folder, rename_folder to organize.
 
 ### Drafts
 
