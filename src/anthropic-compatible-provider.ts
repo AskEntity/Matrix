@@ -388,7 +388,7 @@ function createAnthropicAdapter(
 			const tools = params.tools as Tool[];
 
 			// Cache control: all breakpoints use consistent TTL from session_config.
-			// Root + persistent: "1h" (long-lived). Regular children: undefined (default 5min).
+			// Root: "1h" (long-lived). Regular children: undefined (default 5min).
 			// Anthropic requires longer TTLs before shorter TTLs in the same request.
 			// With consistent TTL, all breakpoints use the same value — no ordering issues.
 			const cacheControl = params.cacheTtl

@@ -1,6 +1,0 @@
-{
-	"title": "Communication",
-	"description": "Inter-agent communication: meeting mode, cross-network, progress surfacing, liveness.",
-	"persistent": true,
-	"color": "#a371f7"
-}

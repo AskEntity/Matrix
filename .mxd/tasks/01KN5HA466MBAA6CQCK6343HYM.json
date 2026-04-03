@@ -1,6 +1,0 @@
-{
-	"title": "Agent Loop",
-	"description": "Everything about a single agent's execution: the provider loop, streaming, tool execution, yield/resume, start/stop, restart recovery, JSONL repair, image handling.\n\nSub-domains:\n- **OpenAI Provider**: Responses API, Chat Completions, model compatibility\n- (future) **Lifecycle**: start, stop, resume, restart, JSONL repair\n- (future) **Runtime**: streaming, tool execution, image handling, compaction",
-	"persistent": true,
-	"color": "#f0883e"
-}

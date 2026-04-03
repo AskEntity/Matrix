@@ -575,7 +575,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			return;
 		}
 		// Always target the selected task regardless of status — the backend
-		// handles routing (persistent queue + auto-resume for non-running tasks).
+		// handles routing (auto-resume for non-running tasks).
 		setTargetNodeId(selectedTaskId);
 	}, [selectedTaskId, rootNodeId]);
 
