@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import {
 	appendFile,
 	chmod,
@@ -119,7 +119,6 @@ export class ProjectManager {
 		);
 
 		await this.createSetupHook(projectPath);
-		await this.createQualityTaskTemplates(projectPath);
 
 		// Initialize git repo with a minimal first commit (.gitignore only).
 		// Everything else (.mxd/, src/) stays uncommitted —
@@ -151,7 +150,6 @@ export class ProjectManager {
 		}
 
 		await this.createSetupHook(projectPath);
-		await this.createQualityTaskTemplates(projectPath);
 
 		// Initialize git if not already a repo
 		if (!existsSync(join(projectPath, ".git"))) {
@@ -198,80 +196,6 @@ export class ProjectManager {
 		await writeFile(hookPath, script, "utf-8");
 		await chmod(hookPath, 0o755);
 		return true;
-	}
-
-	/**
-	 * Create default persistent quality task templates in .mxd/tasks/.
-	 * Skips if the directory already has task files (e.g. cloned from a repo that has them).
-	 */
-	private async createQualityTaskTemplates(projectPath: string): Promise<void> {
-		const tasksDir = join(projectPath, ".mxd", "tasks");
-
-		// Don't overwrite if tasks already exist
-		if (existsSync(tasksDir)) {
-			try {
-				const files = readdirSync(tasksDir).filter((f) => f.endsWith(".json"));
-				if (files.length > 0) return;
-			} catch {
-				// Can't read — proceed to create
-			}
-		}
-
-		await mkdir(tasksDir, { recursive: true });
-
-		const testMutationId = ulid();
-		const archMutationId = ulid();
-
-		const testMutation = {
-			title: "Quality: Test Mutation",
-			description:
-				"You are a quality auditor. Each time you're launched:\n\n" +
-				"1. Read .mxd/memory.md to understand the project\n" +
-				"2. Check recent git history (git log --oneline -20) to see what changed recently\n" +
-				"3. Pick 3-5 interesting functions or code paths from recent changes\n" +
-				"4. For each: mentally mutate the code (flip a conditional, change a return value, delete a line) " +
-				"and analyze whether existing tests would catch it\n" +
-				"5. Report to the task above via send_message: which mutations would be caught, which would NOT be caught, " +
-				"and what kind of test would be needed to catch them\n\n" +
-				"Do NOT modify any code, tests, or memory.md. Only analyze and report. " +
-				"The task above will decide what to act on.\n\n" +
-				"Focus on code that matters — conditional branches, error handling, return values. " +
-				"Don't waste time on trivial mutations.",
-			persistent: true,
-			color: "purple",
-		};
-
-		const archMutation = {
-			title: "Quality: Architecture Mutation",
-			description:
-				"You are an architecture auditor. Each time you're launched:\n\n" +
-				"1. Read .mxd/memory.md to understand the project and its architecture\n" +
-				"2. Think of 5-8 hypothetical features or changes that a real user might want. " +
-				"Be creative — think about new platforms, new integrations, format changes, new user-facing capabilities. " +
-				"Don't repeat ideas from memory.md.\n" +
-				"3. For each hypothetical change: search the actual codebase and count how many files and functions would need modification\n" +
-				"4. Report via send_message: feature name, files to modify, estimated lines, any complications\n" +
-				"5. If any change requires 3+ file modifications in what should be a single-concern area, flag it as an architecture issue\n" +
-				"6. Report to the task above: architecture score and any issues found\n\n" +
-				"Do NOT modify any code or memory.md. Only analyze and report. " +
-				"The task above will decide what to act on.\n\n" +
-				"The goal is to discover duplicate codepaths, missing abstractions, and tight coupling " +
-				"by seeing how the codebase responds to hypothetical changes. " +
-				"A well-architected system needs 1-2 file changes for most features. 5+ means something is wrong.",
-			persistent: true,
-			color: "purple",
-		};
-
-		await writeFile(
-			join(tasksDir, `${testMutationId}.json`),
-			JSON.stringify(testMutation, null, "\t"),
-			"utf-8",
-		);
-		await writeFile(
-			join(tasksDir, `${archMutationId}.json`),
-			JSON.stringify(archMutation, null, "\t"),
-			"utf-8",
-		);
 	}
 
 	/** Ensure .worktrees is listed in .git/info/exclude so worktree dirs stay untracked. */

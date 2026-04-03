@@ -212,9 +212,6 @@ export function createOrchestratorTools(
 								// Mark calling agent's node so it can discover its position
 								...(rest.id === currentTaskId ? { you: true } : {}),
 							};
-							// Persistent tasks: show status only when it's "verify" (awaiting parent review)
-							if (rest.persistent && rest.status !== "verify")
-								delete node.status;
 							return node;
 						})
 					: nodes.map((n) => {
@@ -224,9 +221,7 @@ export function createOrchestratorTools(
 								children: filterChildren(n.children),
 								parentId: n.parentId,
 							};
-							// Show status for non-persistent tasks, or persistent tasks in "verify" state
-							if (!n.persistent || n.status === "verify")
-								node.status = n.status;
+							node.status = n.status;
 							return node;
 						});
 				return {
@@ -303,32 +298,13 @@ export function createOrchestratorTools(
 						"Optional color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex like '#ff5733'). " +
 							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
 					),
-				persistent: z
-					.boolean()
-					.optional()
-					.describe(
-						"If true, creates a persistent task. Definition stored in .mxd/tasks/<id>.json (git-tracked). " +
-							"Persistent tasks cannot be closed or reset. done() preserves session. " +
-							"Only root orchestrator can create persistent tasks.",
-					),
 			},
 			async (args) => {
 				try {
 					// Auto-parent: if no parentId provided, default to current agent's task
 					const effectiveParentId = args.parentId ?? currentTaskId ?? undefined;
 
-					// Persistent tasks can only be created by root orchestrator
-					if (args.persistent && getDepth() > 0) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: "Error: Only the root orchestrator can create persistent tasks.",
-								},
-							],
-							isError: true,
-						};
-					}
+
 
 					// Scope validation: agents can only create tasks under themselves or their descendants
 					if (
@@ -360,7 +336,6 @@ export function createOrchestratorTools(
 							parentId: effectiveParentId,
 							draft: args.draft,
 							color: args.color,
-							persistent: args.persistent,
 							budgetUsd,
 						},
 						"agent",
@@ -436,13 +411,6 @@ export function createOrchestratorTools(
 					.describe(
 						"Color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex). " +
 							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
-					),
-				persistent: z
-					.boolean()
-					.optional()
-					.describe(
-						"Set persistent mode. true = persistent task (definition in .mxd/tasks/<id>.json). " +
-							"false = regular task. Only root orchestrator can set persistent.",
 					),
 			},
 			async (args) => {
@@ -557,18 +525,7 @@ export function createOrchestratorTools(
 						);
 					}
 
-					// Persistent mode can only be changed by root orchestrator
-					if (args.persistent !== undefined && getDepth() > 0) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: "Error: Only the root orchestrator can change persistent mode.",
-								},
-							],
-							isError: true,
-						};
-					}
+
 
 					const node = await updateTaskOp(
 						tracker,
@@ -580,7 +537,6 @@ export function createOrchestratorTools(
 							draft: args.draft,
 							parentId: args.parentId,
 							color: args.color,
-							persistent: args.persistent,
 						},
 						"agent",
 						{
@@ -891,8 +847,7 @@ export function createOrchestratorTools(
 			"Clean up a task's worktree and branch to reclaim disk space. " +
 				"Node and session are preserved — status set to 'closed'. " +
 				"Call this AFTER you have already merged the task's branch yourself. " +
-				"Use for merged tasks or deferred tasks where you want to free resources. " +
-				"Cannot close persistent tasks.",
+				"Use for merged tasks or deferred tasks where you want to free resources.",
 			{
 				taskId: z.string().describe("ID of the task to close"),
 			},
