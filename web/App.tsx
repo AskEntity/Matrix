@@ -1146,26 +1146,24 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 
 					{/* View mode panel header */}
 					<div className="mxd-panel-header">
-						{!isOrchestratorNode && selectedNode ? (
-							<div className="mxd-view-toggle">
-								<button
-									type="button"
-									className={`mxd-view-toggle-btn${viewMode === "activity" ? " active" : ""}`}
-									onClick={() => setViewMode("activity")}
-								>
-									{t("activity.title")}
-								</button>
-								<button
-									type="button"
-									className={`mxd-view-toggle-btn${viewMode === "description" ? " active" : ""}`}
-									onClick={() => setViewMode("description")}
-								>
-									{t("detail.title")}
-								</button>
-							</div>
-						) : (
-							<span className="mxd-panel-title">{t("activity.title")}</span>
-						)}
+						<div className="mxd-view-toggle">
+							<button
+								type="button"
+								className={`mxd-view-toggle-btn${viewMode === "activity" ? " active" : ""}`}
+								onClick={() => setViewMode("activity")}
+							>
+								{t("activity.title")}
+							</button>
+							<button
+								type="button"
+								className={`mxd-view-toggle-btn${viewMode === "description" ? " active" : ""}`}
+								onClick={() => setViewMode("description")}
+							>
+								{isOrchestratorNode
+									? t("project.details")
+									: t("detail.title")}
+							</button>
+						</div>
 						<div className="mxd-panel-actions">
 							{(() => {
 								const usageTaskId =
@@ -1222,27 +1220,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						</div>
 					</div>
 
-					{/* Orchestrator detail — shown above activity for orchestrator view */}
-					{isOrchestratorNode && (
-						<OrchestratorDetail
-							isRootActive={rootNodeId ? activeAgents.has(rootNodeId) : false}
-							nodes={nodes}
-							rootNodeId={rootNodeId}
-							totalCost={totalCost}
-							turns={lastTurns}
-							inputTokens={lastInputTokens}
-							cacheCreationTokens={lastCacheCreationTokens}
-							cacheReadTokens={lastCacheReadTokens}
-							outputTokens={lastOutputTokens}
-							provider={agentProvider}
-							model={agentModel}
-							onClearSession={handleClearRootSession}
-							onStop={handleStop}
-						/>
-					)}
-
-					{/* Main view area — activity log or description */}
-					{viewMode === "activity" || isOrchestratorNode ? (
+					{/* Main view area */}
+					{viewMode === "activity" ? (
 						<div className="mxd-activity-panel">
 							<BackgroundProcessBar
 								processes={backgroundProcesses}
@@ -1262,6 +1241,26 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								olderEventsAvailable={olderEventsAvailable}
 								loadingOlderEvents={loadingOlderEvents}
 								onLoadOlderEvents={handleLoadOlderEvents}
+							/>
+						</div>
+					) : isOrchestratorNode ? (
+						<div className="mxd-description-view">
+							<OrchestratorDetail
+								isRootActive={
+									rootNodeId ? activeAgents.has(rootNodeId) : false
+								}
+								nodes={nodes}
+								rootNodeId={rootNodeId}
+								totalCost={totalCost}
+								turns={lastTurns}
+								inputTokens={lastInputTokens}
+								cacheCreationTokens={lastCacheCreationTokens}
+								cacheReadTokens={lastCacheReadTokens}
+								outputTokens={lastOutputTokens}
+								provider={agentProvider}
+								model={agentModel}
+								onClearSession={handleClearRootSession}
+								onStop={handleStop}
 							/>
 						</div>
 					) : selectedNode && isTask(selectedNode) ? (
