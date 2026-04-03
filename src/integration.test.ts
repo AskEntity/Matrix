@@ -3062,8 +3062,8 @@ describe("Integration: yield wakeup assertions", () => {
 		expect(status).toBe("verify");
 
 		// Verify: the second API call should contain the user message as a text block
-		// For implicit yield, the message goes through buildImplicitYieldMessage
-		// which creates a user message with text blocks (one per queue message)
+		// For implicit yield, buildToolResultsMessage with empty toolUses
+		// creates a user message with text blocks (one per queue message)
 		const req2 = ctx.mockAPI.getRequestHistory()[1];
 		expect(req2).toBeDefined();
 		const lastMsg = req2?.messages[req2?.messages.length - 1];

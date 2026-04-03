@@ -57,7 +57,6 @@ const anthropicAdapter: ProviderAdapter = {
 	buildResponseEvents: () => [],
 	addAssistantMessage: () => {},
 	buildToolResultsMessage: () => [],
-	buildImplicitYieldMessage: () => ({}),
 	computeCost: () => 0,
 } as ProviderAdapter;
 

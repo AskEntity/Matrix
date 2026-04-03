@@ -8,7 +8,7 @@ import {
 	walkEventsToMessages,
 } from "./event-converter.ts";
 import type { Event } from "./events.ts";
-import { MessageQueue, type QueueMessage } from "./message-queue.ts";
+import { MessageQueue } from "./message-queue.ts";
 import {
 	extractQueueImageParts,
 	type ProviderAdapter,
@@ -786,44 +786,32 @@ function createOpenAIAdapter(baseUrl: string, apiKey: string): ProviderAdapter {
 
 			// Inject all queue messages as a separate user message
 			if (allQueueTexts.length > 0 || allQueueImageParts.length > 0) {
-				const parts: Array<
-					| { type: "text"; text: string }
-					| {
-							type: "image_url";
-							image_url: { url: string; detail: "auto" };
-					  }
-				> = [
-					...allQueueTexts.map((t) => ({
-						type: "text" as const,
-						text: t,
-					})),
-					...allQueueImageParts,
-				];
-				result.push({ role: "user", content: parts });
+				// Single text, no images, no tool results → string content (matches JSONL reconstruction)
+				if (
+					allQueueTexts.length === 1 &&
+					allQueueImageParts.length === 0 &&
+					result.length === 0
+				) {
+					result.push({ role: "user", content: allQueueTexts[0] ?? "" });
+				} else {
+					const parts: Array<
+						| { type: "text"; text: string }
+						| {
+								type: "image_url";
+								image_url: { url: string; detail: "auto" };
+						  }
+					> = [
+						...allQueueTexts.map((t) => ({
+							type: "text" as const,
+							text: t,
+						})),
+						...allQueueImageParts,
+					];
+					result.push({ role: "user", content: parts });
+				}
 			}
 
 			return result;
-		},
-
-		buildImplicitYieldMessage(formatted: string, nonCompact: QueueMessage[]) {
-			const imageParts = extractQueueImageParts(nonCompact);
-			// Each queue message as its own text block
-			const textParts = formatted
-				.split("\n")
-				.filter((line) => line.trim())
-				.map((line) => ({ type: "text" as const, text: line }));
-
-			if (imageParts.length > 0 || textParts.length > 1) {
-				return {
-					role: "user" as const,
-					content: [...textParts, ...imageParts],
-				};
-			}
-			// Single queue message, no images — use string content
-			return {
-				role: "user" as const,
-				content: textParts[0]?.text ?? formatted,
-			};
 		},
 
 		validateImage(base64: string, _mediaType: string) {

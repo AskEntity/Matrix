@@ -508,12 +508,6 @@ export interface ProviderAdapter {
 		cancellationFormatted: string;
 	}): unknown[];
 
-	/** Build a user message for queue drain during implicit yield. */
-	buildImplicitYieldMessage(
-		formatted: string,
-		nonCompact: QueueMessage[],
-	): unknown;
-
 	/** Compute cost from accumulated token counts. */
 	computeCost(
 		model: string,
@@ -649,7 +643,7 @@ export async function* runProviderLoop(
 	// Detect pending implicit yield from JSONL: last provider content event is assistant_text
 	// (no tool_call after it). The model ended its turn naturally (end_turn) and the agent
 	// was in handleImplicitYield waiting for messages when it died. On resume, bypass to
-	// handleImplicitYield → block on queue → buildImplicitYieldMessage → API call.
+	// handleImplicitYield → block on queue → buildToolResultsMessage → API call.
 	let pendingImplicitYieldResume = false;
 	if (isResume) {
 		const lastToolCall = [...activeEvents]
@@ -935,7 +929,7 @@ export async function* runProviderLoop(
 
 		// ── Handle pending implicit yield resume (end_turn on JSONL) ──
 		// The model ended its turn naturally before daemon crash. On resume, bypass to
-		// handleImplicitYield → block on queue → buildImplicitYieldMessage → API call.
+		// handleImplicitYield → block on queue → buildToolResultsMessage → API call.
 		// No tool_result to write (no tool_call to pair with).
 		if (pendingImplicitYieldResume && queue) {
 			pendingImplicitYieldResume = false;
@@ -979,14 +973,18 @@ export async function* runProviderLoop(
 			filterQueueMessageImages(adapter, yieldResult.nonCompact);
 
 			// Build user message from queue content and push to conversation
-			const endTurnFormatted = formatQueueMessagesWithHeaders(
-				yieldResult.nonCompact,
-			);
-			const implicitYieldMsg = adapter.buildImplicitYieldMessage(
-				endTurnFormatted,
-				yieldResult.nonCompact,
-			);
-			messages.push(implicitYieldMsg);
+			// Use buildToolResultsMessage with empty toolUses — one codepath for all user messages.
+			const implicitYieldMsgs = adapter.buildToolResultsMessage({
+				toolUses: [],
+				execResults: [],
+				cancellationQueueMsgs: yieldResult.nonCompact,
+				cancellationFormatted: formatQueueMessagesWithHeaders(
+					yieldResult.nonCompact,
+				),
+			});
+			for (const msg of implicitYieldMsgs) {
+				messages.push(msg);
+			}
 
 			// Emit queue events and messages_consumed
 			if (emit) {
@@ -1525,16 +1523,18 @@ export async function* runProviderLoop(
 			filterQueueMessageImages(adapter, yieldResult.nonCompact);
 
 			// Inject messages as a new user turn and continue the loop.
-			// Headers extracted to message level (defense-in-depth — headers shouldn't
-			// be present during running sessions, but strip them if they are).
-			const endTurnFormatted = formatQueueMessagesWithHeaders(
-				yieldResult.nonCompact,
-			);
-			const implicitYieldMsg = adapter.buildImplicitYieldMessage(
-				endTurnFormatted,
-				yieldResult.nonCompact,
-			);
-			messages.push(implicitYieldMsg);
+			// Use buildToolResultsMessage with empty toolUses — one codepath for all user messages.
+			const implicitYieldMsgs = adapter.buildToolResultsMessage({
+				toolUses: [],
+				execResults: [],
+				cancellationQueueMsgs: yieldResult.nonCompact,
+				cancellationFormatted: formatQueueMessagesWithHeaders(
+					yieldResult.nonCompact,
+				),
+			});
+			for (const msg of implicitYieldMsgs) {
+				messages.push(msg);
+			}
 
 			// Emit queue events and messages_consumed
 			if (emit) {
