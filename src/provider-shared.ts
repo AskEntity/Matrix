@@ -1351,6 +1351,8 @@ export async function* runProviderLoop(
 			type: "usage",
 			inputTokens: usage.totalContextTokens,
 			contextWindow,
+			cacheCreationTokens: usage.cacheCreationTokens,
+			cacheReadTokens: usage.cacheReadTokens,
 			taskId: "",
 			ts: Date.now(),
 		};

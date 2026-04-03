@@ -103,6 +103,8 @@ export type Event =
 			inputTokens: number;
 			contextWindow: number;
 			estimated?: boolean;
+			cacheCreationTokens?: number;
+			cacheReadTokens?: number;
 			ts: number;
 	  }
 	| { type: "agent_idle"; taskId: string; ts: number }
