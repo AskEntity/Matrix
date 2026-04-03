@@ -210,6 +210,7 @@ const en: Translations = {
 	"footer.attachImage": "Attach image",
 	"footer.contextWindow": "Context",
 	"footer.estimated": "estimated",
+	"footer.compactAt": "Compact at",
 	"footer.compact": "Compact context",
 	"footer.compactPending": "Compact pending…",
 
@@ -505,6 +506,7 @@ const zh: Translations = {
 	"footer.attachImage": "附加图片",
 	"footer.contextWindow": "上下文",
 	"footer.estimated": "估算",
+	"footer.compactAt": "压缩阈值",
 	"footer.compact": "压缩上下文",
 	"footer.compactPending": "压缩等待中…",
 
