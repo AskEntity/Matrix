@@ -473,7 +473,7 @@ Root agent（优先级从高到低）：
 ```
 Worker Tools（内置，mcp__mxd__ namespace）：
   bash(command, foreground_timeout?, run_in_background?) → { stdout, stderr, exit_code }
-  background(action, id?) → list/status/kill/await background processes
+  background(action, id?) → list/status/kill background processes
   read_file(path, offset?, limit?) → content_with_line_numbers
   write_file(path, content) → success
   edit_file(path, old_str, new_str, replace_all?) → success | not_found
@@ -491,7 +491,7 @@ Orchestration Tools（MCP server "mxd"）：
   reorder_tasks(nodeId, children[]) → reorder child nodes
   send_message(taskId, title, message, requestReply?) → unified up/down communication
   fork_task_context(sourceTaskId, targetTaskId) → copy session context (unix fork semantics)
-  yield() → suspends until queue message, returns messages + ## Pending
+  yield() → suspends until queue message, returns "resumed." + queue messages as text blocks
   done(status, summary) → signal passed/failed exit
   clarify(question) → non-blocking question to user
   list_projects() → discover other projects
@@ -1091,7 +1091,7 @@ interface ToolPlugin {
 | External MCP server 集成 | McpClientManager，支持外部 MCP 工具（如 Chrome DevTools、Brave Search） |
 | Ownership framing | 对 agent 心理模型的洞察——"拥有"任务 vs "被分配"任务影响 agent 自主性 |
 | Lazy-load activity log | Compact barrier 分页加载，大幅减少初始加载时间 |
-| Background process management | bash foreground_timeout + move-to-background + REST 管理。background tool（list/status/kill/await） |
+| Background process management | bash foreground_timeout + move-to-background + REST 管理。background tool（list/status/kill） |
 | Outer API retry | provider loop 外层重试，捕获 transient API 错误（rate limit、overloaded）。指数退避 30s/60s/120s。 |
 | Integration test framework | ValidatingMockAPI + instruction DSL。Mock per-conversation turn queues。Prefix validation。recreateApp() 模拟真实 daemon restart。 |
 | Slash command autocomplete | /compact、/stop、/clear、/settings 快捷命令 |

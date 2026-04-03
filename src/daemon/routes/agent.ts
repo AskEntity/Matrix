@@ -342,24 +342,20 @@ export function registerAgentRoutes(
 
 		// Build hash dump
 		const { createHash } = await import("node:crypto");
-		const perMessage = (messages as unknown[]).map(
-			(m: unknown, i: number) => {
-				const json = JSON.stringify(m);
-				return {
-					idx: i,
-					role: (m as { role?: string }).role ?? "unknown",
-					hash: createHash("sha256").update(json).digest("hex"),
-					len: json.length,
-				};
-			},
-		);
+		const perMessage = (messages as unknown[]).map((m: unknown, i: number) => {
+			const json = JSON.stringify(m);
+			return {
+				idx: i,
+				role: (m as { role?: string }).role ?? "unknown",
+				hash: createHash("sha256").update(json).digest("hex"),
+				len: json.length,
+			};
+		});
 		const fullMsgHash = createHash("sha256")
 			.update(JSON.stringify(messages))
 			.digest("hex");
 		const toolsHash = allTools
-			? createHash("sha256")
-					.update(JSON.stringify(allTools))
-					.digest("hex")
+			? createHash("sha256").update(JSON.stringify(allTools)).digest("hex")
 			: null;
 
 		return c.json({

@@ -284,3 +284,12 @@ await blocked entire agent loop. yield is the one path — accepts all message t
 
 
 
+
+## System Prompt Editing Discipline
+
+System prompt is for ALL Matrix users, not our project notebook. When editing it:
+- Only add universal principles that help any project, not matrix-specific concerns
+- Matrix-specific rules go in memory.md
+- Read the full prompt before editing — understand the 10-chapter structure
+- Delegate to a child for full review if context is insufficient
+- Prompt contains only principles and behavioral rules. Flow details go to tool descriptions.
