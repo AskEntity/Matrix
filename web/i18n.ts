@@ -52,7 +52,7 @@ const en: Translations = {
 	"tasks.addTask": "Add task",
 	"tasks.refresh": "Refresh",
 	"tasks.clearFilter": "Clear filter",
-	"tasks.dropToDelete": "Drop to delete",
+
 	"tasks.moveToRoot": "↑ Move to root level",
 	"tasks.hideCompleted": "Hide completed",
 
@@ -341,7 +341,7 @@ const zh: Translations = {
 	"tasks.addTask": "添加任务",
 	"tasks.refresh": "刷新",
 	"tasks.clearFilter": "清除筛选",
-	"tasks.dropToDelete": "拖放以删除",
+
 	"tasks.moveToRoot": "↑ 移至顶层",
 	"tasks.hideCompleted": "隐藏已完成",
 

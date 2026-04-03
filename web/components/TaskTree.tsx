@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo, useRef, useState } from "react";
 import type { TaskStatus } from "../../src/types.ts";
 import { isFolder, isTask, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
-import { IconChevron, IconEyeOff, IconHexagon, IconTrash } from "./icons.tsx";
+import { IconChevron, IconEyeOff, IconHexagon } from "./icons.tsx";
 import { statusDotClass } from "./StatusBadge.tsx";
 
 /** Sort priority: lower = shown first */
@@ -76,7 +76,6 @@ export const TaskTree = memo(function TaskTree({
 	isCreating,
 	onCreateTask,
 	onCancelCreate,
-	onDeleteTask,
 }: {
 	nodes: TreeNode[];
 	selectedTaskId: string | null;
@@ -88,7 +87,6 @@ export const TaskTree = memo(function TaskTree({
 	isCreating?: boolean;
 	onCreateTask?: (title: string) => void;
 	onCancelCreate?: () => void;
-	onDeleteTask?: (taskId: string) => void;
 }) {
 	// Root node's children are the visible top-level tasks
 	const rootNode = useMemo(
@@ -487,13 +485,7 @@ export const TaskTree = memo(function TaskTree({
 					/>
 				)}
 
-				{/* Trash drop zone — visible only while dragging */}
-				{dragState && onDeleteTask && (
-					<TrashDropZone
-						onDrop={(taskId) => onDeleteTask(taskId)}
-						onDragEnd={handleDragEnd}
-					/>
-				)}
+				{/* Trash zone removed — too dangerous for drag-and-drop deletion */}
 			</div>
 		</div>
 	);
@@ -784,37 +776,3 @@ function RootDropZone({
 }
 
 // ── Trash drop zone ──────────────────────────────────────────────────────
-
-function TrashDropZone({
-	onDrop,
-	onDragEnd,
-}: {
-	onDrop: (taskId: string) => void;
-	onDragEnd: () => void;
-}) {
-	const [isOver, setIsOver] = useState(false);
-	const { t } = useLocale();
-
-	return (
-		// biome-ignore lint/a11y/noStaticElementInteractions: drop target for drag-and-drop
-		<div
-			className={`mxd-trash-drop-zone${isOver ? " mxd-trash-over" : ""}`}
-			onDragOver={(e) => {
-				e.preventDefault();
-				e.dataTransfer.dropEffect = "move";
-				setIsOver(true);
-			}}
-			onDragLeave={() => setIsOver(false)}
-			onDrop={(e) => {
-				e.preventDefault();
-				const taskId = e.dataTransfer.getData("text/plain");
-				if (taskId) onDrop(taskId);
-				setIsOver(false);
-				onDragEnd();
-			}}
-		>
-			<IconTrash size={14} />
-			<span>{t("tasks.dropToDelete")}</span>
-		</div>
-	);
-}

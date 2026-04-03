@@ -543,22 +543,6 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		setIsCreatingTask(false);
 	}
 
-	async function handleDeleteTaskByDrag(taskId: string) {
-		if (!projectId) return;
-		try {
-			await deleteTask(taskId);
-			if (selectedTaskId === taskId) setSelectedTaskId(rootNodeId);
-			await refreshTasks();
-		} catch (err) {
-			addLog({
-				type: "error",
-				message: (err as Error).message,
-				taskId: "",
-				ts: Date.now(),
-			});
-		}
-	}
-
 	return {
 		handleSend,
 		handleStop,
@@ -573,6 +557,5 @@ export function createActionHandlers(deps: ActionHandlerDeps) {
 		handleAddTask,
 		handleCreateTask,
 		handleCancelCreate,
-		handleDeleteTaskByDrag,
 	};
 }

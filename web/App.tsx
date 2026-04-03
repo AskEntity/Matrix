@@ -612,7 +612,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		handleAddTask,
 		handleCreateTask,
 		handleCancelCreate,
-		handleDeleteTaskByDrag,
 	} = useMemo(
 		() =>
 			createActionHandlers({
@@ -956,7 +955,6 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 						isCreating={isCreatingTask}
 						onCreateTask={handleCreateTask}
 						onCancelCreate={handleCancelCreate}
-						onDeleteTask={handleDeleteTaskByDrag}
 					/>
 				</aside>
 
