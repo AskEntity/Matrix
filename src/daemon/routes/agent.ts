@@ -13,6 +13,7 @@ import {
 	stopAgent,
 } from "../agent-lifecycle.ts";
 import type { DaemonContext } from "../context.ts";
+import { isTask } from "../../types.ts";
 import { broadcastTreeUpdate, emitEvent } from "../event-system.ts";
 import {
 	getEventStore,
@@ -43,7 +44,7 @@ export function registerAgentRoutes(
 		// Check if root agent is running via tracker node session
 		const tracker = ctx.trackers.get(project.id);
 		const running = tracker
-			? tracker.get(tracker.rootNodeId)?.session != null
+			? tracker.getTask(tracker.rootNodeId)?.session != null
 			: false;
 		return c.json({
 			running,
@@ -64,6 +65,7 @@ export function registerAgentRoutes(
 		if (tracker) {
 			// All agent queues are on session of tracker nodes
 			for (const node of tracker.allNodes()) {
+				if (!isTask(node)) continue;
 				const queue = node.session?.queue;
 				if (queue) {
 					if (queue.idle) {
@@ -86,13 +88,13 @@ export function registerAgentRoutes(
 		{
 			const tracker = ctx.trackers.get(project.id);
 			const rootSession = tracker
-				? tracker.get(tracker.rootNodeId)?.session
+				? tracker.getTask(tracker.rootNodeId)?.session
 				: undefined;
 			if (!rootSession) {
 				// No active session — reset any orphaned in_progress root node
 				// so the UI can reconcile its running state.
 				if (tracker?.rootNodeId) {
-					const rootNode = tracker.get(tracker.rootNodeId);
+					const rootNode = tracker.getTask(tracker.rootNodeId);
 					if (rootNode && rootNode.status === "in_progress") {
 						tracker.updateStatus(tracker.rootNodeId, "failed");
 						await tracker.save();
@@ -118,7 +120,7 @@ export function registerAgentRoutes(
 		const tracker = ctx.trackers.get(project.id);
 		const targetNodeId = body.nodeId ?? tracker?.rootNodeId;
 		const targetQueue = targetNodeId
-			? tracker?.get(targetNodeId)?.session?.queue
+			? tracker?.getTask(targetNodeId)?.session?.queue
 			: undefined;
 		if (!targetQueue) {
 			return c.json({ error: "No active agent for this project" }, 404);
@@ -139,7 +141,7 @@ export function registerAgentRoutes(
 		{
 			const restartTracker = ctx.trackers.get(project.id);
 			const rootRunning = restartTracker
-				? restartTracker.get(restartTracker.rootNodeId)?.session != null
+				? restartTracker.getTask(restartTracker.rootNodeId)?.session != null
 				: false;
 			if (!rootRunning) {
 				return c.json({ error: "No active agent to restart" }, 404);
@@ -219,7 +221,7 @@ export function registerAgentRoutes(
 		{
 			const clearTracker = ctx.trackers.get(project.id);
 			const rootRunning = clearTracker
-				? clearTracker.get(clearTracker.rootNodeId)?.session != null
+				? clearTracker.getTask(clearTracker.rootNodeId)?.session != null
 				: false;
 			if (rootRunning) {
 				await stopAgent(ctx, project.id);
@@ -259,7 +261,7 @@ export function registerAgentRoutes(
 		sessionId: string,
 	) => {
 		const tracker = await getTracker(ctx, projectId);
-		return tracker.get(sessionId)?.session;
+		return tracker.getTask(sessionId)?.session;
 	};
 
 	// Move a foreground execution to background
@@ -328,7 +330,7 @@ export function registerAgentRoutes(
 		const tracker = await getTracker(ctx, project.id);
 		const { nodeId } = await c.req.json<{ nodeId?: string }>();
 		const targetId = nodeId ?? tracker.rootNodeId;
-		const node = tracker.get(targetId);
+		const node = tracker.getTask(targetId);
 		if (!node?.session) {
 			return c.json({ error: "No active session for this task" }, 404);
 		}

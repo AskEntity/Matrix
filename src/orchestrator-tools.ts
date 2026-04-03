@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Event } from "./events.ts";
+import { isFolder, isTask } from "./types.ts";
 import type { QueueMessage } from "./message-queue.ts";
 import {
 	createCrossProjectMessage,
@@ -176,12 +177,12 @@ export function createOrchestratorTools(
 	const currentTaskId = taskId;
 
 	// Derive depth, queue, and projectPath from session on the task node.
-	const getSession = () => (taskId ? tracker.get(taskId)?.session : undefined);
+	const getSession = () => (taskId ? tracker.getTask(taskId)?.session : undefined);
 	const getDepth = () => getSession()?.depth ?? 0;
 	const getQueue = () => getSession()?.queue;
 	const getProjectPath = () =>
 		(taskId
-			? (tracker.get(taskId)?.worktreePath as string | undefined)
+			? (tracker.getTask(taskId)?.worktreePath as string | undefined)
 			: undefined) ?? repoPath;
 
 	/** Emit an event through the daemon's unified event system. */
@@ -215,13 +216,20 @@ export function createOrchestratorTools(
 			async ({ include_closed, include_details }) => {
 				let nodes = tracker.allNodes();
 				if (!include_closed) {
-					nodes = nodes.filter((n) => n.status !== "closed");
+					nodes = nodes.filter((n) => isFolder(n) || n.status !== "closed");
 				}
 				const visibleIds = new Set(nodes.map((n) => n.id));
 				const filterChildren = (children: string[]) =>
 					children.filter((id) => visibleIds.has(id));
 				const result = include_details
-					? nodes.map(({ session: _session, ...rest }) => {
+					? nodes.map((n) => {
+							if (isFolder(n)) {
+								return {
+									...n,
+									children: filterChildren(n.children),
+								};
+							}
+							const { session: _session, ...rest } = n;
 							const node: Record<string, unknown> = {
 								...rest,
 								children: filterChildren(rest.children),
@@ -237,7 +245,8 @@ export function createOrchestratorTools(
 								children: filterChildren(n.children),
 								parentId: n.parentId,
 							};
-							node.status = n.status;
+							if (isTask(n)) node.status = n.status;
+							if (isFolder(n)) node.type = "folder";
 							return node;
 						});
 				return {
@@ -260,7 +269,7 @@ export function createOrchestratorTools(
 					.describe("Task node ID (or unique prefix, min 8 chars)"),
 			},
 			async ({ taskId }) => {
-				const node = tracker.get(taskId);
+				const node = tracker.getTask(taskId);
 				if (!node) {
 					return {
 						content: [
@@ -493,7 +502,7 @@ export function createOrchestratorTools(
 								isError: true,
 							};
 						}
-						const existingNode = tracker.get(args.taskId);
+						const existingNode = tracker.getTask(args.taskId);
 						if (!existingNode?.description) {
 							return {
 								content: [
@@ -556,7 +565,7 @@ export function createOrchestratorTools(
 							notifyTargetNode: (action, nodeId, title) => {
 								// Notify the modified node directly via queue
 								if (nodeId !== currentTaskId) {
-									const targetNode = tracker.get(nodeId);
+									const targetNode = tracker.getTask(nodeId);
 									if (targetNode?.session?.queue) {
 										try {
 											targetNode.session.queue.enqueue(
@@ -629,7 +638,7 @@ export function createOrchestratorTools(
 					.describe("If true, signals that a reply is expected."),
 			},
 			async (args) => {
-				const node = tracker.get(args.taskId);
+				const node = tracker.getTask(args.taskId);
 				if (!node) {
 					return {
 						content: [
@@ -644,7 +653,7 @@ export function createOrchestratorTools(
 
 				// Determine direction based on taskId
 				const currentNode = currentTaskId
-					? tracker.get(currentTaskId)
+					? tracker.getTask(currentTaskId)
 					: undefined;
 				const isUpward =
 					currentNode?.parentId != null && args.taskId === currentNode.parentId;
@@ -821,7 +830,7 @@ export function createOrchestratorTools(
 					} else {
 						// Fallback for non-daemon contexts (tests without full daemon):
 						// direct queue delivery only
-						const existingQueue = tracker.get(args.taskId)?.session?.queue;
+						const existingQueue = tracker.getTask(args.taskId)?.session?.queue;
 						if (existingQueue) {
 							existingQueue.enqueue(queueMessage);
 						}
@@ -1146,7 +1155,7 @@ export function createOrchestratorTools(
 				const targetTracker = deps.getTracker(args.projectId);
 				const targetRootId = targetTracker?.rootNodeId;
 				const targetQueue = targetRootId
-					? targetTracker?.get(targetRootId)?.session?.queue
+					? targetTracker?.getTask(targetRootId)?.session?.queue
 					: undefined;
 				if (targetQueue) {
 					try {
@@ -1269,7 +1278,7 @@ export function createOrchestratorTools(
 				}
 
 				// Validate target exists
-				const targetNode = tracker.get(args.targetTaskId);
+				const targetNode = tracker.getTask(args.targetTaskId);
 				if (!targetNode) {
 					return {
 						content: [
@@ -1495,7 +1504,7 @@ export function createOrchestratorTools(
 			// Check if any descendants of this task have active sessions
 			if (!currentTaskId) return false;
 			return getDescendantIds(tracker, currentTaskId).some(
-				(id) => tracker.get(id)?.session != null,
+				(id) => tracker.getTask(id)?.session != null,
 			);
 		},
 	};
