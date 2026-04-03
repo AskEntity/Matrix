@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { authFetch } from "./auth.ts";
 import { ActivityLog } from "./components/ActivityLog.tsx";
 import { TaskTree } from "./components/TaskTree.tsx";
 import { createEventHandler, type EventHandlerDeps } from "./event-handler.ts";
@@ -84,7 +85,7 @@ export function MockShowcase() {
 	// ── Fetch mock data on mount ──
 	useEffect(() => {
 		let cancelled = false;
-		fetch("/mock-showcase")
+		authFetch("/mock-showcase")
 			.then((r) => {
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
 				return r.json();
