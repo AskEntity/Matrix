@@ -33,11 +33,11 @@ export function isDescendantOf(
 	nodeId: string,
 	ancestorId: string,
 ): boolean {
-	let current = tracker.getTask(nodeId);
+	let current = tracker.get(nodeId);
 	while (current) {
 		if (current.parentId === ancestorId) return true;
 		if (!current.parentId) return false;
-		current = tracker.getTask(current.parentId);
+		current = tracker.get(current.parentId);
 	}
 	return false;
 }
@@ -51,12 +51,12 @@ export function getDescendantIds(
 	ancestorId: string,
 ): string[] {
 	const result: string[] = [];
-	const queue = [...(tracker.getTask(ancestorId)?.children ?? [])];
+	const queue = [...(tracker.get(ancestorId)?.children ?? [])];
 	while (queue.length > 0) {
 		// biome-ignore lint/style/noNonNullAssertion: length > 0 guarantees shift returns a value
 		const id = queue.shift()!;
 		result.push(id);
-		const node = tracker.getTask(id);
+		const node = tracker.get(id);
 		if (node?.children?.length) {
 			queue.push(...node.children);
 		}
