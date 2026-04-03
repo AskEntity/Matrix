@@ -310,4 +310,66 @@ export function registerAgentRoutes(
 		}
 		return c.json({ ok: true, message: result });
 	});
+
+	// Debug: dump live provider messages array (selfBootstrap only)
+	app.post("/projects/:id/debug/dump-messages", async (c) => {
+		const project = ctx.pm.get(c.req.param("id"));
+		if (!project) {
+			return c.json({ error: "Project not found" }, 404);
+		}
+		const effectiveCfg = await resolveProjectConfig(
+			ctx,
+			project.path,
+			project.id,
+		);
+		if (!effectiveCfg.selfBootstrap) {
+			return c.json({ error: "Only available in selfBootstrap mode" }, 403);
+		}
+		const tracker = await getTracker(ctx, project.id);
+		const { nodeId } = await c.req.json<{ nodeId?: string }>();
+		const targetId = nodeId ?? tracker.rootNodeId;
+		const node = tracker.get(targetId);
+		if (!node?.session) {
+			return c.json({ error: "No active session for this task" }, 404);
+		}
+		const { messages, allTools } = node.session;
+		if (!messages) {
+			return c.json(
+				{ error: "Messages not available (agent may not have started)" },
+				404,
+			);
+		}
+
+		// Build hash dump
+		const { createHash } = await import("node:crypto");
+		const perMessage = (messages as unknown[]).map(
+			(m: unknown, i: number) => {
+				const json = JSON.stringify(m);
+				return {
+					idx: i,
+					role: (m as { role?: string }).role ?? "unknown",
+					hash: createHash("sha256").update(json).digest("hex"),
+					len: json.length,
+				};
+			},
+		);
+		const fullMsgHash = createHash("sha256")
+			.update(JSON.stringify(messages))
+			.digest("hex");
+		const toolsHash = allTools
+			? createHash("sha256")
+					.update(JSON.stringify(allTools))
+					.digest("hex")
+			: null;
+
+		return c.json({
+			taskId: targetId,
+			timestamp: new Date().toISOString(),
+			msgCount: messages.length,
+			fullMsgHash,
+			toolsHash,
+			toolsCount: allTools?.length ?? 0,
+			perMessage,
+		});
+	});
 }

@@ -62,4 +62,7 @@ export const api = {
 	taskFork: (id: string, nodeId: string) => taskUrl(id, nodeId, "fork"),
 	taskReorder: (id: string, nodeId: string) => taskUrl(id, nodeId, "reorder"),
 	taskGitlog: (id: string, nodeId: string) => taskUrl(id, nodeId, "gitlog"),
+
+	// Debug (selfBootstrap only)
+	debugDumpMessages: (id: string) => projectUrl(id, "debug", "dump-messages"),
 } as const;
