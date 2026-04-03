@@ -190,16 +190,23 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	});
 	const [isSidebarDragging, setIsSidebarDragging] = useState(false);
 	const [openTabs, setOpenTabs] = useState<string[]>(() => {
+		let tabs: string[] = [];
 		try {
 			const stored = localStorage.getItem("mxd-open-tabs");
 			if (stored) {
 				const parsed = JSON.parse(stored);
-				if (Array.isArray(parsed)) return parsed;
+				if (Array.isArray(parsed)) tabs = parsed;
 			}
 		} catch {
 			/* ignore */
 		}
-		return [];
+		// Ensure the hash taskId is in the tab list
+		const hashTask = initialHash.taskId;
+		if (hashTask && !tabs.includes(hashTask)) {
+			tabs = [...tabs, hashTask];
+			localStorage.setItem("mxd-open-tabs", JSON.stringify(tabs));
+		}
+		return tabs;
 	});
 	const [previewTabId, setPreviewTabId] = useState<string | null>(null);
 	const [viewMode, setViewMode] = useState<"activity" | "description">(
@@ -674,9 +681,10 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 		setTargetNodeId(selectedTaskId);
 	}, [selectedTaskId, rootNodeId]);
 
-	// Clean up stale tabs (nodes that were deleted)
+	// Clean up stale tabs (nodes that were deleted).
+	// Guard: skip when nodeMap is empty (nodes not yet loaded from server).
 	useEffect(() => {
-		if (openTabs.length === 0) return;
+		if (openTabs.length === 0 || nodeMap.size === 0) return;
 		const validTabs = openTabs.filter((id) => nodeMap.has(id));
 		if (validTabs.length !== openTabs.length) {
 			setOpenTabs(validTabs);
