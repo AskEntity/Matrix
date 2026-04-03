@@ -90,9 +90,7 @@ function MockShowcaseInner() {
 			timestamp: number;
 		}[]
 	>([]);
-	const [clarifyAnswers, setClarifyAnswers] = useState<Record<string, string>>(
-		{},
-	);
+	const [clarifyAnswers] = useState<Record<string, string>>({});
 	const [backgroundProcesses, setBackgroundProcesses] = useState<
 		Map<
 			string,
@@ -214,12 +212,9 @@ function MockShowcaseInner() {
 	}, []);
 
 	const noop = useCallback(() => {}, []);
+	// No-op: clarify input is visible but non-functional in mock mode
 	const handleClarifyAnswerChange = useCallback(
-		(clarificationId: string, value: string) =>
-			setClarifyAnswers((prev) => ({
-				...prev,
-				[clarificationId]: value,
-			})),
+		(_clarificationId: string, _value: string) => {},
 		[],
 	);
 	const handleThemeChange = useCallback(
