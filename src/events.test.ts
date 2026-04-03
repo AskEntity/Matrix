@@ -3909,6 +3909,104 @@ describe("buildSessionRepair", () => {
 		);
 		expect(interruptedResults?.length).toBe(0);
 	});
+
+	test("detects out-of-order tool_result (result after next assistant turn)", () => {
+		// Simulates the duplicate agent loop bug: two yields in one turn,
+		// second gets resolved, new assistant turn starts, THEN first resolves.
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__yield",
+				toolCallId: "yield-1",
+				input: {},
+				taskId: "t1",
+				ts: 100,
+			} as Event,
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__yield",
+				toolCallId: "yield-2",
+				input: {},
+				taskId: "t1",
+				ts: 200,
+			} as Event,
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__yield",
+				toolCallId: "yield-2",
+				content: "resumed.",
+				isError: false,
+				taskId: "t1",
+				ts: 300,
+			} as Event,
+			{
+				type: "assistant_text",
+				content: "New turn started",
+				taskId: "t1",
+				ts: 400,
+			} as Event,
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__yield",
+				toolCallId: "yield-3",
+				input: {},
+				taskId: "t1",
+				ts: 500,
+			} as Event,
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__yield",
+				toolCallId: "yield-1", // ← out of order! belongs before the assistant_text
+				content: "resumed.",
+				isError: false,
+				taskId: "t1",
+				ts: 600,
+			} as Event,
+		];
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).not.toBeNull();
+		// Should truncate before the out-of-order tool_call
+		expect(repair!.truncateAfterIndex).toBeLessThan(4);
+	});
+
+	test("no repair needed when tool_results are positionally correct", () => {
+		const events: Event[] = [
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				input: {},
+				taskId: "t1",
+				ts: 100,
+			} as Event,
+			{
+				type: "tool_result",
+				tool: "mcp__mxd__bash",
+				toolCallId: "tc1",
+				content: "ok",
+				isError: false,
+				taskId: "t1",
+				ts: 200,
+			} as Event,
+			{
+				type: "assistant_text",
+				content: "done",
+				taskId: "t1",
+				ts: 300,
+			} as Event,
+			{
+				type: "tool_call",
+				tool: "mcp__mxd__yield",
+				toolCallId: "tc2",
+				input: {},
+				taskId: "t1",
+				ts: 400,
+			} as Event,
+			// tc2 is last yield with no result — intended orphan
+		];
+		const repair = buildSessionRepair(events, "t1");
+		expect(repair).toBeNull();
+	});
 });
 
 describe("findUnconsumedMessages", () => {

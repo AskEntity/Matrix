@@ -399,24 +399,36 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 			if (inProgressNodes.length === 0) continue;
 
+			// Pre-register ALL nodes in launchingNodes BEFORE starting any.
+			// This prevents Phase 2 crash recovery (above) from triggering
+			// duplicate launches via deliverMessage — deliverMessage checks
+			// launchingNodes and skips if set.
+			const nodesToLaunch: Array<{
+				id: string;
+				isRoot: boolean;
+			}> = [];
 			for (const node of inProgressNodes) {
 				const isRoot = node.id === tracker.rootNodeId;
-
-				// Skip child nodes without worktrees — they can't run
 				if (!isRoot && !node.worktreePath) continue;
+				ctx.launchingNodes.add(node.id);
+				nodesToLaunch.push({ id: node.id, isRoot });
+			}
 
-				console.log(`Auto-resuming ${project.name} node ${node.id}`);
+			for (const { id, isRoot } of nodesToLaunch) {
+				console.log(`Auto-resuming ${project.name} node ${id}`);
 
-				runAgentForNode(ctx, project, tracker, node.id, {
+				runAgentForNode(ctx, project, tracker, id, {
 					orchestratorSystemPrompt: isRoot
 						? ORCHESTRATOR_SYSTEM_PROMPT
 						: undefined,
 					resume: true,
 				}).catch((e) => {
 					console.error(
-						`[autoResume] Failed to resume ${node.id}:`,
+						`[autoResume] Failed to resume ${id}:`,
 						e instanceof Error ? e.message : e,
 					);
+					// Clean up launch lock on failure
+					ctx.launchingNodes.delete(id);
 				});
 			}
 		}
