@@ -304,8 +304,6 @@ export function createOrchestratorTools(
 					// Auto-parent: if no parentId provided, default to current agent's task
 					const effectiveParentId = args.parentId ?? currentTaskId ?? undefined;
 
-
-
 					// Scope validation: agents can only create tasks under themselves or their descendants
 					if (
 						effectiveParentId &&
@@ -524,8 +522,6 @@ export function createOrchestratorTools(
 							args.new_description,
 						);
 					}
-
-
 
 					const node = await updateTaskOp(
 						tracker,

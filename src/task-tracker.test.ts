@@ -374,10 +374,6 @@ describe("TaskTracker", () => {
 		expect(parent.children).toEqual([child.id]);
 	});
 
-
-
-
-
 	test("legacy persistent field stripped on load", async () => {
 		const task1 = tracker.addTask("Old task", "desc");
 		await tracker.save();
@@ -399,7 +395,6 @@ describe("TaskTracker", () => {
 		expect(loaded.persistent).toBeUndefined();
 	});
 
-
 	test("regular nodes have title/description preserved in tree.json on save", async () => {
 		const rootId = tracker.rootNodeId;
 		const task = tracker.addChild(rootId, "Regular task", "my desc");
@@ -411,9 +406,6 @@ describe("TaskTracker", () => {
 		expect(saved.title).toBe("Regular task");
 		expect(saved.description).toBe("my desc");
 	});
-
-
-
 
 	test("reorderChildren throws for mismatched children", () => {
 		const parent = tracker.addTask("App", "desc");
@@ -434,5 +426,3 @@ describe("TaskTracker", () => {
 		expect(() => tracker.reorderChildren(parent.id, [c1.id, c1.id])).toThrow();
 	});
 });
-
-

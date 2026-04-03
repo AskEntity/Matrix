@@ -75,7 +75,6 @@ describe("ProjectManager", () => {
 			const content = await readFile(examplePath, "utf-8");
 			expect(content).toContain("#!/bin/bash");
 		});
-
 	});
 
 	describe("init — existing directory", () => {

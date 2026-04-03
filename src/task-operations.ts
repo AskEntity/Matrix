@@ -90,7 +90,6 @@ export async function createTaskOp(
 		tracker.updateColor(node.id, resolveColor(opts.color), editedBy);
 	}
 
-
 	await tracker.save();
 	callbacks.broadcastTree();
 

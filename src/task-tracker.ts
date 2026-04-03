@@ -24,9 +24,7 @@ export class TaskTracker {
 			const raw = await readFile(this.treePath, "utf-8");
 			const data = JSON.parse(raw) as {
 				rootNodeId: string;
-				nodes: Array<
-					TaskNode & { persistent?: unknown }
-				>;
+				nodes: Array<TaskNode & { persistent?: unknown }>;
 			};
 			for (const node of data.nodes) {
 				// Backfill defaults for fields that became required
@@ -65,8 +63,6 @@ export class TaskTracker {
 		};
 		await writeFile(this.treePath, JSON.stringify(data, null, "\t"), "utf-8");
 	}
-
-
 
 	/** Root node ID. Always present after load(). */
 	get rootNodeId(): string {

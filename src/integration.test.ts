@@ -4967,7 +4967,6 @@ describe("Integration: tree operations", () => {
 		const status = await waitForDone(ctx);
 		expect(status).toBe("verify");
 	}, 20000);
-
 });
 
 // ── File operation tests ──
@@ -9477,5 +9476,4 @@ describe("Integration: two-phase done() gap tests", () => {
 		const doneNotified = events.find((e) => e.type === "done_notified");
 		expect(doneNotified).toBeTruthy();
 	}, 30000);
-
 });

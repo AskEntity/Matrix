@@ -245,7 +245,6 @@ describe("updateTaskOp", () => {
 		expect(updated.status).toBe("in_progress");
 	});
 
-
 	test("reparents task", async () => {
 		const parent1 = tracker.addChild(tracker.rootNodeId, "P1", "", {
 			editedBy: "agent",
@@ -479,7 +478,6 @@ describe("closeTaskOp", () => {
 		expect(node?.status).toBe("closed");
 	});
 
-
 	test("passed → closed (backward compat)", async () => {
 		const task = tracker.addChild(tracker.rootNodeId, "Passed", "", {
 			editedBy: "agent",
@@ -596,7 +594,6 @@ describe("resetTaskOp", () => {
 
 		expect(cleared).toContain(task.id);
 	});
-
 
 	test("throws for nonexistent task", async () => {
 		await expect(
@@ -791,5 +788,3 @@ describe("surgical description edit via updateTaskOp", () => {
 		}
 	});
 });
-
-
