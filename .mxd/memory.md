@@ -15,7 +15,7 @@ Creating tasks is CHEAP. Executing must be DELIBERATE. When user discusses desig
 ## How to Run Tests
 
 ```bash
-bun test              # ALL tests (unit + integration). ~1139 pass, 3 skip.
+bun test              # ALL tests (unit + integration). ~1173 pass, 3 skip.
 bun run typecheck     # tsc --noEmit
 bun run check         # biome lint + format
 ```
@@ -299,3 +299,14 @@ System prompt is for ALL Matrix users, not our project notebook. When editing it
 Embrace large type refactors. Rename TaskNode → TreeNode = TaskNode | FolderNode. Let the compiler show you every place that assumes "all nodes are tasks." Each error is a location that needs to decide how to handle the new case. Hundreds of errors is not a problem — it is the audit.
 
 "Don't fear large changes" is not just about courage. Static type systems make large changes SAFE — the compiler catches what you miss. The errors are your todo list.
+
+## Folder Nodes (2026-04-03)
+
+`TreeNode = TaskNode | FolderNode` discriminated union. FolderNode: only id, title, parentId, children, type:"folder". No status, no session, no lifecycle. Zero behavior — pure grouping.
+
+### Key Design
+- **Tree structure vs task ownership**: `parentId` = tree structure (UI, reparent, delete). `getTaskAbove()`/`getTasksBelow()` = task ownership (message routing, worktree branching, task_complete delivery). Folders are transparent to ownership.
+- **MCP tools**: `create_folder`, `delete_folder` (must be empty), `rename_folder` — separate from task tools.
+- **56 parentId references audited**: each categorized as tree-structure or task-ownership. Task ownership uses getTaskAbove.
+- **Lifecycle rejection**: all lifecycle operations (launch, done, close, reset, send_message) reject folders at entry point.
+- **MUST resist feature creep**: persistent tasks started as "just a flag" and grew into a disaster. Folder stays at ZERO behavior forever.
