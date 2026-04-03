@@ -29,7 +29,6 @@ import {
 import type { MessageQueue, QueueMessage } from "./message-queue.ts";
 import {
 	drainQueueAtCancellationPoint,
-	formatQueueMessagesWithHeaders,
 	recordQueueEvents,
 } from "./queue-utils.ts";
 import type { EventImageData } from "./shared-types.ts";
@@ -496,16 +495,18 @@ export interface ProviderAdapter {
 	): void;
 
 	/**
-	 * Build the user message containing tool results + any queue messages.
-	 * This is where provider format differences are most significant:
+	 * Build the next user turn for the API conversation.
+	 * Combines tool results (if any) with queue messages (if any) into provider-specific format:
 	 * - Anthropic: single user message with tool_result + text + image blocks
 	 * - OpenAI: separate tool messages + user message for images/queue
+	 *
+	 * When toolUses is empty (implicit yield), returns just the queue message content.
+	 * Formatting of queue messages is handled internally — callers pass raw QueueMessage[].
 	 */
-	buildToolResultsMessage(params: {
+	buildUserTurn(params: {
 		toolUses: ProviderToolUse[];
 		execResults: ToolResult[];
-		cancellationQueueMsgs: QueueMessage[];
-		cancellationFormatted: string;
+		queueMessages: QueueMessage[];
 	}): unknown[];
 
 	/** Compute cost from accumulated token counts. */
@@ -643,7 +644,7 @@ export async function* runProviderLoop(
 	// Detect pending implicit yield from JSONL: last provider content event is assistant_text
 	// (no tool_call after it). The model ended its turn naturally (end_turn) and the agent
 	// was in handleImplicitYield waiting for messages when it died. On resume, bypass to
-	// handleImplicitYield → block on queue → buildToolResultsMessage → API call.
+	// handleImplicitYield → block on queue → buildUserTurn → API call.
 	let pendingImplicitYieldResume = false;
 	if (isResume) {
 		const lastToolCall = [...activeEvents]
@@ -893,10 +894,7 @@ export async function* runProviderLoop(
 			yield doneToolResultEvt;
 
 			// Build messages for API from done tool_result + wake messages
-			const doneFormatted = formatQueueMessagesWithHeaders(
-				doneResult.nonCompact,
-			);
-			const doneToolResultMsgs = adapter.buildToolResultsMessage({
+			const doneToolResultMsgs = adapter.buildUserTurn({
 				toolUses: [
 					{
 						id: pendingDoneToolCall.id,
@@ -910,8 +908,7 @@ export async function* runProviderLoop(
 						isError: false,
 					},
 				],
-				cancellationQueueMsgs: doneResult.nonCompact,
-				cancellationFormatted: doneFormatted,
+				queueMessages: doneResult.nonCompact,
 			});
 			for (const msg of doneToolResultMsgs) {
 				messages.push(msg);
@@ -929,7 +926,7 @@ export async function* runProviderLoop(
 
 		// ── Handle pending implicit yield resume (end_turn on JSONL) ──
 		// The model ended its turn naturally before daemon crash. On resume, bypass to
-		// handleImplicitYield → block on queue → buildToolResultsMessage → API call.
+		// handleImplicitYield → block on queue → buildUserTurn → API call.
 		// No tool_result to write (no tool_call to pair with).
 		if (pendingImplicitYieldResume && queue) {
 			pendingImplicitYieldResume = false;
@@ -973,14 +970,10 @@ export async function* runProviderLoop(
 			filterQueueMessageImages(adapter, yieldResult.nonCompact);
 
 			// Build user message from queue content and push to conversation
-			// Use buildToolResultsMessage with empty toolUses — one codepath for all user messages.
-			const implicitYieldMsgs = adapter.buildToolResultsMessage({
+			const implicitYieldMsgs = adapter.buildUserTurn({
 				toolUses: [],
 				execResults: [],
-				cancellationQueueMsgs: yieldResult.nonCompact,
-				cancellationFormatted: formatQueueMessagesWithHeaders(
-					yieldResult.nonCompact,
-				),
+				queueMessages: yieldResult.nonCompact,
 			});
 			for (const msg of implicitYieldMsgs) {
 				messages.push(msg);
@@ -1045,7 +1038,7 @@ export async function* runProviderLoop(
 				yield compactYieldEvt;
 				// Push tool_result into messages so compaction sees a paired tool_use/tool_result.
 				// Without this, messages has an unpaired tool_use → API 400.
-				const compactToolResultMsgs = adapter.buildToolResultsMessage({
+				const compactToolResultMsgs = adapter.buildUserTurn({
 					toolUses: [
 						{
 							id: pendingYieldToolCall.id,
@@ -1059,8 +1052,7 @@ export async function* runProviderLoop(
 							isError: false,
 						},
 					],
-					cancellationQueueMsgs: [],
-					cancellationFormatted: "",
+					queueMessages: [],
 				});
 				for (const msg of compactToolResultMsgs) {
 					messages.push(msg);
@@ -1075,10 +1067,7 @@ export async function* runProviderLoop(
 			// Build yield tool_result — just "resumed." Queue messages appear as
 			// additional text blocks in the same user message.
 			const yieldContent = "resumed.";
-			const yieldFormatted = formatQueueMessagesWithHeaders(
-				yieldResult.nonCompact,
-			);
-			const toolResultMsgs = adapter.buildToolResultsMessage({
+			const toolResultMsgs = adapter.buildUserTurn({
 				toolUses: [
 					{
 						id: pendingYieldToolCall.id,
@@ -1092,8 +1081,7 @@ export async function* runProviderLoop(
 						isError: false,
 					},
 				],
-				cancellationQueueMsgs: yieldResult.nonCompact,
-				cancellationFormatted: yieldFormatted,
+				queueMessages: yieldResult.nonCompact,
 			});
 			for (const msg of toolResultMsgs) {
 				messages.push(msg);
@@ -1523,14 +1511,10 @@ export async function* runProviderLoop(
 			filterQueueMessageImages(adapter, yieldResult.nonCompact);
 
 			// Inject messages as a new user turn and continue the loop.
-			// Use buildToolResultsMessage with empty toolUses — one codepath for all user messages.
-			const implicitYieldMsgs = adapter.buildToolResultsMessage({
+			const implicitYieldMsgs = adapter.buildUserTurn({
 				toolUses: [],
 				execResults: [],
-				cancellationQueueMsgs: yieldResult.nonCompact,
-				cancellationFormatted: formatQueueMessagesWithHeaders(
-					yieldResult.nonCompact,
-				),
+				queueMessages: yieldResult.nonCompact,
 			});
 			for (const msg of implicitYieldMsgs) {
 				messages.push(msg);
@@ -1570,11 +1554,10 @@ export async function* runProviderLoop(
 						"yield() ignored — duplicate yield in same turn. Only the first yield is used.",
 					isError: false,
 				}));
-				const extraToolResultMsgs = adapter.buildToolResultsMessage({
+				const extraToolResultMsgs = adapter.buildUserTurn({
 					toolUses: extraYields,
 					execResults: extraResults,
-					cancellationQueueMsgs: [],
-					cancellationFormatted: "",
+					queueMessages: [],
 				});
 				for (const msg of extraToolResultMsgs) {
 					messages.push(msg);
@@ -1713,7 +1696,6 @@ export async function* runProviderLoop(
 
 		// Cancellation point: drain queue
 		let cancellationQueueMsgs: QueueMessage[] = [];
-		let cancellationFormatted = "";
 		if (queue) {
 			const drained = drainQueueAtCancellationPoint(queue);
 			if (drained) {
@@ -1722,7 +1704,6 @@ export async function* runProviderLoop(
 				}
 				if (drained.messages.length > 0) {
 					cancellationQueueMsgs = drained.messages;
-					cancellationFormatted = drained.formatted;
 				}
 			}
 		}
@@ -1732,12 +1713,11 @@ export async function* runProviderLoop(
 		filterExecResultImages(adapter, execResults);
 		filterQueueMessageImages(adapter, cancellationQueueMsgs);
 
-		// Build tool result messages (provider-specific format) and push to history
-		const toolResultMsgs = adapter.buildToolResultsMessage({
+		// Build user turn (provider-specific format) and push to history
+		const toolResultMsgs = adapter.buildUserTurn({
 			toolUses,
 			execResults,
-			cancellationQueueMsgs,
-			cancellationFormatted,
+			queueMessages: cancellationQueueMsgs,
 		});
 		for (const msg of toolResultMsgs) {
 			messages.push(msg);

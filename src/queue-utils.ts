@@ -95,11 +95,11 @@ export function formatQueueMessagesWithHeaders(msgs: QueueMessage[]): string {
 
 /**
  * Drain queue at cancellation point (between tool execution and next API call).
- * Returns the queue messages and formatted text, or null if nothing to drain.
+ * Returns the raw queue messages, or null if nothing to drain.
+ * Formatting is handled by buildUserTurn inside each provider.
  */
 export function drainQueueAtCancellationPoint(queue: MessageQueue): {
 	messages: QueueMessage[];
-	formatted: string;
 	manualCompactRequested: boolean;
 } | null {
 	if (queue.pending <= 0) return null;
@@ -107,12 +107,7 @@ export function drainQueueAtCancellationPoint(queue: MessageQueue): {
 	const queueMsgs = queue.drain();
 	const manualCompactRequested = queueMsgs.some((m) => m.source === "compact");
 	const nonCompactMsgs = queueMsgs.filter((m) => m.source !== "compact");
-	if (nonCompactMsgs.length === 0) {
-		return { messages: [], formatted: "", manualCompactRequested };
-	}
-
-	const formatted = nonCompactMsgs.map(formatQueueMessage).join("\n");
-	return { messages: nonCompactMsgs, formatted, manualCompactRequested };
+	return { messages: nonCompactMsgs, manualCompactRequested };
 }
 
 // ── Event emission helpers ──

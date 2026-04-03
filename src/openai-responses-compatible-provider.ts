@@ -17,6 +17,7 @@ import {
 	runProviderLoop,
 	type ToolResult,
 } from "./provider-shared.ts";
+import { formatQueueMessagesWithHeaders } from "./queue-utils.ts";
 import type { JsonTool } from "./tool-definition.ts";
 import type { AgentResult } from "./types.ts";
 import { ulid } from "./ulid.ts";
@@ -901,7 +902,7 @@ function createOpenAIResponsesAdapter(
 			(messages as HistoryMessage[]).push(historyMsg);
 		},
 
-		buildToolResultsMessage(params): unknown[] {
+		buildUserTurn(params): unknown[] {
 			const result: HistoryMessage[] = [];
 			const imageResults: Array<{ text: string; dataUri: string }> = [];
 			const allQueueTexts: string[] = [];
@@ -973,18 +974,15 @@ function createOpenAIResponsesAdapter(
 				result.push({ role: "user", content: imageParts });
 			}
 
-			if (
-				params.cancellationQueueMsgs.length > 0 &&
-				params.cancellationFormatted
-			) {
-				for (const line of params.cancellationFormatted.split("\n")) {
+			// Raw queue messages — format internally
+			if (params.queueMessages.length > 0) {
+				const formatted = formatQueueMessagesWithHeaders(params.queueMessages);
+				for (const line of formatted.split("\n")) {
 					if (line.trim()) {
 						allQueueTexts.push(line);
 					}
 				}
-				const queueImageParts = extractQueueImageParts(
-					params.cancellationQueueMsgs,
-				);
+				const queueImageParts = extractQueueImageParts(params.queueMessages);
 				allQueueImageParts.push(...queueImageParts);
 			}
 
