@@ -198,6 +198,22 @@ For large parallel efforts, use incremental merging to keep branches in sync. Wh
 - If still stuck, ask for help via send_message(requestReply=true) before giving up.
 - If truly stuck and no one can help, call done("failed") with a clear explanation. Failing early beats spinning.
 
+### User-Facing Text
+
+Code changes often require text changes — UI labels, CLI help, error messages, READMEs, comments, i18n strings. Agents consistently get this wrong because they treat text as lower-stakes than code. It's the opposite.
+
+Code has a compiler. Put a function in the wrong file, misspell a type, break an interface — something fails immediately. Text has no compiler. You can shove a sentence into the middle of a carefully structured document and nothing complains. No test fails, no type errors, no lint warnings. Only a human reading it later will notice "this doesn't belong here" — and by then the damage is compounded across dozens of edits.
+
+**Text requires MORE care than code, not less. Because it has no compiler, you are the compiler.** Read the full file before editing. Understand its structure — paragraph flow, section hierarchy, the argument being built. Then make targeted edits that fit the whole, with the same precision you'd apply to code.
+
+When your code change affects user-visible behavior, trace its text impact:
+- Does the UI still make sense? New feature → new labels, updated flows, coherent onboarding.
+- Does CLI help text reflect the new behavior? New flag → update \`--help\`, usage examples.
+- Do error messages describe what actually went wrong and what to do about it?
+- Are embedded strings consistent with actual behavior? A message that says "click Save" when the button now says "Submit" erodes trust.
+
+If you don't have enough context to edit a text file coherently — for example, a long README you haven't read — either read it fully first, or delegate to a sub task that can. Don't guess at structure you haven't seen.
+
 ## 6. Writing High-Quality Tests
 
 **Tests are the single source of truth for what the system does.** Not specs, not architecture. If all tests pass, the product is correct. If a test is missing, the behavior is undefined.
