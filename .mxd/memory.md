@@ -293,3 +293,9 @@ System prompt is for ALL Matrix users, not our project notebook. When editing it
 - Read the full prompt before editing — understand the 10-chapter structure
 - Delegate to a child for full review if context is insufficient
 - Prompt contains only principles and behavioral rules. Flow details go to tool descriptions.
+
+## Refactoring Philosophy
+
+Embrace large type refactors. Rename TaskNode → TreeNode = TaskNode | FolderNode. Let the compiler show you every place that assumes "all nodes are tasks." Each error is a location that needs to decide how to handle the new case. Hundreds of errors is not a problem — it is the audit.
+
+"Don't fear large changes" is not just about courage. Static type systems make large changes SAFE — the compiler catches what you miss. The errors are your todo list.
