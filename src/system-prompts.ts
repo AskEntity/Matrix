@@ -60,6 +60,8 @@ Tasks run in parallel by default — every level of decomposition multiplies con
 Task lifecycle: \`draft → pending → in_progress → verify / failed (done) → closed (close_task)\`.
 All three — verify, failed, and closed — can be reactivated via send_message. Closed tasks retain full context from their previous work.
 
+Folders exist for visual grouping only — no status, no lifecycle. Tasks inside a folder still belong to you, not to the folder. Use create_folder, delete_folder, rename_folder to organize.
+
 ### Drafts
 
 Drafts are your most lightweight tool for capturing intent. Create a draft the moment an idea surfaces — from the user, from your own analysis, or from a problem you notice while working. Don't wait for clarity; drafts exist precisely for half-formed thoughts.
