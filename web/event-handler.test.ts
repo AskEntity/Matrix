@@ -2562,3 +2562,242 @@ describe("event-handler activeAgents global updates", () => {
 		expect(checkCalled).toBeGreaterThan(0);
 	});
 });
+
+describe("event-handler usage / cache info", () => {
+	it("processEventBatch: usage event attaches cacheInfo to preceding assistant_text", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater([]);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const handler = createEventHandler(deps as unknown as EventHandlerDeps);
+
+		handler.processEventBatch([
+			{
+				type: "assistant_text",
+				content: "Hello world",
+				taskId: "test-task",
+				ts: 1000,
+			},
+			{
+				type: "usage",
+				taskId: "test-task",
+				inputTokens: 50000,
+				outputTokens: 1200,
+				contextWindow: 200000,
+				cacheCreationTokens: 500,
+				cacheReadTokens: 45000,
+				ts: 1001,
+			},
+		]);
+
+		// assistant_text entry should have cacheInfo attached
+		const textEntry = capturedLogs.find((e) => e.type === "assistant_text");
+		expect(textEntry).toBeDefined();
+		expect(textEntry?.cacheInfo).toEqual({
+			inputTokens: 50000,
+			outputTokens: 1200,
+			cacheCreationTokens: 500,
+			cacheReadTokens: 45000,
+		});
+	});
+
+	it("processEventBatch: usage event without preceding assistant_text is silently ignored", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater([]);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const handler = createEventHandler(deps as unknown as EventHandlerDeps);
+
+		handler.processEventBatch([
+			{
+				type: "usage",
+				taskId: "test-task",
+				inputTokens: 50000,
+				contextWindow: 200000,
+				ts: 1001,
+			},
+		]);
+
+		// No entries should be created — usage without assistant_text is a no-op
+		expect(capturedLogs.length).toBe(0);
+	});
+
+	it("processEventBatch: usage event only attaches to same-taskId assistant_text", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater([]);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const handler = createEventHandler(deps as unknown as EventHandlerDeps);
+
+		handler.processEventBatch([
+			{
+				type: "assistant_text",
+				content: "From task A",
+				taskId: "task-a",
+				ts: 1000,
+			},
+			{
+				type: "assistant_text",
+				content: "From task B",
+				taskId: "task-b",
+				ts: 1001,
+			},
+			{
+				type: "usage",
+				taskId: "task-a",
+				inputTokens: 30000,
+				outputTokens: 800,
+				contextWindow: 200000,
+				cacheCreationTokens: 200,
+				cacheReadTokens: 25000,
+				ts: 1002,
+			},
+		]);
+
+		// Only task-a's assistant_text should have cacheInfo
+		const taskA = capturedLogs.find(
+			(e) => e.type === "assistant_text" && e.taskId === "task-a",
+		);
+		const taskB = capturedLogs.find(
+			(e) => e.type === "assistant_text" && e.taskId === "task-b",
+		);
+		expect(taskA?.cacheInfo).toBeDefined();
+		expect(taskA?.cacheInfo?.inputTokens).toBe(30000);
+		expect(taskB?.cacheInfo).toBeUndefined();
+	});
+
+	it("handleEvent: live usage event attaches cacheInfo to existing assistant_text entry", () => {
+		const { deps } = makeDeps();
+
+		let currentLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				currentLogs = updater(currentLogs);
+			} else {
+				currentLogs = updater;
+			}
+		});
+
+		const handler = createEventHandler(deps as unknown as EventHandlerDeps);
+
+		// First: assistant_text arrives
+		handler.handleEvent({
+			type: "assistant_text",
+			content: "Hello",
+			taskId: "test-task",
+			ts: 1000,
+		});
+
+		// Then: usage event arrives
+		handler.handleEvent({
+			type: "usage",
+			taskId: "test-task",
+			inputTokens: 60000,
+			outputTokens: 1500,
+			contextWindow: 200000,
+			cacheCreationTokens: 0,
+			cacheReadTokens: 55000,
+			ts: 1001,
+		});
+
+		const textEntry = currentLogs.find((e) => e.type === "assistant_text");
+		expect(textEntry).toBeDefined();
+		expect(textEntry?.cacheInfo).toEqual({
+			inputTokens: 60000,
+			outputTokens: 1500,
+			cacheCreationTokens: 0,
+			cacheReadTokens: 55000,
+		});
+	});
+
+	it("processEventBatch: usage event without cache fields still attaches cacheInfo", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater([]);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const handler = createEventHandler(deps as unknown as EventHandlerDeps);
+
+		handler.processEventBatch([
+			{
+				type: "assistant_text",
+				content: "OpenAI response",
+				taskId: "test-task",
+				ts: 1000,
+			},
+			{
+				type: "usage",
+				taskId: "test-task",
+				inputTokens: 40000,
+				outputTokens: 900,
+				contextWindow: 128000,
+				ts: 1001,
+			},
+		]);
+
+		const textEntry = capturedLogs.find((e) => e.type === "assistant_text");
+		expect(textEntry).toBeDefined();
+		expect(textEntry?.cacheInfo).toEqual({
+			inputTokens: 40000,
+			outputTokens: 900,
+			cacheCreationTokens: undefined,
+			cacheReadTokens: undefined,
+		});
+	});
+
+	it("processEventBatch: usage events are not rendered as visible entries", () => {
+		const { deps } = makeDeps();
+
+		let capturedLogs: LogEntry[] = [];
+		deps.setLogs = mock((updater: React.SetStateAction<LogEntry[]>) => {
+			if (typeof updater === "function") {
+				capturedLogs = updater([]);
+			} else {
+				capturedLogs = updater;
+			}
+		});
+
+		const handler = createEventHandler(deps as unknown as EventHandlerDeps);
+
+		handler.processEventBatch([
+			{
+				type: "usage",
+				taskId: "test-task",
+				inputTokens: 50000,
+				contextWindow: 200000,
+				ts: 1001,
+			},
+		]);
+
+		// No entries created — usage events are not standalone entries
+		const usageEntries = capturedLogs.filter((e) => e.type === "usage");
+		expect(usageEntries.length).toBe(0);
+	});
+});

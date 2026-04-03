@@ -3460,7 +3460,6 @@ describe("isPersistedByEmitEvent", () => {
 	test("ephemeral events return false", () => {
 		const ephemeralTypes: Event["type"][] = [
 			"text_delta",
-			"usage",
 			"agent_idle",
 			"agent_active",
 			"status",
@@ -3474,6 +3473,7 @@ describe("isPersistedByEmitEvent", () => {
 
 	test("persisted events return true", () => {
 		const persistedTypes: Event["type"][] = [
+			"usage",
 			"message",
 			"assistant_text",
 			"tool_call",

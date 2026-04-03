@@ -331,3 +331,13 @@ After a crash, `orchestration_completed` never emits (the loop was interrupted).
 
 ### Test lesson: shutdown() required before recreateApp() in restart tests
 Without shutdown, old app's agent stays alive. New app launches another agent for same node → appears as duplicate but is a test setup bug (can't happen in production crash where process is dead).
+
+## Usage Event Persistence (2026-04-03)
+
+`usage` events moved from ephemeral to persisted. Now written to JSONL by emitEvent.
+- Added `outputTokens?: number` to usage event type.
+- `walkEventsToMessages` skips `usage` via default case (not conversation content).
+- UI: `attach_usage` UpdateOp finds most recent `assistant_text` for same taskId and attaches `CacheInfo` (inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens).
+- Displayed as subtle ⚡ hover badge on assistant messages (not separate log entries).
+- Color-coded: green (>80% hit), yellow (>30%), grey (<30%).
+- Compaction also emits usage (estimated=true, no cache fields) — persisted harmlessly.

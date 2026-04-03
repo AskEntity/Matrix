@@ -53,6 +53,15 @@ type UpdateOp =
 	| {
 			type: "remove_tool";
 			toolCallId: string;
+	  }
+	| {
+			type: "attach_usage";
+			taskId: string | undefined;
+			inputTokens: number;
+			outputTokens?: number;
+			cacheCreationTokens?: number;
+			cacheReadTokens?: number;
+			ts: number;
 	  };
 
 export interface EventHandlerDeps {
@@ -548,7 +557,17 @@ export function createEventHandler(deps: EventHandlerDeps) {
 			case "usage":
 				return {
 					entries: [],
-					updates: [],
+					updates: [
+						{
+							type: "attach_usage",
+							taskId: msg.taskId || undefined,
+							inputTokens: msg.inputTokens,
+							outputTokens: msg.outputTokens,
+							cacheCreationTokens: msg.cacheCreationTokens,
+							cacheReadTokens: msg.cacheReadTokens,
+							ts: msg.ts,
+						},
+					],
 					sideEffects: () => {
 						const usageKey = msg.taskId || "orchestrator";
 						setTokenUsage((prev) => ({
@@ -996,6 +1015,31 @@ export function createEventHandler(deps: EventHandlerDeps) {
 						return entries.filter((_, idx) => idx !== i);
 					}
 				}
+				return entries;
+			}
+			case "attach_usage": {
+				// Walk backwards to find the most recent assistant_text for this task
+				for (let i = entries.length - 1; i >= 0; i--) {
+					const e = entries[i];
+					if (
+						e &&
+						e.type === "assistant_text" &&
+						e.taskId === (op.taskId ?? "")
+					) {
+						const updated = [...entries];
+						updated[i] = {
+							...e,
+							cacheInfo: {
+								inputTokens: op.inputTokens,
+								outputTokens: op.outputTokens,
+								cacheCreationTokens: op.cacheCreationTokens,
+								cacheReadTokens: op.cacheReadTokens,
+							},
+						};
+						return updated;
+					}
+				}
+				// No assistant_text found — nothing to attach to
 				return entries;
 			}
 		}
