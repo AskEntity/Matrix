@@ -335,6 +335,11 @@ select {
 	user-select: none;
 }
 
+/* Disable sidebar transition during resize drag for instant feedback */
+.mxd-sidebar-resizing .mxd-sidebar {
+	transition: none;
+}
+
 /* Sidebar collapse button — desktop only */
 .mxd-sidebar-collapse-btn {
 	/* shown by default on desktop, hidden on mobile (mobile uses hamburger) */
