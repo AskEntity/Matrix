@@ -355,6 +355,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 							project,
 							taskAbove.id,
 							completionMsg,
+							// quiet: skip auto-launch — the parent will be launched
+							// by the autoResume loop below. Without quiet, deliverMessage
+							// would auto-launch the parent here, then autoResume would
+							// also try to launch it → duplicate agent loop.
+							{ quiet: true },
 						).catch((e) => {
 							console.warn(
 								`[autoResume] Failed to deliver task_complete to parent ${taskAbove.id}:`,
@@ -399,36 +404,24 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 
 			if (inProgressNodes.length === 0) continue;
 
-			// Pre-register ALL nodes in launchingNodes BEFORE starting any.
-			// This prevents Phase 2 crash recovery (above) from triggering
-			// duplicate launches via deliverMessage — deliverMessage checks
-			// launchingNodes and skips if set.
-			const nodesToLaunch: Array<{
-				id: string;
-				isRoot: boolean;
-			}> = [];
 			for (const node of inProgressNodes) {
 				const isRoot = node.id === tracker.rootNodeId;
+
+				// Skip child nodes without worktrees — they can't run
 				if (!isRoot && !node.worktreePath) continue;
-				ctx.launchingNodes.add(node.id);
-				nodesToLaunch.push({ id: node.id, isRoot });
-			}
 
-			for (const { id, isRoot } of nodesToLaunch) {
-				console.log(`Auto-resuming ${project.name} node ${id}`);
+				console.log(`Auto-resuming ${project.name} node ${node.id}`);
 
-				runAgentForNode(ctx, project, tracker, id, {
+				runAgentForNode(ctx, project, tracker, node.id, {
 					orchestratorSystemPrompt: isRoot
 						? ORCHESTRATOR_SYSTEM_PROMPT
 						: undefined,
 					resume: true,
 				}).catch((e) => {
 					console.error(
-						`[autoResume] Failed to resume ${id}:`,
+						`[autoResume] Failed to resume ${node.id}:`,
 						e instanceof Error ? e.message : e,
 					);
-					// Clean up launch lock on failure
-					ctx.launchingNodes.delete(id);
 				});
 			}
 		}

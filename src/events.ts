@@ -616,7 +616,10 @@ export function buildSessionRepair(
 		const e = events[i];
 		if (e?.type === "tool_call") {
 			toolCallIndices.set(e.toolCallId, i);
-		} else if (e?.type === "tool_result" && !toolResultIndices.has(e.toolCallId)) {
+		} else if (
+			e?.type === "tool_result" &&
+			!toolResultIndices.has(e.toolCallId)
+		) {
 			toolResultIndices.set(e.toolCallId, i);
 		} else if (e?.type === "assistant_text") {
 			assistantTextIndices.push(i);
@@ -658,7 +661,8 @@ export function buildSessionRepair(
 		if (resultCount === 0) orphanCallIds.push(callId);
 	}
 
-	if (!hasDuplicates && orphanCallIds.length === 0 && outOfOrderIndex === -1) return null;
+	if (!hasDuplicates && orphanCallIds.length === 0 && outOfOrderIndex === -1)
+		return null;
 
 	// Strategy 0: OUT-OF-ORDER tool_results — truncate from the problematic tool_call.
 	// This is the most severe case: two agent loops wrote interleaved events.
@@ -686,7 +690,9 @@ export function buildSessionRepair(
 				let isLastCall = true;
 				for (let i = keptEvents.length - 1; i >= 0; i--) {
 					if (keptEvents[i]?.type === "tool_call") {
-						isLastCall = (keptEvents[i] as Event & { toolCallId: string }).toolCallId === callId;
+						isLastCall =
+							(keptEvents[i] as Event & { toolCallId: string }).toolCallId ===
+							callId;
 						break;
 					}
 				}
@@ -696,7 +702,8 @@ export function buildSessionRepair(
 				type: "tool_result" as const,
 				tool,
 				toolCallId: callId,
-				content: "Tool execution was interrupted — out-of-order events detected and repaired.",
+				content:
+					"Tool execution was interrupted — out-of-order events detected and repaired.",
 				isError: true,
 				taskId,
 				ts: now,

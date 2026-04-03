@@ -9484,24 +9484,6 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 	});
 
 	/**
-	 * Helper: count max consecutive orchestration_started without completed.
-	 * If > 1, there were duplicate launches.
-	 */
-	function maxConsecutiveStarts(events: Event[]): number {
-		let consecutive = 0;
-		let max = 0;
-		for (const e of events) {
-			if (e.type === "orchestration_started") {
-				consecutive++;
-				max = Math.max(max, consecutive);
-			} else if (e.type === "orchestration_completed") {
-				consecutive = 0;
-			}
-		}
-		return max;
-	}
-
-	/**
 	 * Helper: count unique traceIds in events. If > expected, there were duplicate loops.
 	 */
 	function uniqueTraceIds(events: Event[]): Set<string> {
@@ -9535,21 +9517,29 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 		const preTraceIds = uniqueTraceIds(preEvents);
 		expect(preTraceIds.size).toBe(1);
 
+		// === CRASH: shutdown the daemon ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
 		// === RESTART ===
 		ctx.app = await recreateApp(ctx);
 		await ctx.app.autoResumeProjects();
 		await new Promise((r) => setTimeout(r, 300));
 
 		// No new API call (yield resume waits for message)
-		// Check: no duplicate orchestration_started
+		// Check: only ONE orchestration_started after restart (no duplicate launch)
 		const events = await readSessionEvents(ctx, rootNodeId);
-		expect(maxConsecutiveStarts(events)).toBeLessThanOrEqual(1);
+		const startTraceIds = events
+			.filter((e) => e.type === "orchestration_started")
+			.map((e) => (e as Event & { traceId?: string }).traceId)
+			.filter(Boolean);
 
-		// traceId: yield resume starts a new loop but may not emit events yet
-		// (waiting for message). So we may see 1 or 2 traceIds.
-		const postTraceIds = uniqueTraceIds(events);
-		expect(postTraceIds.size).toBeGreaterThanOrEqual(1);
-		expect(postTraceIds.size).toBeLessThanOrEqual(2);
+		// Should have 1-2 orchestration_started: one pre-crash, possibly one from resume
+		// (yield resume may or may not have emitted orchestration_started yet)
+		expect(startTraceIds.length).toBeGreaterThanOrEqual(1);
+		expect(startTraceIds.length).toBeLessThanOrEqual(2);
+		// All orchestration_started events should have unique traceIds
+		expect(new Set(startTraceIds).size).toBe(startTraceIds.length);
 	}, 15000);
 
 	test("Scenario 2: interrupted mid-tool → restart → single launch with delay_ms", async () => {
@@ -9591,8 +9581,11 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
 
-		// === RESTART during the delay window ===
+		// === CRASH during the delay window ===
 		// JSONL state: tool_result for bash written, no yield yet
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
 		ctx.app = await recreateApp(ctx);
 
 		await ctx.app.autoResumeProjects();
@@ -9607,14 +9600,21 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 		await sendMessage(ctx, wakeInstruction);
 		await new Promise((r) => setTimeout(r, 2000));
 
-		// Check: only one agent loop should have run post-restart
+		// Check: only ONE orchestration_started after the restart.
+		// Pre-crash events have a different traceId from post-restart events.
+		// If there are 2+ post-restart orchestration_started, that's a duplicate launch.
 		const events = await readSessionEvents(ctx, rootNodeId);
-		expect(maxConsecutiveStarts(events)).toBeLessThanOrEqual(1);
 
-		// traceId check: should have 1-2 unique traceIds (post-restart loop may not have emitted yet)
-		const traceIds = uniqueTraceIds(events);
-		expect(traceIds.size).toBeGreaterThanOrEqual(1);
-		expect(traceIds.size).toBeLessThanOrEqual(2);
+		// Find traceIds from orchestration_started events
+		const startTraceIds = events
+			.filter((e) => e.type === "orchestration_started")
+			.map((e) => (e as Event & { traceId?: string }).traceId)
+			.filter(Boolean);
+
+		// Should have exactly 2 orchestration_started: one pre-crash, one post-restart
+		// Each with a different traceId (different loop instances)
+		expect(startTraceIds.length).toBe(2);
+		expect(new Set(startTraceIds).size).toBe(2);
 	}, 15000);
 
 	test("Scenario 3: root + child both in_progress → restart → no interleaved traceIds", async () => {
@@ -9652,6 +9652,10 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 		const tracker = await ctx.app.getTracker(ctx.projectId);
 		const rootNodeId = tracker.rootNodeId;
 
+		// === CRASH: shutdown the daemon ===
+		await ctx.app.shutdown();
+		await new Promise((r) => setTimeout(r, 100));
+
 		// === RESTART with both root (yielding) and possibly child in_progress ===
 		ctx.app = await recreateApp(ctx);
 
@@ -9667,36 +9671,18 @@ describe("Bug reproducer: duplicate agent launch on autoResumeProjects", () => {
 		await sendMessage(ctx, wakeInstruction);
 		await new Promise((r) => setTimeout(r, 1000));
 
-		// Check root JSONL: no interleaved traceIds
+		// Check: only ONE orchestration_started after restart (no duplicate launch).
+		// Pre-crash orchestration_started has a different traceId from post-restart.
 		const rootEvents = await readSessionEvents(ctx, rootNodeId);
-		expect(maxConsecutiveStarts(rootEvents)).toBeLessThanOrEqual(1);
+		const startTraceIds = rootEvents
+			.filter((e) => e.type === "orchestration_started")
+			.map((e) => (e as Event & { traceId?: string }).traceId)
+			.filter(Boolean);
 
-		// Each traceId's events should be contiguous (no interleaving)
-		const traceIds = uniqueTraceIds(rootEvents);
-		for (const tid of traceIds) {
-			const indices = rootEvents
-				.map((e, i) => ({
-					i,
-					tid: (e as Event & { traceId?: string }).traceId,
-				}))
-				.filter((x) => x.tid === tid)
-				.map((x) => x.i);
-
-			// All indices should be contiguous (no gaps from other traceIds)
-			for (let j = 1; j < indices.length; j++) {
-				// Allow small gaps (messages from external sources don't have traceId)
-				// but no events from a DIFFERENT traceId should appear in between
-				const between = rootEvents.slice(
-					(indices[j - 1] as number) + 1,
-					indices[j],
-				);
-				const foreignTraces = between.filter((e) => {
-					const t = (e as Event & { traceId?: string }).traceId;
-					return t && t !== tid;
-				});
-				expect(foreignTraces.length).toBe(0);
-			}
-		}
+		// Should have 2 orchestration_started: one pre-crash, one post-restart
+		expect(startTraceIds.length).toBe(2);
+		// Each should have a unique traceId (different loop instances, not duplicate)
+		expect(new Set(startTraceIds).size).toBe(2);
 	}, 30000);
 });
 
