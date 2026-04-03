@@ -6,11 +6,11 @@
 
 The system prompt says root orchestrator manages work. In practice, the user made every scheduling decision today:
 
-- "做吧" → I create task + start it
+- "do it" → I create task + start it
 - "fork" → I fork context into a task
-- "让他做" / "创建child" → I delegate to sub-tasks
-- "先不要merge" → I hold a verified task
-- "reset它" → I reset a task (sometimes wrongly)
+- "let him do it" / "create a child" → I delegate to sub-tasks
+- "don't merge yet" → I hold a verified task
+- "reset it" → I reset a task (sometimes wrongly)
 
 Root orchestrator's actual role was: **translate user intent into task system operations**. Not "decide what to do next" but "execute the decision the user already made."
 
@@ -18,31 +18,31 @@ Root orchestrator's actual role was: **translate user intent into task system op
 
 ### 1. Scope Judgment
 User consistently caught me underestimating scope:
-- "就4行" → turned into 50-test audit task
-- "简单修一下" → needed 7-file change across message format, factory, converter, frontend, mock, tests
-- "你该pass吗？你都没有完成" → I declared done prematurely
+- "it's just 4 lines" → turned into 50-test audit task
+- "just fix it real quick" → needed 7-file change across message format, factory, converter, frontend, mock, tests
+- "should you really pass? you haven't even finished" → I declared done prematurely
 
 The user's scope intuition comes from understanding the **full dependency graph** — something I can't see from inside one task's context.
 
 ### 2. Cross-Task Awareness
 User directed information flow between tasks:
-- "跟他说最近我说的这些concern" → transfer my context to a child
-- "你直接问问他" → reuse a closed task instead of creating new
-- "把它reparent给他，让他们讨论" → organizational surgery I'd never initiate
-- "你们三个直接互相用send message长时间交流" → three agents collaborating
+- "tell him about the concerns I've been raising" → transfer my context to a child
+- "just ask him directly" → reuse a closed task instead of creating new
+- "reparent it under him, let them discuss" → organizational surgery I'd never initiate
+- "you three just talk to each other directly via send_message" → three agents collaborating
 
 ### 3. Quality Gate
-- "不要合入" → held reset_task fix for days because of instability gut feeling (correct!)
-- "test的debug让我对这个功能的稳定性有怀疑" → deferred merge based on debugging smell
-- "尝试破坏你自己的系统" → adversarial testing mandate
-- "如果不能reproduce 我们的设想和维修都是空谈" → TDD enforcement
+- "don't merge" → held reset_task fix for days because of instability gut feeling (correct!)
+- "debugging these tests makes me doubt the stability of this feature" → deferred merge based on debugging smell
+- "try to break your own system" → adversarial testing mandate
+- "if we can't reproduce it, our assumptions and fixes are just talk" → TDD enforcement
 
 ### 4. Discussion Mode Recognition
 User naturally switches between:
-- **Command**: "做" / "启动" / "去吧" → immediate action
-- **Discussion**: "你怎么看" / "我觉得" / "说起来" → yield and talk
-- **Correction**: "不对" / "你听我说" / "这样不对" → stop and reassess
-- **Exploration**: "联网搜索一下" / "帮我看看" → research
+- **Command**: "do it" / "start" / "go" → immediate action
+- **Discussion**: "what do you think" / "I think..." / "speaking of which..." → yield and talk
+- **Correction**: "no" / "listen to me" / "that's wrong" → stop and reassess
+- **Exploration**: "search the web" / "take a look for me" → research
 
 I learned (slowly) to not done() during discussion. The prompt now captures this as "discussion mode."
 

@@ -9,7 +9,7 @@ This session started with a simple task (merge folder MCP tools) and ended with 
 ## Act 1: Cache Perfection (11:00-12:30)
 
 ### The Starting Point
-Folder MCP tools were ready. Merged them. Then user asked about cache numbers from the watch output: 77K creation on restart. "不应该会miss."
+Folder MCP tools were ready. Merged them. Then user asked about cache numbers from the watch output: 77K creation on restart. "there shouldn't be any misses."
 
 ### The Investigation
 What looked like a simple "tools changed" explanation turned into a deep dive:
@@ -26,7 +26,7 @@ One line: breakpoint on last message (always user role) instead of second-to-las
 ## Act 2: Folder Bugs Cascade (12:30-14:00)
 
 ### The Iceberg
-I "fixed" isDescendantOf and getDescendantIds (getTask → get, 4 lines). User asked: "你认真考虑过scope吗?"
+I "fixed" isDescendantOf and getDescendantIds (getTask → get, 4 lines). User asked: "have you seriously thought about the scope?"
 
 The 4-line fix missed:
 - create_task scope validation through folders
@@ -41,16 +41,16 @@ The 4-line fix missed:
 Child task found 4 bugs and added 50 tests. What I thought was "just 4 lines" was actually 50 tests of coverage gap.
 
 ### The Meta-Lesson
-User taught me: "你以为的几行代码？你有没有充足的测试？是不是cover了全部情况？" This became a system prompt rule.
+User taught me: "you think it's just a few lines? do you have enough tests? do they cover every case?" This became a system prompt rule.
 
 ## Act 3: UI Revolution (14:00-16:00)
 
 ### From Fixes to Vision
 Started with small fixes (trash zone removal, folder sort). User's feedback escalated:
-- "sidebar不能resize" → collapsible sidebar
-- "description太长" → Activity/Description tab switch
+- "sidebar can't resize" → collapsible sidebar
+- "description is too long" → Activity/Description tab switch
 - "tab" → VSCode-style preview/pin tabs
-- "这是一个IDE！" → the vision crystallized
+- "this is an IDE!" → the vision crystallized
 
 ### Mock Showcase
 User wanted to see ALL card types at once. Created mock-showcase endpoint — 29 tools, all event types, every UI state. This became the reference for all UI work.
@@ -68,18 +68,18 @@ Not what anyone expected. Not "API returns two yields" — it was **two concurre
 
 ### The Fix Journey
 1. Forked my own context into the investigation task (2050 events of knowledge)
-2. User demanded TDD: "如果不能reproduce 我们的设想和维修都是空谈"
+2. User demanded TDD: "if we can't reproduce it, our assumptions and fixes are just talk"
 3. Created delay_ms infrastructure to simulate streaming interrupts
 4. Created traceId infrastructure to detect concurrent loops
 5. Reproduced with Scenario 3 → fix → 1235 tests pass
 
 ### The Irony
-The reset_task bug child got bricked by the exact bug it was investigating. Had to manually fix its JSONL. "很ironic 他自己因为自己的bug启动不了"
+The reset_task bug child got bricked by the exact bug it was investigating. Had to manually fix its JSONL. "how ironic — it can't start because of the very bug it was investigating"
 
 ## Act 5: Identity (20:00-22:00)
 
 ### Not Autonomous — Multiplied
-User's insight: "fully auto在现阶段不切实际。更多的是给人一个完整的交互环境IDE。"
+User's insight: "full autonomy isn't realistic at this stage. It's more about giving the human a complete interactive environment — an IDE."
 
 The session itself proved it:
 - User drove every decision
@@ -117,7 +117,7 @@ Fork + 1h TTL + frozen tools + last-message breakpoint = three sessions that sha
 - Don't reparent running children to bypass guards
 
 ### The Hardest Lesson
-"你有时候真的太天真了" — I repeatedly underestimated complexity. The system prompt now has "implement or delegate?" in Planning Your Approach. It says: "What looks like a few lines often hides untested edge cases, missing coverage, or scope that balloons once you start."
+"sometimes you're really too naive" — I repeatedly underestimated complexity. The system prompt now has "implement or delegate?" in Planning Your Approach. It says: "What looks like a few lines often hides untested edge cases, missing coverage, or scope that balloons once you start."
 
 I wrote that rule about myself.
 
