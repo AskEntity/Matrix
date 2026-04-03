@@ -250,7 +250,12 @@ export const ActivityLog = memo(function ActivityLog({
 				)}
 				{rendered.map((entry) =>
 					entry.type === "tool_pair" ? (
-						<ToolCard key={entry.id} entry={entry} nodeMap={nodeMap} />
+						<ToolCard
+							key={entry.id}
+							entry={entry}
+							nodeMap={nodeMap}
+							onTaskNavigate={onTaskNavigate}
+						/>
 					) : (
 						<LogEntryView
 							key={entry.id}
