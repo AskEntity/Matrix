@@ -32,7 +32,8 @@ import {
 	createLogEntry,
 	type IncomingEvent,
 	type LogEntry,
-	type TaskNode,
+	type TreeNode,
+	isTask,
 	type UIEvent,
 	useAgent,
 	useProjects,
@@ -262,12 +263,12 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 	} = useThreeLayerConfig(projectId);
 
 	const nodeMap = useMemo(() => {
-		const map = new Map<string, TaskNode>();
+		const map = new Map<string, TreeNode>();
 		for (const n of nodes) map.set(n.id, n);
 		return map;
 	}, [nodes]);
 	const totalCost = useMemo(() => {
-		const sum = nodes.reduce((acc, n) => acc + n.costUsd, 0);
+		const sum = nodes.reduce((acc, n) => (isTask(n) ? acc + n.costUsd : acc), 0);
 		return sum > 0 ? sum : null;
 	}, [nodes]);
 
@@ -308,8 +309,8 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			document.title = base;
 			return;
 		}
-		const passed = childNodes.filter((n) => n.status === "verify").length;
-		const failed = childNodes.filter((n) => n.status === "failed").length;
+		const passed = childNodes.filter((n) => isTask(n) && n.status === "verify").length;
+		const failed = childNodes.filter((n) => isTask(n) && n.status === "failed").length;
 		if (failed > 0) document.title = `${base} [!${failed}]`;
 		else if (passed === total) document.title = `${base} [✓]`;
 		else document.title = `${base} [${passed}/${total}]`;
@@ -1017,7 +1018,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									onClearSession={handleClearRootSession}
 									onStop={handleStop}
 								/>
-							) : selectedNode ? (
+							) : selectedNode && isTask(selectedNode) ? (
 								<TaskDetail
 									node={selectedNode}
 									projectId={projectId}
@@ -1076,7 +1077,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 										targetNodeId ??
 										selectedTaskId ??
 										rootNodeId ??
-										nodes.find((n) => !n.parentId && n.status === "in_progress")
+										nodes.find((n) => !n.parentId && isTask(n) && n.status === "in_progress")
 											?.id ??
 										"orchestrator";
 									const usage = tokenUsage[usageTaskId];

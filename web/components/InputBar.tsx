@@ -1,6 +1,6 @@
 import type React from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { TaskNode } from "../hooks.ts";
+import type { TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconClose, IconImage, IconSend } from "./icons.tsx";
 import { SLASH_COMMANDS, SlashCommandMenu } from "./SlashCommandMenu.tsx";
@@ -19,7 +19,7 @@ export const InputBar = memo(function InputBar({
 }: {
 	projectId: string;
 	targetNodeId: string | null;
-	nodeMap: Map<string, TaskNode>;
+	nodeMap: Map<string, TreeNode>;
 	onSend: (
 		message: string,
 		images?: { base64: string; mediaType: string }[],

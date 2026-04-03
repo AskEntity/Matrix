@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getLogTaskId, type LogEntry, type TaskNode } from "../hooks.ts";
+import { getLogTaskId, type LogEntry, type TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { LogEntryView, ToolCard } from "./ToolCard.tsx";
 import { getEntryText } from "./tools/utils.ts";
@@ -39,7 +39,7 @@ export const ActivityLog = memo(function ActivityLog({
 	entries: LogEntry[];
 	filterTaskId: string | null;
 	rootNodeId: string | null;
-	nodeMap: Map<string, TaskNode>;
+	nodeMap: Map<string, TreeNode>;
 	autoScroll: boolean;
 	onAutoScrollChange: (locked: boolean) => void;
 	isActive: boolean;

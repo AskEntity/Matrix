@@ -1,5 +1,5 @@
 import { memo } from "react";
-import type { TaskNode } from "../hooks.ts";
+import { type TreeNode, isTask } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { IconHexagon, IconPause, IconTrash } from "./icons.tsx";
 
@@ -19,7 +19,7 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 	onStop,
 }: {
 	isRootActive: boolean;
-	nodes: TaskNode[];
+	nodes: TreeNode[];
 	rootNodeId?: string | null;
 	totalCost?: number | null;
 	turns?: number | null;
@@ -39,13 +39,13 @@ export const OrchestratorDetail = memo(function OrchestratorDetail({
 		? nodes.filter((n) => n.id !== rootNodeId)
 		: nodes;
 	const nodeCount = childNodes.length;
-	const passed = childNodes.filter((n) => n.status === "verify").length;
+	const passed = childNodes.filter((n) => isTask(n) && n.status === "verify").length;
 	const done = childNodes.filter(
-		(n) => n.status === "verify" || n.status === "closed",
+		(n) => isTask(n) && (n.status === "verify" || n.status === "closed"),
 	).length;
-	const failed = childNodes.filter((n) => n.status === "failed").length;
+	const failed = childNodes.filter((n) => isTask(n) && n.status === "failed").length;
 	const inProgress = childNodes.filter(
-		(n) => n.status === "in_progress",
+		(n) => isTask(n) && n.status === "in_progress",
 	).length;
 	return (
 		<div className="mxd-orch-detail">

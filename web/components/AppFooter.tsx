@@ -1,5 +1,5 @@
 import { memo } from "react";
-import type { TaskNode } from "../hooks.ts";
+import type { TreeNode } from "../hooks.ts";
 import { useLocale } from "../i18n.ts";
 import { InputBar } from "./InputBar.tsx";
 import { IconBack } from "./icons.tsx";
@@ -20,7 +20,7 @@ export const AppFooter = memo(function AppFooter({
 	projectId: string;
 	targetNodeId: string | null;
 	rootNodeId: string | null;
-	nodeMap: Map<string, TaskNode>;
+	nodeMap: Map<string, TreeNode>;
 	pendingMessages: {
 		id: string;
 		taskId: string | null;
