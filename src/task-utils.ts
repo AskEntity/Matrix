@@ -168,16 +168,20 @@ export function findParentQueue(
 	tracker: TaskTracker,
 	nodeId: string,
 ): { queue: MessageQueue; targetId: string } | undefined {
-	const node = tracker.getTask(nodeId);
+	const node = tracker.get(nodeId);
 	if (!node?.parentId) return undefined;
 
+	// Walk up through all ancestors (including folders) looking for a running task
 	let targetId: string | null = node.parentId;
 	while (targetId) {
-		const queue = tracker.getTask(targetId)?.session?.queue;
-		if (queue) return { queue, targetId };
-
-		const ancestor = tracker.getTask(targetId);
+		const ancestor = tracker.get(targetId);
 		if (!ancestor) break;
+
+		// Skip folders — they can't have queues
+		if (isTask(ancestor)) {
+			const queue = ancestor.session?.queue;
+			if (queue) return { queue, targetId };
+		}
 
 		// Reached root without finding a queue — root isn't running
 		if (!ancestor.parentId) break;

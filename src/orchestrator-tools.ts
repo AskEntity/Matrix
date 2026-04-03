@@ -652,21 +652,26 @@ export function createOrchestratorTools(
 					};
 				}
 
-				// Determine direction based on taskId
+				// Determine direction based on taskId — folders are transparent
 				const currentNode = currentTaskId
 					? tracker.getTask(currentTaskId)
 					: undefined;
-				const isUpward =
-					currentNode?.parentId != null && args.taskId === currentNode.parentId;
+				// Upward: target is the task above me (skipping folders)
+				const taskAboveMe = currentTaskId
+					? tracker.getTaskAbove(currentTaskId)
+					: undefined;
+				const isUpward = taskAboveMe != null && args.taskId === taskAboveMe.id;
 				let isDownward = false;
 				if (!isUpward) {
 					if (currentTaskId !== null) {
-						// Non-root agent: direct children only
-						isDownward = node.parentId === currentTaskId;
+						// Non-root agent: target's task above must be me (skipping folders)
+						const targetTaskAbove = tracker.getTaskAbove(args.taskId);
+						isDownward = targetTaskAbove?.id === currentTaskId;
 					} else {
-						// Root orchestrator: top-level tasks (children of root node)
+						// Root orchestrator: target's task above must be root (skipping folders)
+						const targetTaskAbove = tracker.getTaskAbove(args.taskId);
 						isDownward =
-							node.parentId === tracker.rootNodeId || node.parentId === null;
+							targetTaskAbove?.id === tracker.rootNodeId || !targetTaskAbove;
 					}
 				}
 
@@ -684,7 +689,7 @@ export function createOrchestratorTools(
 
 				// ── Upward message (like old report_to_parent) ──
 				if (isUpward) {
-					if (!currentNode?.parentId) {
+					if (!taskAboveMe) {
 						return {
 							content: [
 								{
@@ -696,7 +701,7 @@ export function createOrchestratorTools(
 					}
 
 					const taskTitle = currentNode?.title ?? "unknown";
-					const parentId = currentNode.parentId;
+					const parentId = taskAboveMe.id;
 
 					try {
 						const queueMessage = createTaskMessage(
