@@ -608,7 +608,7 @@ function TreeNodeView({
 						toggleCollapse(node.id);
 						return;
 					}
-					onSelect(isSelected ? rootNodeId : node.id);
+					onSelect(node.id);
 				}}
 				onDoubleClick={(e) => {
 					e.stopPropagation();
