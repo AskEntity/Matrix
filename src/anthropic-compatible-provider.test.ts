@@ -177,11 +177,11 @@ describe("getCompactionThresholds", () => {
 		expect(lazyCountThreshold).toBe(compressThreshold - 16_000);
 	});
 
-	test("computes thresholds for 1M context window", () => {
+	test("computes thresholds for 1M context window (8% buffer)", () => {
 		const { compressThreshold, lazyCountThreshold } =
 			getCompactionThresholds(1_000_000);
-		// 1M * 0.83 = 830k
-		expect(compressThreshold).toBe(Math.floor(1_000_000 * 0.83));
+		// 1M * 0.92 = 920k (large window uses smaller buffer)
+		expect(compressThreshold).toBe(920_000);
 		expect(lazyCountThreshold).toBe(compressThreshold - 16_000);
 	});
 });
