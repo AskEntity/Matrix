@@ -100,7 +100,7 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 	const handleLogin = useCallback(async () => {
 		const trimmed = pasteInput.trim();
 		if (!trimmed || !privateKey) {
-			setStatus("Paste the output from the command above");
+			setStatus("Paste the output from step 1");
 			setIsError(true);
 			return;
 		}
@@ -132,57 +132,88 @@ export function LoginPage({ onAuthenticated }: LoginPageProps) {
 
 	return (
 		<div className="mxd-login-page">
-			<div className="mxd-login-card">
-				<div className="mxd-login-icon">🔐</div>
-				<h1 className="mxd-login-title">Matrix</h1>
+			<div className="mxd-login-container">
+				{/* Left branding panel */}
+				<div className="mxd-login-brand">
+					<div className="mxd-login-brand-content">
+						<div className="mxd-login-logo">M</div>
+						<h1 className="mxd-login-title">Matrix</h1>
+						<p className="mxd-login-tagline">Autonomous agent orchestration</p>
+					</div>
+					<div className="mxd-login-brand-decoration" />
+				</div>
 
-				{!ready ? (
-					<p className="mxd-login-subtitle">Initializing…</p>
-				) : (
-					<>
-						<p className="mxd-login-subtitle">
-							Run this command in your terminal:
-						</p>
-						<div className="mxd-login-command-block">
-							<code className="mxd-login-command-text">{command}</code>
+				{/* Right auth panel */}
+				<div className="mxd-login-auth">
+					{!ready ? (
+						<div className="mxd-login-loading">
+							<div className="mxd-login-spinner" />
+							<p>Generating keypair…</p>
+						</div>
+					) : (
+						<>
+							<h2 className="mxd-login-auth-title">Authenticate</h2>
+							<p className="mxd-login-auth-desc">
+								Verify your identity with a challenge-response handshake.
+							</p>
+
+							<div className="mxd-login-step">
+								<div className="mxd-login-step-header">
+									<span className="mxd-login-step-num">1</span>
+									<span className="mxd-login-step-label">
+										Copy &amp; run in terminal
+									</span>
+								</div>
+								<div className="mxd-login-command-block">
+									<code className="mxd-login-command-text">{command}</code>
+								</div>
+								<button
+									type="button"
+									className="mxd-login-btn-copy"
+									onClick={handleCopy}
+								>
+									{copied ? "✓ Copied!" : "Copy command"}
+								</button>
+							</div>
+
+							<div className="mxd-login-step">
+								<div className="mxd-login-step-header">
+									<span className="mxd-login-step-num">2</span>
+									<span className="mxd-login-step-label">
+										Paste the response
+									</span>
+								</div>
+								<input
+									ref={inputRef}
+									type="password"
+									className="mxd-login-input"
+									placeholder="Paste encrypted token here…"
+									value={pasteInput}
+									onChange={(e) => setPasteInput(e.target.value)}
+									onKeyDown={handleKeyDown}
+									disabled={loading}
+								/>
+							</div>
+
 							<button
 								type="button"
-								className="mxd-login-btn mxd-login-btn-copy"
-								onClick={handleCopy}
+								className="mxd-login-btn"
+								onClick={handleLogin}
+								disabled={loading || !pasteInput.trim()}
 							>
-								{copied ? "✓ Copied" : "Copy"}
+								{loading ? "Verifying…" : "Login"}
 							</button>
-						</div>
+						</>
+					)}
 
-						<p className="mxd-login-subtitle">Then paste the output here:</p>
-						<input
-							ref={inputRef}
-							type="password"
-							className="mxd-login-input"
-							placeholder="Paste output here"
-							value={pasteInput}
-							onChange={(e) => setPasteInput(e.target.value)}
-							onKeyDown={handleKeyDown}
-							disabled={loading}
-						/>
-						<button
-							type="button"
-							className="mxd-login-btn"
-							onClick={handleLogin}
-							disabled={loading || !pasteInput.trim()}
+					{status && (
+						<div
+							className={`mxd-login-status ${isError ? "mxd-login-status-error" : "mxd-login-status-ok"}`}
 						>
-							{loading ? "Verifying…" : "Login"}
-						</button>
-					</>
-				)}
-
-				{status && (
-					<div
-						className={`mxd-login-status ${isError ? "mxd-login-status-error" : "mxd-login-status-ok"}`}
-					>
-						{status}
-					</div>
-				)}
+							{status}
+						</div>
+					)}
+				</div>
 			</div>
 		</div>
 	);

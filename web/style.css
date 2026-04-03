@@ -3703,150 +3703,315 @@ button.mxd-tool-card-header:hover {
 	align-items: center;
 	justify-content: center;
 	min-height: 100dvh;
-	background: var(--mxd-bg);
+	background: var(--bg-base);
+	padding: 1.5rem;
 }
 
-.mxd-login-card {
-	background: var(--mxd-surface);
-	border: 1px solid var(--mxd-border);
-	border-radius: 12px;
-	padding: 2.5rem;
-	max-width: 400px;
+.mxd-login-container {
+	display: flex;
 	width: 100%;
+	max-width: 760px;
+	min-height: 460px;
+	background: var(--bg-surface);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-xl);
+	overflow: hidden;
+	box-shadow: var(--shadow-lg);
+}
+
+/* ── Left branding panel ── */
+
+.mxd-login-brand {
+	flex: 0 0 260px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: 3rem 2rem;
+	position: relative;
+	overflow: hidden;
+	background: linear-gradient(
+		145deg,
+		rgba(56, 139, 253, 0.08) 0%,
+		transparent 60%
+	);
+}
+
+.mxd-login-brand-content {
+	position: relative;
+	z-index: 1;
 	text-align: center;
 }
 
-.mxd-login-icon {
-	font-size: 2.5rem;
-	margin-bottom: 0.75rem;
+.mxd-login-logo {
+	width: 64px;
+	height: 64px;
+	border-radius: var(--radius-lg);
+	background: var(--accent);
+	color: #fff;
+	font-size: 2rem;
+	font-weight: 800;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin: 0 auto 1.25rem;
+	letter-spacing: -0.02em;
+	box-shadow: 0 4px 16px rgba(56, 139, 253, 0.3);
 }
 
 .mxd-login-title {
-	font-size: 1.5rem;
+	font-size: 1.75rem;
 	font-weight: 700;
-	color: var(--mxd-text);
+	color: var(--text-primary);
+	margin-bottom: 0.5rem;
+	letter-spacing: -0.02em;
+}
+
+.mxd-login-tagline {
+	color: var(--text-muted);
+	font-size: 0.8rem;
+	line-height: 1.5;
+}
+
+.mxd-login-brand-decoration {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	background:
+		radial-gradient(
+			ellipse 300px 200px at 20% 90%,
+			rgba(56, 139, 253, 0.06) 0%,
+			transparent 70%
+		),
+		radial-gradient(
+			ellipse 200px 300px at 80% 10%,
+			rgba(163, 113, 247, 0.04) 0%,
+			transparent 70%
+		);
+}
+
+/* ── Right auth panel ── */
+
+.mxd-login-auth {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	padding: 2.5rem 2.5rem;
+	border-left: 1px solid var(--border-subtle);
+}
+
+.mxd-login-auth-title {
+	font-size: 1.25rem;
+	font-weight: 600;
+	color: var(--text-primary);
+	margin-bottom: 0.35rem;
+}
+
+.mxd-login-auth-desc {
+	color: var(--text-muted);
+	font-size: 0.8rem;
+	line-height: 1.5;
+	margin-bottom: 1.75rem;
+}
+
+/* ── Steps ── */
+
+.mxd-login-step {
+	margin-bottom: 1.5rem;
+}
+
+.mxd-login-step-header {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin-bottom: 0.6rem;
+}
+
+.mxd-login-step-num {
+	width: 22px;
+	height: 22px;
+	border-radius: var(--radius-full);
+	background: var(--accent-muted);
+	color: var(--accent);
+	font-size: 0.7rem;
+	font-weight: 700;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+}
+
+.mxd-login-step-label {
+	font-size: 0.8rem;
+	font-weight: 500;
+	color: var(--text-secondary);
+}
+
+/* ── Command block ── */
+
+.mxd-login-command-block {
+	background: var(--bg-base);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	padding: 0.6rem 0.75rem;
 	margin-bottom: 0.5rem;
 }
 
-.mxd-login-subtitle {
-	color: var(--mxd-text-dim);
-	font-size: 0.9rem;
-	margin-bottom: 1.5rem;
-	line-height: 1.4;
+.mxd-login-command-text {
+	display: block;
+	font-family: var(--font-mono);
+	font-size: 0.65rem;
+	line-height: 1.6;
+	word-break: break-all;
+	color: var(--text-secondary);
+	max-height: 3.5rem;
+	overflow-y: auto;
 }
+
+.mxd-login-btn-copy {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	padding: 0.35rem 0.75rem;
+	border-radius: var(--radius-md);
+	border: 1px solid var(--border);
+	background: var(--bg-raised);
+	color: var(--text-secondary);
+	font-size: 0.75rem;
+	font-weight: 500;
+	cursor: pointer;
+	transition: all 120ms ease;
+}
+
+.mxd-login-btn-copy:hover {
+	background: var(--bg-overlay);
+	color: var(--text-primary);
+	border-color: var(--text-muted);
+}
+
+/* ── Input ── */
 
 .mxd-login-input {
 	width: 100%;
-	padding: 0.6rem 0.8rem;
-	border: 1px solid var(--mxd-border);
-	border-radius: 6px;
-	background: var(--mxd-bg);
-	color: var(--mxd-text);
-	font-size: 0.875rem;
-	font-family: var(--mxd-mono, monospace);
-	margin-bottom: 0.75rem;
+	padding: 0.6rem 0.75rem;
+	border: 1px solid var(--border);
+	border-radius: var(--radius-md);
+	background: var(--bg-base);
+	color: var(--text-primary);
+	font-size: 0.8rem;
+	font-family: var(--font-mono);
 	box-sizing: border-box;
+	transition: border-color 120ms ease;
 }
 
 .mxd-login-input:focus {
 	outline: none;
-	border-color: var(--mxd-accent);
+	border-color: var(--accent);
 }
 
 .mxd-login-input::placeholder {
-	color: var(--mxd-text-dim);
+	color: var(--text-muted);
 }
 
-.mxd-login-subtitle code {
-	background: var(--mxd-bg);
-	padding: 0.15rem 0.4rem;
-	border-radius: 4px;
-	font-size: 0.85rem;
-	font-family: var(--mxd-mono, monospace);
-}
+/* ── Login button ── */
 
 .mxd-login-btn {
-	display: inline-block;
-	padding: 0.75rem 1.5rem;
-	border-radius: 8px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	padding: 0.65rem 1.25rem;
+	border-radius: var(--radius-md);
 	border: none;
-	font-size: 1rem;
+	font-size: 0.85rem;
 	font-weight: 600;
 	cursor: pointer;
-	background: var(--mxd-accent);
+	background: var(--accent);
 	color: #fff;
-	transition: opacity 0.2s;
+	transition: all 150ms ease;
 }
 
 .mxd-login-btn:hover {
-	opacity: 0.85;
+	background: var(--accent-hover);
 }
 
 .mxd-login-btn:disabled {
-	opacity: 0.5;
+	opacity: 0.4;
 	cursor: not-allowed;
 }
 
-.mxd-login-btn.mxd-login-btn-ghost {
-	background: transparent;
-	color: var(--text-secondary);
-	border: 1px solid var(--border);
-	margin-top: 0.5rem;
-	font-size: 0.9em;
-}
+/* ── Status ── */
 
 .mxd-login-status {
 	margin-top: 1rem;
-	font-size: 0.9rem;
-	padding: 0.5rem;
-	border-radius: 6px;
+	font-size: 0.8rem;
+	padding: 0.5rem 0.75rem;
+	border-radius: var(--radius-md);
 }
 
 .mxd-login-status-ok {
-	color: var(--mxd-success);
+	color: var(--color-passed);
 }
 
 .mxd-login-status-error {
-	color: var(--mxd-error);
+	color: var(--color-failed);
+	background: var(--bg-failed);
 }
 
-.mxd-login-command-block {
+/* ── Loading state ── */
+
+.mxd-login-loading {
 	display: flex;
-	align-items: stretch;
-	gap: 0.5rem;
-	background: var(--mxd-bg);
-	border: 1px solid var(--mxd-border);
-	border-radius: 6px;
-	padding: 0.5rem;
-	margin-bottom: 1rem;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 1rem;
+	color: var(--text-muted);
+	font-size: 0.85rem;
+	padding: 2rem 0;
 }
 
-.mxd-login-command-text {
-	flex: 1;
-	font-family: var(--mxd-mono, monospace);
-	font-size: 0.7rem;
-	line-height: 1.5;
-	word-break: break-all;
-	text-align: left;
-	color: var(--mxd-text);
-	max-height: 4rem;
-	overflow-y: auto;
-	padding: 0.25rem;
+.mxd-login-spinner {
+	width: 28px;
+	height: 28px;
+	border: 2.5px solid var(--border);
+	border-top-color: var(--accent);
+	border-radius: 50%;
+	animation: mxd-spin 0.7s linear infinite;
 }
 
-.mxd-login-btn-copy {
-	font-size: 0.8rem;
-	padding: 0.4rem 0.75rem;
-	white-space: nowrap;
-	align-self: flex-start;
+@keyframes mxd-spin {
+	to {
+		transform: rotate(360deg);
+	}
 }
 
-.mxd-login-actions .mxd-login-btn {
-	flex: 1;
-}
+/* ── Mobile: stack vertically ── */
 
-.mxd-login-actions .mxd-login-btn-ghost {
-	margin-top: 0;
+@media (max-width: 600px) {
+	.mxd-login-page {
+		padding: 1rem;
+		align-items: flex-start;
+		padding-top: 3rem;
+	}
+
+	.mxd-login-container {
+		flex-direction: column;
+		max-width: 100%;
+		min-height: 0;
+	}
+
+	.mxd-login-brand {
+		flex: 0 0 auto;
+		padding: 2rem 1.5rem;
+	}
+
+	.mxd-login-auth {
+		padding: 1.5rem;
+		border-left: none;
+		border-top: 1px solid var(--border-subtle);
+	}
 }
 
 /* =========================================================
