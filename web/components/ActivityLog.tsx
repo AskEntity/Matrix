@@ -36,6 +36,7 @@ export const ActivityLog = memo(function ActivityLog({
 	loadingOlderEvents,
 	onLoadOlderEvents,
 	onTaskNavigate,
+	showCacheBadges,
 }: {
 	entries: LogEntry[];
 	filterTaskId: string | null;
@@ -49,6 +50,7 @@ export const ActivityLog = memo(function ActivityLog({
 	loadingOlderEvents?: boolean;
 	onLoadOlderEvents?: (sessionId: string) => void;
 	onTaskNavigate?: (taskId: string, ts?: number) => void;
+	showCacheBadges?: boolean;
 }) {
 	const logRef = useRef<HTMLDivElement>(null);
 
@@ -264,6 +266,7 @@ export const ActivityLog = memo(function ActivityLog({
 							projectId={projectId}
 							rootNodeId={rootNodeId}
 							onTaskNavigate={onTaskNavigate}
+							showCacheBadges={showCacheBadges}
 						/>
 					),
 				)}

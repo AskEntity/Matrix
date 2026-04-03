@@ -1923,6 +1923,19 @@ select {
 	opacity: 1;
 }
 
+.mxd-cache-toggle-btn {
+	font-size: 12px;
+	opacity: 0.4;
+	transition: opacity var(--t-fast);
+}
+.mxd-cache-toggle-btn:hover {
+	opacity: 0.7;
+}
+.mxd-cache-toggle-btn.active {
+	opacity: 1;
+	color: var(--color-pending);
+}
+
 .mxd-event-status .mxd-lmxd-text {
 	color: var(--text-muted);
 	font-style: italic;

@@ -238,6 +238,9 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 			{ inputTokens: number; contextWindow: number; estimated?: boolean }
 		>
 	>({});
+	const [showCacheBadges, setShowCacheBadges] = useState(
+		() => localStorage.getItem("mxd-show-cache-badges") === "true",
+	);
 	const [pendingMessages, setPendingMessages] = useState<
 		{
 			id: string;
@@ -1367,6 +1370,25 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 									{t("activity.follow")}
 								</button>
 							)}
+							{viewMode === "activity" && (
+								<button
+									type="button"
+									className={`mxd-btn-icon mxd-cache-toggle-btn${showCacheBadges ? " active" : ""}`}
+									onClick={() => {
+										setShowCacheBadges((prev) => {
+											const next = !prev;
+											localStorage.setItem(
+												"mxd-show-cache-badges",
+												String(next),
+											);
+											return next;
+										});
+									}}
+									title={t("activity.toggleCacheBadges")}
+								>
+									⚡
+								</button>
+							)}
 							<button
 								type="button"
 								className="mxd-btn-icon mxd-fullscreen-btn"
@@ -1408,6 +1430,7 @@ function AuthenticatedApp({ onLogout }: { onLogout: () => void }) {
 								loadingOlderEvents={loadingOlderEvents}
 								onLoadOlderEvents={handleLoadOlderEvents}
 								onTaskNavigate={handleTaskNavigate}
+								showCacheBadges={showCacheBadges}
 							/>
 						</div>
 					) : isOrchestratorNode ? (

@@ -125,6 +125,7 @@ const en: Translations = {
 	"activity.follow": "Follow",
 	"activity.fullscreen": "Fullscreen",
 	"activity.exitFullscreen": "Exit fullscreen",
+	"activity.toggleCacheBadges": "Toggle cache info badges",
 
 	// Settings
 	"settings.title": "Settings",
@@ -422,6 +423,7 @@ const zh: Translations = {
 	"activity.follow": "跟踪",
 	"activity.fullscreen": "全屏",
 	"activity.exitFullscreen": "退出全屏",
+	"activity.toggleCacheBadges": "显示/隐藏缓存信息",
 
 	// Settings
 	"settings.title": "设置",
