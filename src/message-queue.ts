@@ -52,6 +52,8 @@ export type QueueMessage =
 			fromTaskId: string;
 			fromTitle: string;
 			content: string;
+			/** True when this forward was triggered by resuming a verify/closed/failed task. */
+			resumed?: boolean;
 	  }
 	| {
 			source: "cross_project";

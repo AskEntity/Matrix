@@ -100,6 +100,7 @@ export function createUserMessageForwarded(
 	fromTaskId: string,
 	fromTitle: string,
 	content: string,
+	opts?: { resumed?: boolean },
 ): MessageOf<"user_message_forwarded"> {
 	return {
 		source: "user_message_forwarded",
@@ -107,6 +108,7 @@ export function createUserMessageForwarded(
 		fromTaskId,
 		fromTitle,
 		content,
+		...(opts?.resumed ? { resumed: true } : {}),
 	};
 }
 

@@ -46,6 +46,11 @@ async function notifyParentChain(
 	const node = tracker.getTask(taskId);
 	if (!node?.parentId) return;
 
+	const wasResumed =
+		statusBeforeDelivery === "closed" ||
+		statusBeforeDelivery === "verify" ||
+		statusBeforeDelivery === "failed";
+
 	// Walk parent chain using tracker.get() to traverse through folders
 	let currentId: string | null = node.parentId;
 	while (currentId) {
@@ -54,24 +59,13 @@ async function notifyParentChain(
 
 		// Only deliver to task nodes — folders have no queue/session
 		if (isTask(ancestor)) {
-			const wasResumed =
-				statusBeforeDelivery === "closed" ||
-				statusBeforeDelivery === "verify" ||
-				statusBeforeDelivery === "failed";
-			let content: string;
-			if (wasResumed) {
-				const details: string[] = [];
-				if (node.worktreePath) details.push(`worktree: ${node.worktreePath}`);
-				if (node.branch) details.push(`branch: ${node.branch}`);
-				const detailStr = details.length > 0 ? ` (${details.join(", ")})` : "";
-				content = `User RESUMED ${statusBeforeDelivery} task '${taskTitle}'${detailStr} with message: ${messageContent}`;
-			} else {
-				content = `User sent a message to child task '${taskTitle}' (${taskId}): ${messageContent}`;
-			}
-
-			const notification = wasResumed
-				? createTaskMessage(taskId, taskTitle, content)
-				: createUserMessageForwarded(taskId, taskTitle, content);
+			// Content is always the user's raw message — metadata goes in XML attributes
+			const notification = createUserMessageForwarded(
+				taskId,
+				taskTitle,
+				messageContent,
+				wasResumed ? { resumed: true } : undefined,
+			);
 
 			// Quiet delivery — don't auto-launch stopped agents for notifications
 			await deliverMessage(ctx, project, currentId, notification, {
@@ -310,23 +304,19 @@ export function registerTaskRoutes(
 		const body = await c.req
 			.json<{ message?: string; model?: string }>()
 			.catch(() => ({ message: undefined, model: undefined }));
-		/** Notify parent agent that a child was continued by the user. */
+		/** Notify parent chain that a child was continued/resumed by the user. */
 		const notifyParentOfContinue = () => {
-			if (node.parentId) {
-				deliverMessage(
-					ctx,
-					project,
-					node.parentId,
-					createTaskMessage(
-						nodeId,
-						node.title,
-						`User continued child task "${node.title}" (${nodeId}).`,
-					),
-					{ quiet: true },
-				).catch(() => {
-					/* delivery may fail if no project */
-				});
-			}
+			const content = body.message ?? "Continue working.";
+			notifyParentChain(
+				ctx,
+				project,
+				nodeId,
+				node.title ?? nodeId,
+				content,
+				node.status,
+			).catch(() => {
+				/* delivery may fail if no project */
+			});
 		};
 
 		// If the task has a worktree, re-run the agent immediately

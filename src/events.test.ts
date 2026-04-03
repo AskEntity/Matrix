@@ -197,13 +197,34 @@ describe("formatEventForAI", () => {
 				ts: 0,
 				fromTaskId: "t1",
 				fromTitle: "Worker",
-				content: "User sent a message to child task 'Worker' (t1): fix the bug",
+				content: "fix the bug",
 			},
 			taskId: "test",
 			ts: 1000,
 		};
 		expect(formatEventForAI(event)).toBe(
-			`[00:00:01] <user_message_forwarded from_task="t1" task_name="Worker">User sent a message to child task 'Worker' (t1): fix the bug</user_message_forwarded>`,
+			`[00:00:01] <user_message_forwarded from_task="t1" task_name="Worker">fix the bug</user_message_forwarded>`,
+		);
+	});
+
+	test("formats user_message_forwarded with resumed attribute", () => {
+		const event: Event = {
+			type: "message",
+			id: "test",
+			body: {
+				source: "user_message_forwarded",
+				id: "test-id",
+				ts: 0,
+				fromTaskId: "t1",
+				fromTitle: "Worker",
+				content: "continue working on auth",
+				resumed: true,
+			},
+			taskId: "test",
+			ts: 1000,
+		};
+		expect(formatEventForAI(event)).toBe(
+			`[00:00:01] <user_message_forwarded from_task="t1" task_name="Worker" resumed="true">continue working on auth</user_message_forwarded>`,
 		);
 	});
 

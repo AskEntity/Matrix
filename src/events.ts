@@ -311,8 +311,10 @@ function formatBodyForAI(body: QueueMessage): string {
 			return `<task_complete from_task="${body.taskId}" task_name="${body.title}" status="${body.success ? "passed" : "failed"}">${body.output}</task_complete>`;
 		case "clarify_response":
 			return `<clarify_response>${body.answer}</clarify_response>`;
-		case "user_message_forwarded":
-			return `<user_message_forwarded from_task="${body.fromTaskId}" task_name="${body.fromTitle}">${body.content}</user_message_forwarded>`;
+		case "user_message_forwarded": {
+			const resumedAttr = body.resumed ? ' resumed="true"' : "";
+			return `<user_message_forwarded from_task="${body.fromTaskId}" task_name="${body.fromTitle}"${resumedAttr}>${body.content}</user_message_forwarded>`;
+		}
 		case "task_message": {
 			const titleAttr = body.title ? ` title="${body.title}"` : "";
 			const replyAttr = body.requestReply ? ' requestReply="true"' : "";

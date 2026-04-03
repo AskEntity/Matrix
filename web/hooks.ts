@@ -45,6 +45,7 @@ type UIOnlyEvent =
 			taskId?: string;
 			title: string;
 			content: string;
+			resumed?: boolean;
 			ts: number;
 	  }
 	| {
