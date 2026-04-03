@@ -338,9 +338,10 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 					);
 					tracker.updateStatus(node.id, status);
 
-					// Deliver task_complete to parent (child agents only)
+					// Deliver task_complete to task above (skip folders)
 					const isRoot = node.id === tracker.rootNodeId;
-					if (node.parentId && !isRoot) {
+					const taskAbove = tracker.getTaskAbove(node.id);
+					if (taskAbove && !isRoot) {
 						const completionMsg = createTaskComplete(
 							node.id,
 							node.title ?? "unknown",
@@ -350,11 +351,11 @@ export function createApp(config: DaemonConfig = defaultConfig) {
 						await deliverMessage(
 							ctx,
 							project,
-							node.parentId,
+							taskAbove.id,
 							completionMsg,
 						).catch((e) => {
 							console.warn(
-								`[autoResume] Failed to deliver task_complete to parent ${node.parentId}:`,
+								`[autoResume] Failed to deliver task_complete to parent ${taskAbove.id}:`,
 								e,
 							);
 						});

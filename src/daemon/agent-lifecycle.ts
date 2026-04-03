@@ -528,7 +528,8 @@ export async function ensureChildAgentRunning(
 			node.worktreePath = null;
 			node.branch = null;
 		}
-		const parentNode = node.parentId ? tracker.getTask(node.parentId) : null;
+		// Use getTaskAbove to skip folders — a folder has no branch to branch from
+		const parentNode = tracker.getTaskAbove(nodeId);
 		const baseBranch = parentNode?.branch;
 		if (!baseBranch) {
 			throw new Error(
@@ -559,12 +560,13 @@ export async function ensureChildAgentRunning(
 }
 
 /** Compute the depth of a task in the tree by walking up the parentId chain. */
+/** Compute depth by counting task ancestors (folders are transparent). */
 function computeDepth(tracker: TaskTracker, nodeId: string): number {
 	let depth = 0;
-	let current = tracker.getTask(nodeId);
-	while (current?.parentId) {
+	let current = tracker.getTaskAbove(nodeId);
+	while (current) {
 		depth++;
-		current = tracker.getTask(current.parentId);
+		current = tracker.getTaskAbove(current.id);
 	}
 	return depth;
 }
@@ -950,8 +952,9 @@ export async function runAgentForNode(
 				await tracker.save();
 				broadcastTreeUpdate(ctx, project.id, tracker);
 
-				// Deliver task_complete to parent (child agents only)
-				if (currentNode.parentId && !isRoot) {
+				// Deliver task_complete to task above (skip folders)
+				const taskAbove = tracker.getTaskAbove(nodeId);
+				if (taskAbove && !isRoot) {
 					const completionMsg = createTaskComplete(
 						nodeId,
 						currentNode.title ?? "unknown",
@@ -961,11 +964,11 @@ export async function runAgentForNode(
 					deliverMessage(
 						ctx,
 						project,
-						currentNode.parentId,
+						taskAbove.id,
 						completionMsg,
 					).catch((e) => {
 						console.warn(
-							`[Phase 2] Failed to deliver task_complete to parent ${currentNode.parentId}:`,
+							`[Phase 2] Failed to deliver task_complete to parent ${taskAbove.id}:`,
 							e,
 						);
 					});

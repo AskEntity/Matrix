@@ -323,6 +323,7 @@ export function createOrchestratorTools(
 						"Optional color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex like '#ff5733'). " +
 							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
 					),
+
 			},
 			async (args) => {
 				try {
@@ -651,21 +652,26 @@ export function createOrchestratorTools(
 					};
 				}
 
-				// Determine direction based on taskId
+				// Determine direction based on taskId — folders are transparent
 				const currentNode = currentTaskId
 					? tracker.getTask(currentTaskId)
 					: undefined;
-				const isUpward =
-					currentNode?.parentId != null && args.taskId === currentNode.parentId;
+				// Upward: target is the task above me (skipping folders)
+				const taskAboveMe = currentTaskId
+					? tracker.getTaskAbove(currentTaskId)
+					: undefined;
+				const isUpward = taskAboveMe != null && args.taskId === taskAboveMe.id;
 				let isDownward = false;
 				if (!isUpward) {
 					if (currentTaskId !== null) {
-						// Non-root agent: direct children only
-						isDownward = node.parentId === currentTaskId;
+						// Non-root agent: target's task above must be me (skipping folders)
+						const targetTaskAbove = tracker.getTaskAbove(args.taskId);
+						isDownward = targetTaskAbove?.id === currentTaskId;
 					} else {
-						// Root orchestrator: top-level tasks (children of root node)
+						// Root orchestrator: target's task above must be root (skipping folders)
+						const targetTaskAbove = tracker.getTaskAbove(args.taskId);
 						isDownward =
-							node.parentId === tracker.rootNodeId || node.parentId === null;
+							targetTaskAbove?.id === tracker.rootNodeId || !targetTaskAbove;
 					}
 				}
 
@@ -683,7 +689,7 @@ export function createOrchestratorTools(
 
 				// ── Upward message (like old report_to_parent) ──
 				if (isUpward) {
-					if (!currentNode?.parentId) {
+					if (!taskAboveMe) {
 						return {
 							content: [
 								{
@@ -695,7 +701,7 @@ export function createOrchestratorTools(
 					}
 
 					const taskTitle = currentNode?.title ?? "unknown";
-					const parentId = currentNode.parentId;
+					const parentId = taskAboveMe.id;
 
 					try {
 						const queueMessage = createTaskMessage(
@@ -1076,6 +1082,78 @@ export function createOrchestratorTools(
 						content: [{ type: "text" as const, text: `Error: ${message}` }],
 						isError: true,
 					};
+				}
+			},
+		),
+
+		// ── Folder tools (pure grouping, zero lifecycle) ──
+
+		tool(
+			"create_folder",
+			"Create a folder for visual grouping. Folders have no status, no lifecycle — pure organization. " +
+				"Tasks inside folders are logically owned by the nearest task ancestor above the folder.",
+			{
+				title: z.string().describe("Folder title"),
+				parentId: z.string().optional().describe("Parent node ID. Omit to create under your current task."),
+			},
+			async (args) => {
+				try {
+					const effectiveParentId = args.parentId ?? currentTaskId ?? tracker.rootNodeId;
+					const folder = tracker.addFolder(args.title, effectiveParentId);
+					await tracker.save();
+					broadcastTree();
+					return {
+						content: [{ type: "text" as const, text: JSON.stringify(folder, null, 2) }],
+					};
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
+				}
+			},
+		),
+
+		tool(
+			"delete_folder",
+			"Delete an empty folder. Fails if the folder has children — move or delete them first.",
+			{
+				folderId: z.string().describe("ID of the folder to delete"),
+			},
+			async (args) => {
+				try {
+					const node = tracker.get(args.folderId);
+					if (!node) return { content: [{ type: "text" as const, text: "Folder not found" }], isError: true };
+					if (!isFolder(node)) return { content: [{ type: "text" as const, text: "Not a folder — use delete_task instead" }], isError: true };
+					if (node.children.length > 0) return { content: [{ type: "text" as const, text: "Cannot delete folder with children. Move or delete them first." }], isError: true };
+					tracker.remove(args.folderId);
+					await tracker.save();
+					broadcastTree();
+					return { content: [{ type: "text" as const, text: JSON.stringify({ deleted: true, folderId: args.folderId, title: node.title }) }] };
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
+				}
+			},
+		),
+
+		tool(
+			"rename_folder",
+			"Rename a folder.",
+			{
+				folderId: z.string().describe("ID of the folder to rename"),
+				title: z.string().describe("New title for the folder"),
+			},
+			async (args) => {
+				try {
+					const node = tracker.get(args.folderId);
+					if (!node) return { content: [{ type: "text" as const, text: "Folder not found" }], isError: true };
+					if (!isFolder(node)) return { content: [{ type: "text" as const, text: "Not a folder — use update_task instead" }], isError: true };
+					tracker.updateTitle(args.folderId, args.title);
+					await tracker.save();
+					broadcastTree();
+					return { content: [{ type: "text" as const, text: JSON.stringify({ renamed: true, folderId: args.folderId, title: args.title }) }] };
+				} catch (e) {
+					const message = e instanceof Error ? e.message : "Unknown error";
+					return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
 				}
 			},
 		),

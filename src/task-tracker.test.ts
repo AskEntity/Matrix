@@ -439,7 +439,6 @@ describe("TaskTracker", () => {
 		expect(folder.title).toBe("Features");
 		expect(folder.parentId).toBe(tracker.rootNodeId);
 		expect(folder.children).toEqual([]);
-		// Folder should NOT have status, session, branch, etc.
 		expect("status" in folder).toBe(false);
 		expect("session" in folder).toBe(false);
 		expect("branch" in folder).toBe(false);
@@ -454,8 +453,15 @@ describe("TaskTracker", () => {
 	test("getTaskAbove skips folders to find real task parent", () => {
 		const folder = tracker.addFolder("Features", tracker.rootNodeId);
 		const task = tracker.addChild(folder.id, "JWT", "Implement JWT");
-		// task's tree parent is folder, but task above is root
 		expect(task.parentId).toBe(folder.id);
+		const above = tracker.getTaskAbove(task.id);
+		expect(above?.id).toBe(tracker.rootNodeId);
+	});
+
+	test("getTaskAbove skips nested folders", () => {
+		const f1 = tracker.addFolder("Level1", tracker.rootNodeId);
+		const f2 = tracker.addFolder("Level2", f1.id);
+		const task = tracker.addChild(f2.id, "Deep Task", "desc");
 		const above = tracker.getTaskAbove(task.id);
 		expect(above?.id).toBe(tracker.rootNodeId);
 	});
@@ -464,13 +470,31 @@ describe("TaskTracker", () => {
 		const folder = tracker.addFolder("Features", tracker.rootNodeId);
 		const task1 = tracker.addChild(folder.id, "JWT", "Implement JWT");
 		const task2 = tracker.addChild(folder.id, "Login", "Implement Login");
-		// Direct children of root via getChildren includes the folder
 		const directChildren = tracker.getChildren(tracker.rootNodeId);
 		expect(directChildren.some((n) => n.id === folder.id)).toBe(true);
-		// But tasksBelow of root transparently reaches through folder
 		const tasksBelow = tracker.getTasksBelow(tracker.rootNodeId);
 		expect(tasksBelow.map((n) => n.id)).toContain(task1.id);
 		expect(tasksBelow.map((n) => n.id)).toContain(task2.id);
+	});
+
+	test("getTasksBelow recurses through nested folders", () => {
+		const f1 = tracker.addFolder("Level1", tracker.rootNodeId);
+		const f2 = tracker.addFolder("Level2", f1.id);
+		const task = tracker.addChild(f2.id, "Deep Task", "desc");
+		const tasksBelow = tracker.getTasksBelow(tracker.rootNodeId);
+		expect(tasksBelow.map((n) => n.id)).toContain(task.id);
+	});
+
+	test("getTasksBelow returns mix of direct tasks and tasks inside folders", () => {
+		const directTask = tracker.addChild(tracker.rootNodeId, "Direct", "desc");
+		const folder = tracker.addFolder("Grouped", tracker.rootNodeId);
+		const folderTask = tracker.addChild(folder.id, "In Folder", "desc");
+		const tasksBelow = tracker.getTasksBelow(tracker.rootNodeId);
+		const ids = tasksBelow.map((n) => n.id);
+		expect(ids).toContain(directTask.id);
+		expect(ids).toContain(folderTask.id);
+		// folder itself should NOT be in tasksBelow
+		expect(ids).not.toContain(folder.id);
 	});
 
 	test("lifecycle operations reject folders", () => {
@@ -490,10 +514,17 @@ describe("TaskTracker", () => {
 		expect(() => tracker.updateColor(folder.id, "red")).toThrow(/folder/i);
 	});
 
+	test("updateCost silently ignores folders", () => {
+		const folder = tracker.addFolder("Features", tracker.rootNodeId);
+		// Should not throw
+		tracker.updateCost(folder.id, 1.5);
+		// Folder has no costUsd field — no change
+		expect((folder as unknown as Record<string, unknown>).costUsd).toBeUndefined();
+	});
+
 	test("getTask returns undefined for folder nodes", () => {
 		const folder = tracker.addFolder("Features", tracker.rootNodeId);
 		expect(tracker.getTask(folder.id)).toBeUndefined();
-		// But get() returns the folder
 		expect(tracker.get(folder.id)).toBeDefined();
 	});
 
@@ -508,7 +539,6 @@ describe("TaskTracker", () => {
 		expect(loaded).toBeDefined();
 		expect(loaded?.type).toBe("folder");
 		expect(loaded?.title).toBe("Features");
-		// Task inside folder also loads
 		expect(tracker2.getTask(task.id)).toBeDefined();
 	});
 
@@ -517,13 +547,96 @@ describe("TaskTracker", () => {
 		const task = tracker.addChild(folder.id, "JWT", "desc");
 		const newParent = tracker.addTask("New Parent", "desc");
 		tracker.reparent(folder.id, newParent.id);
-		// folder moved
 		expect(tracker.get(folder.id)?.parentId).toBe(newParent.id);
-		// task inside folder still there
 		expect(tracker.getTask(task.id)?.parentId).toBe(folder.id);
-		// getTasksBelow of new parent reaches through folder
-		expect(tracker.getTasksBelow(newParent.id).map((n) => n.id)).toContain(
-			task.id,
-		);
+		expect(tracker.getTasksBelow(newParent.id).map((n) => n.id)).toContain(task.id);
+	});
+
+	test("remove empty folder succeeds", () => {
+		const folder = tracker.addFolder("Empty", tracker.rootNodeId);
+		const id = folder.id;
+		tracker.remove(id);
+		expect(tracker.get(id)).toBeUndefined();
+	});
+
+	test("remove folder cascades to children", () => {
+		const folder = tracker.addFolder("Parent", tracker.rootNodeId);
+		const task = tracker.addChild(folder.id, "Child", "desc");
+		tracker.remove(folder.id);
+		expect(tracker.get(folder.id)).toBeUndefined();
+		expect(tracker.get(task.id)).toBeUndefined();
+	});
+
+	test("remove task inside folder leaves folder intact", () => {
+		const folder = tracker.addFolder("Parent", tracker.rootNodeId);
+		const task = tracker.addChild(folder.id, "Child", "desc");
+		tracker.remove(task.id);
+		expect(tracker.get(folder.id)).toBeDefined();
+		expect(tracker.get(folder.id)?.children).toEqual([]);
+	});
+
+	test("updateTitle works on folders", () => {
+		const folder = tracker.addFolder("Old Name", tracker.rootNodeId);
+		tracker.updateTitle(folder.id, "New Name");
+		expect(tracker.get(folder.id)?.title).toBe("New Name");
+	});
+
+	test("byStatus excludes folders", () => {
+		tracker.addFolder("Folder", tracker.rootNodeId);
+		tracker.addTask("Draft Task", "desc", { draft: true });
+		const drafts = tracker.byStatus("draft");
+		expect(drafts.every((n) => (n as { type?: string }).type !== "folder")).toBe(true);
+		expect(drafts.length).toBe(1);
+	});
+
+	test("allNodes includes folders", () => {
+		const folder = tracker.addFolder("Folder", tracker.rootNodeId);
+		const all = tracker.allNodes();
+		expect(all.some((n) => n.id === folder.id)).toBe(true);
+	});
+
+	test("reorderChildren works with mixed folders and tasks", () => {
+		const folder = tracker.addFolder("Folder", tracker.rootNodeId);
+		const task = tracker.addChild(tracker.rootNodeId, "Task", "desc");
+		const root = tracker.get(tracker.rootNodeId)!;
+		expect(root.children).toContain(folder.id);
+		expect(root.children).toContain(task.id);
+		tracker.reorderChildren(tracker.rootNodeId, [task.id, folder.id]);
+		const reordered = tracker.get(tracker.rootNodeId)!;
+		expect(reordered.children[0]).toBe(task.id);
+		expect(reordered.children[1]).toBe(folder.id);
+	});
+
+	test("getTaskAbove for task nested inside multiple folders", () => {
+		// root → folder1 → folder2 → folder3 → task
+		const f1 = tracker.addFolder("F1", tracker.rootNodeId);
+		const f2 = tracker.addFolder("F2", f1.id);
+		const f3 = tracker.addFolder("F3", f2.id);
+		const task = tracker.addChild(f3.id, "Deep", "desc");
+		// task above should skip all 3 folders to reach root
+		expect(tracker.getTaskAbove(task.id)?.id).toBe(tracker.rootNodeId);
+	});
+
+	test("getTasksBelow finds tasks through multiple folder layers", () => {
+		// root → folder1 → folder2 → task1
+		//                 → task2
+		const f1 = tracker.addFolder("F1", tracker.rootNodeId);
+		const f2 = tracker.addFolder("F2", f1.id);
+		const task1 = tracker.addChild(f2.id, "Deep", "desc");
+		const task2 = tracker.addChild(f1.id, "Shallow", "desc");
+		const below = tracker.getTasksBelow(tracker.rootNodeId);
+		const ids = below.map((n) => n.id);
+		expect(ids).toContain(task1.id);
+		expect(ids).toContain(task2.id);
+		expect(ids).toHaveLength(2);
+	});
+
+	test("getTaskAbove returns task parent when task is between folders", () => {
+		// root → parentTask → folder → childTask
+		const parentTask = tracker.addChild(tracker.rootNodeId, "Parent", "desc");
+		const folder = tracker.addFolder("Group", parentTask.id);
+		const childTask = tracker.addChild(folder.id, "Child", "desc");
+		// childTask's task above should be parentTask, not root
+		expect(tracker.getTaskAbove(childTask.id)?.id).toBe(parentTask.id);
 	});
 });
