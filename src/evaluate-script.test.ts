@@ -9,17 +9,19 @@
  */
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
-import { tool, type ToolDefinition } from "./tool-definition.ts";
-import { executeTool } from "./tool-execution.ts";
-import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import type { OrchestratorToolsDeps } from "./orchestrator-tools.ts";
+import { createOrchestratorTools } from "./orchestrator-tools.ts";
 import { TaskTracker } from "./task-tracker.ts";
+import { type ToolDefinition, tool } from "./tool-definition.ts";
+import { executeTool } from "./tool-execution.ts";
 import { TOOL_EVALUATE_SCRIPT } from "./tool-names.ts";
 
 // ── Helpers ──
 
 /** Minimal deps for createOrchestratorTools. */
-function makeDeps(overrides?: Partial<OrchestratorToolsDeps>): OrchestratorToolsDeps {
+function makeDeps(
+	overrides?: Partial<OrchestratorToolsDeps>,
+): OrchestratorToolsDeps {
 	const tracker = new TaskTracker("root-node");
 	return {
 		tracker,
@@ -60,7 +62,10 @@ describe("hidden tool mechanism", () => {
 		// Simulate what prepareTools does in all providers
 		const mcpToolDefs: Record<string, ToolDefinition[]> = {
 			// biome-ignore lint/suspicious/noExplicitAny: test flexibility
-			mxd: [visibleTool as ToolDefinition<any>, hiddenTool as ToolDefinition<any>],
+			mxd: [
+				visibleTool as ToolDefinition<any>,
+				hiddenTool as ToolDefinition<any>,
+			],
 		};
 
 		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
@@ -80,10 +85,14 @@ describe("hidden tool mechanism", () => {
 		// Hidden tool is in mcpHandlers (can be executed)
 		expect(mcpHandlers.has("mcp__mxd__hidden_tool")).toBe(true);
 		// Hidden tool is NOT in allTools (not sent to API)
-		expect(allTools.find((t) => t.name === "mcp__mxd__hidden_tool")).toBeUndefined();
+		expect(
+			allTools.find((t) => t.name === "mcp__mxd__hidden_tool"),
+		).toBeUndefined();
 		// Visible tool is in both
 		expect(mcpHandlers.has("mcp__mxd__visible_tool")).toBe(true);
-		expect(allTools.find((t) => t.name === "mcp__mxd__visible_tool")).toBeDefined();
+		expect(
+			allTools.find((t) => t.name === "mcp__mxd__visible_tool"),
+		).toBeDefined();
 	});
 
 	test("executeTool can execute hidden tools normally", async () => {
@@ -120,14 +129,28 @@ describe("evaluate_script tool", () => {
 		const evalTool = result1.toolDefs.find((t) => t.name === "evaluate_script");
 		expect(evalTool).toBeUndefined();
 
-		const result2 = createOrchestratorTools(makeDeps(), "proj1", null, undefined, false);
+		const result2 = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			false,
+		);
 		expect(result2.setMessages).toBeUndefined();
-		const evalTool2 = result2.toolDefs.find((t) => t.name === "evaluate_script");
+		const evalTool2 = result2.toolDefs.find(
+			(t) => t.name === "evaluate_script",
+		);
 		expect(evalTool2).toBeUndefined();
 	});
 
 	test("created with hidden=true when selfBootstrap is true", () => {
-		const result = createOrchestratorTools(makeDeps(), "proj1", null, undefined, true);
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
 		expect(result.setMessages).toBeDefined();
 		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
 		expect(evalTool).toBeDefined();
@@ -135,7 +158,13 @@ describe("evaluate_script tool", () => {
 	});
 
 	test("executes script and returns result", async () => {
-		const result = createOrchestratorTools(makeDeps(), "proj1", null, undefined, true);
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
 		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
 
 		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
@@ -152,7 +181,13 @@ describe("evaluate_script tool", () => {
 	});
 
 	test("captures console.log output", async () => {
-		const result = createOrchestratorTools(makeDeps(), "proj1", null, undefined, true);
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
 		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
 
 		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
@@ -171,7 +206,13 @@ describe("evaluate_script tool", () => {
 	});
 
 	test("captures console.error and console.warn", async () => {
-		const result = createOrchestratorTools(makeDeps(), "proj1", null, undefined, true);
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
 		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
 
 		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
@@ -189,7 +230,13 @@ describe("evaluate_script tool", () => {
 	});
 
 	test("returns error on script failure", async () => {
-		const result = createOrchestratorTools(makeDeps(), "proj1", null, undefined, true);
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
 		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
 
 		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
@@ -207,7 +254,13 @@ describe("evaluate_script tool", () => {
 	});
 
 	test("accesses ctx.messages via setMessages binding", async () => {
-		const result = createOrchestratorTools(makeDeps(), "proj1", null, undefined, true);
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
 		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
 
 		// Simulate provider loop binding the messages array
@@ -215,7 +268,7 @@ describe("evaluate_script tool", () => {
 			{ role: "user", content: "hello" },
 			{ role: "assistant", content: "hi there" },
 		];
-		result.setMessages!(messages);
+		result.setMessages?.(messages);
 
 		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
 		const handlers = new Map<string, ToolDefinition<any>>();
@@ -271,8 +324,7 @@ describe("evaluate_script tool", () => {
 		const execResult = await executeTool(
 			TOOL_EVALUATE_SCRIPT,
 			{
-				script:
-					"return { projectId: ctx.projectId, taskId: ctx.taskId }",
+				script: "return { projectId: ctx.projectId, taskId: ctx.taskId }",
 			},
 			handlers,
 		);
@@ -282,7 +334,13 @@ describe("evaluate_script tool", () => {
 	});
 
 	test("supports async/await in script", async () => {
-		const result = createOrchestratorTools(makeDeps(), "proj1", null, undefined, true);
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
 		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
 
 		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
@@ -299,7 +357,13 @@ describe("evaluate_script tool", () => {
 	});
 
 	test("returns '(no output)' when script has no return or console", async () => {
-		const result = createOrchestratorTools(makeDeps(), "proj1", null, undefined, true);
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
 		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
 
 		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
@@ -317,7 +381,13 @@ describe("evaluate_script tool", () => {
 
 	test("restores console methods after error", async () => {
 		const originalLog = console.log;
-		const result = createOrchestratorTools(makeDeps(), "proj1", null, undefined, true);
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
 		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
 
 		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
@@ -335,7 +405,13 @@ describe("evaluate_script tool", () => {
 	});
 
 	test("both console output and return value in same script", async () => {
-		const result = createOrchestratorTools(makeDeps(), "proj1", null, undefined, true);
+		const result = createOrchestratorTools(
+			makeDeps(),
+			"proj1",
+			null,
+			undefined,
+			true,
+		);
 		const evalTool = result.toolDefs.find((t) => t.name === "evaluate_script");
 
 		// biome-ignore lint/suspicious/noExplicitAny: test flexibility
