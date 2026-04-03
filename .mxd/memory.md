@@ -271,6 +271,9 @@ API can return multiple yield (or done) tool_calls in the same assistant turn. P
 - Restart: 99.8% cache hit (582 creation / 362K read)
 - Fork: 100% cache hit (0 creation / 365K read)
 
+### Message Cache Breakpoint
+Breakpoint on **last** user message (not second-to-last). Last message sent to API is always user role. Anthropic's 20-block lookback caches all preceding history. Previous "second-to-last" strategy caused full miss when only 1 user message existed (post-compaction with no new user input before restart).
+
 ### Remaining Cache Concern
 `addAssistantMessage` stores raw API response content (SDK key order). JSONL reconstruction uses our manual key order. Within a session this is consistent (messages[] grows in memory). But the two key orders are `{type, id, name, input, caller}` (both paths currently). If SDK ever changes key order, this would break. Low priority — currently not causing issues.
 
