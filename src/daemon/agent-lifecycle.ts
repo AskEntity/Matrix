@@ -961,17 +961,14 @@ export async function runAgentForNode(
 						agentResult.exitReason === "done_passed",
 						agentResult.doneSummary ?? "",
 					);
-					deliverMessage(
-						ctx,
-						project,
-						taskAbove.id,
-						completionMsg,
-					).catch((e) => {
-						console.warn(
-							`[Phase 2] Failed to deliver task_complete to parent ${taskAbove.id}:`,
-							e,
-						);
-					});
+					deliverMessage(ctx, project, taskAbove.id, completionMsg).catch(
+						(e) => {
+							console.warn(
+								`[Phase 2] Failed to deliver task_complete to parent ${taskAbove.id}:`,
+								e,
+							);
+						},
+					);
 				}
 
 				// Write done_notified marker — crash-safe confirmation that Phase 2 completed.

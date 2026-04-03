@@ -323,7 +323,6 @@ export function createOrchestratorTools(
 						"Optional color label for visual categorization (e.g. 'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'gray' or hex like '#ff5733'). " +
 							"Categories: Bug=red, Feature=blue, Refactor=green, Optimization=yellow, Research=purple, Chore=gray.",
 					),
-
 			},
 			async (args) => {
 				try {
@@ -1094,20 +1093,29 @@ export function createOrchestratorTools(
 				"Tasks inside folders are logically owned by the nearest task ancestor above the folder.",
 			{
 				title: z.string().describe("Folder title"),
-				parentId: z.string().optional().describe("Parent node ID. Omit to create under your current task."),
+				parentId: z
+					.string()
+					.optional()
+					.describe("Parent node ID. Omit to create under your current task."),
 			},
 			async (args) => {
 				try {
-					const effectiveParentId = args.parentId ?? currentTaskId ?? tracker.rootNodeId;
+					const effectiveParentId =
+						args.parentId ?? currentTaskId ?? tracker.rootNodeId;
 					const folder = tracker.addFolder(args.title, effectiveParentId);
 					await tracker.save();
 					broadcastTree();
 					return {
-						content: [{ type: "text" as const, text: JSON.stringify(folder, null, 2) }],
+						content: [
+							{ type: "text" as const, text: JSON.stringify(folder, null, 2) },
+						],
 					};
 				} catch (e) {
 					const message = e instanceof Error ? e.message : "Unknown error";
-					return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
+					return {
+						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						isError: true,
+					};
 				}
 			},
 		),
@@ -1121,16 +1129,52 @@ export function createOrchestratorTools(
 			async (args) => {
 				try {
 					const node = tracker.get(args.folderId);
-					if (!node) return { content: [{ type: "text" as const, text: "Folder not found" }], isError: true };
-					if (!isFolder(node)) return { content: [{ type: "text" as const, text: "Not a folder — use delete_task instead" }], isError: true };
-					if (node.children.length > 0) return { content: [{ type: "text" as const, text: "Cannot delete folder with children. Move or delete them first." }], isError: true };
+					if (!node)
+						return {
+							content: [{ type: "text" as const, text: "Folder not found" }],
+							isError: true,
+						};
+					if (!isFolder(node))
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: "Not a folder — use delete_task instead",
+								},
+							],
+							isError: true,
+						};
+					if (node.children.length > 0)
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: "Cannot delete folder with children. Move or delete them first.",
+								},
+							],
+							isError: true,
+						};
 					tracker.remove(args.folderId);
 					await tracker.save();
 					broadcastTree();
-					return { content: [{ type: "text" as const, text: JSON.stringify({ deleted: true, folderId: args.folderId, title: node.title }) }] };
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify({
+									deleted: true,
+									folderId: args.folderId,
+									title: node.title,
+								}),
+							},
+						],
+					};
 				} catch (e) {
 					const message = e instanceof Error ? e.message : "Unknown error";
-					return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
+					return {
+						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						isError: true,
+					};
 				}
 			},
 		),
@@ -1145,15 +1189,42 @@ export function createOrchestratorTools(
 			async (args) => {
 				try {
 					const node = tracker.get(args.folderId);
-					if (!node) return { content: [{ type: "text" as const, text: "Folder not found" }], isError: true };
-					if (!isFolder(node)) return { content: [{ type: "text" as const, text: "Not a folder — use update_task instead" }], isError: true };
+					if (!node)
+						return {
+							content: [{ type: "text" as const, text: "Folder not found" }],
+							isError: true,
+						};
+					if (!isFolder(node))
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: "Not a folder — use update_task instead",
+								},
+							],
+							isError: true,
+						};
 					tracker.updateTitle(args.folderId, args.title);
 					await tracker.save();
 					broadcastTree();
-					return { content: [{ type: "text" as const, text: JSON.stringify({ renamed: true, folderId: args.folderId, title: args.title }) }] };
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: JSON.stringify({
+									renamed: true,
+									folderId: args.folderId,
+									title: args.title,
+								}),
+							},
+						],
+					};
 				} catch (e) {
 					const message = e instanceof Error ? e.message : "Unknown error";
-					return { content: [{ type: "text" as const, text: `Error: ${message}` }], isError: true };
+					return {
+						content: [{ type: "text" as const, text: `Error: ${message}` }],
+						isError: true,
+					};
 				}
 			},
 		),

@@ -519,7 +519,9 @@ describe("TaskTracker", () => {
 		// Should not throw
 		tracker.updateCost(folder.id, 1.5);
 		// Folder has no costUsd field — no change
-		expect((folder as unknown as Record<string, unknown>).costUsd).toBeUndefined();
+		expect(
+			(folder as unknown as Record<string, unknown>).costUsd,
+		).toBeUndefined();
 	});
 
 	test("getTask returns undefined for folder nodes", () => {
@@ -549,7 +551,9 @@ describe("TaskTracker", () => {
 		tracker.reparent(folder.id, newParent.id);
 		expect(tracker.get(folder.id)?.parentId).toBe(newParent.id);
 		expect(tracker.getTask(task.id)?.parentId).toBe(folder.id);
-		expect(tracker.getTasksBelow(newParent.id).map((n) => n.id)).toContain(task.id);
+		expect(tracker.getTasksBelow(newParent.id).map((n) => n.id)).toContain(
+			task.id,
+		);
 	});
 
 	test("remove empty folder succeeds", () => {
@@ -585,7 +589,9 @@ describe("TaskTracker", () => {
 		tracker.addFolder("Folder", tracker.rootNodeId);
 		tracker.addTask("Draft Task", "desc", { draft: true });
 		const drafts = tracker.byStatus("draft");
-		expect(drafts.every((n) => (n as { type?: string }).type !== "folder")).toBe(true);
+		expect(
+			drafts.every((n) => (n as { type?: string }).type !== "folder"),
+		).toBe(true);
 		expect(drafts.length).toBe(1);
 	});
 
